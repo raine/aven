@@ -642,25 +642,24 @@ impl TuiStore {
                 )));
             }
 
-            let before = if item.task.deleted { "1" } else { "0" };
-            self.database
-                .set_task_deleted_state(&self.active_workspace, &item.task, deleted)
-                .await?;
             let summary = if deleted {
                 format!("delete {}", item.display_ref)
             } else {
                 format!("restore {}", item.display_ref)
             };
-            self.record_undo_commands(
-                &summary,
-                vec![UndoCommand::SetTaskField {
-                    task_id: item.task.id.clone(),
-                    field: "deleted".to_string(),
-                    before: before.to_string(),
-                    after: if deleted { "1" } else { "0" }.to_string(),
-                }],
-            )
-            .await?;
+            self.database
+                .mutate_tasks(
+                    &self.active_workspace,
+                    vec![(
+                        item.task.id.clone(),
+                        TaskUpdate {
+                            deleted: Some(deleted),
+                            ..TaskUpdate::default()
+                        },
+                    )],
+                    UndoContext::tui(summary),
+                )
+                .await?;
             if deleted {
                 if let Some(index) = index
                     && let Some(current) = self.tasks.get_mut(index)
@@ -1086,36 +1085,31 @@ impl TuiStore {
             return Ok(None);
         }
 
-        let mut undo_commands = Vec::new();
         let mut updates = Vec::new();
         for item in &targets {
             if item.task.deleted == deleted {
                 continue;
             }
-            let before = if item.task.deleted { "1" } else { "0" };
-            let after = if deleted { "1" } else { "0" };
             updates.push((
                 item.task.id.clone(),
-                "deleted".to_string(),
-                after.to_string(),
+                TaskUpdate {
+                    deleted: Some(deleted),
+                    ..TaskUpdate::default()
+                },
             ));
-            undo_commands.push(UndoCommand::SetTaskField {
-                task_id: item.task.id.clone(),
-                field: "deleted".to_string(),
-                before: before.to_string(),
-                after: after.to_string(),
-            });
         }
-        self.database
-            .set_task_fields(&self.active_workspace, &updates)
+        let expected_changed = updates.len();
+        let summary = if deleted { "delete" } else { "restore" };
+        let report = self
+            .database
+            .mutate_tasks(
+                &self.active_workspace,
+                updates,
+                UndoContext::tui(format!("{summary} {expected_changed} tasks")),
+            )
             .await?;
 
-        let changed = undo_commands.len();
-        if changed > 0 {
-            let summary = if deleted { "delete" } else { "restore" };
-            self.record_undo_commands(&format!("{summary} {changed} tasks"), undo_commands)
-                .await?;
-        }
+        let changed = report.changed_count();
         let message = match (deleted, changed) {
             (true, 0) => format!("already deleted {} tasks", targets.len()),
             (false, 0) => format!("already restored {} tasks", targets.len()),

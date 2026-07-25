@@ -56,6 +56,7 @@ pub struct TaskUpdate {
     pub priority: Option<String>,
     pub available_at: Option<Option<String>>,
     pub due_on: Option<Option<String>>,
+    pub deleted: Option<bool>,
     pub is_epic: Option<bool>,
     pub add_labels: Vec<String>,
     pub remove_labels: Vec<String>,
@@ -800,6 +801,16 @@ async fn apply_task_update(
             task_id,
             "due_on",
             due_on.as_deref().unwrap_or(""),
+        )
+        .await?;
+    }
+    if let Some(deleted) = update.deleted {
+        changed |= update_task_field(
+            conn,
+            workspace,
+            task_id,
+            "deleted",
+            if deleted { "1" } else { "0" },
         )
         .await?;
     }

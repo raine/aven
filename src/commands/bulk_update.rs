@@ -265,6 +265,7 @@ fn bulk_update_for_item(
             .map(str::to_string),
         available_at: None,
         due_on: None,
+        deleted: None,
         is_epic: None,
         add_labels: add_labels
             .iter()

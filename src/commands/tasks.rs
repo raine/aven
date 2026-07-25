@@ -494,6 +494,7 @@ pub(crate) async fn cmd_edit(
                 priority: args.priority,
                 available_at,
                 due_on,
+                deleted: None,
                 is_epic,
                 add_labels: args.label,
                 remove_labels: args.remove_label,
