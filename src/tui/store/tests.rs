@@ -1264,6 +1264,31 @@ mod task_creation_and_updates {
     }
 
     #[tokio::test]
+    async fn date_mutation_rolls_back_when_undo_recording_fails() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (task_id, selected) = create_selected_task(&mut store, "Date undo failure").await;
+        reject_undo_inserts(&pool).await;
+
+        let error = store
+            .update_due_for_tasks(
+                Some(selected),
+                std::slice::from_ref(&task_id),
+                "2026-08-01".to_string(),
+                false,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("injected undo failure"));
+        let persisted: String = sqlx::query_scalar("SELECT due_on FROM tasks WHERE id = ?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(persisted, "");
+    }
+
+    #[tokio::test]
     async fn unchanged_single_and_batch_edits_preserve_state_without_undo() {
         let (_dir, pool, mut store) = test_store_with_pool().await;
         let (task_id, selected) = create_selected_task(&mut store, "Unchanged edits").await;

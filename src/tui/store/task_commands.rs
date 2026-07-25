@@ -403,27 +403,23 @@ impl TuiStore {
             ));
         }
 
-        let outcome = self
+        let report = self
             .database
-            .update_task(
+            .mutate_tasks(
                 &self.active_workspace,
-                &item.task.id,
-                TaskUpdate {
-                    available_at: Some((!available_at.is_empty()).then(|| available_at.clone())),
-                    ..TaskUpdate::default()
-                },
+                vec![(
+                    item.task.id.clone(),
+                    TaskUpdate {
+                        available_at: Some(
+                            (!available_at.is_empty()).then(|| available_at.clone()),
+                        ),
+                        ..TaskUpdate::default()
+                    },
+                )],
+                UndoContext::tui(format!("availability {}", item.display_ref)),
             )
             .await?;
-        self.record_undo_commands(
-            &format!("availability {}", item.display_ref),
-            vec![UndoCommand::SetTaskField {
-                task_id: item.task.id.clone(),
-                field: "available_at".to_string(),
-                before,
-                after: available_at.clone(),
-            }],
-        )
-        .await?;
+        let outcome = report.outcomes.into_iter().next().unwrap();
         let message = if available_at.is_empty() {
             format!("cleared {} availability", item.display_ref)
         } else {
@@ -451,7 +447,6 @@ impl TuiStore {
             return Ok(None);
         }
         let mut updates = Vec::new();
-        let mut undo_commands = Vec::new();
         for item in &targets {
             let before = item.task.available_at.clone().unwrap_or_default();
             if before == available_at {
@@ -464,22 +459,17 @@ impl TuiStore {
                     ..TaskUpdate::default()
                 },
             ));
-            undo_commands.push(UndoCommand::SetTaskField {
-                task_id: item.task.id.clone(),
-                field: "available_at".to_string(),
-                before,
-                after: available_at.clone(),
-            });
         }
-        let outcomes = self
+        let expected_changed = updates.len();
+        let report = self
             .database
-            .update_tasks(&self.active_workspace, updates)
+            .mutate_tasks(
+                &self.active_workspace,
+                updates,
+                UndoContext::tui(format!("availability {expected_changed} tasks")),
+            )
             .await?;
-        let changed = undo_commands.len();
-        if changed > 0 {
-            self.record_undo_commands(&format!("availability {changed} tasks"), undo_commands)
-                .await?;
-        }
+        let changed = report.changed_count();
         let noun = if targets.len() == 1 { "task" } else { "tasks" };
         let message = if changed == 0 {
             format!("availability unchanged on {} {noun}", targets.len())
@@ -496,7 +486,7 @@ impl TuiStore {
         };
         let result = if preserve_task && targets.len() == 1 && changed == 1 {
             let mut item = targets[0].clone();
-            item.task = outcomes.into_iter().next().unwrap().task;
+            item.task = report.outcomes.into_iter().next().unwrap().task;
             self.refresh_preserved_task_message(current_selected_index, item, message)
                 .await?
         } else {
@@ -518,7 +508,6 @@ impl TuiStore {
             return Ok(None);
         }
         let mut updates = Vec::new();
-        let mut undo_commands = Vec::new();
         for item in &targets {
             let before = item.task.due_on.clone().unwrap_or_default();
             if before == due_on {
@@ -531,22 +520,17 @@ impl TuiStore {
                     ..TaskUpdate::default()
                 },
             ));
-            undo_commands.push(UndoCommand::SetTaskField {
-                task_id: item.task.id.clone(),
-                field: "due_on".to_string(),
-                before,
-                after: due_on.clone(),
-            });
         }
-        let outcomes = self
+        let expected_changed = updates.len();
+        let report = self
             .database
-            .update_tasks(&self.active_workspace, updates)
+            .mutate_tasks(
+                &self.active_workspace,
+                updates,
+                UndoContext::tui(format!("due date {expected_changed} tasks")),
+            )
             .await?;
-        let changed = undo_commands.len();
-        if changed > 0 {
-            self.record_undo_commands(&format!("due date {changed} tasks"), undo_commands)
-                .await?;
-        }
+        let changed = report.changed_count();
         let noun = if targets.len() == 1 { "task" } else { "tasks" };
         let message = if changed == 0 {
             format!("due date unchanged on {} {noun}", targets.len())
@@ -563,7 +547,7 @@ impl TuiStore {
         };
         let result = if preserve_task && targets.len() == 1 && changed == 1 {
             let mut item = targets[0].clone();
-            item.task = outcomes.into_iter().next().unwrap().task;
+            item.task = report.outcomes.into_iter().next().unwrap().task;
             self.refresh_preserved_task_message(current_selected_index, item, message)
                 .await?
         } else {
