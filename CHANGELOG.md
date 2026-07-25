@@ -3,6 +3,17 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.17 (2026-07-25)
+
+- Manage epic children from the TUI by adding existing tasks, creating new
+  tasks, removing links, and undoing relationship changes.
+- Open linked tasks directly from detail views, including tasks outside the
+  current filter, and return through your detail history with `Esc`.
+- Edit the project, priority, availability, due date, or labels for marked tasks
+  as a batch while keeping your marks available for follow-up changes.
+- Note drafts with meaningful text ask for confirmation before `Esc` discards
+  them.
+
 ## v0.1.16 (2026-07-23)
 
 - Task detail help includes navigation shortcuts for moving through tasks,
