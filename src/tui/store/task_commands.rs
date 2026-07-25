@@ -5,7 +5,7 @@ use anyhow::Result;
 use crate::choices::TaskPriority;
 use crate::query::TaskListItem;
 use crate::tui::store::MutationMessage;
-use crate::undo::{UndoCommand, UndoContext};
+use crate::undo::UndoContext;
 use aven_core::operations::TaskUpdate;
 
 use super::TuiStore;
@@ -34,28 +34,6 @@ fn cycled_priority(priority: TaskPriority, reverse: bool) -> TaskPriority {
 }
 
 impl TuiStore {
-    #[cfg(test)]
-    async fn update_selected_task<F>(
-        &mut self,
-        index: Option<usize>,
-        update: TaskUpdate,
-        message: F,
-    ) -> Result<Option<MutationMessage>>
-    where
-        F: FnOnce(&TaskListItem) -> String,
-    {
-        if let Some(item) = self.selected_task(index).cloned() {
-            self.database
-                .update_task(&self.active_workspace, &item.task.id, update)
-                .await?;
-            return Ok(Some(
-                self.refresh_task_message(&item.task.id, message(&item))
-                    .await?,
-            ));
-        }
-        Ok(None)
-    }
-
     pub(crate) async fn update_status(
         &mut self,
         index: Option<usize>,
@@ -219,29 +197,23 @@ impl TuiStore {
                 .await?,
             ));
         }
-        let outcome = self
-            .update_selected_task(
-                index,
-                TaskUpdate {
-                    title: Some(title.clone()),
-                    ..TaskUpdate::default()
-                },
-                |item| format!("set {} title", item.display_ref),
+        self.database
+            .mutate_tasks(
+                &self.active_workspace,
+                vec![(
+                    item.task.id.clone(),
+                    TaskUpdate {
+                        title: Some(title),
+                        ..TaskUpdate::default()
+                    },
+                )],
+                UndoContext::tui(format!("title {}", item.display_ref)),
             )
             .await?;
-        if outcome.is_some() {
-            self.record_undo_commands(
-                &format!("title {}", item.display_ref),
-                vec![UndoCommand::SetTaskField {
-                    task_id: item.task.id.clone(),
-                    field: "title".to_string(),
-                    before,
-                    after: title,
-                }],
-            )
-            .await?;
-        }
-        Ok(outcome)
+        Ok(Some(
+            self.refresh_task_message(&item.task.id, format!("set {} title", item.display_ref))
+                .await?,
+        ))
     }
 
     pub(crate) async fn update_title_for_task(
@@ -267,25 +239,18 @@ impl TuiStore {
             ));
         }
         self.database
-            .update_task(
+            .mutate_tasks(
                 &self.active_workspace,
-                task_id,
-                TaskUpdate {
-                    title: Some(title.clone()),
-                    ..TaskUpdate::default()
-                },
+                vec![(
+                    task_id.clone(),
+                    TaskUpdate {
+                        title: Some(title),
+                        ..TaskUpdate::default()
+                    },
+                )],
+                UndoContext::tui(format!("title {}", item.display_ref)),
             )
             .await?;
-        self.record_undo_commands(
-            &format!("title {}", item.display_ref),
-            vec![UndoCommand::SetTaskField {
-                task_id: task_id.clone(),
-                field: "title".to_string(),
-                before,
-                after: title,
-            }],
-        )
-        .await?;
         Ok(Some(
             self.refresh_after_task_batch(
                 current_selected_index,
@@ -318,25 +283,18 @@ impl TuiStore {
             ));
         }
         self.database
-            .update_task(
+            .mutate_tasks(
                 &self.active_workspace,
-                task_id,
-                TaskUpdate {
-                    description: Some(description.clone()),
-                    ..TaskUpdate::default()
-                },
+                vec![(
+                    task_id.clone(),
+                    TaskUpdate {
+                        description: Some(description),
+                        ..TaskUpdate::default()
+                    },
+                )],
+                UndoContext::tui(format!("description {}", item.display_ref)),
             )
             .await?;
-        self.record_undo_commands(
-            &format!("description {}", item.display_ref),
-            vec![UndoCommand::SetTaskField {
-                task_id: task_id.clone(),
-                field: "description".to_string(),
-                before,
-                after: description,
-            }],
-        )
-        .await?;
         Ok(Some(
             self.refresh_after_task_batch(
                 current_selected_index,
@@ -356,30 +314,26 @@ impl TuiStore {
         let Some(item) = self.selected_task(index).cloned() else {
             return Ok(None);
         };
-        let before = item.task.description.clone();
-        let outcome = self
-            .update_selected_task(
-                index,
-                TaskUpdate {
-                    description: Some(description.clone()),
-                    ..TaskUpdate::default()
-                },
-                |item| format!("set {} description", item.display_ref),
+        self.database
+            .mutate_tasks(
+                &self.active_workspace,
+                vec![(
+                    item.task.id.clone(),
+                    TaskUpdate {
+                        description: Some(description),
+                        ..TaskUpdate::default()
+                    },
+                )],
+                UndoContext::tui(format!("description {}", item.display_ref)),
             )
             .await?;
-        if outcome.is_some() {
-            self.record_undo_commands(
-                &format!("description {}", item.display_ref),
-                vec![UndoCommand::SetTaskField {
-                    task_id: item.task.id.clone(),
-                    field: "description".to_string(),
-                    before,
-                    after: description,
-                }],
+        Ok(Some(
+            self.refresh_task_message(
+                &item.task.id,
+                format!("set {} description", item.display_ref),
             )
-            .await?;
-        }
-        Ok(outcome)
+            .await?,
+        ))
     }
 
     #[cfg(test)]
