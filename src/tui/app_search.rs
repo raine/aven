@@ -311,8 +311,12 @@ impl App {
                             mutation.message.selected
                         };
                         self.widgets.table.select(selected);
-                        self.selected_detail_child_task_id =
-                            self.detail_context.then_some(child_id);
+                        self.detail_focus =
+                            self.detail_context
+                                .then_some(crate::tui::app::DetailTargetId::Task {
+                                    section: crate::tui::app::DetailSection::EpicChildren,
+                                    task_id: child_id,
+                                });
                         self.removed_epic_child = None;
                         self.set_success(mutation.message.message);
                         if self.detail_context {

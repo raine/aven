@@ -853,13 +853,14 @@ impl App {
     async fn remove_selected_epic_child(&mut self) -> Result<()> {
         let detail =
             matches!(self.overlay, Some(OverlayState::Detail { .. })) || self.detail_context;
-        let focused_child = detail.then(|| match &self.detail_focus {
+        let focused_child = match &self.detail_focus {
             Some(DetailTargetId::Task {
                 section: DetailSection::EpicChildren,
                 task_id,
             }) => Some(task_id),
             _ => None,
-        }).flatten();
+        };
+        let focused_child = detail.then_some(focused_child).flatten();
         if let (Some(removed), Some(child_id)) = (&self.removed_epic_child, focused_child)
             && removed.child.task_id == *child_id
         {
@@ -915,11 +916,7 @@ impl App {
         });
     }
 
-    pub(super) async fn open_detail_task(
-        &mut self,
-        task_id: &crate::ids::TaskId,
-        scroll: u16,
-    ) {
+    pub(super) async fn open_detail_task(&mut self, task_id: &crate::ids::TaskId, scroll: u16) {
         let current_task_id = self
             .store
             .selected_task(self.widgets.table.selected())

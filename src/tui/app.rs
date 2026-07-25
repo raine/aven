@@ -407,7 +407,10 @@ impl App {
             self.store.view_state = previous.view_state;
             let selected = self.store.refresh(Some(&previous.task_id)).await?;
             let index = if let Some(index) = selected.filter(|&index| {
-                self.store.tasks.get(index).is_some_and(|item| item.task.id == previous.task_id)
+                self.store
+                    .tasks
+                    .get(index)
+                    .is_some_and(|item| item.task.id == previous.task_id)
             }) {
                 index
             } else {

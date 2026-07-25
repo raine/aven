@@ -6135,7 +6135,10 @@ mod detail_mode {
                 .map(|removed| &removed.child.task_id),
             Some(&child_id)
         );
-        assert_eq!(app.selected_detail_child_task_id.as_ref(), Some(&child_id));
+        assert_eq!(
+            app.detail_focus.as_ref().and_then(DetailTargetId::task_id),
+            Some(&child_id)
+        );
         let linked: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM task_epic_links WHERE epic_task_id = ? AND child_task_id = ?",
         )
@@ -6169,7 +6172,10 @@ mod detail_mode {
                 .map(|item| &item.task.id),
             Some(&parent_id)
         );
-        assert_eq!(app.selected_detail_child_task_id.as_ref(), Some(&child_id));
+        assert_eq!(
+            app.detail_focus.as_ref().and_then(DetailTargetId::task_id),
+            Some(&child_id)
+        );
         assert_eq!(
             app.removed_epic_child
                 .as_ref()
@@ -6182,7 +6188,10 @@ mod detail_mode {
             .unwrap();
 
         assert!(app.removed_epic_child.is_none());
-        assert_eq!(app.selected_detail_child_task_id.as_ref(), Some(&child_id));
+        assert_eq!(
+            app.detail_focus.as_ref().and_then(DetailTargetId::task_id),
+            Some(&child_id)
+        );
         let linked: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM task_epic_links WHERE epic_task_id = ? AND child_task_id = ?",
         )
@@ -7070,9 +7079,7 @@ mod detail_mode {
             Some(OverlayState::Detail { scroll: 7 })
         ));
         assert_eq!(
-            app.detail_focus
-                .as_ref()
-                .and_then(DetailTargetId::task_id),
+            app.detail_focus.as_ref().and_then(DetailTargetId::task_id),
             Some(&child_id)
         );
     }

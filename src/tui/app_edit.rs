@@ -365,7 +365,13 @@ impl App {
             self.store
                 .selected_task(self.widgets.table.selected())
                 .and_then(|parent| {
-                    let child_id = self.selected_detail_child_task_id.as_ref()?;
+                    let crate::tui::app::DetailTargetId::Task {
+                        section: crate::tui::app::DetailSection::EpicChildren,
+                        task_id: child_id,
+                    } = self.detail_focus.as_ref()?
+                    else {
+                        return None;
+                    };
                     parent
                         .epic_children
                         .iter()
@@ -386,7 +392,10 @@ impl App {
                             .iter()
                             .position(|item| item.task.id == removed.epic_id),
                     );
-                    self.selected_detail_child_task_id = Some(removed.child.task_id);
+                    self.detail_focus = Some(crate::tui::app::DetailTargetId::Task {
+                        section: crate::tui::app::DetailSection::EpicChildren,
+                        task_id: removed.child.task_id,
+                    });
                 } else if let Some((epic_id, original_position, child)) = focused_link
                     && self.store.tasks.iter().any(|item| {
                         item.task.id == epic_id
@@ -402,7 +411,10 @@ impl App {
                             .iter()
                             .position(|item| item.task.id == epic_id),
                     );
-                    self.selected_detail_child_task_id = Some(child.task_id.clone());
+                    self.detail_focus = Some(crate::tui::app::DetailTargetId::Task {
+                        section: crate::tui::app::DetailSection::EpicChildren,
+                        task_id: child.task_id.clone(),
+                    });
                     self.removed_epic_child = Some(crate::tui::app::RemovedEpicChild {
                         epic_id,
                         child,

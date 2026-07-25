@@ -1109,7 +1109,12 @@ fn extend_epic_children_section(
     let open = item
         .epic_children
         .iter()
-        .filter(|link| link.unresolved)
+        .filter(|link| link.unresolved && !link.title.ends_with("[removed]"))
+        .count();
+    let total = item
+        .epic_children
+        .iter()
+        .filter(|link| !link.title.ends_with("[removed]"))
         .count();
     lines.push(Line::from(vec![
         Span::styled(
@@ -1117,7 +1122,7 @@ fn extend_epic_children_section(
             Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!(" open={open} total={}", item.epic_children.len()),
+            format!(" open={open} total={total}"),
             Style::new().fg(FG_DIM),
         ),
     ]));

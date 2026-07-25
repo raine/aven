@@ -443,7 +443,10 @@ impl App {
                     .position(|item| item.task.id == context.epic.epic_id)
                     .or(selected),
             );
-            self.selected_detail_child_task_id = Some(task_id);
+            self.detail_focus = Some(crate::tui::app::DetailTargetId::Task {
+                section: crate::tui::app::DetailSection::EpicChildren,
+                task_id,
+            });
             self.removed_epic_child = None;
             self.epic_child_authoring = None;
             self.authoring.clear_add_task();

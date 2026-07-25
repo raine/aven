@@ -299,62 +299,6 @@ impl App {
         }
     }
 
-    pub(super) async fn open_task_by_id_with_return(
-        &mut self,
-        task_id: crate::ids::TaskId,
-    ) -> Result<bool> {
-        let selected_index = self.widgets.table.selected();
-        let return_state = LastChangeReturnState {
-            view_state: self.store.view_state.clone(),
-            selected_task_id: self
-                .store
-                .selected_task(selected_index)
-                .map(|item| item.task.id.clone()),
-            selected_index,
-            table_offset: self.widgets.table.offset(),
-            return_to_detail: matches!(self.overlay, Some(OverlayState::Detail { .. }))
-                || self.detail_context,
-            detail_scroll: match self.overlay {
-                Some(OverlayState::Detail { scroll }) => scroll,
-                _ => self.detail_context_scroll,
-            },
-            detail_focus: self.detail_focus.clone(),
-            detail_expanded_sections: self.detail_expanded_sections.clone(),
-        };
-        self.store.view_state = TaskViewState {
-            scope: TaskScope::Workspace,
-            view: TaskView::Search,
-            filter_modifiers: TaskFilterModifiers {
-                task_ids: vec![task_id.clone()],
-                ..TaskFilterModifiers::default()
-            },
-            ..TaskViewState::default()
-        };
-        let selected = self.store.refresh(Some(&task_id)).await?;
-        let Some(selected) = selected.filter(|index| {
-            self.store
-                .tasks
-                .get(*index)
-                .is_some_and(|item| item.task.id == task_id)
-        }) else {
-            self.store.view_state = return_state.view_state;
-            self.store
-                .refresh(return_state.selected_task_id.as_ref())
-                .await?;
-            self.widgets.table.select(
-                self.store
-                    .restored_task_selection_at_index(return_state.selected_index),
-            );
-            *self.widgets.table.offset_mut() = return_state.table_offset;
-            return Ok(false);
-        };
-        self.last_change_return = Some(return_state);
-        self.focus = Focus::Tasks;
-        self.widgets.table.select(Some(selected));
-        self.overlay = Some(OverlayState::Detail { scroll: 0 });
-        Ok(true)
-    }
-
     pub(super) async fn return_to_last_change(&mut self) -> Result<()> {
         let Some(task_id) = self.last_changed_task_id.clone() else {
             self.set_info("no recently changed task");
