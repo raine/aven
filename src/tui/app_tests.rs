@@ -5974,6 +5974,67 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn epic_detail_add_child_search_hides_other_projects() {
+        let (_dir, _pool, mut app) = test_app_with_pool().await;
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent needle")
+            },
+        )
+        .await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+        let parent_project = app.store.tasks[parent_index].task.project_key.clone();
+        create_and_select_task(&mut app, test_task_draft("Same project needle")).await;
+        create_and_select_task(
+            &mut app,
+            TaskDraft {
+                project: Some("other".to_string()),
+                ..test_task_draft("Other project needle")
+            },
+        )
+        .await;
+        let parent_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == parent_id)
+            .unwrap();
+        app.widgets.table.select(Some(parent_index));
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        for code in [KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')] {
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        }
+        type_chars(&mut app, "needle").await;
+        settle_search_preview(&mut app).await;
+
+        let Some(OverlayState::Search(state)) = &app.overlay else {
+            panic!("expected add-child search");
+        };
+        assert!(
+            state
+                .results
+                .iter()
+                .filter(|result| !result.create_new)
+                .all(|result| result.project_key == parent_project)
+        );
+        assert!(
+            state
+                .results
+                .iter()
+                .any(|result| result.title == "Same project needle")
+        );
+        assert!(
+            state
+                .results
+                .iter()
+                .all(|result| result.title != "Other project needle")
+        );
+    }
+
+    #[tokio::test]
     async fn focused_detail_child_removes_and_undo_restores_relationship() {
         let (_dir, pool, mut app) = test_app_with_pool().await;
         let parent_index = create_and_select_task(

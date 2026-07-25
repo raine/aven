@@ -423,8 +423,11 @@ impl App {
             .items
             .into_iter()
             .filter(|result| match &purpose {
-                SearchPurpose::Navigate | SearchPurpose::AddEpicChild { .. } => true,
+                SearchPurpose::Navigate => true,
                 SearchPurpose::AddDependency { task_id, .. } => result.task_id != *task_id,
+                SearchPurpose::AddEpicChild { project_key, .. } => {
+                    result.project_key == *project_key
+                }
             })
             .map(|result| {
                 let unavailable_reason = match &purpose {
@@ -434,14 +437,6 @@ impl App {
                         ..
                     } if result.task_id == *epic_id => {
                         Some(format!("{display_ref} cannot be its own child"))
-                    }
-                    SearchPurpose::AddEpicChild { project_key, .. }
-                        if result.project_key != *project_key =>
-                    {
-                        Some(format!(
-                            "{} is unavailable: different project",
-                            result.display_ref
-                        ))
                     }
                     SearchPurpose::AddEpicChild { .. } if result.is_epic => Some(format!(
                         "{} is unavailable: epics cannot be children",
