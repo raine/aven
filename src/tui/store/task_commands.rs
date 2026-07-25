@@ -566,28 +566,19 @@ impl TuiStore {
         let Some(item) = self.selected_task(index).cloned() else {
             return Ok(None);
         };
-        let before = item.task.project_id.clone();
-        let outcome = self
-            .database
-            .update_task(
+        self.database
+            .mutate_tasks(
                 &self.active_workspace,
-                &item.task.id,
-                TaskUpdate {
-                    project: Some(project.clone()),
-                    ..TaskUpdate::default()
-                },
+                vec![(
+                    item.task.id.clone(),
+                    TaskUpdate {
+                        project: Some(project),
+                        ..TaskUpdate::default()
+                    },
+                )],
+                UndoContext::tui(format!("project {}", item.display_ref)),
             )
             .await?;
-        self.record_undo_commands(
-            &format!("project {}", item.display_ref),
-            vec![UndoCommand::SetTaskField {
-                task_id: item.task.id.clone(),
-                field: "project".to_string(),
-                before: before.to_string(),
-                after: outcome.task.project_id.to_string(),
-            }],
-        )
-        .await?;
         Ok(Some(
             self.refresh_task_message(&item.task.id, format!("set {} project", item.display_ref))
                 .await?,
@@ -1062,28 +1053,18 @@ impl TuiStore {
                     },
                 )
             })
-            .collect();
-        let outcomes = self
-            .database
-            .update_tasks(&self.active_workspace, updates)
-            .await?;
-        let undo_commands = targets
-            .iter()
-            .zip(outcomes)
-            .filter(|(_, outcome)| outcome.changed)
-            .map(|(item, outcome)| UndoCommand::SetTaskField {
-                task_id: item.task.id.clone(),
-                field: "project".to_string(),
-                before: item.task.project_id.to_string(),
-                after: outcome.task.project_id.to_string(),
-            })
             .collect::<Vec<_>>();
+        let expected_changed = updates.len();
+        let report = self
+            .database
+            .mutate_tasks(
+                &self.active_workspace,
+                updates,
+                UndoContext::tui(format!("project {expected_changed} tasks")),
+            )
+            .await?;
 
-        let changed = undo_commands.len();
-        if changed > 0 {
-            self.record_undo_commands(&format!("project {changed} tasks"), undo_commands)
-                .await?;
-        }
+        let changed = report.changed_count();
         let message = if changed == 0 {
             format!(
                 "project unchanged on {} {}",

@@ -1264,6 +1264,39 @@ mod task_creation_and_updates {
     }
 
     #[tokio::test]
+    async fn project_assignment_rolls_back_when_undo_recording_fails() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        store
+            .create_project("Atomic Project".to_string())
+            .await
+            .unwrap();
+        let (task_id, selected) = create_selected_task(&mut store, "Project undo failure").await;
+        let before: String = sqlx::query_scalar("SELECT project_id FROM tasks WHERE id = ?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        reject_undo_inserts(&pool).await;
+
+        let error = store
+            .update_project_for_tasks(
+                Some(selected),
+                std::slice::from_ref(&task_id),
+                "atomic-project".to_string(),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("injected undo failure"));
+        let persisted: String = sqlx::query_scalar("SELECT project_id FROM tasks WHERE id = ?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(persisted, before);
+    }
+
+    #[tokio::test]
     async fn date_mutation_rolls_back_when_undo_recording_fails() {
         let (_dir, pool, mut store) = test_store_with_pool().await;
         let (task_id, selected) = create_selected_task(&mut store, "Date undo failure").await;
