@@ -33,8 +33,8 @@ pub use projects::{
 pub(crate) use projects::{insert_project_metadata_change, set_project_metadata};
 pub(crate) use tasks::update_task_labels_in_workspace;
 pub use tasks::{
-    NoteDeleteOutcome, NoteOutcome, TaskDraft, TaskMutationOutcome, TaskMutationReport,
-    TaskOutcome, TaskUpdate, TaskUpdateOutcome,
+    NoteDeleteOutcome, NoteOutcome, TaskCreationOptions, TaskCreationUndo, TaskDraft,
+    TaskMutationOutcome, TaskMutationReport, TaskOutcome, TaskUpdate, TaskUpdateOutcome,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use tasks::{create_task, set_task_deleted, update_task};

@@ -4,8 +4,8 @@ mod projects;
 #[cfg(test)]
 pub use aven_core::operations::attachment_read_items_by_task;
 pub use aven_core::operations::{
-    AttachmentAddInput, ConflictDetail, ConflictListItem, TaskAttachmentAddInput, TaskDraft,
-    TaskOutcome, TaskUpdate,
+    AttachmentAddInput, ConflictDetail, ConflictListItem, TaskAttachmentAddInput,
+    TaskCreationOptions, TaskCreationUndo, TaskDraft, TaskOutcome, TaskUpdate,
 };
 #[cfg(test)]
 pub use aven_core::test_support::{

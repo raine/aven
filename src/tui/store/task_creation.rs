@@ -4,7 +4,9 @@ use anyhow::Result;
 use tokio::task::JoinHandle;
 
 use crate::config::TaskIntakeConfig;
-use crate::operations::{TaskAttachmentAddInput, TaskDraft, TaskOutcome};
+use crate::operations::{
+    TaskAttachmentAddInput, TaskCreationOptions, TaskCreationUndo, TaskDraft, TaskOutcome,
+};
 use crate::tui::authoring::PendingTaskAttachment;
 use crate::undo::UndoCommand;
 
@@ -77,7 +79,7 @@ impl TuiStore {
         }
         let outcome = self
             .database
-            .create_task(&self.active_workspace, draft)
+            .create_task_with_undo(&self.active_workspace, draft, TaskCreationUndo::TuiTask)
             .await?;
         let created = self
             .finish_task_creation(outcome, Vec::new(), current_selected_index)
@@ -95,7 +97,15 @@ impl TuiStore {
         draft.project = Some(epic.project_key.clone());
         let outcome = self
             .database
-            .create_task_for_epic(&self.active_workspace, draft, &epic.epic_id)
+            .create_task_for_epic_with_undo(
+                &self.active_workspace,
+                draft,
+                &epic.epic_id,
+                TaskCreationUndo::TuiEpicChild {
+                    epic_id: epic.epic_id.clone(),
+                    epic_display_ref: epic.display_ref.clone(),
+                },
+            )
             .await?;
         let task_id = outcome.task.id.clone();
         let child_ref = self
@@ -140,12 +150,13 @@ impl TuiStore {
             .collect();
         let outcome = self
             .database
-            .create_task_with_attachments(
+            .create_task_with_attachments_and_undo(
                 &self.active_workspace,
                 blob_dir,
                 lifecycle_policy,
                 draft,
                 inputs,
+                TaskCreationUndo::TuiTask,
             )
             .await?;
         let created = self
@@ -178,13 +189,19 @@ impl TuiStore {
             .collect();
         let outcome = self
             .database
-            .create_task_with_attachments_for_epic(
+            .create_task_with_attachments_for_epic_and_undo(
                 &self.active_workspace,
                 blob_dir,
                 lifecycle_policy,
                 draft,
                 inputs,
-                &epic.epic_id,
+                TaskCreationOptions::for_epic(
+                    epic.epic_id.clone(),
+                    TaskCreationUndo::TuiEpicChild {
+                        epic_id: epic.epic_id.clone(),
+                        epic_display_ref: epic.display_ref.clone(),
+                    },
+                ),
             )
             .await?;
         let task_id = outcome.task.id.clone();
@@ -215,14 +232,6 @@ impl TuiStore {
         child_ref: &str,
     ) -> Result<CreatedTaskMessage> {
         let task_id = outcome.task.id.clone();
-        self.record_undo_commands(
-            &format!("add {child_ref} to {}", epic.display_ref),
-            vec![UndoCommand::AddEpicChild {
-                epic_id: epic.epic_id.clone(),
-                child_id: task_id.clone(),
-            }],
-        )
-        .await?;
         self.view_state.collapsed_epic_ids.remove(&epic.epic_id);
         self.view_state
             .expanded_epic_ids
@@ -238,7 +247,7 @@ impl TuiStore {
     async fn finish_task_creation(
         &mut self,
         outcome: TaskOutcome,
-        attachment_ids: Vec<String>,
+        _attachment_ids: Vec<String>,
         current_selected_index: Option<usize>,
     ) -> Result<CreatedTaskMessage> {
         let previous_id = self
@@ -250,22 +259,6 @@ impl TuiStore {
             .display_ref_context(&self.active_workspace.id)
             .await?;
         let message_ref = display_refs.display_ref(&outcome.task);
-        let workspace_id = self.active_workspace.id.clone();
-        let snapshot = self
-            .database
-            .task_undo_snapshot(&workspace_id, &task_id)
-            .await?;
-        self.record_undo_commands(
-            &format!("task {task_id}"),
-            vec![UndoCommand::DeleteCreatedTask {
-                task_id: task_id.clone(),
-                create_change_id: outcome.create_change_id,
-                attachment_ids,
-                attachment_change_ids: outcome.attachment_change_ids,
-                expected: snapshot,
-            }],
-        )
-        .await?;
 
         self.refresh(None).await?;
         let created_index = self.tasks.iter().position(|item| item.task.id == task_id);

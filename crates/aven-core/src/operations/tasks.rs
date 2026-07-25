@@ -13,7 +13,7 @@ use crate::ids::{TaskId, new_id, now};
 use crate::labels::resolve_labels_in_workspace;
 use crate::mutation::{set_task_field, set_task_project};
 use crate::projects::resolve_or_create_project_in_workspace;
-use crate::refs::get_task_in_workspace;
+use crate::refs::{DisplayRefContext, get_task_in_workspace};
 use crate::task_fields::TaskField;
 use crate::types::Task;
 use crate::undo::{
@@ -31,6 +31,39 @@ pub struct TaskDraft {
     pub available_at: Option<String>,
     pub due_on: Option<String>,
     pub is_epic: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub enum TaskCreationUndo {
+    #[default]
+    None,
+    TuiTask,
+    TuiEpicChild {
+        epic_id: TaskId,
+        epic_display_ref: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskCreationOptions {
+    epic_id: Option<TaskId>,
+    undo: TaskCreationUndo,
+}
+
+impl TaskCreationOptions {
+    pub fn standalone(undo: TaskCreationUndo) -> Self {
+        Self {
+            epic_id: None,
+            undo,
+        }
+    }
+
+    pub fn for_epic(epic_id: TaskId, undo: TaskCreationUndo) -> Self {
+        Self {
+            epic_id: Some(epic_id),
+            undo,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -109,8 +142,18 @@ impl Database {
         workspace: &Workspace,
         draft: TaskDraft,
     ) -> Result<TaskOutcome> {
+        self.create_task_with_undo(workspace, draft, TaskCreationUndo::None)
+            .await
+    }
+
+    pub async fn create_task_with_undo(
+        &self,
+        workspace: &Workspace,
+        draft: TaskDraft,
+        undo: TaskCreationUndo,
+    ) -> Result<TaskOutcome> {
         let mut conn = self.acquire().await?;
-        create_task(&mut conn, workspace, draft).await
+        create_task_with_epic(&mut conn, workspace, draft, None, undo).await
     }
 
     pub async fn create_task_for_epic(
@@ -119,8 +162,19 @@ impl Database {
         draft: TaskDraft,
         epic_id: &TaskId,
     ) -> Result<TaskOutcome> {
+        self.create_task_for_epic_with_undo(workspace, draft, epic_id, TaskCreationUndo::None)
+            .await
+    }
+
+    pub async fn create_task_for_epic_with_undo(
+        &self,
+        workspace: &Workspace,
+        draft: TaskDraft,
+        epic_id: &TaskId,
+        undo: TaskCreationUndo,
+    ) -> Result<TaskOutcome> {
         let mut conn = self.acquire().await?;
-        create_task_for_epic(&mut conn, workspace, draft, epic_id).await
+        create_task_with_epic(&mut conn, workspace, draft, Some(epic_id), undo).await
     }
 
     pub async fn create_task_with_attachments(
@@ -131,14 +185,35 @@ impl Database {
         draft: TaskDraft,
         attachments: Vec<super::attachments::TaskAttachmentAddInput>,
     ) -> Result<TaskOutcome> {
+        self.create_task_with_attachments_and_undo(
+            workspace,
+            blob_dir,
+            lifecycle_policy,
+            draft,
+            attachments,
+            TaskCreationUndo::None,
+        )
+        .await
+    }
+
+    pub async fn create_task_with_attachments_and_undo(
+        &self,
+        workspace: &Workspace,
+        blob_dir: &Path,
+        lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
+        draft: TaskDraft,
+        attachments: Vec<super::attachments::TaskAttachmentAddInput>,
+        undo: TaskCreationUndo,
+    ) -> Result<TaskOutcome> {
         let mut conn = self.acquire().await?;
-        create_task_with_attachments(
+        create_task_with_attachments_and_epic(
             &mut conn,
             workspace,
             blob_dir,
             lifecycle_policy,
             draft,
             attachments,
+            TaskCreationOptions::standalone(undo),
         )
         .await
     }
@@ -152,15 +227,35 @@ impl Database {
         attachments: Vec<super::attachments::TaskAttachmentAddInput>,
         epic_id: &TaskId,
     ) -> Result<TaskOutcome> {
+        self.create_task_with_attachments_for_epic_and_undo(
+            workspace,
+            blob_dir,
+            lifecycle_policy,
+            draft,
+            attachments,
+            TaskCreationOptions::for_epic(epic_id.clone(), TaskCreationUndo::None),
+        )
+        .await
+    }
+
+    pub async fn create_task_with_attachments_for_epic_and_undo(
+        &self,
+        workspace: &Workspace,
+        blob_dir: &Path,
+        lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
+        draft: TaskDraft,
+        attachments: Vec<super::attachments::TaskAttachmentAddInput>,
+        options: TaskCreationOptions,
+    ) -> Result<TaskOutcome> {
         let mut conn = self.acquire().await?;
-        create_task_with_attachments_for_epic(
+        create_task_with_attachments_and_epic(
             &mut conn,
             workspace,
             blob_dir,
             lifecycle_policy,
             draft,
             attachments,
-            epic_id,
+            options,
         )
         .await
     }
@@ -284,16 +379,7 @@ pub async fn create_task(
     workspace: &Workspace,
     draft: TaskDraft,
 ) -> Result<TaskOutcome> {
-    create_task_with_epic(conn, workspace, draft, None).await
-}
-
-pub async fn create_task_for_epic(
-    conn: &mut SqliteConnection,
-    workspace: &Workspace,
-    draft: TaskDraft,
-    epic_id: &TaskId,
-) -> Result<TaskOutcome> {
-    create_task_with_epic(conn, workspace, draft, Some(epic_id)).await
+    create_task_with_epic(conn, workspace, draft, None, TaskCreationUndo::None).await
 }
 
 async fn create_task_with_epic(
@@ -301,6 +387,7 @@ async fn create_task_with_epic(
     workspace: &Workspace,
     draft: TaskDraft,
     epic_id: Option<&TaskId>,
+    undo: TaskCreationUndo,
 ) -> Result<TaskOutcome> {
     validate_task_draft(&draft)?;
     let mut tx = begin_immediate(conn).await?;
@@ -308,6 +395,17 @@ async fn create_task_with_epic(
     if let Some(epic_id) = epic_id {
         super::add_task_to_epic_in_transaction(&mut tx, workspace, &inserted.id, epic_id).await?;
     }
+    let task = get_task_in_workspace(&mut tx, workspace, &inserted.id).await?;
+    record_task_creation_undo(
+        &mut tx,
+        workspace,
+        &task,
+        Some(inserted.change_id.clone()),
+        Vec::new(),
+        Vec::new(),
+        undo,
+    )
+    .await?;
     tx.commit().await?;
     info!(
         task_id = %inserted.id,
@@ -316,51 +414,10 @@ async fn create_task_with_epic(
         "task created"
     );
     Ok(TaskOutcome {
-        task: get_task_in_workspace(conn, workspace, &inserted.id).await?,
+        task,
         create_change_id: Some(inserted.change_id),
         attachment_change_ids: Vec::new(),
     })
-}
-
-pub async fn create_task_with_attachments(
-    conn: &mut SqliteConnection,
-    workspace: &Workspace,
-    blob_dir: &Path,
-    lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
-    draft: TaskDraft,
-    attachments: Vec<super::attachments::TaskAttachmentAddInput>,
-) -> Result<TaskOutcome> {
-    create_task_with_attachments_and_epic(
-        conn,
-        workspace,
-        blob_dir,
-        lifecycle_policy,
-        draft,
-        attachments,
-        None,
-    )
-    .await
-}
-
-pub async fn create_task_with_attachments_for_epic(
-    conn: &mut SqliteConnection,
-    workspace: &Workspace,
-    blob_dir: &Path,
-    lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
-    draft: TaskDraft,
-    attachments: Vec<super::attachments::TaskAttachmentAddInput>,
-    epic_id: &TaskId,
-) -> Result<TaskOutcome> {
-    create_task_with_attachments_and_epic(
-        conn,
-        workspace,
-        blob_dir,
-        lifecycle_policy,
-        draft,
-        attachments,
-        Some(epic_id),
-    )
-    .await
 }
 
 async fn create_task_with_attachments_and_epic(
@@ -370,9 +427,10 @@ async fn create_task_with_attachments_and_epic(
     lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
     draft: TaskDraft,
     attachments: Vec<super::attachments::TaskAttachmentAddInput>,
-    epic_id: Option<&TaskId>,
+    options: TaskCreationOptions,
 ) -> Result<TaskOutcome> {
     validate_task_draft(&draft)?;
+    let TaskCreationOptions { epic_id, undo } = options;
     let mut prepared = Vec::with_capacity(attachments.len());
     for attachment in attachments {
         prepared.push(super::attachments::prepare_task_attachment(attachment).await?);
@@ -483,7 +541,7 @@ async fn create_task_with_attachments_and_epic(
             .await?;
         }
         let inserted = insert_task(&mut tx, workspace, draft).await?;
-        if let Some(epic_id) = epic_id {
+        if let Some(epic_id) = epic_id.as_ref() {
             super::add_task_to_epic_in_transaction(&mut tx, workspace, &inserted.id, epic_id)
                 .await?;
         }
@@ -505,6 +563,20 @@ async fn create_task_with_attachments_and_epic(
             );
         }
         let task = get_task_in_workspace(&mut tx, workspace, &inserted.id).await?;
+        let attachment_ids = prepared
+            .iter()
+            .map(|attachment| attachment.attachment_id.clone())
+            .collect();
+        record_task_creation_undo(
+            &mut tx,
+            workspace,
+            &task,
+            Some(inserted.change_id.clone()),
+            attachment_ids,
+            attachment_change_ids.clone(),
+            undo,
+        )
+        .await?;
         tx.commit().await?;
         Ok::<_, anyhow::Error>((inserted, attachment_change_ids, task))
     }
@@ -539,6 +611,53 @@ async fn create_task_with_attachments_and_epic(
         create_change_id: Some(inserted.change_id),
         attachment_change_ids,
     })
+}
+
+async fn record_task_creation_undo(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    task: &Task,
+    create_change_id: Option<String>,
+    attachment_ids: Vec<String>,
+    attachment_change_ids: Vec<String>,
+    undo: TaskCreationUndo,
+) -> Result<()> {
+    let (summary, command) = match undo {
+        TaskCreationUndo::None => return Ok(()),
+        TaskCreationUndo::TuiTask => (
+            format!("task {}", task.id),
+            UndoCommand::DeleteCreatedTask {
+                task_id: task.id.clone(),
+                create_change_id,
+                expected: task_snapshot(conn, &workspace.id, &task.id).await?,
+                attachment_ids,
+                attachment_change_ids,
+            },
+        ),
+        TaskCreationUndo::TuiEpicChild {
+            epic_id,
+            epic_display_ref,
+        } => {
+            let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
+            let child_ref = display_refs.display_ref(task);
+            (
+                format!("add {child_ref} to {epic_display_ref}"),
+                UndoCommand::AddEpicChild {
+                    epic_id,
+                    child_id: task.id.clone(),
+                },
+            )
+        }
+    };
+    record_tui_undo(
+        conn,
+        &workspace.id,
+        &summary,
+        UndoPayload {
+            commands: vec![command],
+        },
+    )
+    .await
 }
 
 fn validate_task_draft(draft: &TaskDraft) -> Result<()> {

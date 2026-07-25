@@ -1917,7 +1917,7 @@ mod attachment_paste {
     }
 
     #[tokio::test]
-    async fn committed_attachment_task_is_not_retained_for_retry() {
+    async fn rolled_back_attachment_task_is_retained_for_retry() {
         let (dir, pool, mut app) = test_app_with_pool().await;
         app.set_add_task_db_path(dir.path().join("test.db"));
         let image = dir.path().join("committed.png");
@@ -1937,9 +1937,9 @@ mod attachment_paste {
         drop(conn);
 
         let error = app.handle_overlay_key(ctrl_s()).await.unwrap_err();
-        assert!(crate::tui::store::task_creation_committed(&error));
-        assert!(app.overlay.is_none());
-        assert!(app.authoring.add_task_attachments().is_empty());
+        assert!(!crate::tui::store::task_creation_committed(&error));
+        assert!(matches!(app.overlay, Some(OverlayState::AddTask(_))));
+        assert_eq!(app.authoring.add_task_attachments().len(), 1);
         let mut conn = pool.acquire().await.unwrap();
         let task_count: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks")
             .fetch_one(&mut *conn)
@@ -1949,7 +1949,7 @@ mod attachment_paste {
             .fetch_one(&mut *conn)
             .await
             .unwrap();
-        assert_eq!((task_count, attachment_count), (1, 1));
+        assert_eq!((task_count, attachment_count), (0, 0));
     }
 
     #[tokio::test]
