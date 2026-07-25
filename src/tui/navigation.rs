@@ -71,7 +71,6 @@ pub(crate) fn handle_detail_overlay_key_with_images(
     let scroll = scroll_by(scroll, 0);
     let page = detail_page_scroll_rows(terminal_height);
     match key.code {
-        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => OverlayOutcome::Cancelled,
         KeyCode::Char('j') | KeyCode::Down => OverlayOutcome::None(OverlayState::Detail {
             scroll: scroll_by(scroll, 1),
         }),

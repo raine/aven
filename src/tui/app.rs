@@ -123,6 +123,7 @@ pub(crate) enum FooterChoiceMode {
 pub(super) struct DetailNavigationState {
     pub(super) task_id: crate::ids::TaskId,
     pub(super) scroll: u16,
+    pub(super) focused_child_task_id: Option<crate::ids::TaskId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -306,27 +307,60 @@ impl App {
         self.detail_navigation_history.push(previous);
     }
 
-    pub(super) fn go_back_in_detail(&mut self) -> bool {
-        let Some(previous) = self.detail_navigation_history.pop() else {
-            return false;
-        };
-        let Some(index) = self
-            .store
-            .tasks
-            .iter()
-            .position(|item| item.task.id == previous.task_id)
-        else {
-            self.set_warning("previous task is hidden by the current view");
-            return false;
-        };
-        self.widgets.table.select(Some(index));
-        self.focus = Focus::Tasks;
+    pub(super) fn detail_has_parent(&self) -> bool {
+        !self.detail_navigation_history.is_empty()
+    }
+
+    pub(super) fn clear_detail_session(&mut self) {
+        self.pending_shortcut.clear();
+        self.pending_shortcut_scroll = 0;
+        self.detail_navigation_history.clear();
+        self.selected_detail_child_task_id = None;
+        self.selected_detail_attachment_id = None;
+        self.hovered_detail_child_task_id = None;
+        self.detail_text_selection = None;
+        self.detail_text_dragging = false;
+        self.last_task_click = None;
         self.detail_context = false;
-        self.detail_context_scroll = previous.scroll;
-        self.overlay = Some(crate::tui::overlay::OverlayState::Detail {
-            scroll: previous.scroll,
-        });
-        true
+        self.detail_context_scroll = 0;
+        self.overlay = None;
+    }
+
+    pub(super) fn go_back_in_detail(&mut self) -> bool {
+        let mut skipped = false;
+        while let Some(previous) = self.detail_navigation_history.pop() {
+            let Some(index) = self
+                .store
+                .tasks
+                .iter()
+                .position(|item| item.task.id == previous.task_id)
+            else {
+                skipped = true;
+                continue;
+            };
+            self.widgets.table.select(Some(index));
+            self.focus = Focus::Tasks;
+            self.detail_context = false;
+            self.detail_context_scroll = previous.scroll;
+            self.selected_detail_attachment_id = None;
+            self.selected_detail_child_task_id = previous.focused_child_task_id.filter(|task_id| {
+                self.store.tasks[index]
+                    .epic_children
+                    .iter()
+                    .any(|child| &child.task_id == task_id)
+            });
+            self.overlay = Some(crate::tui::overlay::OverlayState::Detail {
+                scroll: previous.scroll,
+            });
+            if skipped {
+                self.set_warning("some previous tasks are hidden by the current view");
+            }
+            return true;
+        }
+        if skipped {
+            self.set_warning("previous tasks are hidden by the current view");
+        }
+        false
     }
 
     pub(super) async fn go_back(&mut self) -> Result<()> {

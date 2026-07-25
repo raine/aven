@@ -1322,7 +1322,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
 pub(crate) const DETAIL_COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
         "detail-back",
-        "return to the task list",
+        "back one detail level",
         "General",
         &[KeySequence {
             codes: &[KeyCode::Char('g'), KeyCode::Char('[')],

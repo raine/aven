@@ -18,6 +18,10 @@ impl<T> BoundedHistory<T> {
         self.entries.clear();
     }
 
+    pub(super) fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     pub(super) fn pop(&mut self) -> Option<T> {
         self.entries.pop_back()
     }

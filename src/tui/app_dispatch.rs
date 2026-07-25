@@ -811,7 +811,7 @@ impl App {
         });
     }
 
-    fn open_detail_child_task(&mut self, task_id: &crate::ids::TaskId, scroll: u16) {
+    pub(super) fn open_detail_child_task(&mut self, task_id: &crate::ids::TaskId, scroll: u16) {
         let current_task_id = self
             .store
             .selected_task(self.widgets.table.selected())
@@ -830,8 +830,12 @@ impl App {
             self.overlay = Some(OverlayState::Detail { scroll });
             return;
         };
-        if let Some(task_id) = current_task_id {
-            self.push_detail_navigation_state(DetailNavigationState { task_id, scroll });
+        if let Some(parent_task_id) = current_task_id {
+            self.push_detail_navigation_state(DetailNavigationState {
+                task_id: parent_task_id,
+                scroll,
+                focused_child_task_id: Some(task_id.clone()),
+            });
         }
         self.widgets.table.select(Some(index));
         self.detail_context = true;
@@ -1197,6 +1201,10 @@ impl App {
             scroll,
         } = &overlay
         {
+            if key.code == KeyCode::Char('q') && key.modifiers.is_empty() {
+                self.close_detail_session().await?;
+                return Ok(());
+            }
             if key.code == KeyCode::Char('D')
                 && matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT)
             {
@@ -1252,6 +1260,16 @@ impl App {
                 self.overlay = Some(OverlayState::Detail { scroll });
                 return Ok(());
             }
+            if key.code == KeyCode::Char('q') && key.modifiers.is_empty() {
+                self.close_detail_session().await?;
+                return Ok(());
+            }
+            if key.code == KeyCode::Esc && !self.pending_shortcut.is_empty() {
+                self.pending_shortcut.clear();
+                self.pending_shortcut_scroll = 0;
+                self.overlay = Some(OverlayState::Detail { scroll });
+                return Ok(());
+            }
             if key.code == KeyCode::Char('y')
                 && key.modifiers.is_empty()
                 && self.detail_text_selection.is_some()
@@ -1260,6 +1278,12 @@ impl App {
                 self.pending_shortcut_scroll = 0;
                 self.copy_detail_text_selection();
                 self.overlay = Some(OverlayState::Detail { scroll });
+                return Ok(());
+            }
+            if (!self.pending_shortcut.is_empty() || key.code == KeyCode::Char('g'))
+                && let Some(outcome) = self.handle_detail_shortcut(key, scroll).await?
+            {
+                self.overlay = outcome;
                 return Ok(());
             }
             let had_detail_focus = self.selected_detail_child_task_id.is_some()
@@ -1358,6 +1382,11 @@ impl App {
             if let Some(delta) = detail_task_delta(key) {
                 self.select_detail_task(delta);
                 self.overlay = Some(OverlayState::Detail { scroll: 0 });
+                return Ok(());
+            }
+
+            if key.code == KeyCode::Esc {
+                self.navigate_back_from_detail().await?;
                 return Ok(());
             }
 
@@ -1595,6 +1624,21 @@ impl App {
         Ok(())
     }
 
+    async fn close_detail_session(&mut self) -> Result<()> {
+        self.clear_detail_session();
+        if !self.restore_last_change_return().await? {
+            self.refresh().await?;
+        }
+        Ok(())
+    }
+
+    async fn navigate_back_from_detail(&mut self) -> Result<()> {
+        if self.last_change_return.is_some() || !self.go_back_in_detail() {
+            self.close_detail_session().await?;
+        }
+        Ok(())
+    }
+
     async fn handle_detail_shortcut(
         &mut self,
         key: KeyEvent,
@@ -1607,16 +1651,8 @@ impl App {
         match self.pending_shortcut.resolve_detail(key) {
             DetailShortcutResolution::Action(Action::GoBack) => {
                 self.pending_shortcut_scroll = 0;
-                if self.last_change_return.is_some() {
-                    self.restore_last_change_return().await?;
-                    return Ok(Some(self.overlay.take()));
-                }
-                if self.go_back_in_detail() {
-                    return Ok(Some(self.overlay.take()));
-                }
-                self.detail_context = false;
-                self.detail_context_scroll = 0;
-                Ok(Some(None))
+                self.navigate_back_from_detail().await?;
+                Ok(Some(self.overlay.take()))
             }
             DetailShortcutResolution::Action(action) => {
                 self.pending_shortcut_scroll = 0;

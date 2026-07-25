@@ -84,6 +84,7 @@ pub(crate) struct ViewState {
     pub(crate) onboarding_intro: Option<crate::tui::app_onboarding::OnboardingIntroVisual>,
     pub(crate) detail_underlay: bool,
     pub(crate) detail_underlay_scroll: u16,
+    pub(crate) detail_has_parent: bool,
     pub(crate) hovered_detail_child_task_id: Option<crate::ids::TaskId>,
     pub(crate) selected_detail_child_task_id: Option<crate::ids::TaskId>,
     pub(crate) selected_detail_attachment_id: Option<String>,
@@ -124,6 +125,8 @@ impl ViewState {
                 .is_some_and(|selection| selection.terminal_width == width)
             {
                 FooterMode::DetailSelection
+            } else if self.detail_has_parent {
+                FooterMode::DetailNested
             } else {
                 FooterMode::Detail
             }

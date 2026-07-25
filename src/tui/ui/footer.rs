@@ -9,6 +9,7 @@ pub(super) enum FooterMode {
     List,
     Columns,
     Detail,
+    DetailNested,
     DetailChildren,
     DetailAttachment,
     AttachmentPreview,
@@ -117,20 +118,23 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
         FooterMode::DetailChildren => &[
             ("j/k", "select child"),
             ("Enter", "open"),
-            ("Tab/Esc", "leave"),
+            ("Esc", "leave"),
+            ("q", "task list"),
         ],
         FooterMode::DetailAttachment => &[
             ("j/k", "select image"),
             ("Enter", "preview/open"),
             ("o", "system viewer"),
             ("D", "remove"),
-            ("Tab/Esc", "leave"),
+            ("Esc", "leave"),
+            ("q", "task list"),
         ],
         FooterMode::AttachmentPreview => &[
             ("j/k", "switch image"),
             ("o", "system viewer"),
             ("D", "remove"),
-            ("Esc", "back"),
+            ("Esc", "detail"),
+            ("q", "task list"),
         ],
         FooterMode::DetailSelection if width >= 72 => &[
             ("y", "copy selection"),
@@ -138,6 +142,32 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("j/k Pg", "scroll"),
         ],
         FooterMode::DetailSelection => &[("y", "copy"), ("Esc", "clear")],
+        FooterMode::DetailNested if width >= 128 => &[
+            ("j/k Pg", "scroll"),
+            ("[/]", "task"),
+            ("e", "edit"),
+            ("s", "status"),
+            ("e p", "priority"),
+            ("n", "note"),
+            ("t d", "done"),
+            ("?", "more"),
+            ("Esc", "parent"),
+            ("q", "task list"),
+        ],
+        FooterMode::DetailNested if width >= 72 => &[
+            ("j/k Pg", "scroll"),
+            ("[/]", "task"),
+            ("e", "edit"),
+            ("?", "more"),
+            ("Esc", "parent"),
+            ("q", "task list"),
+        ],
+        FooterMode::DetailNested => &[
+            ("j/k", "scroll"),
+            ("?", "more"),
+            ("Esc", "parent"),
+            ("q", "list"),
+        ],
         FooterMode::Detail if width >= 128 => &[
             ("j/k Pg", "scroll"),
             ("[/]", "task"),
@@ -148,7 +178,8 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("t d", "done"),
             ("t y/Y", "copy"),
             ("?", "more"),
-            ("Esc", "back"),
+            ("Esc", "task list"),
+            ("q", "close"),
         ],
         FooterMode::Detail if width >= 72 => &[
             ("j/k Pg", "scroll"),
@@ -157,14 +188,16 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("s/e p", "status/priority"),
             ("n", "note"),
             ("?", "more"),
-            ("Esc", "back"),
+            ("Esc", "task list"),
+            ("q", "close"),
         ],
         FooterMode::Detail => &[
             ("j/k", "scroll"),
             ("[/]", "task"),
             ("e", "edit"),
             ("?", "more"),
-            ("Esc", "back"),
+            ("Esc", "task list"),
+            ("q", "close"),
         ],
         FooterMode::StatusChoice => &[
             ("i", "inbox"),
@@ -211,6 +244,7 @@ fn cmd(mode: FooterMode, label: &str) -> Span<'static> {
         FooterMode::List
         | FooterMode::Columns
         | FooterMode::Detail
+        | FooterMode::DetailNested
         | FooterMode::DetailChildren
         | FooterMode::DetailAttachment
         | FooterMode::AttachmentPreview
@@ -286,7 +320,8 @@ mod tests {
             &[
                 ("j/k", "select child"),
                 ("Enter", "open"),
-                ("Tab/Esc", "leave"),
+                ("Esc", "leave"),
+                ("q", "task list"),
             ]
         );
     }
@@ -300,7 +335,8 @@ mod tests {
                 ("Enter", "preview/open"),
                 ("o", "system viewer"),
                 ("D", "remove"),
-                ("Tab/Esc", "leave"),
+                ("Esc", "leave"),
+                ("q", "task list"),
             ]
         );
         assert_eq!(
@@ -309,9 +345,20 @@ mod tests {
                 ("j/k", "switch image"),
                 ("o", "system viewer"),
                 ("D", "remove"),
-                ("Esc", "back"),
+                ("Esc", "detail"),
+                ("q", "task list"),
             ]
         );
+    }
+
+    #[test]
+    fn detail_footer_distinguishes_root_and_nested_back_targets() {
+        let root = footer_hints(FooterMode::Detail, 80);
+        let nested = footer_hints(FooterMode::DetailNested, 80);
+
+        assert!(root.contains(&("Esc", "task list")));
+        assert!(nested.contains(&("Esc", "parent")));
+        assert!(nested.contains(&("q", "task list")));
     }
 
     #[test]

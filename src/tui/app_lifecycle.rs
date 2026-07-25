@@ -416,6 +416,7 @@ impl App {
             onboarding_intro: self.onboarding_intro_visual(),
             detail_underlay: self.detail_underlay(),
             detail_underlay_scroll: self.detail_context_scroll,
+            detail_has_parent: self.detail_has_parent(),
             hovered_detail_child_task_id: self.hovered_detail_child_task_id.clone(),
             selected_detail_child_task_id: self
                 .selected_detail_child_task_id

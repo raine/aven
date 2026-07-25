@@ -201,11 +201,13 @@ impl App {
         if self.focus == Focus::Sidebar {
             self.apply_sidebar_selection().await?;
         } else if matches!(self.overlay, Some(OverlayState::Detail { .. })) {
-            self.detail_navigation_history.clear();
-            self.overlay = None;
+            self.clear_detail_session();
         } else if self.store.view_state.view == crate::tui::store::TaskView::RecentActions {
             self.set_info("recent actions are read-only");
         } else {
+            self.detail_navigation_history.clear();
+            self.selected_detail_child_task_id = None;
+            self.selected_detail_attachment_id = None;
             self.overlay = Some(OverlayState::Detail { scroll: 0 });
             self.detail_context_scroll = 0;
         }

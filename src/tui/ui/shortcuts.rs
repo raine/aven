@@ -21,8 +21,18 @@ struct HelpTopic {
 
 const DETAIL_HELP_TOPICS: &[HelpTopic] = &[
     HelpTopic {
-        keys: "Esc/Enter/q",
-        description: "return to the task list",
+        keys: "Esc",
+        description: "back one level",
+        section: "General",
+    },
+    HelpTopic {
+        keys: "Enter",
+        description: "open focused child or attachment",
+        section: "General",
+    },
+    HelpTopic {
+        keys: "q",
+        description: "close detail",
         section: "General",
     },
     HelpTopic {
@@ -32,7 +42,7 @@ const DETAIL_HELP_TOPICS: &[HelpTopic] = &[
     },
     HelpTopic {
         keys: "Tab/Shift+Tab",
-        description: "jump to next or previous section",
+        description: "focus children and attachments",
         section: "Task detail",
     },
     HelpTopic {
@@ -837,8 +847,10 @@ mod tests {
     fn detail_help_overlay_shows_detail_shortcuts() {
         let rendered = render_detail_help_overlay(0);
         assert!(rendered.contains("Task detail shortcuts"));
-        assert!(rendered.contains("return to the task list"));
-        assert!(rendered.contains("jump to next or previous section"));
+        assert!(rendered.contains("back one level"));
+        assert!(rendered.contains("open focused child or attachment"));
+        assert!(rendered.contains("close detail"));
+        assert!(rendered.contains("focus children and attachments"));
         assert!(rendered.contains("scroll one page"));
         assert!(rendered.contains("select previous or next task"));
         assert!(rendered.contains("select the task most recently changed"));
@@ -853,7 +865,9 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(rendered.contains("return to the task list"));
+        assert!(rendered.contains("back one level"));
+        assert!(rendered.contains("open focused child or attachment"));
+        assert!(rendered.contains("close detail"));
         assert!(rendered.contains("scroll one page"));
         assert!(rendered.contains("select previous or next task"));
         assert!(rendered.contains("copy task title"));
