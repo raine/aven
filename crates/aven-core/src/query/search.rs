@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use crate::db::task_from_row;
 use crate::refs::DisplayRefContext;
-use crate::task_enrichment::labels_for_tasks;
+use crate::task_enrichment::{epic_parents_for_tasks, labels_for_tasks};
 use crate::types::Task;
 
 use super::TaskListItem;
@@ -95,6 +95,7 @@ pub struct TaskSearchPreviewResult {
     pub labels: Vec<String>,
     pub deleted: bool,
     pub is_epic: bool,
+    pub epic_parent_display_ref: Option<String>,
     pub score: i64,
     pub matched_field: SearchMatchedField,
     pub snippet: Option<String>,
@@ -257,6 +258,8 @@ pub async fn search_task_preview_set_in_workspace(
         .map(|scored| scored.document.task.id.clone())
         .collect::<Vec<_>>();
     let mut labels_by_task = labels_for_tasks(conn, workspace_id, &task_ids).await?;
+    let mut epic_parents_by_task =
+        epic_parents_for_tasks(conn, workspace_id, &task_ids, &display_refs).await?;
     let items = scored
         .items
         .into_iter()
@@ -273,6 +276,9 @@ pub async fn search_task_preview_set_in_workspace(
                 labels: labels_by_task.remove(&task.id).unwrap_or_default(),
                 deleted: task.deleted,
                 is_epic: task.is_epic,
+                epic_parent_display_ref: epic_parents_by_task
+                    .remove(&task.id)
+                    .map(|parent| parent.display_ref),
                 score: scored.score,
                 matched_field: scored.matched_field,
                 snippet: scored.snippet,

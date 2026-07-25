@@ -11,6 +11,7 @@ pub(super) enum FooterMode {
     Detail,
     DetailNested,
     DetailLinks,
+    DetailEpicChild,
     AttachmentPreview,
     DetailSelection,
     StatusChoice,
@@ -118,6 +119,14 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("j/k", "select link"),
             ("Tab", "next section"),
             ("Enter", "open"),
+            ("Esc", "browse"),
+            ("q", "task list"),
+        ],
+        FooterMode::DetailEpicChild => &[
+            ("j/k", "select"),
+            ("Enter", "open"),
+            ("t c r", "remove"),
+            ("Tab", "next section"),
             ("Esc", "browse"),
             ("q", "task list"),
         ],
@@ -238,6 +247,7 @@ fn cmd(mode: FooterMode, label: &str) -> Span<'static> {
         | FooterMode::Detail
         | FooterMode::DetailNested
         | FooterMode::DetailLinks
+        | FooterMode::DetailEpicChild
         | FooterMode::AttachmentPreview
         | FooterMode::DetailSelection => Style::new().fg(FG_DIM),
     };

@@ -3,6 +3,60 @@ use crate::ids::WorkspaceId;
 use crate::query::test_support::*;
 use sqlx::SqliteConnection;
 
+#[tokio::test]
+async fn task_search_preview_includes_epic_parent_display_ref() {
+    let (_temp, mut conn) = test_conn().await;
+    seed_default_project(&mut conn).await;
+    insert_test_task(
+        &mut conn,
+        "7KQ9A1X4MV2P8D6R",
+        "Parent epic",
+        "inbox",
+        "none",
+        "001",
+    )
+    .await;
+    insert_test_task(
+        &mut conn,
+        "8KQ9A1X4MV2P8D6R",
+        "Child task",
+        "inbox",
+        "none",
+        "002",
+    )
+    .await;
+    sqlx::query("UPDATE tasks SET is_epic = 1 WHERE id = '7KQ9A1X4MV2P8D6R'")
+        .execute(conn.as_mut())
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO task_epic_links(workspace_id, child_task_id, epic_task_id, created_at)
+         VALUES (?, '8KQ9A1X4MV2P8D6R', '7KQ9A1X4MV2P8D6R', '003')",
+    )
+    .bind(crate::workspaces::default_workspace_id())
+    .execute(conn.as_mut())
+    .await
+    .unwrap();
+
+    let preview = search_task_preview_set_in_workspace(
+        &mut conn,
+        &crate::workspaces::default_workspace_id(),
+        TaskSearchQuery {
+            text: "Child task".to_string(),
+            include_deleted: false,
+            limit: 10,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(preview.items.len(), 1);
+    assert_eq!(
+        preview.items[0].epic_parent_display_ref.as_deref(),
+        Some("APP-7KQ9")
+    );
+}
+
 #[test]
 fn score_text_lane_does_not_normalize_ref_glyphs() {
     assert_eq!(score_contiguous_text_lane("looking glass", "100king"), None);

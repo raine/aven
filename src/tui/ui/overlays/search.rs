@@ -50,7 +50,8 @@ pub(in crate::tui::ui) fn render_search(frame: &mut Frame, view: SearchRenderVie
     } else {
         (result_rows * 2 + 6).min(frame.area().height.saturating_sub(2))
     };
-    let mut dialog = Dialog::new(purpose.title(), width, height);
+    let title = purpose.title();
+    let mut dialog = Dialog::new(&title, width, height);
     if let Some(summary) = search_summary_line(
         input,
         results.len(),
@@ -326,6 +327,12 @@ fn result_meta_line(
     } else {
         Style::new().fg(FG_DIM).bg(bg)
     };
+    if result.create_new {
+        return padded_meta_line("  open task authoring", muted, width);
+    }
+    if let Some(reason) = &result.unavailable_reason {
+        return padded_meta_line(&format!("  {reason}"), muted, width);
+    }
     let labels = labels_display(&result.labels, ", ");
     let priority = result.priority.as_str();
     let priority_label = format!("{} {priority}", priority_icon(priority));
@@ -354,6 +361,15 @@ fn result_meta_line(
         muted,
     ));
     Line::from(spans)
+}
+
+fn padded_meta_line(value: &str, style: Style, width: usize) -> Line<'static> {
+    let value = truncate_chars(value, width);
+    let padding = width.saturating_sub(value.chars().count());
+    Line::from(vec![
+        Span::styled(value, style),
+        Span::styled(" ".repeat(padding), style),
+    ])
 }
 
 fn apply_bg(mut span: Span<'static>, bg: Color) -> Span<'static> {

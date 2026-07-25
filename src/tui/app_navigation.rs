@@ -31,6 +31,19 @@ impl App {
                         &self.store.tasks,
                     )
                     .move_vertical(self.widgets.table.selected(), delta)
+                } else if self.store.view_state.view == crate::tui::store::TaskView::Epics {
+                    let current = self
+                        .widgets
+                        .table
+                        .selected()
+                        .and_then(|index| crate::tui::ui::task_visual_row(&self.store, index));
+                    next_index(
+                        current,
+                        crate::tui::ui::task_visual_row_count(&self.store),
+                        delta,
+                        true,
+                    )
+                    .and_then(|row| crate::tui::ui::task_index_at_visual_row(&self.store, row))
                 } else {
                     next_index(
                         self.widgets.table.selected(),
@@ -64,6 +77,13 @@ impl App {
                     )
                     .edge(self.widgets.table.selected(), last);
                     self.widgets.table.select(next);
+                } else if self.store.view_state.view == crate::tui::store::TaskView::Epics {
+                    let row_count = crate::tui::ui::task_visual_row_count(&self.store);
+                    let row = Some(if last { row_count.saturating_sub(1) } else { 0 })
+                        .filter(|_| row_count > 0);
+                    self.widgets.table.select(row.and_then(|row| {
+                        crate::tui::ui::task_index_at_visual_row(&self.store, row)
+                    }));
                 } else {
                     let row_count = self.store.main_row_count();
                     if row_count == 0 {
@@ -269,12 +289,70 @@ impl App {
         self.detail_focus = None;
         self.detail_hover = None;
         self.detail_expanded_sections.clear();
+        self.removed_epic_child = None;
+        self.epic_child_authoring = None;
         let had_overlay = self.overlay.take().is_some();
         self.detail_context = false;
         if !had_overlay && self.focus == Focus::Sidebar {
             self.focus = Focus::Tasks;
             self.preserve_or_restore_sidebar_selection();
         }
+    }
+
+    pub(super) async fn open_task_by_id_with_return(
+        &mut self,
+        task_id: crate::ids::TaskId,
+    ) -> Result<bool> {
+        let selected_index = self.widgets.table.selected();
+        let return_state = LastChangeReturnState {
+            view_state: self.store.view_state.clone(),
+            selected_task_id: self
+                .store
+                .selected_task(selected_index)
+                .map(|item| item.task.id.clone()),
+            selected_index,
+            table_offset: self.widgets.table.offset(),
+            return_to_detail: matches!(self.overlay, Some(OverlayState::Detail { .. }))
+                || self.detail_context,
+            detail_scroll: match self.overlay {
+                Some(OverlayState::Detail { scroll }) => scroll,
+                _ => self.detail_context_scroll,
+            },
+            detail_focus: self.detail_focus.clone(),
+            detail_expanded_sections: self.detail_expanded_sections.clone(),
+        };
+        self.store.view_state = TaskViewState {
+            scope: TaskScope::Workspace,
+            view: TaskView::Search,
+            filter_modifiers: TaskFilterModifiers {
+                task_ids: vec![task_id.clone()],
+                ..TaskFilterModifiers::default()
+            },
+            ..TaskViewState::default()
+        };
+        let selected = self.store.refresh(Some(&task_id)).await?;
+        let Some(selected) = selected.filter(|index| {
+            self.store
+                .tasks
+                .get(*index)
+                .is_some_and(|item| item.task.id == task_id)
+        }) else {
+            self.store.view_state = return_state.view_state;
+            self.store
+                .refresh(return_state.selected_task_id.as_ref())
+                .await?;
+            self.widgets.table.select(
+                self.store
+                    .restored_task_selection_at_index(return_state.selected_index),
+            );
+            *self.widgets.table.offset_mut() = return_state.table_offset;
+            return Ok(false);
+        };
+        self.last_change_return = Some(return_state);
+        self.focus = Focus::Tasks;
+        self.widgets.table.select(Some(selected));
+        self.overlay = Some(OverlayState::Detail { scroll: 0 });
+        Ok(true)
     }
 
     pub(super) async fn return_to_last_change(&mut self) -> Result<()> {
@@ -307,6 +385,14 @@ impl App {
                 .map(|item| item.task.id.clone()),
             selected_index,
             table_offset: self.widgets.table.offset(),
+            return_to_detail: matches!(self.overlay, Some(OverlayState::Detail { .. }))
+                || self.detail_context,
+            detail_scroll: match self.overlay {
+                Some(OverlayState::Detail { scroll }) => scroll,
+                _ => self.detail_context_scroll,
+            },
+            detail_focus: self.detail_focus.clone(),
+            detail_expanded_sections: self.detail_expanded_sections.clone(),
         };
         self.store.view_state = TaskViewState {
             scope: TaskScope::Workspace,
@@ -362,6 +448,15 @@ impl App {
             });
         self.widgets.table.select(selected);
         *self.widgets.table.offset_mut() = return_state.table_offset;
+        self.detail_context_scroll = return_state.detail_scroll;
+        self.detail_focus = return_state.detail_focus;
+        self.detail_hover = None;
+        self.detail_expanded_sections = return_state.detail_expanded_sections;
+        if return_state.return_to_detail {
+            self.overlay = Some(OverlayState::Detail {
+                scroll: return_state.detail_scroll,
+            });
+        }
         self.preserve_or_restore_sidebar_selection();
         self.prune_task_marks();
         Ok(true)

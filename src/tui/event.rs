@@ -65,8 +65,8 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::Delete
             | Action::Restore
             | Action::ToggleEpicExpanded
-            | Action::DetachEpicChild
-            | Action::PromoteEpicChild
+            | Action::BeginAddEpicChild
+            | Action::RemoveEpicChild
             | Action::BeginStatusPicker
             | Action::BeginRenameProject
             | Action::BeginDeleteProject
@@ -234,6 +234,7 @@ mod tests {
                 "move-column-right",
                 "view-recent",
                 "copy-ref",
+                "task-child-remove",
                 "order-reverse",
                 "conflict-use-remote"
             ]
@@ -795,12 +796,12 @@ mod tests {
             ShortcutLookup::Found(Action::ToggleEpicExpanded)
         ));
         assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('d')]),
-            ShortcutLookup::Found(Action::DetachEpicChild)
+            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')]),
+            ShortcutLookup::Found(Action::BeginAddEpicChild)
         ));
         assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('p')]),
-            ShortcutLookup::Found(Action::PromoteEpicChild)
+            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('r')]),
+            ShortcutLookup::Found(Action::RemoveEpicChild)
         ));
         assert!(matches!(
             resolve_shortcut(&[KeyCode::Char('y'), KeyCode::Char('r')]),

@@ -286,7 +286,9 @@ impl App {
             return Ok(());
         }
         if let Some(OverlayState::Detail { scroll }) = self.overlay
-            && self.handle_detail_mouse_click(mouse, terminal_size, scroll)
+            && self
+                .handle_detail_mouse_click(mouse, terminal_size, scroll)
+                .await?
         {
             return Ok(());
         }
@@ -594,11 +596,11 @@ impl App {
         }
     }
 
-    fn detail_focus_targets(&self, terminal_size: Size) -> Vec<DetailTargetId> {
+    pub(super) fn detail_focus_targets(&self, terminal_size: Size) -> Vec<DetailTargetId> {
         let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
             return Vec::new();
         };
-        detail_interactive_rows(
+        let mut targets = detail_interactive_rows(
             item,
             terminal_size.width,
             terminal_size.height,
@@ -608,7 +610,38 @@ impl App {
         .into_iter()
         .map(|row| row.target)
         .filter(|target| detail_target_is_actionable(item, target))
-        .collect()
+        .collect::<Vec<_>>();
+        if let Some(removed) = &self.removed_epic_child
+            && removed.epic_id == item.task.id
+            && !item
+                .epic_children
+                .iter()
+                .any(|child| child.task_id == removed.child.task_id)
+        {
+            let removed_target = DetailTargetId::Task {
+                section: DetailSection::EpicChildren,
+                task_id: removed.child.task_id.clone(),
+            };
+            let child_indices = targets
+                .iter()
+                .enumerate()
+                .filter_map(|(index, target)| {
+                    (target.section() == DetailSection::EpicChildren).then_some(index)
+                })
+                .collect::<Vec<_>>();
+            let insert_at = child_indices
+                .get(removed.original_position)
+                .copied()
+                .or_else(|| child_indices.last().map(|index| index + 1))
+                .unwrap_or_else(|| {
+                    targets
+                        .iter()
+                        .position(|target| target.section() > DetailSection::EpicChildren)
+                        .unwrap_or(targets.len())
+                });
+            targets.insert(insert_at, removed_target);
+        }
+        targets
     }
 
     fn selected_detail_focus_target(&self, terminal_size: Size) -> Option<DetailTargetId> {
@@ -817,6 +850,58 @@ impl App {
         }
     }
 
+    async fn remove_selected_epic_child(&mut self) -> Result<()> {
+        let detail =
+            matches!(self.overlay, Some(OverlayState::Detail { .. })) || self.detail_context;
+        let focused_child = detail.then(|| match &self.detail_focus {
+            Some(DetailTargetId::Task {
+                section: DetailSection::EpicChildren,
+                task_id,
+            }) => Some(task_id),
+            _ => None,
+        }).flatten();
+        if let (Some(removed), Some(child_id)) = (&self.removed_epic_child, focused_child)
+            && removed.child.task_id == *child_id
+        {
+            self.set_info(format!(
+                "{} is already removed from its epic",
+                removed.child.display_ref
+            ));
+            return Ok(());
+        }
+        let Some(target) = self
+            .store
+            .resolve_epic_child_target(self.widgets.table.selected(), focused_child)
+        else {
+            if detail
+                && self
+                    .store
+                    .selected_task(self.widgets.table.selected())
+                    .is_some_and(|item| item.task.is_epic)
+            {
+                self.set_warning("Select a child with Tab first");
+            } else {
+                self.set_warning("Selected task does not belong to an epic");
+            }
+            return Ok(());
+        };
+        let mutation = self.store.remove_epic_child(target).await?;
+        self.widgets.table.select(mutation.message.selected);
+        if detail && mutation.changed {
+            self.removed_epic_child = Some(crate::tui::app::RemovedEpicChild {
+                epic_id: mutation.epic.epic_id,
+                child: mutation.child.clone(),
+                original_position: mutation.original_position,
+            });
+            self.detail_focus = Some(DetailTargetId::Task {
+                section: DetailSection::EpicChildren,
+                task_id: mutation.child.task_id,
+            });
+        }
+        self.set_success(mutation.message.message);
+        Ok(())
+    }
+
     fn open_detail_attachment(&mut self, attachment_id: String, scroll: u16) {
         self.last_task_click = None;
         self.detail_text_selection = None;
@@ -928,12 +1013,12 @@ impl App {
         Ok(true)
     }
 
-    fn handle_detail_mouse_click(
+    async fn handle_detail_mouse_click(
         &mut self,
         mouse: MouseEvent,
         terminal_size: Size,
         scroll: u16,
-    ) -> bool {
+    ) -> Result<bool> {
         if let Some(item) = self.store.selected_task(self.widgets.table.selected())
             && let Some(hit) = detail_copy_target_at(
                 item,
@@ -947,7 +1032,7 @@ impl App {
                 Ok(()) => self.set_success(format!("copied {}", hit.value)),
                 Err(error) => self.set_error(format!("copy failed: {error}")),
             }
-            return true;
+            return Ok(true);
         }
 
         let Some((target, _column, _row)) = crate::tui::ui::detail_metadata_target_at(
@@ -956,7 +1041,7 @@ impl App {
             mouse.column,
             mouse.row,
         ) else {
-            return false;
+            return Ok(false);
         };
         self.last_task_click = None;
         self.detail_context = true;
@@ -972,7 +1057,7 @@ impl App {
         if self.overlay.is_none() {
             self.overlay = Some(OverlayState::Detail { scroll });
         }
-        true
+        Ok(true)
     }
 
     fn handle_detail_mouse_move(&mut self, mouse: MouseEvent, terminal_size: Size) {
@@ -1375,7 +1460,11 @@ impl App {
                         self.focus_detail_section(true, terminal_size);
                         focused_scroll = self.detail_focus_scroll(scroll, terminal_size);
                     }
-                    _ => {}
+                    _ => {
+                        if self.handle_focused_child_shortcut(key, scroll).await? {
+                            return Ok(());
+                        }
+                    }
                 }
                 self.overlay = Some(OverlayState::Detail {
                     scroll: focused_scroll,
@@ -1680,6 +1769,54 @@ impl App {
         Ok(())
     }
 
+    async fn handle_focused_child_shortcut(&mut self, key: KeyEvent, scroll: u16) -> Result<bool> {
+        let child_is_focused = matches!(
+            self.detail_focus,
+            Some(DetailTargetId::Task {
+                section: DetailSection::EpicChildren,
+                ..
+            })
+        );
+        if !child_is_focused {
+            return Ok(false);
+        }
+        if !key.modifiers.is_empty() && key.modifiers != KeyModifiers::SHIFT {
+            return Ok(false);
+        }
+        match self.pending_shortcut.resolve_detail(key) {
+            DetailShortcutResolution::Action(
+                action @ (Action::BeginAddEpicChild | Action::RemoveEpicChild | Action::Undo),
+            ) => {
+                self.pending_shortcut_scroll = 0;
+                self.detail_context = true;
+                self.detail_context_scroll = scroll;
+                self.execute(action).await?;
+                if self.detail_context && self.overlay.is_none() {
+                    self.restore_detail_overlay_at_scroll(true, scroll);
+                }
+                Ok(true)
+            }
+            DetailShortcutResolution::Action(_) => {
+                self.pending_shortcut_scroll = 0;
+                self.set_warning("Leave child focus before using that command");
+                self.overlay = Some(OverlayState::Detail { scroll });
+                Ok(true)
+            }
+            DetailShortcutResolution::Prefix => {
+                self.pending_shortcut_scroll = 0;
+                self.overlay = Some(OverlayState::Detail { scroll });
+                Ok(true)
+            }
+            DetailShortcutResolution::MissingAfterPrefix(label) => {
+                self.pending_shortcut_scroll = 0;
+                self.set_warning(format!("invalid shortcut: {label}"));
+                self.overlay = Some(OverlayState::Detail { scroll });
+                Ok(true)
+            }
+            DetailShortcutResolution::PassThrough => Ok(false),
+        }
+    }
+
     async fn handle_detail_shortcut(
         &mut self,
         key: KeyEvent,
@@ -1820,22 +1957,12 @@ impl App {
                 if let Some(message) = self.store.toggle_selected_epic(index).await? {
                     self.set_info(message.message);
                     self.widgets.table.select(message.selected);
+                } else {
+                    self.set_warning("Select an epic in the Epics list");
                 }
             }
-            Action::DetachEpicChild => {
-                let index = self.widgets.table.selected();
-                if let Some(message) = self.store.detach_selected_epic_child(index).await? {
-                    self.set_info(message.message);
-                    self.widgets.table.select(message.selected);
-                }
-            }
-            Action::PromoteEpicChild => {
-                let index = self.widgets.table.selected();
-                if let Some(message) = self.store.promote_selected_epic_child(index).await? {
-                    self.set_info(message.message);
-                    self.widgets.table.select(message.selected);
-                }
-            }
+            Action::BeginAddEpicChild => self.begin_add_epic_child(),
+            Action::RemoveEpicChild => self.remove_selected_epic_child().await?,
             Action::Planned { name, reason } => {
                 self.set_warning(format!(":{name} is not yet implemented: {reason}"));
             }

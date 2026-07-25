@@ -121,6 +121,15 @@ impl TaskListView {
             _ => false,
         })
     }
+
+    pub(super) fn task_index_at_visual_row(&self, visual_row: usize) -> Option<usize> {
+        match self.rows.get(visual_row)? {
+            TaskListRow::EpicChild { task_index, .. } | TaskListRow::Task { task_index } => {
+                Some(*task_index)
+            }
+            TaskListRow::Group(_) => None,
+        }
+    }
 }
 
 pub(super) fn epics_rows(
@@ -140,7 +149,6 @@ pub(super) fn epics_rows(
             let child_task_indices = item
                 .epic_children
                 .iter()
-                .filter(|link| link.unresolved)
                 .filter_map(|link| tasks.iter().position(|t| t.task.id == link.task_id))
                 .collect::<Vec<_>>();
             let last_child_index = child_task_indices.len().saturating_sub(1);
@@ -686,7 +694,7 @@ mod tests {
     }
 
     #[test]
-    fn expanded_epic_skips_resolved_child() {
+    fn expanded_epic_includes_resolved_children() {
         let resolved_child = make_task("resolved", "child-1");
         let open_child = make_task("open", "child-2");
         let mut parent = make_epic_parent("parent", "parent-1", &["child-1", "child-2"], true);
@@ -702,6 +710,11 @@ mod tests {
             view.rows,
             vec![
                 TaskListRow::Task { task_index: 0 },
+                TaskListRow::EpicChild {
+                    parent_index: 0,
+                    task_index: 1,
+                    last: false,
+                },
                 TaskListRow::EpicChild {
                     parent_index: 0,
                     task_index: 2,

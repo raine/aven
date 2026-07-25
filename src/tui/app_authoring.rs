@@ -318,7 +318,10 @@ impl App {
             return Ok(());
         }
         let project = self.add_task_project_context();
-        if create_on_success && !self.authoring.add_task_has_pending_attachments() {
+        if create_on_success
+            && !self.authoring.add_task_has_pending_attachments()
+            && self.epic_child_authoring.is_none()
+        {
             self.intake.start_detached(
                 raw,
                 &self.store.active_workspace.id,
@@ -403,6 +406,52 @@ impl App {
     pub(super) async fn submit_created_task(&mut self, draft: TaskDraft) -> Result<()> {
         let attachments = self.authoring.add_task_attachments();
         let current_selected = self.widgets.table.selected();
+        if let Some(context) = self.epic_child_authoring.clone() {
+            let result = if attachments.is_empty() {
+                self.store
+                    .create_task_for_epic(draft, current_selected, &context.epic)
+                    .await
+            } else {
+                let db_path = self
+                    .intake
+                    .db_path()
+                    .ok_or_else(|| anyhow::anyhow!("database path is not available"))?;
+                let blob_dir = resolve_blob_dir(db_path, self.intake.config())?;
+                self.store
+                    .create_task_with_attachments_for_epic(
+                        draft,
+                        current_selected,
+                        &blob_dir,
+                        self.intake.config().local.attachment_lifecycle.policy(),
+                        attachments,
+                        &context.epic,
+                    )
+                    .await
+            };
+            let (message, selected, task_id) = match result {
+                Ok(created) => created,
+                Err(error) => {
+                    self.set_error(format!("{error:#}"));
+                    self.begin_add_task_step();
+                    return Ok(());
+                }
+            };
+            self.widgets.table.select(
+                self.store
+                    .tasks
+                    .iter()
+                    .position(|item| item.task.id == context.epic.epic_id)
+                    .or(selected),
+            );
+            self.selected_detail_child_task_id = Some(task_id);
+            self.removed_epic_child = None;
+            self.epic_child_authoring = None;
+            self.authoring.clear_add_task();
+            self.overlay = Some(OverlayState::Detail { scroll: 0 });
+            self.detail_context = true;
+            self.set_success(message);
+            return Ok(());
+        }
         let result = if attachments.is_empty() {
             self.store.create_task(draft, current_selected).await
         } else {
@@ -474,6 +523,14 @@ impl App {
     pub(super) fn cancel_authoring_overlay(&mut self) {
         self.pending_shortcut.clear();
         self.intake.cancel();
+        if let Some(context) = self.epic_child_authoring.take() {
+            self.authoring.clear_add_task();
+            let mut search = context.search;
+            self.schedule_search_preview(&mut search);
+            self.overlay = Some(OverlayState::Search(search));
+            self.detail_context = true;
+            return;
+        }
         let return_to_detail = self.authoring.cancel() || self.detail_context;
         self.overlay = None;
         self.conflict_flow.clear();

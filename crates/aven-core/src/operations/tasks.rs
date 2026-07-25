@@ -87,6 +87,16 @@ impl Database {
         create_task(&mut conn, workspace, draft).await
     }
 
+    pub async fn create_task_for_epic(
+        &self,
+        workspace: &Workspace,
+        draft: TaskDraft,
+        epic_id: &TaskId,
+    ) -> Result<TaskOutcome> {
+        let mut conn = self.acquire().await?;
+        create_task_for_epic(&mut conn, workspace, draft, epic_id).await
+    }
+
     pub async fn create_task_with_attachments(
         &self,
         workspace: &Workspace,
@@ -103,6 +113,28 @@ impl Database {
             lifecycle_policy,
             draft,
             attachments,
+        )
+        .await
+    }
+
+    pub async fn create_task_with_attachments_for_epic(
+        &self,
+        workspace: &Workspace,
+        blob_dir: &Path,
+        lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
+        draft: TaskDraft,
+        attachments: Vec<super::attachments::TaskAttachmentAddInput>,
+        epic_id: &TaskId,
+    ) -> Result<TaskOutcome> {
+        let mut conn = self.acquire().await?;
+        create_task_with_attachments_for_epic(
+            &mut conn,
+            workspace,
+            blob_dir,
+            lifecycle_policy,
+            draft,
+            attachments,
+            epic_id,
         )
         .await
     }
@@ -183,9 +215,30 @@ pub async fn create_task(
     workspace: &Workspace,
     draft: TaskDraft,
 ) -> Result<TaskOutcome> {
+    create_task_with_epic(conn, workspace, draft, None).await
+}
+
+pub async fn create_task_for_epic(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    draft: TaskDraft,
+    epic_id: &TaskId,
+) -> Result<TaskOutcome> {
+    create_task_with_epic(conn, workspace, draft, Some(epic_id)).await
+}
+
+async fn create_task_with_epic(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    draft: TaskDraft,
+    epic_id: Option<&TaskId>,
+) -> Result<TaskOutcome> {
     validate_task_draft(&draft)?;
     let mut tx = begin_immediate(conn).await?;
     let inserted = insert_task(&mut tx, workspace, draft).await?;
+    if let Some(epic_id) = epic_id {
+        super::add_task_to_epic_in_transaction(&mut tx, workspace, &inserted.id, epic_id).await?;
+    }
     tx.commit().await?;
     info!(
         task_id = %inserted.id,
@@ -207,6 +260,48 @@ pub async fn create_task_with_attachments(
     lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
     draft: TaskDraft,
     attachments: Vec<super::attachments::TaskAttachmentAddInput>,
+) -> Result<TaskOutcome> {
+    create_task_with_attachments_and_epic(
+        conn,
+        workspace,
+        blob_dir,
+        lifecycle_policy,
+        draft,
+        attachments,
+        None,
+    )
+    .await
+}
+
+pub async fn create_task_with_attachments_for_epic(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    blob_dir: &Path,
+    lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
+    draft: TaskDraft,
+    attachments: Vec<super::attachments::TaskAttachmentAddInput>,
+    epic_id: &TaskId,
+) -> Result<TaskOutcome> {
+    create_task_with_attachments_and_epic(
+        conn,
+        workspace,
+        blob_dir,
+        lifecycle_policy,
+        draft,
+        attachments,
+        Some(epic_id),
+    )
+    .await
+}
+
+async fn create_task_with_attachments_and_epic(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    blob_dir: &Path,
+    lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
+    draft: TaskDraft,
+    attachments: Vec<super::attachments::TaskAttachmentAddInput>,
+    epic_id: Option<&TaskId>,
 ) -> Result<TaskOutcome> {
     validate_task_draft(&draft)?;
     let mut prepared = Vec::with_capacity(attachments.len());
@@ -319,6 +414,10 @@ pub async fn create_task_with_attachments(
             .await?;
         }
         let inserted = insert_task(&mut tx, workspace, draft).await?;
+        if let Some(epic_id) = epic_id {
+            super::add_task_to_epic_in_transaction(&mut tx, workspace, &inserted.id, epic_id)
+                .await?;
+        }
         let mut attachment_change_ids = Vec::with_capacity(prepared.len());
         let attachment_base = chrono::DateTime::parse_from_rfc3339(&now())?.to_utc();
         for (index, attachment) in prepared.iter().enumerate() {

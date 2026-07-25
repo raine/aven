@@ -37,7 +37,9 @@ use self::recent_actions::render_recent_actions;
 use self::shortcuts::{render_command, render_detail_help, render_help, render_prefix_hints};
 use self::sidebar::{render_sidebar, render_sidebar_overlay};
 use self::task_list::render_tasks;
-pub(crate) use self::task_list::task_visual_row;
+pub(crate) use self::task_list::{
+    task_index_at_visual_row, task_visual_row, task_visual_row_count,
+};
 use self::toast::render_toast;
 
 pub(crate) use self::detail::{
@@ -91,6 +93,7 @@ pub(crate) struct ViewState {
     pub(crate) detail_focus: Option<crate::tui::app::DetailTargetId>,
     pub(crate) detail_hover: Option<crate::tui::app::DetailTargetId>,
     pub(crate) detail_expanded_sections: std::collections::BTreeSet<crate::tui::app::DetailSection>,
+    pub(crate) removed_epic_child: Option<crate::tui::app::RemovedEpicChild>,
     pub(crate) detail_text_selection: Option<crate::tui::detail_selection::DetailTextSelection>,
     pub(crate) notification: Option<Toast>,
     pub(crate) pending_shortcut: Vec<String>,
@@ -119,7 +122,15 @@ impl ViewState {
             self.overlay,
             Some(OverlayView::Detail { .. } | OverlayView::DetailHelp { .. })
         ) {
-            if self.detail_focus.is_some() {
+            if matches!(
+                self.detail_focus,
+                Some(crate::tui::app::DetailTargetId::Task {
+                    section: crate::tui::app::DetailSection::EpicChildren,
+                    ..
+                })
+            ) {
+                FooterMode::DetailEpicChild
+            } else if self.detail_focus.is_some() {
                 FooterMode::DetailLinks
             } else if self
                 .detail_text_selection
@@ -254,6 +265,7 @@ pub(crate) fn render(
             view.detail_text_selection.as_ref(),
             view.inline_images.as_ref(),
             &view.pending_attachments,
+            view.removed_epic_child.as_ref(),
         );
     }
     if let Some(overlay) = &view.overlay {
@@ -269,6 +281,7 @@ pub(crate) fn render(
             view.detail_text_selection.as_ref(),
             view.inline_images.as_ref(),
             &view.pending_attachments,
+            view.removed_epic_child.as_ref(),
         );
     }
     if !view.pending_shortcut.is_empty() && !add_task_dialog_prefix_active(view) {
@@ -694,6 +707,7 @@ fn render_overlay(
     detail_text_selection: Option<&crate::tui::detail_selection::DetailTextSelection>,
     inline_images: Option<&DetailInlineImageContext>,
     pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
+    removed_epic_child: Option<&crate::tui::app::RemovedEpicChild>,
 ) {
     if let OverlayView::AttachmentPreview { attachment_id, .. } = overlay {
         if let Some(item) = store.selected_task(widgets.table.selected()) {
@@ -722,6 +736,7 @@ fn render_overlay(
             detail_text_selection,
             inline_images.filter(|_| matches!(overlay, OverlayView::Detail { .. })),
             pending_attachments,
+            removed_epic_child,
         );
         if matches!(overlay, OverlayView::DetailHelp { .. }) {
             render_overlay_content(frame, overlay, inline_title_editor);

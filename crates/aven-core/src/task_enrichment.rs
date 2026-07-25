@@ -474,7 +474,7 @@ async fn epic_children_for_tasks(
     Ok(links)
 }
 
-async fn epic_parents_for_tasks(
+pub(crate) async fn epic_parents_for_tasks(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     task_ids: &[TaskId],

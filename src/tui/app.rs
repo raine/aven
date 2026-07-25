@@ -181,6 +181,23 @@ pub(super) struct LastChangeReturnState {
     pub(super) selected_task_id: Option<crate::ids::TaskId>,
     pub(super) selected_index: Option<usize>,
     pub(super) table_offset: usize,
+    pub(super) return_to_detail: bool,
+    pub(super) detail_scroll: u16,
+    pub(super) detail_focus: Option<DetailTargetId>,
+    pub(super) detail_expanded_sections: BTreeSet<DetailSection>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RemovedEpicChild {
+    pub(crate) epic_id: crate::ids::TaskId,
+    pub(crate) child: crate::query::TaskDependencyLink,
+    pub(crate) original_position: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct EpicChildAuthoringContext {
+    pub(super) epic: crate::tui::store::EpicContext,
+    pub(super) search: crate::tui::overlay::SearchState,
 }
 
 pub(crate) struct App {
@@ -213,6 +230,8 @@ pub(crate) struct App {
     pub(crate) detail_focus: Option<DetailTargetId>,
     pub(crate) detail_hover: Option<DetailTargetId>,
     pub(crate) detail_expanded_sections: std::collections::BTreeSet<DetailSection>,
+    pub(crate) removed_epic_child: Option<RemovedEpicChild>,
+    pub(super) epic_child_authoring: Option<EpicChildAuthoringContext>,
     pub(crate) detail_text_selection: Option<crate::tui::detail_selection::DetailTextSelection>,
     pub(crate) detail_text_dragging: bool,
     pub(super) previous_inline_image_placements: Vec<crate::tui::ui::DetailInlineImagePlacement>,
@@ -283,6 +302,8 @@ impl App {
             detail_focus: None,
             detail_hover: None,
             detail_expanded_sections: std::collections::BTreeSet::new(),
+            removed_epic_child: None,
+            epic_child_authoring: None,
             detail_text_selection: None,
             detail_text_dragging: false,
             previous_inline_image_placements: Vec::new(),

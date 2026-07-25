@@ -93,6 +93,14 @@ pub enum UndoCommand {
         task_id: crate::ids::TaskId,
         depends_on_task_id: crate::ids::TaskId,
     },
+    AddEpicChild {
+        epic_id: crate::ids::TaskId,
+        child_id: crate::ids::TaskId,
+    },
+    RemoveEpicChild {
+        epic_id: crate::ids::TaskId,
+        child_id: crate::ids::TaskId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -332,7 +340,9 @@ fn undo_payload_has_effect(payload: &UndoPayload) -> bool {
         | UndoCommand::DeleteCreatedLabel { .. }
         | UndoCommand::RestoreConflictResolution { .. }
         | UndoCommand::AddTaskDependency { .. }
-        | UndoCommand::RemoveTaskDependency { .. } => true,
+        | UndoCommand::RemoveTaskDependency { .. }
+        | UndoCommand::AddEpicChild { .. }
+        | UndoCommand::RemoveEpicChild { .. } => true,
     })
 }
 
@@ -714,6 +724,30 @@ async fn apply_undo_command(
             add_dependency_for_undo(conn, workspace_id, task_id, depends_on_task_id).await?;
             Ok(CommandOutcome {
                 task_id: Some(task_id.clone()),
+                include_deleted: None,
+                project_rename: None,
+            })
+        }
+        UndoCommand::AddEpicChild { epic_id, child_id } => {
+            ensure!(
+                epic_edge_exists(conn, workspace_id, epic_id, child_id).await?,
+                "error undo-state-changed task_id={child_id} field=epic"
+            );
+            set_epic_edge_for_undo(conn, workspace_id, epic_id, child_id, false).await?;
+            Ok(CommandOutcome {
+                task_id: Some(child_id.clone()),
+                include_deleted: None,
+                project_rename: None,
+            })
+        }
+        UndoCommand::RemoveEpicChild { epic_id, child_id } => {
+            ensure!(
+                !epic_edge_exists(conn, workspace_id, epic_id, child_id).await?,
+                "error undo-state-changed task_id={child_id} field=epic"
+            );
+            set_epic_edge_for_undo(conn, workspace_id, epic_id, child_id, true).await?;
+            Ok(CommandOutcome {
+                task_id: Some(child_id.clone()),
                 include_deleted: None,
                 project_rename: None,
             })
@@ -1108,6 +1142,46 @@ async fn dependency_edge_exists(
     .fetch_one(&mut *conn)
     .await?
         > 0)
+}
+
+async fn epic_edge_exists(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    epic_id: &crate::ids::TaskId,
+    child_id: &crate::ids::TaskId,
+) -> Result<bool> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM task_epic_links
+         WHERE workspace_id = ? AND epic_task_id = ? AND child_task_id = ?",
+    )
+    .bind(workspace_id)
+    .bind(epic_id)
+    .bind(child_id)
+    .fetch_one(&mut *conn)
+    .await?
+        > 0)
+}
+
+async fn set_epic_edge_for_undo(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    epic_id: &crate::ids::TaskId,
+    child_id: &crate::ids::TaskId,
+    linked: bool,
+) -> Result<()> {
+    let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
+    let outcome = if linked {
+        crate::operations::restore_task_to_epic_in_transaction(conn, &workspace, child_id, epic_id)
+            .await?
+    } else {
+        crate::operations::remove_task_from_epic_in_transaction(conn, &workspace, child_id, epic_id)
+            .await?
+    };
+    ensure!(
+        outcome.changed,
+        "error undo-state-changed task_id={child_id} field=epic"
+    );
+    Ok(())
 }
 
 async fn add_dependency_for_undo(

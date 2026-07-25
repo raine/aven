@@ -175,6 +175,14 @@ pub(crate) fn task_visual_row(store: &TuiStore, task_index: usize) -> Option<usi
     TaskListView::new(store).visual_row_for(task_index)
 }
 
+pub(crate) fn task_index_at_visual_row(store: &TuiStore, visual_row: usize) -> Option<usize> {
+    TaskListView::new(store).task_index_at_visual_row(visual_row)
+}
+
+pub(crate) fn task_visual_row_count(store: &TuiStore) -> usize {
+    TaskListView::new(store).rows.len()
+}
+
 pub(super) fn render_tasks(
     frame: &mut Frame,
     store: &TuiStore,

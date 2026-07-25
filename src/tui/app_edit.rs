@@ -354,14 +354,62 @@ impl App {
     }
 
     pub(super) async fn undo_last(&mut self) -> Result<()> {
-        let selected =
-            if self.detail_context || matches!(self.overlay, Some(OverlayState::Detail { .. })) {
-                None
-            } else {
-                self.widgets.table.selected()
-            };
+        let in_detail =
+            self.detail_context || matches!(self.overlay, Some(OverlayState::Detail { .. }));
+        let selected = if in_detail {
+            None
+        } else {
+            self.widgets.table.selected()
+        };
+        let focused_link = if in_detail {
+            self.store
+                .selected_task(self.widgets.table.selected())
+                .and_then(|parent| {
+                    let child_id = self.selected_detail_child_task_id.as_ref()?;
+                    parent
+                        .epic_children
+                        .iter()
+                        .enumerate()
+                        .find(|(_, child)| &child.task_id == child_id)
+                        .map(|(position, child)| (parent.task.id.clone(), position, child.clone()))
+                })
+        } else {
+            None
+        };
         match self.store.undo_last(selected).await? {
-            Some(result) => self.apply_mutation_result(result),
+            Some(result) => {
+                self.apply_mutation_result(result);
+                if let Some(removed) = self.removed_epic_child.take() {
+                    self.widgets.table.select(
+                        self.store
+                            .tasks
+                            .iter()
+                            .position(|item| item.task.id == removed.epic_id),
+                    );
+                    self.selected_detail_child_task_id = Some(removed.child.task_id);
+                } else if let Some((epic_id, original_position, child)) = focused_link
+                    && self.store.tasks.iter().any(|item| {
+                        item.task.id == epic_id
+                            && item
+                                .epic_children
+                                .iter()
+                                .all(|candidate| candidate.task_id != child.task_id)
+                    })
+                {
+                    self.widgets.table.select(
+                        self.store
+                            .tasks
+                            .iter()
+                            .position(|item| item.task.id == epic_id),
+                    );
+                    self.selected_detail_child_task_id = Some(child.task_id.clone());
+                    self.removed_epic_child = Some(crate::tui::app::RemovedEpicChild {
+                        epic_id,
+                        child,
+                        original_position,
+                    });
+                }
+            }
             None => self.set_info("nothing to undo"),
         }
         Ok(())

@@ -27,6 +27,7 @@ use aven_core::db::Database;
 
 pub(crate) use crate::query::RecentActionItem;
 pub(crate) use attachments::AttachmentWorkerContext;
+pub(crate) use epics::EpicContext;
 pub(crate) use launch::{TuiLaunch, TuiStartup};
 pub(crate) use onboarding::OnboardingStatus;
 pub(crate) use pickers::deleted_picker_items;
@@ -236,12 +237,7 @@ impl TuiStore {
             .tasks
             .iter()
             .filter(|item| expanded.contains(&item.task.id))
-            .flat_map(|item| {
-                item.epic_children
-                    .iter()
-                    .filter(|link| link.unresolved)
-                    .map(|link| link.task_id.clone())
-            })
+            .flat_map(|item| item.epic_children.iter().map(|link| link.task_id.clone()))
             .filter(|task_id| !existing_ids.contains(task_id))
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()

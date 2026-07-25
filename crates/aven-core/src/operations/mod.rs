@@ -20,7 +20,10 @@ pub(crate) use dependencies::dependency_path_exists;
 pub use epics::EpicLinkOutcome;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use epics::add_task_to_epic;
-pub(crate) use epics::task_has_epic_children;
+pub(crate) use epics::{
+    add_task_to_epic_in_transaction, remove_task_from_epic_in_transaction,
+    restore_task_to_epic_in_transaction, task_has_epic_children,
+};
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use projects::create_label_operation;
 pub use projects::{

@@ -1064,24 +1064,24 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ToggleEpicExpanded,
     ),
     CommandSpec::implemented(
-        "task-child-detach",
-        "detach selected child from its epic parent",
+        "task-child-add",
+        "add a child to the selected epic",
         "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('d')],
-            label: "t c d",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')],
+            label: "t c a",
         }],
-        Action::DetachEpicChild,
+        Action::BeginAddEpicChild,
     ),
     CommandSpec::implemented(
-        "task-child-promote",
-        "promote selected child by removing its epic parent edge",
+        "task-child-remove",
+        "remove the selected child from its epic",
         "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('p')],
-            label: "t c p",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('r')],
+            label: "t c r",
         }],
-        Action::PromoteEpicChild,
+        Action::RemoveEpicChild,
     ),
     // Filters
     CommandSpec::implemented(
@@ -1573,6 +1573,26 @@ pub(crate) const DETAIL_COMMANDS: &[CommandSpec] = &[
             label: "u",
         }],
         Action::Undo,
+    ),
+    CommandSpec::implemented(
+        "detail-task-child-add",
+        "add a child to the selected epic",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')],
+            label: "t c a",
+        }],
+        Action::BeginAddEpicChild,
+    ),
+    CommandSpec::implemented(
+        "detail-task-child-remove",
+        "remove the selected child from its epic",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('r')],
+            label: "t c r",
+        }],
+        Action::RemoveEpicChild,
     ),
     CommandSpec::implemented(
         "detail-add-dependency",

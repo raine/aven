@@ -5941,6 +5941,154 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn epic_detail_add_child_shortcut_opens_contextual_search() {
+        let (_dir, _pool, mut app) = test_app_with_pool().await;
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+        let display_ref = app.store.tasks[parent_index].display_ref.clone();
+        app.overlay = Some(OverlayState::Detail { scroll: 3 });
+
+        for code in [KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')] {
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        }
+
+        let Some(OverlayState::Search(state)) = &app.overlay else {
+            panic!("expected add-child search");
+        };
+        assert!(matches!(
+            &state.purpose,
+            SearchPurpose::AddEpicChild {
+                epic_id,
+                display_ref: purpose_ref,
+                ..
+            } if epic_id == &parent_id && purpose_ref == &display_ref
+        ));
+        assert!(state.results[0].create_new);
+    }
+
+    #[tokio::test]
+    async fn focused_detail_child_removes_and_undo_restores_relationship() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+        let child_index = create_and_select_task(&mut app, test_task_draft("Child task")).await;
+        let child_id = app.store.tasks[child_index].task.id.clone();
+        let mut conn = pool.acquire().await.unwrap();
+        crate::operations::add_task_to_epic(
+            &mut conn,
+            &app.store.active_workspace,
+            &child_id,
+            &parent_id,
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        app.store.view_state.view = crate::tui::store::TaskView::Epics;
+        app.store.refresh(Some(&parent_id)).await.unwrap();
+        let parent_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == parent_id)
+            .unwrap();
+        app.widgets.table.select(Some(parent_index));
+        app.move_selection(1).await.unwrap();
+        assert_eq!(
+            app.store
+                .selected_task(app.widgets.table.selected())
+                .map(|item| &item.task.id),
+            Some(&child_id)
+        );
+        app.widgets.table.select(Some(parent_index));
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
+            .await
+            .unwrap();
+
+        for code in [KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('r')] {
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        }
+
+        assert_eq!(
+            app.removed_epic_child
+                .as_ref()
+                .map(|removed| &removed.child.task_id),
+            Some(&child_id)
+        );
+        assert_eq!(app.selected_detail_child_task_id.as_ref(), Some(&child_id));
+        let linked: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM task_epic_links WHERE epic_task_id = ? AND child_task_id = ?",
+        )
+        .bind(&parent_id)
+        .bind(&child_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(linked, 0);
+
+        app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(
+            app.store
+                .selected_task(app.widgets.table.selected())
+                .map(|item| &item.task.id),
+            Some(&child_id)
+        );
+
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        assert_eq!(
+            app.store
+                .selected_task(app.widgets.table.selected())
+                .map(|item| &item.task.id),
+            Some(&parent_id)
+        );
+        assert_eq!(app.selected_detail_child_task_id.as_ref(), Some(&child_id));
+        assert_eq!(
+            app.removed_epic_child
+                .as_ref()
+                .map(|removed| &removed.child.task_id),
+            Some(&child_id)
+        );
+
+        app.dispatch_key(key(KeyCode::Char('u')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(app.removed_epic_child.is_none());
+        assert_eq!(app.selected_detail_child_task_id.as_ref(), Some(&child_id));
+        let linked: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM task_epic_links WHERE epic_task_id = ? AND child_task_id = ?",
+        )
+        .bind(&parent_id)
+        .bind(&child_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(linked, 1);
+    }
+
+    #[tokio::test]
     async fn detail_tab_focuses_locally_available_images_independent_of_preview_state() {
         let (_dir, _pool, mut app) = test_app_with_pool().await;
         let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;

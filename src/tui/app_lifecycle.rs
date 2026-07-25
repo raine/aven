@@ -410,7 +410,18 @@ impl App {
 
         let selected_task = self.store.selected_task(self.widgets.table.selected());
         let detail_focus = self.detail_focus.as_ref().filter(|focused| {
-            selected_task.is_some_and(|item| ui::detail_target_is_actionable(item, focused))
+            selected_task.is_some_and(|item| {
+                ui::detail_target_is_actionable(item, focused)
+                    || matches!(
+                        focused,
+                        crate::tui::app::DetailTargetId::Task {
+                            section: crate::tui::app::DetailSection::EpicChildren,
+                            task_id,
+                        } if self.removed_epic_child.as_ref().is_some_and(|removed| {
+                            removed.epic_id == item.task.id && removed.child.task_id == *task_id
+                        })
+                    )
+            })
         });
         let inline_images = self.inline_image_context();
         ViewState {
@@ -423,6 +434,7 @@ impl App {
             detail_focus: detail_focus.cloned(),
             detail_hover: self.detail_hover.clone(),
             detail_expanded_sections: self.detail_expanded_sections.clone(),
+            removed_epic_child: self.removed_epic_child.clone(),
             detail_text_selection: self
                 .detail_text_selection
                 .as_ref()
@@ -537,12 +549,7 @@ impl App {
         .flatten();
         let previous_detail_targets = detail_task
             .as_ref()
-            .map(|item| {
-                ui::detail_interactive_rows(item, 80, 24, None, &self.detail_expanded_sections)
-                    .into_iter()
-                    .map(|row| row.target)
-                    .collect::<Vec<_>>()
-            })
+            .map(|_| self.detail_focus_targets(ratatui::layout::Size::new(80, 24)))
             .unwrap_or_default();
         let result = self
             .store
@@ -569,6 +576,17 @@ impl App {
                 result.selected
             });
         self.widgets.table.select(selected);
+        if let Some(removed) = &self.removed_epic_child
+            && self.store.tasks.iter().any(|item| {
+                item.task.id == removed.epic_id
+                    && item
+                        .epic_children
+                        .iter()
+                        .any(|child| child.task_id == removed.child.task_id)
+            })
+        {
+            self.removed_epic_child = None;
+        }
         self.reconcile_detail_focus(&previous_detail_targets);
         self.preserve_or_restore_sidebar_selection();
         self.prune_task_marks();
@@ -582,16 +600,11 @@ impl App {
         let Some(focused) = self.detail_focus.clone() else {
             return;
         };
-        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
+        let Some(_item) = self.store.selected_task(self.widgets.table.selected()) else {
             self.detail_focus = None;
             return;
         };
-        let targets =
-            ui::detail_interactive_rows(item, 80, 24, None, &self.detail_expanded_sections)
-                .into_iter()
-                .map(|row| row.target)
-                .filter(|target| ui::detail_target_is_actionable(item, target))
-                .collect::<Vec<_>>();
+        let targets = self.detail_focus_targets(ratatui::layout::Size::new(80, 24));
         if targets.contains(&focused) {
             return;
         }

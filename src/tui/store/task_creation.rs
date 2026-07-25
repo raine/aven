@@ -86,6 +86,36 @@ impl TuiStore {
         Ok((created.message, created.selected))
     }
 
+    pub(crate) async fn create_task_for_epic(
+        &mut self,
+        mut draft: TaskDraft,
+        current_selected_index: Option<usize>,
+        epic: &super::EpicContext,
+    ) -> Result<(String, Option<usize>, crate::ids::TaskId)> {
+        draft.project = Some(epic.project_key.clone());
+        let outcome = self
+            .database
+            .create_task_for_epic(&self.active_workspace, draft, &epic.epic_id)
+            .await?;
+        let task_id = outcome.task.id.clone();
+        let child_ref = self
+            .database
+            .display_ref_context(&self.active_workspace.id)
+            .await?
+            .display_ref(&outcome.task);
+        let created = self
+            .finish_epic_child_creation(
+                outcome,
+                Vec::new(),
+                current_selected_index,
+                epic,
+                &child_ref,
+            )
+            .await
+            .map_err(committed_error)?;
+        Ok((created.message, created.selected, task_id))
+    }
+
     pub(crate) async fn create_task_with_attachments(
         &mut self,
         mut draft: TaskDraft,
@@ -123,6 +153,86 @@ impl TuiStore {
             .await
             .map_err(committed_error)?;
         Ok((created.message, created.selected))
+    }
+
+    pub(crate) async fn create_task_with_attachments_for_epic(
+        &mut self,
+        mut draft: TaskDraft,
+        current_selected_index: Option<usize>,
+        blob_dir: &Path,
+        lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
+        attachments: Vec<PendingTaskAttachment>,
+        epic: &super::EpicContext,
+    ) -> Result<(String, Option<usize>, crate::ids::TaskId)> {
+        draft.project = Some(epic.project_key.clone());
+        let attachment_ids = attachments
+            .iter()
+            .map(|attachment| attachment.attachment_id.clone())
+            .collect();
+        let inputs = attachments
+            .into_iter()
+            .map(|attachment| TaskAttachmentAddInput {
+                attachment_id: attachment.attachment_id,
+                input: attachment.input,
+            })
+            .collect();
+        let outcome = self
+            .database
+            .create_task_with_attachments_for_epic(
+                &self.active_workspace,
+                blob_dir,
+                lifecycle_policy,
+                draft,
+                inputs,
+                &epic.epic_id,
+            )
+            .await?;
+        let task_id = outcome.task.id.clone();
+        let child_ref = self
+            .database
+            .display_ref_context(&self.active_workspace.id)
+            .await?
+            .display_ref(&outcome.task);
+        let created = self
+            .finish_epic_child_creation(
+                outcome,
+                attachment_ids,
+                current_selected_index,
+                epic,
+                &child_ref,
+            )
+            .await
+            .map_err(committed_error)?;
+        Ok((created.message, created.selected, task_id))
+    }
+
+    async fn finish_epic_child_creation(
+        &mut self,
+        outcome: TaskOutcome,
+        _attachment_ids: Vec<String>,
+        current_selected_index: Option<usize>,
+        epic: &super::EpicContext,
+        child_ref: &str,
+    ) -> Result<CreatedTaskMessage> {
+        let task_id = outcome.task.id.clone();
+        self.record_undo_commands(
+            &format!("add {child_ref} to {}", epic.display_ref),
+            vec![UndoCommand::AddEpicChild {
+                epic_id: epic.epic_id.clone(),
+                child_id: task_id.clone(),
+            }],
+        )
+        .await?;
+        self.view_state.collapsed_epic_ids.remove(&epic.epic_id);
+        self.view_state
+            .expanded_epic_ids
+            .insert(epic.epic_id.clone());
+        self.refresh(Some(&epic.epic_id)).await?;
+        let selected = self.tasks.iter().position(|item| item.task.id == task_id);
+        Ok(CreatedTaskMessage {
+            message: format!("Added {child_ref} to {}", epic.display_ref),
+            selected: selected.or(current_selected_index),
+        })
     }
 
     async fn finish_task_creation(

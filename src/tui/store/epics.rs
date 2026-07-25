@@ -1,6 +1,31 @@
+use crate::query::TaskDependencyLink;
 use crate::tui::store::MutationMessage;
+use crate::undo::UndoCommand;
 
 use super::{TaskListRenderMode, TuiStore};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EpicContext {
+    pub(crate) epic_id: crate::ids::TaskId,
+    pub(crate) display_ref: String,
+    pub(crate) project_key: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct EpicChildTarget {
+    pub(crate) epic: EpicContext,
+    pub(crate) child: TaskDependencyLink,
+    pub(crate) original_position: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct EpicChildMutation {
+    pub(crate) message: MutationMessage,
+    pub(crate) epic: EpicContext,
+    pub(crate) child: TaskDependencyLink,
+    pub(crate) original_position: usize,
+    pub(crate) changed: bool,
+}
 
 impl TuiStore {
     pub(crate) async fn toggle_selected_epic(
@@ -22,89 +47,227 @@ impl TuiStore {
         let message = if self.view_state.expanded_epic_ids.contains(&task_id) {
             self.view_state.expanded_epic_ids.remove(&task_id);
             self.view_state.collapsed_epic_ids.insert(task_id.clone());
-            format!("collapsed epic {}", display_ref)
+            format!("collapsed epic {display_ref}")
         } else {
             self.view_state.collapsed_epic_ids.remove(&task_id);
             self.view_state.expanded_epic_ids.insert(task_id.clone());
-            format!("expanded epic {}", display_ref)
+            format!("expanded epic {display_ref}")
         };
         self.refresh(Some(&task_id)).await?;
         let selected = self.tasks.iter().position(|task| task.task.id == task_id);
         Ok(Some(MutationMessage::new(message, selected)))
     }
 
-    pub(crate) async fn detach_selected_epic_child(
-        &mut self,
-        index: Option<usize>,
-    ) -> Result<Option<MutationMessage>, anyhow::Error> {
-        let Some((child_id, parent_id)) = self.find_epic_child_pair(index) else {
-            return Ok(None);
-        };
-        let child_display_ref = self
-            .tasks
-            .iter()
-            .find(|t| t.task.id == child_id)
-            .map(|t| t.display_ref.clone())
-            .unwrap_or_default();
-        let parent_display_ref = self
-            .tasks
-            .iter()
-            .find(|t| t.task.id == parent_id)
-            .map(|t| t.display_ref.clone())
-            .unwrap_or_default();
-        self.database
-            .remove_task_from_epic(&self.active_workspace, &child_id, &parent_id)
-            .await?;
-        let message = format!("detached {} from {}", child_display_ref, parent_display_ref);
-        self.refresh(None).await?;
-        let selected = self.tasks.iter().position(|t| t.task.id == parent_id);
-        Ok(Some(MutationMessage::new(message, selected)))
-    }
-
-    pub(crate) async fn promote_selected_epic_child(
-        &mut self,
-        index: Option<usize>,
-    ) -> Result<Option<MutationMessage>, anyhow::Error> {
-        let Some((child_id, parent_id)) = self.find_epic_child_pair(index) else {
-            return Ok(None);
-        };
-        let child_display_ref = self
-            .tasks
-            .iter()
-            .find(|t| t.task.id == child_id)
-            .map(|t| t.display_ref.clone())
-            .unwrap_or_default();
-        let parent_display_ref = self
-            .tasks
-            .iter()
-            .find(|t| t.task.id == parent_id)
-            .map(|t| t.display_ref.clone())
-            .unwrap_or_default();
-        self.database
-            .remove_task_from_epic(&self.active_workspace, &child_id, &parent_id)
-            .await?;
-        let message = format!("promoted {} from {}", child_display_ref, parent_display_ref);
-        self.refresh(None).await?;
-        let selected = self.tasks.iter().position(|t| t.task.id == child_id);
-        Ok(Some(MutationMessage::new(message, selected)))
-    }
-
-    fn find_epic_child_pair(
+    pub(crate) fn resolve_epic_context(
         &self,
         selected: Option<usize>,
-    ) -> Option<(crate::ids::TaskId, crate::ids::TaskId)> {
+        _detail: bool,
+    ) -> Option<EpicContext> {
+        let item = self.selected_task(selected)?;
+        if item.task.is_epic {
+            return Some(EpicContext {
+                epic_id: item.task.id.clone(),
+                display_ref: item.display_ref.clone(),
+                project_key: item.task.project_key.clone(),
+            });
+        }
+        if let Some(parent) = &item.epic_parent {
+            return Some(EpicContext {
+                epic_id: parent.task_id.clone(),
+                display_ref: parent.display_ref.clone(),
+                project_key: item.task.project_key.clone(),
+            });
+        }
+        self.find_epic_child_target(selected)
+            .map(|target| target.epic)
+    }
+
+    pub(crate) fn resolve_epic_child_target(
+        &self,
+        selected: Option<usize>,
+        focused_child_id: Option<&crate::ids::TaskId>,
+    ) -> Option<EpicChildTarget> {
+        if let Some(child_id) = focused_child_id {
+            let parent = self.selected_task(selected)?;
+            let (original_position, child) = parent
+                .epic_children
+                .iter()
+                .enumerate()
+                .find(|(_, child)| &child.task_id == child_id)?;
+            return Some(EpicChildTarget {
+                epic: EpicContext {
+                    epic_id: parent.task.id.clone(),
+                    display_ref: parent.display_ref.clone(),
+                    project_key: parent.task.project_key.clone(),
+                },
+                child: child.clone(),
+                original_position,
+            });
+        }
+        if let Some(target) = self.find_epic_child_target(selected) {
+            return Some(target);
+        }
+        let item = self.selected_task(selected)?;
+        let parent = item.epic_parent.as_ref()?;
+        Some(EpicChildTarget {
+            epic: EpicContext {
+                epic_id: parent.task_id.clone(),
+                display_ref: parent.display_ref.clone(),
+                project_key: item.task.project_key.clone(),
+            },
+            child: TaskDependencyLink {
+                task_id: item.task.id.clone(),
+                display_ref: item.display_ref.clone(),
+                title: item.task.title.clone(),
+                status: item.task.status.as_str().to_string(),
+                priority: item.task.priority.as_str().to_string(),
+                unresolved: !matches!(item.task.status.as_str(), "done" | "canceled"),
+            },
+            original_position: 0,
+        })
+    }
+
+    pub(crate) async fn add_epic_child(
+        &mut self,
+        epic: EpicContext,
+        child_id: crate::ids::TaskId,
+    ) -> Result<EpicChildMutation, anyhow::Error> {
+        let outcome = self
+            .database
+            .add_task_to_epic(&self.active_workspace, &child_id, &epic.epic_id)
+            .await?;
+        let display_refs = self
+            .database
+            .display_ref_context(&self.active_workspace.id)
+            .await?;
+        let child_ref = display_refs.display_ref(&outcome.child);
+        if outcome.changed {
+            self.record_undo_commands(
+                &format!("add {child_ref} to {}", epic.display_ref),
+                vec![UndoCommand::AddEpicChild {
+                    epic_id: epic.epic_id.clone(),
+                    child_id: child_id.clone(),
+                }],
+            )
+            .await?;
+        }
+        if self.view_state.render_mode() == TaskListRenderMode::Epics {
+            self.view_state.collapsed_epic_ids.remove(&epic.epic_id);
+            self.view_state
+                .expanded_epic_ids
+                .insert(epic.epic_id.clone());
+        }
+        self.refresh(Some(&epic.epic_id)).await?;
+        let selected = self.tasks.iter().position(|item| item.task.id == child_id);
+        let live_child = self
+            .tasks
+            .iter()
+            .find(|item| item.task.id == epic.epic_id)
+            .and_then(|item| {
+                item.epic_children
+                    .iter()
+                    .enumerate()
+                    .find(|(_, child)| child.task_id == child_id)
+            });
+        let original_position = live_child.map(|(position, _)| position).unwrap_or(0);
+        let child = live_child
+            .map(|(_, child)| child.clone())
+            .unwrap_or(TaskDependencyLink {
+                task_id: outcome.child.id,
+                display_ref: child_ref.clone(),
+                title: outcome.child.title,
+                status: outcome.child.status.as_str().to_string(),
+                priority: outcome.child.priority.as_str().to_string(),
+                unresolved: !matches!(outcome.child.status.as_str(), "done" | "canceled"),
+            });
+        let message = if outcome.changed {
+            format!("Added {child_ref} to {}", epic.display_ref)
+        } else {
+            format!("{child_ref} is already a child of {}", epic.display_ref)
+        };
+        Ok(EpicChildMutation {
+            message: MutationMessage::new(message, selected),
+            epic,
+            child,
+            original_position,
+            changed: outcome.changed,
+        })
+    }
+
+    pub(crate) async fn remove_epic_child(
+        &mut self,
+        target: EpicChildTarget,
+    ) -> Result<EpicChildMutation, anyhow::Error> {
+        let outcome = self
+            .database
+            .remove_task_from_epic(
+                &self.active_workspace,
+                &target.child.task_id,
+                &target.epic.epic_id,
+            )
+            .await?;
+        if outcome.changed {
+            self.record_undo_commands(
+                &format!(
+                    "remove {} from {}",
+                    target.child.display_ref, target.epic.display_ref
+                ),
+                vec![UndoCommand::RemoveEpicChild {
+                    epic_id: target.epic.epic_id.clone(),
+                    child_id: target.child.task_id.clone(),
+                }],
+            )
+            .await?;
+        }
+        self.refresh(Some(&target.epic.epic_id)).await?;
+        let selected = self
+            .tasks
+            .iter()
+            .position(|item| item.task.id == target.epic.epic_id);
+        let message = if outcome.changed {
+            format!(
+                "Removed {} from {}",
+                target.child.display_ref, target.epic.display_ref
+            )
+        } else {
+            format!(
+                "{} is already removed from {}",
+                target.child.display_ref, target.epic.display_ref
+            )
+        };
+        Ok(EpicChildMutation {
+            message: MutationMessage::new(message, selected),
+            epic: target.epic,
+            child: target.child,
+            original_position: target.original_position,
+            changed: outcome.changed,
+        })
+    }
+
+    fn find_epic_child_target(&self, selected: Option<usize>) -> Option<EpicChildTarget> {
         if self.view_state.render_mode() != TaskListRenderMode::Epics {
             return None;
         }
-        let selected_task_id = self.tasks.get(selected?).map(|task| task.task.id.clone())?;
+        let selected_task_id = self.tasks.get(selected?)?.task.id.clone();
         for item in &self.tasks {
             if !self.view_state.expanded_epic_ids.contains(&item.task.id) {
                 continue;
             }
-            for link in &item.epic_children {
-                if link.unresolved && link.task_id == selected_task_id {
-                    return Some((link.task_id.clone(), item.task.id.clone()));
-                }
+            if let Some((original_position, child)) = item
+                .epic_children
+                .iter()
+                .enumerate()
+                .find(|(_, child)| child.task_id == selected_task_id)
+            {
+                return Some(EpicChildTarget {
+                    epic: EpicContext {
+                        epic_id: item.task.id.clone(),
+                        display_ref: item.display_ref.clone(),
+                        project_key: item.task.project_key.clone(),
+                    },
+                    child: child.clone(),
+                    original_position,
+                });
             }
         }
         None

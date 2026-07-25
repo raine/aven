@@ -214,6 +214,8 @@ fn search_result_item(title: &str) -> SearchResultItem {
         score: 100,
         deleted: false,
         is_epic: false,
+        unavailable_reason: None,
+        create_new: false,
     }
 }
 

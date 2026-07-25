@@ -61,6 +61,8 @@ pub(crate) struct SearchResultItem {
     pub(crate) score: i64,
     pub(crate) deleted: bool,
     pub(crate) is_epic: bool,
+    pub(crate) unavailable_reason: Option<String>,
+    pub(crate) create_new: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,13 +72,19 @@ pub(crate) enum SearchPurpose {
         task_id: crate::ids::TaskId,
         display_ref: String,
     },
+    AddEpicChild {
+        epic_id: crate::ids::TaskId,
+        display_ref: String,
+        project_key: String,
+    },
 }
 
 impl SearchPurpose {
-    pub(crate) fn title(&self) -> &'static str {
+    pub(crate) fn title(&self) -> String {
         match self {
-            Self::Navigate => "Search",
-            Self::AddDependency { .. } => "Add dependency",
+            Self::Navigate => "Search".to_string(),
+            Self::AddDependency { .. } => "Add dependency".to_string(),
+            Self::AddEpicChild { display_ref, .. } => format!("Add child to {display_ref}"),
         }
     }
 
@@ -84,6 +92,7 @@ impl SearchPurpose {
         match self {
             Self::Navigate => "open task",
             Self::AddDependency { .. } => "add selected as blocker",
+            Self::AddEpicChild { .. } => "add selected child",
         }
     }
 
@@ -91,13 +100,14 @@ impl SearchPurpose {
         match self {
             Self::Navigate => "Search tasks, notes, labels, and projects...",
             Self::AddDependency { .. } => "Search for the task that blocks this task...",
+            Self::AddEpicChild { .. } => "Search for an existing task or create a child...",
         }
     }
 
     pub(crate) fn tab_hint(&self) -> Option<&'static str> {
         match self {
             Self::Navigate => Some("open results"),
-            Self::AddDependency { .. } => None,
+            Self::AddDependency { .. } | Self::AddEpicChild { .. } => None,
         }
     }
 }

@@ -3145,64 +3145,141 @@ mod epics {
     }
 
     #[tokio::test]
-    async fn detach_epic_child_removes_link() {
+    async fn remove_epic_child_uses_resolved_ids_and_records_undo() {
         let mut store = test_store().await;
         let (parent_id, child_id, _parent_index) = create_epic_child_pair(&mut store).await;
-
-        let parent_index = store
-            .tasks
-            .iter()
-            .position(|t| t.task.id == parent_id)
-            .unwrap();
         let child_index = store
             .tasks
             .iter()
-            .position(|t| t.task.id == child_id)
+            .position(|task| task.task.id == child_id)
+            .unwrap();
+        let target = store
+            .resolve_epic_child_target(Some(child_index), None)
             .unwrap();
 
+        let outcome = store.remove_epic_child(target).await.unwrap();
+
+        assert!(outcome.changed);
+        assert!(outcome.message.message.contains("Removed"));
+        let parent_index = store
+            .tasks
+            .iter()
+            .position(|task| task.task.id == parent_id)
+            .unwrap();
         assert!(
             store.tasks[parent_index]
                 .epic_children
                 .iter()
-                .any(|l| l.task_id == child_id)
+                .all(|child| child.task_id != child_id)
         );
 
-        let outcome = store
-            .detach_selected_epic_child(Some(child_index))
-            .await
-            .unwrap()
+        store.undo_last(None).await.unwrap().unwrap();
+        let parent = store
+            .tasks
+            .iter()
+            .find(|task| task.task.id == parent_id)
             .unwrap();
-
-        assert!(outcome.message.contains("detached"));
-
-        if let Some(refreshed_parent) = store.tasks.iter().position(|t| t.task.id == parent_id) {
-            assert!(
-                !store.tasks[refreshed_parent]
-                    .epic_children
-                    .iter()
-                    .any(|l| l.task_id == child_id)
-            );
-        }
+        assert!(
+            parent
+                .epic_children
+                .iter()
+                .any(|child| child.task_id == child_id)
+        );
     }
 
     #[tokio::test]
-    async fn promote_epic_child_removes_link_and_selects_child() {
+    async fn add_epic_child_and_undo_remove_relationship() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (parent_id, parent_index) = create_selected_task(&mut store, "Parent epic").await;
+        let (child_id, _) = create_selected_task(&mut store, "Child task").await;
+        let epic = store
+            .resolve_epic_context(Some(parent_index), false)
+            .unwrap_or_else(|| EpicContext {
+                epic_id: parent_id.clone(),
+                display_ref: store.tasks[parent_index].display_ref.clone(),
+                project_key: store.tasks[parent_index].task.project_key.clone(),
+            });
+
+        let outcome = store.add_epic_child(epic, child_id.clone()).await.unwrap();
+
+        assert!(outcome.changed);
+        store.undo_last(None).await.unwrap().unwrap();
+        let linked: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM task_epic_links WHERE epic_task_id = ? AND child_task_id = ?",
+        )
+        .bind(&parent_id)
+        .bind(&child_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(linked, 0);
+    }
+
+    #[tokio::test]
+    async fn epic_child_creation_rolls_back_task_when_link_validation_fails() {
+        let (_dir, pool, store) = test_store_with_pool().await;
+        let parent = store
+            .database
+            .create_task(
+                &store.active_workspace,
+                TaskDraft {
+                    project: Some("parent-project".to_string()),
+                    is_epic: true,
+                    ..task_draft("Parent epic")
+                },
+            )
+            .await
+            .unwrap();
+
+        let error = store
+            .database
+            .create_task_for_epic(
+                &store.active_workspace,
+                TaskDraft {
+                    project: Some("child-project".to_string()),
+                    ..task_draft("Unexpected standalone child")
+                },
+                &parent.task.id,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(format!("{error:#}").contains("epic-cross-project"));
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks WHERE title = ?")
+            .bind("Unexpected standalone child")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn remove_completed_epic_child() {
         let mut store = test_store().await;
         let (_parent_id, child_id, _parent_index) = create_epic_child_pair(&mut store).await;
-
         let child_index = store
             .tasks
             .iter()
-            .position(|t| t.task.id == child_id)
+            .position(|task| task.task.id == child_id)
             .unwrap();
-
-        let outcome = store
-            .promote_selected_epic_child(Some(child_index))
+        store
+            .update_status(Some(child_index), "done")
             .await
-            .unwrap()
+            .unwrap();
+        store.view_state.view = TaskView::Epics;
+        store.refresh(None).await.unwrap();
+        let child_index = store
+            .tasks
+            .iter()
+            .position(|task| task.task.id == child_id)
+            .unwrap();
+        let target = store
+            .resolve_epic_child_target(Some(child_index), None)
             .unwrap();
 
-        assert!(outcome.message.contains("promoted"));
+        let outcome = store.remove_epic_child(target).await.unwrap();
+
+        assert!(outcome.changed);
     }
 }
 mod dependency_actions {

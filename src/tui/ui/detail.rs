@@ -1200,7 +1200,12 @@ fn detail_epic_child_lines(
     let open = item
         .epic_children
         .iter()
-        .filter(|link| link.unresolved)
+        .filter(|link| link.unresolved && !link.title.ends_with("[removed]"))
+        .count();
+    let total = item
+        .epic_children
+        .iter()
+        .filter(|link| !link.title.ends_with("[removed]"))
         .count();
     let mut lines = vec![Line::from(vec![
         Span::styled(
@@ -1208,13 +1213,16 @@ fn detail_epic_child_lines(
             Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!(" open={open} total={}", item.epic_children.len()),
+            format!(" open={open} total={total}"),
             Style::new().fg(FG_DIM),
         ),
     ])];
 
     if item.epic_children.is_empty() {
-        lines.push(Line::from(Span::styled("none", Style::new().fg(FG_MUTED))));
+        lines.push(Line::from(Span::styled(
+            "No children · t c a to add",
+            Style::new().fg(FG_MUTED),
+        )));
         return lines;
     }
 
@@ -1240,16 +1248,21 @@ fn epic_child_tree_item_lines(
     hovered: bool,
 ) -> Vec<Line<'static>> {
     let tree_glyph = if is_last { "└─ " } else { "├─ " };
+    let removed = link.title.ends_with("[removed]");
     let ref_style = if hovered {
         Style::new()
             .fg(ACCENT)
             .bg(BG_PANEL)
             .add_modifier(Modifier::BOLD)
+    } else if removed {
+        Style::new().fg(FG_MUTED).add_modifier(Modifier::DIM)
     } else {
         Style::new().fg(ACCENT)
     };
     let title_style = if hovered {
         Style::new().fg(FG).bg(BG_PANEL)
+    } else if removed {
+        Style::new().fg(FG_MUTED).add_modifier(Modifier::DIM)
     } else {
         Style::new().fg(FG)
     };
@@ -2095,13 +2108,18 @@ fn detail_epic_metadata_lines(item: &TaskListItem) -> Vec<Line<'static>> {
     let open = item
         .epic_children
         .iter()
-        .filter(|link| link.unresolved)
+        .filter(|link| link.unresolved && !link.title.ends_with("[removed]"))
+        .count();
+    let total = item
+        .epic_children
+        .iter()
+        .filter(|link| !link.title.ends_with("[removed]"))
         .count();
     let lines = vec![
         Line::from(""),
         metadata_label("CHILDREN"),
         Line::from(Span::styled(
-            format!("open={open} total={}", item.epic_children.len()),
+            format!("open={open} total={total}"),
             Style::new().fg(FG_DIM),
         )),
     ];
@@ -2511,11 +2529,25 @@ pub(super) fn render_detail_underlay(
     selection: Option<&DetailTextSelection>,
     inline_images: Option<&DetailInlineImageContext>,
     pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
+    removed_epic_child: Option<&crate::tui::app::RemovedEpicChild>,
 ) {
     if let Some(task) = store.selected_task(widgets.table.selected()) {
+        let mut task = task.clone();
+        if let Some(removed) = removed_epic_child
+            && removed.epic_id == task.task.id
+            && !task
+                .epic_children
+                .iter()
+                .any(|child| child.task_id == removed.child.task_id)
+        {
+            let mut child = removed.child.clone();
+            child.title = format!("{}  [removed]", child.title);
+            let position = removed.original_position.min(task.epic_children.len());
+            task.epic_children.insert(position, child);
+        }
         render_detail(
             frame,
-            task,
+            &task,
             scroll,
             inline_title_editor,
             active_target,
@@ -3049,6 +3081,22 @@ mod tests {
             rendered.find("CHILD TASKS").unwrap()
                 < rendered.find("Two token refresh requests").unwrap()
         );
+    }
+
+    #[test]
+    fn removed_epic_child_is_labeled_and_excluded_from_counts() {
+        let mut item = detail_test_epic_item();
+        item.epic_children.truncate(1);
+        item.epic_children[0].title.push_str("  [removed]");
+
+        let rendered = detail_content_lines(&item, 80, None)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("CHILD TASKS open=0 total=0"));
+        assert!(rendered.contains("[removed]"));
     }
 
     #[test]
