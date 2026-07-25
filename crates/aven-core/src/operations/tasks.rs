@@ -113,8 +113,10 @@ impl Database {
         task_id: &TaskId,
         update: TaskUpdate,
     ) -> Result<TaskUpdateOutcome> {
-        let mut conn = self.acquire().await?;
-        update_task(&mut conn, workspace, task_id, update).await
+        let mut outcomes = self
+            .update_tasks(workspace, vec![(task_id.clone(), update)])
+            .await?;
+        Ok(outcomes.remove(0))
     }
 
     pub async fn update_tasks(
@@ -122,10 +124,25 @@ impl Database {
         workspace: &Workspace,
         updates: Vec<(TaskId, TaskUpdate)>,
     ) -> Result<Vec<TaskUpdateOutcome>> {
+        for (_, update) in &updates {
+            validate_task_update(update)?;
+        }
+
         let mut conn = self.acquire().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        let mut changed = Vec::with_capacity(updates.len());
+        for (task_id, update) in &updates {
+            changed.push(apply_task_update(&mut tx, workspace, task_id, update).await?);
+        }
+        tx.commit().await?;
+
         let mut outcomes = Vec::with_capacity(updates.len());
-        for (task_id, update) in updates {
-            outcomes.push(update_task(&mut conn, workspace, &task_id, update).await?);
+        for ((task_id, _), changed) in updates.into_iter().zip(changed) {
+            info!(task_id = %task_id, changed, "task updated");
+            outcomes.push(TaskUpdateOutcome {
+                task: get_task_in_workspace(&mut conn, workspace, &task_id).await?,
+                changed,
+            });
         }
         Ok(outcomes)
     }
@@ -473,12 +490,24 @@ async fn cleanup_created_objects(conn: &mut SqliteConnection, blob_dir: &Path, h
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub async fn update_task(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     task_id: &crate::ids::TaskId,
     update: TaskUpdate,
 ) -> Result<TaskUpdateOutcome> {
+    validate_task_update(&update)?;
+    let mut tx = begin_immediate(conn).await?;
+    let changed = apply_task_update(&mut tx, workspace, task_id, &update).await?;
+    tx.commit().await?;
+    Ok(TaskUpdateOutcome {
+        task: get_task_in_workspace(conn, workspace, task_id).await?,
+        changed,
+    })
+}
+
+fn validate_task_update(update: &TaskUpdate) -> Result<()> {
     if let Some(status) = update.status.as_deref() {
         TaskStatus::parse(status)?;
     }
@@ -491,29 +520,35 @@ pub async fn update_task(
     if let Some(Some(due_on)) = update.due_on.as_ref() {
         crate::time_validation::validate_due_on_value(due_on)?;
     }
+    Ok(())
+}
+
+async fn apply_task_update(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    task_id: &crate::ids::TaskId,
+    update: &TaskUpdate,
+) -> Result<bool> {
     let mut changed = false;
-    let mut tx = begin_immediate(conn).await?;
-    if let Some(title) = update.title {
-        changed |= update_task_field(&mut tx, workspace, task_id, "title", &title).await?;
+    if let Some(title) = update.title.as_deref() {
+        changed |= update_task_field(conn, workspace, task_id, "title", title).await?;
     }
-    if let Some(description) = update.description {
-        changed |=
-            update_task_field(&mut tx, workspace, task_id, "description", &description).await?;
+    if let Some(description) = update.description.as_deref() {
+        changed |= update_task_field(conn, workspace, task_id, "description", description).await?;
     }
-    if let Some(project) = update.project {
-        let project =
-            resolve_or_create_project_in_workspace(&mut tx, &workspace.id, &project).await?;
-        changed |= set_task_project(&mut tx, workspace, task_id, &project).await?;
+    if let Some(project) = update.project.as_deref() {
+        let project = resolve_or_create_project_in_workspace(conn, &workspace.id, project).await?;
+        changed |= set_task_project(conn, workspace, task_id, &project).await?;
     }
-    if let Some(status) = update.status {
-        changed |= update_task_field(&mut tx, workspace, task_id, "status", &status).await?;
+    if let Some(status) = update.status.as_deref() {
+        changed |= update_task_field(conn, workspace, task_id, "status", status).await?;
     }
-    if let Some(priority) = update.priority {
-        changed |= update_task_field(&mut tx, workspace, task_id, "priority", &priority).await?;
+    if let Some(priority) = update.priority.as_deref() {
+        changed |= update_task_field(conn, workspace, task_id, "priority", priority).await?;
     }
-    if let Some(available_at) = update.available_at {
+    if let Some(available_at) = update.available_at.as_ref() {
         changed |= update_task_field(
-            &mut tx,
+            conn,
             workspace,
             task_id,
             "available_at",
@@ -521,9 +556,9 @@ pub async fn update_task(
         )
         .await?;
     }
-    if let Some(due_on) = update.due_on {
+    if let Some(due_on) = update.due_on.as_ref() {
         changed |= update_task_field(
-            &mut tx,
+            conn,
             workspace,
             task_id,
             "due_on",
@@ -533,13 +568,13 @@ pub async fn update_task(
     }
     if let Some(is_epic) = update.is_epic {
         if !is_epic {
-            let task = get_task_in_workspace(&mut tx, workspace, task_id).await?;
-            if super::epics::task_has_epic_children(&mut tx, &task.workspace_id, task_id).await? {
+            let task = get_task_in_workspace(conn, workspace, task_id).await?;
+            if super::epics::task_has_epic_children(conn, &task.workspace_id, task_id).await? {
                 bail!("error epic-has-children task_id={task_id}");
             }
         }
         changed |= update_task_field(
-            &mut tx,
+            conn,
             workspace,
             task_id,
             "is_epic",
@@ -547,23 +582,15 @@ pub async fn update_task(
         )
         .await?;
     }
-    if update_task_labels_in_workspace(
-        &mut tx,
+    changed |= update_task_labels_in_workspace(
+        conn,
         &workspace.id,
         task_id,
         &update.add_labels,
         &update.remove_labels,
     )
-    .await?
-    {
-        changed = true;
-    }
-    tx.commit().await?;
-    info!(task_id = %task_id, changed, "task updated");
-    Ok(TaskUpdateOutcome {
-        task: get_task_in_workspace(conn, workspace, task_id).await?,
-        changed,
-    })
+    .await?;
+    Ok(changed)
 }
 
 pub async fn update_task_field(

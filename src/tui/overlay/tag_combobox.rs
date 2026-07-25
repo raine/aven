@@ -115,6 +115,7 @@ fn tag_combobox_submit(state: TagComboboxState) -> OverlayOutcome {
     OverlayOutcome::Submitted(OverlaySubmit::Picker {
         route: state.route,
         values: dedupe_labels(state.selected),
+        partial_values: dedupe_labels(state.partial),
     })
 }
 
@@ -122,7 +123,10 @@ fn toggle_highlighted_label(state: &mut TagComboboxState, clear_after_toggle: bo
     let Some(label) = state.options.get(state.highlighted).cloned() else {
         return;
     };
-    if let Some(index) = state
+    if let Some(index) = state.partial.iter().position(|partial| partial == &label) {
+        state.partial.remove(index);
+        state.selected.push(label);
+    } else if let Some(index) = state
         .selected
         .iter()
         .position(|selected| selected == &label)
@@ -148,6 +152,7 @@ fn add_label(state: &mut TagComboboxState, label: String) {
         state.options.sort();
     }
     if !state.selected.contains(&label) {
+        state.partial.retain(|partial| partial != &label);
         state.selected.push(label.clone());
     }
     if let Some(index) = state.options.iter().position(|option| option == &label) {
@@ -219,6 +224,7 @@ mod tests {
             input: LineEdit::blank(),
             options: vec!["bug".to_string(), "feature".to_string()],
             selected: Vec::new(),
+            partial: Vec::new(),
             highlighted: 0,
         }
     }
@@ -271,6 +277,29 @@ mod tests {
                 ..
             }) if values == vec!["feature".to_string()]
         ));
+    }
+
+    #[test]
+    fn partial_label_cycles_to_all_then_none() {
+        let mut state = tag_combobox_state();
+        state.route = OverlayRoute::EditLabelsMulti;
+        state.partial = vec!["bug".to_string()];
+
+        let OverlayOutcome::None(OverlayState::TagCombobox(state)) =
+            handle_tag_combobox_key(state, key(KeyCode::Char(' ')))
+        else {
+            panic!("expected label combobox state");
+        };
+        assert_eq!(state.selected, vec!["bug".to_string()]);
+        assert!(state.partial.is_empty());
+
+        let OverlayOutcome::None(OverlayState::TagCombobox(state)) =
+            handle_tag_combobox_key(state, key(KeyCode::Char(' ')))
+        else {
+            panic!("expected label combobox state");
+        };
+        assert!(state.selected.is_empty());
+        assert!(state.partial.is_empty());
     }
 
     #[test]

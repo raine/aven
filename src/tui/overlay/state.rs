@@ -387,6 +387,8 @@ pub(crate) enum OverlayRoute {
     DeleteProjectConfirm,
     DeleteTaskConfirm,
     DeleteAttachmentConfirm,
+    ClearAvailabilityConfirm,
+    ClearDueConfirm,
     SwitchWorkspace,
     ConflictField,
     ConflictConfirm,
@@ -449,6 +451,8 @@ pub(crate) enum ConfirmSubmitRoute {
     DeleteProjectConfirm,
     DeleteTaskConfirm,
     DeleteAttachmentConfirm,
+    ClearAvailabilityConfirm,
+    ClearDueConfirm,
     UpdateConfirm,
 }
 
@@ -651,6 +655,14 @@ impl OverlayRoute {
                 confirm_submit: Some(ConfirmSubmitRoute::DeleteAttachmentConfirm),
                 ..OverlayRouteDescriptor::default()
             },
+            Self::ClearAvailabilityConfirm => OverlayRouteDescriptor {
+                confirm_submit: Some(ConfirmSubmitRoute::ClearAvailabilityConfirm),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::ClearDueConfirm => OverlayRouteDescriptor {
+                confirm_submit: Some(ConfirmSubmitRoute::ClearDueConfirm),
+                ..OverlayRouteDescriptor::default()
+            },
             Self::SwitchWorkspace => OverlayRouteDescriptor {
                 picker_submit: Some(PickerSubmitRoute::SwitchWorkspace),
                 ..OverlayRouteDescriptor::default()
@@ -716,7 +728,7 @@ impl OverlayRoute {
 
 #[cfg(test)]
 impl OverlayRoute {
-    pub(crate) const ALL: [Self; 38] = [
+    pub(crate) const ALL: [Self; 40] = [
         Self::MessageOnly,
         Self::AddTaskTitle,
         Self::AddTaskDescription,
@@ -747,6 +759,8 @@ impl OverlayRoute {
         Self::DeleteProjectConfirm,
         Self::DeleteTaskConfirm,
         Self::DeleteAttachmentConfirm,
+        Self::ClearAvailabilityConfirm,
+        Self::ClearDueConfirm,
         Self::SwitchWorkspace,
         Self::ConflictField,
         Self::ConflictConfirm,
@@ -1014,6 +1028,7 @@ pub(crate) struct TagComboboxState {
     pub(crate) input: LineEdit,
     pub(crate) options: Vec<String>,
     pub(crate) selected: Vec<String>,
+    pub(crate) partial: Vec<String>,
     pub(crate) highlighted: usize,
 }
 
@@ -1038,6 +1053,9 @@ pub(crate) enum OverlaySubmit {
         route: OverlayRoute,
         value: String,
     },
+    Clear {
+        route: OverlayRoute,
+    },
     Multiline {
         route: OverlayRoute,
         value: String,
@@ -1045,6 +1063,7 @@ pub(crate) enum OverlaySubmit {
     Picker {
         route: OverlayRoute,
         values: Vec<String>,
+        partial_values: Vec<String>,
     },
     HeaderMenu {
         action: HeaderMenuAction,
@@ -1124,6 +1143,29 @@ impl OverlayState {
             input: LineEdit::blank(),
             options,
             selected,
+            partial: Vec::new(),
+            highlighted,
+        })
+    }
+
+    pub(crate) fn partial_tag_combobox(
+        route: OverlayRoute,
+        title: impl Into<String>,
+        options: Vec<String>,
+        selected: Vec<String>,
+        partial: Vec<String>,
+    ) -> Self {
+        let highlighted = options
+            .iter()
+            .position(|label| selected.contains(label) || partial.contains(label))
+            .unwrap_or(0);
+        Self::TagCombobox(TagComboboxState {
+            route,
+            title: title.into(),
+            input: LineEdit::blank(),
+            options,
+            selected,
+            partial,
             highlighted,
         })
     }

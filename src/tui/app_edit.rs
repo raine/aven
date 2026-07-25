@@ -13,14 +13,53 @@ use crate::tui::platform::edit_text_externally;
 
 pub(crate) const EDIT_TITLE_TITLE: &str = "Edit title";
 pub(crate) const EDIT_DESCRIPTION_TITLE: &str = "Edit description";
+#[cfg(test)]
 pub(crate) const EDIT_PROJECT_TITLE: &str = "Edit project";
+#[cfg(test)]
 pub(crate) const EDIT_AVAILABILITY_TITLE: &str = "Edit availability";
 pub(crate) const EDIT_AVAILABILITY_PROMPT: &str =
     "Try tomorrow · in 2 weeks · next monday at 9am\nLocal dates/times · empty or now = immediate";
+#[cfg(test)]
 pub(crate) const EDIT_DUE_TITLE: &str = "Edit due date";
 pub(crate) const EDIT_DUE_PROMPT: &str = "Try today · tomorrow · in 2 weeks · next monday\nCalendar dates only · empty or none = no due date";
 pub(crate) const EDIT_LABELS_TITLE: &str = "Edit task: labels";
 pub(crate) const REMOVE_DEPENDENCY_TITLE: &str = "Remove dependency";
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) enum EditScope {
+    #[default]
+    None,
+    Single(crate::ids::TaskId),
+    Batch(Vec<crate::ids::TaskId>),
+}
+
+impl EditScope {
+    fn task_ids(&self) -> &[crate::ids::TaskId] {
+        match self {
+            Self::None => &[],
+            Self::Single(task_id) => std::slice::from_ref(task_id),
+            Self::Batch(task_ids) => task_ids,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.task_ids().len()
+    }
+
+    fn single(&self) -> Option<&crate::ids::TaskId> {
+        match self {
+            Self::Single(task_id) => Some(task_id),
+            Self::None | Self::Batch(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) enum EditAggregate {
+    #[default]
+    Uniform,
+    Mixed,
+}
 
 impl App {
     pub(super) async fn update_status(&mut self, status: &'static str) -> Result<()> {
@@ -328,6 +367,84 @@ impl App {
         Ok(())
     }
 
+    fn resolve_edit_scope(&self) -> EditScope {
+        let marked = self.marked_task_ids_in_view();
+        match marked.len() {
+            0 => self
+                .store
+                .selected_task(self.widgets.table.selected())
+                .map(|item| EditScope::Single(item.task.id.clone()))
+                .unwrap_or(EditScope::None),
+            1 => EditScope::Single(marked[0].clone()),
+            _ => EditScope::Batch(marked),
+        }
+    }
+
+    fn capture_edit_scope(&mut self) -> bool {
+        self.pending_shortcut.clear();
+        self.edit_scope = self.resolve_edit_scope();
+        if self.edit_scope == EditScope::None {
+            self.set_info("no selected task to edit");
+            return false;
+        }
+        true
+    }
+
+    fn capture_single_edit_scope(&mut self, field: &str) -> bool {
+        if !self.capture_edit_scope() {
+            return false;
+        }
+        if let EditScope::Batch(task_ids) = &self.edit_scope {
+            self.set_info(format!(
+                "{field} requires one task · {} tasks marked",
+                task_ids.len()
+            ));
+            return false;
+        }
+        true
+    }
+
+    fn edit_scope_items(&self) -> Vec<&TaskListItem> {
+        let ids = self.edit_scope.task_ids().iter().collect::<BTreeSet<_>>();
+        self.store
+            .tasks
+            .iter()
+            .filter(|item| ids.contains(&item.task.id))
+            .collect()
+    }
+
+    fn edit_scope_index(&self) -> Option<usize> {
+        let task_id = self.edit_scope.single()?;
+        self.store
+            .tasks
+            .iter()
+            .position(|item| &item.task.id == task_id)
+    }
+
+    fn batch_edit_title(&self, field: &str) -> String {
+        match self.edit_scope.len() {
+            1 => format!("Edit {field}"),
+            count => format!("Edit {field} · {count} marked tasks"),
+        }
+    }
+
+    fn aggregate_value<T, F>(&self, value: F) -> (EditAggregate, T)
+    where
+        T: Clone + PartialEq + Default,
+        F: Fn(&TaskListItem) -> T,
+    {
+        let items = self.edit_scope_items();
+        let Some(first) = items.first() else {
+            return (EditAggregate::Uniform, T::default());
+        };
+        let first_value = value(first);
+        if items.iter().skip(1).all(|item| value(item) == first_value) {
+            (EditAggregate::Uniform, first_value)
+        } else {
+            (EditAggregate::Mixed, T::default())
+        }
+    }
+
     fn guard_selected_task(&mut self) -> Option<usize> {
         self.pending_shortcut.clear();
         let index = self.widgets.table.selected();
@@ -357,23 +474,21 @@ impl App {
     }
 
     pub(super) fn begin_status_picker(&mut self) {
-        if self.marked_task_ids_in_view().is_empty() && self.guard_selected_task().is_none() {
+        if !self.capture_edit_scope() {
             return;
         }
         self.footer_choice_mode = Some(FooterChoiceMode::Status);
     }
 
     pub(super) fn begin_edit_title(&mut self) {
-        let Some(index) = self.guard_selected_task() else {
+        if !self.capture_single_edit_scope("title") {
+            return;
+        }
+        let Some(index) = self.edit_scope_index() else {
+            self.set_info("no selected task to edit");
             return;
         };
-        let title = self
-            .store
-            .selected_task(Some(index))
-            .unwrap()
-            .task
-            .title
-            .clone();
+        let title = self.store.tasks[index].task.title.clone();
         self.open_edit_title_overlay(title);
     }
 
@@ -397,128 +512,136 @@ impl App {
     }
 
     pub(super) fn begin_edit_description(&mut self) {
-        let Some(index) = self.guard_selected_task() else {
+        if !self.capture_single_edit_scope("description") {
+            return;
+        }
+        let Some(index) = self.edit_scope_index() else {
+            self.set_info("no selected task to edit");
             return;
         };
-        let description = self
-            .store
-            .selected_task(Some(index))
-            .unwrap()
-            .task
-            .description
-            .clone();
+        let description = self.store.tasks[index].task.description.clone();
         self.open_edit_description_overlay(description);
     }
 
     pub(super) fn begin_edit_project(&mut self) {
-        let task_ids = self.marked_task_ids_in_view();
-        if !task_ids.is_empty() {
-            let items = self.store.existing_project_picker_items("");
-            let count = task_ids.len();
-            self.open_picker_overlay(
-                OverlayRoute::EditProject,
-                format!("Edit project: {count} marked tasks"),
-                items,
-                false,
-            );
+        if !self.capture_edit_scope() {
             return;
         }
-        let Some(index) = self.guard_selected_task() else {
-            return;
-        };
-        let selected = self
-            .store
-            .selected_task(Some(index))
-            .unwrap()
-            .task
-            .project_key
-            .as_str();
-        let items = self.store.existing_project_picker_items(selected);
-        self.open_picker_overlay(OverlayRoute::EditProject, EDIT_PROJECT_TITLE, items, false);
+        let (aggregate, selected) = self.aggregate_value(|item| item.task.project_key.clone());
+        self.edit_aggregate = aggregate;
+        let mut items = self.store.existing_project_picker_items(&selected);
+        if aggregate == EditAggregate::Mixed {
+            items.insert(
+                0,
+                PickerItem {
+                    label: "Keep existing values (current: varies)".to_string(),
+                    value: String::new(),
+                    selected: true,
+                },
+            );
+        }
+        self.open_picker_overlay(
+            OverlayRoute::EditProject,
+            self.batch_edit_title("project"),
+            items,
+            false,
+        );
     }
 
     pub(super) fn begin_edit_priority(&mut self) {
-        let task_ids = self.marked_task_ids_in_view();
-        if !task_ids.is_empty() {
-            let items = self.store.priority_picker_items("");
-            let count = task_ids.len();
-            self.open_picker_overlay(
-                OverlayRoute::EditPriority,
-                format!("Edit priority: {count} marked tasks"),
-                items,
-                false,
+        if !self.capture_edit_scope() {
+            return;
+        }
+        let (aggregate, selected) = self.aggregate_value(|item| item.task.priority.to_string());
+        self.edit_aggregate = aggregate;
+        if self.edit_scope.len() == 1 {
+            self.footer_choice_mode = Some(FooterChoiceMode::Priority);
+            return;
+        }
+        let mut items = self.store.priority_picker_items(&selected);
+        if aggregate == EditAggregate::Mixed {
+            items.insert(
+                0,
+                PickerItem {
+                    label: "Keep existing values (current: varies)".to_string(),
+                    value: String::new(),
+                    selected: true,
+                },
             );
-            return;
         }
-        if self.guard_selected_task().is_none() {
-            return;
-        }
-        self.footer_choice_mode = Some(FooterChoiceMode::Priority);
+        self.open_picker_overlay(
+            OverlayRoute::EditPriority,
+            self.batch_edit_title("priority"),
+            items,
+            false,
+        );
     }
 
     pub(super) fn begin_edit_availability(&mut self) {
-        let Some(index) = self.guard_selected_task() else {
+        if !self.capture_edit_scope() {
             return;
-        };
-        let available_at = self
-            .store
-            .selected_task(Some(index))
-            .unwrap()
-            .task
-            .available_at
-            .clone()
-            .unwrap_or_default();
+        }
+        let (aggregate, available_at) =
+            self.aggregate_value(|item| item.task.available_at.clone().unwrap_or_default());
+        self.edit_aggregate = aggregate;
         self.open_edit_availability_overlay(available_at);
     }
 
     fn open_edit_availability_overlay(&mut self, input: String) {
+        let prompt = if self.edit_aggregate == EditAggregate::Mixed {
+            "Current: varies\nEnter keeps existing dates · type a date to set all\nCtrl+D clears all after confirmation"
+        } else if self.edit_scope.len() > 1 {
+            "Try tomorrow · in 2 weeks · next monday at 9am\nCtrl+D clears all after confirmation"
+        } else {
+            EDIT_AVAILABILITY_PROMPT
+        };
         self.overlay = Some(OverlayState::text_input(
             OverlayRoute::EditAvailability,
-            EDIT_AVAILABILITY_TITLE,
-            EDIT_AVAILABILITY_PROMPT,
+            self.batch_edit_title("availability"),
+            prompt,
             input,
         ));
     }
 
     pub(super) fn begin_edit_due(&mut self) {
-        let Some(index) = self.guard_selected_task() else {
+        if !self.capture_edit_scope() {
             return;
-        };
-        let due_on = self
-            .store
-            .selected_task(Some(index))
-            .unwrap()
-            .task
-            .due_on
-            .clone()
-            .unwrap_or_default();
+        }
+        let (aggregate, due_on) =
+            self.aggregate_value(|item| item.task.due_on.clone().unwrap_or_default());
+        self.edit_aggregate = aggregate;
         self.open_edit_due_overlay(due_on);
     }
 
     fn open_edit_due_overlay(&mut self, input: String) {
+        let prompt = if self.edit_aggregate == EditAggregate::Mixed {
+            "Current: varies\nEnter keeps existing dates · type a date to set all\nCtrl+D clears all after confirmation"
+        } else if self.edit_scope.len() > 1 {
+            "Try today · tomorrow · in 2 weeks · next monday\nCtrl+D clears all after confirmation"
+        } else {
+            EDIT_DUE_PROMPT
+        };
         self.overlay = Some(OverlayState::text_input(
             OverlayRoute::EditDue,
-            EDIT_DUE_TITLE,
-            EDIT_DUE_PROMPT,
+            self.batch_edit_title("due date"),
+            prompt,
             input,
         ));
     }
 
     pub(super) fn begin_edit_labels(&mut self) {
-        let task_ids = self.marked_task_ids_in_view();
-        if !task_ids.is_empty() {
-            self.open_edit_labels_multi(task_ids);
+        if !self.capture_edit_scope() {
             return;
         }
-        let Some(index) = self.guard_selected_task() else {
+        if self.edit_scope.len() > 1 {
+            self.open_edit_labels_multi();
             return;
-        };
+        }
         let labels = self
-            .store
-            .selected_task(Some(index))
-            .unwrap()
-            .labels
-            .clone();
+            .edit_scope_items()
+            .first()
+            .map(|item| item.labels.clone())
+            .unwrap_or_default();
         self.overlay = Some(OverlayState::tag_combobox(
             OverlayRoute::EditLabels,
             EDIT_LABELS_TITLE,
@@ -558,7 +681,14 @@ impl App {
     }
 
     pub(super) async fn submit_edit_status(&mut self, status: String) -> Result<()> {
-        let task_ids = self.marked_task_ids_in_view();
+        let mut task_ids = self.edit_scope.task_ids().to_vec();
+        let selected_id = self
+            .store
+            .selected_task(self.widgets.table.selected())
+            .map(|item| &item.task.id);
+        if self.edit_scope.single() == selected_id {
+            task_ids.clear();
+        }
         let preserve_task = self.status_change_preserves_task();
         let changed_task_id = self.changed_status_target(&task_ids, &status);
         let viewport_row = (!preserve_task)
@@ -594,7 +724,7 @@ impl App {
             Ok(None) => self.set_info("no selected task to edit"),
             Err(error) => {
                 self.set_error(format!("{error:#}"));
-                self.begin_status_picker();
+                self.footer_choice_mode = Some(FooterChoiceMode::Status);
             }
         }
         Ok(())
@@ -607,9 +737,13 @@ impl App {
             self.open_edit_title_overlay(value);
             return Ok(());
         }
+        let Some(task_id) = self.edit_scope.single().cloned() else {
+            self.set_info("no selected task to edit");
+            return Ok(());
+        };
         match self
             .store
-            .update_title(self.widgets.table.selected(), trimmed)
+            .update_title_for_task(self.widgets.table.selected(), &task_id, trimmed)
             .await
         {
             Ok(Some(result)) => self.apply_mutation_result(result),
@@ -623,45 +757,77 @@ impl App {
     }
 
     pub(super) async fn submit_edit_description(&mut self, value: String) -> Result<()> {
+        let Some(task_id) = self.edit_scope.single().cloned() else {
+            self.set_info("no selected task to edit");
+            return Ok(());
+        };
         let result = self
             .store
-            .update_description(self.widgets.table.selected(), value.clone())
+            .update_description_for_task(self.widgets.table.selected(), &task_id, value.clone())
             .await;
         self.apply_edit_mutation(result, |app| app.open_edit_description_overlay(value));
         Ok(())
     }
 
     pub(super) async fn submit_edit_project(&mut self, project: String) -> Result<()> {
-        let task_ids = self.marked_task_ids_in_view();
-        let result = if task_ids.is_empty() {
-            self.store
-                .update_project(self.widgets.table.selected(), project)
-                .await
-        } else {
-            self.store
-                .update_project_for_tasks(self.widgets.table.selected(), &task_ids, project)
-                .await
-        };
-        self.apply_edit_mutation(result, |app| app.begin_edit_project());
+        if project.is_empty() && self.edit_aggregate == EditAggregate::Mixed {
+            self.set_info(format!(
+                "project unchanged on {} tasks",
+                self.edit_scope.len()
+            ));
+            return Ok(());
+        }
+        let task_ids = self.edit_scope.task_ids().to_vec();
+        let result = self
+            .store
+            .update_project_for_tasks(self.widgets.table.selected(), &task_ids, project)
+            .await;
+        self.apply_edit_mutation(result, |app| app.reopen_edit_project());
         Ok(())
+    }
+
+    fn reopen_edit_project(&mut self) {
+        let scope = self.edit_scope.clone();
+        self.begin_edit_project();
+        self.edit_scope = scope;
     }
 
     pub(super) async fn submit_edit_priority(&mut self, priority: String) -> Result<()> {
-        let task_ids = self.marked_task_ids_in_view();
-        let result = if task_ids.is_empty() {
-            self.store
-                .set_exact_priority(self.widgets.table.selected(), &priority)
-                .await
-        } else {
-            self.store
-                .set_exact_priority_for_tasks(self.widgets.table.selected(), &task_ids, &priority)
-                .await
-        };
-        self.apply_edit_mutation(result, |app| app.begin_edit_priority());
+        if priority.is_empty() && self.edit_aggregate == EditAggregate::Mixed {
+            self.set_info(format!(
+                "priority unchanged on {} tasks",
+                self.edit_scope.len()
+            ));
+            return Ok(());
+        }
+        let task_ids = self.edit_scope.task_ids().to_vec();
+        let result = self
+            .store
+            .set_exact_priority_for_tasks(self.widgets.table.selected(), &task_ids, &priority)
+            .await;
+        self.apply_edit_mutation(result, |app| app.reopen_edit_priority());
         Ok(())
     }
 
+    fn reopen_edit_priority(&mut self) {
+        let scope = self.edit_scope.clone();
+        self.begin_edit_priority();
+        self.edit_scope = scope;
+    }
+
     pub(super) async fn submit_edit_availability(&mut self, input: String) -> Result<()> {
+        if self.edit_scope.len() > 1 && input.trim().is_empty() {
+            if self.edit_aggregate == EditAggregate::Mixed {
+                self.set_info(format!(
+                    "availability unchanged on {} tasks",
+                    self.edit_scope.len()
+                ));
+            } else {
+                self.set_info("use Ctrl+D to clear availability on marked tasks");
+                self.open_edit_availability_overlay(input);
+            }
+            return Ok(());
+        }
         let available_at = if input.trim().is_empty() {
             String::new()
         } else {
@@ -674,16 +840,33 @@ impl App {
                 }
             }
         };
-        let preserve_task = self.detail_context;
+        let task_ids = self.edit_scope.task_ids().to_vec();
         let result = self
             .store
-            .update_availability(self.widgets.table.selected(), available_at, preserve_task)
+            .update_availability_for_tasks(
+                self.widgets.table.selected(),
+                &task_ids,
+                available_at,
+                self.detail_context,
+            )
             .await;
         self.apply_edit_mutation(result, |app| app.open_edit_availability_overlay(input));
         Ok(())
     }
 
     pub(super) async fn submit_edit_due(&mut self, input: String) -> Result<()> {
+        if self.edit_scope.len() > 1 && input.trim().is_empty() {
+            if self.edit_aggregate == EditAggregate::Mixed {
+                self.set_info(format!(
+                    "due date unchanged on {} tasks",
+                    self.edit_scope.len()
+                ));
+            } else {
+                self.set_info("use Ctrl+D to clear due dates on marked tasks");
+                self.open_edit_due_overlay(input);
+            }
+            return Ok(());
+        }
         let due_on = if input.trim().is_empty() {
             String::new()
         } else {
@@ -696,12 +879,73 @@ impl App {
                 }
             }
         };
-        let preserve_task = self.detail_context;
+        let task_ids = self.edit_scope.task_ids().to_vec();
         let result = self
             .store
-            .update_due(self.widgets.table.selected(), due_on, preserve_task)
+            .update_due_for_tasks(
+                self.widgets.table.selected(),
+                &task_ids,
+                due_on,
+                self.detail_context,
+            )
             .await;
         self.apply_edit_mutation(result, |app| app.open_edit_due_overlay(input));
+        Ok(())
+    }
+
+    pub(super) async fn begin_clear_edit_value(&mut self, route: OverlayRoute) -> Result<()> {
+        if self.edit_scope.len() <= 1 {
+            match route {
+                OverlayRoute::EditAvailability => self.submit_clear_availability().await?,
+                OverlayRoute::EditDue => self.submit_clear_due().await?,
+                _ => {}
+            }
+            return Ok(());
+        }
+        let (confirm_route, field) = match route {
+            OverlayRoute::EditAvailability => {
+                (OverlayRoute::ClearAvailabilityConfirm, "availability")
+            }
+            OverlayRoute::EditDue => (OverlayRoute::ClearDueConfirm, "due date"),
+            _ => return Ok(()),
+        };
+        self.overlay = Some(OverlayState::confirm(
+            confirm_route,
+            format!("Clear {field}"),
+            format!("Clear {field} on {} marked tasks?", self.edit_scope.len()),
+        ));
+        Ok(())
+    }
+
+    pub(super) async fn submit_clear_availability(&mut self) -> Result<()> {
+        let task_ids = self.edit_scope.task_ids().to_vec();
+        let result = self
+            .store
+            .update_availability_for_tasks(
+                self.widgets.table.selected(),
+                &task_ids,
+                String::new(),
+                self.detail_context,
+            )
+            .await;
+        self.apply_edit_mutation(result, |app| {
+            app.open_edit_availability_overlay(String::new())
+        });
+        Ok(())
+    }
+
+    pub(super) async fn submit_clear_due(&mut self) -> Result<()> {
+        let task_ids = self.edit_scope.task_ids().to_vec();
+        let result = self
+            .store
+            .update_due_for_tasks(
+                self.widgets.table.selected(),
+                &task_ids,
+                String::new(),
+                self.detail_context,
+            )
+            .await;
+        self.apply_edit_mutation(result, |app| app.open_edit_due_overlay(String::new()));
         Ok(())
     }
 
@@ -716,26 +960,54 @@ impl App {
                 return Ok(());
             }
         }
+        let task_ids = self.edit_scope.task_ids().to_vec();
         let result = self
             .store
-            .update_labels(self.widgets.table.selected(), labels)
+            .update_labels_for_tasks(self.widgets.table.selected(), &task_ids, labels, Vec::new())
             .await;
         self.apply_edit_mutation(result, |app| app.begin_edit_labels());
         Ok(())
     }
 
-    fn open_edit_labels_multi(&mut self, task_ids: Vec<crate::ids::TaskId>) {
-        let labels = self.store.union_labels_for_tasks(&task_ids);
+    fn open_edit_labels_multi(&mut self) {
+        let task_ids = self.edit_scope.task_ids().to_vec();
+        let items = self.edit_scope_items();
+        let mut options = self.store.labels.iter().cloned().collect::<BTreeSet<_>>();
+        for item in &items {
+            options.extend(item.labels.iter().cloned());
+        }
+        let options = options.into_iter().collect::<Vec<_>>();
+        let selected = options
+            .iter()
+            .filter(|label| items.iter().all(|item| item.labels.contains(label)))
+            .cloned()
+            .collect::<Vec<_>>();
+        let partial = options
+            .iter()
+            .filter(|label| {
+                let count = items
+                    .iter()
+                    .filter(|item| item.labels.contains(label))
+                    .count();
+                count > 0 && count < items.len()
+            })
+            .cloned()
+            .collect::<Vec<_>>();
         let count = task_ids.len();
-        self.overlay = Some(OverlayState::tag_combobox(
+        self.overlay = Some(OverlayState::partial_tag_combobox(
             OverlayRoute::EditLabelsMulti,
-            format!("Edit labels: {count} marked tasks"),
-            self.store.labels.clone(),
-            labels,
+            format!("Edit labels · {count} marked tasks"),
+            options,
+            selected,
+            partial,
         ));
     }
 
-    pub(super) async fn submit_edit_labels_multi(&mut self, labels: Vec<String>) -> Result<()> {
+    pub(super) async fn submit_edit_labels_multi(
+        &mut self,
+        labels: Vec<String>,
+        partial_labels: Vec<String>,
+    ) -> Result<()> {
         for label in &labels {
             let label = normalize_label(label);
             if !self.store.labels.contains(&label)
@@ -747,10 +1019,10 @@ impl App {
             }
         }
         let selected = self.widgets.table.selected();
-        let task_ids = self.marked_task_ids_in_view();
+        let task_ids = self.edit_scope.task_ids().to_vec();
         let result = self
             .store
-            .update_labels_for_tasks(selected, &task_ids, labels)
+            .update_labels_for_tasks(selected, &task_ids, labels, partial_labels)
             .await;
         self.apply_edit_mutation(result, |app| app.begin_edit_labels());
         Ok(())

@@ -6,7 +6,8 @@ use tracing::{debug, info};
 use crate::change_log::op_type;
 use crate::choices::TaskPriority;
 use crate::db::{
-    Database, conflict_exists, field_version, insert_change, set_field_version, task_from_row,
+    Database, begin_immediate, conflict_exists, field_version, insert_change, set_field_version,
+    task_from_row,
 };
 use crate::ids::now;
 use crate::projects::resolve_or_create_project_in_workspace;
@@ -101,10 +102,12 @@ impl Database {
         updates: &[(crate::ids::TaskId, String, String)],
     ) -> Result<Vec<bool>> {
         let mut conn = self.acquire().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
         let mut outcomes = Vec::with_capacity(updates.len());
         for (task_id, field, value) in updates {
-            outcomes.push(set_task_field(&mut conn, workspace, task_id, field, value).await?);
+            outcomes.push(set_task_field(&mut tx, workspace, task_id, field, value).await?);
         }
+        tx.commit().await?;
         Ok(outcomes)
     }
 
@@ -115,10 +118,12 @@ impl Database {
         reverse: bool,
     ) -> Result<Vec<Task>> {
         let mut conn = self.acquire().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
         let mut outcomes = Vec::with_capacity(tasks.len());
         for task in tasks {
-            outcomes.push(cycle_priority(&mut conn, workspace, task, reverse).await?);
+            outcomes.push(cycle_priority(&mut tx, workspace, task, reverse).await?);
         }
+        tx.commit().await?;
         Ok(outcomes)
     }
 }

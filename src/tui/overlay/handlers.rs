@@ -301,6 +301,15 @@ pub(crate) fn handle_generic_overlay_key(
         }
         OverlayState::TextInput(mut state) => match key.code {
             KeyCode::Esc => OverlayOutcome::Cancelled,
+            KeyCode::Char('d')
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(
+                        state.route,
+                        super::OverlayRoute::EditAvailability | super::OverlayRoute::EditDue
+                    ) =>
+            {
+                OverlayOutcome::Submitted(OverlaySubmit::Clear { route: state.route })
+            }
             KeyCode::Enter => OverlayOutcome::Submitted(OverlaySubmit::Text {
                 route: state.route,
                 value: state.input.text.clone(),
@@ -533,6 +542,7 @@ fn tag_combobox_mouse_target(
         completion: None,
         options: state.options.clone(),
         selected: state.selected.clone(),
+        partial: state.partial.clone(),
         highlighted: state.highlighted,
         visible_indices: tag_combobox_matches(state),
         visible_start: 0,
@@ -1442,6 +1452,26 @@ mod tests {
         assert!(matches!(
             handle(key(KeyCode::Char('n')), OverlayState::Confirm(state)),
             OverlayOutcome::Cancelled
+        ));
+    }
+
+    #[test]
+    fn ctrl_d_requests_explicit_date_clear() {
+        let outcome = handle(
+            ctrl(KeyCode::Char('d')),
+            OverlayState::TextInput(TextInputState::new(
+                OverlayRoute::EditDue,
+                "Edit due date",
+                "",
+                String::new(),
+            )),
+        );
+
+        assert!(matches!(
+            outcome,
+            OverlayOutcome::Submitted(OverlaySubmit::Clear {
+                route: OverlayRoute::EditDue
+            })
         ));
     }
 

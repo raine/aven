@@ -15,6 +15,10 @@ enum StatusRefresh {
     PreserveTask,
 }
 
+fn task_noun(count: usize) -> &'static str {
+    if count == 1 { "task" } else { "tasks" }
+}
+
 impl TuiStore {
     async fn update_selected_task<F>(
         &mut self,
@@ -181,6 +185,7 @@ impl TuiStore {
         Ok(outcome)
     }
 
+    #[cfg(test)]
     pub(crate) async fn update_title(
         &mut self,
         index: Option<usize>,
@@ -225,6 +230,110 @@ impl TuiStore {
         Ok(outcome)
     }
 
+    pub(crate) async fn update_title_for_task(
+        &mut self,
+        current_selected_index: Option<usize>,
+        task_id: &crate::ids::TaskId,
+        title: String,
+    ) -> Result<Option<MutationMessage>> {
+        let title = title.trim().to_string();
+        let targets = self.tasks_matching_ids(std::slice::from_ref(task_id));
+        let Some(item) = targets.first() else {
+            return Ok(None);
+        };
+        let before = item.task.title.clone();
+        if title == before {
+            return Ok(Some(
+                self.refresh_after_task_batch(
+                    current_selected_index,
+                    &targets,
+                    format!("unchanged {} title", item.display_ref),
+                )
+                .await?,
+            ));
+        }
+        self.database
+            .update_task(
+                &self.active_workspace,
+                task_id,
+                TaskUpdate {
+                    title: Some(title.clone()),
+                    ..TaskUpdate::default()
+                },
+            )
+            .await?;
+        self.record_undo_commands(
+            &format!("title {}", item.display_ref),
+            vec![UndoCommand::SetTaskField {
+                task_id: task_id.clone(),
+                field: "title".to_string(),
+                before,
+                after: title,
+            }],
+        )
+        .await?;
+        Ok(Some(
+            self.refresh_after_task_batch(
+                current_selected_index,
+                &targets,
+                format!("set {} title", item.display_ref),
+            )
+            .await?,
+        ))
+    }
+
+    pub(crate) async fn update_description_for_task(
+        &mut self,
+        current_selected_index: Option<usize>,
+        task_id: &crate::ids::TaskId,
+        description: String,
+    ) -> Result<Option<MutationMessage>> {
+        let targets = self.tasks_matching_ids(std::slice::from_ref(task_id));
+        let Some(item) = targets.first() else {
+            return Ok(None);
+        };
+        let before = item.task.description.clone();
+        if description == before {
+            return Ok(Some(
+                self.refresh_after_task_batch(
+                    current_selected_index,
+                    &targets,
+                    format!("unchanged {} description", item.display_ref),
+                )
+                .await?,
+            ));
+        }
+        self.database
+            .update_task(
+                &self.active_workspace,
+                task_id,
+                TaskUpdate {
+                    description: Some(description.clone()),
+                    ..TaskUpdate::default()
+                },
+            )
+            .await?;
+        self.record_undo_commands(
+            &format!("description {}", item.display_ref),
+            vec![UndoCommand::SetTaskField {
+                task_id: task_id.clone(),
+                field: "description".to_string(),
+                before,
+                after: description,
+            }],
+        )
+        .await?;
+        Ok(Some(
+            self.refresh_after_task_batch(
+                current_selected_index,
+                &targets,
+                format!("set {} description", item.display_ref),
+            )
+            .await?,
+        ))
+    }
+
+    #[cfg(test)]
     pub(crate) async fn update_description(
         &mut self,
         index: Option<usize>,
@@ -259,6 +368,7 @@ impl TuiStore {
         Ok(outcome)
     }
 
+    #[cfg(test)]
     pub(crate) async fn update_availability(
         &mut self,
         index: Option<usize>,
@@ -315,62 +425,141 @@ impl TuiStore {
         Ok(Some(result))
     }
 
-    pub(crate) async fn update_due(
+    pub(crate) async fn update_availability_for_tasks(
         &mut self,
-        index: Option<usize>,
-        due_on: String,
+        current_selected_index: Option<usize>,
+        task_ids: &[crate::ids::TaskId],
+        available_at: String,
         preserve_task: bool,
     ) -> Result<Option<MutationMessage>> {
-        let Some(mut item) = self.selected_task(index).cloned() else {
+        let targets = self.tasks_matching_ids(task_ids);
+        if targets.is_empty() {
             return Ok(None);
-        };
-        let before = item.task.due_on.clone().unwrap_or_default();
-        if due_on == before {
-            return Ok(Some(
-                self.refresh_task_message(
-                    &item.task.id,
-                    format!("unchanged {} due date", item.display_ref),
-                )
-                .await?,
-            ));
         }
-
-        let outcome = self
-            .database
-            .update_task(
-                &self.active_workspace,
-                &item.task.id,
+        let mut updates = Vec::new();
+        let mut undo_commands = Vec::new();
+        for item in &targets {
+            let before = item.task.available_at.clone().unwrap_or_default();
+            if before == available_at {
+                continue;
+            }
+            updates.push((
+                item.task.id.clone(),
                 TaskUpdate {
-                    due_on: Some((!due_on.is_empty()).then(|| due_on.clone())),
+                    available_at: Some((!available_at.is_empty()).then(|| available_at.clone())),
                     ..TaskUpdate::default()
                 },
-            )
-            .await?;
-        self.record_undo_commands(
-            &format!("due date {}", item.display_ref),
-            vec![UndoCommand::SetTaskField {
+            ));
+            undo_commands.push(UndoCommand::SetTaskField {
                 task_id: item.task.id.clone(),
-                field: "due_on".to_string(),
+                field: "available_at".to_string(),
                 before,
-                after: due_on.clone(),
-            }],
-        )
-        .await?;
-        let message = if due_on.is_empty() {
-            format!("cleared {} due date", item.display_ref)
+                after: available_at.clone(),
+            });
+        }
+        let outcomes = self
+            .database
+            .update_tasks(&self.active_workspace, updates)
+            .await?;
+        let changed = undo_commands.len();
+        if changed > 0 {
+            self.record_undo_commands(&format!("availability {changed} tasks"), undo_commands)
+                .await?;
+        }
+        let noun = if targets.len() == 1 { "task" } else { "tasks" };
+        let message = if changed == 0 {
+            format!("availability unchanged on {} {noun}", targets.len())
+        } else if available_at.is_empty() {
+            format!(
+                "cleared availability on {changed} {}",
+                if changed == 1 { "task" } else { "tasks" }
+            )
         } else {
-            format!("set {} due date", item.display_ref)
+            format!(
+                "set availability on {changed} {}",
+                if changed == 1 { "task" } else { "tasks" }
+            )
         };
-        item.task = outcome.task;
-        let result = if preserve_task {
-            self.refresh_preserved_task_message(index, item, message)
+        let result = if preserve_task && targets.len() == 1 && changed == 1 {
+            let mut item = targets[0].clone();
+            item.task = outcomes.into_iter().next().unwrap().task;
+            self.refresh_preserved_task_message(current_selected_index, item, message)
                 .await?
         } else {
-            self.refresh_task_message(&item.task.id, message).await?
+            self.refresh_after_task_batch(current_selected_index, &targets, message)
+                .await?
         };
         Ok(Some(result))
     }
 
+    pub(crate) async fn update_due_for_tasks(
+        &mut self,
+        current_selected_index: Option<usize>,
+        task_ids: &[crate::ids::TaskId],
+        due_on: String,
+        preserve_task: bool,
+    ) -> Result<Option<MutationMessage>> {
+        let targets = self.tasks_matching_ids(task_ids);
+        if targets.is_empty() {
+            return Ok(None);
+        }
+        let mut updates = Vec::new();
+        let mut undo_commands = Vec::new();
+        for item in &targets {
+            let before = item.task.due_on.clone().unwrap_or_default();
+            if before == due_on {
+                continue;
+            }
+            updates.push((
+                item.task.id.clone(),
+                TaskUpdate {
+                    due_on: Some((!due_on.is_empty()).then(|| due_on.clone())),
+                    ..TaskUpdate::default()
+                },
+            ));
+            undo_commands.push(UndoCommand::SetTaskField {
+                task_id: item.task.id.clone(),
+                field: "due_on".to_string(),
+                before,
+                after: due_on.clone(),
+            });
+        }
+        let outcomes = self
+            .database
+            .update_tasks(&self.active_workspace, updates)
+            .await?;
+        let changed = undo_commands.len();
+        if changed > 0 {
+            self.record_undo_commands(&format!("due date {changed} tasks"), undo_commands)
+                .await?;
+        }
+        let noun = if targets.len() == 1 { "task" } else { "tasks" };
+        let message = if changed == 0 {
+            format!("due date unchanged on {} {noun}", targets.len())
+        } else if due_on.is_empty() {
+            format!(
+                "cleared due date on {changed} {}",
+                if changed == 1 { "task" } else { "tasks" }
+            )
+        } else {
+            format!(
+                "set due date on {changed} {}",
+                if changed == 1 { "task" } else { "tasks" }
+            )
+        };
+        let result = if preserve_task && targets.len() == 1 && changed == 1 {
+            let mut item = targets[0].clone();
+            item.task = outcomes.into_iter().next().unwrap().task;
+            self.refresh_preserved_task_message(current_selected_index, item, message)
+                .await?
+        } else {
+            self.refresh_after_task_batch(current_selected_index, &targets, message)
+                .await?
+        };
+        Ok(Some(result))
+    }
+
+    #[cfg(test)]
     pub(crate) async fn update_project(
         &mut self,
         index: Option<usize>,
@@ -407,6 +596,7 @@ impl TuiStore {
         ))
     }
 
+    #[cfg(test)]
     pub(crate) async fn update_labels(
         &mut self,
         index: Option<usize>,
@@ -593,17 +783,6 @@ impl TuiStore {
         ))
     }
 
-    pub(crate) fn union_labels_for_tasks(&self, task_ids: &[crate::ids::TaskId]) -> Vec<String> {
-        let task_ids = task_ids.iter().collect::<BTreeSet<_>>();
-        self.tasks
-            .iter()
-            .filter(|item| task_ids.contains(&item.task.id))
-            .flat_map(|item| item.labels.iter().cloned())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect()
-    }
-
     fn tasks_matching_ids(&self, task_ids: &[crate::ids::TaskId]) -> Vec<TaskListItem> {
         let task_ids = task_ids.iter().collect::<BTreeSet<_>>();
         self.tasks
@@ -702,9 +881,13 @@ impl TuiStore {
                 .await?;
         }
         let message = if changed == 0 {
-            format!("status unchanged on {} tasks", targets.len())
+            format!(
+                "status unchanged on {} {}",
+                targets.len(),
+                task_noun(targets.len())
+            )
         } else {
-            format!("set status on {changed} tasks")
+            format!("set status on {changed} {}", task_noun(changed))
         };
         let result = match refresh {
             StatusRefresh::Default => {
@@ -815,7 +998,7 @@ impl TuiStore {
             self.refresh_after_task_batch(
                 current_selected_index,
                 &targets,
-                format!("set priority on {changed} tasks"),
+                format!("set priority on {changed} {}", task_noun(changed)),
             )
             .await?,
         ))
@@ -863,9 +1046,13 @@ impl TuiStore {
                 .await?;
         }
         let message = if changed == 0 {
-            format!("priority unchanged on {} tasks", targets.len())
+            format!(
+                "priority unchanged on {} {}",
+                targets.len(),
+                task_noun(targets.len())
+            )
         } else {
-            format!("set priority on {changed} tasks")
+            format!("set priority on {changed} {}", task_noun(changed))
         };
         Ok(Some(
             self.refresh_after_task_batch(current_selected_index, &targets, message)
@@ -918,9 +1105,13 @@ impl TuiStore {
                 .await?;
         }
         let message = if changed == 0 {
-            format!("project unchanged on {} tasks", targets.len())
+            format!(
+                "project unchanged on {} {}",
+                targets.len(),
+                task_noun(targets.len())
+            )
         } else {
-            format!("set project on {changed} tasks")
+            format!("set project on {changed} {}", task_noun(changed))
         };
         Ok(Some(
             self.refresh_after_task_batch(current_selected_index, &targets, message)
@@ -986,6 +1177,7 @@ impl TuiStore {
         current_selected_index: Option<usize>,
         task_ids: &[crate::ids::TaskId],
         selected_labels: Vec<String>,
+        partial_labels: Vec<String>,
     ) -> Result<Option<MutationMessage>> {
         if task_ids.is_empty() {
             return Ok(None);
@@ -995,6 +1187,7 @@ impl TuiStore {
             .map(|item| item.task.id.clone());
         let task_ids = task_ids.iter().collect::<BTreeSet<_>>();
         let selected_label_set = selected_labels.iter().collect::<BTreeSet<_>>();
+        let partial_label_set = partial_labels.iter().collect::<BTreeSet<_>>();
         let targets = self
             .tasks
             .iter()
@@ -1016,12 +1209,25 @@ impl TuiStore {
                 .collect::<Vec<_>>();
             let remove_labels = before
                 .iter()
-                .filter(|label| !selected_label_set.contains(label))
+                .filter(|label| {
+                    !selected_label_set.contains(label) && !partial_label_set.contains(label)
+                })
                 .cloned()
                 .collect::<Vec<_>>();
             if add_labels.is_empty() && remove_labels.is_empty() {
                 continue;
             }
+            let mut after = before
+                .iter()
+                .filter(|label| !remove_labels.contains(label))
+                .cloned()
+                .collect::<Vec<_>>();
+            for label in &add_labels {
+                if !after.contains(label) {
+                    after.push(label.clone());
+                }
+            }
+            after.sort();
             updates.push((
                 item.task.id.clone(),
                 TaskUpdate {
@@ -1033,7 +1239,7 @@ impl TuiStore {
             undo_commands.push(UndoCommand::SetTaskLabels {
                 task_id: item.task.id.clone(),
                 before,
-                after: selected_labels.clone(),
+                after,
             });
         }
         self.database
@@ -1050,9 +1256,13 @@ impl TuiStore {
             .refresh(selected_id.as_ref().or(fallback_id.as_ref()))
             .await?;
         let message = if changed == 0 {
-            format!("labels unchanged on {} tasks", targets.len())
+            format!(
+                "labels unchanged on {} {}",
+                targets.len(),
+                task_noun(targets.len())
+            )
         } else {
-            format!("set labels on {changed} tasks")
+            format!("set labels on {changed} {}", task_noun(changed))
         };
         Ok(Some(MutationMessage::new(message, selected)))
     }

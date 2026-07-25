@@ -24,8 +24,13 @@ impl App {
             OverlaySubmit::AddTask(state) => {
                 self.handle_add_task_submit(*state).await?;
             }
-            OverlaySubmit::Picker { route, values } => {
-                self.handle_picker_submit(route, values).await?;
+            OverlaySubmit::Picker {
+                route,
+                values,
+                partial_values,
+            } => {
+                self.handle_picker_submit(route, values, partial_values)
+                    .await?;
             }
             OverlaySubmit::HeaderMenu { action } => {
                 self.submit_header_menu(action).await?;
@@ -35,6 +40,9 @@ impl App {
             }
             OverlaySubmit::Text { route, value } => {
                 self.handle_text_submit(route, value).await?;
+            }
+            OverlaySubmit::Clear { route } => {
+                self.begin_clear_edit_value(route).await?;
             }
             OverlaySubmit::Multiline { route, value } => {
                 self.handle_multiline_submit(route, value).await?;
@@ -189,6 +197,7 @@ impl App {
         &mut self,
         route: OverlayRoute,
         values: Vec<String>,
+        partial_values: Vec<String>,
     ) -> Result<()> {
         match route.picker_submit_route() {
             Some(PickerSubmitRoute::AddTaskTitleProject) => {
@@ -236,7 +245,8 @@ impl App {
                 self.submit_edit_labels(values).await?;
             }
             Some(PickerSubmitRoute::EditLabelsMulti) => {
-                self.submit_edit_labels_multi(values).await?;
+                self.submit_edit_labels_multi(values, partial_values)
+                    .await?;
             }
             Some(PickerSubmitRoute::FilterLabel) => {
                 self.submit_filter_label(values).await?;
@@ -304,6 +314,12 @@ impl App {
             }
             Some(ConfirmSubmitRoute::DeleteAttachmentConfirm) => {
                 self.submit_delete_attachment().await?;
+            }
+            Some(ConfirmSubmitRoute::ClearAvailabilityConfirm) => {
+                self.submit_clear_availability().await?;
+            }
+            Some(ConfirmSubmitRoute::ClearDueConfirm) => {
+                self.submit_clear_due().await?;
             }
             Some(ConfirmSubmitRoute::UpdateConfirm) => {
                 self.confirm_update()?;

@@ -546,6 +546,7 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
                 completion: tag_combobox_completion(state),
                 options: state.options.clone(),
                 selected: state.selected.clone(),
+                partial: state.partial.clone(),
                 highlighted: state.highlighted,
                 visible_start: visible_indices
                     .iter()

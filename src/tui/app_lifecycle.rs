@@ -457,6 +457,7 @@ impl App {
             copy_description_available: selected_task
                 .is_some_and(|task| !task.task.description.is_empty()),
             copy_notes_available: selected_task.is_some_and(|task| !task.notes.is_empty()),
+            marked_task_count: self.marked_task_ids_in_view().len(),
             footer_choice_mode: self.footer_choice_mode,
             sidebar_visible: self.sidebar_visible,
             update_badge: self.update.badge(),

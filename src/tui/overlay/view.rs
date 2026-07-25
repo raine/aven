@@ -140,6 +140,7 @@ pub(crate) struct TagComboboxView {
     pub(crate) completion: Option<String>,
     pub(crate) options: Vec<String>,
     pub(crate) selected: Vec<String>,
+    pub(crate) partial: Vec<String>,
     pub(crate) highlighted: usize,
     pub(crate) visible_indices: Vec<usize>,
     pub(crate) visible_start: usize,
@@ -286,6 +287,7 @@ impl From<&OverlayState> for OverlayView {
                     completion: tag_combobox_completion(state),
                     options: state.options.clone(),
                     selected: state.selected.clone(),
+                    partial: state.partial.clone(),
                     highlighted: state.highlighted,
                     visible_start: visible_indices
                         .iter()

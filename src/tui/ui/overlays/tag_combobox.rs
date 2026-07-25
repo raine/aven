@@ -29,13 +29,23 @@ pub(in crate::tui::ui) fn tag_combobox_lines(state: &TagComboboxView) -> Vec<Lin
     lines.push(Line::from(""));
     lines.extend(option_lines(state));
     lines.push(Line::from(""));
-    lines.push(dialog_hint_line(&[
-        ("Tab/Space", "add"),
-        ("Enter", "add/save"),
-        ("^S", "save"),
-        ("BS", "remove"),
-        ("Esc", "clear"),
-    ]));
+    let hints = if state.partial.is_empty() {
+        vec![
+            ("Tab/Space", "add"),
+            ("Enter", "add/save"),
+            ("^S", "save"),
+            ("BS", "remove"),
+            ("Esc", "clear"),
+        ]
+    } else {
+        vec![
+            ("Tab/Space", "toggle"),
+            ("Enter", "save"),
+            ("^S", "save"),
+            ("~", "on some"),
+        ]
+    };
+    lines.push(dialog_hint_line(&hints));
     lines
 }
 
@@ -110,8 +120,15 @@ fn option_line(state: &TagComboboxView, index: usize) -> Line<'static> {
     let label = &state.options[index];
     let highlighted = index == state.highlighted;
     let selected = state.selected.contains(label);
+    let partial = state.partial.contains(label);
     let marker = if highlighted { "▸" } else { " " };
-    let check = if selected { "✓" } else { " " };
+    let check = if selected {
+        "✓"
+    } else if partial {
+        "~"
+    } else {
+        " "
+    };
     let style = if highlighted {
         SELECTED
     } else {

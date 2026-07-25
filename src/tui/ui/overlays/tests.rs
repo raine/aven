@@ -1607,6 +1607,7 @@ mod picker_overlays {
             completion: Some("g".to_string()),
             options: vec!["bug".to_string(), "feature".to_string()],
             selected: vec!["feature".to_string()],
+            partial: Vec::new(),
             highlighted: 0,
             visible_indices: vec![0],
             visible_start: 0,
@@ -1619,6 +1620,25 @@ mod picker_overlays {
         assert!(rendered.contains("Tab/Space add"));
         assert!(rendered.contains("Enter add/save"));
         assert!(rendered.contains("^S save"));
+    }
+
+    #[test]
+    fn tag_combobox_shows_partial_label_membership() {
+        let rendered = render_overlay_view(OverlayView::TagCombobox(TagComboboxView {
+            route: OverlayRoute::EditLabelsMulti,
+            title: "Edit labels · 2 marked tasks".to_string(),
+            input: String::new(),
+            input_cursor: 0,
+            completion: None,
+            options: vec!["urgent".to_string()],
+            selected: Vec::new(),
+            partial: vec!["urgent".to_string()],
+            highlighted: 0,
+            visible_indices: vec![0],
+            visible_start: 0,
+        }));
+
+        assert!(rendered.contains("~ urgent"));
     }
 
     #[test]
@@ -1846,6 +1866,7 @@ mod route_specific_rendering {
                 completion: None,
                 options: vec!["bug".to_string()],
                 selected: Vec::new(),
+                partial: Vec::new(),
                 highlighted: 0,
                 visible_indices: vec![0],
                 visible_start: 0,

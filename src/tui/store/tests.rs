@@ -93,6 +93,26 @@ async fn seed_title_conflict_database(database: &crate::db::Database, task_id: &
     .unwrap();
 }
 
+async fn seed_field_conflict_database(
+    database: &crate::db::Database,
+    task_id: &TaskId,
+    field: &str,
+) {
+    let mut conn = aven_core::test_support::acquire(database).await.unwrap();
+    sqlx::query(
+        "INSERT INTO conflicts(task_id, field, base_version, local_value, remote_value,
+         local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
+         VALUES (?, ?, NULL, 'local', 'remote', NULL, ?, 'a', 'b', ?, 0)",
+    )
+    .bind(task_id)
+    .bind(field)
+    .bind(crate::ids::new_id())
+    .bind(crate::ids::now())
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+}
+
 fn task_draft(title: &str) -> TaskDraft {
     TaskDraft {
         title: title.to_string(),
@@ -958,6 +978,33 @@ mod task_creation_and_updates {
     }
 
     #[tokio::test]
+    async fn set_exact_priority_for_tasks_rolls_back_on_later_conflict() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (first_id, _) = create_selected_task(&mut store, "First atomic").await;
+        let (second_id, _) = create_selected_task(&mut store, "Second atomic").await;
+        seed_field_conflict_database(&store.database, &second_id, "priority").await;
+        let undo_before = pending_undo_count(&pool, &store.active_workspace.id).await;
+
+        let error = store
+            .set_exact_priority_for_tasks(None, &[first_id.clone(), second_id], "high")
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("conflicted-field"));
+        store.refresh(None).await.unwrap();
+        let first = store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == first_id)
+            .unwrap();
+        assert_eq!(first.task.priority, TaskPriority::None);
+        assert_eq!(
+            pending_undo_count(&pool, &store.active_workspace.id).await,
+            undo_before
+        );
+    }
+
+    #[tokio::test]
     async fn update_project_for_tasks_sets_project_on_each_marked_task() {
         let mut store = test_store().await;
         store
@@ -1034,7 +1081,12 @@ mod task_creation_and_updates {
         let task_ids = vec![first_id.clone(), second_id.clone()];
 
         let outcome = store
-            .update_labels_for_tasks(None, &task_ids, vec!["bug".to_string(), "docs".to_string()])
+            .update_labels_for_tasks(
+                None,
+                &task_ids,
+                vec!["bug".to_string(), "docs".to_string()],
+                Vec::new(),
+            )
             .await
             .unwrap()
             .unwrap();
@@ -1051,6 +1103,48 @@ mod task_creation_and_updates {
     }
 
     #[tokio::test]
+    async fn update_labels_for_tasks_preserves_partial_membership() {
+        let mut store = test_store().await;
+        store.create_label("bug".to_string()).await.unwrap();
+        store.create_label("docs".to_string()).await.unwrap();
+        let (first_id, first) = create_selected_task(&mut store, "First labels").await;
+        store
+            .update_labels(Some(first), vec!["bug".to_string()])
+            .await
+            .unwrap();
+        let (second_id, second) = create_selected_task(&mut store, "Second labels").await;
+        store
+            .update_labels(Some(second), vec!["docs".to_string()])
+            .await
+            .unwrap();
+
+        store
+            .update_labels_for_tasks(
+                None,
+                &[first_id.clone(), second_id.clone()],
+                vec!["bug".to_string()],
+                vec!["docs".to_string()],
+            )
+            .await
+            .unwrap();
+
+        let labels_for = |store: &TuiStore, task_id: &TaskId| {
+            store
+                .tasks
+                .iter()
+                .find(|item| &item.task.id == task_id)
+                .unwrap()
+                .labels
+                .clone()
+        };
+        assert_eq!(labels_for(&store, &first_id), vec!["bug".to_string()]);
+        assert_eq!(
+            labels_for(&store, &second_id),
+            vec!["bug".to_string(), "docs".to_string()]
+        );
+    }
+
+    #[tokio::test]
     async fn update_labels_for_tasks_reports_unchanged_batch() {
         let mut store = test_store().await;
         store.create_label("bug".to_string()).await.unwrap();
@@ -1061,12 +1155,12 @@ mod task_creation_and_updates {
             .unwrap();
 
         let outcome = store
-            .update_labels_for_tasks(None, &[task_id], vec!["bug".to_string()])
+            .update_labels_for_tasks(None, &[task_id], vec!["bug".to_string()], Vec::new())
             .await
             .unwrap()
             .unwrap();
 
-        assert_eq!(outcome.message, "labels unchanged on 1 tasks");
+        assert_eq!(outcome.message, "labels unchanged on 1 task");
     }
 }
 
@@ -2452,6 +2546,7 @@ mod undo {
                 None,
                 &[first_id.clone(), second_id.clone()],
                 vec!["bug".to_string(), "docs".to_string()],
+                Vec::new(),
             )
             .await
             .unwrap();

@@ -2734,6 +2734,7 @@ mod command_and_config_overlays {
         let original_project = app.store.tasks[third].task.project_key.clone();
         app.widgets.marked_task_ids.insert(first_id.clone());
         app.widgets.marked_task_ids.insert(second_id.clone());
+        app.begin_edit_project();
 
         app.submit_edit_project("mobile-app".to_string())
             .await
@@ -2765,6 +2766,7 @@ mod command_and_config_overlays {
         let third_id = app.store.tasks[third].task.id.clone();
         app.widgets.marked_task_ids.insert(first_id.clone());
         app.widgets.marked_task_ids.insert(second_id.clone());
+        app.begin_edit_priority();
 
         app.submit_edit_priority("high".to_string()).await.unwrap();
 
@@ -2780,6 +2782,150 @@ mod command_and_config_overlays {
         assert_eq!(priority_for(&app, &first_id), TaskPriority::High);
         assert_eq!(priority_for(&app, &second_id), TaskPriority::High);
         assert_eq!(priority_for(&app, &third_id), TaskPriority::None);
+    }
+
+    #[tokio::test]
+    async fn mixed_marked_due_dates_keep_then_set_and_undo_as_one_batch() {
+        let mut app = test_app().await;
+        let first = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                due_on: Some("2099-01-01".to_string()),
+                ..test_task_draft("first")
+            },
+        )
+        .await;
+        let first_id = app.store.tasks[first].task.id.clone();
+        let second = create_and_select_task(&mut app, test_task_draft("second")).await;
+        let second_id = app.store.tasks[second].task.id.clone();
+        let third = create_and_select_task(&mut app, test_task_draft("third")).await;
+        let third_id = app.store.tasks[third].task.id.clone();
+        app.widgets.marked_task_ids.insert(first_id.clone());
+        app.widgets.marked_task_ids.insert(second_id.clone());
+
+        app.begin_edit_due();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(state))
+                if state.title == "Edit due date · 2 marked tasks"
+                    && state.prompt.contains("Current: varies")
+                    && state.input.as_str().is_empty()
+        ));
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert_eq!(
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == first_id)
+                .unwrap()
+                .task
+                .due_on
+                .as_deref(),
+            Some("2099-01-01")
+        );
+
+        app.begin_edit_due();
+        type_chars(&mut app, "2099-02-02").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        for task_id in [&first_id, &second_id] {
+            assert_eq!(
+                app.store
+                    .tasks
+                    .iter()
+                    .find(|item| &item.task.id == task_id)
+                    .unwrap()
+                    .task
+                    .due_on
+                    .as_deref(),
+                Some("2099-02-02")
+            );
+        }
+        assert!(
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == third_id)
+                .unwrap()
+                .task
+                .due_on
+                .is_none()
+        );
+        assert_eq!(app.widgets.marked_task_ids.len(), 2);
+
+        app.undo_last().await.unwrap();
+        assert_eq!(
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == first_id)
+                .unwrap()
+                .task
+                .due_on
+                .as_deref(),
+            Some("2099-01-01")
+        );
+        assert!(
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == second_id)
+                .unwrap()
+                .task
+                .due_on
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn clearing_marked_due_dates_requires_confirmation() {
+        let mut app = test_app().await;
+        let first = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                due_on: Some("2099-01-01".to_string()),
+                ..test_task_draft("first clear")
+            },
+        )
+        .await;
+        let first_id = app.store.tasks[first].task.id.clone();
+        let second = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                due_on: Some("2099-02-02".to_string()),
+                ..test_task_draft("second clear")
+            },
+        )
+        .await;
+        let second_id = app.store.tasks[second].task.id.clone();
+        app.widgets.marked_task_ids.insert(first_id.clone());
+        app.widgets.marked_task_ids.insert(second_id.clone());
+
+        app.begin_edit_due();
+        app.handle_overlay_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL))
+            .await
+            .unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Confirm(state))
+                if state.route == OverlayRoute::ClearDueConfirm
+                    && state.prompt == "Clear due date on 2 marked tasks?"
+        ));
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+
+        for task_id in [first_id, second_id] {
+            assert!(
+                app.store
+                    .tasks
+                    .iter()
+                    .find(|item| item.task.id == task_id)
+                    .unwrap()
+                    .task
+                    .due_on
+                    .is_none()
+            );
+        }
     }
 
     #[tokio::test]
@@ -2821,7 +2967,7 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
-    async fn edit_labels_shortcut_opens_marked_overlay_when_tasks_are_marked() {
+    async fn edit_labels_shortcut_uses_one_mark_as_single_task_scope() {
         let mut app = test_app().await;
         let index = create_and_select_task(&mut app, test_task_draft("marked")).await;
         let id = app.store.tasks[index].task.id.clone();
@@ -2833,8 +2979,8 @@ mod command_and_config_overlays {
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::TagCombobox(state))
-                if state.route == OverlayRoute::EditLabelsMulti
-                    && state.title == "Edit labels: 1 marked tasks"
+                if state.route == OverlayRoute::EditLabels
+                    && state.title == EDIT_LABELS_TITLE
         ));
     }
 
@@ -2865,8 +3011,9 @@ mod command_and_config_overlays {
         let third_id = app.store.tasks[third].task.id.clone();
         app.widgets.marked_task_ids.insert(first_id.clone());
         app.widgets.marked_task_ids.insert(second_id.clone());
+        app.begin_edit_labels();
 
-        app.submit_edit_labels_multi(vec!["batch".to_string()])
+        app.submit_edit_labels_multi(vec!["batch".to_string()], Vec::new())
             .await
             .unwrap();
 
@@ -7872,6 +8019,57 @@ mod task_editing {
 
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.title, "Old title updated");
+    }
+
+    #[tokio::test]
+    async fn one_mark_edits_the_marked_title_and_preserves_cursor_selection() {
+        let mut app = test_app().await;
+        let marked = create_and_select_task(&mut app, test_task_draft("Marked title")).await;
+        let marked_id = app.store.tasks[marked].task.id.clone();
+        let selected = create_and_select_task(&mut app, test_task_draft("Cursor title")).await;
+        let selected_id = app.store.tasks[selected].task.id.clone();
+        app.widgets.marked_task_ids.insert(marked_id.clone());
+
+        app.begin_edit_title();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(state)) if state.input.as_str() == "Marked title"
+        ));
+        app.handle_overlay_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+            .await
+            .unwrap();
+        type_chars(&mut app, "Updated marked title").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        let marked = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == marked_id)
+            .unwrap();
+        assert_eq!(marked.task.title, "Updated marked title");
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.id, selected_id);
+        assert!(app.widgets.marked_task_ids.contains(&marked_id));
+    }
+
+    #[tokio::test]
+    async fn multiple_marks_disable_title_editing() {
+        let mut app = test_app().await;
+        let first = create_and_select_task(&mut app, test_task_draft("First")).await;
+        let first_id = app.store.tasks[first].task.id.clone();
+        let second = create_and_select_task(&mut app, test_task_draft("Second")).await;
+        let second_id = app.store.tasks[second].task.id.clone();
+        app.widgets.marked_task_ids.insert(first_id);
+        app.widgets.marked_task_ids.insert(second_id);
+
+        app.begin_edit_title();
+
+        assert!(app.overlay.is_none());
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("title requires one task · 2 tasks marked")
+        );
     }
 
     #[tokio::test]

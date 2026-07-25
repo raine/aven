@@ -416,7 +416,7 @@ pub(super) fn render_command(
 }
 
 fn prefix_hint_lines(context: CommandContext, pending: &[String]) -> Vec<Line<'static>> {
-    prefix_hint_lines_with_availability(context, pending, true, true)
+    prefix_hint_lines_with_availability(context, pending, true, true, 0)
 }
 
 fn prefix_hint_lines_with_availability(
@@ -424,6 +424,7 @@ fn prefix_hint_lines_with_availability(
     pending: &[String],
     copy_description_available: bool,
     copy_notes_available: bool,
+    marked_task_count: usize,
 ) -> Vec<Line<'static>> {
     let matches = prefix_hint_commands(context, pending);
     let command_name_width = command_name_width(
@@ -435,12 +436,26 @@ fn prefix_hint_lines_with_availability(
     matches
         .into_iter()
         .map(|(command, _, key_hint)| {
+            let single_task_edit = matches!(
+                command.action,
+                crate::tui::event::Action::BeginEditTitle
+                    | crate::tui::event::Action::BeginEditDescription
+            );
+            let batch_edit = matches!(
+                command.action,
+                crate::tui::event::Action::BeginEditProject
+                    | crate::tui::event::Action::BeginEditPriority
+                    | crate::tui::event::Action::BeginEditAvailability
+                    | crate::tui::event::Action::BeginEditDue
+                    | crate::tui::event::Action::BeginEditLabels
+            );
             let unavailable = matches!(
                 command.action,
                 crate::tui::event::Action::CopyTaskDescription
             ) && !copy_description_available
                 || matches!(command.action, crate::tui::event::Action::CopyTaskNotes)
-                    && !copy_notes_available;
+                    && !copy_notes_available
+                || single_task_edit && marked_task_count > 1;
             let mut line = command_hint_line(
                 Span::styled(
                     format!(" {:<6} ", key_hint),
@@ -449,6 +464,20 @@ fn prefix_hint_lines_with_availability(
                 command,
                 command_name_width,
             );
+            if marked_task_count > 1 && single_task_edit {
+                line.spans
+                    .push(Span::styled(" · 1 task only", Style::new().fg(FG_DIM)));
+            } else if marked_task_count > 0 && batch_edit {
+                let noun = if marked_task_count == 1 {
+                    "task"
+                } else {
+                    "tasks"
+                };
+                line.spans.push(Span::styled(
+                    format!(" · {marked_task_count} marked {noun}"),
+                    Style::new().fg(FG_MUTED),
+                ));
+            }
             if unavailable {
                 for span in &mut line.spans {
                     span.style = span.style.fg(FG_DIM);
@@ -470,12 +499,22 @@ pub(super) fn render_prefix_hints(frame: &mut Frame, view: &ViewState) {
         &view.pending_shortcut,
         view.copy_description_available,
         view.copy_notes_available,
+        view.marked_task_count,
     );
     if lines.is_empty() {
         return;
     }
     let visible_rows = prefix_hint_visible_rows(frame.area().height, lines.len());
-    let title = format!("{} …", view.pending_shortcut.join(" "));
+    let title = if view.pending_shortcut == ["e"] && view.marked_task_count > 0 {
+        let noun = if view.marked_task_count == 1 {
+            "task"
+        } else {
+            "tasks"
+        };
+        format!("Edit · {} marked {noun}", view.marked_task_count)
+    } else {
+        format!("{} …", view.pending_shortcut.join(" "))
+    };
     let content = Dialog::new(&title, 72, visible_rows.saturating_add(2)).render_block(frame);
     render_scrollable_help_lines(frame, content, lines, view.pending_shortcut_scroll);
 }
@@ -673,6 +712,7 @@ mod tests {
             &["y".to_string()],
             false,
             false,
+            0,
         );
 
         for command_name in [":copy-description", ":copy-notes"] {
@@ -697,6 +737,7 @@ mod tests {
             &["y".to_string()],
             true,
             true,
+            0,
         );
 
         for command_name in [":detail-copy-description", ":detail-copy-notes"] {
@@ -706,6 +747,26 @@ mod tests {
                 .unwrap();
             assert!(line.spans.iter().any(|span| span.style.fg != Some(FG_DIM)));
         }
+    }
+
+    #[test]
+    fn marked_edit_hints_show_scope_and_single_task_limits() {
+        let rendered = prefix_hint_lines_with_availability(
+            CommandContext::Normal,
+            &["e".to_string()],
+            true,
+            true,
+            3,
+        )
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+        assert!(rendered.contains(":edit-title"));
+        assert!(rendered.contains("1 task only"));
+        assert!(rendered.contains(":edit-project"));
+        assert!(rendered.contains("3 marked tasks"));
     }
 
     #[test]
