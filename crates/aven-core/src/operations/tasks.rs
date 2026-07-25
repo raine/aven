@@ -360,7 +360,17 @@ impl Database {
         body: String,
     ) -> Result<NoteOutcome> {
         let mut conn = self.acquire().await?;
-        add_note(&mut conn, workspace, task_id, body).await
+        add_note_operation(&mut conn, workspace, task_id, body, false).await
+    }
+
+    pub async fn add_note_with_tui_undo(
+        &self,
+        workspace: &Workspace,
+        task_id: &TaskId,
+        body: String,
+    ) -> Result<NoteOutcome> {
+        let mut conn = self.acquire().await?;
+        add_note_operation(&mut conn, workspace, task_id, body, true).await
     }
 
     pub async fn delete_note(
@@ -1063,11 +1073,12 @@ pub async fn set_task_deleted(
     })
 }
 
-pub async fn add_note(
+async fn add_note_operation(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     task_id: &crate::ids::TaskId,
     body: String,
+    tui_undo: bool,
 ) -> Result<NoteOutcome> {
     let note_id = new_id();
     let ts = now();
@@ -1101,6 +1112,21 @@ pub async fn add_note(
         .bind(task_id)
         .execute(&mut *tx)
         .await?;
+    if tui_undo {
+        record_tui_undo(
+            &mut tx,
+            &workspace.id,
+            &format!("note {note_id}"),
+            UndoPayload {
+                commands: vec![UndoCommand::DeleteCreatedNote {
+                    task_id: task_id.clone(),
+                    note_id: note_id.clone(),
+                    note_add_change_id: change_id.clone(),
+                }],
+            },
+        )
+        .await?;
+    }
     tx.commit().await?;
     info!(task_id = %task_id, note_id = %note_id, "note added");
     Ok(NoteOutcome {

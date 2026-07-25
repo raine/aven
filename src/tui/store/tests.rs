@@ -719,6 +719,26 @@ mod task_creation_and_updates {
     }
 
     #[tokio::test]
+    async fn note_creation_rolls_back_when_undo_recording_fails() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (task_id, _) = create_selected_task(&mut store, "Note undo failure").await;
+        reject_undo_inserts(&pool).await;
+
+        let error = store
+            .add_note_to_task(&task_id, "atomic note".to_string())
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("injected undo failure"));
+        let persisted: i64 = sqlx::query_scalar("SELECT count(*) FROM notes WHERE task_id = ?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(persisted, 0);
+    }
+
+    #[tokio::test]
     async fn update_task_fields_refresh_selected_task() {
         let mut store = test_store().await;
         let (_, selected) = store

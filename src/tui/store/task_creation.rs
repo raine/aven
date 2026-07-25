@@ -8,7 +8,6 @@ use crate::operations::{
     TaskAttachmentAddInput, TaskCreationOptions, TaskCreationUndo, TaskDraft, TaskOutcome,
 };
 use crate::tui::authoring::PendingTaskAttachment;
-use crate::undo::UndoCommand;
 
 use super::TuiStore;
 
@@ -283,18 +282,8 @@ impl TuiStore {
     ) -> Result<String> {
         let outcome = self
             .database
-            .add_note(&self.active_workspace, task_id, body)
+            .add_note_with_tui_undo(&self.active_workspace, task_id, body)
             .await?;
-        let note_change_id = outcome.change_id.clone();
-        self.record_undo_commands(
-            &format!("note {}", outcome.note_id),
-            vec![UndoCommand::DeleteCreatedNote {
-                task_id: task_id.clone(),
-                note_id: outcome.note_id.clone(),
-                note_add_change_id: note_change_id,
-            }],
-        )
-        .await?;
         Ok(outcome.note_id)
     }
 }
