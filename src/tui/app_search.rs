@@ -269,8 +269,11 @@ impl App {
                         project_key: epic.project_key.clone(),
                     });
                     search.input = LineEdit::new(input.clone());
-                    self.epic_child_authoring =
-                        Some(crate::tui::app::EpicChildAuthoringContext { epic, search });
+                    self.epic_child_authoring = Some(crate::tui::app::EpicChildAuthoringContext {
+                        epic,
+                        search,
+                        return_to_detail: self.detail_context,
+                    });
                     let project_key = self
                         .epic_child_authoring
                         .as_ref()

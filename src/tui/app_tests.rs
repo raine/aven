@@ -5974,6 +5974,51 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn canceling_new_epic_child_authoring_preserves_list_origin() {
+        let mut app = test_app().await;
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+
+        for code in [KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')] {
+            app.handle_normal_key(code).await.unwrap();
+        }
+        app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::AddTask(_))));
+        assert!(
+            app.epic_child_authoring
+                .as_ref()
+                .is_some_and(|context| !context.return_to_detail)
+        );
+
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::Search(_))));
+        assert!(!app.detail_context);
+
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(app.overlay.is_none());
+        assert!(!app.detail_context);
+        assert_eq!(
+            app.store
+                .selected_task(app.widgets.table.selected())
+                .map(|item| &item.task.id),
+            Some(&parent_id)
+        );
+    }
+
+    #[tokio::test]
     async fn epic_detail_add_child_search_hides_other_projects() {
         let (_dir, _pool, mut app) = test_app_with_pool().await;
         let parent_index = create_and_select_task(

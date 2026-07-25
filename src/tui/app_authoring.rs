@@ -525,10 +525,11 @@ impl App {
         self.intake.cancel();
         if let Some(context) = self.epic_child_authoring.take() {
             self.authoring.clear_add_task();
+            let return_to_detail = context.return_to_detail;
             let mut search = context.search;
             self.schedule_search_preview(&mut search);
             self.overlay = Some(OverlayState::Search(search));
-            self.detail_context = true;
+            self.detail_context = return_to_detail;
             return;
         }
         let return_to_detail = self.authoring.cancel() || self.detail_context;

@@ -198,6 +198,7 @@ pub(crate) struct RemovedEpicChild {
 pub(super) struct EpicChildAuthoringContext {
     pub(super) epic: crate::tui::store::EpicContext,
     pub(super) search: crate::tui::overlay::SearchState,
+    pub(super) return_to_detail: bool,
 }
 
 pub(crate) struct App {
