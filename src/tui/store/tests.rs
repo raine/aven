@@ -1732,6 +1732,45 @@ mod conflicts {
     }
 
     #[tokio::test]
+    async fn conflict_resolution_rolls_back_when_undo_recording_fails() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (task_id, selected) = create_selected_task(&mut store, "Conflict undo failure").await;
+        let display_ref = store.tasks[selected].display_ref.clone();
+        seed_title_conflict(&pool, &task_id).await;
+        reject_undo_inserts(&pool).await;
+
+        let error = store
+            .resolve_conflict_value(
+                ConflictTarget {
+                    task_id: task_id.clone(),
+                    display_ref,
+                    field: "title".to_string(),
+                    variant_a: "a".to_string(),
+                    local_value: "local title".to_string(),
+                    variant_b: "b".to_string(),
+                    remote_value: "remote title".to_string(),
+                },
+                "local title".to_string(),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("injected undo failure"));
+        let title: String = sqlx::query_scalar("SELECT title FROM tasks WHERE id = ?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let resolved: i64 = sqlx::query_scalar("SELECT resolved FROM conflicts WHERE task_id = ?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(title, "Conflict undo failure");
+        assert_eq!(resolved, 0);
+    }
+
+    #[tokio::test]
     async fn resolve_missing_conflict_leaves_task_unchanged() {
         let dir = tempfile::tempdir().unwrap();
         let pool = crate::test_support::open_db(&dir.path().join("test.db"))

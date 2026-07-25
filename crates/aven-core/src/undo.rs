@@ -188,16 +188,6 @@ impl Database {
         conflict_row_id(&mut conn, workspace_id, task_id, field).await
     }
 
-    pub async fn record_tui_undo(
-        &self,
-        workspace_id: &WorkspaceId,
-        summary: &str,
-        payload: UndoPayload,
-    ) -> Result<()> {
-        let mut conn = self.acquire().await?;
-        record_tui_undo(&mut conn, workspace_id, summary, payload).await
-    }
-
     pub async fn clear_pending_tui_undo_entries(&self) -> Result<()> {
         let mut conn = self.acquire().await?;
         clear_pending_tui_undo_entries(&mut conn).await

@@ -123,28 +123,14 @@ pub(crate) async fn cmd_internal_natural_add(
         let draft =
             crate::task_intake::parsed_output_to_draft_with_database(database, &context, &output)
                 .await?;
-        let outcome = database.create_task(&workspace, draft).await?;
-        if args.tui_undo {
-            let task_id = outcome.task.id.clone();
-            let snapshot = database
-                .task_undo_snapshot(&args.workspace_id, &task_id)
-                .await?;
-            database
-                .record_tui_undo(
-                    &args.workspace_id,
-                    &format!("task {task_id}"),
-                    crate::undo::UndoPayload {
-                        commands: vec![crate::undo::UndoCommand::DeleteCreatedTask {
-                            task_id,
-                            create_change_id: outcome.create_change_id.clone(),
-                            attachment_ids: Vec::new(),
-                            attachment_change_ids: Vec::new(),
-                            expected: snapshot,
-                        }],
-                    },
-                )
-                .await?;
-        }
+        let undo = if args.tui_undo {
+            aven_core::operations::TaskCreationUndo::TuiTask
+        } else {
+            aven_core::operations::TaskCreationUndo::None
+        };
+        let outcome = database
+            .create_task_with_undo(&workspace, draft, undo)
+            .await?;
         Ok(outcome)
     }
     .await;

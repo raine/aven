@@ -1,7 +1,6 @@
 use anyhow::Result;
 
 use crate::tui::store::{ConflictTarget, MutationMessage};
-use crate::undo::UndoCommand;
 
 use super::TuiStore;
 
@@ -40,26 +39,16 @@ impl TuiStore {
     ) -> Result<MutationMessage> {
         let resolution = self
             .database
-            .resolve_conflict_for_undo(
+            .resolve_conflict_with_tui_undo(
                 &self.active_workspace,
                 &target.task_id,
                 &target.field,
                 &value,
+                &format!("conflict {} {}", target.display_ref, target.field),
             )
             .await?;
         let resolved_task_id = resolution.outcome.task.id.clone();
         let resolved_field = resolution.outcome.field.clone();
-        self.record_undo_commands(
-            &format!("conflict {} {}", target.display_ref, target.field),
-            vec![UndoCommand::RestoreConflictResolution {
-                task_id: target.task_id.clone(),
-                field: target.field.clone(),
-                before: resolution.before,
-                after: resolution.after,
-                conflict_id: resolution.conflict_id,
-            }],
-        )
-        .await?;
         self.refresh_task_message(
             &resolved_task_id,
             format!(

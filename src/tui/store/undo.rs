@@ -1,27 +1,10 @@
 use anyhow::Result;
 
 use crate::tui::store::{MutationMessage, TaskScope};
-use crate::undo::{UndoCommand, UndoPayload};
 
 use super::TuiStore;
 
 impl TuiStore {
-    pub(super) async fn record_undo(&self, summary: &str, payload: UndoPayload) -> Result<()> {
-        let workspace_id = self.active_workspace.id.clone();
-        self.database
-            .record_tui_undo(&workspace_id, summary, payload)
-            .await?;
-        Ok(())
-    }
-
-    pub(super) async fn record_undo_commands(
-        &self,
-        summary: &str,
-        commands: Vec<UndoCommand>,
-    ) -> Result<()> {
-        self.record_undo(summary, UndoPayload { commands }).await
-    }
-
     pub(super) async fn refresh_task_message(
         &mut self,
         task_id: &crate::ids::TaskId,

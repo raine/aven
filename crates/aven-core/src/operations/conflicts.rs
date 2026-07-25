@@ -10,6 +10,7 @@ use crate::projects::{resolve_existing_project_in_workspace, resolve_project_for
 use crate::refs::get_task_in_workspace;
 use crate::task_fields::TaskField;
 use crate::types::Task;
+use crate::undo::{UndoCommand, UndoPayload, record_tui_undo};
 use crate::workspaces::Workspace;
 
 impl Database {
@@ -44,26 +45,24 @@ impl Database {
         conflict_variant_value(&mut conn, workspace, task_id, field, token).await
     }
 
-    pub async fn resolve_conflict_for_undo(
+    pub async fn resolve_conflict_with_tui_undo(
         &self,
         workspace: &Workspace,
         task_id: &TaskId,
         field: &str,
         value: &str,
+        summary: &str,
     ) -> Result<ConflictResolutionOutcome> {
         let mut conn = self.acquire().await?;
-        let before =
-            crate::undo::task_field_value(&mut conn, &workspace.id, task_id, field).await?;
-        let conflict_id =
-            crate::undo::conflict_row_id(&mut conn, &workspace.id, task_id, field).await?;
-        let outcome = resolve_conflict(&mut conn, workspace, task_id, field, value).await?;
-        let after = crate::undo::task_field_value(&mut conn, &workspace.id, task_id, field).await?;
-        Ok(ConflictResolutionOutcome {
-            outcome,
-            before,
-            after,
-            conflict_id,
-        })
+        resolve_conflict_value(
+            &mut conn,
+            workspace,
+            task_id,
+            field,
+            ResolutionValue::Explicit(value),
+            Some(summary),
+        )
+        .await
     }
 
     pub async fn resolve_conflict(
@@ -234,14 +233,16 @@ pub async fn resolve_conflict(
     field: &str,
     value: &str,
 ) -> Result<ConflictOutcome> {
-    resolve_conflict_value(
+    Ok(resolve_conflict_value(
         conn,
         workspace,
         task_id,
         field,
         ResolutionValue::Explicit(value),
+        None,
     )
-    .await
+    .await?
+    .outcome)
 }
 
 pub(crate) async fn resolve_conflict_choice(
@@ -251,14 +252,16 @@ pub(crate) async fn resolve_conflict_choice(
     field: &str,
     choice: ConflictValueChoice,
 ) -> Result<ConflictOutcome> {
-    resolve_conflict_value(
+    Ok(resolve_conflict_value(
         conn,
         workspace,
         task_id,
         field,
         ResolutionValue::Choice(choice),
+        None,
     )
-    .await
+    .await?
+    .outcome)
 }
 
 enum ResolutionValue<'a> {
@@ -272,10 +275,13 @@ async fn resolve_conflict_value(
     task_id: &crate::ids::TaskId,
     field: &str,
     resolution: ResolutionValue<'_>,
-) -> Result<ConflictOutcome> {
+    tui_summary: Option<&str>,
+) -> Result<ConflictResolutionOutcome> {
     let task_field = TaskField::parse_or_unknown(field)?;
     let field = task_field.as_str();
     let mut tx = begin_immediate(conn).await?;
+    let before = crate::undo::task_field_value(&mut tx, &workspace.id, task_id, field).await?;
+    let conflict_id = crate::undo::conflict_row_id(&mut tx, &workspace.id, task_id, field).await?;
     let value = match resolution {
         ResolutionValue::Explicit(value) => value.to_string(),
         ResolutionValue::Choice(choice) => {
@@ -339,10 +345,34 @@ async fn resolve_conflict_value(
     )
     .await?;
     set_field_version(&mut tx, task_id, field, &change_id).await?;
+    let task = get_task_in_workspace(&mut tx, workspace, task_id).await?;
+    let after = crate::undo::task_field_value(&mut tx, &workspace.id, task_id, field).await?;
+    if let Some(summary) = tui_summary {
+        record_tui_undo(
+            &mut tx,
+            &workspace.id,
+            summary,
+            UndoPayload {
+                commands: vec![UndoCommand::RestoreConflictResolution {
+                    task_id: task_id.clone(),
+                    field: field.to_string(),
+                    before: before.clone(),
+                    after: after.clone(),
+                    conflict_id,
+                }],
+            },
+        )
+        .await?;
+    }
     tx.commit().await?;
     info!(task_id = %task_id, field = %field, "conflict resolved");
-    Ok(ConflictOutcome {
-        task: get_task_in_workspace(conn, workspace, task_id).await?,
-        field: field.to_string(),
+    Ok(ConflictResolutionOutcome {
+        outcome: ConflictOutcome {
+            task,
+            field: field.to_string(),
+        },
+        before,
+        after,
+        conflict_id,
     })
 }
