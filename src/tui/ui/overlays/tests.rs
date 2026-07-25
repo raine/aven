@@ -382,6 +382,66 @@ mod text_panel_and_search {
     }
 
     #[test]
+    fn add_epic_child_create_action_spans_row_and_updates_enter_hint() {
+        let mut create = search_result_item("Create a child using \"Ship account security\"...");
+        create.display_ref.clear();
+        create.create_new = true;
+        let purpose = SearchPurpose::AddEpicChild {
+            epic_id: crate::test_support::task_id("epic-1"),
+            display_ref: "APP-YDKM".to_string(),
+            project_key: "app".to_string(),
+        };
+        let buffer = overlay_buffer(OverlayView::Search {
+            input: "Ship account security".to_string(),
+            cursor: 21,
+            results: vec![create, search_result_item("Ship account security")],
+            selected: 0,
+            total_matches: 1,
+            stale: false,
+            no_matches_cached: false,
+            purpose,
+        });
+        let create_row = (0..buffer.area.height)
+            .map(|row| buffer_row(&buffer, row))
+            .find(|row| row.contains("Create a child using"))
+            .unwrap();
+        let rendered = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(create_row.contains("▸ Create a child using"));
+        assert!(rendered.contains("  Open task authoring"));
+        assert!(rendered.contains("Enter create child"));
+        assert!(!rendered.contains("Enter add selected child"));
+    }
+
+    #[test]
+    fn add_epic_child_task_selection_uses_add_enter_hint() {
+        let mut create = search_result_item("Create a new child task...");
+        create.display_ref.clear();
+        create.create_new = true;
+        let rendered = render_overlay_view(OverlayView::Search {
+            input: String::new(),
+            cursor: 0,
+            results: vec![create, search_result_item("Existing task")],
+            selected: 1,
+            total_matches: 1,
+            stale: false,
+            no_matches_cached: false,
+            purpose: SearchPurpose::AddEpicChild {
+                epic_id: crate::test_support::task_id("epic-1"),
+                display_ref: "APP-YDKM".to_string(),
+                project_key: "app".to_string(),
+            },
+        });
+
+        assert!(rendered.contains("Enter add selected child"));
+        assert!(!rendered.contains("Enter create child"));
+    }
+
+    #[test]
     fn search_overlay_marks_epic_results_with_star() {
         let mut result = search_result_item("Query result");
         result.is_epic = true;

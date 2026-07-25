@@ -75,7 +75,7 @@ pub(in crate::tui::ui) fn render_search(frame: &mut Frame, view: SearchRenderVie
             input_area,
         );
         frame.render_widget(Paragraph::new(""), input_spacer_area);
-        frame.render_widget(Paragraph::new(search_hint_line(purpose)), hint_area);
+        frame.render_widget(Paragraph::new(search_hint_line(purpose, None)), hint_area);
         return;
     }
 
@@ -102,7 +102,10 @@ pub(in crate::tui::ui) fn render_search(frame: &mut Frame, view: SearchRenderVie
     render_result_list(frame, body_area, input, results, selected, status.stale);
 
     frame.render_widget(Paragraph::new(""), hint_spacer_area);
-    frame.render_widget(Paragraph::new(search_hint_line(purpose)), hint_area);
+    frame.render_widget(
+        Paragraph::new(search_hint_line(purpose, results.get(selected))),
+        hint_area,
+    );
 }
 
 fn search_summary_line(
@@ -201,6 +204,18 @@ fn result_line(
 ) -> Line<'static> {
     let style = row_style(selected, stale);
     let marker = if selected { "▸" } else { " " };
+    if result.create_new {
+        let title_width = width.saturating_sub(2).max(8);
+        let title = truncate_chars(&result.title, title_width);
+        let used_width = 2 + title.chars().count();
+        let mut spans = vec![Span::styled(format!("{marker} "), style)];
+        spans.extend(title_spans(&title, input, result.matched_field, style));
+        spans.push(Span::styled(
+            " ".repeat(width.saturating_sub(used_width)),
+            style,
+        ));
+        return Line::from(spans);
+    }
     let ref_width = 10;
     let epic_marker_width = usize::from(result.is_epic) * 2;
     let title_width = width
@@ -328,7 +343,7 @@ fn result_meta_line(
         Style::new().fg(FG_DIM).bg(bg)
     };
     if result.create_new {
-        return padded_meta_line("  open task authoring", muted, width);
+        return padded_meta_line("  Open task authoring", muted, width);
     }
     if let Some(reason) = &result.unavailable_reason {
         return padded_meta_line(&format!("  {reason}"), muted, width);
@@ -441,7 +456,12 @@ fn compact_age(age_seconds: i64) -> String {
     format!("{}mo", days / 30)
 }
 
-fn search_hint_line(purpose: &SearchPurpose) -> Line<'static> {
+fn search_hint_line(purpose: &SearchPurpose, selected: Option<&SearchResultItem>) -> Line<'static> {
+    let enter_hint = if selected.is_some_and(|result| result.create_new) {
+        "create child"
+    } else {
+        purpose.enter_hint()
+    };
     let mut spans = vec![
         Span::styled(
             "↑/↓ ^N/^P",
@@ -449,10 +469,7 @@ fn search_hint_line(purpose: &SearchPurpose) -> Line<'static> {
         ),
         Span::styled(" select", Style::new().fg(FG_DIM)),
         Span::styled("  Enter", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(
-            format!(" {}", purpose.enter_hint()),
-            Style::new().fg(FG_DIM),
-        ),
+        Span::styled(format!(" {enter_hint}"), Style::new().fg(FG_DIM)),
     ];
     if let Some(tab_hint) = purpose.tab_hint() {
         spans.extend([
