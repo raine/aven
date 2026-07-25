@@ -698,26 +698,25 @@ impl TuiStore {
         task_id: &crate::ids::TaskId,
         depends_on_task_id: &crate::ids::TaskId,
     ) -> Result<MutationMessage> {
-        let outcome = self
-            .database
-            .add_task_dependency(&self.active_workspace, task_id, depends_on_task_id)
-            .await?;
         let display_refs = self
             .database
             .display_ref_context(&self.active_workspace.id)
             .await?;
-        let task_ref = display_refs.display_ref(&outcome.task);
-        let depends_on_ref = display_refs.display_ref(&outcome.depends_on);
-        if outcome.changed {
-            self.record_undo_commands(
-                &format!("dependency {task_ref}"),
-                vec![UndoCommand::AddTaskDependency {
-                    task_id: outcome.task.id.clone(),
-                    depends_on_task_id: outcome.depends_on.id.clone(),
-                }],
+        let task = self
+            .database
+            .resolve_task_ref(&self.active_workspace, task_id.as_str())
+            .await?;
+        let task_ref = display_refs.display_ref(&task);
+        let outcome = self
+            .database
+            .add_task_dependency_with_undo(
+                &self.active_workspace,
+                task_id,
+                depends_on_task_id,
+                UndoContext::tui(format!("dependency {task_ref}")),
             )
             .await?;
-        }
+        let depends_on_ref = display_refs.display_ref(&outcome.depends_on);
         let verb = if outcome.changed { "added" } else { "kept" };
         self.refresh_task_message(
             &outcome.task.id,
@@ -736,23 +735,18 @@ impl TuiStore {
         };
         let outcome = self
             .database
-            .remove_task_dependency(&self.active_workspace, &item.task.id, depends_on_task_id)
+            .remove_task_dependency_with_undo(
+                &self.active_workspace,
+                &item.task.id,
+                depends_on_task_id,
+                UndoContext::tui(format!("dependency {}", item.display_ref)),
+            )
             .await?;
         let display_refs = self
             .database
             .display_ref_context(&self.active_workspace.id)
             .await?;
         let depends_on_ref = display_refs.display_ref(&outcome.depends_on);
-        if outcome.changed {
-            self.record_undo_commands(
-                &format!("dependency {}", item.display_ref),
-                vec![UndoCommand::RemoveTaskDependency {
-                    task_id: item.task.id.clone(),
-                    depends_on_task_id: outcome.depends_on.id.clone(),
-                }],
-            )
-            .await?;
-        }
         let verb = if outcome.changed { "removed" } else { "kept" };
         Ok(Some(
             self.refresh_task_message(

@@ -8,6 +8,7 @@ use crate::ids::{TaskId, now};
 use crate::refs::get_task_in_workspace;
 use crate::task_fields::TaskField;
 use crate::types::Task;
+use crate::undo::{UndoCommand, UndoContext, UndoPayload, record_tui_undo};
 use crate::workspaces::Workspace;
 
 impl Database {
@@ -17,8 +18,39 @@ impl Database {
         child_id: &TaskId,
         epic_id: &TaskId,
     ) -> Result<EpicLinkOutcome> {
+        self.add_task_to_epic_with_undo(workspace, child_id, epic_id, UndoContext::None)
+            .await
+    }
+
+    pub async fn add_task_to_epic_with_undo(
+        &self,
+        workspace: &Workspace,
+        child_id: &TaskId,
+        epic_id: &TaskId,
+        undo: UndoContext,
+    ) -> Result<EpicLinkOutcome> {
         let mut conn = self.acquire().await?;
-        add_task_to_epic(&mut conn, workspace, child_id, epic_id).await
+        let mut tx = begin_immediate(&mut conn).await?;
+        let outcome =
+            add_task_to_epic_in_transaction(&mut tx, workspace, child_id, epic_id).await?;
+        if outcome.changed
+            && let UndoContext::Tui { summary } = undo
+        {
+            record_tui_undo(
+                &mut tx,
+                &workspace.id,
+                &summary,
+                UndoPayload {
+                    commands: vec![UndoCommand::AddEpicChild {
+                        epic_id: outcome.epic.id.clone(),
+                        child_id: outcome.child.id.clone(),
+                    }],
+                },
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(outcome)
     }
 
     pub async fn remove_task_from_epic(
@@ -27,8 +59,39 @@ impl Database {
         child_id: &TaskId,
         epic_id: &TaskId,
     ) -> Result<EpicLinkOutcome> {
+        self.remove_task_from_epic_with_undo(workspace, child_id, epic_id, UndoContext::None)
+            .await
+    }
+
+    pub async fn remove_task_from_epic_with_undo(
+        &self,
+        workspace: &Workspace,
+        child_id: &TaskId,
+        epic_id: &TaskId,
+        undo: UndoContext,
+    ) -> Result<EpicLinkOutcome> {
         let mut conn = self.acquire().await?;
-        remove_task_from_epic(&mut conn, workspace, child_id, epic_id).await
+        let mut tx = begin_immediate(&mut conn).await?;
+        let outcome =
+            remove_task_from_epic_in_transaction(&mut tx, workspace, child_id, epic_id).await?;
+        if outcome.changed
+            && let UndoContext::Tui { summary } = undo
+        {
+            record_tui_undo(
+                &mut tx,
+                &workspace.id,
+                &summary,
+                UndoPayload {
+                    commands: vec![UndoCommand::RemoveEpicChild {
+                        epic_id: outcome.epic.id.clone(),
+                        child_id: outcome.child.id.clone(),
+                    }],
+                },
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(outcome)
     }
 }
 
@@ -227,19 +290,6 @@ pub(crate) async fn restore_task_to_epic_in_transaction(
         child: pair.child,
         changed,
     })
-}
-
-pub async fn remove_task_from_epic(
-    conn: &mut SqliteConnection,
-    workspace: &Workspace,
-    child_id: &crate::ids::TaskId,
-    epic_id: &crate::ids::TaskId,
-) -> Result<EpicLinkOutcome> {
-    let mut tx = begin_immediate(conn).await?;
-    let outcome =
-        remove_task_from_epic_in_transaction(&mut tx, workspace, child_id, epic_id).await?;
-    tx.commit().await?;
-    Ok(outcome)
 }
 
 pub(crate) async fn remove_task_from_epic_in_transaction(

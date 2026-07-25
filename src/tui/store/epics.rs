@@ -1,6 +1,6 @@
 use crate::query::TaskDependencyLink;
 use crate::tui::store::MutationMessage;
-use crate::undo::UndoCommand;
+use crate::undo::UndoContext;
 
 use super::{TaskListRenderMode, TuiStore};
 
@@ -132,25 +132,24 @@ impl TuiStore {
         epic: EpicContext,
         child_id: crate::ids::TaskId,
     ) -> Result<EpicChildMutation, anyhow::Error> {
-        let outcome = self
-            .database
-            .add_task_to_epic(&self.active_workspace, &child_id, &epic.epic_id)
-            .await?;
         let display_refs = self
             .database
             .display_ref_context(&self.active_workspace.id)
             .await?;
-        let child_ref = display_refs.display_ref(&outcome.child);
-        if outcome.changed {
-            self.record_undo_commands(
-                &format!("add {child_ref} to {}", epic.display_ref),
-                vec![UndoCommand::AddEpicChild {
-                    epic_id: epic.epic_id.clone(),
-                    child_id: child_id.clone(),
-                }],
+        let child = self
+            .database
+            .resolve_task_ref(&self.active_workspace, child_id.as_str())
+            .await?;
+        let child_ref = display_refs.display_ref(&child);
+        let outcome = self
+            .database
+            .add_task_to_epic_with_undo(
+                &self.active_workspace,
+                &child_id,
+                &epic.epic_id,
+                UndoContext::tui(format!("add {child_ref} to {}", epic.display_ref)),
             )
             .await?;
-        }
         if self.view_state.render_mode() == TaskListRenderMode::Epics {
             self.view_state.collapsed_epic_ids.remove(&epic.epic_id);
             self.view_state
@@ -200,25 +199,16 @@ impl TuiStore {
     ) -> Result<EpicChildMutation, anyhow::Error> {
         let outcome = self
             .database
-            .remove_task_from_epic(
+            .remove_task_from_epic_with_undo(
                 &self.active_workspace,
                 &target.child.task_id,
                 &target.epic.epic_id,
-            )
-            .await?;
-        if outcome.changed {
-            self.record_undo_commands(
-                &format!(
+                UndoContext::tui(format!(
                     "remove {} from {}",
                     target.child.display_ref, target.epic.display_ref
-                ),
-                vec![UndoCommand::RemoveEpicChild {
-                    epic_id: target.epic.epic_id.clone(),
-                    child_id: target.child.task_id.clone(),
-                }],
+                )),
             )
             .await?;
-        }
         self.refresh(Some(&target.epic.epic_id)).await?;
         let selected = self
             .tasks

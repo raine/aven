@@ -3557,6 +3557,42 @@ mod epics {
     }
 
     #[tokio::test]
+    async fn epic_membership_rolls_back_when_undo_recording_fails() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (parent_id, parent_index) = create_selected_task(&mut store, "Atomic epic").await;
+        let (child_id, _) = create_selected_task(&mut store, "Atomic child").await;
+        let epic = EpicContext {
+            epic_id: parent_id.clone(),
+            display_ref: store.tasks[parent_index].display_ref.clone(),
+            project_key: store.tasks[parent_index].task.project_key.clone(),
+        };
+        reject_undo_inserts(&pool).await;
+
+        let error = store
+            .add_epic_child(epic, child_id.clone())
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("injected undo failure"));
+        let linked: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM task_epic_links
+             WHERE epic_task_id = ? AND child_task_id = ?",
+        )
+        .bind(&parent_id)
+        .bind(&child_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(linked, 0);
+        let is_epic: i64 = sqlx::query_scalar("SELECT is_epic FROM tasks WHERE id = ?")
+            .bind(&parent_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(is_epic, 0);
+    }
+
+    #[tokio::test]
     async fn add_epic_child_and_undo_remove_relationship() {
         let (_dir, pool, mut store) = test_store_with_pool().await;
         let (parent_id, parent_index) = create_selected_task(&mut store, "Parent epic").await;
@@ -3653,6 +3689,31 @@ mod epics {
 }
 mod dependency_actions {
     use super::*;
+
+    #[tokio::test]
+    async fn dependency_add_rolls_back_when_undo_recording_fails() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (blocker_id, _) = create_selected_task(&mut store, "Atomic blocker").await;
+        let (task_id, selected) = create_selected_task(&mut store, "Atomic blocked").await;
+        reject_undo_inserts(&pool).await;
+
+        let error = store
+            .add_dependency(Some(selected), &blocker_id)
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("injected undo failure"));
+        let persisted: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM task_dependencies
+             WHERE task_id = ? AND depends_on_task_id = ?",
+        )
+        .bind(&task_id)
+        .bind(&blocker_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(persisted, 0);
+    }
 
     #[tokio::test]
     async fn dependency_actions_add_remove_and_undo() {
