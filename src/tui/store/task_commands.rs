@@ -605,29 +605,24 @@ impl TuiStore {
             .filter(|label| !selected_labels.contains(label))
             .cloned()
             .collect::<Vec<_>>();
-        let outcome = self
-            .update_selected_task(
-                index,
-                TaskUpdate {
-                    add_labels,
-                    remove_labels,
-                    ..TaskUpdate::default()
-                },
-                |item| format!("set {} labels", item.display_ref),
+        self.database
+            .mutate_tasks(
+                &self.active_workspace,
+                vec![(
+                    item.task.id.clone(),
+                    TaskUpdate {
+                        add_labels,
+                        remove_labels,
+                        ..TaskUpdate::default()
+                    },
+                )],
+                UndoContext::tui(format!("labels {}", item.display_ref)),
             )
             .await?;
-        if outcome.is_some() {
-            self.record_undo_commands(
-                &format!("labels {}", item.display_ref),
-                vec![UndoCommand::SetTaskLabels {
-                    task_id: item.task.id.clone(),
-                    before: item.labels.clone(),
-                    after: selected_labels,
-                }],
-            )
-            .await?;
-        }
-        Ok(outcome)
+        Ok(Some(
+            self.refresh_task_message(&item.task.id, format!("set {} labels", item.display_ref))
+                .await?,
+        ))
     }
 
     pub(crate) async fn update_deleted(
@@ -1159,10 +1154,9 @@ impl TuiStore {
             return Ok(None);
         }
 
-        let mut undo_commands = Vec::new();
         let mut updates = Vec::new();
         for item in &targets {
-            let before = item.labels.clone();
+            let before = &item.labels;
             let add_labels = selected_labels
                 .iter()
                 .filter(|label| !before.contains(label))
@@ -1178,17 +1172,6 @@ impl TuiStore {
             if add_labels.is_empty() && remove_labels.is_empty() {
                 continue;
             }
-            let mut after = before
-                .iter()
-                .filter(|label| !remove_labels.contains(label))
-                .cloned()
-                .collect::<Vec<_>>();
-            for label in &add_labels {
-                if !after.contains(label) {
-                    after.push(label.clone());
-                }
-            }
-            after.sort();
             updates.push((
                 item.task.id.clone(),
                 TaskUpdate {
@@ -1197,21 +1180,18 @@ impl TuiStore {
                     ..TaskUpdate::default()
                 },
             ));
-            undo_commands.push(UndoCommand::SetTaskLabels {
-                task_id: item.task.id.clone(),
-                before,
-                after,
-            });
         }
-        self.database
-            .update_tasks(&self.active_workspace, updates)
+        let expected_changed = updates.len();
+        let report = self
+            .database
+            .mutate_tasks(
+                &self.active_workspace,
+                updates,
+                UndoContext::tui(format!("labels {expected_changed} tasks")),
+            )
             .await?;
 
-        let changed = undo_commands.len();
-        if changed > 0 {
-            self.record_undo_commands(&format!("labels {changed} tasks"), undo_commands)
-                .await?;
-        }
+        let changed = report.changed_count();
         let fallback_id = targets.first().map(|item| item.task.id.clone());
         let selected = self
             .refresh(selected_id.as_ref().or(fallback_id.as_ref()))
