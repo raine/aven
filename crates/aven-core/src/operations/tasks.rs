@@ -384,6 +384,7 @@ impl Database {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub async fn create_task(
     conn: &mut SqliteConnection,
     workspace: &Workspace,

@@ -141,6 +141,7 @@ async fn record_dependency_change(
     Ok(())
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub async fn add_task_dependency(
     conn: &mut SqliteConnection,
     workspace: &Workspace,

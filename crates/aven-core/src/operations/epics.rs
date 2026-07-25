@@ -172,6 +172,7 @@ async fn mark_task_as_epic(
     Ok(())
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub async fn add_task_to_epic(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
