@@ -29,14 +29,7 @@ impl TuiLaunch {
         if let Some(task_ref) = args.task_ref {
             let task = database.resolve_task_ref(workspace, &task_ref).await?;
             return Ok(Self {
-                view_state: TaskViewState {
-                    view: TaskView::Search,
-                    filter_modifiers: TaskFilterModifiers {
-                        task_ids: vec![task.id.clone()],
-                        ..TaskFilterModifiers::default()
-                    },
-                    ..TaskViewState::default()
-                },
+                view_state: TaskViewState::for_exact_task(task.id.clone()),
                 startup: TuiStartup::Detail { task_id: task.id },
             });
         }

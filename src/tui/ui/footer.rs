@@ -10,8 +10,7 @@ pub(super) enum FooterMode {
     Columns,
     Detail,
     DetailNested,
-    DetailChildren,
-    DetailAttachment,
+    DetailLinks,
     AttachmentPreview,
     DetailSelection,
     StatusChoice,
@@ -115,18 +114,11 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("m", "lane"),
             ("?", "more"),
         ],
-        FooterMode::DetailChildren => &[
-            ("j/k", "select child"),
+        FooterMode::DetailLinks => &[
+            ("j/k", "select link"),
+            ("Tab", "next section"),
             ("Enter", "open"),
-            ("Esc", "leave"),
-            ("q", "task list"),
-        ],
-        FooterMode::DetailAttachment => &[
-            ("j/k", "select image"),
-            ("Enter", "preview/open"),
-            ("o", "system viewer"),
-            ("D", "remove"),
-            ("Esc", "leave"),
+            ("Esc", "browse"),
             ("q", "task list"),
         ],
         FooterMode::AttachmentPreview => &[
@@ -245,8 +237,7 @@ fn cmd(mode: FooterMode, label: &str) -> Span<'static> {
         | FooterMode::Columns
         | FooterMode::Detail
         | FooterMode::DetailNested
-        | FooterMode::DetailChildren
-        | FooterMode::DetailAttachment
+        | FooterMode::DetailLinks
         | FooterMode::AttachmentPreview
         | FooterMode::DetailSelection => Style::new().fg(FG_DIM),
     };
@@ -312,33 +303,23 @@ mod tests {
     }
 
     #[test]
-    fn detail_children_footer_advertises_selection_controls() {
-        let hints = footer_hints(FooterMode::DetailChildren, 80);
+    fn detail_links_footer_advertises_navigation_controls() {
+        let hints = footer_hints(FooterMode::DetailLinks, 80);
 
         assert_eq!(
             hints,
             &[
-                ("j/k", "select child"),
+                ("j/k", "select link"),
+                ("Tab", "next section"),
                 ("Enter", "open"),
-                ("Esc", "leave"),
+                ("Esc", "browse"),
                 ("q", "task list"),
             ]
         );
     }
 
     #[test]
-    fn detail_attachment_footer_advertises_preview_controls() {
-        assert_eq!(
-            footer_hints(FooterMode::DetailAttachment, 80),
-            &[
-                ("j/k", "select image"),
-                ("Enter", "preview/open"),
-                ("o", "system viewer"),
-                ("D", "remove"),
-                ("Esc", "leave"),
-                ("q", "task list"),
-            ]
-        );
+    fn attachment_preview_footer_advertises_preview_controls() {
         assert_eq!(
             footer_hints(FooterMode::AttachmentPreview, 80),
             &[

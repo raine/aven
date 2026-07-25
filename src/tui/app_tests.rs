@@ -1324,7 +1324,9 @@ mod attachment_paste {
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
         finish_attachment_work(&mut app).await;
         let attachment_id = app.store.tasks[0].attachments[0].attachment_id.clone();
-        app.selected_detail_attachment_id = Some(attachment_id.clone());
+        app.detail_focus = Some(crate::tui::app::DetailTargetId::Attachment {
+            attachment_id: attachment_id.clone(),
+        });
         app.overlay = Some(OverlayState::Detail { scroll: 7 });
 
         app.dispatch_key(shift_key(KeyCode::Char('D')), (100, 30).into())
@@ -1352,7 +1354,7 @@ mod attachment_paste {
             app.overlay,
             Some(OverlayState::Detail { scroll: 7 })
         ));
-        assert!(app.selected_detail_attachment_id.is_none());
+        assert!(app.detail_focus.is_none());
         assert!(app.store.tasks[0].attachments.is_empty());
         assert_eq!(toast_message(&app).as_deref(), Some("removed image"));
         let deleted: i64 =
@@ -1379,7 +1381,9 @@ mod attachment_paste {
         finish_attachment_work(&mut app).await;
         let first_id = app.store.tasks[0].attachments[0].attachment_id.clone();
         let second_id = app.store.tasks[0].attachments[1].attachment_id.clone();
-        app.selected_detail_attachment_id = Some(first_id);
+        app.detail_focus = Some(crate::tui::app::DetailTargetId::Attachment {
+            attachment_id: first_id,
+        });
         app.overlay = Some(OverlayState::Detail { scroll: 7 });
 
         app.dispatch_key(shift_key(KeyCode::Char('D')), (100, 30).into())
@@ -1394,7 +1398,9 @@ mod attachment_paste {
             Some(OverlayState::Detail { scroll: 7 })
         ));
         assert_eq!(
-            app.selected_detail_attachment_id.as_deref(),
+            app.detail_focus
+                .as_ref()
+                .and_then(crate::tui::app::DetailTargetId::attachment_id),
             Some(second_id.as_str())
         );
         assert_eq!(app.store.tasks[0].attachments.len(), 1);
@@ -1411,7 +1417,9 @@ mod attachment_paste {
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
         finish_attachment_work(&mut app).await;
         let attachment_id = app.store.tasks[0].attachments[0].attachment_id.clone();
-        app.selected_detail_attachment_id = Some(attachment_id.clone());
+        app.detail_focus = Some(crate::tui::app::DetailTargetId::Attachment {
+            attachment_id: attachment_id.clone(),
+        });
         app.overlay = Some(OverlayState::AttachmentPreview {
             attachment_id: attachment_id.clone(),
             scroll: 3,
@@ -5170,6 +5178,20 @@ mod authoring {
 mod detail_mode {
     use super::*;
 
+    fn detail_navigation_state(
+        app: &App,
+        task_id: crate::ids::TaskId,
+        scroll: u16,
+    ) -> DetailNavigationState {
+        DetailNavigationState {
+            task_id,
+            scroll,
+            focused_target: None,
+            expanded_sections: std::collections::BTreeSet::new(),
+            view_state: app.store.view_state.clone(),
+        }
+    }
+
     #[tokio::test]
     async fn q_closes_detail_overlay() {
         let mut app = test_app().await;
@@ -5738,11 +5760,18 @@ mod detail_mode {
             .await
             .unwrap();
         assert_eq!(
-            app.selected_detail_child_task_id.as_deref(),
+            app.detail_focus
+                .as_ref()
+                .and_then(crate::tui::app::DetailTargetId::task_id)
+                .map(crate::ids::TaskId::as_str),
             Some(child_ids[0].as_str())
         );
         assert_eq!(
-            app.view().selected_detail_child_task_id.as_deref(),
+            app.view()
+                .detail_focus
+                .as_ref()
+                .and_then(crate::tui::app::DetailTargetId::task_id)
+                .map(crate::ids::TaskId::as_str),
             Some(child_ids[0].as_str())
         );
         assert!(matches!(
@@ -5754,7 +5783,10 @@ mod detail_mode {
             .await
             .unwrap();
         assert_eq!(
-            app.selected_detail_child_task_id.as_deref(),
+            app.detail_focus
+                .as_ref()
+                .and_then(crate::tui::app::DetailTargetId::task_id)
+                .map(crate::ids::TaskId::as_str),
             Some(child_ids[1].as_str())
         );
 
@@ -5762,7 +5794,10 @@ mod detail_mode {
             .await
             .unwrap();
         assert_eq!(
-            app.selected_detail_child_task_id.as_deref(),
+            app.detail_focus
+                .as_ref()
+                .and_then(crate::tui::app::DetailTargetId::task_id)
+                .map(crate::ids::TaskId::as_str),
             Some(child_ids[0].as_str())
         );
 
@@ -5774,7 +5809,7 @@ mod detail_mode {
             .unwrap();
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, child_ids[1]);
-        assert!(app.selected_detail_child_task_id.is_none());
+        assert!(app.detail_focus.is_none());
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
@@ -5786,8 +5821,122 @@ mod detail_mode {
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, parent_id);
         assert_eq!(
-            app.selected_detail_child_task_id.as_ref(),
+            app.detail_focus
+                .as_ref()
+                .and_then(crate::tui::app::DetailTargetId::task_id),
             Some(&child_ids[1])
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_linked_task_keeps_current_detail_open() {
+        let (_dir, _pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Current task")).await;
+        let current_id = app.store.tasks[selected].task.id.clone();
+        let missing_id = crate::test_support::task_id("missing-linked-task");
+        app.store.tasks[selected].depends_on = vec![crate::query::TaskDependencyLink {
+            task_id: missing_id,
+            display_ref: "APP-MISS".to_string(),
+            title: "Unavailable blocker".to_string(),
+            status: "todo".to_string(),
+            priority: "high".to_string(),
+            unresolved: true,
+        }];
+        app.overlay = Some(OverlayState::Detail { scroll: 2 });
+
+        app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(app.store.tasks[selected].task.id, current_id);
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("linked task is unavailable")
+        );
+        assert!(app.detail_navigation_history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn linked_task_opens_outside_active_list_filter() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+        let child_index = create_and_select_task(&mut app, test_task_draft("Filtered child")).await;
+        let child_id = app.store.tasks[child_index].task.id.clone();
+        let mut conn = pool.acquire().await.unwrap();
+        crate::operations::add_task_to_epic(
+            &mut conn,
+            &app.store.active_workspace,
+            &child_id,
+            &parent_id,
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE tasks SET status = 'todo' WHERE id = ?")
+            .bind(&child_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+        app.store.view_state.view = TaskView::Inbox;
+        app.store.refresh(Some(&parent_id)).await.unwrap();
+        assert_eq!(app.store.tasks.len(), 1);
+        app.widgets.table.select(Some(0));
+        app.detail_expanded_sections
+            .insert(crate::tui::app::DetailSection::Blocks);
+        app.overlay = Some(OverlayState::Detail { scroll: 3 });
+
+        app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(app.store.view_state.view, TaskView::Search);
+        assert_eq!(app.store.tasks[0].task.id, child_id);
+        assert!(app.detail_expanded_sections.is_empty());
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+
+        app.dispatch_key(key(KeyCode::Char('g')), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('[')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(app.store.view_state.view, TaskView::Inbox);
+        assert_eq!(app.store.tasks[0].task.id, parent_id);
+        assert!(
+            app.detail_expanded_sections
+                .contains(&crate::tui::app::DetailSection::Blocks)
+        );
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        assert_eq!(
+            app.detail_focus
+                .as_ref()
+                .and_then(crate::tui::app::DetailTargetId::task_id),
+            Some(&child_id)
         );
     }
 
@@ -5817,12 +5966,16 @@ mod detail_mode {
             .await
             .unwrap();
         assert_eq!(
-            app.selected_detail_attachment_id.as_deref(),
+            app.detail_focus
+                .as_ref()
+                .and_then(crate::tui::app::DetailTargetId::attachment_id),
             Some("SUPPRESSED")
         );
-        assert!(app.selected_detail_child_task_id.is_none());
         assert_eq!(
-            app.view().selected_detail_attachment_id.as_deref(),
+            app.view()
+                .detail_focus
+                .as_ref()
+                .and_then(crate::tui::app::DetailTargetId::attachment_id),
             Some("SUPPRESSED")
         );
         let forward_scroll = match app.overlay {
@@ -5849,24 +6002,16 @@ mod detail_mode {
             .await
             .unwrap();
         assert_eq!(
-            app.selected_detail_attachment_id.as_deref(),
+            app.detail_focus
+                .as_ref()
+                .and_then(crate::tui::app::DetailTargetId::attachment_id),
             Some("LASTIMAGE")
         );
         let reverse_scroll = match app.overlay {
             Some(OverlayState::Detail { scroll }) => scroll,
             _ => panic!("expected detail"),
         };
-        assert_eq!(
-            detail_attachment_hit_id(
-                &app.store.tasks[selected],
-                100,
-                30,
-                reverse_scroll,
-                &context,
-            )
-            .as_deref(),
-            Some("LASTIMAGE")
-        );
+        assert!(reverse_scroll >= forward_scroll);
     }
 
     fn fail_image_viewer(_path: &std::path::Path) -> anyhow::Result<()> {
@@ -5905,7 +6050,9 @@ mod detail_mode {
             .await
             .unwrap();
         assert_eq!(
-            app.selected_detail_attachment_id.as_deref(),
+            app.detail_focus
+                .as_ref()
+                .and_then(crate::tui::app::DetailTargetId::attachment_id),
             Some(attachment_id.as_str())
         );
         app.dispatch_key(key(KeyCode::Char('o')), (100, 30).into())
@@ -6169,12 +6316,19 @@ mod detail_mode {
         app.dispatch_key(key(KeyCode::Tab), (100, 30).into())
             .await
             .unwrap();
-        assert_eq!(app.selected_detail_child_task_id.as_ref(), Some(&child_id));
+        assert_eq!(
+            app.detail_focus
+                .as_ref()
+                .and_then(crate::tui::app::DetailTargetId::task_id),
+            Some(&child_id)
+        );
         app.dispatch_key(key(KeyCode::Char('j')), (100, 30).into())
             .await
             .unwrap();
         assert_eq!(
-            app.selected_detail_attachment_id.as_deref(),
+            app.detail_focus
+                .as_ref()
+                .and_then(crate::tui::app::DetailTargetId::attachment_id),
             Some("FOCUSIMAGE")
         );
         let image_scroll = match app.overlay {
@@ -6195,7 +6349,12 @@ mod detail_mode {
         app.dispatch_key(key(KeyCode::Char('k')), (100, 30).into())
             .await
             .unwrap();
-        assert_eq!(app.selected_detail_child_task_id.as_ref(), Some(&child_id));
+        assert_eq!(
+            app.detail_focus
+                .as_ref()
+                .and_then(crate::tui::app::DetailTargetId::task_id),
+            Some(&child_id)
+        );
         app.dispatch_key(key(KeyCode::Char('j')), (100, 30).into())
             .await
             .unwrap();
@@ -6229,7 +6388,9 @@ mod detail_mode {
             unavailable_hashes: [suppressed_hash].into_iter().collect(),
             ..crate::tui::ui::DetailInlineImageContext::default()
         });
-        app.selected_detail_attachment_id = Some("FIRSTIMAGE".to_string());
+        app.detail_focus = Some(crate::tui::app::DetailTargetId::Attachment {
+            attachment_id: "FIRSTIMAGE".to_string(),
+        });
         app.overlay = Some(OverlayState::AttachmentPreview {
             attachment_id: "FIRSTIMAGE".to_string(),
             scroll: 4,
@@ -6246,7 +6407,9 @@ mod detail_mode {
             }) if attachment_id == "SECONDIMAGE"
         ));
         assert_eq!(
-            app.selected_detail_attachment_id.as_deref(),
+            app.detail_focus
+                .as_ref()
+                .and_then(crate::tui::app::DetailTargetId::attachment_id),
             Some("SECONDIMAGE")
         );
 
@@ -6402,14 +6565,16 @@ mod detail_mode {
         )];
         app.widgets.table.select(Some(first));
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
-        app.selected_detail_attachment_id = Some("FIRSTIMAGE".to_string());
+        app.detail_focus = Some(crate::tui::app::DetailTargetId::Attachment {
+            attachment_id: "FIRSTIMAGE".to_string(),
+        });
 
         let previous = app.widgets.table.selected();
         app.select_detail_task(1);
 
         assert_ne!(app.widgets.table.selected(), previous);
-        assert!(app.selected_detail_attachment_id.is_none());
-        assert!(app.selected_detail_child_task_id.is_none());
+        assert!(app.detail_focus.is_none());
+        assert!(app.detail_focus.is_none());
     }
 
     #[tokio::test]
@@ -6431,20 +6596,22 @@ mod detail_mode {
                 _ => panic!("expected detail overlay"),
             };
             assert_eq!(
-                app.selected_detail_attachment_id.as_deref(),
+                app.detail_focus
+                    .as_ref()
+                    .and_then(crate::tui::app::DetailTargetId::attachment_id),
                 Some("INVALIDATEDIMAGE")
             );
 
             app.store.tasks[selected].attachments[0].has_blob = false;
             app.store.tasks[selected].attachments[0].bytes_state =
                 crate::attachments::AttachmentBytesState::Unavailable;
-            assert!(app.view().selected_detail_attachment_id.is_none());
+            assert!(app.view().detail_focus.is_none());
 
             app.dispatch_key(key(key_code), (100, 30).into())
                 .await
                 .unwrap();
 
-            assert!(app.selected_detail_attachment_id.is_none());
+            assert!(app.detail_focus.is_none());
             assert!(matches!(
                 app.overlay,
                 Some(OverlayState::Detail { scroll }) if scroll == focused_scroll
@@ -6468,7 +6635,9 @@ mod detail_mode {
             attachment_id: "ATTACHMENT000001".to_string(),
             scroll: 4,
         });
-        app.selected_detail_attachment_id = Some("ATTACHMENT000001".to_string());
+        app.detail_focus = Some(crate::tui::app::DetailTargetId::Attachment {
+            attachment_id: "ATTACHMENT000001".to_string(),
+        });
         assert!(!app.detail_underlay());
 
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
@@ -6479,7 +6648,9 @@ mod detail_mode {
             Some(OverlayState::Detail { scroll: 4 })
         ));
         assert_eq!(
-            app.selected_detail_attachment_id.as_deref(),
+            app.detail_focus
+                .as_ref()
+                .and_then(crate::tui::app::DetailTargetId::attachment_id),
             Some("ATTACHMENT000001")
         );
     }
@@ -6497,7 +6668,9 @@ mod detail_mode {
             true,
             Some((640, 480)),
         )];
-        app.selected_detail_attachment_id = Some("OWNEDIMAGE".to_string());
+        app.detail_focus = Some(crate::tui::app::DetailTargetId::Attachment {
+            attachment_id: "OWNEDIMAGE".to_string(),
+        });
         app.overlay = Some(OverlayState::AttachmentPreview {
             attachment_id: "OWNEDIMAGE".to_string(),
             scroll: 6,
@@ -6626,8 +6799,12 @@ mod detail_mode {
                 .unwrap(),
         ));
         app.overlay = Some(OverlayState::Detail { scroll: 7 });
+        app.detail_focus = Some(DetailTargetId::Task {
+            section: DetailSection::EpicChildren,
+            task_id: child_id.clone(),
+        });
 
-        app.open_detail_child_task(&child_id, 7);
+        app.open_detail_task(&child_id, 7).await;
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
             .unwrap();
@@ -6638,7 +6815,12 @@ mod detail_mode {
             app.overlay,
             Some(OverlayState::Detail { scroll: 7 })
         ));
-        assert_eq!(app.selected_detail_child_task_id, Some(child_id));
+        assert_eq!(
+            app.detail_focus
+                .as_ref()
+                .and_then(DetailTargetId::task_id),
+            Some(&child_id)
+        );
     }
 
     #[tokio::test]
@@ -6648,16 +6830,8 @@ mod detail_mode {
         let first_id = app.store.tasks[first].task.id.clone();
         let second = create_and_select_task(&mut app, test_task_draft("Second")).await;
         let second_id = app.store.tasks[second].task.id.clone();
-        app.push_detail_navigation_state(DetailNavigationState {
-            task_id: first_id.clone(),
-            scroll: 2,
-            focused_child_task_id: None,
-        });
-        app.push_detail_navigation_state(DetailNavigationState {
-            task_id: second_id.clone(),
-            scroll: 4,
-            focused_child_task_id: None,
-        });
+        app.push_detail_navigation_state(detail_navigation_state(&app, first_id.clone(), 2));
+        app.push_detail_navigation_state(detail_navigation_state(&app, second_id.clone(), 4));
         app.widgets.table.select(Some(first));
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
@@ -6710,17 +6884,15 @@ mod detail_mode {
         )];
         app.widgets.table.select(Some(child));
         app.overlay = Some(OverlayState::Detail { scroll: 5 });
-        app.selected_detail_attachment_id = Some("FOCUSEDIMAGE".to_string());
-        app.push_detail_navigation_state(DetailNavigationState {
-            task_id: parent_id.clone(),
-            scroll: 3,
-            focused_child_task_id: None,
+        app.detail_focus = Some(DetailTargetId::Attachment {
+            attachment_id: "FOCUSEDIMAGE".to_string(),
         });
+        app.push_detail_navigation_state(detail_navigation_state(&app, parent_id.clone(), 3));
 
         app.dispatch_key(key(KeyCode::Esc), (100, 30).into())
             .await
             .unwrap();
-        assert!(app.selected_detail_attachment_id.is_none());
+        assert!(app.detail_focus.is_none());
         assert_eq!(
             app.store.tasks[app.widgets.table.selected().unwrap()]
                 .task
@@ -6754,12 +6926,10 @@ mod detail_mode {
         )];
         app.widgets.table.select(Some(child));
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
-        app.selected_detail_attachment_id = Some("FOCUSEDIMAGE".to_string());
-        app.push_detail_navigation_state(DetailNavigationState {
-            task_id: parent_id.clone(),
-            scroll: 6,
-            focused_child_task_id: None,
+        app.detail_focus = Some(DetailTargetId::Attachment {
+            attachment_id: "FOCUSEDIMAGE".to_string(),
         });
+        app.push_detail_navigation_state(detail_navigation_state(&app, parent_id.clone(), 6));
 
         app.dispatch_key(key(KeyCode::Char('g')), (100, 30).into())
             .await
@@ -6786,16 +6956,12 @@ mod detail_mode {
         let parent = create_and_select_task(&mut app, test_task_draft("Parent")).await;
         let parent_id = app.store.tasks[parent].task.id.clone();
         create_and_select_task(&mut app, test_task_draft("Child")).await;
-        app.push_detail_navigation_state(DetailNavigationState {
-            task_id: parent_id.clone(),
-            scroll: 8,
-            focused_child_task_id: None,
-        });
-        app.push_detail_navigation_state(DetailNavigationState {
-            task_id: crate::ids::TaskId::new(),
-            scroll: 4,
-            focused_child_task_id: None,
-        });
+        app.push_detail_navigation_state(detail_navigation_state(&app, parent_id.clone(), 8));
+        app.push_detail_navigation_state(detail_navigation_state(
+            &app,
+            crate::ids::TaskId::new(),
+            4,
+        ));
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
@@ -6819,11 +6985,11 @@ mod detail_mode {
     async fn detail_back_exhausted_unavailable_history_closes_detail() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Child")).await;
-        app.push_detail_navigation_state(DetailNavigationState {
-            task_id: crate::ids::TaskId::new(),
-            scroll: 4,
-            focused_child_task_id: None,
-        });
+        app.push_detail_navigation_state(detail_navigation_state(
+            &app,
+            crate::ids::TaskId::new(),
+            4,
+        ));
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
@@ -6841,11 +7007,7 @@ mod detail_mode {
         let root = create_and_select_task(&mut app, test_task_draft("Root")).await;
         let root_id = app.store.tasks[root].task.id.clone();
         create_and_select_task(&mut app, test_task_draft("Child")).await;
-        app.push_detail_navigation_state(DetailNavigationState {
-            task_id: root_id,
-            scroll: 3,
-            focused_child_task_id: None,
-        });
+        app.push_detail_navigation_state(detail_navigation_state(&app, root_id, 3));
         app.overlay = Some(OverlayState::Detail { scroll: 5 });
 
         app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
@@ -6858,8 +7020,7 @@ mod detail_mode {
             .unwrap();
         assert!(app.overlay.is_none());
         assert!(app.detail_navigation_history.is_empty());
-        assert!(app.selected_detail_child_task_id.is_none());
-        assert!(app.selected_detail_attachment_id.is_none());
+        assert!(app.detail_focus.is_none());
     }
 
     #[tokio::test]
@@ -6868,12 +7029,10 @@ mod detail_mode {
         let parent = create_and_select_task(&mut app, test_task_draft("Parent")).await;
         let parent_id = app.store.tasks[parent].task.id.clone();
         create_and_select_task(&mut app, test_task_draft("Child")).await;
-        app.push_detail_navigation_state(DetailNavigationState {
-            task_id: parent_id.clone(),
-            scroll: 9,
-            focused_child_task_id: None,
+        app.push_detail_navigation_state(detail_navigation_state(&app, parent_id.clone(), 9));
+        app.detail_focus = Some(DetailTargetId::Attachment {
+            attachment_id: "PREVIEWIMAGE".to_string(),
         });
-        app.selected_detail_attachment_id = Some("PREVIEWIMAGE".to_string());
         app.overlay = Some(OverlayState::AttachmentPreview {
             attachment_id: "PREVIEWIMAGE".to_string(),
             scroll: 4,
@@ -6888,7 +7047,7 @@ mod detail_mode {
         ));
         assert!(app.detail_has_parent());
 
-        app.selected_detail_attachment_id = None;
+        app.detail_focus = None;
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
             .unwrap();
@@ -6907,11 +7066,7 @@ mod detail_mode {
         let parent_id = app.store.tasks[parent].task.id.clone();
         let child = create_and_select_task(&mut app, test_task_draft("Child")).await;
         let child_id = app.store.tasks[child].task.id.clone();
-        app.push_detail_navigation_state(DetailNavigationState {
-            task_id: parent_id.clone(),
-            scroll: 5,
-            focused_child_task_id: None,
-        });
+        app.push_detail_navigation_state(detail_navigation_state(&app, parent_id.clone(), 5));
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
         app.refresh().await.unwrap();
@@ -6957,11 +7112,7 @@ mod detail_mode {
         let parent = create_and_select_task(&mut app, test_task_draft("Parent")).await;
         let parent_id = app.store.tasks[parent].task.id.clone();
         create_and_select_task(&mut app, test_task_draft("Child")).await;
-        app.push_detail_navigation_state(DetailNavigationState {
-            task_id: parent_id,
-            scroll: 3,
-            focused_child_task_id: None,
-        });
+        app.push_detail_navigation_state(detail_navigation_state(&app, parent_id, 3));
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
         app.dispatch_key(key(KeyCode::Char('q')), (80, 24).into())

@@ -99,6 +99,33 @@ impl TuiStore {
         Ok(store)
     }
 
+    pub(crate) async fn load_task_item(
+        &self,
+        task_id: &crate::ids::TaskId,
+    ) -> Result<Option<TaskListItem>> {
+        Ok(self
+            .database
+            .list_task_items(
+                &self.active_workspace.id,
+                crate::query::TaskFilters {
+                    include_deleted: true,
+                    task_ids: vec![task_id.clone()],
+                    ..crate::query::TaskFilters::default()
+                },
+                crate::query::TaskQueryMode::Flat,
+                crate::query::TaskSort::Created,
+                crate::query::SortDirection::Asc,
+            )
+            .await?
+            .into_iter()
+            .next())
+    }
+
+    pub(crate) fn show_exact_task(&mut self, item: TaskListItem) {
+        self.view_state = TaskViewState::for_exact_task(item.task.id.clone());
+        self.tasks = vec![item];
+    }
+
     pub(crate) fn selected_task(&self, selected: Option<usize>) -> Option<&TaskListItem> {
         selected.and_then(|index| self.tasks.get(index))
     }

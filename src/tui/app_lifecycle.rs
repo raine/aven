@@ -409,6 +409,9 @@ impl App {
         }
 
         let selected_task = self.store.selected_task(self.widgets.table.selected());
+        let detail_focus = self.detail_focus.as_ref().filter(|focused| {
+            selected_task.is_some_and(|item| ui::detail_target_is_actionable(item, focused))
+        });
         let inline_images = self.inline_image_context();
         ViewState {
             focus: self.focus,
@@ -417,30 +420,9 @@ impl App {
             detail_underlay: self.detail_underlay(),
             detail_underlay_scroll: self.detail_context_scroll,
             detail_has_parent: self.detail_has_parent(),
-            hovered_detail_child_task_id: self.hovered_detail_child_task_id.clone(),
-            selected_detail_child_task_id: self
-                .selected_detail_child_task_id
-                .as_ref()
-                .filter(|task_id| {
-                    selected_task.is_some_and(|task| {
-                        task.epic_children
-                            .iter()
-                            .any(|child| &child.task_id == *task_id)
-                    })
-                })
-                .cloned(),
-            selected_detail_attachment_id: self
-                .selected_detail_attachment_id
-                .as_ref()
-                .filter(|attachment_id| {
-                    selected_task.is_some_and(|task| {
-                        task.attachments.iter().any(|attachment| {
-                            &attachment.attachment_id == *attachment_id
-                                && ui::attachment_is_locally_openable(attachment)
-                        })
-                    })
-                })
-                .cloned(),
+            detail_focus: detail_focus.cloned(),
+            detail_hover: self.detail_hover.clone(),
+            detail_expanded_sections: self.detail_expanded_sections.clone(),
             detail_text_selection: self
                 .detail_text_selection
                 .as_ref()
@@ -479,7 +461,11 @@ impl App {
             return Some(ui::DetailInlineImageContext {
                 previews_enabled: false,
                 unavailable_hashes: Default::default(),
-                focused_attachment_id: self.selected_detail_attachment_id.clone(),
+                focused_attachment_id: self
+                    .detail_focus
+                    .as_ref()
+                    .and_then(crate::tui::app::DetailTargetId::attachment_id)
+                    .map(str::to_string),
             });
         }
         #[cfg(test)]
@@ -491,7 +477,11 @@ impl App {
             return Some(ui::DetailInlineImageContext {
                 previews_enabled: false,
                 unavailable_hashes: Default::default(),
-                focused_attachment_id: self.selected_detail_attachment_id.clone(),
+                focused_attachment_id: self
+                    .detail_focus
+                    .as_ref()
+                    .and_then(crate::tui::app::DetailTargetId::attachment_id)
+                    .map(str::to_string),
             });
         }
         let db_path = self.intake.db_path()?;
@@ -499,7 +489,11 @@ impl App {
         Some(ui::DetailInlineImageContext {
             previews_enabled: true,
             unavailable_hashes: self.preview_controller.suppressed_hashes(&blob_dir),
-            focused_attachment_id: self.selected_detail_attachment_id.clone(),
+            focused_attachment_id: self
+                .detail_focus
+                .as_ref()
+                .and_then(crate::tui::app::DetailTargetId::attachment_id)
+                .map(str::to_string),
         })
     }
 
@@ -541,6 +535,15 @@ impl App {
             || matches!(self.overlay, Some(OverlayState::AttachmentPreview { .. })))
         .then(|| self.store.selected_task(selected).cloned())
         .flatten();
+        let previous_detail_targets = detail_task
+            .as_ref()
+            .map(|item| {
+                ui::detail_interactive_rows(item, 80, 24, None, &self.detail_expanded_sections)
+                    .into_iter()
+                    .map(|row| row.target)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let result = self
             .store
             .refresh_with_scope_fallback(selected_id.as_ref())
@@ -566,12 +569,62 @@ impl App {
                 result.selected
             });
         self.widgets.table.select(selected);
+        self.reconcile_detail_focus(&previous_detail_targets);
         self.preserve_or_restore_sidebar_selection();
         self.prune_task_marks();
         if let Some(project) = result.fallback_scope {
             self.set_warning(format!("project scope {project} is no longer available"));
         }
         Ok(())
+    }
+
+    fn reconcile_detail_focus(&mut self, previous_targets: &[crate::tui::app::DetailTargetId]) {
+        let Some(focused) = self.detail_focus.clone() else {
+            return;
+        };
+        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
+            self.detail_focus = None;
+            return;
+        };
+        let targets =
+            ui::detail_interactive_rows(item, 80, 24, None, &self.detail_expanded_sections)
+                .into_iter()
+                .map(|row| row.target)
+                .filter(|target| ui::detail_target_is_actionable(item, target))
+                .collect::<Vec<_>>();
+        if targets.contains(&focused) {
+            return;
+        }
+        let section = focused.section();
+        let prior_section_index = previous_targets
+            .iter()
+            .filter(|target| target.section() == section)
+            .position(|target| target == &focused)
+            .unwrap_or(0);
+        let same_section = targets
+            .iter()
+            .filter(|target| target.section() == section)
+            .collect::<Vec<_>>();
+        if !same_section.is_empty() {
+            self.detail_focus =
+                Some((*same_section[prior_section_index.min(same_section.len() - 1)]).clone());
+            return;
+        }
+        let previous_index = previous_targets
+            .iter()
+            .position(|target| target == &focused)
+            .unwrap_or(0);
+        self.detail_focus = previous_targets
+            .iter()
+            .skip(previous_index.saturating_add(1))
+            .map(crate::tui::app::DetailTargetId::section)
+            .find_map(|candidate_section| {
+                targets
+                    .iter()
+                    .find(|target| target.section() == candidate_section)
+                    .cloned()
+            })
+            .or_else(|| targets.first().cloned());
     }
 
     fn restored_recent_action_selection(

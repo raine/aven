@@ -42,13 +42,16 @@ use self::toast::render_toast;
 
 pub(crate) use self::detail::{
     DetailInlineImageContext, DetailInlineImagePlacement, DetailMetadataTarget,
-    attachment_is_locally_openable, attachment_is_locally_previewable,
-    detail_attachment_at_position, detail_attachment_scroll_target, detail_child_task_at_position,
-    detail_copy_target_at, detail_metadata_target_at, detail_scroll_cap_with_images,
-    detail_section_scroll_target_with_images, detail_selected_text, detail_text_cell_at_position,
+    attachment_is_locally_openable, attachment_is_locally_previewable, detail_copy_target_at,
+    detail_interactive_rows, detail_metadata_target_at, detail_scroll_cap_with_images,
+    detail_section_scroll_target_with_images, detail_selected_text, detail_target_at_position,
+    detail_target_is_actionable, detail_target_scroll_target, detail_text_cell_at_position,
 };
 #[cfg(test)]
-pub(crate) use self::detail::{detail_scroll_cap, detail_section_scroll_target};
+pub(crate) use self::detail::{
+    detail_attachment_at_position, detail_attachment_scroll_target, detail_child_task_at_position,
+    detail_scroll_cap, detail_section_scroll_target,
+};
 pub(crate) use self::overlays::{
     add_task_field_at, composer_help_scroll_cap, database_stats_scroll_cap, text_panel_scroll_cap,
 };
@@ -85,9 +88,9 @@ pub(crate) struct ViewState {
     pub(crate) detail_underlay: bool,
     pub(crate) detail_underlay_scroll: u16,
     pub(crate) detail_has_parent: bool,
-    pub(crate) hovered_detail_child_task_id: Option<crate::ids::TaskId>,
-    pub(crate) selected_detail_child_task_id: Option<crate::ids::TaskId>,
-    pub(crate) selected_detail_attachment_id: Option<String>,
+    pub(crate) detail_focus: Option<crate::tui::app::DetailTargetId>,
+    pub(crate) detail_hover: Option<crate::tui::app::DetailTargetId>,
+    pub(crate) detail_expanded_sections: std::collections::BTreeSet<crate::tui::app::DetailSection>,
     pub(crate) detail_text_selection: Option<crate::tui::detail_selection::DetailTextSelection>,
     pub(crate) notification: Option<Toast>,
     pub(crate) pending_shortcut: Vec<String>,
@@ -116,10 +119,8 @@ impl ViewState {
             self.overlay,
             Some(OverlayView::Detail { .. } | OverlayView::DetailHelp { .. })
         ) {
-            if self.selected_detail_child_task_id.is_some() {
-                FooterMode::DetailChildren
-            } else if self.selected_detail_attachment_id.is_some() {
-                FooterMode::DetailAttachment
+            if self.detail_focus.is_some() {
+                FooterMode::DetailLinks
             } else if self
                 .detail_text_selection
                 .as_ref()
@@ -240,10 +241,6 @@ pub(crate) fn render(
         footer,
     );
 
-    let active_detail_child_task_id = view
-        .selected_detail_child_task_id
-        .as_deref()
-        .or(view.hovered_detail_child_task_id.as_deref());
     if view.detail_underlay {
         render_detail_underlay(
             frame,
@@ -251,7 +248,9 @@ pub(crate) fn render(
             widgets,
             detail_underlay_scroll(view),
             inline_detail_title_editor,
-            active_detail_child_task_id,
+            view.detail_focus.as_ref(),
+            view.detail_hover.as_ref(),
+            &view.detail_expanded_sections,
             view.detail_text_selection.as_ref(),
             view.inline_images.as_ref(),
             &view.pending_attachments,
@@ -264,7 +263,9 @@ pub(crate) fn render(
             widgets,
             overlay,
             inline_title_editor.is_some() || inline_detail_title_editor.is_some(),
-            active_detail_child_task_id,
+            view.detail_focus.as_ref(),
+            view.detail_hover.as_ref(),
+            &view.detail_expanded_sections,
             view.detail_text_selection.as_ref(),
             view.inline_images.as_ref(),
             &view.pending_attachments,
@@ -687,7 +688,9 @@ fn render_overlay(
     widgets: &mut WidgetState,
     overlay: &OverlayView,
     inline_title_editor: bool,
-    active_detail_child_task_id: Option<&str>,
+    focused_detail_target: Option<&crate::tui::app::DetailTargetId>,
+    hovered_detail_target: Option<&crate::tui::app::DetailTargetId>,
+    detail_expanded_sections: &std::collections::BTreeSet<crate::tui::app::DetailSection>,
     detail_text_selection: Option<&crate::tui::detail_selection::DetailTextSelection>,
     inline_images: Option<&DetailInlineImageContext>,
     pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
@@ -713,7 +716,9 @@ fn render_overlay(
             widgets,
             scroll,
             None,
-            active_detail_child_task_id,
+            focused_detail_target,
+            hovered_detail_target,
+            detail_expanded_sections,
             detail_text_selection,
             inline_images.filter(|_| matches!(overlay, OverlayView::Detail { .. })),
             pending_attachments,

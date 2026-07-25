@@ -108,6 +108,17 @@ impl Default for TaskViewState {
 }
 
 impl TaskViewState {
+    pub(crate) fn for_exact_task(task_id: crate::ids::TaskId) -> Self {
+        Self {
+            view: TaskView::Search,
+            filter_modifiers: TaskFilterModifiers {
+                task_ids: vec![task_id],
+                ..TaskFilterModifiers::default()
+            },
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn filters(&self) -> TaskFilters {
         let mut filters = TaskFilters {
             label: self.filter_modifiers.label.clone(),

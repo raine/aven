@@ -186,8 +186,9 @@ impl App {
         self.widgets.table.select(next);
         self.focus = Focus::Tasks;
         if current != next {
-            self.selected_detail_child_task_id = None;
-            self.selected_detail_attachment_id = None;
+            self.detail_focus = None;
+            self.detail_hover = None;
+            self.detail_expanded_sections.clear();
             let message = if delta > 0 {
                 "selected next task"
             } else {
@@ -206,8 +207,9 @@ impl App {
             self.set_info("recent actions are read-only");
         } else {
             self.detail_navigation_history.clear();
-            self.selected_detail_child_task_id = None;
-            self.selected_detail_attachment_id = None;
+            self.detail_focus = None;
+            self.detail_hover = None;
+            self.detail_expanded_sections.clear();
             self.overlay = Some(OverlayState::Detail { scroll: 0 });
             self.detail_context_scroll = 0;
         }
@@ -264,8 +266,9 @@ impl App {
         self.pending_delete_attachment = None;
         self.clear_live_search_preview();
         self.detail_navigation_history.clear();
-        self.selected_detail_child_task_id = None;
-        self.selected_detail_attachment_id = None;
+        self.detail_focus = None;
+        self.detail_hover = None;
+        self.detail_expanded_sections.clear();
         let had_overlay = self.overlay.take().is_some();
         self.detail_context = false;
         if !had_overlay && self.focus == Focus::Sidebar {

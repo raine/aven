@@ -119,11 +119,60 @@ pub(crate) enum FooterChoiceMode {
     Priority,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum DetailSection {
+    EpicParent,
+    EpicChildren,
+    Attachments,
+    DependsOn,
+    Blocks,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum DetailTargetId {
+    Task {
+        section: DetailSection,
+        task_id: crate::ids::TaskId,
+    },
+    Attachment {
+        attachment_id: String,
+    },
+    Expand {
+        section: DetailSection,
+    },
+}
+
+impl DetailTargetId {
+    pub(crate) fn section(&self) -> DetailSection {
+        match self {
+            Self::Task { section, .. } | Self::Expand { section } => *section,
+            Self::Attachment { .. } => DetailSection::Attachments,
+        }
+    }
+
+    pub(crate) fn attachment_id(&self) -> Option<&str> {
+        match self {
+            Self::Attachment { attachment_id } => Some(attachment_id),
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn task_id(&self) -> Option<&crate::ids::TaskId> {
+        match self {
+            Self::Task { task_id, .. } => Some(task_id),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct DetailNavigationState {
     pub(super) task_id: crate::ids::TaskId,
     pub(super) scroll: u16,
-    pub(super) focused_child_task_id: Option<crate::ids::TaskId>,
+    pub(super) focused_target: Option<DetailTargetId>,
+    pub(super) expanded_sections: std::collections::BTreeSet<DetailSection>,
+    pub(super) view_state: TaskViewState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,9 +210,9 @@ pub(crate) struct App {
     pub(super) update: crate::tui::app_update::UpdateController,
     pub(super) next_refresh_at: Instant,
     pub(crate) last_task_click: Option<TaskRowClick>,
-    pub(crate) hovered_detail_child_task_id: Option<crate::ids::TaskId>,
-    pub(crate) selected_detail_child_task_id: Option<crate::ids::TaskId>,
-    pub(crate) selected_detail_attachment_id: Option<String>,
+    pub(crate) detail_focus: Option<DetailTargetId>,
+    pub(crate) detail_hover: Option<DetailTargetId>,
+    pub(crate) detail_expanded_sections: std::collections::BTreeSet<DetailSection>,
     pub(crate) detail_text_selection: Option<crate::tui::detail_selection::DetailTextSelection>,
     pub(crate) detail_text_dragging: bool,
     pub(super) previous_inline_image_placements: Vec<crate::tui::ui::DetailInlineImagePlacement>,
@@ -231,9 +280,9 @@ impl App {
             update: crate::tui::app_update::UpdateController::new(),
             next_refresh_at,
             last_task_click: None,
-            hovered_detail_child_task_id: None,
-            selected_detail_child_task_id: None,
-            selected_detail_attachment_id: None,
+            detail_focus: None,
+            detail_hover: None,
+            detail_expanded_sections: std::collections::BTreeSet::new(),
             detail_text_selection: None,
             detail_text_dragging: false,
             previous_inline_image_placements: Vec::new(),
@@ -319,9 +368,9 @@ impl App {
         self.pending_shortcut.clear();
         self.pending_shortcut_scroll = 0;
         self.detail_navigation_history.clear();
-        self.selected_detail_child_task_id = None;
-        self.selected_detail_attachment_id = None;
-        self.hovered_detail_child_task_id = None;
+        self.detail_focus = None;
+        self.detail_hover = None;
+        self.detail_expanded_sections.clear();
         self.detail_text_selection = None;
         self.detail_text_dragging = false;
         self.last_task_click = None;
@@ -330,41 +379,42 @@ impl App {
         self.overlay = None;
     }
 
-    pub(super) fn go_back_in_detail(&mut self) -> bool {
+    pub(super) async fn go_back_in_detail(&mut self) -> Result<bool> {
         let mut skipped = false;
         while let Some(previous) = self.detail_navigation_history.pop() {
-            let Some(index) = self
-                .store
-                .tasks
-                .iter()
-                .position(|item| item.task.id == previous.task_id)
-            else {
-                skipped = true;
-                continue;
+            self.store.view_state = previous.view_state;
+            let selected = self.store.refresh(Some(&previous.task_id)).await?;
+            let index = if let Some(index) = selected.filter(|&index| {
+                self.store.tasks.get(index).is_some_and(|item| item.task.id == previous.task_id)
+            }) {
+                index
+            } else {
+                let Some(item) = self.store.load_task_item(&previous.task_id).await? else {
+                    skipped = true;
+                    continue;
+                };
+                self.store.show_exact_task(item);
+                0
             };
             self.widgets.table.select(Some(index));
             self.focus = Focus::Tasks;
             self.detail_context = false;
             self.detail_context_scroll = previous.scroll;
-            self.selected_detail_attachment_id = None;
-            self.selected_detail_child_task_id = previous.focused_child_task_id.filter(|task_id| {
-                self.store.tasks[index]
-                    .epic_children
-                    .iter()
-                    .any(|child| &child.task_id == task_id)
-            });
+            self.detail_focus = previous.focused_target;
+            self.detail_hover = None;
+            self.detail_expanded_sections = previous.expanded_sections;
             self.overlay = Some(crate::tui::overlay::OverlayState::Detail {
                 scroll: previous.scroll,
             });
             if skipped {
-                self.set_warning("some previous tasks are hidden by the current view");
+                self.set_warning("some previous linked tasks are unavailable");
             }
-            return true;
+            return Ok(true);
         }
         if skipped {
-            self.set_warning("previous tasks are hidden by the current view");
+            self.set_warning("previous linked tasks are unavailable");
         }
-        false
+        Ok(false)
     }
 
     pub(super) async fn go_back(&mut self) -> Result<()> {

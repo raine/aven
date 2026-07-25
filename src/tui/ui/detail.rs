@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
     Block, Borders, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use super::input::clipped_input_line;
 use super::scroll::{clamp_scroll_start, scrollbar_thumb_position};
@@ -15,7 +15,7 @@ use super::timestamps::local_timestamp_display;
 use super::truncate::truncate_width;
 use crate::query::TaskListItem;
 use crate::task_render::{AttachmentMetadataJson, attachment_state_placeholder, human_file_size};
-use crate::tui::app::WidgetState;
+use crate::tui::app::{DetailSection, DetailTargetId, WidgetState};
 use crate::tui::detail_selection::{DetailTextSelection, TextCell, text_cell_at_column};
 use crate::tui::markdown::{
     MarkdownBlock, MarkdownRenderContext, flatten_markdown_blocks, render_markdown,
@@ -30,6 +30,35 @@ use crate::tui::widgets::{priority_short, status_chip, status_span};
 use unicode_width::UnicodeWidthStr;
 
 const DETAIL_DEPENDENCY_TREE_CAP: usize = 3;
+
+pub(crate) fn detail_target_is_actionable(item: &TaskListItem, target: &DetailTargetId) -> bool {
+    match target {
+        DetailTargetId::Task { section, task_id } => match section {
+            DetailSection::EpicParent => item
+                .epic_parent
+                .as_ref()
+                .is_some_and(|link| &link.task_id == task_id),
+            DetailSection::EpicChildren => item
+                .epic_children
+                .iter()
+                .any(|link| &link.task_id == task_id),
+            DetailSection::DependsOn => item.depends_on.iter().any(|link| &link.task_id == task_id),
+            DetailSection::Blocks => item.blocks.iter().any(|link| &link.task_id == task_id),
+            DetailSection::Attachments => false,
+        },
+        DetailTargetId::Attachment { attachment_id } => item
+            .attachments
+            .iter()
+            .find(|attachment| attachment.attachment_id == *attachment_id)
+            .is_some_and(attachment_is_locally_openable),
+        DetailTargetId::Expand { section } => match section {
+            DetailSection::EpicChildren => item.epic_children.len() > 5,
+            DetailSection::DependsOn => item.depends_on.len() > DETAIL_DEPENDENCY_TREE_CAP,
+            DetailSection::Blocks => item.blocks.len() > DETAIL_DEPENDENCY_TREE_CAP,
+            DetailSection::EpicParent | DetailSection::Attachments => false,
+        },
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 enum DependencyDirection {
@@ -61,7 +90,14 @@ struct DetailContentRenderModel {
     body_start: usize,
     scrollbar_position: usize,
     image_placements: Vec<DetailBodyImagePlacement>,
-    attachment_placements: Vec<DetailBodyAttachmentPlacement>,
+    interactive_rows: Vec<DetailInteractiveRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DetailInteractiveRow {
+    pub(crate) target: DetailTargetId,
+    pub(crate) line_index: usize,
+    pub(crate) height: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -133,10 +169,12 @@ struct DetailSelectableDocument {
     description: Vec<SelectableLine>,
 }
 
+#[cfg(test)]
 pub(crate) struct DetailChildHit {
     pub(crate) task_id: crate::ids::TaskId,
 }
 
+#[cfg(test)]
 pub(crate) struct DetailAttachmentHit {
     pub(crate) attachment_id: String,
 }
@@ -157,7 +195,9 @@ fn render_detail(
     item: &TaskListItem,
     scroll: u16,
     inline_title_editor: Option<&TextInputView>,
-    hovered_child_task_id: Option<&str>,
+    active_target: Option<&DetailTargetId>,
+    hovered_target: Option<&DetailTargetId>,
+    expanded_sections: &BTreeSet<DetailSection>,
     selection: Option<&DetailTextSelection>,
     widgets: &mut WidgetState,
     inline_images: Option<&DetailInlineImageContext>,
@@ -171,16 +211,22 @@ fn render_detail(
     }
 
     let selection = selection.filter(|selection| selection.terminal_width == frame.area().width);
-    let model = build_detail_content_model_with_pending(
+    let mut model = build_detail_content_model_with_pending(
         item,
         layout.content_area,
         scroll,
         inline_title_editor,
-        hovered_child_task_id,
+        active_target,
+        expanded_sections,
         selection,
         inline_images,
         pending_attachments,
     );
+    if hovered_target != active_target
+        && let Some(hovered_target) = hovered_target
+    {
+        apply_hover_style(&mut model, hovered_target);
+    }
     render_detail_content_from_model(frame, layout.content_area, &model, widgets);
     if layout.metadata_area.width > 0 {
         render_detail_metadata(frame, item, layout.metadata_area);
@@ -242,6 +288,7 @@ pub(crate) fn detail_scroll_cap_with_images(
         0,
         None,
         None,
+        &BTreeSet::new(),
         None,
         inline_images,
     );
@@ -275,6 +322,131 @@ pub(crate) fn detail_section_scroll_target(
     )
 }
 
+pub(crate) fn detail_interactive_rows(
+    item: &TaskListItem,
+    terminal_width: u16,
+    terminal_height: u16,
+    inline_images: Option<&DetailInlineImageContext>,
+    expanded_sections: &BTreeSet<DetailSection>,
+) -> Vec<DetailInteractiveRow> {
+    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
+    build_detail_content_model(
+        item,
+        layout.content_area,
+        0,
+        None,
+        None,
+        expanded_sections,
+        None,
+        inline_images,
+    )
+    .interactive_rows
+}
+
+pub(crate) fn detail_target_scroll_target(
+    item: &TaskListItem,
+    target: &DetailTargetId,
+    scroll: u16,
+    terminal_width: u16,
+    terminal_height: u16,
+    inline_images: Option<&DetailInlineImageContext>,
+    expanded_sections: &BTreeSet<DetailSection>,
+) -> Option<u16> {
+    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
+    let model = build_detail_content_model(
+        item,
+        layout.content_area,
+        0,
+        None,
+        None,
+        expanded_sections,
+        None,
+        inline_images,
+    );
+    let sticky_height = model
+        .sticky_lines
+        .len()
+        .min(layout.content_area.height as usize);
+    let visible = (layout.content_area.height as usize).saturating_sub(sticky_height);
+    let row = model
+        .interactive_rows
+        .iter()
+        .find(|row| &row.target == target)?;
+    if visible == 0 {
+        return None;
+    }
+    let cap = model.content_height.saturating_sub(visible);
+    let scroll = (scroll as usize).min(cap);
+    let end = row.line_index.saturating_add(row.height.saturating_sub(1));
+    let target_scroll = if row.line_index < scroll {
+        row.line_index
+    } else if end >= scroll.saturating_add(visible) {
+        end.saturating_add(1).saturating_sub(visible)
+    } else {
+        scroll
+    };
+    Some(target_scroll.min(cap) as u16)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn detail_target_at_position(
+    item: &TaskListItem,
+    terminal_width: u16,
+    terminal_height: u16,
+    column: u16,
+    row: u16,
+    scroll: u16,
+    inline_images: Option<&DetailInlineImageContext>,
+    expanded_sections: &BTreeSet<DetailSection>,
+) -> Option<DetailTargetId> {
+    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
+    if column < layout.content_area.x
+        || column
+            >= layout
+                .content_area
+                .x
+                .saturating_add(layout.content_area.width)
+    {
+        return None;
+    }
+    let model = build_detail_content_model(
+        item,
+        layout.content_area,
+        scroll,
+        None,
+        None,
+        expanded_sections,
+        None,
+        inline_images,
+    );
+    let sticky_height = model
+        .sticky_lines
+        .len()
+        .min(layout.content_area.height as usize) as u16;
+    let body_y = layout.content_area.y.saturating_add(sticky_height);
+    if row < body_y
+        || row
+            >= layout
+                .content_area
+                .y
+                .saturating_add(layout.content_area.height)
+    {
+        return None;
+    }
+    let body_index = model
+        .body_start
+        .saturating_add(row.saturating_sub(body_y) as usize);
+    model
+        .interactive_rows
+        .iter()
+        .find(|target| {
+            (target.line_index..target.line_index.saturating_add(target.height))
+                .contains(&body_index)
+        })
+        .map(|target| target.target.clone())
+}
+
+#[cfg(test)]
 pub(crate) fn detail_attachment_scroll_target(
     item: &TaskListItem,
     attachment_id: &str,
@@ -290,6 +462,7 @@ pub(crate) fn detail_attachment_scroll_target(
         0,
         None,
         None,
+        &BTreeSet::new(),
         None,
         Some(inline_images),
     );
@@ -298,10 +471,14 @@ pub(crate) fn detail_attachment_scroll_target(
         .len()
         .min(layout.content_area.height as usize);
     let body_visible = (layout.content_area.height as usize).saturating_sub(sticky_height);
-    let placement = model
-        .attachment_placements
-        .iter()
-        .find(|placement| placement.attachment_id == attachment_id)?;
+    let placement = model.interactive_rows.iter().find(|row| {
+        matches!(
+            &row.target,
+            DetailTargetId::Attachment {
+                attachment_id: candidate,
+            } if candidate == attachment_id
+        )
+    })?;
     let frame_start = placement.line_index;
     let frame_end = frame_start.saturating_add(placement.height.saturating_sub(1));
     if body_visible == 0 {
@@ -334,6 +511,7 @@ pub(crate) fn detail_section_scroll_target_with_images(
         scroll,
         None,
         None,
+        &BTreeSet::new(),
         None,
         inline_images,
     );
@@ -375,12 +553,14 @@ fn detail_content_margin() -> Margin {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_detail_content_model(
     item: &TaskListItem,
     area: Rect,
     scroll: u16,
     inline_title_editor: Option<&TextInputView>,
-    hovered_child_task_id: Option<&str>,
+    active_target: Option<&DetailTargetId>,
+    expanded_sections: &BTreeSet<DetailSection>,
     selection: Option<&DetailTextSelection>,
     inline_images: Option<&DetailInlineImageContext>,
 ) -> DetailContentRenderModel {
@@ -389,7 +569,8 @@ fn build_detail_content_model(
         area,
         scroll,
         inline_title_editor,
-        hovered_child_task_id,
+        active_target,
+        expanded_sections,
         selection,
         inline_images,
         &[],
@@ -402,17 +583,19 @@ fn build_detail_content_model_with_pending(
     area: Rect,
     scroll: u16,
     inline_title_editor: Option<&TextInputView>,
-    hovered_child_task_id: Option<&str>,
+    active_target: Option<&DetailTargetId>,
+    expanded_sections: &BTreeSet<DetailSection>,
     selection: Option<&DetailTextSelection>,
     inline_images: Option<&DetailInlineImageContext>,
     pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
 ) -> DetailContentRenderModel {
     let mut sticky_lines = detail_header_options(item, area.width as usize, inline_title_editor);
-    let (mut body_lines, image_placements, attachment_placements) =
+    let (mut body_lines, image_placements, _attachment_placements, interactive_rows) =
         detail_body_lines_with_pending_images(
             item,
             area.width as usize,
-            hovered_child_task_id,
+            active_target,
+            expanded_sections,
             inline_images,
             pending_attachments,
         );
@@ -445,7 +628,25 @@ fn build_detail_content_model_with_pending(
         body_start: start,
         scrollbar_position,
         image_placements,
-        attachment_placements,
+        interactive_rows,
+    }
+}
+
+fn apply_hover_style(model: &mut DetailContentRenderModel, target: &DetailTargetId) {
+    let Some(row) = model
+        .interactive_rows
+        .iter()
+        .find(|row| &row.target == target)
+    else {
+        return;
+    };
+    let start = row.line_index.saturating_sub(model.body_start);
+    let end = start.saturating_add(row.height).min(model.lines.len());
+    let lines_len = model.lines.len();
+    for line in &mut model.lines[start.min(lines_len)..end] {
+        for span in &mut line.spans {
+            span.style = span.style.add_modifier(Modifier::UNDERLINED);
+        }
     }
 }
 
@@ -550,22 +751,52 @@ fn detail_body_lines_with_images(
     Vec<Line<'static>>,
     Vec<DetailBodyImagePlacement>,
     Vec<DetailBodyAttachmentPlacement>,
+    Vec<DetailInteractiveRow>,
 ) {
-    detail_body_lines_with_pending_images(item, width, hovered_child_task_id, inline_images, &[])
+    let target = hovered_child_task_id.map(|task_id| DetailTargetId::Task {
+        section: DetailSection::EpicChildren,
+        task_id: crate::ids::TaskId::try_from(task_id.to_string()).expect("valid test task ID"),
+    });
+    detail_body_lines_with_pending_images(
+        item,
+        width,
+        target.as_ref(),
+        &BTreeSet::new(),
+        inline_images,
+        &[],
+    )
 }
 
 fn detail_body_lines_with_pending_images(
     item: &TaskListItem,
     width: usize,
-    hovered_child_task_id: Option<&str>,
+    active_target: Option<&DetailTargetId>,
+    expanded_sections: &BTreeSet<DetailSection>,
     inline_images: Option<&DetailInlineImageContext>,
     pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
 ) -> (
     Vec<Line<'static>>,
     Vec<DetailBodyImagePlacement>,
     Vec<DetailBodyAttachmentPlacement>,
+    Vec<DetailInteractiveRow>,
 ) {
-    let mut lines = detail_epic_child_lines(item, width, hovered_child_task_id);
+    let mut lines = Vec::new();
+    let mut interactive_rows = Vec::new();
+    extend_epic_parent_section(
+        &mut lines,
+        &mut interactive_rows,
+        item,
+        width,
+        active_target,
+    );
+    extend_epic_children_section(
+        &mut lines,
+        &mut interactive_rows,
+        item,
+        width,
+        active_target,
+        expanded_sections.contains(&DetailSection::EpicChildren),
+    );
     if !lines.is_empty() {
         lines.push(Line::from(""));
     }
@@ -588,6 +819,15 @@ fn detail_body_lines_with_pending_images(
         width,
         inline_images,
     );
+    for placement in &attachment_placements {
+        interactive_rows.push(DetailInteractiveRow {
+            target: DetailTargetId::Attachment {
+                attachment_id: placement.attachment_id.clone(),
+            },
+            line_index: placement.line_index,
+            height: placement.height,
+        });
+    }
     extend_pending_attachment_section(
         &mut lines,
         &item.task.id,
@@ -598,8 +838,20 @@ fn detail_body_lines_with_pending_images(
     );
     lines.push(Line::from(""));
     lines.extend(detail_note_lines(item, width));
-    lines.extend(detail_dependency_lines(item, width));
-    (lines, image_placements, attachment_placements)
+    extend_dependency_sections(
+        &mut lines,
+        &mut interactive_rows,
+        item,
+        width,
+        active_target,
+        expanded_sections,
+    );
+    (
+        lines,
+        image_placements,
+        attachment_placements,
+        interactive_rows,
+    )
 }
 
 fn detail_selectable_document(
@@ -802,6 +1054,140 @@ fn detail_description_lines(
     lines
 }
 
+fn extend_epic_parent_section(
+    lines: &mut Vec<Line<'static>>,
+    rows: &mut Vec<DetailInteractiveRow>,
+    item: &TaskListItem,
+    width: usize,
+    active_target: Option<&DetailTargetId>,
+) {
+    let Some(parent) = &item.epic_parent else {
+        return;
+    };
+    lines.push(Line::from(Span::styled(
+        "EPIC PARENT",
+        Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+    )));
+    let target = DetailTargetId::Task {
+        section: DetailSection::EpicParent,
+        task_id: parent.task_id.clone(),
+    };
+    let start = lines.len();
+    let active = active_target == Some(&target);
+    let rendered = epic_child_tree_item_lines(parent, true, width, active);
+    let height = rendered.len();
+    lines.extend(rendered);
+    rows.push(DetailInteractiveRow {
+        target,
+        line_index: start,
+        height,
+    });
+}
+
+fn ordered_epic_children(item: &TaskListItem) -> Vec<&crate::query::TaskDependencyLink> {
+    item.epic_children
+        .iter()
+        .filter(|link| link.unresolved)
+        .chain(item.epic_children.iter().filter(|link| !link.unresolved))
+        .collect()
+}
+
+fn extend_epic_children_section(
+    lines: &mut Vec<Line<'static>>,
+    rows: &mut Vec<DetailInteractiveRow>,
+    item: &TaskListItem,
+    width: usize,
+    active_target: Option<&DetailTargetId>,
+    expanded: bool,
+) {
+    if !item.task.is_epic {
+        return;
+    }
+    if !lines.is_empty() {
+        lines.push(Line::from(""));
+    }
+    let open = item
+        .epic_children
+        .iter()
+        .filter(|link| link.unresolved)
+        .count();
+    lines.push(Line::from(vec![
+        Span::styled(
+            "CHILD TASKS",
+            Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" open={open} total={}", item.epic_children.len()),
+            Style::new().fg(FG_DIM),
+        ),
+    ]));
+    let links = ordered_epic_children(item);
+    if links.is_empty() {
+        lines.push(Line::from(Span::styled("none", Style::new().fg(FG_MUTED))));
+        return;
+    }
+    let visible = if expanded {
+        links.len()
+    } else {
+        links.len().min(5)
+    };
+    let has_disclosure = links.len() > 5;
+    for (index, link) in links.iter().take(visible).enumerate() {
+        let target = DetailTargetId::Task {
+            section: DetailSection::EpicChildren,
+            task_id: link.task_id.clone(),
+        };
+        let is_last = index + 1 == visible && !has_disclosure;
+        let start = lines.len();
+        let rendered =
+            epic_child_tree_item_lines(link, is_last, width, active_target == Some(&target));
+        let height = rendered.len();
+        lines.extend(rendered);
+        rows.push(DetailInteractiveRow {
+            target,
+            line_index: start,
+            height,
+        });
+    }
+    if has_disclosure {
+        let target = DetailTargetId::Expand {
+            section: DetailSection::EpicChildren,
+        };
+        let label = if expanded {
+            "Show less".to_string()
+        } else {
+            format!("Show {} more", links.len() - visible)
+        };
+        let start = lines.len();
+        lines.push(disclosure_line(&label, active_target == Some(&target)));
+        rows.push(DetailInteractiveRow {
+            target,
+            line_index: start,
+            height: 1,
+        });
+    }
+}
+
+fn disclosure_line(label: &str, active: bool) -> Line<'static> {
+    let style = if active {
+        Style::new()
+            .fg(ACCENT)
+            .bg(BG_PANEL)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(FG_MUTED)
+    };
+    let tree_style = if active {
+        Style::new().fg(BORDER).bg(BG_PANEL)
+    } else {
+        Style::new().fg(BORDER)
+    };
+    Line::from(vec![
+        Span::styled("└─ ", tree_style),
+        Span::styled(label.to_string(), style),
+    ])
+}
+
 fn detail_epic_child_lines(
     item: &TaskListItem,
     width: usize,
@@ -892,6 +1278,110 @@ fn epic_child_tree_item_lines(
     )
 }
 
+fn extend_dependency_sections(
+    lines: &mut Vec<Line<'static>>,
+    rows: &mut Vec<DetailInteractiveRow>,
+    item: &TaskListItem,
+    width: usize,
+    active_target: Option<&DetailTargetId>,
+    expanded_sections: &BTreeSet<DetailSection>,
+) {
+    extend_dependency_section(
+        lines,
+        rows,
+        "WHY BLOCKED",
+        &item.depends_on,
+        DependencyDirection::Blocker,
+        DetailSection::DependsOn,
+        width,
+        active_target,
+        expanded_sections.contains(&DetailSection::DependsOn),
+    );
+    extend_dependency_section(
+        lines,
+        rows,
+        "WHAT THIS UNLOCKS",
+        &item.blocks,
+        DependencyDirection::Dependent,
+        DetailSection::Blocks,
+        width,
+        active_target,
+        expanded_sections.contains(&DetailSection::Blocks),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn extend_dependency_section(
+    lines: &mut Vec<Line<'static>>,
+    rows: &mut Vec<DetailInteractiveRow>,
+    label: &'static str,
+    links: &[crate::query::TaskDependencyLink],
+    direction: DependencyDirection,
+    section: DetailSection,
+    width: usize,
+    active_target: Option<&DetailTargetId>,
+    expanded: bool,
+) {
+    if links.is_empty() {
+        return;
+    }
+    lines.push(Line::from(""));
+    lines.push(dependency_heading(label, links));
+    let visible = if expanded {
+        links.len()
+    } else {
+        links.len().min(DETAIL_DEPENDENCY_TREE_CAP)
+    };
+    let has_disclosure = links.len() > DETAIL_DEPENDENCY_TREE_CAP;
+    for (index, link) in links.iter().take(visible).enumerate() {
+        let target = DetailTargetId::Task {
+            section,
+            task_id: link.task_id.clone(),
+        };
+        let start = lines.len();
+        let mut rendered = dependency_tree_item_lines(
+            link,
+            direction,
+            index + 1 == visible && !has_disclosure,
+            width,
+        );
+        if active_target == Some(&target) {
+            apply_link_row_style(&mut rendered);
+        }
+        let height = rendered.len();
+        lines.extend(rendered);
+        rows.push(DetailInteractiveRow {
+            target,
+            line_index: start,
+            height,
+        });
+    }
+    if has_disclosure {
+        let target = DetailTargetId::Expand { section };
+        let label = if expanded {
+            "Show less".to_string()
+        } else {
+            format!("Show {} more", links.len() - visible)
+        };
+        let start = lines.len();
+        lines.push(disclosure_line(&label, active_target == Some(&target)));
+        rows.push(DetailInteractiveRow {
+            target,
+            line_index: start,
+            height: 1,
+        });
+    }
+}
+
+fn apply_link_row_style(lines: &mut [Line<'static>]) {
+    for line in lines {
+        for span in &mut line.spans {
+            span.style = span.style.bg(BG_PANEL);
+        }
+    }
+}
+
+#[cfg(test)]
 fn detail_dependency_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
     if item.depends_on.is_empty() && item.blocks.is_empty() {
         return Vec::new();
@@ -921,6 +1411,7 @@ fn detail_dependency_lines(item: &TaskListItem, width: usize) -> Vec<Line<'stati
     lines
 }
 
+#[cfg(test)]
 fn dependency_branch_lines(
     links: &[crate::query::TaskDependencyLink],
     direction: DependencyDirection,
@@ -1083,33 +1574,8 @@ fn detail_header_options(
         Line::from(Span::styled("─".repeat(width), Style::new().fg(BORDER))),
         Line::from(summary_spans),
     ];
-    if let Some(parent) = &item.epic_parent {
-        lines.push(detail_epic_parent_line(parent, width));
-    }
     lines.push(Line::from(""));
     lines
-}
-
-fn detail_epic_parent_line(
-    parent: &crate::query::TaskDependencyLink,
-    width: usize,
-) -> Line<'static> {
-    let mut spans = vec![
-        Span::styled("part of ", Style::new().fg(FG_DIM)),
-        Span::styled(EPIC_MARKER, Style::new().fg(YELLOW)),
-        Span::styled(" ", Style::new().fg(FG_DIM)),
-        Span::styled(
-            parent.display_ref.clone(),
-            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" ", Style::new().fg(FG_DIM)),
-    ];
-    let used_width = spans.iter().map(Span::width).sum::<usize>();
-    spans.push(Span::styled(
-        truncate_width(&parent.title, width.saturating_sub(used_width)),
-        Style::new().fg(FG_MUTED),
-    ));
-    Line::from(spans)
 }
 
 fn detail_title_line(
@@ -1684,8 +2150,16 @@ pub(crate) fn detail_text_cell_at_position(
     {
         return None;
     }
-    let model =
-        build_detail_content_model(item, layout.content_area, scroll, None, None, None, None);
+    let model = build_detail_content_model(
+        item,
+        layout.content_area,
+        scroll,
+        None,
+        None,
+        &BTreeSet::new(),
+        None,
+        None,
+    );
     let document = detail_selectable_document(item, layout.content_area.width as usize, None);
 
     let selectable = if row == layout.content_area.y {
@@ -1739,6 +2213,7 @@ pub(crate) fn detail_selected_text(
     document.text.get(selection.range()).map(str::to_string)
 }
 
+#[cfg(test)]
 pub(crate) fn detail_attachment_at_position(
     item: &TaskListItem,
     terminal_width: u16,
@@ -1748,54 +2223,27 @@ pub(crate) fn detail_attachment_at_position(
     scroll: u16,
     inline_images: &DetailInlineImageContext,
 ) -> Option<DetailAttachmentHit> {
-    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
-    let model = build_detail_content_model(
+    match detail_target_at_position(
         item,
-        layout.content_area,
+        terminal_width,
+        terminal_height,
+        column,
+        row,
         scroll,
-        None,
-        None,
-        None,
         Some(inline_images),
-    );
-    let sticky_height = model
-        .sticky_lines
-        .len()
-        .min(layout.content_area.height as usize) as u16;
-    let body_area = Rect::new(
-        layout.content_area.x,
-        layout.content_area.y.saturating_add(sticky_height),
-        layout.content_area.width,
-        layout.content_area.height.saturating_sub(sticky_height),
-    );
-    for placement in &model.attachment_placements {
-        let attachment = item
+        &BTreeSet::new(),
+    )? {
+        DetailTargetId::Attachment { attachment_id } => item
             .attachments
             .iter()
-            .find(|attachment| attachment.attachment_id == placement.attachment_id)?;
-        if !attachment_is_locally_openable(attachment) {
-            continue;
-        }
-        let Some(start) = placement.line_index.checked_sub(model.body_start) else {
-            continue;
-        };
-        let end = start.saturating_add(placement.height);
-        if column >= body_area.x
-            && column < body_area.x.saturating_add(body_area.width)
-            && row >= body_area.y.saturating_add(start as u16)
-            && row
-                < body_area
-                    .y
-                    .saturating_add(end.min(body_area.height as usize) as u16)
-        {
-            return Some(DetailAttachmentHit {
-                attachment_id: placement.attachment_id.clone(),
-            });
-        }
+            .find(|attachment| attachment.attachment_id == attachment_id)
+            .filter(|attachment| attachment_is_locally_openable(attachment))
+            .map(|_| DetailAttachmentHit { attachment_id }),
+        _ => None,
     }
-    None
 }
 
+#[cfg(test)]
 pub(crate) fn detail_child_task_at_position(
     item: &TaskListItem,
     terminal_width: u16,
@@ -1820,8 +2268,16 @@ pub(crate) fn detail_child_task_at_position(
     {
         return None;
     }
-    let model =
-        build_detail_content_model(item, layout.content_area, scroll, None, None, None, None);
+    let model = build_detail_content_model(
+        item,
+        layout.content_area,
+        scroll,
+        None,
+        None,
+        &BTreeSet::new(),
+        None,
+        None,
+    );
     let sticky_height = model
         .sticky_lines
         .len()
@@ -1840,6 +2296,7 @@ pub(crate) fn detail_child_task_at_position(
     Some(DetailChildHit { task_id })
 }
 
+#[cfg(test)]
 fn detail_epic_child_task_id_at_body_line(
     item: &TaskListItem,
     width: usize,
@@ -2048,7 +2505,9 @@ pub(super) fn render_detail_underlay(
     widgets: &mut WidgetState,
     scroll: u16,
     inline_title_editor: Option<&TextInputView>,
-    hovered_child_task_id: Option<&str>,
+    active_target: Option<&DetailTargetId>,
+    hovered_target: Option<&DetailTargetId>,
+    expanded_sections: &BTreeSet<DetailSection>,
     selection: Option<&DetailTextSelection>,
     inline_images: Option<&DetailInlineImageContext>,
     pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
@@ -2059,7 +2518,9 @@ pub(super) fn render_detail_underlay(
             task,
             scroll,
             inline_title_editor,
-            hovered_child_task_id,
+            active_target,
+            hovered_target,
+            expanded_sections,
             selection,
             widgets,
             inline_images,
@@ -2109,7 +2570,7 @@ mod tests {
     }
 
     #[test]
-    fn detail_header_shows_epic_parent_context() {
+    fn detail_body_shows_epic_parent_relationship() {
         let mut item = detail_test_item();
         item.epic_parent = Some(crate::query::TaskDependencyLink {
             task_id: crate::test_support::task_id("epic-task-id"),
@@ -2120,17 +2581,22 @@ mod tests {
             unresolved: true,
         });
 
-        let lines = detail_header_options(&item, 60, None);
+        let lines = detail_body_lines(&item, 60, None);
 
-        assert_eq!(
-            lines[3].to_string(),
-            format!("part of {EPIC_MARKER} APP-EPIC Ship authentication reliability")
+        assert_eq!(lines[0].to_string(), "EPIC PARENT");
+        assert!(lines[1].to_string().contains("APP-EPIC"));
+        assert!(
+            lines
+                .iter()
+                .map(Line::to_string)
+                .collect::<Vec<_>>()
+                .join(" ")
+                .contains("Ship authentication")
         );
-        assert_eq!(lines[4].to_string(), "");
     }
 
     #[test]
-    fn detail_epic_parent_context_truncates_to_header_width() {
+    fn detail_epic_parent_relationship_wraps_to_width() {
         let mut item = detail_test_item();
         item.epic_parent = Some(crate::query::TaskDependencyLink {
             task_id: crate::test_support::task_id("epic-task-id"),
@@ -2141,10 +2607,106 @@ mod tests {
             unresolved: true,
         });
 
-        let line = detail_header_options(&item, 32, None).remove(3);
+        let lines = detail_body_lines(&item, 32, None);
 
-        assert!(line.width() <= 32);
-        assert!(line.to_string().ends_with('…'));
+        assert!(lines.iter().all(|line| line.width() <= 32));
+        assert!(lines.len() > 2);
+    }
+
+    #[test]
+    fn detail_projection_orders_every_relationship_section() {
+        let mut item = detail_test_item();
+        item.task.is_epic = true;
+        item.epic_parent = Some(crate::query::TaskDependencyLink {
+            task_id: crate::test_support::task_id("epic-parent-id"),
+            display_ref: "APP-EPIC".to_string(),
+            title: "Parent epic".to_string(),
+            status: "active".to_string(),
+            priority: "high".to_string(),
+            unresolved: true,
+        });
+        item.epic_children = vec![crate::query::TaskDependencyLink {
+            task_id: crate::test_support::task_id("epic-child-id"),
+            display_ref: "APP-CHILD".to_string(),
+            title: "Child task".to_string(),
+            status: "todo".to_string(),
+            priority: "medium".to_string(),
+            unresolved: true,
+        }];
+        item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
+
+        let sections = detail_interactive_rows(
+            &item,
+            100,
+            40,
+            Some(&DetailInlineImageContext::default()),
+            &BTreeSet::new(),
+        )
+        .into_iter()
+        .map(|row| row.target.section())
+        .fold(Vec::new(), |mut sections, section| {
+            if sections.last() != Some(&section) {
+                sections.push(section);
+            }
+            sections
+        });
+
+        assert_eq!(
+            sections,
+            vec![
+                DetailSection::EpicParent,
+                DetailSection::EpicChildren,
+                DetailSection::Attachments,
+                DetailSection::DependsOn,
+                DetailSection::Blocks,
+            ]
+        );
+    }
+
+    #[test]
+    fn detail_projection_expands_long_dependency_sections() {
+        let mut item = detail_test_item();
+        item.depends_on = (0..5)
+            .map(|index| crate::query::TaskDependencyLink {
+                task_id: crate::test_support::task_id(&format!("blocker-id-{index}")),
+                display_ref: format!("APP-B{index}"),
+                title: format!("blocker {index}"),
+                status: "todo".to_string(),
+                priority: "medium".to_string(),
+                unresolved: true,
+            })
+            .collect();
+        item.blocks.clear();
+
+        let collapsed = detail_interactive_rows(&item, 80, 24, None, &BTreeSet::new());
+        assert_eq!(
+            collapsed
+                .iter()
+                .filter(|row| row.target.section() == DetailSection::DependsOn)
+                .count(),
+            4
+        );
+        assert!(matches!(
+            collapsed.last().map(|row| &row.target),
+            Some(DetailTargetId::Expand {
+                section: DetailSection::DependsOn
+            })
+        ));
+
+        let expanded = detail_interactive_rows(
+            &item,
+            80,
+            24,
+            None,
+            &[DetailSection::DependsOn].into_iter().collect(),
+        );
+        assert_eq!(
+            expanded
+                .iter()
+                .filter(|row| row.target.section() == DetailSection::DependsOn)
+                .count(),
+            6
+        );
     }
 
     #[test]
@@ -2187,7 +2749,7 @@ mod tests {
 
         assert!(rendered.contains("├─ ← APP-B0"));
         assert!(rendered.contains("├─ ← APP-B2"));
-        assert!(rendered.contains("└─ +2 more"));
+        assert!(rendered.contains("└─ Show 2 more"));
         assert!(!rendered.contains("APP-B3"));
     }
 
@@ -2214,7 +2776,7 @@ mod tests {
 
         assert!(rendered.contains("├─ → APP-D0"));
         assert!(rendered.contains("├─ → APP-D2"));
-        assert!(rendered.contains("└─ +2 more"));
+        assert!(rendered.contains("└─ Show 2 more"));
         assert!(!rendered.contains("APP-D3"));
     }
 
@@ -2373,6 +2935,7 @@ mod tests {
             0,
             None,
             None,
+            &BTreeSet::new(),
             Some(&selection),
             None,
         );
@@ -2683,8 +3246,16 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let model =
-            build_detail_content_model(&item, Rect::new(0, 0, 60, 5), 4, None, None, None, None);
+        let model = build_detail_content_model(
+            &item,
+            Rect::new(0, 0, 60, 5),
+            4,
+            None,
+            None,
+            &BTreeSet::new(),
+            None,
+            None,
+        );
 
         assert_eq!(
             model.content_height,
@@ -2715,12 +3286,19 @@ mod tests {
             },
         ];
 
-        let rendered = detail_body_lines_with_pending_images(&item, 60, None, None, &pending)
-            .0
-            .iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
+        let rendered = detail_body_lines_with_pending_images(
+            &item,
+            60,
+            None,
+            &BTreeSet::new(),
+            None,
+            &pending,
+        )
+        .0
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
 
         assert!(rendered.contains("ATTACHMENTS"));
         assert!(rendered.contains("[image: preparing]"));
@@ -2862,7 +3440,8 @@ mod tests {
         item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
         let context = DetailInlineImageContext::default();
 
-        let (lines, placements, _) = detail_body_lines_with_images(&item, 80, None, Some(&context));
+        let (lines, placements, _, _) =
+            detail_body_lines_with_images(&item, 80, None, Some(&context));
 
         assert_eq!(placements.len(), 1);
         assert_eq!(placements[0].height, 12);
@@ -2890,9 +3469,9 @@ mod tests {
             ..DetailInlineImageContext::default()
         };
 
-        let (unfocused_lines, unfocused_placements, _) =
+        let (unfocused_lines, unfocused_placements, _, _) =
             detail_body_lines_with_images(&item, 80, None, Some(&unfocused));
-        let (focused_lines, focused_placements, _) =
+        let (focused_lines, focused_placements, _, _) =
             detail_body_lines_with_images(&item, 80, None, Some(&focused));
 
         assert_eq!(unfocused_placements.len(), 1);
@@ -2928,7 +3507,7 @@ mod tests {
         item.attachments[0].height = Some(302);
         let context = DetailInlineImageContext::default();
 
-        let (_lines, placements, _) =
+        let (_lines, placements, _, _) =
             detail_body_lines_with_images(&item, 200, None, Some(&context));
 
         assert_eq!(placements.len(), 1);
@@ -2946,7 +3525,8 @@ mod tests {
             ..DetailInlineImageContext::default()
         };
 
-        let (lines, placements, _) = detail_body_lines_with_images(&item, 80, None, Some(&context));
+        let (lines, placements, _, _) =
+            detail_body_lines_with_images(&item, 80, None, Some(&context));
 
         assert!(placements.is_empty());
         assert!(lines.iter().any(|line| {
@@ -2960,7 +3540,7 @@ mod tests {
         item.task.description = String::new();
         item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
 
-        let (lines, placements, _) = detail_body_lines_with_images(&item, 80, None, None);
+        let (lines, placements, _, _) = detail_body_lines_with_images(&item, 80, None, None);
 
         assert!(placements.is_empty());
         assert_eq!(
@@ -2989,6 +3569,7 @@ mod tests {
             0,
             None,
             None,
+            &BTreeSet::new(),
             None,
             Some(&context),
         );
@@ -3012,7 +3593,7 @@ mod tests {
                 width: 30,
                 height: 12,
             }],
-            attachment_placements: Vec::new(),
+            interactive_rows: Vec::new(),
         };
         let mut widgets = WidgetState {
             sidebar: ListState::default(),
@@ -3052,6 +3633,7 @@ mod tests {
             scroll,
             None,
             None,
+            &BTreeSet::new(),
             None,
             Some(&context),
         );
@@ -3119,6 +3701,7 @@ mod tests {
             0,
             None,
             None,
+            &BTreeSet::new(),
             None,
             Some(&context),
         );
@@ -3141,6 +3724,7 @@ mod tests {
                     scroll,
                     None,
                     None,
+                    &BTreeSet::new(),
                     None,
                     Some(&context),
                 );
@@ -3213,6 +3797,8 @@ mod tests {
                     0,
                     None,
                     None,
+                    None,
+                    &BTreeSet::new(),
                     None,
                     &mut widgets,
                     Some(&context),

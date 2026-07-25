@@ -6,7 +6,7 @@ use crate::attachments::optimization::ImageOptimizationPolicy;
 use crate::config::resolve_blob_dir;
 use crate::ids::new_id;
 use crate::operations::AttachmentAddInput;
-use crate::tui::app::App;
+use crate::tui::app::{App, DetailTargetId};
 use crate::tui::attachment_controller::{
     AttachmentCompletion, AttachmentRequest, AttachmentSource,
 };
@@ -54,14 +54,11 @@ impl App {
         };
         let replacement_attachment_id = self.attachment_focus_after_delete(&attachment_id);
         self.store.delete_attachment(&attachment_id).await?;
-        self.selected_detail_attachment_id = None;
+        self.detail_focus = replacement_attachment_id
+            .map(|attachment_id| DetailTargetId::Attachment { attachment_id });
         self.external_image_exports
             .retain(|(retained_id, _)| retained_id != &attachment_id);
         self.refresh().await?;
-        if replacement_attachment_id.is_some() {
-            self.selected_detail_child_task_id = None;
-            self.selected_detail_attachment_id = replacement_attachment_id;
-        }
         self.set_success("removed image");
         self.restore_detail_overlay(true);
         Ok(())
