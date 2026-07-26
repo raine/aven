@@ -2842,6 +2842,47 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
+    async fn empty_project_retry_keeps_captured_targets() {
+        let mut app = test_app().await;
+        let first = create_and_select_task(&mut app, test_task_draft("first")).await;
+        let first_id = app.store.tasks[first].task.id.clone();
+        let second = create_and_select_task(&mut app, test_task_draft("second")).await;
+        let second_id = app.store.tasks[second].task.id.clone();
+        let third = create_and_select_task(&mut app, test_task_draft("third")).await;
+        let third_id = app.store.tasks[third].task.id.clone();
+        app.list.mark(first_id.clone());
+        app.list.mark(second_id.clone());
+        app.begin_edit_project();
+        let (selection, mixed) = match &app.overlay {
+            Some(OverlayState::Picker(PickerState {
+                intent: PickerIntent::EditProject { selection, mixed },
+                ..
+            })) => (selection.clone(), *mixed),
+            overlay => panic!("expected project edit intent, got {overlay:?}"),
+        };
+
+        let expected_ids = selection.ids().cloned().collect::<Vec<_>>();
+        app.list.clear_marks();
+        app.list.mark(third_id);
+        app.handle_overlay_submit(crate::tui::overlay::OverlaySubmit::Picker {
+            intent: PickerIntent::EditProject { selection, mixed },
+            values: Vec::new(),
+            partial_values: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+        let retried_ids = match &app.overlay {
+            Some(OverlayState::Picker(PickerState {
+                intent: PickerIntent::EditProject { selection, .. },
+                ..
+            })) => selection.ids().cloned().collect::<Vec<_>>(),
+            overlay => panic!("expected retried project edit intent, got {overlay:?}"),
+        };
+        assert_eq!(retried_ids, expected_ids);
+    }
+
+    #[tokio::test]
     async fn submit_edit_priority_updates_only_marked_tasks() {
         let mut app = test_app().await;
         let first = create_and_select_task(&mut app, test_task_draft("first")).await;
@@ -6060,6 +6101,40 @@ mod detail_mode {
                 .and_then(crate::tui::app::DetailTargetId::task_id),
             Some(&child_id)
         );
+    }
+
+    #[tokio::test]
+    async fn unavailable_detail_history_keeps_current_task_open() {
+        let mut app = test_app().await;
+        let selected =
+            create_and_select_task(&mut app, test_task_draft("Current linked task")).await;
+        let current = app.store.tasks[selected].clone();
+        let current_id = current.task.id.clone();
+        app.store.show_exact_task(current);
+        app.list.select_task(Some(0));
+        app.show_detail(4);
+        let current_view = app.store.view_state.clone();
+        let missing_id = crate::test_support::task_id("missing-history-task");
+        app.push_detail_navigation_state(crate::tui::detail_session::DetailNavigationState {
+            task_id: missing_id.clone(),
+            scroll: 2,
+            focused_target: None,
+            expanded_sections: Default::default(),
+            view_state: crate::tui::store::TaskViewState::for_exact_task(missing_id),
+        });
+
+        assert!(!app.go_back_in_detail().await.unwrap());
+        assert_eq!(app.store.view_state, current_view);
+        assert_eq!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .map(|item| &item.task.id),
+            Some(&current_id)
+        );
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 4 })
+        ));
     }
 
     #[tokio::test]

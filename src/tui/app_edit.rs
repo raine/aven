@@ -144,6 +144,10 @@ impl App {
             self.set_info("no selected task to move");
             return;
         };
+        self.open_move_to_column_picker(selection);
+    }
+
+    pub(super) fn open_move_to_column_picker(&mut self, selection: TaskSelection) {
         let selected_lane = if selection.is_single() {
             crate::tui::columns::lane_index_for_status(
                 &self.store.task_columns,
@@ -212,7 +216,12 @@ impl App {
             self.set_info("tasks are already in that column");
             return Ok(());
         }
-        self.apply_column_moves(&selection, changes).await
+        let retry_selection = selection.clone();
+        if let Err(error) = self.apply_column_moves(&selection, changes).await {
+            self.set_error(format!("{error:#}"));
+            self.open_move_to_column_picker(retry_selection);
+        }
+        Ok(())
     }
 
     async fn apply_column_moves(
@@ -514,7 +523,7 @@ impl App {
         self.open_edit_project_picker(selection);
     }
 
-    fn open_edit_project_picker(&mut self, selection: TaskSelection) {
+    pub(super) fn open_edit_project_picker(&mut self, selection: TaskSelection) {
         let (aggregate, selected) =
             Self::aggregate_value(&selection, |item| item.task.project_key.clone());
         let mut items = self.store.existing_project_picker_items(&selected);
@@ -544,8 +553,6 @@ impl App {
         let Some(selection) = self.capture_edit_selection() else {
             return;
         };
-        let (aggregate, selected) =
-            Self::aggregate_value(&selection, |item| item.task.priority.to_string());
         if selection.len() == 1 {
             self.footer_choice = Some(FooterChoiceState {
                 mode: FooterChoiceMode::Priority,
@@ -553,6 +560,12 @@ impl App {
             });
             return;
         }
+        self.open_edit_priority_picker_for_selection(selection);
+    }
+
+    pub(super) fn open_edit_priority_picker_for_selection(&mut self, selection: TaskSelection) {
+        let (aggregate, selected) =
+            Self::aggregate_value(&selection, |item| item.task.priority.to_string());
         self.open_edit_priority_picker(selection, aggregate, selected);
     }
 
@@ -707,6 +720,19 @@ impl App {
             return;
         };
         let task_id = self.store.tasks[index].task.id.clone();
+        self.open_remove_dependency_picker(task_id);
+    }
+
+    pub(super) fn open_remove_dependency_picker(&mut self, task_id: crate::ids::TaskId) {
+        let Some(index) = self
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+        else {
+            self.set_warning("task is unavailable");
+            return;
+        };
         let items = self.store.selected_dependency_picker_items(Some(index));
         self.open_picker_overlay(
             PickerIntent::RemoveDependency { task_id },
@@ -1256,7 +1282,7 @@ impl App {
             Ok(None) => self.set_info("no selected task to edit"),
             Err(error) => {
                 self.set_error(format!("{error:#}"));
-                self.begin_remove_dependency();
+                self.open_remove_dependency_picker(task_id);
             }
         }
         Ok(())

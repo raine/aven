@@ -223,7 +223,7 @@ impl App {
                 }
                 None => {
                     self.set_warning("no matching column");
-                    self.begin_move_to_column();
+                    self.open_move_to_column_picker(selection);
                 }
             },
             PickerIntent::EditProject { selection, mixed } => match values.first() {
@@ -233,7 +233,7 @@ impl App {
                 }
                 None => {
                     self.set_warning("no matching project");
-                    self.begin_edit_project();
+                    self.open_edit_project_picker(selection);
                 }
             },
             PickerIntent::EditPriority { selection, mixed } => match values.first() {
@@ -243,7 +243,7 @@ impl App {
                 }
                 None => {
                     self.set_warning("no matching priority");
-                    self.begin_edit_priority();
+                    self.open_edit_priority_picker_for_selection(selection);
                 }
             },
             PickerIntent::FilterLabel => self.submit_filter_label(values).await?,
@@ -271,7 +271,7 @@ impl App {
                 }
                 None => {
                     self.set_warning("no matching dependency");
-                    self.begin_remove_dependency();
+                    self.open_remove_dependency_picker(task_id);
                 }
             },
         }

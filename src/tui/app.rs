@@ -312,6 +312,10 @@ impl App {
     pub(super) async fn go_back_in_detail(&mut self) -> Result<bool> {
         let mut skipped = false;
         while let Some(previous) = self.detail.as_mut().and_then(|detail| detail.pop_history()) {
+            let Some(item) = self.store.load_task_item(&previous.task_id).await? else {
+                skipped = true;
+                continue;
+            };
             self.store.view_state = previous.view_state.clone();
             let selected = self.store.refresh(Some(&previous.task_id)).await?;
             let index = if let Some(index) = selected.filter(|&index| {
@@ -322,10 +326,6 @@ impl App {
             }) {
                 index
             } else {
-                let Some(item) = self.store.load_task_item(&previous.task_id).await? else {
-                    skipped = true;
-                    continue;
-                };
                 self.store.show_exact_task(item);
                 0
             };
