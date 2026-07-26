@@ -2765,6 +2765,7 @@ mod undo {
     async fn repeated_delete_does_not_add_noop_undo_entry() {
         let (dir, pool, mut store) = test_store_with_pool().await;
         let (task_id, selected) = create_selected_task(&mut store, "Keep once").await;
+        store.view_state.filter_modifiers.include_deleted = true;
         store.update_deleted(Some(selected), true).await.unwrap();
         let workspace_id = store.active_workspace.id.clone();
         let undo_count_after_delete = pending_undo_count(&pool, &workspace_id).await;
