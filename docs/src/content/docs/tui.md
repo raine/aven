@@ -1,9 +1,9 @@
 ---
 title: TUI
-description: Use the keyboard-first terminal interface.
+description: Find, capture, and manage work in the terminal interface.
 ---
 
-The TUI is the main human interface for aven. It gives you a fast, keyboard-driven view of your local task database, with the same workspace routing and project inference used by the CLI.
+The TUI is aven's keyboard-driven interface for local task management.
 
 ```sh
 aven tui
@@ -11,176 +11,182 @@ aven tui
 
 ![aven TUI showing the queue view across workspace projects](/tui.webp)
 
-<p class="media-caption">The queue view brings workspace scope, project groups, task metadata, and selected-task context into one screen.</p>
+<p class="media-caption">The queue brings workspace scope, project groups, task metadata, and selected-task context into one screen.</p>
 
-## Screen tour
-
-The TUI is organized around the current workspace, scope, view, task list, and selected task.
-
-| Area | Purpose |
-| --- | --- |
-| Header | Shows the active workspace, scope, view, queue counts, and sync state. |
-| Sidebar | Switches between views, workspace scope, projects, and filters. |
-| Task list | Shows the tasks in the current view, including refs, labels, project, status, priority, and age. |
-| Selected task | Shows the selected task's important metadata and description without leaving the list. |
-| Footer | Shows the most useful shortcuts for the current mode. |
-| Overlays | Add tasks, search, command palette, help, and pickers appear over the current screen. |
-
-## Interaction model
-
-aven is keyboard-first. Common actions have direct shortcuts, broader command families use prefixes, and the command palette searches the same command catalog.
-
-- **Direct shortcuts** run frequent actions immediately. For example, `a` adds a task, `s` opens the status picker, `d` marks a task done, and `u` undoes a completed TUI mutation.
-- **Prefix families** group related commands. Press `v` for views, `f` for filters, `o` for ordering, `t` for task actions, `p` for projects, `L` for labels, `c` for conflicts, or `C` for config.
-- **Command palette** opens with `:` and searches available commands by name and description.
-- **Help** opens with `?` and shows commands available in the current mode.
-- **Escape** cancels overlays and prefix mode.
-
-![aven TUI command palette filtering view commands](/command-palette.webp)
-
-<p class="media-caption">The command palette searches the same command catalog used by prefix hints and help.</p>
-
-## Daily workflow
-
-A typical TUI session is simple:
-
-1. Open `aven tui`.
-2. Start in the queue to see work that needs attention.
-3. Press `a` to capture new work.
-4. Use `s`, `d`, `x`, and task actions to triage the selected task.
-5. Press `Enter` to inspect details, notes, dependencies, and metadata.
-6. Use `/`, `f`, `o`, `v`, and `g` when the list needs narrowing or a different view.
-7. Press `u` when a completed TUI change should be undone.
+Use `?` for commands available in the current mode. Use `:` to search the complete command catalog by name or description.
 
 ## Find work
 
-The queue is the default attention view. It groups work into needs action, blocked, focus, triage, and later. The queue gives you one place to decide what needs attention across projects.
+Queue is the default view. It groups open work by what needs attention across the active scope. See [Concepts](/concepts/) for queue groups, statuses, priorities, availability, due dates, dependencies, and epics.
 
-Use the sidebar or the `v` prefix family to switch views. Views include queue, columns, open, inbox, backlog, todo, active, done, conflicts, epics, recent actions, and search results.
+Use the sidebar or the `v` command family to switch views.
 
-### Columns view
+| Goal | View | Open with |
+| --- | --- | --- |
+| Decide what needs attention | Queue | `v q` |
+| Move work through lifecycle lanes | Columns | `v l` |
+| See all unfinished work | Open | `v o` |
+| Triage captured work | Inbox | `v i` |
+| Review work saved for later | Backlog | `v b` |
+| See committed work | Todo | `v t` |
+| See work in progress | Active | `v a` |
+| Review deferred work by availability | Upcoming | Sidebar or `aven tui --view upcoming` |
+| Review completed and canceled work | Done | `v d` |
+| Resolve synchronization conflicts | Conflicts | `v c` |
+| Plan with parent tasks | Epics | `v e` |
+| Manage repeating schedules | Recurring Tasks | `v u` |
+| Audit recent changes | Recent actions | `v r` |
+| Return to accepted search results | Search results | `v s` |
 
-The Columns view arranges tasks into configurable lifecycle lanes. Its defaults use Aven's status names directly: Inbox, Backlog, Todo, Active, and Done. Inbox shows the oldest captures first, Backlog and Todo prioritize important older work, Active surfaces stale work, and Done shows the most recently completed or canceled tasks first.
+### Scope
 
-![aven TUI showing tasks organized across lifecycle columns](/columns.webp)
+Workspace scope shows tasks across projects. Project scope narrows every view to one project.
 
-<p class="media-caption">The columns view keeps the complete task lifecycle visible while preserving task metadata and selected-task context.</p>
+| Key | Action |
+| --- | --- |
+| `g a` | Show all projects in the workspace |
+| `g p` | Choose a project scope |
+| `g w` | Switch workspace |
 
-Use `v l` to open the view. Up and down move within a lane, while left and right move the selection between lanes. Press `<` or `>` to move the selected task one lane, or press `m` to choose a destination lane. Marked tasks move together and create one undo step. Relative moves use each task's current lane, and the batch remains unchanged when any marked task is already at the requested edge.
+The header and sidebar show the active workspace, scope, view, and filters.
 
-Moving into a lane assigns its first configured status. Choosing the lane a task already occupies preserves its exact status, so a canceled task remains canceled when Done contains `[done, canceled]`. Click a lane header to move the selected or marked tasks there, or right-click a card to open the status choices.
+### Search, filter, and order
 
-Press `g d` to toggle the selected-task preview and give the board more vertical space. Project scope, filters, details, editing, and task mutations continue to use the existing task model. Configure lane names and status grouping under [`tui.columns`](/configuration/#tui-columns).
+Press `/` to search titles, descriptions, projects, labels, notes, metadata, refs, and attachment text. Results update while you type. `Enter` opens the selected preview result, while `Tab` accepts the query and opens Search results.
 
-Use the sidebar or the `g` prefix family to switch scope. Workspace scope shows projects in the active workspace. Project scope narrows the task list to one project.
+Filters constrain the current view. Useful filter commands include:
 
-Queue behavior, statuses, priorities, refs, dependencies, and epics are described in [Concepts](/concepts/).
+| Key | Action |
+| --- | --- |
+| `f l` | Filter by label |
+| `f p` | Filter by priority |
+| `f r` | Cycle recurring lifecycle |
+| `f x` | Cycle deleted-task visibility |
+| `f c` | Clear filters |
 
-## Run the TUI in tmux
+Press `o` to choose ordering. Queue uses aven's attention score. Other views can order by fields such as availability and due date.
 
-When you live in tmux, bind the full TUI to a popup so you can open aven over the current pane without changing windows.
-
-![aven TUI running in a tmux popup over terminal panes](/tui-tmux-popup.webp)
-
-<p class="media-caption">A tmux popup keeps the full queue and detail workflow available over the terminal session you are already using.</p>
-
-For example, this binds prefix + `Ctrl-a` to a large popup in the current pane's directory:
-
-```text
-bind C-a display-popup -E -d '#{pane_current_path}' -w 80% -h 80% 'aven tui'
-```
+For shell shortcuts that open an initial view, project, filter, or task, see [`aven tui`](/command-reference/#aven-tui).
 
 ## Capture tasks
 
-Press `a` to open the task composer. Project, status, priority, labels, availability, due date, title, and description stay visible as one form. The active field has a `▶` marker, so focus remains clear without relying on color. The project picker's **Infer** option uses the project mapped to the current directory. Choose a named project when the task belongs elsewhere.
+Press `a` to open the task composer. Project, status, priority, labels, availability, due date, natural-language schedule, title, and description stay visible as one form. The active field has a `▶` marker, so focus remains clear without relying on color. The project picker's **Infer** option uses the project mapped to the current directory. Choose a named project when the task belongs elsewhere.
 
 ![aven TUI add task popup with title and description fields](/add-task.webp)
 
-<p class="media-caption">The composer captures structured fields without leaving the keyboard workflow.</p>
+<p class="media-caption">The composer keeps task metadata, schedule, title, and description in one keyboard workflow.</p>
 
-Use `Tab` and `Shift+Tab` to move through every field. Press `Enter` to edit the focused metadata field. `Enter` creates from the title field and inserts a newline in the description. `Ctrl-Enter` creates from any field when the terminal reports modified Enter keys. `Ctrl-s` is the portable create fallback. Press `F1` for complete composer help.
+`Enter` opens the focused metadata control, creates from the title, and inserts a newline in the description. `Ctrl-Enter` creates from any field in terminals that report modified Enter keys. `Ctrl-s` is the portable create shortcut.
+
+### Schedule tasks
+
+Type a schedule directly in the Schedule field:
+
+- `tomorrow`
+- `available tomorrow at 9am`
+- `due next Friday`
+- `daily`
+- `every Friday at 09:00`
+- `every 3 weeks, no due`
+
+Press `Enter` on Schedule when a structured editor is easier. **One-off** exposes optional Available and Due values. **Repeating** exposes the recurrence rule, the local availability time, due policy, and start date.
+
+Availability controls when a task becomes actionable. Due records a date when completion is expected. For repeating schedules, an empty availability time means the occurrence becomes available at the start of its day.
+
+See [Availability input](/command-reference/#availability-input), [Due date input](/command-reference/#due-date-input), and [`aven add`](/command-reference/#aven-add) for the accepted grammar.
+
+### Create with AI
+
+Press `Ctrl-n` when the visible title and description contain rough notes, pasted context, or dictated input. The configured task-intake agent produces a structured draft for review. See [`agent.task_intake`](/configuration/#agent-task-intake).
 
 ### Attach images
 
-Attach images from the composer or task detail:
+Copy a PNG, JPEG, GIF, or WebP image and press `Ctrl-v`, or paste a local image path or `file://` URL. Images remain attached to the draft when validation fails.
 
-- On macOS or Linux, copy a PNG, JPEG, GIF, or WebP image and press `Ctrl-v`.
-- On Linux, install `wl-paste` from `wl-clipboard` for Wayland or `xclip` for X11. Aven prefers the session's native backend and falls back to the other backend in mixed Wayland and XWayland sessions.
-- On any platform, use the terminal's paste action to insert one local image path or `file://` URL.
-
-Some terminals represent an image paste as an empty bracketed-paste event. In that case, the terminal's usual paste action, such as `Cmd-v` on macOS, triggers the same direct clipboard image read.
-
-Images that cannot be added stay marked as failed for the current session. Pasting the same image repeatedly adds it once.
-
-Image optimization is off by default. Set [`local.image_optimization`](/configuration/#png-optimization) to `paste` or `on` to apply lossless PNG optimization to pasted images.
-
-If a clipboard image does not attach, save it as a PNG, JPEG, GIF, or WebP file and paste the file path instead.
-
-Images added in the composer are saved with the task. If the task cannot be created, the draft and its images stay available so you can try again. See [`aven attachment`](/command-reference/#aven-attachment) for command-line attachment management and image limits.
-
-:::note[Terminal compatibility]
-Aven negotiates progressive keyboard enhancement with compatible terminals and uses the xterm modified-key protocol as a fallback. In tmux, enable forwarding with `set -s extended-keys on`. The outer terminal must also support tmux's extended-key mode. Use `Ctrl-s` when that path does not distinguish `Ctrl-Enter` from `Enter`. See [Tips](/tips/#use-ctrl-enter-in-alacritty-and-tmux) for the complete Alacritty and tmux configuration.
-:::
-
-`Esc` closes an empty composer. A draft with entered or changed values asks for confirmation before it is discarded. Opening metadata controls and help preserves the title and description cursors and viewport.
-
-`Ctrl-x Ctrl-e` opens an external editor while the description is focused. Optional accelerators such as `Ctrl-p`, `Ctrl-t`, `Ctrl-r`, `Ctrl-l`, `Ctrl-a`, and `Ctrl-u` jump to metadata fields, but all metadata is accessible with Tab and Enter. Availability accepts timestamps and local-calendar expressions such as `next mon at 9am`. Due dates accept the same date expressions without times. See [Availability input](/command-reference/#availability-input) and [Due date input](/command-reference/#due-date-input) for their independent semantics and complete grammar.
-
-### LLM task intake
-
-Use `Ctrl-n` in the composer to **Create with AI** when you have rough input, pasted notes, or dictated rambling. The configured LLM turns the visible title and description into a sensible task while preserving useful context and the selected project.
-
-The LLM command itself is configured through `agent.task_intake`; see [Configuration](/configuration/#agent-task-intake).
-
-### Capture from tmux
-
-When you live in tmux, bind the task composer to a key so it opens as a popup over the current pane.
-
-![aven tmux popup add task composer over terminal panes](/tmux-popup.webp)
-
-<p class="media-caption">The tmux popup opens the same composer over your current terminal session.</p>
-
-For example, this binds prefix + `t` to a 120 by 30 popup in the current pane's directory:
-
-```text
-bind t display-popup -E -d '#{pane_current_path}' -w 120 -h 30 'aven tui --add-task-only'
-```
+If clipboard image paste is unavailable, save the image and paste its path. See [Tips](/tips/) for terminal-specific clipboard and preview setup, [Configuration](/configuration/#png-optimization) for image optimization, and [`aven attachment`](/command-reference/#aven-attachment) for limits and command-line management.
 
 ## Triage and edit tasks
 
-Use direct shortcuts for common task changes:
+Direct shortcuts cover frequent lifecycle changes:
 
-- `s` opens the status picker.
-- `d` marks the selected task done.
-- `x` marks the selected task canceled.
-- `n` adds a note.
-- `u` undoes a completed TUI mutation.
+| Key | Action |
+| --- | --- |
+| `s` | Choose status |
+| `d` | Mark done |
+| `x` | Mark canceled |
+| `n` | Add a note |
+| `u` | Undo the latest completed TUI mutation |
 
-Use the `t` prefix family for more task fields and lifecycle actions. Task actions include editing status, priority, project, labels, availability, due dates, descriptions, notes, dependencies, and epic relationships.
+Use the `e` family to edit task fields:
 
-## Open detail
+| Key | Field |
+| --- | --- |
+| `e t` | Title |
+| `e d` | Description |
+| `e j` | Project |
+| `e p` | Priority |
+| `e a` | Availability |
+| `e u` | Due date |
+| `e l` | Labels |
 
-Press `Enter` on a task to open its detail view. Double-clicking a task row also opens detail when mouse support is active.
+The `t` family contains lifecycle, priority, relationship, recurrence, delete, and restore actions. Press `t` and follow the footer hints, or search by action name with `:`.
+
+### Delete and restore
+
+`t D` deletes the selected task after confirmation. Deleted tasks stay available through the `f x` filter. Select a deleted task and press `t R` to restore it.
+
+Canceling with `x` preserves the task as an intentional outcome. Deleting removes it from ordinary task views.
+
+### Mark and change several tasks
+
+Press `Space` to mark or unmark the selected task. The footer shows the marked count.
+
+| Key | Action |
+| --- | --- |
+| `Space` | Toggle the selected task's mark |
+| `t V` | Toggle marks on visible tasks |
+| `t C` | Clear all marks |
+
+Status, priority, project, labels, availability, due date, delete, and Columns moves apply to the marked set when marks exist. A batch mutation creates one undo step.
+
+## Columns
+
+Columns arranges tasks into configurable lifecycle lanes.
+
+![aven TUI showing tasks organized across lifecycle columns](/columns.webp)
+
+<p class="media-caption">Columns keeps the task lifecycle visible while preserving metadata and selected-task context.</p>
+
+Use `v l` to open Columns. Up and down move within a lane. Left and right switch lanes. Press `<` or `>` to move the selected or marked tasks one lane, or `m` to choose a destination.
+
+Moving a task into a lane assigns the lane's first configured status. Choosing its existing lane preserves its exact status. This matters when a lane groups several statuses, such as `done` and `canceled`.
+
+Press `g d` to toggle the selected-task preview. Configure lane names and status groups under [`tui.columns`](/configuration/#tui-columns).
+
+## Task detail
+
+Press `Enter` on a task to open detail.
 
 ![aven TUI task detail view with Markdown description and task metadata](/task-detail.webp)
 
-<p class="media-caption">The detail view keeps Markdown context, notes, relationships, and editable metadata together.</p>
+<p class="media-caption">Detail keeps Markdown context, notes, relationships, attachments, and editable metadata together.</p>
 
-The detail view shows the task description, notes, metadata, availability, and due date.
+Use `[` and `]` to switch tasks without returning to the list.
 
-### View image attachments
+### Copy task information
 
-Attachments appear in an `ATTACHMENTS` section below the description, in the order they were added. iTerm2, Kitty, WezTerm, and Ghostty can show inline previews. Other terminals show a text label instead, so the attachment remains visible even when the terminal cannot display the image.
+The `y` family copies task information from either the list or detail:
 
-![Aven task detail showing two attached Wayfinder design concepts with the first inline preview focused](/task-attachments.webp)
+| Key | Copies |
+| --- | --- |
+| `y r` | Qualified ref, such as `APP-7KQ9` |
+| `y i` | Durable task id |
+| `y t` | Title |
+| `y d` | Description |
+| `y a` | Title and description |
+| `y n` | Notes |
 
-<p class="media-caption">Kitty showing an inline image attachment preview in task detail.</p>
-
-Overdue and due-today labels are highlighted while future deadlines remain visible as dates. Use `j/k`, arrows, `Ctrl-d`, `Ctrl-u`, `PageDown`, `PageUp`, or the mouse wheel to scroll. Use `[` and `]` to switch tasks while staying in detail. With no child task or image focused, press `Esc`, `Enter`, or `q` to return to the list. Clicking status or priority opens the matching menu and returns to detail after selection. To save an image as a regular file, use [`aven attachment get`](/command-reference/#aven-attachment).
-
-### Select and copy text
-
-Drag across the rendered title or description to select text, then press `y` to copy it. Selection follows the rendered Markdown and remains anchored while the detail view scrolls. Press `Esc` or click outside the selectable text to clear it.
+In detail, drag across rendered title or description text and press `y` to copy only that selection.
 
 <div class="video-player" data-video-player>
   <video controls muted playsinline preload="metadata">
@@ -193,105 +199,108 @@ Drag across the rendered title or description to select text, then press `y` to 
 
 <p class="media-caption">Drag across rendered task text and press <code>y</code> to copy the selection.</p>
 
-## Search, filter, and order
+### Image attachments
 
-Search, filters, and ordering are separate tools:
+Attachments appear below the description. iTerm2, Kitty, WezTerm, and Ghostty can show inline previews. Other terminals show a text label.
 
-- **Search** finds tasks by title, description, project, label, note, status, priority, ref, and current attachment filename or alternative text.
-- **Filters** constrain the current task list by fields such as label, priority, and deleted visibility.
-- **Ordering** changes the sort field or direction. Queue ordering uses aven's attention score, while other views can order by fields including availability and due date. Due ordering places undated tasks last.
+![Aven task detail showing two attached Wayfinder design concepts with the first inline preview focused](/task-attachments.webp)
 
-Press `/` to search. Search shows live preview results while you type.
+<p class="media-caption">Kitty showing an inline image attachment preview in task detail.</p>
 
-| Key                | Search behavior                                    |
-| ------------------ | -------------------------------------------------- |
-| `Ctrl-n`, `Ctrl-p` | Move through preview results.                      |
-| `Enter`            | Open the selected preview result.                  |
-| `Tab`              | Accept the query and open the search-results view. |
+Open the preview to move between attachments, open one in the system viewer, or delete one. To save an image as a regular file, use [`aven attachment get`](/command-reference/#aven-attachment).
 
-Press `f` to filter the current list. Press `o` to change ordering.
+## Recurring tasks
 
-For shell shortcuts that need an initial view, filter, or task, see [`aven tui`](/command-reference/#aven-tui).
+A repeating schedule creates a series and one current occurrence task. The series has a stable `RCR-` ref. Each occurrence is an ordinary task linked to that series.
 
-## Projects, labels, dependencies, and epics
+Press `v u` to open Recurring Tasks. The view shows each series's rule, next occurrence, and lifecycle state. Use `f r` to cycle active, paused, and stopped series.
 
-Projects and labels are available from the sidebar and command families. Use `p` for project administration and `L` for label administration.
+Series actions work from a selected series or linked occurrence:
 
-Task detail shows why a task is blocked and what it unlocks. Task actions include dependency and epic workflows when those relationships are useful.
+| Key | Action |
+| --- | --- |
+| `t r k` | Skip the current occurrence |
+| `t r e` | Edit the template for future occurrences |
+| `t r p` | Pause the series |
+| `t r r` | Resume a paused series |
+| `t r s` | Stop future occurrences after the current task |
+| `t r h` | Show occurrence history |
 
-## Conflicts and sync state
+See [`aven recur`](/command-reference/#aven-recur) for command-line management and recurrence behavior.
 
-The header shows sync state, and the conflicts view shows tasks that need human review. Use the conflicts view to inspect conflicted tasks. Conflict actions live under the `c` prefix family.
+## Projects and relationships
 
-Sync setup and conflict concepts are described in [Sync and backups](/sync/).
+Use `p` for project administration and `L` for label administration. Common commands include `p a` to add a project and `L n` to add a label.
+
+Dependencies express blocking relationships:
+
+| Key | Action |
+| --- | --- |
+| `t B` | Add a blocker to the selected task |
+| `t U` | Remove a blocker |
+
+Task detail shows what blocks a task and what it unlocks.
+
+Epic actions live under `t c`: `t c a` adds a child, `t c r` removes a child, and `t c t` expands or collapses an epic in supported views. Press `v e` to open Epics.
+
+## Conflicts and sync
+
+The header shows synchronization state. Press `v c` to open tasks with unresolved field conflicts, then use the `c` family to inspect and resolve them.
+
+See [Sync and backups](/sync/) for setup, transport, conflict semantics, and recovery.
+
+## Run aven from tmux
+
+Bind the full TUI, the composer, or both to tmux popups:
+
+```text
+bind C-a display-popup -E -d '#{pane_current_path}' -w 80% -h 80% 'aven tui'
+bind t display-popup -E -d '#{pane_current_path}' -w 120 -h 30 'aven tui --add-task-only'
+```
+
+![aven TUI running in a tmux popup over terminal panes](/tui-tmux-popup.webp)
+
+<p class="media-caption">A popup keeps aven available over the terminal session in the current pane.</p>
+
+See [Tips](/tips/#use-ctrl-enter-in-alacritty-and-tmux) for modified-key and tmux configuration.
 
 ## Mouse support
 
-The TUI supports mouse actions in addition to keyboard shortcuts:
+Mouse actions cover the same common outcomes as keyboard commands:
 
-- Click header menus for workspace, scope, view, ordering, and sync status.
-- Click header metrics to jump to related views.
-- Click sidebar entries to switch views, scope, projects, and filters.
-- Right-click a task status cell, or any card in Columns view, to open the status menu.
-- Click a lane header in Columns view to move the selected or marked tasks into that lane.
-- Double-click a task row or card to open detail.
-- Click a locally available inline image to open its large in-TUI preview, or click its text label to use the operating system viewer.
-- Scroll detail content with the mouse wheel.
+- Click the sidebar or header to change view, scope, project, filter, or ordering.
+- Double-click a task to open detail.
+- In Columns, click a lane header to move selected or marked tasks, or right-click a task to choose status.
+- Click an inline image to open its TUI preview, or its text label to use the system viewer.
+- Scroll task detail with the mouse wheel.
 
-## Keyboard reference
+## Discover commands
 
-### Global navigation
+The in-app command catalog is the authoritative shortcut reference:
 
-| Shortcut         | Action                        |
-| ---------------- | ----------------------------- |
-| `j`, `k`, up/down | Move within the current list, focus, or image preview |
-| Left/Right        | Move between column lanes     |
-| `Tab`, `Shift+Tab` | Switch focus, including locally available images in detail |
-| `Enter`          | Open task detail, an image preview, or the viewer fallback |
-| `o`              | Open a focused or previewed image in the system viewer |
-| `[`, `]`         | Switch tasks while in detail  |
-| `/`              | Open search                   |
-| `:`              | Open command palette          |
-| `?`              | Open help                     |
-| `r`              | Refresh                       |
-| `u`              | Undo                          |
-| `q`              | Quit                          |
-| `Esc`            | Return from preview, cancel overlay or prefix mode |
+- `?` lists commands available in the current mode.
+- `:` searches command names and descriptions.
+- Prefix keys show their available continuations in the footer.
 
-### Task shortcuts
-
-| Shortcut        | Action                                           |
-| --------------- | ------------------------------------------------ |
-| `a`             | Add task                                         |
-| `n`             | Add note                                         |
-| `s`             | Open status picker                               |
-| `<`, `>`        | Move selected or marked tasks between lanes     |
-| `m`             | Choose a destination lane in Columns view       |
-| `Space`         | Mark or unmark a task for batch actions          |
-| `d`             | Mark done                                        |
-| `x`             | Mark canceled                                    |
-| `Ctrl-x Ctrl-e` | Open external editor during supported text input |
-
-### Prefix families
-
-Press the prefix to see available commands in that family.
-
-| Prefix | Family                                    |
-| ------ | ----------------------------------------- |
-| `g`    | Go to task list scope or switch workspace |
-| `v`    | Views                                     |
-| `f`    | Filters                                   |
-| `o`    | Ordering                                  |
-| `t`    | Task fields and lifecycle actions         |
-| `p`    | Project administration                    |
-| `L`    | Label administration                      |
-| `c`    | Conflicts                                 |
-| `C`    | Config                                    |
+| Prefix | Family |
+| --- | --- |
+| `g` | Navigation, scope, and workspace |
+| `v` | Views |
+| `f` | Filters |
+| `o` | Ordering |
+| `e` | Edit task fields |
+| `t` | Task lifecycle and relationships |
+| `y` | Copy task information |
+| `p` | Project administration |
+| `L` | Label administration |
+| `c` | Conflict resolution |
+| `C` | Configuration |
 
 ## Related pages
 
 - [Getting started](/getting-started/) covers installation and first-run usage.
 - [Concepts](/concepts/) explains the task model behind the TUI.
-- [Configuration](/configuration/) covers workspace routes, project path mappings, sync defaults, and LLM task intake configuration.
+- [Command reference](/command-reference/) documents CLI equivalents and accepted input grammar.
+- [Configuration](/configuration/) covers workspace routes, project mappings, sync defaults, and task-intake configuration.
+- [Tips](/tips/) covers terminal, tmux, clipboard, and image-preview setup.
 - [Workflows](/workflows/) covers capture, chat, sync, and agent workflows.
-- [Agents](/agents/) covers CLI and coding-agent workflows.

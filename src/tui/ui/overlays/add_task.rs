@@ -19,30 +19,30 @@ use super::tag_combobox::tag_combobox_lines;
 use crate::task_render::human_file_size;
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::{
-    AddTaskMode, AddTaskView, ConfirmView, PickerKind, PickerView, TAG_COMBOBOX_VIEWPORT_ROWS,
-    TagComboboxView, tag_combobox_completion, tag_combobox_matches, visible_picker_indices,
+    AddTaskMode, AddTaskView, ConfirmView, PickerKind, PickerView, ScheduleEditorField,
+    ScheduleEditorMode, ScheduleEditorState, TAG_COMBOBOX_VIEWPORT_ROWS, TagComboboxView,
+    tag_combobox_completion, tag_combobox_matches, visible_picker_indices,
 };
 use crate::tui::text::cell_width_ranges;
 use crate::tui::theme::{self, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, SELECTED};
 use crate::tui::widgets::{priority_short, status_span};
 
+#[derive(Clone, Copy)]
+pub(crate) struct AddTaskScheduleLayout;
+
 pub(crate) fn add_task_field_at(
     terminal: Rect,
     full_frame: bool,
     has_attachments: bool,
-    recurring: bool,
-    repeat_visible: bool,
+    _schedule: AddTaskScheduleLayout,
     column: u16,
     row: u16,
 ) -> Option<AddTaskStep> {
     let outer = if full_frame {
         terminal
     } else {
-        crate::tui::overlay::dialog_area(
-            terminal,
-            100,
-            terminal.height.saturating_sub(2).clamp(18, 28),
-        )
+        let height = terminal.height.saturating_sub(4).clamp(16, 26);
+        crate::tui::overlay::dialog_area(terminal, 100, height)
     };
     let content = Rect {
         x: outer.x.saturating_add(2),
@@ -56,10 +56,9 @@ pub(crate) fn add_task_field_at(
     }
     let relative_x = column.saturating_sub(content.x);
     let relative_y = row.saturating_sub(content.y);
-    let repeat_visible = recurring || repeat_visible;
-    let steps = metadata_steps(recurring, repeat_visible);
+    let steps = metadata_steps();
     let metadata_rows = if content.width >= 80 {
-        if repeat_visible { 4 } else { 2 }
+        2
     } else {
         steps.len().div_ceil(metadata_columns(content.width)) as u16
     };
@@ -73,22 +72,10 @@ pub(crate) fn add_task_field_at(
                         AddTaskStep::Priority,
                     ][(relative_x as usize * 3 / content.width.max(1) as usize).min(2)],
                 ),
-                1 if recurring => Some(
-                    [
-                        AddTaskStep::Labels,
-                        AddTaskStep::RepeatAt,
-                        AddTaskStep::RepeatDue,
-                    ][(relative_x as usize * 3 / content.width.max(1) as usize).min(2)],
-                ),
-                1 => Some(
-                    [
-                        AddTaskStep::Labels,
-                        AddTaskStep::AvailableAt,
-                        AddTaskStep::Due,
-                    ][(relative_x as usize * 3 / content.width.max(1) as usize).min(2)],
-                ),
-                2 if repeat_visible => Some(AddTaskStep::RepeatRule),
-                3 if recurring => Some(AddTaskStep::RepeatStartOn),
+                1 => match (relative_x as usize * 3 / content.width.max(1) as usize).min(2) {
+                    0 => Some(AddTaskStep::Labels),
+                    _ => Some(AddTaskStep::Schedule),
+                },
                 _ => None,
             };
         }
@@ -98,7 +85,7 @@ pub(crate) fn add_task_field_at(
                 .min(columns.saturating_sub(1));
         return steps.get(index).copied();
     }
-    let preview_rows = u16::from(content.height > 10 && repeat_visible);
+    let preview_rows = 0;
     if relative_y == metadata_rows + preview_rows && has_attachments {
         return Some(AddTaskStep::Images);
     }
@@ -123,7 +110,7 @@ pub(crate) fn add_task_field_at(
 }
 
 pub(in crate::tui::ui) fn render_add_task(frame: &mut Frame, state: &AddTaskView) {
-    let height = frame.area().height.saturating_sub(2).clamp(18, 28);
+    let height = frame.area().height.saturating_sub(4).clamp(16, 26);
     let title = if state.editing_template {
         "Edit recurring template"
     } else {
@@ -147,8 +134,14 @@ pub(in crate::tui::ui) fn render_add_task_full_frame(frame: &mut Frame, state: &
 
 fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
     let mut lines = add_task_metadata_lines(state, content.width);
-    if content.height > 10 && recurrence_visible(state) {
-        lines.push(recurrence_preview_line(state, content.width as usize));
+    if state.schedule_error.is_some() && state.schedule_validation_requested {
+        lines.push(fit_line_to_width(
+            Line::from(Span::styled(
+                format!("  Schedule: {}", crate::schedule_input::schedule_guidance()),
+                Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+            )),
+            content.width as usize,
+        ));
     }
     if content.height <= 10 {
         if !state.attachments.items.is_empty() && lines.len() + 3 < content.height as usize {
@@ -180,7 +173,7 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
             state.focus,
             state.status_prefix_active,
             state.priority_prefix_active,
-            !recurrence_visible(state),
+            !state.schedule_expanded,
         ));
         frame.render_widget(
             Paragraph::new(Text::from(lines))
@@ -231,7 +224,7 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
         state.focus,
         state.status_prefix_active,
         state.priority_prefix_active,
-        !recurrence_active(state),
+        !state.schedule_expanded,
     ));
     frame.render_widget(
         Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT)),
@@ -308,41 +301,14 @@ fn compact_text_field(label: &str, value: &str, active: bool) -> Line<'static> {
     ])
 }
 
-const REPEAT_EXAMPLE: &str = "daily or every Friday";
-
-fn recurrence_active(state: &AddTaskView) -> bool {
-    state.editing_template
-        || crate::recurrence_input::canonical_rule_input(&state.repeat_rule)
-            .is_ok_and(|rule| rule.is_some())
-}
-
-fn recurrence_visible(state: &AddTaskView) -> bool {
-    state.editing_template
-        || !matches!(state.repeat_rule.trim(), "" | "none")
-        || state.focus == AddTaskStep::RepeatRule
-}
-
-fn metadata_steps(recurring: bool, repeat_visible: bool) -> Vec<AddTaskStep> {
-    let mut steps = vec![
+fn metadata_steps() -> [AddTaskStep; 5] {
+    [
         AddTaskStep::Project,
         AddTaskStep::Status,
         AddTaskStep::Priority,
         AddTaskStep::Labels,
-    ];
-    if recurring {
-        steps.extend([
-            AddTaskStep::RepeatAt,
-            AddTaskStep::RepeatDue,
-            AddTaskStep::RepeatRule,
-            AddTaskStep::RepeatStartOn,
-        ]);
-    } else {
-        steps.extend([AddTaskStep::AvailableAt, AddTaskStep::Due]);
-        if repeat_visible {
-            steps.extend([AddTaskStep::RepeatRule, AddTaskStep::RepeatStartOn]);
-        }
-    }
-    steps
+        AddTaskStep::Schedule,
+    ]
 }
 
 fn metadata_columns(width: u16) -> usize {
@@ -355,9 +321,7 @@ fn metadata_columns(width: u16) -> usize {
 }
 
 fn add_task_metadata_lines(state: &AddTaskView, width: u16) -> Vec<Line<'static>> {
-    let recurring = recurrence_active(state);
-    let repeat_visible = recurrence_visible(state);
-    let mut owned = vec![
+    let owned = [
         metadata_field(AddTaskStep::Project, "Project", &state.project, state.focus),
         metadata_field(AddTaskStep::Status, "Status", &state.status, state.focus),
         metadata_field(
@@ -372,81 +336,13 @@ fn add_task_metadata_lines(state: &AddTaskView, width: u16) -> Vec<Line<'static>
             &labels_display(&state.labels),
             state.focus,
         ),
+        schedule_metadata_field(state),
     ];
-    if recurring {
-        owned.push(recurrence_inline_field(
-            state,
-            AddTaskStep::RepeatAt,
-            "Available",
-            &state.repeat_at,
-            state.repeat_at_cursor,
-            "Start of day",
-        ));
-        owned.push(metadata_field(
-            AddTaskStep::RepeatDue,
-            "Due",
-            if state.repeat_due == "same-day" {
-                "Same day"
-            } else {
-                "None"
-            },
-            state.focus,
-        ));
-        owned.push(recurrence_inline_field(
-            state,
-            AddTaskStep::RepeatRule,
-            "Repeat",
-            &state.repeat_rule,
-            state.repeat_rule_cursor,
-            REPEAT_EXAMPLE,
-        ));
-        let starts = chrono::NaiveDate::parse_from_str(&state.repeat_start_on, "%Y-%m-%d")
-            .map(|date| date.format("%b %-d").to_string())
-            .unwrap_or_else(|_| state.repeat_start_on.clone());
-        owned.push(if state.editing_template {
-            metadata_field(AddTaskStep::RepeatStartOn, "Starts", &starts, state.focus)
-        } else {
-            let mut line =
-                metadata_field(AddTaskStep::RepeatStartOn, "Starts", &starts, state.focus);
-            if state.focus == AddTaskStep::RepeatStartOn {
-                line.spans.pop();
-                line.spans.extend(
-                    placeholder_input_line(
-                        &state.repeat_start_on,
-                        Some(state.repeat_start_on_cursor),
-                        48,
-                        "Today",
-                    )
-                    .spans,
-                );
-            }
-            line
-        });
-    } else {
-        owned.push(availability_metadata_field(state));
-        owned.push(due_metadata_field(state));
-        if repeat_visible {
-            owned.push(recurrence_inline_field(
-                state,
-                AddTaskStep::RepeatRule,
-                "Repeat",
-                &state.repeat_rule,
-                state.repeat_rule_cursor,
-                REPEAT_EXAMPLE,
-            ));
-            owned.push(Line::from(""));
-        }
-    }
     if width >= 80 {
-        let mut lines = vec![
+        return vec![
             metadata_row(owned[..3].to_vec(), width as usize),
-            metadata_row(owned[3..6].to_vec(), width as usize),
+            metadata_schedule_row(owned[3].clone(), owned[4].clone(), width as usize),
         ];
-        if repeat_visible {
-            lines.push(fit_line_to_width(owned[6].clone(), width as usize));
-            lines.push(fit_line_to_width(owned[7].clone(), width as usize));
-        }
-        return lines;
     }
     let columns = metadata_columns(width);
     owned
@@ -455,91 +351,30 @@ fn add_task_metadata_lines(state: &AddTaskView, width: u16) -> Vec<Line<'static>
         .collect()
 }
 
-fn availability_metadata_field(state: &AddTaskView) -> Line<'static> {
-    let value = if state.available_at.is_empty() {
-        "Now"
-    } else {
-        &state.available_at
-    };
-    let mut line = metadata_field(AddTaskStep::AvailableAt, "Available", value, state.focus);
-    if state.focus == AddTaskStep::AvailableAt {
-        line.spans.pop();
-        line.spans.extend(
-            placeholder_input_line(
-                &state.available_at,
-                Some(state.available_at_cursor),
-                48,
-                ADD_TASK_AVAILABILITY_PLACEHOLDER,
-            )
-            .spans,
-        );
-    }
-    line
-}
-
-fn due_metadata_field(state: &AddTaskView) -> Line<'static> {
-    let value = if state.due_on.is_empty() {
-        "None"
-    } else {
-        &state.due_on
-    };
-    let mut line = metadata_field(AddTaskStep::Due, "Due", value, state.focus);
-    if state.focus == AddTaskStep::Due {
-        line.spans.pop();
-        line.spans.extend(
-            placeholder_input_line(
-                &state.due_on,
-                Some(state.due_on_cursor),
-                40,
-                ADD_TASK_DUE_PLACEHOLDER,
-            )
-            .spans,
-        );
-    }
-    line
-}
-
-fn recurrence_inline_field(
-    state: &AddTaskView,
-    field: AddTaskStep,
-    label: &str,
-    value: &str,
-    cursor: usize,
-    placeholder: &'static str,
-) -> Line<'static> {
+fn schedule_metadata_field(state: &AddTaskView) -> Line<'static> {
     let mut line = metadata_field(
-        field,
-        label,
-        if value.is_empty() { placeholder } else { value },
+        AddTaskStep::Schedule,
+        "Schedule",
+        if state.schedule_input.is_empty() {
+            "none"
+        } else {
+            &state.schedule_input
+        },
         state.focus,
     );
-    if state.focus == field {
+    if state.focus == AddTaskStep::Schedule && !state.editing_template {
         line.spans.pop();
-        line.spans
-            .extend(placeholder_input_line(value, Some(cursor), 48, placeholder).spans);
+        line.spans.extend(
+            placeholder_input_line(
+                &state.schedule_input,
+                Some(state.schedule_input_cursor),
+                64,
+                "type a schedule or press enter",
+            )
+            .spans,
+        );
     }
     line
-}
-
-fn recurrence_preview_line(state: &AddTaskView, width: usize) -> Line<'static> {
-    let value = if state.recurrence_error.is_some() {
-        format!("Repeat: Try {REPEAT_EXAMPLE}")
-    } else if matches!(state.repeat_rule.trim(), "" | "none") {
-        String::new()
-    } else if state.recurrence_preview.is_empty() {
-        "Next: No upcoming dates".to_string()
-    } else {
-        format!("Next: {}", state.recurrence_preview.join(", "))
-    };
-    let style = if state.recurrence_error.is_some() {
-        Style::new().fg(Color::Red).add_modifier(Modifier::BOLD)
-    } else {
-        Style::new().fg(FG_DIM)
-    };
-    fit_line_to_width(
-        Line::from(vec![Span::raw("  "), Span::styled(value, style)]),
-        width,
-    )
 }
 
 pub(in crate::tui::ui) fn metadata_field(
@@ -554,9 +389,10 @@ pub(in crate::tui::ui) fn metadata_field(
         AddTaskStep::Status => "^T ",
         AddTaskStep::Priority => "^R ",
         AddTaskStep::Labels => "^L ",
-        AddTaskStep::AvailableAt => "^A ",
-        AddTaskStep::Due => "^U ",
-        _ => "",
+        AddTaskStep::Schedule | AddTaskStep::RepeatRule => "   ",
+        AddTaskStep::AvailableAt | AddTaskStep::RepeatAt => "^A ",
+        AddTaskStep::Due | AddTaskStep::RepeatDue => "^U ",
+        _ => "   ",
     };
     let mut spans = vec![
         Span::styled(marker, Style::new().fg(FG)),
@@ -622,6 +458,26 @@ fn metadata_row(lines: Vec<Line<'static>>, width: usize) -> Line<'static> {
     join_lines(fitted, METADATA_SEPARATOR)
 }
 
+fn metadata_schedule_row(
+    labels: Line<'static>,
+    schedule: Line<'static>,
+    width: usize,
+) -> Line<'static> {
+    let separator_width = METADATA_SEPARATOR.width();
+    let fields_width = width.saturating_sub(separator_width * 2);
+    let base_width = fields_width / 3;
+    let remainder = fields_width % 3;
+    let first_width = base_width + usize::from(remainder > 0);
+    let schedule_width = width.saturating_sub(first_width + separator_width);
+    join_lines(
+        vec![
+            fit_line_to_width(labels, first_width),
+            fit_line_to_width(schedule, schedule_width),
+        ],
+        METADATA_SEPARATOR,
+    )
+}
+
 fn fit_line_to_width(line: Line<'static>, width: usize) -> Line<'static> {
     if line.width() <= width {
         let padding = width.saturating_sub(line.width());
@@ -673,37 +529,213 @@ fn join_lines(lines: Vec<Line<'static>>, separator: &'static str) -> Line<'stati
 }
 
 const COMPOSER_HELP_TOPICS: &[(&str, &str)] = &[
-    ("Tab / Shift+Tab", "next / previous field"),
-    ("Arrows", "move fields; edit cursor in date fields"),
+    ("Tab / Shift+Tab", "next / previous; validate edited field"),
+    ("Arrows", "move fields or edit the text cursor"),
+    ("Enter", "open focused control; create from title"),
     (
-        "Enter",
-        "open metadata, create title, or newline description",
+        "Schedule",
+        "type naturally; Enter opens the schedule editor",
     ),
     (
-        "Available",
-        "tomorrow · next mon at 9am · 2w · in 2 months · next week",
+        "Schedule examples",
+        "tomorrow · due Friday · every Friday at 09:00",
     ),
-    ("Available", "YYYY-MM-DD · UTC timestamp · epoch seconds"),
-    ("Available", "local time; empty or now = immediate"),
-    ("Due", "same dates without times · YYYY-MM-DD · none clears"),
-    ("Ctrl-p/t/r/l/a/u", "jump to metadata fields"),
-    ("Ctrl-Enter", "create from any field"),
-    ("Ctrl-s", "portable create fallback"),
+    ("Ctrl-a / Ctrl-u", "edit one-off Available / Due"),
+    (
+        "Schedule editor",
+        "↑/↓ move · ←/→ choose · Enter apply · Esc cancel",
+    ),
+    ("Docs", "https://aven.raine.dev/tui/#capture-tasks"),
+    (
+        "One-off Available",
+        "when the task becomes actionable; empty = now",
+    ),
+    ("One-off Due", "due date; empty = no due date"),
+    ("Repeat", "daily · weekdays · every Friday · every 3 weeks"),
+    (
+        "Repeat Available",
+        "time each occurrence appears; empty = start of day",
+    ),
+    ("Repeat Due", "same day or no due date"),
+    ("Ctrl-p/t/r/l", "jump to other metadata fields"),
+    ("Ctrl-Enter / Ctrl-s", "create from any field"),
     ("Ctrl-n", "create with AI"),
-    ("Images", "Left/Right select; D removes the selected image"),
-    ("F1", "open this help"),
+    ("Images", "Left/Right select; D removes selected image"),
     ("Ctrl-x Ctrl-e", "edit description externally"),
     ("Esc", "cancel or confirm discard"),
 ];
 const COMPOSER_HELP_HEIGHT: u16 = 19;
 const COMPOSER_HELP_FIXED_ROWS: u16 = 4;
 
-pub(crate) fn composer_help_scroll_cap(frame_height: u16, full_frame: bool) -> u16 {
-    let frame_padding = if full_frame { 2 } else { 4 };
+pub(crate) fn composer_help_scroll_cap(
+    frame_height: u16,
+    full_frame: bool,
+    schedule_expanded: bool,
+) -> u16 {
+    let frame_padding = if full_frame {
+        2
+    } else if schedule_expanded {
+        4
+    } else {
+        6
+    };
     let add_task_content_height = frame_height.saturating_sub(frame_padding).min(20);
     let dialog_height = COMPOSER_HELP_HEIGHT.min(add_task_content_height);
     let visible_rows = dialog_height.saturating_sub(COMPOSER_HELP_FIXED_ROWS) as usize;
     COMPOSER_HELP_TOPICS.len().saturating_sub(visible_rows) as u16
+}
+
+fn schedule_editor_lines(editor: &ScheduleEditorState) -> Vec<Line<'static>> {
+    let active = Style::new().fg(FG).add_modifier(Modifier::BOLD);
+    let inactive = Style::new().fg(FG_DIM);
+    let mode = |label: &'static str, selected| {
+        Span::styled(
+            format!(" {label} "),
+            if selected {
+                Style::new()
+                    .fg(theme::INVERSE_FG)
+                    .bg(theme::ACCENT)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::new().fg(FG).bg(theme::BORDER)
+            },
+        )
+    };
+    let mut lines = vec![Line::from(vec![
+        Span::styled(
+            if editor.focus == ScheduleEditorField::Mode {
+                "▶ Type      "
+            } else {
+                "  Type      "
+            },
+            if editor.focus == ScheduleEditorField::Mode {
+                active
+            } else {
+                inactive
+            },
+        ),
+        mode("One-off", editor.mode == ScheduleEditorMode::Once),
+        Span::raw("  "),
+        mode("Repeating", editor.mode == ScheduleEditorMode::Repeat),
+    ])];
+
+    match editor.mode {
+        ScheduleEditorMode::Once => {
+            lines.push(schedule_editor_input_line(
+                "Available",
+                &editor.available_at.text,
+                editor.available_at.cursor,
+                editor.focus == ScheduleEditorField::Available,
+                "tomorrow or next monday at 9am",
+            ));
+            lines.push(schedule_editor_input_line(
+                "Due",
+                &editor.due_on.text,
+                editor.due_on.cursor,
+                editor.focus == ScheduleEditorField::Due,
+                "next friday or none",
+            ));
+        }
+        ScheduleEditorMode::Repeat => {
+            lines.push(schedule_editor_input_line(
+                "Repeat",
+                &editor.repeat_rule.text,
+                editor.repeat_rule.cursor,
+                editor.focus == ScheduleEditorField::Repeat && !editor.template_locked,
+                "daily or every Friday",
+            ));
+            lines.push(schedule_editor_input_line(
+                "Available",
+                &editor.repeat_at.text,
+                editor.repeat_at.cursor,
+                editor.focus == ScheduleEditorField::Time,
+                "09:00; empty means start of day",
+            ));
+            lines.push(Line::from(vec![
+                Span::styled(
+                    if editor.focus == ScheduleEditorField::DuePolicy {
+                        "▶ Due       "
+                    } else {
+                        "  Due       "
+                    },
+                    if editor.focus == ScheduleEditorField::DuePolicy {
+                        active
+                    } else {
+                        inactive
+                    },
+                ),
+                Span::raw(if editor.repeat_due == "none" {
+                    "None - occurrences have no due date"
+                } else {
+                    "Same day - due on the occurrence day"
+                }),
+            ]));
+            lines.push(schedule_editor_input_line(
+                "Starts",
+                &editor.repeat_start_on.text,
+                editor.repeat_start_on.cursor,
+                editor.focus == ScheduleEditorField::Starts && !editor.template_locked,
+                "YYYY-MM-DD",
+            ));
+            if !editor.preview.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    format!("  Next      {}", editor.preview.join(", ")),
+                    Style::new().fg(FG_DIM),
+                )));
+            }
+        }
+    }
+
+    if let Some(error) = &editor.error {
+        let message = if error.contains("invalid-repeat-at") {
+            "Available: use 09:00 or leave empty"
+        } else if error.contains("invalid-recurrence-date") {
+            "Starts: use a date in YYYY-MM-DD form"
+        } else if error.contains("invalid-available-at") {
+            "Available: try tomorrow or next Monday at 9am"
+        } else if error.contains("invalid-due") {
+            "Due: try next Friday or leave empty"
+        } else if editor.mode == ScheduleEditorMode::Repeat {
+            "Repeat: use daily, weekdays, every Friday, or every 3 weeks"
+        } else {
+            crate::schedule_input::schedule_guidance()
+        };
+        lines.push(Line::from(Span::styled(
+            format!("  {message}"),
+            Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(dialog_hint_line(&[
+        ("↑/↓", "move"),
+        ("←/→", "choose"),
+        ("Enter", "apply"),
+        ("Esc", "cancel"),
+    ]));
+    lines
+}
+
+fn schedule_editor_input_line(
+    label: &'static str,
+    value: &str,
+    cursor: usize,
+    focused: bool,
+    placeholder: &'static str,
+) -> Line<'static> {
+    let mut spans = vec![Span::styled(
+        if focused {
+            format!("▶ {label:<10}")
+        } else {
+            format!("  {label:<10}")
+        },
+        if focused {
+            Style::new().fg(FG).add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(FG_DIM)
+        },
+    )];
+    spans.extend(placeholder_input_line(value, focused.then_some(cursor), 48, placeholder).spans);
+    Line::from(spans)
 }
 
 fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) {
@@ -724,6 +756,12 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
 
     let (title, lines, width, background) = match state.mode.as_ref() {
         AddTaskMode::Compose => return,
+        AddTaskMode::Schedule(editor) => (
+            "Schedule".to_string(),
+            schedule_editor_lines(editor),
+            68,
+            BG_ALT,
+        ),
         AddTaskMode::Picker { state, .. } => {
             let view = PickerView {
                 kind: (&state.intent).into(),
@@ -782,7 +820,7 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
 }
 
 fn render_composer_help(frame: &mut Frame, content: Rect, scroll: u16) {
-    let width = 66.min(content.width.saturating_sub(2)).max(1);
+    let width = 82.min(content.width.saturating_sub(2)).max(1);
     let height = COMPOSER_HELP_HEIGHT.min(content.height).max(1);
     let area = Rect {
         x: content.x + content.width.saturating_sub(width) / 2,
@@ -828,9 +866,19 @@ pub(in crate::tui::ui) fn composer_help_line(
     keys: &'static str,
     description: &'static str,
 ) -> Line<'static> {
+    let (key_style, description_style) = if keys == "Docs" {
+        (
+            Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+            Style::new()
+                .fg(theme::ACCENT)
+                .add_modifier(Modifier::UNDERLINED),
+        )
+    } else {
+        (Style::new().fg(FG_MUTED), Style::new().fg(FG_DIM))
+    };
     Line::from(vec![
-        Span::styled(format!("{keys:<18}"), Style::new().fg(FG_MUTED)),
-        Span::styled(description, Style::new().fg(FG_DIM)),
+        Span::styled(format!("{keys:<22}"), key_style),
+        Span::styled(description, description_style),
     ])
 }
 
@@ -886,8 +934,6 @@ pub(in crate::tui::ui) fn add_task_title_metadata(title: &str) -> Option<(&str, 
 }
 
 pub(in crate::tui::ui) const ADD_TASK_TITLE_PLACEHOLDER: &str = "Enter title here...";
-const ADD_TASK_AVAILABILITY_PLACEHOLDER: &str = "tomorrow, in 2 weeks, or next monday at 9am";
-const ADD_TASK_DUE_PLACEHOLDER: &str = "tomorrow, in 2 weeks, or next monday";
 
 pub(in crate::tui::ui) fn add_task_title_input_line(
     input: &str,
@@ -1095,6 +1141,15 @@ pub(in crate::tui::ui) fn add_task_hint_line(
     }
 
     match focus {
+        AddTaskStep::Schedule => dialog_hint_line(&[
+            ("type", "schedule"),
+            ("Enter", "details"),
+            ("^A", "available"),
+            ("^U", "due"),
+            ("Tab", "next"),
+            ("F1", "help"),
+            ("Esc", "cancel"),
+        ]),
         AddTaskStep::Project
         | AddTaskStep::Status
         | AddTaskStep::Priority
@@ -1121,7 +1176,6 @@ pub(in crate::tui::ui) fn add_task_hint_line(
             ("↑/↓", "field"),
             ("Tab", "next"),
             ("^N", "create with AI"),
-            ("F2", "repeat"),
             ("F1", "help"),
             ("Esc", "cancel"),
         ]),
@@ -1133,9 +1187,17 @@ pub(in crate::tui::ui) fn add_task_hint_line(
             ("F1", "help"),
             ("Esc", "cancel"),
         ]),
+        AddTaskStep::RepeatAt => dialog_hint_line(&[
+            ("←/→", "cursor"),
+            ("HH:MM", "availability time"),
+            ("none", "start of day"),
+            ("Tab", "next"),
+            ("^S", "create"),
+            ("F1", "formats"),
+            ("Esc", "cancel"),
+        ]),
         AddTaskStep::AvailableAt
         | AddTaskStep::RepeatRule
-        | AddTaskStep::RepeatAt
         | AddTaskStep::TimeZone
         | AddTaskStep::RepeatStartOn => dialog_hint_line(&[
             ("←/→", "cursor"),
@@ -1157,7 +1219,6 @@ pub(in crate::tui::ui) fn add_task_hint_line(
             ("Ctrl-Enter / ^S", "create"),
             ("Tab", "next"),
             ("^N", "create with AI"),
-            ("F2", "repeat"),
             ("F1", "help"),
             ("Esc", "cancel"),
         ]),

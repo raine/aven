@@ -5600,6 +5600,27 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn add_task_invalid_repeat_time_focuses_available_time() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+            panic!("expected composer");
+        };
+        state.title = LineEdit::new("Daily planning".to_string());
+        state.set_repeat_rule("daily".to_string());
+        state.repeat_at = LineEdit::new("daily".to_string());
+
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if state.focus == AddTaskStep::RepeatAt
+                    && state.recurrence_error.as_deref().is_some_and(|error| error.contains("invalid-repeat-at"))
+        ));
+    }
+
+    #[tokio::test]
     async fn add_task_recurring_preserves_each_explicit_open_status() {
         let (_dir, pool, mut app) = test_app_with_pool().await;
         for status in ["inbox", "backlog", "todo", "active"] {
@@ -5742,6 +5763,7 @@ mod authoring {
         let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
             panic!("expected template composer");
         };
+        assert!(state.schedule_expanded);
         state.title = LineEdit::new("Updated template".to_string());
         state.selected_project = None;
         state.repeat_rule = LineEdit::new("daily".to_string());
@@ -6722,7 +6744,42 @@ mod authoring {
     }
 
     #[tokio::test]
-    async fn add_task_ctrl_a_focuses_availability() {
+    async fn recurrence_due_control_cycles_each_policy() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+            panic!("expected composer");
+        };
+        state.set_repeat_rule("daily".to_string());
+        state.mode = crate::tui::overlay::AddTaskMode::Schedule(
+            state.schedule_editor(crate::tui::overlay::ScheduleEditorField::DuePolicy),
+        );
+
+        app.handle_overlay_key(key(KeyCode::Right)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if matches!(
+                    &state.mode,
+                    crate::tui::overlay::AddTaskMode::Schedule(editor)
+                        if editor.repeat_due == "none"
+                )
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Left)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if matches!(
+                    &state.mode,
+                    crate::tui::overlay::AddTaskMode::Schedule(editor)
+                        if editor.repeat_due == "same-day"
+                )
+        ));
+    }
+
+    #[tokio::test]
+    async fn add_task_ctrl_a_opens_once_schedule_at_availability() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
 
@@ -6730,27 +6787,32 @@ mod authoring {
 
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::AvailableAt
+            Some(OverlayState::AddTask(state))
+                if matches!(
+                    &state.mode,
+                    crate::tui::overlay::AddTaskMode::Schedule(editor)
+                        if editor.mode == crate::tui::overlay::ScheduleEditorMode::Once
+                            && editor.focus == crate::tui::overlay::ScheduleEditorField::Available
+                )
         ));
     }
 
     #[tokio::test]
-    async fn add_task_ctrl_u_focuses_due_and_clears_its_input() {
+    async fn add_task_ctrl_u_opens_once_schedule_at_due() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
 
         app.handle_overlay_key(ctrl_u()).await.unwrap();
-        assert!(matches!(
-            &app.overlay,
-            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Due
-        ));
 
-        type_chars(&mut app, "tomorrow").await;
-        app.handle_overlay_key(ctrl_u()).await.unwrap();
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::AddTask(state))
-                if state.focus == AddTaskStep::Due && state.due_on.text.is_empty()
+                if matches!(
+                    &state.mode,
+                    crate::tui::overlay::AddTaskMode::Schedule(editor)
+                        if editor.mode == crate::tui::overlay::ScheduleEditorMode::Once
+                            && editor.focus == crate::tui::overlay::ScheduleEditorField::Due
+                )
         ));
     }
 
@@ -6768,9 +6830,7 @@ mod authoring {
             AddTaskStep::Status,
             AddTaskStep::Priority,
             AddTaskStep::Labels,
-            AddTaskStep::AvailableAt,
-            AddTaskStep::Due,
-            AddTaskStep::RepeatRule,
+            AddTaskStep::Schedule,
         ] {
             app.handle_overlay_key(key(KeyCode::Right)).await.unwrap();
             assert!(matches!(
@@ -6781,7 +6841,7 @@ mod authoring {
         app.handle_overlay_key(key(KeyCode::Right)).await.unwrap();
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Project
+            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Schedule
         ));
         app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
         assert!(matches!(
@@ -6801,12 +6861,34 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn add_task_schedule_enter_opens_structured_editor() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+            panic!("expected composer");
+        };
+        state.focus = AddTaskStep::Schedule;
+
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if matches!(
+                    state.mode,
+                    crate::tui::overlay::AddTaskMode::Schedule(ref editor)
+                        if editor.mode == crate::tui::overlay::ScheduleEditorMode::Once
+                )
+        ));
+    }
+
+    #[tokio::test]
     async fn add_task_mouse_opens_metadata_and_focuses_text_fields() {
         for (column, row, expected) in [
-            (3, 2, AddTaskStep::Project),
-            (29, 2, AddTaskStep::Status),
-            (55, 2, AddTaskStep::Priority),
-            (3, 3, AddTaskStep::Labels),
+            (3, 3, AddTaskStep::Project),
+            (29, 3, AddTaskStep::Status),
+            (55, 3, AddTaskStep::Priority),
+            (3, 4, AddTaskStep::Labels),
         ] {
             let mut app = test_app().await;
             app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
@@ -6823,33 +6905,15 @@ mod authoring {
 
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-        let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
-            panic!("expected composer");
-        };
-        state
-            .attachments
-            .push(crate::tui::authoring::PendingTaskAttachmentSummary {
-                filename: "draft.png".to_string(),
-                byte_size: 4,
-                dimensions: Some((1, 1)),
-            });
-        for (column, row, expected) in [
-            (29, 3, AddTaskStep::AvailableAt),
-            (55, 3, AddTaskStep::Due),
-            (3, 4, AddTaskStep::Images),
-            (3, 7, AddTaskStep::Title),
-            (3, 10, AddTaskStep::Description),
-        ] {
-            app.dispatch_mouse(task_row_click(column, row), (80, 24).into())
-                .await
-                .unwrap();
-            assert!(matches!(
-                &app.overlay,
-                Some(OverlayState::AddTask(state))
-                    if state.focus == expected
-                        && matches!(state.mode, crate::tui::overlay::AddTaskMode::Compose)
-            ));
-        }
+        app.dispatch_mouse(task_row_click(29, 4), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if state.focus == AddTaskStep::Schedule
+                    && matches!(state.mode, crate::tui::overlay::AddTaskMode::Schedule(_))
+        ));
     }
 
     #[tokio::test]
