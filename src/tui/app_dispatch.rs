@@ -1,20 +1,25 @@
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::layout::{Rect, Size};
+
 use std::time::Instant;
 
 use crate::tui::app::{
     App, DetailSection, DetailTargetId, Focus, FooterChoiceMode, MAX_EXTERNAL_IMAGE_EXPORTS,
-    TaskCopyKind, TaskRefKind,
 };
 use crate::tui::authoring::AddTaskStep;
-use crate::tui::conflict_flow::ConflictResolutionChoice;
 use crate::tui::detail_session::{
     DetailNavigationState, DetailTargetActivation, TASK_ROW_DOUBLE_CLICK, TaskRowClick,
 };
 use crate::tui::event::{
     Action, CommandCompletion, CommandLookup, command_cycle_options, complete_command,
     lookup_command,
+};
+use crate::tui::input::key::{
+    ImagePasteTarget, KeyInput, KeyRouteState, NormalKeyInput, route_key, route_normal_key,
+};
+use crate::tui::input::mouse::{
+    MouseInput, PointerEvent, TaskSurfaceView, route_mouse, route_task_surface,
 };
 use crate::tui::navigation::{
     detail_scroll_with_delta_with_images, detail_task_delta, handle_detail_overlay_key_with_cap,
@@ -25,23 +30,16 @@ use crate::tui::overlay::{
     TagComboboxIntent,
 };
 use crate::tui::platform::{copy_to_clipboard, is_editor_prefix_key};
-use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
+use crate::tui::shortcut_buffer::DetailShortcutResolution;
 use crate::tui::store::TaskView;
 use crate::tui::ui::{
     attachment_is_locally_previewable, composer_help_scroll_cap, database_stats_scroll_cap,
     detail_copy_target_at, detail_help_scroll_cap, detail_interactive_rows,
     detail_section_scroll_target_with_images, detail_selected_text, detail_target_at_position,
     detail_target_is_actionable, detail_target_scroll_target, detail_text_cell_at_position,
-    help_scroll_cap, prefix_hint_scroll_cap, recent_action_at_position, task_at_position,
-    task_status_at_position, text_panel_scroll_cap,
+    help_scroll_cap, prefix_hint_scroll_cap, task_at_position, task_status_at_position,
+    text_panel_scroll_cap,
 };
-
-fn is_image_paste_key(key: KeyEvent) -> bool {
-    key.code == KeyCode::Char('v')
-        && key
-            .modifiers
-            .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER)
-}
 
 impl App {
     pub(super) async fn dispatch_paste(&mut self, text: &str) -> Result<()> {
@@ -66,55 +64,57 @@ impl App {
     }
 
     pub(crate) async fn dispatch_key(&mut self, key: KeyEvent, terminal_size: Size) -> Result<()> {
-        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            self.handle(Action::Quit).await
-        } else if is_image_paste_key(key)
-            && matches!(self.overlay, Some(OverlayState::Detail { .. }))
-        {
-            self.paste_detail_image_from_clipboard().await
-        } else if is_image_paste_key(key)
-            && matches!(
-                self.overlay,
-                Some(OverlayState::AddTask(_))
-                    | Some(OverlayState::MultilineInput(
-                        crate::tui::overlay::MultilineInputState {
-                            intent: MultilineIntent::AddTaskNatural,
-                            ..
-                        }
-                    ))
-            )
-        {
-            self.paste_add_task_image_from_clipboard().await
-        } else if self.footer_choice.is_some() {
-            self.handle_footer_choice_key(key).await
-        } else if key.code == KeyCode::Esc && self.pending_shortcut.cancel() {
-            self.pending_shortcut_scroll = 0;
-            Ok(())
-        } else if self.overlay_captures_input() {
-            if key.code == KeyCode::Char('?')
-                && matches!(self.overlay, Some(OverlayState::Detail { .. }))
-                && self
+        let input = route_key(
+            key,
+            KeyRouteState {
+                footer_choice: self.footer_choice.is_some(),
+                shortcut_pending: !self.pending_shortcut.is_empty(),
+                prefix_hints: self.prefix_hints_active(),
+                overlay_captures: self.overlay_captures_input(),
+                detail_overlay: matches!(self.overlay, Some(OverlayState::Detail { .. })),
+                detail_target_focused: self
                     .detail
                     .as_ref()
                     .and_then(|detail| detail.focused_target())
-                    .is_none()
-            {
+                    .is_some(),
+                add_task_image_target: matches!(
+                    self.overlay,
+                    Some(OverlayState::AddTask(_))
+                        | Some(OverlayState::MultilineInput(
+                            crate::tui::overlay::MultilineInputState {
+                                intent: MultilineIntent::AddTaskNatural,
+                                ..
+                            }
+                        ))
+                ),
+            },
+            terminal_size.height,
+        );
+        match input {
+            KeyInput::Action(action) => self.execute(action).await,
+            KeyInput::PasteImage(ImagePasteTarget::Detail) => {
+                self.paste_detail_image_from_clipboard().await
+            }
+            KeyInput::PasteImage(ImagePasteTarget::AddTask) => {
+                self.paste_add_task_image_from_clipboard().await
+            }
+            KeyInput::FooterChoice(key) => self.handle_footer_choice_key(key).await,
+            KeyInput::CancelShortcut => {
+                self.pending_shortcut.cancel();
+                self.pending_shortcut_scroll = 0;
+                Ok(())
+            }
+            KeyInput::ToggleHelp => {
                 self.toggle_help_at_height(terminal_size.height);
                 Ok(())
-            } else if self.dispatch_prefix_hint_key_scroll(key, terminal_size) {
-                Ok(())
-            } else {
-                self.handle_overlay_key_at_size(key, terminal_size).await
             }
-        } else if key.code == KeyCode::Char('?') {
-            self.toggle_help_at_height(terminal_size.height);
-            Ok(())
-        } else if self.dispatch_prefix_hint_key_scroll(key, terminal_size) {
-            Ok(())
-        } else if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT {
-            self.handle_normal_key(key.code).await
-        } else {
-            Ok(())
+            KeyInput::ScrollPrefix(delta) => {
+                self.dispatch_prefix_hint_scroll(delta, terminal_size);
+                Ok(())
+            }
+            KeyInput::Overlay(key) => self.handle_overlay_key_at_size(key, terminal_size).await,
+            KeyInput::Normal(code) => self.handle_normal_key(code).await,
+            KeyInput::Ignore => Ok(()),
         }
     }
 
@@ -203,26 +203,23 @@ impl App {
         mouse: MouseEvent,
         terminal_size: Size,
     ) -> Result<()> {
-        match mouse.kind {
-            MouseEventKind::ScrollDown => {
-                if self.dispatch_prefix_hint_scroll(1, terminal_size) {
-                    return Ok(());
-                }
-                if self.dispatch_mouse_scroll(mouse.kind, terminal_size) {
-                    return Ok(());
-                }
-                return self.handle_task_list_wheel(1, terminal_size).await;
+        match route_mouse(mouse.kind, self.prefix_hints_active()) {
+            MouseInput::PrefixScroll(delta) => {
+                self.dispatch_prefix_hint_scroll(delta, terminal_size);
+                return Ok(());
             }
-            MouseEventKind::ScrollUp => {
-                if self.dispatch_prefix_hint_scroll(-1, terminal_size) {
+            MouseInput::OverlayScroll(kind) => {
+                if self.dispatch_mouse_scroll(kind, terminal_size) {
                     return Ok(());
                 }
-                if self.dispatch_mouse_scroll(mouse.kind, terminal_size) {
-                    return Ok(());
-                }
-                return self.handle_task_list_wheel(-1, terminal_size).await;
+                let delta = if kind == MouseEventKind::ScrollDown {
+                    1
+                } else {
+                    -1
+                };
+                return self.handle_task_list_wheel(delta, terminal_size).await;
             }
-            MouseEventKind::Down(MouseButton::Left) => {
+            MouseInput::DetailPress => {
                 if self
                     .handle_detail_attachment_mouse_click(mouse, terminal_size)
                     .await?
@@ -236,26 +233,26 @@ impl App {
                     detail.clear_text_selection();
                 }
             }
-            MouseEventKind::Drag(MouseButton::Left) => {
+            MouseInput::DetailDrag => {
                 self.update_detail_text_selection(mouse, terminal_size);
                 return Ok(());
             }
-            MouseEventKind::Up(MouseButton::Left) => {
+            MouseInput::DetailRelease => {
                 if let Some(detail) = self.detail.as_mut() {
                     detail.finish_text_drag();
                 }
                 return Ok(());
             }
-            MouseEventKind::Moved => {
+            MouseInput::PointerMove => {
                 self.handle_detail_mouse_move(mouse, terminal_size);
                 return Ok(());
             }
-            MouseEventKind::Down(MouseButton::Right) => {
+            MouseInput::StatusPress => {
                 return self
                     .handle_task_status_right_click(mouse, terminal_size)
                     .await;
             }
-            _ => return Ok(()),
+            MouseInput::Ignore => return Ok(()),
         }
 
         let last_task_click = self
@@ -390,102 +387,68 @@ impl App {
             };
         }
 
-        if !self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row)
-            && self.store.view_state.view == TaskView::Columns
-            && let Some(lane_index) = crate::tui::ui::column_lane_at_position(
-                &self.store,
-                &self.widgets.table,
-                self.task_area_for_mouse(terminal_size),
-                mouse.column,
-                mouse.row,
-            )
-            && let Some(status) =
-                crate::tui::columns::lane_entry_status(&self.store.task_columns, lane_index)
-        {
-            self.detail.set_last_task_click(None);
-            let Some(selection) = self.resolve_task_selection() else {
-                self.set_info("no selected task to move");
-                return Ok(());
-            };
-            return self
-                .move_tasks_to_column(selection, status.as_str().to_string())
-                .await;
-        }
-
-        if !self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row)
-            && self.store.view_state.view == TaskView::RecentActions
-            && let Some(hit) = recent_action_at_position(
-                &self.store,
-                &self.widgets.table,
-                self.task_area_for_mouse(terminal_size),
-                mouse.column,
-                mouse.row,
-            )
-        {
-            self.focus = Focus::Tasks;
-            self.widgets.table.select(Some(hit.action_index));
-            self.detail.set_last_task_click(None);
-            return Ok(());
-        }
-
-        if !self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row)
-            && let Some(hit) = task_status_at_position(
-                &self.store,
-                &self.widgets.table,
-                self.task_area_for_mouse(terminal_size),
-                mouse.column,
-                mouse.row,
-            )
-        {
-            self.detail.set_last_task_click(None);
-            self.focus = Focus::Tasks;
-            self.widgets.table.select(Some(hit.task_index));
-            self.begin_status_picker();
-            return Ok(());
-        }
-
-        if !self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row)
-            && let Some(hit) = task_at_position(
-                &self.store,
-                &self.widgets.table,
-                self.task_area_for_mouse(terminal_size),
-                mouse.column,
-                mouse.row,
-            )
-        {
-            self.focus = Focus::Tasks;
-            self.widgets.table.select(Some(hit.task_index));
-            let now = Instant::now();
-            let is_double_click = self.detail.last_task_click().is_some_and(|previous| {
-                previous.task_id == hit.task_id
-                    && previous.viewport_row == hit.viewport_row
-                    && now.duration_since(previous.at) <= TASK_ROW_DOUBLE_CLICK
-            });
-            if is_double_click {
-                self.detail.set_last_task_click(None);
-                self.show_detail(0);
-            } else {
-                self.detail.set_last_task_click(Some(TaskRowClick {
-                    task_id: hit.task_id,
-                    viewport_row: hit.viewport_row,
-                    at: now,
-                }));
-            }
-            return Ok(());
-        }
-
-        self.detail.set_last_task_click(None);
-        if let Some(click) = crate::tui::ui::sidebar_click_at_for(
-            &self.store.sidebar_entries,
-            &self.widgets.sidebar,
-            self.focus,
-            self.sidebar_visible,
-            ratatui::layout::Rect::new(0, 0, terminal_size.width, terminal_size.height),
+        let outside_sidebar = !self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row);
+        let pointer = route_task_surface(
+            TaskSurfaceView {
+                store: &self.store,
+                widgets: &self.widgets,
+                focus: self.focus,
+                sidebar_visible: self.sidebar_visible,
+                terminal_area: Rect::new(0, 0, terminal_size.width, terminal_size.height),
+                task_area: self.task_area_for_mouse(terminal_size),
+                outside_sidebar,
+            },
             mouse.column,
             mouse.row,
-        ) {
-            self.widgets.sidebar.select(Some(click.entry_index));
-            self.apply_sidebar_selection().await?;
+        );
+
+        match pointer {
+            PointerEvent::MoveToColumn(status) => {
+                self.detail.set_last_task_click(None);
+                let Some(selection) = self.resolve_task_selection() else {
+                    self.set_info("no selected task to move");
+                    return Ok(());
+                };
+                self.move_tasks_to_column(selection, status.as_str().to_string())
+                    .await?;
+            }
+            PointerEvent::SelectRecentAction(action_index) => {
+                self.focus = Focus::Tasks;
+                self.widgets.table.select(Some(action_index));
+                self.detail.set_last_task_click(None);
+            }
+            PointerEvent::EditStatus(hit) => {
+                self.detail.set_last_task_click(None);
+                self.focus = Focus::Tasks;
+                self.widgets.table.select(Some(hit.task_index));
+                self.begin_status_picker();
+            }
+            PointerEvent::SelectTask(hit) => {
+                self.focus = Focus::Tasks;
+                self.widgets.table.select(Some(hit.task_index));
+                let now = Instant::now();
+                let is_double_click = self.detail.last_task_click().is_some_and(|previous| {
+                    previous.task_id == hit.task_id
+                        && previous.viewport_row == hit.viewport_row
+                        && now.duration_since(previous.at) <= TASK_ROW_DOUBLE_CLICK
+                });
+                if is_double_click {
+                    self.detail.set_last_task_click(None);
+                    self.show_detail(0);
+                } else {
+                    self.detail.set_last_task_click(Some(TaskRowClick {
+                        task_id: hit.task_id,
+                        viewport_row: hit.viewport_row,
+                        at: now,
+                    }));
+                }
+            }
+            PointerEvent::SelectSidebar(entry_index) => {
+                self.detail.set_last_task_click(None);
+                self.widgets.sidebar.select(Some(entry_index));
+                self.apply_sidebar_selection().await?;
+            }
+            PointerEvent::None => self.detail.set_last_task_click(None),
         }
 
         Ok(())
@@ -909,7 +872,7 @@ impl App {
         }
     }
 
-    async fn remove_selected_epic_child(&mut self) -> Result<()> {
+    pub(super) async fn remove_selected_epic_child(&mut self) -> Result<()> {
         let detail = self.detail.is_some();
         let focused_child = match self
             .detail
@@ -1208,20 +1171,6 @@ impl App {
         Ok(())
     }
 
-    fn dispatch_prefix_hint_key_scroll(&mut self, key: KeyEvent, terminal_size: Size) -> bool {
-        if !key.modifiers.is_empty() && key.modifiers != KeyModifiers::SHIFT {
-            return false;
-        }
-        let delta = match key.code {
-            KeyCode::Down => 1,
-            KeyCode::Up => -1,
-            KeyCode::PageDown => terminal_size.height.saturating_sub(4).max(1) as isize,
-            KeyCode::PageUp => -(terminal_size.height.saturating_sub(4).max(1) as isize),
-            _ => return false,
-        };
-        self.dispatch_prefix_hint_scroll(delta, terminal_size)
-    }
-
     fn dispatch_prefix_hint_scroll(&mut self, delta: isize, terminal_size: Size) -> bool {
         if !self.prefix_hints_active() {
             return false;
@@ -1304,35 +1253,20 @@ impl App {
     }
 
     pub(crate) async fn handle_normal_key(&mut self, code: KeyCode) -> Result<()> {
-        if self.overlay_captures_input()
-            && (code != KeyCode::Esc || self.pending_shortcut.is_empty())
-        {
-            return self
-                .handle_overlay_key(KeyEvent::new(code, KeyModifiers::NONE))
-                .await;
-        }
-
-        if code == KeyCode::Esc {
-            if !self.pending_shortcut.cancel() {
-                self.handle(Action::CancelOverlay).await?;
-            }
-            self.pending_shortcut_scroll = 0;
-            return Ok(());
-        }
-
-        match self.pending_shortcut.resolve_normal(code) {
-            NormalShortcutResolution::Action(action) => {
-                self.pending_shortcut_scroll = 0;
-                self.handle(action).await?;
-            }
-            NormalShortcutResolution::Prefix => {
-                self.pending_shortcut_scroll = 0;
-            }
-            NormalShortcutResolution::Missing(label) => {
-                self.pending_shortcut_scroll = 0;
+        let translation =
+            route_normal_key(&self.pending_shortcut, code, self.overlay_captures_input());
+        self.pending_shortcut = translation.shortcut;
+        match translation.input {
+            NormalKeyInput::Overlay(key) => self.handle_overlay_key(key).await?,
+            NormalKeyInput::CancelShortcut => {}
+            NormalKeyInput::CancelOverlay => self.execute(Action::CancelOverlay).await?,
+            NormalKeyInput::Action(action) => self.execute(action).await?,
+            NormalKeyInput::Prefix => {}
+            NormalKeyInput::Missing(label) => {
                 self.set_warning(format!("invalid shortcut: {label}"));
             }
         }
+        self.pending_shortcut_scroll = 0;
         Ok(())
     }
 
@@ -1999,133 +1933,6 @@ impl App {
         }
     }
 
-    async fn handle(&mut self, action: Action) -> Result<()> {
-        self.execute(action).await
-    }
-
-    pub(super) async fn execute(&mut self, action: Action) -> Result<()> {
-        match action {
-            Action::Quit => self.should_quit = true,
-            Action::CancelOverlay => self.cancel_overlay(),
-            Action::MoveDown => self.move_selection(1).await?,
-            Action::MoveUp => self.move_selection(-1).await?,
-            Action::MoveLeft => self.move_left(),
-            Action::MoveRight => self.move_right(),
-            Action::MoveColumnLeft => self.move_tasks_by_column(-1).await?,
-            Action::MoveColumnRight => self.move_tasks_by_column(1).await?,
-            Action::BeginMoveToColumn => self.begin_move_to_column(),
-            Action::PreviousItem => self.previous_item(),
-            Action::NextItem => self.next_item(),
-            Action::First => self.select_edge(false).await?,
-            Action::Last => self.select_edge(true).await?,
-            Action::ToggleFocus => self.toggle_focus(),
-            Action::ToggleSidebar => self.toggle_sidebar(),
-            Action::ToggleDetail => self.activate_or_toggle_detail().await?,
-            Action::ToggleColumnsPreview => {
-                if self.store.view_state.view == crate::tui::store::TaskView::Columns {
-                    self.store.columns_preview_visible = !self.store.columns_preview_visible;
-                }
-            }
-            Action::GoBack => self.go_back().await?,
-            Action::ReturnToLastChange => self.return_to_last_change().await?,
-            Action::ToggleHelp => self.toggle_help_at_height(24),
-            Action::ShowWelcome => self.show_welcome(),
-            Action::BeginSearch => self.begin_search(),
-            Action::BeginCommand => self.begin_command(),
-            Action::Refresh => self.refresh().await?,
-            Action::SetOrder(order) => self.set_sort(order).await?,
-            Action::ReverseSort => self.reverse_sort().await?,
-            Action::SetStatus(status) => self.update_status(status).await?,
-            Action::SetPriority(priority) => self.set_exact_priority(priority).await?,
-            Action::CyclePriority(reverse) => self.update_priority(reverse).await?,
-            Action::CopyShortRef => self.copy_selected_ref(TaskRefKind::Short),
-            Action::CopyDurableRef => self.copy_selected_ref(TaskRefKind::Durable),
-            Action::CopyTaskTitle => self.copy_selected_task_text(TaskCopyKind::Title),
-            Action::CopyTaskDescription => self.copy_selected_task_text(TaskCopyKind::Description),
-            Action::CopyTaskText => self.copy_selected_task_text(TaskCopyKind::TitleAndDescription),
-            Action::CopyTaskNotes => self.copy_selected_task_notes(),
-            Action::BeginEditTitle => self.begin_edit_title(),
-            Action::BeginEditDescription => self.begin_edit_description(),
-            Action::BeginEditProject => self.begin_edit_project(),
-            Action::BeginEditPriority => self.begin_edit_priority(),
-            Action::BeginEditAvailability => self.begin_edit_availability(),
-            Action::BeginEditDue => self.begin_edit_due(),
-            Action::BeginEditLabels => self.begin_edit_labels(),
-            Action::Delete => self.begin_delete_task(),
-            Action::Restore => self.update_deleted(false).await?,
-            Action::BeginStatusPicker => self.begin_status_picker(),
-            Action::BeginRenameProject => self.begin_rename_project(),
-            Action::BeginDeleteProject => self.begin_delete_project(),
-            Action::BeginAddProject => self.begin_add_project(),
-            Action::BeginAddLabel => self.begin_add_label(),
-            Action::BeginAddTask => self.begin_add_task().await?,
-            Action::BeginAddNote => self.begin_add_note(),
-            Action::BeginFilterLabel => self.begin_filter_label(),
-            Action::BeginFilterPriority => self.begin_filter_priority(),
-            Action::BeginScopeProject => self.begin_scope_project(),
-            Action::BeginSwitchWorkspace => self.begin_switch_workspace().await?,
-            Action::ClearFilters => self.clear_filters().await?,
-            Action::ToggleDeletedFilter => self.toggle_deleted_filter().await?,
-            Action::ShowView(view) => self.show_view(view).await?,
-            Action::ShowWorkspaceScope => {
-                self.show_scope(crate::tui::store::TaskScopeTarget::Workspace)
-                    .await?
-            }
-            Action::BeginConflictList => self.open_conflict_list().await?,
-            Action::ShowConflictDetails => self.show_conflict_details().await?,
-            Action::NextConflict => self.move_to_conflict(1),
-            Action::PreviousConflict => self.move_to_conflict(-1),
-            Action::AcceptConflictLocal => {
-                self.begin_conflict_resolution(ConflictResolutionChoice::Local)
-                    .await?
-            }
-            Action::AcceptConflictRemote => {
-                self.begin_conflict_resolution(ConflictResolutionChoice::Remote)
-                    .await?
-            }
-            Action::BeginManualConflictMerge => self.begin_manual_conflict_merge().await?,
-            Action::ShowConfigStatus => self.show_config_status()?,
-            Action::ShowConfigInfo => self.show_config_info()?,
-            Action::ShowConfigPaths => self.show_config_paths()?,
-            Action::ShowDatabaseStats => self.show_database_stats().await?,
-            Action::BeginUpdate => self.begin_update(),
-            Action::BeginConfigInit => self.begin_config_init()?,
-            Action::BeginAddDependency => self.begin_add_dependency().await?,
-            Action::BeginRemoveDependency => self.begin_remove_dependency(),
-            Action::Undo => self.undo_last().await?,
-            Action::ToggleMarkSelected => self.toggle_mark_selected(),
-            Action::ToggleMarkAllInView => self.toggle_mark_all_in_view(),
-            Action::ClearMarks => self.clear_marks(),
-            Action::ToggleEpicExpanded => {
-                let index = self.widgets.table.selected();
-                if let Some(message) = self.store.toggle_selected_epic(index).await? {
-                    self.set_info(message.message);
-                    self.widgets.table.select(message.selected);
-                } else {
-                    self.set_warning("Select an epic in the Epics list");
-                }
-            }
-            Action::BeginAddEpicChild => self.begin_add_epic_child(),
-            Action::RemoveEpicChild => self.remove_selected_epic_child().await?,
-            Action::Planned { name, reason } => {
-                self.set_warning(format!(":{name} is not yet implemented: {reason}"));
-            }
-            Action::Disabled { name, reason } => {
-                self.set_warning(format!(":{name} is disabled: {reason}"));
-            }
-            Action::AcceptCommand
-            | Action::CancelCommand
-            | Action::BackspaceCommand
-            | Action::CommandChar(_)
-            | Action::AcceptSearch
-            | Action::CancelSearch
-            | Action::BackspaceSearch
-            | Action::SearchChar(_)
-            | Action::None => {}
-        }
-        Ok(())
-    }
-
     fn accept_command_input(&mut self, input: &str) -> Option<Action> {
         match lookup_command(input) {
             CommandLookup::Found(action) => {
@@ -2208,30 +2015,5 @@ impl App {
             }
             _ => self.overlay = Some(OverlayState::Help { scroll: 0 }),
         }
-    }
-}
-
-#[cfg(test)]
-mod image_paste_key_tests {
-    use super::*;
-
-    #[test]
-    fn accepts_control_and_command_v() {
-        assert!(is_image_paste_key(KeyEvent::new(
-            KeyCode::Char('v'),
-            KeyModifiers::CONTROL,
-        )));
-        assert!(is_image_paste_key(KeyEvent::new(
-            KeyCode::Char('v'),
-            KeyModifiers::SUPER,
-        )));
-    }
-
-    #[test]
-    fn rejects_unmodified_v() {
-        assert!(!is_image_paste_key(KeyEvent::new(
-            KeyCode::Char('v'),
-            KeyModifiers::NONE,
-        )));
     }
 }

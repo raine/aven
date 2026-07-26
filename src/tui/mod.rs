@@ -28,6 +28,7 @@ mod detail_selection;
 mod detail_session;
 mod event;
 mod inline_images;
+mod input;
 mod markdown;
 mod natural_add_runtime;
 mod navigation;
