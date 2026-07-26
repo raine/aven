@@ -38,12 +38,40 @@ pub enum UndoContext {
     Tui {
         summary: String,
     },
+    TuiTaskMutation {
+        single_summary: Option<String>,
+        batch_action: String,
+    },
 }
 
 impl UndoContext {
     pub fn tui(summary: impl Into<String>) -> Self {
         Self::Tui {
             summary: summary.into(),
+        }
+    }
+
+    pub fn tui_task_mutation(
+        single_summary: Option<String>,
+        batch_action: impl Into<String>,
+    ) -> Self {
+        Self::TuiTaskMutation {
+            single_summary,
+            batch_action: batch_action.into(),
+        }
+    }
+
+    pub(crate) fn task_mutation_summary(self, changed_count: usize) -> Option<String> {
+        match self {
+            Self::None => None,
+            Self::Tui { summary } => Some(summary),
+            Self::TuiTaskMutation {
+                single_summary,
+                batch_action,
+            } => single_summary.filter(|_| changed_count == 1).or_else(|| {
+                let noun = if changed_count == 1 { "task" } else { "tasks" };
+                Some(format!("{batch_action} {changed_count} {noun}"))
+            }),
         }
     }
 }

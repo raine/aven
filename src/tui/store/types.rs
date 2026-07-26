@@ -13,6 +13,35 @@ impl MutationMessage {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct MutationCommittedError {
+    source: anyhow::Error,
+}
+
+impl std::fmt::Display for MutationCommittedError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "mutation committed but TUI refresh failed: {}",
+            self.source
+        )
+    }
+}
+
+impl std::error::Error for MutationCommittedError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+pub(crate) fn mutation_committed(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<MutationCommittedError>().is_some()
+}
+
+pub(super) fn committed_mutation_error(source: anyhow::Error) -> anyhow::Error {
+    MutationCommittedError { source }.into()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConflictTarget {
     pub(crate) task_id: crate::ids::TaskId,

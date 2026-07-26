@@ -1,10 +1,10 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
-use anyhow::Result;
-use aven_core::operations::{TaskMutationReport, TaskUpdate};
+use anyhow::{Result, ensure};
+use aven_core::operations::{TaskLabelSelection, TaskMutationReport, TaskUpdate};
 
 use crate::choices::{TaskPriority, TaskStatus};
-use crate::tui::store::MutationMessage;
+use crate::tui::store::{MutationMessage, types::committed_mutation_error};
 use crate::tui::task_selection::TaskSelection;
 use crate::undo::UndoContext;
 
@@ -32,19 +32,6 @@ fn task_noun(count: usize) -> &'static str {
     if count == 1 { "task" } else { "tasks" }
 }
 
-fn cycled_priority(priority: TaskPriority, reverse: bool) -> TaskPriority {
-    let index = TaskPriority::ALL
-        .iter()
-        .position(|candidate| *candidate == priority)
-        .unwrap_or(0);
-    let next = if reverse {
-        (index + TaskPriority::ALL.len() - 1) % TaskPriority::ALL.len()
-    } else {
-        (index + 1) % TaskPriority::ALL.len()
-    };
-    TaskPriority::ALL[next]
-}
-
 impl TuiStore {
     pub(crate) async fn mutate_status_selection(
         &mut self,
@@ -70,12 +57,21 @@ impl TuiStore {
             .mutate_tasks(
                 &self.active_workspace,
                 updates,
-                UndoContext::tui(format!("status {} tasks", selection.len())),
+                UndoContext::tui_task_mutation(
+                    selection
+                        .is_single()
+                        .then(|| format!("status {}", selection.targets()[0].display_ref)),
+                    "status",
+                ),
             )
             .await?;
         let changed = report.changed_count();
         let message = if selection.is_single() {
-            format!("set {} status={status}", selection.targets()[0].display_ref)
+            let verb = if changed == 0 { "unchanged" } else { "set" };
+            format!(
+                "{verb} {} status={status}",
+                selection.targets()[0].display_ref
+            )
         } else if changed == 0 {
             format!("status unchanged on {} tasks", selection.len())
         } else {
@@ -109,7 +105,15 @@ impl TuiStore {
             .mutate_tasks(
                 &self.active_workspace,
                 updates,
-                UndoContext::tui(format!("move {} tasks between columns", selection.len())),
+                UndoContext::tui_task_mutation(
+                    selection.is_single().then(|| {
+                        format!(
+                            "move {} between columns",
+                            selection.targets()[0].display_ref
+                        )
+                    }),
+                    "move between columns",
+                ),
             )
             .await?;
         let changed = report.changed_count();
@@ -128,22 +132,20 @@ impl TuiStore {
         mutation: PriorityMutation,
     ) -> Result<MutationMessage> {
         let updates = selection
-            .targets()
-            .iter()
-            .map(|item| {
-                let priority = match mutation {
-                    PriorityMutation::Cycle { reverse } => {
-                        cycled_priority(item.task.priority, reverse)
-                    }
-                    PriorityMutation::Set(priority) => priority,
-                };
-                (
-                    item.task.id.clone(),
-                    TaskUpdate {
+            .ids()
+            .cloned()
+            .map(|task_id| {
+                let update = match mutation {
+                    PriorityMutation::Cycle { reverse } => TaskUpdate {
+                        cycle_priority: Some(reverse),
+                        ..TaskUpdate::default()
+                    },
+                    PriorityMutation::Set(priority) => TaskUpdate {
                         priority: Some(priority.to_string()),
                         ..TaskUpdate::default()
                     },
-                )
+                };
+                (task_id, update)
             })
             .collect();
         let report = self
@@ -151,14 +153,20 @@ impl TuiStore {
             .mutate_tasks(
                 &self.active_workspace,
                 updates,
-                UndoContext::tui(format!("priority {} tasks", selection.len())),
+                UndoContext::tui_task_mutation(
+                    selection
+                        .is_single()
+                        .then(|| format!("priority {}", selection.targets()[0].display_ref)),
+                    "priority",
+                ),
             )
             .await?;
         let changed = report.changed_count();
         let message = if selection.is_single() {
             let priority = report.outcomes[0].task.priority;
+            let verb = if changed == 0 { "unchanged" } else { "set" };
             format!(
-                "set {} priority={priority}",
+                "{verb} {} priority={priority}",
                 selection.targets()[0].display_ref
             )
         } else if changed == 0 {
@@ -176,6 +184,10 @@ impl TuiStore {
         field: TaskTextField,
         value: String,
     ) -> Result<MutationMessage> {
+        ensure!(
+            selection.is_single(),
+            "text mutation requires exactly one task"
+        );
         let item = &selection.targets()[0];
         let (update, field_name) = match field {
             TaskTextField::Title => (
@@ -244,7 +256,12 @@ impl TuiStore {
             .mutate_tasks(
                 &self.active_workspace,
                 updates,
-                UndoContext::tui(format!("{field_name} {} tasks", selection.len())),
+                UndoContext::tui_task_mutation(
+                    selection
+                        .is_single()
+                        .then(|| format!("{field_name} {}", selection.targets()[0].display_ref)),
+                    field_name,
+                ),
             )
             .await?;
         let changed = report.changed_count();
@@ -288,12 +305,18 @@ impl TuiStore {
             .mutate_tasks(
                 &self.active_workspace,
                 updates,
-                UndoContext::tui(format!("project {} tasks", selection.len())),
+                UndoContext::tui_task_mutation(
+                    selection
+                        .is_single()
+                        .then(|| format!("project {}", selection.targets()[0].display_ref)),
+                    "project",
+                ),
             )
             .await?;
         let changed = report.changed_count();
         let message = if selection.is_single() {
-            format!("set {} project", selection.targets()[0].display_ref)
+            let verb = if changed == 0 { "unchanged" } else { "set" };
+            format!("{verb} {} project", selection.targets()[0].display_ref)
         } else if changed == 0 {
             format!("project unchanged on {} tasks", selection.len())
         } else {
@@ -309,28 +332,17 @@ impl TuiStore {
         selected_labels: Vec<String>,
         partial_labels: Vec<String>,
     ) -> Result<MutationMessage> {
-        let selected = selected_labels.iter().collect::<BTreeSet<_>>();
-        let partial = partial_labels.iter().collect::<BTreeSet<_>>();
         let updates = selection
-            .targets()
-            .iter()
-            .map(|item| {
-                let add_labels = selected_labels
-                    .iter()
-                    .filter(|label| !item.labels.contains(label))
-                    .cloned()
-                    .collect();
-                let remove_labels = item
-                    .labels
-                    .iter()
-                    .filter(|label| !selected.contains(label) && !partial.contains(label))
-                    .cloned()
-                    .collect();
+            .ids()
+            .cloned()
+            .map(|task_id| {
                 (
-                    item.task.id.clone(),
+                    task_id,
                     TaskUpdate {
-                        add_labels,
-                        remove_labels,
+                        label_selection: Some(TaskLabelSelection {
+                            selected: selected_labels.clone(),
+                            partial: partial_labels.clone(),
+                        }),
                         ..TaskUpdate::default()
                     },
                 )
@@ -341,12 +353,18 @@ impl TuiStore {
             .mutate_tasks(
                 &self.active_workspace,
                 updates,
-                UndoContext::tui(format!("labels {} tasks", selection.len())),
+                UndoContext::tui_task_mutation(
+                    selection
+                        .is_single()
+                        .then(|| format!("labels {}", selection.targets()[0].display_ref)),
+                    "labels",
+                ),
             )
             .await?;
         let changed = report.changed_count();
         let message = if selection.is_single() {
-            format!("set {} labels", selection.targets()[0].display_ref)
+            let verb = if changed == 0 { "unchanged" } else { "set" };
+            format!("{verb} {} labels", selection.targets()[0].display_ref)
         } else if changed == 0 {
             format!("labels unchanged on {} tasks", selection.len())
         } else {
@@ -379,11 +397,16 @@ impl TuiStore {
             .mutate_tasks(
                 &self.active_workspace,
                 updates,
-                UndoContext::tui(format!(
-                    "{} {} tasks",
+                UndoContext::tui_task_mutation(
+                    selection.is_single().then(|| {
+                        format!(
+                            "{} {}",
+                            if deleted { "delete" } else { "restore" },
+                            selection.targets()[0].display_ref
+                        )
+                    }),
                     if deleted { "delete" } else { "restore" },
-                    selection.len()
-                )),
+                ),
             )
             .await?;
         let changed = report.changed_count();
@@ -403,19 +426,6 @@ impl TuiStore {
                 (false, _) => format!("restored {changed} tasks"),
             }
         };
-        if deleted && selection.is_single() && !selection.uses_marks() {
-            if let Some(item) = self
-                .tasks
-                .iter_mut()
-                .find(|item| item.task.id == selection.targets()[0].task.id)
-            {
-                item.task.deleted = true;
-            }
-            return Ok(MutationMessage::new(
-                message,
-                Some(selection.anchor_index()),
-            ));
-        }
         self.refresh_task_selection(selection, report, message, false, false)
             .await
     }
@@ -431,7 +441,7 @@ impl TuiStore {
         if preserve_task && selection.is_single() && report.changed_count() == 1 {
             let mut item = selection.targets()[0].clone();
             item.task = report.outcomes.into_iter().next().unwrap().task;
-            self.refresh(None).await?;
+            self.refresh(None).await.map_err(committed_mutation_error)?;
             let selected = match self
                 .tasks
                 .iter()
@@ -447,11 +457,14 @@ impl TuiStore {
             return Ok(MutationMessage::new(message, selected));
         }
         if restore_by_index && !preserve_task {
-            self.refresh(None).await?;
+            self.refresh(None).await.map_err(committed_mutation_error)?;
             let selected = self.restored_task_selection_at_index(Some(selection.anchor_index()));
             return Ok(MutationMessage::new(message, selected));
         }
-        let selected = self.refresh(Some(selection.anchor_id())).await?;
+        let selected = self
+            .refresh(Some(selection.anchor_id()))
+            .await
+            .map_err(committed_mutation_error)?;
         Ok(MutationMessage::new(message, selected))
     }
 
@@ -461,20 +474,25 @@ impl TuiStore {
         index: Option<usize>,
         depends_on_task_id: &crate::ids::TaskId,
     ) -> Result<Option<MutationMessage>> {
-        let Some(item) = self.selected_task(index).cloned() else {
+        let Some(selection) = self.test_selected(index) else {
             return Ok(None);
         };
         Ok(Some(
-            self.add_dependency_to_task(&item.task.id, depends_on_task_id)
+            self.add_dependency_to_selection(&selection, depends_on_task_id)
                 .await?,
         ))
     }
 
-    pub(crate) async fn add_dependency_to_task(
+    pub(crate) async fn add_dependency_to_selection(
         &mut self,
-        task_id: &crate::ids::TaskId,
+        selection: &TaskSelection,
         depends_on_task_id: &crate::ids::TaskId,
     ) -> Result<MutationMessage> {
+        ensure!(
+            selection.is_single(),
+            "dependency mutation requires exactly one task"
+        );
+        let task_id = selection.single_id().expect("single selection");
         let display_refs = self
             .database
             .display_ref_context(&self.active_workspace.id)
@@ -502,14 +520,31 @@ impl TuiStore {
         .await
     }
 
+    #[cfg(test)]
     pub(crate) async fn remove_dependency(
         &mut self,
         index: Option<usize>,
         depends_on_task_id: &crate::ids::TaskId,
     ) -> Result<Option<MutationMessage>> {
-        let Some(item) = self.selected_task(index).cloned() else {
+        let Some(selection) = self.test_selected(index) else {
             return Ok(None);
         };
+        Ok(Some(
+            self.remove_dependency_from_selection(&selection, depends_on_task_id)
+                .await?,
+        ))
+    }
+
+    pub(crate) async fn remove_dependency_from_selection(
+        &mut self,
+        selection: &TaskSelection,
+        depends_on_task_id: &crate::ids::TaskId,
+    ) -> Result<MutationMessage> {
+        ensure!(
+            selection.is_single(),
+            "dependency mutation requires exactly one task"
+        );
+        let item = &selection.targets()[0];
         let outcome = self
             .database
             .remove_task_dependency_with_undo(
@@ -525,16 +560,14 @@ impl TuiStore {
             .await?;
         let depends_on_ref = display_refs.display_ref(&outcome.depends_on);
         let verb = if outcome.changed { "removed" } else { "kept" };
-        Ok(Some(
-            self.refresh_task_message(
-                &item.task.id,
-                format!(
-                    "{verb} dependency {} depends_on {depends_on_ref}",
-                    item.display_ref
-                ),
-            )
-            .await?,
-        ))
+        self.refresh_task_message(
+            &item.task.id,
+            format!(
+                "{verb} dependency {} depends_on {depends_on_ref}",
+                item.display_ref
+            ),
+        )
+        .await
     }
 }
 

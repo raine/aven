@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::ids::WorkspaceId;
@@ -80,19 +80,27 @@ struct InsertedTask {
     label_count: usize,
 }
 
-#[derive(Default)]
+#[derive(Debug, Clone)]
+pub struct TaskLabelSelection {
+    pub selected: Vec<String>,
+    pub partial: Vec<String>,
+}
+
+#[derive(Clone, Default)]
 pub struct TaskUpdate {
     pub title: Option<String>,
     pub description: Option<String>,
     pub project: Option<String>,
     pub status: Option<String>,
     pub priority: Option<String>,
+    pub cycle_priority: Option<bool>,
     pub available_at: Option<Option<String>>,
     pub due_on: Option<Option<String>>,
     pub deleted: Option<bool>,
     pub is_epic: Option<bool>,
     pub add_labels: Vec<String>,
     pub remove_labels: Vec<String>,
+    pub label_selection: Option<TaskLabelSelection>,
 }
 
 pub struct TaskUpdateOutcome {
@@ -313,7 +321,8 @@ impl Database {
         let mut undo_commands = Vec::new();
         for (task_id, update) in &updates {
             let before = task_snapshot(&mut tx, &workspace.id, task_id).await?;
-            apply_task_update(&mut tx, workspace, task_id, update).await?;
+            let update = materialize_task_update(update, &before)?;
+            apply_task_update(&mut tx, workspace, task_id, &update).await?;
             let task = get_task_in_workspace(&mut tx, workspace, task_id).await?;
             let after = task_snapshot(&mut tx, &workspace.id, task_id).await?;
             append_task_undo_commands(task_id, &before, &after, &mut undo_commands);
@@ -324,7 +333,8 @@ impl Database {
                 after,
             });
         }
-        if let UndoContext::Tui { summary } = undo {
+        let changed_count = outcomes.iter().filter(|outcome| outcome.changed).count();
+        if let Some(summary) = undo.task_mutation_summary(changed_count) {
             record_tui_undo(
                 &mut tx,
                 &workspace.id,
@@ -875,7 +885,52 @@ fn append_task_undo_commands(
     }
 }
 
+fn cycled_priority(priority: TaskPriority, reverse: bool) -> TaskPriority {
+    let index = TaskPriority::ALL
+        .iter()
+        .position(|candidate| *candidate == priority)
+        .unwrap_or(0);
+    let next = if reverse {
+        (index + TaskPriority::ALL.len() - 1) % TaskPriority::ALL.len()
+    } else {
+        (index + 1) % TaskPriority::ALL.len()
+    };
+    TaskPriority::ALL[next]
+}
+
+fn materialize_task_update(update: &TaskUpdate, before: &TaskUndoSnapshot) -> Result<TaskUpdate> {
+    let mut update = update.clone();
+    if let Some(reverse) = update.cycle_priority.take() {
+        let priority = TaskPriority::parse(&before.priority)?;
+        update.priority = Some(cycled_priority(priority, reverse).to_string());
+    }
+    if let Some(selection) = update.label_selection.take() {
+        let selected = selection.selected.iter().cloned().collect::<BTreeSet<_>>();
+        let partial = selection.partial.iter().cloned().collect::<BTreeSet<_>>();
+        update.add_labels = selection
+            .selected
+            .into_iter()
+            .filter(|label| !before.labels.contains(label))
+            .collect();
+        update.remove_labels = before
+            .labels
+            .iter()
+            .filter(|label| !selected.contains(label.as_str()) && !partial.contains(label.as_str()))
+            .cloned()
+            .collect();
+    }
+    Ok(update)
+}
+
 fn validate_task_update(update: &TaskUpdate) -> Result<()> {
+    if update.priority.is_some() && update.cycle_priority.is_some() {
+        bail!("error invalid-task-update priority and priority cycle are mutually exclusive");
+    }
+    if update.label_selection.is_some()
+        && (!update.add_labels.is_empty() || !update.remove_labels.is_empty())
+    {
+        bail!("error invalid-task-update label selection and label deltas are mutually exclusive");
+    }
     if let Some(status) = update.status.as_deref() {
         TaskStatus::parse(status)?;
     }

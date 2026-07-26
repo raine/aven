@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::tui::store::{MutationMessage, TaskScope};
+use crate::tui::store::{MutationMessage, TaskScope, types::committed_mutation_error};
 
 use super::TuiStore;
 
@@ -10,7 +10,10 @@ impl TuiStore {
         task_id: &crate::ids::TaskId,
         message: impl Into<String>,
     ) -> Result<MutationMessage> {
-        let selected = self.refresh(Some(task_id)).await?;
+        let selected = self
+            .refresh(Some(task_id))
+            .await
+            .map_err(committed_mutation_error)?;
         Ok(MutationMessage::new(message, selected))
     }
 
@@ -33,10 +36,12 @@ impl TuiStore {
         }
 
         let selected = if selected.is_some() {
-            self.refresh(None).await?;
+            self.refresh(None).await.map_err(committed_mutation_error)?;
             self.restored_task_selection_at_index(selected)
         } else {
-            self.refresh(outcome.task_id.as_ref()).await?
+            self.refresh(outcome.task_id.as_ref())
+                .await
+                .map_err(committed_mutation_error)?
         };
         Ok(Some(MutationMessage::new(
             format!("undid {}", outcome.summary),

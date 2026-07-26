@@ -8111,6 +8111,24 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn committed_title_edit_refresh_failure_does_not_reopen_editor() {
+        let mut app = test_app().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Original title")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        app.begin_edit_title();
+        app.handle_overlay_key(key(KeyCode::End)).await.unwrap();
+        type_chars(&mut app, " changed").await;
+        app.store.fail_next_refresh();
+
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(!matches!(app.overlay, Some(OverlayState::TextInput(_))));
+        assert!(toast_message(&app).is_some_and(|message| message.contains("mutation committed")));
+        let persisted = app.store.load_task_item(&task_id).await.unwrap().unwrap();
+        assert_eq!(persisted.task.title, "Original title changed");
+    }
+
+    #[tokio::test]
     async fn submit_edit_title_from_detail_returns_to_detail() {
         let mut app = test_app().await;
         let selected =
@@ -10086,7 +10104,8 @@ mod typed_overlay_submissions {
         };
         assert!(matches!(
             &state.intent,
-            PickerIntent::RemoveDependency { task_id } if task_id == &blocked_id
+            PickerIntent::RemoveDependency { selection }
+                if selection.single_id() == Some(&blocked_id)
         ));
         assert_eq!(state.items.len(), 1);
         assert_eq!(state.items[0].value, blocker_id.to_string());

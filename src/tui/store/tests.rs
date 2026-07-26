@@ -1026,6 +1026,104 @@ mod task_creation_and_updates {
     }
 
     #[tokio::test]
+    async fn text_mutation_rejects_multiple_targets() {
+        let mut store = test_store().await;
+        let (first_id, _) = create_selected_task(&mut store, "First").await;
+        let (second_id, second) = create_selected_task(&mut store, "Second").await;
+        let selection = crate::tui::task_selection::TaskSelection::from_ids(
+            &store.tasks,
+            &[first_id, second_id],
+            Some(second),
+        )
+        .unwrap();
+
+        let error = store
+            .mutate_text_selection(&selection, TaskTextField::Title, "Unexpected".to_string())
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.to_string(), "text mutation requires exactly one task");
+    }
+
+    #[tokio::test]
+    async fn priority_cycle_uses_authoritative_value_after_selection_capture() {
+        let mut store = test_store().await;
+        let (task_id, selected) = create_selected_task(&mut store, "Priority race").await;
+        let selection = crate::tui::task_selection::TaskSelection::from_ids(
+            &store.tasks,
+            std::slice::from_ref(&task_id),
+            Some(selected),
+        )
+        .unwrap();
+        store
+            .database
+            .update_task(
+                &store.active_workspace,
+                &task_id,
+                TaskUpdate {
+                    priority: Some("high".to_string()),
+                    ..TaskUpdate::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        store
+            .mutate_priority_selection(&selection, PriorityMutation::Cycle { reverse: false })
+            .await
+            .unwrap();
+
+        assert_eq!(store.tasks[selected].task.priority, TaskPriority::Urgent);
+    }
+
+    #[tokio::test]
+    async fn label_selection_uses_authoritative_labels_after_capture() {
+        let mut store = test_store().await;
+        for label in ["old", "docs", "bug"] {
+            store.create_label(label.to_string()).await.unwrap();
+        }
+        let (_, selected) = store
+            .create_task(
+                TaskDraft {
+                    title: "Label race".to_string(),
+                    labels: vec!["old".to_string()],
+                    ..task_draft("")
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let selected = selected.unwrap();
+        let task_id = store.tasks[selected].task.id.clone();
+        let selection = crate::tui::task_selection::TaskSelection::from_ids(
+            &store.tasks,
+            std::slice::from_ref(&task_id),
+            Some(selected),
+        )
+        .unwrap();
+        store
+            .database
+            .update_task(
+                &store.active_workspace,
+                &task_id,
+                TaskUpdate {
+                    add_labels: vec!["docs".to_string()],
+                    remove_labels: vec!["old".to_string()],
+                    ..TaskUpdate::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        store
+            .mutate_labels_selection(&selection, vec!["bug".to_string()], Vec::new())
+            .await
+            .unwrap();
+
+        assert_eq!(store.tasks[selected].labels, vec!["bug".to_string()]);
+    }
+
+    #[tokio::test]
     async fn update_labels_adds_and_removes_labels() {
         let mut store = test_store().await;
         store.create_label("bug".to_string()).await.unwrap();
@@ -1175,6 +1273,29 @@ mod task_creation_and_updates {
     }
 
     #[tokio::test]
+    async fn single_delete_refreshes_counts_and_clamps_stale_anchor() {
+        let mut store = test_store().await;
+        let (_first_id, _) = create_selected_task(&mut store, "First").await;
+        let (second_id, second) = create_selected_task(&mut store, "Second").await;
+        let selection = crate::tui::task_selection::TaskSelection::from_ids(
+            &store.tasks,
+            std::slice::from_ref(&second_id),
+            Some(second),
+        )
+        .unwrap();
+        store.tasks.remove(0);
+
+        let outcome = store
+            .mutate_deleted_selection(&selection, true)
+            .await
+            .unwrap();
+
+        assert_eq!(store.counts.inbox, 1);
+        assert_eq!(store.tasks.len(), 1);
+        assert_eq!(outcome.selected, Some(0));
+    }
+
+    #[tokio::test]
     async fn update_labels_for_tasks_sets_labels_on_each_marked_task() {
         let mut store = test_store().await;
         store.create_label("bug".to_string()).await.unwrap();
@@ -1287,8 +1408,30 @@ mod task_creation_and_updates {
 
         assert_eq!(
             outcome.message,
-            format!("set {} labels", store.tasks[selected].display_ref)
+            format!("unchanged {} labels", store.tasks[selected].display_ref)
         );
+    }
+
+    #[tokio::test]
+    async fn committed_mutation_reports_refresh_failure_without_rolling_back() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (task_id, selected) = create_selected_task(&mut store, "Refresh failure").await;
+        store.fail_next_refresh();
+
+        let error = store
+            .update_status(Some(selected), "todo")
+            .await
+            .unwrap_err();
+
+        assert!(mutation_committed(&error));
+        assert!(error.to_string().contains("injected refresh failure"));
+        let persisted: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(persisted, "todo");
+        assert_eq!(store.tasks[selected].task.status, TaskStatus::Inbox);
     }
 
     #[tokio::test]
@@ -1481,7 +1624,10 @@ mod task_creation_and_updates {
             .unwrap();
         assert_eq!(
             status.message,
-            format!("set {} status=inbox", store.tasks[selected].display_ref)
+            format!(
+                "unchanged {} status=inbox",
+                store.tasks[selected].display_ref
+            )
         );
         assert_selected_task(&store, &status, &task_id);
 
@@ -1492,7 +1638,10 @@ mod task_creation_and_updates {
             .unwrap();
         assert_eq!(
             priority.message,
-            format!("set {} priority=none", store.tasks[selected].display_ref)
+            format!(
+                "unchanged {} priority=none",
+                store.tasks[selected].display_ref
+            )
         );
         assert_selected_task(&store, &priority, &task_id);
 
@@ -1507,7 +1656,7 @@ mod task_creation_and_updates {
             .unwrap();
         assert_eq!(
             project.message,
-            format!("set {} project", store.tasks[selected].display_ref)
+            format!("unchanged {} project", store.tasks[selected].display_ref)
         );
         assert_selected_task(&store, &project, &task_id);
 
@@ -1523,7 +1672,7 @@ mod task_creation_and_updates {
             .unwrap();
         assert_eq!(
             labels.message,
-            format!("set {} labels", store.tasks[selected].display_ref)
+            format!("unchanged {} labels", store.tasks[selected].display_ref)
         );
         assert_selected_task(&store, &labels, &task_id);
 
@@ -2549,6 +2698,34 @@ mod undo {
             .position(|item| item.task.id == task_id)
             .unwrap();
         assert_eq!(store.tasks[index].task.title, "Changed");
+    }
+
+    #[tokio::test]
+    async fn single_task_undo_summary_keeps_display_ref() {
+        let mut store = test_store().await;
+        let (_task_id, selected) = create_selected_task(&mut store, "Single summary").await;
+        let display_ref = store.tasks[selected].display_ref.clone();
+
+        store.update_status(Some(selected), "todo").await.unwrap();
+        let undo = store.undo_last(None).await.unwrap().unwrap();
+
+        assert_eq!(undo.message, format!("undid status {display_ref}"));
+    }
+
+    #[tokio::test]
+    async fn partially_unchanged_batch_undo_summary_uses_changed_count() {
+        let mut store = test_store().await;
+        let (first_id, first) = create_selected_task(&mut store, "Already changed").await;
+        let (second_id, _) = create_selected_task(&mut store, "Needs change").await;
+        store.update_status(Some(first), "todo").await.unwrap();
+
+        store
+            .update_status_for_tasks(None, &[first_id, second_id], "todo")
+            .await
+            .unwrap();
+        let undo = store.undo_last(None).await.unwrap().unwrap();
+
+        assert_eq!(undo.message, "undid status 1 task");
     }
 
     #[tokio::test]

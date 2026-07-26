@@ -71,7 +71,7 @@ pub(crate) struct SearchResultItem {
 pub(crate) enum SearchIntent {
     Navigate,
     AddDependency {
-        task_id: crate::ids::TaskId,
+        selection: crate::tui::task_selection::TaskSelection,
         display_ref: String,
     },
     AddEpicChild {
@@ -424,7 +424,7 @@ pub(crate) enum PickerIntent {
         target: ConflictTarget,
     },
     RemoveDependency {
-        task_id: crate::ids::TaskId,
+        selection: crate::tui::task_selection::TaskSelection,
     },
 }
 

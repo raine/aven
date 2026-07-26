@@ -7,7 +7,6 @@ use crate::query::TaskListItem;
 pub(crate) struct TaskSelection {
     targets: Vec<TaskListItem>,
     anchor: TaskSelectionAnchor,
-    uses_marks: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,9 +17,7 @@ struct TaskSelectionAnchor {
 
 impl PartialEq for TaskSelection {
     fn eq(&self, other: &Self) -> bool {
-        self.ids().eq(other.ids())
-            && self.anchor == other.anchor
-            && self.uses_marks == other.uses_marks
+        self.ids().eq(other.ids()) && self.anchor == other.anchor
     }
 }
 
@@ -56,7 +53,6 @@ impl TaskSelection {
                 task_id: tasks[anchor_index].task.id.clone(),
                 index: anchor_index,
             },
-            uses_marks,
         })
     }
 
@@ -82,7 +78,6 @@ impl TaskSelection {
                 task_id: tasks[anchor_index].task.id.clone(),
                 index: anchor_index,
             },
-            uses_marks: false,
         })
     }
 
@@ -92,10 +87,6 @@ impl TaskSelection {
 
     pub(crate) fn is_single(&self) -> bool {
         self.targets.len() == 1
-    }
-
-    pub(crate) fn uses_marks(&self) -> bool {
-        self.uses_marks
     }
 
     pub(crate) fn targets(&self) -> &[TaskListItem] {

@@ -218,8 +218,11 @@ impl App {
         }
         let retry_selection = selection.clone();
         if let Err(error) = self.apply_column_moves(&selection, changes).await {
+            let committed = crate::tui::store::mutation_committed(&error);
             self.set_error(format!("{error:#}"));
-            self.open_move_to_column_picker(retry_selection);
+            if !committed {
+                self.open_move_to_column_picker(retry_selection);
+            }
         }
         Ok(())
     }
@@ -433,17 +436,6 @@ impl App {
         }
     }
 
-    fn guard_selected_task(&mut self) -> Option<usize> {
-        self.pending_shortcut.clear();
-        let index = self.list.selected_task();
-        if index.is_some_and(|i| self.store.selected_task(Some(i)).is_some()) {
-            index
-        } else {
-            self.set_info("no selected task to edit");
-            None
-        }
-    }
-
     fn apply_edit_mutation<F>(
         &mut self,
         result: Result<Option<crate::tui::store::MutationMessage>>,
@@ -455,8 +447,11 @@ impl App {
             Ok(Some(result)) => self.apply_mutation_result(result),
             Ok(None) => self.set_info("no selected task to edit"),
             Err(error) => {
+                let committed = crate::tui::store::mutation_committed(&error);
                 self.set_error(format!("{error:#}"));
-                on_error(self);
+                if !committed {
+                    on_error(self);
+                }
             }
         }
     }
@@ -699,16 +694,14 @@ impl App {
     }
 
     pub(super) async fn begin_add_dependency(&mut self) -> Result<()> {
-        let Some(index) = self.guard_selected_task() else {
+        let Some(selection) = self.capture_single_edit_selection("dependency") else {
             return Ok(());
         };
-        let item = self.store.selected_task(Some(index)).unwrap();
-        let task_id = item.task.id.clone();
-        let display_ref = item.display_ref.clone();
+        let display_ref = selection.targets()[0].display_ref.clone();
         self.clear_live_search_preview();
         self.overlay = Some(OverlayState::Search(SearchState::for_intent(
             SearchIntent::AddDependency {
-                task_id,
+                selection,
                 display_ref,
             },
         )));
@@ -716,26 +709,20 @@ impl App {
     }
 
     pub(super) fn begin_remove_dependency(&mut self) {
-        let Some(index) = self.guard_selected_task() else {
+        let Some(selection) = self.capture_single_edit_selection("dependency") else {
             return;
         };
-        let task_id = self.store.tasks[index].task.id.clone();
-        self.open_remove_dependency_picker(task_id);
+        self.open_remove_dependency_picker(selection);
     }
 
-    pub(super) fn open_remove_dependency_picker(&mut self, task_id: crate::ids::TaskId) {
-        let Some(index) = self
-            .store
-            .tasks
-            .iter()
-            .position(|item| item.task.id == task_id)
-        else {
+    pub(super) fn open_remove_dependency_picker(&mut self, selection: TaskSelection) {
+        let Some(index) = self.selection_index(&selection) else {
             self.set_warning("task is unavailable");
             return;
         };
         let items = self.store.selected_dependency_picker_items(Some(index));
         self.open_picker_overlay(
-            PickerIntent::RemoveDependency { task_id },
+            PickerIntent::RemoveDependency { selection },
             REMOVE_DEPENDENCY_TITLE,
             items,
             false,
@@ -760,11 +747,14 @@ impl App {
         {
             Ok(result) => self.apply_status_mutation_result(result, changed_task_id, viewport_row),
             Err(error) => {
+                let committed = crate::tui::store::mutation_committed(&error);
                 self.set_error(format!("{error:#}"));
-                self.footer_choice = Some(FooterChoiceState {
-                    mode: FooterChoiceMode::Status,
-                    selection,
-                });
+                if !committed {
+                    self.footer_choice = Some(FooterChoiceState {
+                        mode: FooterChoiceMode::Status,
+                        selection,
+                    });
+                }
             }
         }
         Ok(())
@@ -788,8 +778,11 @@ impl App {
         {
             Ok(result) => self.apply_mutation_result(result),
             Err(error) => {
+                let committed = crate::tui::store::mutation_committed(&error);
                 self.set_error(format!("{error:#}"));
-                self.open_edit_title_overlay(selection, value);
+                if !committed {
+                    self.open_edit_title_overlay(selection, value);
+                }
             }
         }
         Ok(())
@@ -1265,24 +1258,21 @@ impl App {
 
     pub(super) async fn submit_remove_dependency(
         &mut self,
-        task_id: crate::ids::TaskId,
+        selection: TaskSelection,
         depends_on_task_id: crate::ids::TaskId,
     ) -> Result<()> {
-        let index = self
-            .store
-            .tasks
-            .iter()
-            .position(|item| item.task.id == task_id);
         match self
             .store
-            .remove_dependency(index, &depends_on_task_id)
+            .remove_dependency_from_selection(&selection, &depends_on_task_id)
             .await
         {
-            Ok(Some(result)) => self.apply_mutation_result(result),
-            Ok(None) => self.set_info("no selected task to edit"),
+            Ok(result) => self.apply_mutation_result(result),
             Err(error) => {
+                let committed = crate::tui::store::mutation_committed(&error);
                 self.set_error(format!("{error:#}"));
-                self.open_remove_dependency_picker(task_id);
+                if !committed {
+                    self.open_remove_dependency_picker(selection);
+                }
             }
         }
         Ok(())

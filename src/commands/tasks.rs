@@ -478,12 +478,14 @@ pub(crate) async fn cmd_edit(
                 project: args.project,
                 status: args.status,
                 priority: args.priority,
+                cycle_priority: None,
                 available_at,
                 due_on,
                 deleted: None,
                 is_epic,
                 add_labels: args.label,
                 remove_labels: args.remove_label,
+                label_selection: None,
             },
         )
         .await?;

@@ -264,14 +264,14 @@ impl App {
                     self.set_warning("no value selected");
                 }
             }
-            PickerIntent::RemoveDependency { task_id } => match values.first() {
+            PickerIntent::RemoveDependency { selection } => match values.first() {
                 Some(depends_on_task_id) => {
-                    self.submit_remove_dependency(task_id, depends_on_task_id.parse()?)
+                    self.submit_remove_dependency(selection, depends_on_task_id.parse()?)
                         .await?;
                 }
                 None => {
                     self.set_warning("no matching dependency");
-                    self.open_remove_dependency_picker(task_id);
+                    self.open_remove_dependency_picker(selection);
                 }
             },
         }

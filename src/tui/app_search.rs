@@ -233,23 +233,27 @@ impl App {
                 self.show_detail(0);
             }
             SearchIntent::AddDependency {
-                task_id,
+                selection,
                 display_ref,
             } => {
+                let task_id = selection.single_id().cloned().expect("single selection");
                 if task_id == result.task_id {
                     self.set_warning(format!("{display_ref} cannot depend on itself"));
-                    self.reopen_add_dependency_search(task_id, display_ref, input);
+                    self.reopen_add_dependency_search(selection, display_ref, input);
                     return Ok(());
                 }
                 match self
                     .store
-                    .add_dependency_to_task(&task_id, &result.task_id)
+                    .add_dependency_to_selection(&selection, &result.task_id)
                     .await
                 {
                     Ok(result) => self.apply_mutation_result(result),
                     Err(error) => {
+                        let committed = crate::tui::store::mutation_committed(&error);
                         self.set_error(format!("{error:#}"));
-                        self.reopen_add_dependency_search(task_id, display_ref, input);
+                        if !committed {
+                            self.reopen_add_dependency_search(selection, display_ref, input);
+                        }
                     }
                 }
             }
@@ -341,12 +345,12 @@ impl App {
 
     fn reopen_add_dependency_search(
         &mut self,
-        task_id: crate::ids::TaskId,
+        selection: crate::tui::task_selection::TaskSelection,
         display_ref: String,
         input: String,
     ) {
         let mut state = SearchState::for_intent(SearchIntent::AddDependency {
-            task_id,
+            selection,
             display_ref,
         });
         state.input = LineEdit::new(input);
@@ -439,7 +443,9 @@ impl App {
             .into_iter()
             .filter(|result| match &intent {
                 SearchIntent::Navigate => true,
-                SearchIntent::AddDependency { task_id, .. } => result.task_id != *task_id,
+                SearchIntent::AddDependency { selection, .. } => {
+                    selection.single_id() != Some(&result.task_id)
+                }
                 SearchIntent::AddEpicChild { project_key, .. } => {
                     result.project_key == *project_key
                 }

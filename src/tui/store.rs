@@ -36,7 +36,7 @@ pub(crate) use task_creation::task_creation_committed;
 pub(crate) use types::{
     ConflictTarget, MutationMessage, SidebarEntry, SidebarEntryTarget, SyncStatusCheck,
     TaskFilterModifiers, TaskListRenderMode, TaskOrder, TaskScope, TaskScopeTarget, TaskView,
-    TaskViewState, TuiDatabaseStats, TuiSyncStatus,
+    TaskViewState, TuiDatabaseStats, TuiSyncStatus, mutation_committed,
 };
 #[cfg(test)]
 pub(crate) use types::{DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts};
@@ -60,6 +60,8 @@ pub(crate) struct TuiStore {
     pub(crate) sync_status: TuiSyncStatus,
     pub(crate) db_stats: TuiDatabaseStats,
     pub(crate) last_refresh: Instant,
+    #[cfg(test)]
+    fail_next_refresh: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,10 +97,17 @@ impl TuiStore {
             sync_status: TuiSyncStatus::default(),
             db_stats: TuiDatabaseStats::default(),
             last_refresh: Instant::now(),
+            #[cfg(test)]
+            fail_next_refresh: false,
         };
         store.database.clear_pending_tui_undo_entries().await?;
         store.refresh(None).await?;
         Ok(store)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_refresh(&mut self) {
+        self.fail_next_refresh = true;
     }
 
     pub(crate) async fn load_task_item(
@@ -161,6 +170,10 @@ impl TuiStore {
         &mut self,
         selected_id: Option<&crate::ids::TaskId>,
     ) -> Result<ScopeRefreshResult> {
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_next_refresh) {
+            anyhow::bail!("injected refresh failure");
+        }
         let workspace_id = self.active_workspace.id.clone();
         self.workspaces = self.database.list_workspaces().await?;
         self.projects = self.database.list_project_items(&workspace_id).await?;

@@ -263,6 +263,7 @@ fn bulk_update_for_item(
             .as_deref()
             .filter(|priority| *priority != item.task.priority.as_str())
             .map(str::to_string),
+        cycle_priority: None,
         available_at: None,
         due_on: None,
         deleted: None,
@@ -277,6 +278,7 @@ fn bulk_update_for_item(
             .filter(|label| item.labels.contains(label))
             .cloned()
             .collect(),
+        label_selection: None,
     }
 }
 
