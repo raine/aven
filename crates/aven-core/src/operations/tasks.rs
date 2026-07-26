@@ -364,17 +364,21 @@ impl Database {
         task_id: &TaskId,
         deleted: bool,
     ) -> Result<TaskOutcome> {
-        let mut conn = self.acquire().await?;
-        let mut tx = begin_immediate(&mut conn).await?;
-        let outcome = match set_task_deleted(&mut tx, workspace, task_id, deleted).await {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                tx.rollback().await?;
-                return Err(error);
-            }
-        };
-        tx.commit().await?;
-        Ok(outcome)
+        let outcome = self
+            .update_task(
+                workspace,
+                task_id,
+                TaskUpdate {
+                    deleted: Some(deleted),
+                    ..TaskUpdate::default()
+                },
+            )
+            .await?;
+        Ok(TaskOutcome {
+            task: outcome.task,
+            create_change_id: None,
+            attachment_change_ids: Vec::new(),
+        })
     }
 
     pub async fn add_note(
@@ -1012,6 +1016,11 @@ async fn apply_task_update(
             if deleted { "1" } else { "0" },
         )
         .await?;
+        crate::attachments::lifecycle::reconcile_liveness_in_transaction(
+            conn,
+            &crate::attachments::lifecycle::SystemClock,
+        )
+        .await?;
     }
     if let Some(is_epic) = update.is_epic {
         if !is_epic {
@@ -1114,33 +1123,6 @@ pub async fn update_task_labels_in_workspace(
         );
     }
     Ok(changed)
-}
-
-pub(crate) async fn set_task_deleted(
-    conn: &mut SqliteConnection,
-    workspace: &Workspace,
-    task_id: &crate::ids::TaskId,
-    deleted: bool,
-) -> Result<TaskOutcome> {
-    set_task_field(
-        conn,
-        workspace,
-        task_id,
-        "deleted",
-        if deleted { "1" } else { "0" },
-    )
-    .await?;
-    crate::attachments::lifecycle::reconcile_liveness_in_transaction(
-        conn,
-        &crate::attachments::lifecycle::SystemClock,
-    )
-    .await?;
-    info!(task_id = %task_id, deleted, "task deleted flag changed");
-    Ok(TaskOutcome {
-        task: get_task_in_workspace(conn, workspace, task_id).await?,
-        create_change_id: None,
-        attachment_change_ids: Vec::new(),
-    })
 }
 
 async fn add_note_operation(

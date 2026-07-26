@@ -38,4 +38,4 @@ pub use tasks::{
     TaskUpdateOutcome,
 };
 #[cfg(any(test, feature = "test-support"))]
-pub(crate) use tasks::{create_task, set_task_deleted, update_task};
+pub(crate) use tasks::{create_task, update_task};

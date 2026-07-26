@@ -76,7 +76,21 @@ pub async fn set_task_deleted(
     task_id: &TaskId,
     deleted: bool,
 ) -> Result<TaskOutcome> {
-    crate::operations::set_task_deleted(conn, workspace, task_id, deleted).await
+    let outcome = crate::operations::update_task(
+        conn,
+        workspace,
+        task_id,
+        TaskUpdate {
+            deleted: Some(deleted),
+            ..TaskUpdate::default()
+        },
+    )
+    .await?;
+    Ok(TaskOutcome {
+        task: outcome.task,
+        create_change_id: None,
+        attachment_change_ids: Vec::new(),
+    })
 }
 
 pub async fn update_task_labels_in_workspace(

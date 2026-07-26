@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 
 use aven_core::attachments::{ImageOptimizationPolicy, LifecyclePolicy};
 use aven_core::db::Database;
-use aven_core::operations::{AttachmentAddInput, TaskAttachmentAddInput, TaskDraft};
+use aven_core::operations::{AttachmentAddInput, TaskAttachmentAddInput, TaskDraft, TaskUpdate};
 use aven_core::query::{SortDirection, TaskFilters, TaskQueryMode, TaskSort};
+use aven_core::undo::UndoContext;
 use image::{DynamicImage, ImageFormat, RgbaImage};
 use sha2::{Digest, Sha256};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
@@ -384,4 +385,120 @@ async fn validation_and_staging_failures_leave_no_visible_state() {
             .is_err()
     );
     assert_eq!(visible_counts(&pool).await, (0, 0, 0, 0));
+}
+
+#[tokio::test]
+async fn task_deletion_and_restore_reconcile_attachment_liveness() {
+    let (temp, database, pool) = setup().await;
+    let workspace = database.list_workspaces().await.unwrap().remove(0);
+    let outcome = database
+        .create_task_with_attachments(
+            &workspace,
+            &temp.path().join("blobs"),
+            LifecyclePolicy::default(),
+            draft("attachment liveness"),
+            vec![attachment("ATTACHMENT000001", png_bytes(1))],
+        )
+        .await
+        .unwrap();
+
+    database
+        .set_task_deleted(&workspace, &outcome.task.id, true)
+        .await
+        .unwrap();
+    let deleted_at: Option<String> =
+        sqlx::query_scalar("SELECT unreferenced_at FROM blob_lifecycle")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(deleted_at.is_some());
+
+    database
+        .set_task_deleted(&workspace, &outcome.task.id, false)
+        .await
+        .unwrap();
+    let restored_at: Option<String> =
+        sqlx::query_scalar("SELECT unreferenced_at FROM blob_lifecycle")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(restored_at, None);
+
+    database
+        .mutate_tasks(
+            &workspace,
+            vec![(
+                outcome.task.id,
+                TaskUpdate {
+                    deleted: Some(true),
+                    ..TaskUpdate::default()
+                },
+            )],
+            UndoContext::tui("delete attachment task"),
+        )
+        .await
+        .unwrap();
+    let tui_deleted_at: Option<String> =
+        sqlx::query_scalar("SELECT unreferenced_at FROM blob_lifecycle")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(tui_deleted_at.is_some());
+}
+
+#[tokio::test]
+async fn liveness_failure_rolls_back_task_deletion_and_undo() {
+    let (temp, database, pool) = setup().await;
+    let workspace = database.list_workspaces().await.unwrap().remove(0);
+    let outcome = database
+        .create_task_with_attachments(
+            &workspace,
+            &temp.path().join("blobs"),
+            LifecyclePolicy::default(),
+            draft("liveness rollback"),
+            vec![attachment("ATTACHMENT000001", png_bytes(1))],
+        )
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER reject_liveness_update BEFORE UPDATE OF unreferenced_at ON blob_lifecycle
+         BEGIN SELECT RAISE(FAIL, 'injected liveness failure'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let error = database
+        .mutate_tasks(
+            &workspace,
+            vec![(
+                outcome.task.id.clone(),
+                TaskUpdate {
+                    deleted: Some(true),
+                    ..TaskUpdate::default()
+                },
+            )],
+            UndoContext::tui("delete attachment task"),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("injected liveness failure"));
+    let deleted: i64 = sqlx::query_scalar("SELECT deleted FROM tasks WHERE id = ?")
+        .bind(&outcome.task.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 0);
+    let unreferenced_at: Option<String> =
+        sqlx::query_scalar("SELECT unreferenced_at FROM blob_lifecycle")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(unreferenced_at, None);
+    let undo_entries: i64 = sqlx::query_scalar("SELECT count(*) FROM tui_undo_entries")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(undo_entries, 0);
 }
