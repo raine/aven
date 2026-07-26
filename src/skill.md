@@ -95,10 +95,12 @@ aven search "daily journal" --expand-recurring
 - Series refs use the `RCR-7KP2` form. Use the series ref for recurrence
   commands and durable references. A current or historical occurrence task ref
   also resolves to its series for convenience.
-- Recurrence rules use the fixed grammar `daily`, `weekdays`, `weekly`, `weekly
-  on mon,wed,fri`, or `every N weeks on mon,thu`. Weeks begin on Monday.
-  Completion-relative, monthly, yearly, cron, and bare every-N-day rules are
-  outside this model.
+- Recurrence rules use the fixed grammar `daily`, `weekdays`, `weekly`,
+  `fortnightly`, `monthly`, `weekly on mon,wed,fri`, `every N weeks`, or `every
+  N weeks on mon,thu`. Weekly shorthands use the start date's weekday, and weeks
+  begin on Monday. Monthly rules use the start date's day number and clamp to
+  the final day of shorter months without changing that anchor. Completion-relative,
+  yearly, cron, and bare every-N-day rules are outside this model.
 - `--repeat-at` is a local `HH:MM` time in the series IANA time zone.
   `--repeat-due` is `same-day` or `none`. Ordinary `--available-at` and `--due`
   are absolute task fields and cannot be combined with `--repeat`.

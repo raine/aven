@@ -114,6 +114,10 @@ fn parse_rule(value: &str, start_on: NaiveDate) -> Result<RecurrenceRule> {
         "daily" => return Ok(RecurrenceRule::daily()),
         "weekdays" => return Ok(RecurrenceRule::weekdays()),
         "weekly" => return Ok(RecurrenceRule::weekly(start_on.weekday())),
+        "fortnightly" => {
+            return RecurrenceRule::every_n_weeks_on(2, [start_on.weekday()]).map_err(Into::into);
+        }
+        "monthly" => return Ok(RecurrenceRule::monthly()),
         _ => {}
     }
     if let Some(days) = value.strip_prefix("weekly on ") {
@@ -121,16 +125,27 @@ fn parse_rule(value: &str, start_on: NaiveDate) -> Result<RecurrenceRule> {
         return RecurrenceRule::weekly_on(weekdays.iter()).map_err(Into::into);
     }
     let words = value.split(' ').collect::<Vec<_>>();
+    if let ["every", interval, "weeks"] = words.as_slice() {
+        let interval = parse_week_interval(interval)?;
+        return RecurrenceRule::every_n_weeks_on(interval, [start_on.weekday()])
+            .map_err(Into::into);
+    }
     if let ["every", interval, "weeks", "on", days] = words.as_slice() {
-        let interval = interval.parse::<u32>().with_context(|| {
-            format!("error invalid-repeat-interval value={interval:?} hint=\"use a whole number of weeks\"")
-        })?;
+        let interval = parse_week_interval(interval)?;
         let weekdays = days.parse::<WeekdaySet>().map_err(anyhow::Error::msg)?;
         return RecurrenceRule::every_n_weeks_on(interval, weekdays.iter()).map_err(Into::into);
     }
     bail!(
-        "error invalid-repeat-rule value={value:?} hint=\"use daily, weekdays, weekly, weekly on mon,wed,fri, or every N weeks on mon,thu\""
+        "error invalid-repeat-rule value={value:?} hint=\"use daily, weekdays, weekly, fortnightly, monthly, weekly on mon,wed,fri, every N weeks, or every N weeks on mon,thu\""
     )
+}
+
+fn parse_week_interval(value: &str) -> Result<u32> {
+    value.parse::<u32>().with_context(|| {
+        format!(
+            "error invalid-repeat-interval value={value:?} hint=\"use a whole number of weeks\""
+        )
+    })
 }
 
 async fn list(database: &Database, workspace: &Workspace, args: RecurListArgs) -> Result<()> {
@@ -650,14 +665,26 @@ mod tests {
             "daily",
             "weekdays",
             "weekly",
+            "fortnightly",
+            "monthly",
             "weekly on mon,wed,fri",
+            "every 2 weeks",
             "every 2 weeks on tue",
             "every 3 weeks on mon,thu",
         ] {
             assert!(parse_rule(rule, monday).is_ok(), "{rule}");
         }
+        assert_eq!(
+            parse_rule("fortnightly", monday).unwrap(),
+            RecurrenceRule::every_n_weeks_on(2, [chrono::Weekday::Mon]).unwrap()
+        );
+        assert_eq!(
+            parse_rule("every 3 weeks", monday).unwrap(),
+            RecurrenceRule::every_n_weeks_on(3, [chrono::Weekday::Mon]).unwrap()
+        );
         for rule in [
             "every 3 days",
+            "every 0 weeks",
             "weekly on monday",
             "weekly on fri,mon",
             "every two weeks on tue",

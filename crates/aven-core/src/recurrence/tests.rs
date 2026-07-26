@@ -55,6 +55,15 @@ fn rules_reject_values_outside_the_fixed_schedule_lattice() {
     assert!(RecurrenceRule::weekly_on([]).is_err());
     assert!(RecurrenceRule::new(RecurrenceFrequency::Weekly, 1, WeekdaySet::default()).is_err());
     assert!(RecurrenceRule::new(RecurrenceFrequency::Daily, 2, WeekdaySet::default(),).is_err());
+    assert!(RecurrenceRule::new(RecurrenceFrequency::Monthly, 2, WeekdaySet::default()).is_err());
+    assert!(
+        RecurrenceRule::new(
+            RecurrenceFrequency::Monthly,
+            1,
+            WeekdaySet::from_weekdays([Weekday::Mon]),
+        )
+        .is_err()
+    );
     assert!(
         serde_json::from_str::<RecurrenceRule>(
             r#"{"frequency":"weekly","interval":1,"weekdays":"fri,mon"}"#,
@@ -104,6 +113,100 @@ fn daily_and_weekday_iteration_crosses_leap_dates() {
             date(2026, 7, 21),
             date(2026, 7, 22),
         ]
+    );
+}
+
+#[test]
+fn monthly_iteration_clamps_to_each_month_without_drifting() {
+    let monthly = schedule(
+        RecurrenceRule::monthly(),
+        "UTC",
+        date(2027, 1, 31),
+        None,
+        RecurrenceDuePolicy::SameDay,
+    );
+    assert_eq!(
+        monthly
+            .slots_on_or_after(monthly.start_on)
+            .take(4)
+            .collect::<Vec<_>>(),
+        vec![
+            date(2027, 1, 31),
+            date(2027, 2, 28),
+            date(2027, 3, 31),
+            date(2027, 4, 30),
+        ]
+    );
+
+    let leap_year = schedule(
+        RecurrenceRule::monthly(),
+        "UTC",
+        date(2028, 1, 31),
+        None,
+        RecurrenceDuePolicy::SameDay,
+    );
+    assert_eq!(
+        leap_year
+            .slots_on_or_after(date(2028, 2, 1))
+            .take(2)
+            .collect::<Vec<_>>(),
+        vec![date(2028, 2, 29), date(2028, 3, 31)]
+    );
+    assert!(is_slot(
+        &leap_year.rule,
+        leap_year.start_on,
+        date(2028, 2, 29)
+    ));
+    assert!(!is_slot(
+        &leap_year.rule,
+        leap_year.start_on,
+        date(2028, 2, 28)
+    ));
+    assert_eq!(
+        next_slot_after(&leap_year.rule, leap_year.start_on, date(2028, 1, 31)),
+        Some(date(2028, 2, 29))
+    );
+    assert_eq!(
+        live_slot_on(
+            &leap_year.rule,
+            leap_year.start_on,
+            utc("2028-04-01T12:00:00Z"),
+            &leap_year.timezone,
+        ),
+        Some(date(2028, 3, 31))
+    );
+
+    let twenty_eighth = schedule(
+        RecurrenceRule::monthly(),
+        "UTC",
+        date(2027, 2, 28),
+        None,
+        RecurrenceDuePolicy::SameDay,
+    );
+    assert_eq!(
+        twenty_eighth
+            .slots_on_or_after(twenty_eighth.start_on)
+            .take(3)
+            .collect::<Vec<_>>(),
+        vec![date(2027, 2, 28), date(2027, 3, 28), date(2027, 4, 28),]
+    );
+}
+
+#[test]
+fn monthly_iteration_uses_the_original_day_across_year_boundaries() {
+    let monthly = schedule(
+        RecurrenceRule::monthly(),
+        "UTC",
+        date(2027, 12, 30),
+        None,
+        RecurrenceDuePolicy::SameDay,
+    );
+    assert_eq!(
+        monthly
+            .slots_on_or_after(date(2027, 12, 31))
+            .take(3)
+            .collect::<Vec<_>>(),
+        vec![date(2028, 1, 30), date(2028, 2, 29), date(2028, 3, 30),]
     );
 }
 

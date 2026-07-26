@@ -5569,6 +5569,30 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn add_task_monthly_previews_and_persists_the_rule() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+            panic!("expected composer");
+        };
+        state.title = LineEdit::new("Monthly planning".to_string());
+        state.set_repeat_rule("monthly".to_string());
+        state.refresh_recurrence_preview();
+        assert_eq!(state.recurrence_preview.len(), 3);
+
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        let row = sqlx::query_as::<_, (String, i64, String)>(
+            "SELECT frequency, interval, weekdays FROM recurrence_series WHERE title = ?",
+        )
+        .bind("Monthly planning")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row, ("monthly".to_string(), 1, String::new()));
+    }
+
+    #[tokio::test]
     async fn add_task_recurring_preserves_each_explicit_open_status() {
         let (_dir, pool, mut app) = test_app_with_pool().await;
         for status in ["inbox", "backlog", "todo", "active"] {

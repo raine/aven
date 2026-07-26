@@ -134,6 +134,40 @@ fn daily_series(title: &str) -> CreateRecurrenceSeries {
     }
 }
 
+fn monthly_series(title: &str) -> CreateRecurrenceSeries {
+    let mut series = daily_series(title);
+    series.schedule.rule.frequency = RecurrenceFrequency::Monthly;
+    series
+}
+
+#[test]
+fn recurrence_facade_round_trips_monthly_rules() {
+    let directory = tempfile::tempdir().unwrap();
+    let client = AvenClient::open(
+        directory
+            .path()
+            .join("monthly.sqlite")
+            .to_string_lossy()
+            .into_owned(),
+    )
+    .unwrap();
+    let workspace = client.resolve_workspace("default".to_string()).unwrap();
+    let created = client
+        .create_recurrence_series(workspace.id.clone(), monthly_series("facade monthly"))
+        .unwrap();
+
+    assert_eq!(created.series.rule.frequency, RecurrenceFrequency::Monthly);
+    assert_eq!(
+        client
+            .show_recurrence_series(workspace.id, created.series_ref)
+            .unwrap()
+            .series
+            .rule
+            .frequency,
+        RecurrenceFrequency::Monthly
+    );
+}
+
 #[test]
 fn recurrence_facade_exposes_lifecycle_history_reports_and_typed_ingress() {
     let directory = tempfile::tempdir().unwrap();

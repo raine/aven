@@ -127,7 +127,7 @@ aven add <title> [options]
 | `--epic` | Create an epic container. |
 | `--natural` | Parse the title as natural-language task intake using the configured agent command. |
 
-A plain task starts with status `inbox`. A recurring task starts with status `todo` and prints both its stable series ref and first occurrence task ref. Recurrence rules are exactly `daily`, `weekdays`, `weekly`, `weekly on mon,wed,fri`, and `every N weeks on mon,thu`, with canonical Monday-to-Sunday weekday abbreviations. `weekly` uses the weekday of the start date, and weeks begin on Monday. `--available-at` and `--due` cannot be combined with `--repeat`; use `--repeat-at` and `--repeat-due` instead. `--natural` cannot be combined with a description source, `--project`, a non-default priority, `--label`, scheduling flags, or `--due`. Natural intake can infer a title, description, project, status, priority, labels, availability, due date, and epic state from the request.
+A plain task starts with status `inbox`. A recurring task starts with status `todo` and prints both its stable series ref and first occurrence task ref. Recurrence rules are exactly `daily`, `weekdays`, `weekly`, `fortnightly`, `monthly`, `weekly on mon,wed,fri`, `every N weeks`, and `every N weeks on mon,thu`, with canonical Monday-to-Sunday weekday abbreviations where weekdays are explicit. Weekly shorthands use the weekday of the start date, and weeks begin on Monday. Monthly rules use the start date's day number. Shorter months clamp to their final day without changing the anchor, so January 31 is followed by February 28 or 29 and then March 31. `--available-at` and `--due` cannot be combined with `--repeat`; use `--repeat-at` and `--repeat-due` instead. `--natural` cannot be combined with a description source, `--project`, a non-default priority, `--label`, scheduling flags, or `--due`. Natural intake can infer a title, description, project, status, priority, labels, availability, due date, and epic state from the request.
 
 The command prints the created task's qualified reference and bare suffix.
 
@@ -137,6 +137,8 @@ aven add "Review launch notes" --available-at "next monday at 9am"
 aven add "Submit expense report" --due "next fri"
 aven add "Add release automation" --epic
 aven add "Daily journal" --repeat daily --repeat-at 09:00 --time-zone Europe/Stockholm
+aven add "Review invoices" --repeat monthly --repeat-start-on 2026-01-31
+aven add "Plan next sprint" --repeat fortnightly --repeat-start-on 2026-07-27
 aven add --natural "high priority docs task for the aven project"
 ```
 

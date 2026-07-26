@@ -337,6 +337,37 @@ fn daily_series(title: &str) -> CreateRecurrenceSeries {
     }
 }
 
+fn monthly_series(title: &str) -> CreateRecurrenceSeries {
+    let mut series = daily_series(title);
+    series.schedule.rule.frequency = RecurrenceFrequency::Monthly;
+    series
+}
+
+#[tokio::test]
+async fn consumer_api_round_trips_monthly_recurrence_rules() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path().join("monthly.sqlite"))
+        .await
+        .unwrap();
+    let workspace = store.resolve_workspace("default").await.unwrap();
+    let created = store
+        .create_recurrence_series(&workspace.id, monthly_series("monthly review"))
+        .await
+        .unwrap();
+
+    assert_eq!(created.series.rule.frequency, RecurrenceFrequency::Monthly);
+    assert_eq!(
+        store
+            .show_recurrence_series(&workspace.id, &created.series_ref)
+            .await
+            .unwrap()
+            .series
+            .rule
+            .frequency,
+        RecurrenceFrequency::Monthly
+    );
+}
+
 #[tokio::test]
 async fn consumer_api_owns_recurrence_lifecycle_reports_and_mutation_routing() {
     let directory = tempfile::tempdir().unwrap();
@@ -521,7 +552,7 @@ async fn consumer_recurrence_changes_survive_sync_round_trips() {
     let first = Store::open(&first_path).await.unwrap();
     let workspace = first.resolve_workspace("default").await.unwrap();
     let created = first
-        .create_recurrence_series(&workspace.id, daily_series("synced daily"))
+        .create_recurrence_series(&workspace.id, monthly_series("synced monthly"))
         .await
         .unwrap();
     first
@@ -537,6 +568,10 @@ async fn consumer_recurrence_changes_survive_sync_round_trips() {
     let series = second.list_recurrence_series(&workspace.id).await.unwrap();
     assert_eq!(series.len(), 1);
     assert_eq!(series[0].series.id, created.series.id);
+    assert_eq!(
+        series[0].series.rule.frequency,
+        RecurrenceFrequency::Monthly
+    );
     assert_eq!(series[0].series.state, RecurrenceSeriesState::Paused);
     let history = second
         .recurrence_history(&workspace.id, &series[0].series_ref, 0, 100)

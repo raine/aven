@@ -15,6 +15,12 @@ pub(crate) fn canonical_rule_input(input: &str) -> Result<Option<String>> {
     if matches!(normalized.as_str(), "daily" | "every day") {
         return Ok(Some("daily".to_string()));
     }
+    if matches!(normalized.as_str(), "monthly" | "every month") {
+        return Ok(Some("monthly".to_string()));
+    }
+    if normalized == "fortnightly" {
+        return Ok(Some("fortnightly".to_string()));
+    }
     if matches!(normalized.as_str(), "weekdays" | "every weekday") {
         return Ok(Some("weekdays".to_string()));
     }
@@ -25,6 +31,9 @@ pub(crate) fn canonical_rule_input(input: &str) -> Result<Option<String>> {
     if let Some(days) = normalized.strip_prefix("every ") {
         if let Some(day) = parse_weekday(days) {
             return Ok(Some(format!("weekly on {}", weekday_short(day))));
+        }
+        if let Some(interval) = parse_week_count(days)? {
+            return Ok(Some(format!("every {interval} weeks")));
         }
         if let Some((interval, days)) = parse_week_interval(days)? {
             return Ok(Some(format!(
@@ -38,17 +47,26 @@ pub(crate) fn canonical_rule_input(input: &str) -> Result<Option<String>> {
     bail!(rule_guidance())
 }
 
+fn parse_week_count(value: &str) -> Result<Option<u32>> {
+    let Some(interval) = value.strip_suffix(" weeks") else {
+        return Ok(None);
+    };
+    parse_positive_interval(interval).map(Some)
+}
+
 fn parse_week_interval(value: &str) -> Result<Option<(u32, &str)>> {
     let Some((interval, days)) = value.split_once(" weeks on ") else {
         return Ok(None);
     };
-    let interval = interval
-        .parse::<u32>()
-        .map_err(|_| anyhow!(rule_guidance()))?;
+    Ok(Some((parse_positive_interval(interval)?, days)))
+}
+
+fn parse_positive_interval(value: &str) -> Result<u32> {
+    let interval = value.parse::<u32>().map_err(|_| anyhow!(rule_guidance()))?;
     if interval == 0 {
         bail!(rule_guidance());
     }
-    Ok(Some((interval, days)))
+    Ok(interval)
 }
 
 fn canonical_weekdays(value: &str) -> Result<String> {
@@ -113,6 +131,7 @@ fn weekday_name(weekday: Weekday) -> &'static str {
 pub(crate) fn natural_rule_label(rule: RecurrenceRule) -> String {
     match rule.frequency() {
         RecurrenceFrequency::Daily => "Every day".to_string(),
+        RecurrenceFrequency::Monthly => "Every month".to_string(),
         RecurrenceFrequency::Weekly if rule == RecurrenceRule::weekdays() => {
             "Every weekday".to_string()
         }
@@ -141,7 +160,7 @@ pub(crate) fn natural_rule_label(rule: RecurrenceRule) -> String {
 }
 
 pub(crate) const fn rule_guidance() -> &'static str {
-    "Try daily, weekdays, every Friday, every Monday and Thursday, or every 4 weeks on Monday and Thursday"
+    "Try daily, weekdays, monthly, fortnightly, every Friday, every 3 weeks, or every 4 weeks on Monday and Thursday"
 }
 
 #[cfg(test)]
@@ -153,11 +172,15 @@ mod tests {
         for (input, expected) in [
             ("daily", "daily"),
             ("every day", "daily"),
+            ("monthly", "monthly"),
+            ("every month", "monthly"),
+            ("fortnightly", "fortnightly"),
             ("weekdays", "weekdays"),
             ("every weekday", "weekdays"),
             ("every Friday", "weekly on fri"),
             ("Fridays", "weekly on fri"),
             ("every Monday and Thursday", "weekly on mon,thu"),
+            ("every 3 weeks", "every 3 weeks"),
             (
                 "every 4 weeks on Monday and Thursday",
                 "every 4 weeks on mon,thu",
@@ -180,6 +203,7 @@ mod tests {
     #[test]
     fn formats_rules_in_natural_language() {
         assert_eq!(natural_rule_label(RecurrenceRule::daily()), "Every day");
+        assert_eq!(natural_rule_label(RecurrenceRule::monthly()), "Every month");
         assert_eq!(
             natural_rule_label(RecurrenceRule::weekdays()),
             "Every weekday"

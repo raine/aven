@@ -48,6 +48,9 @@ fn add_parses_fixed_rules_and_rejects_ambiguous_scheduling() {
         "daily",
         "weekdays",
         "weekly",
+        "fortnightly",
+        "monthly",
+        "every 2 weeks",
         "weekly on mon,wed,fri",
         "every 2 weeks on tue",
         "every 3 weeks on mon,thu",
@@ -73,6 +76,13 @@ fn add_parses_fixed_rules_and_rejects_ambiguous_scheduling() {
             ],
         ));
         contains_all(&output, &["created RCR-", "occurrence=", "status=todo"]);
+        let series_ref = output.split_whitespace().nth(1).unwrap();
+        let shown = ok(env.aven(&db, ["recur", "show", series_ref]));
+        match rule {
+            "monthly" => contains_all(&shown, &["rule=\"monthly\""]),
+            "fortnightly" | "every 2 weeks" => contains_all(&shown, &["rule=\"every 2 weeks on"]),
+            _ => {}
+        }
     }
 
     for rule in [

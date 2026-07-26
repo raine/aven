@@ -9,6 +9,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub enum RecurrenceFrequency {
     Daily,
     Weekly,
+    Monthly,
 }
 
 impl RecurrenceFrequency {
@@ -16,6 +17,7 @@ impl RecurrenceFrequency {
         match self {
             Self::Daily => "daily",
             Self::Weekly => "weekly",
+            Self::Monthly => "monthly",
         }
     }
 
@@ -23,6 +25,7 @@ impl RecurrenceFrequency {
         match value {
             "daily" => Ok(Self::Daily),
             "weekly" => Ok(Self::Weekly),
+            "monthly" => Ok(Self::Monthly),
             _ => Err(InvalidRecurrenceFrequency(value.to_string())),
         }
     }
@@ -163,6 +166,12 @@ impl RecurrenceRule {
             RecurrenceFrequency::Weekly if weekdays.is_empty() => {
                 return Err(InvalidRecurrenceRule::EmptyWeekdays);
             }
+            RecurrenceFrequency::Monthly if interval != 1 => {
+                return Err(InvalidRecurrenceRule::MonthlyInterval);
+            }
+            RecurrenceFrequency::Monthly if !weekdays.is_empty() => {
+                return Err(InvalidRecurrenceRule::MonthlyWeekdays);
+            }
             _ => {}
         }
         Ok(Self {
@@ -185,6 +194,14 @@ impl RecurrenceRule {
             frequency: RecurrenceFrequency::Weekly,
             interval: 1,
             weekdays: WeekdaySet::weekdays(),
+        }
+    }
+
+    pub fn monthly() -> Self {
+        Self {
+            frequency: RecurrenceFrequency::Monthly,
+            interval: 1,
+            weekdays: WeekdaySet::default(),
         }
     }
 
@@ -233,6 +250,9 @@ impl RecurrenceRule {
                 let weeks = days_from_anchor / 7;
                 weeks % i64::from(self.interval) == 0 && self.weekdays.contains(date.weekday())
             }
+            RecurrenceFrequency::Monthly => {
+                date.day() == start_on.day().min(last_day_of_month(date))
+            }
         }
     }
 }
@@ -260,6 +280,8 @@ pub enum InvalidRecurrenceRule {
     EmptyWeekdays,
     DailyInterval,
     DailyWeekdays,
+    MonthlyInterval,
+    MonthlyWeekdays,
 }
 
 impl fmt::Display for InvalidRecurrenceRule {
@@ -269,11 +291,20 @@ impl fmt::Display for InvalidRecurrenceRule {
             Self::EmptyWeekdays => "weekly recurrence must contain at least one weekday",
             Self::DailyInterval => "daily recurrence interval must be one",
             Self::DailyWeekdays => "daily recurrence cannot contain a weekday set",
+            Self::MonthlyInterval => "monthly recurrence interval must be one",
+            Self::MonthlyWeekdays => "monthly recurrence cannot contain a weekday set",
         })
     }
 }
 
 impl std::error::Error for InvalidRecurrenceRule {}
+
+fn last_day_of_month(date: chrono::NaiveDate) -> u32 {
+    (28..=31)
+        .rev()
+        .find(|day| date.with_day(*day).is_some())
+        .expect("every calendar month has at least 28 days")
+}
 
 fn parse_weekday_set(value: &str) -> Result<WeekdaySet, &'static str> {
     if value.is_empty() {

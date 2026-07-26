@@ -158,6 +158,7 @@ impl From<OptionalDateUpdate> for core_api::OptionalDateUpdate {
 pub enum RecurrenceFrequency {
     Daily,
     Weekly,
+    Monthly,
 }
 
 impl From<RecurrenceFrequency> for core_api::RecurrenceFrequency {
@@ -165,6 +166,7 @@ impl From<RecurrenceFrequency> for core_api::RecurrenceFrequency {
         match value {
             RecurrenceFrequency::Daily => Self::Daily,
             RecurrenceFrequency::Weekly => Self::Weekly,
+            RecurrenceFrequency::Monthly => Self::Monthly,
         }
     }
 }
@@ -174,6 +176,7 @@ impl From<core_api::RecurrenceFrequency> for RecurrenceFrequency {
         match value {
             core_api::RecurrenceFrequency::Daily => Self::Daily,
             core_api::RecurrenceFrequency::Weekly => Self::Weekly,
+            core_api::RecurrenceFrequency::Monthly => Self::Monthly,
         }
     }
 }

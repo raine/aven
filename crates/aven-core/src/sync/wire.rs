@@ -19,7 +19,7 @@ use crate::recurrence::{
 };
 use crate::task_fields::TaskField;
 
-pub const SYNC_PROTOCOL_VERSION: u32 = 10;
+pub const SYNC_PROTOCOL_VERSION: u32 = 11;
 const MAX_CHANGE_PAYLOAD_BYTES: usize = 64 * 1024;
 pub fn sync_server_url_is_valid(server: &str) -> bool {
     let Ok(url) = url::Url::parse(server) else {
