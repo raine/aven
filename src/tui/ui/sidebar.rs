@@ -7,7 +7,8 @@ use unicode_width::UnicodeWidthStr;
 
 use super::truncate::truncate_chars;
 use crate::choices::TaskPriority;
-use crate::tui::app::{Focus, WidgetState};
+use crate::tui::app::Focus;
+use crate::tui::list_surface::ListSurface;
 use crate::tui::store::{
     SidebarEntry, SidebarEntryTarget, TaskScope, TaskScopeTarget, TaskView, TuiStore,
 };
@@ -147,19 +148,19 @@ pub(crate) fn sidebar_click_at_for(
 pub(super) fn render_sidebar_overlay(
     frame: &mut Frame,
     store: &TuiStore,
-    widgets: &mut WidgetState,
+    list: &mut ListSurface,
     focus: Focus,
     area: Rect,
 ) {
     let area = sidebar_overlay_area(area);
     frame.render_widget(Clear, area);
-    render_sidebar(frame, store, widgets, focus, area, true);
+    render_sidebar(frame, store, list, focus, area, true);
 }
 
 pub(super) fn render_sidebar(
     frame: &mut Frame,
     store: &TuiStore,
-    widgets: &mut WidgetState,
+    list: &mut ListSurface,
     focus: Focus,
     area: Rect,
     overlay: bool,
@@ -185,7 +186,7 @@ pub(super) fn render_sidebar(
             }
             let marker = sidebar_icon(entry);
             let label = sidebar_label(entry);
-            let selected = index == widgets.sidebar.selected().unwrap_or(usize::MAX);
+            let selected = index == list.selected_sidebar().unwrap_or(usize::MAX);
             let is_active_view = sidebar_entry_active(entry, store);
             let color = match &entry.target {
                 Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(project))) => {
@@ -242,7 +243,7 @@ pub(super) fn render_sidebar(
     } else {
         Borders::RIGHT
     };
-    let list = List::new(items)
+    let sidebar = List::new(items)
         .block(
             Block::new()
                 .borders(borders)
@@ -251,7 +252,7 @@ pub(super) fn render_sidebar(
                 .style(Style::new().bg(BG)),
         )
         .highlight_style(highlight_style);
-    frame.render_stateful_widget(list, area, &mut widgets.sidebar);
+    frame.render_stateful_widget(sidebar, area, list.sidebar_state_mut());
 }
 
 fn badge(count: i64, active: bool) -> Span<'static> {

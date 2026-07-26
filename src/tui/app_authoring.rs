@@ -192,11 +192,7 @@ impl App {
 
     pub(super) fn begin_add_note(&mut self) {
         self.pending_shortcut.clear();
-        let Some(item) = self
-            .store
-            .selected_task(self.widgets.table.selected())
-            .cloned()
-        else {
+        let Some(item) = self.store.selected_task(self.list.selected_task()).cloned() else {
             self.set_info("no selected task for note");
             return;
         };
@@ -402,7 +398,7 @@ impl App {
 
     pub(super) async fn submit_created_task(&mut self, draft: TaskDraft) -> Result<()> {
         let attachments = self.authoring.add_task_attachments();
-        let current_selected = self.widgets.table.selected();
+        let current_selected = self.list.selected_task();
         if let Some(context) = self.epic_child_authoring.clone() {
             let result = if attachments.is_empty() {
                 self.store
@@ -433,7 +429,7 @@ impl App {
                     return Ok(());
                 }
             };
-            self.widgets.table.select(
+            self.list.select_task(
                 self.store
                     .tasks
                     .iter()
@@ -481,7 +477,7 @@ impl App {
                 return Err(error);
             }
         };
-        self.widgets.table.select(selected);
+        self.list.select_task(selected);
         self.preserve_or_restore_sidebar_selection();
         self.prune_task_marks();
         if selected.is_none() {

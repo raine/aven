@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::tui::app::{App, Focus};
+use crate::tui::app::App;
 use crate::tui::overlay::{
     HeaderMenuAction, HeaderMenuItem, HeaderMenuKind, HeaderMenuState, OrderMenuState,
     OverlayState, PickerIntent,
@@ -190,8 +190,7 @@ impl App {
         match action {
             HeaderMenuAction::Workspace(workspace) => {
                 let (message, selected) = self.store.switch_workspace(workspace).await?;
-                self.last_changed_task_id = None;
-                self.last_change_return = None;
+                self.list.clear_last_change();
                 self.clear_navigation_history();
                 self.apply_filter_selection(selected);
                 self.set_success(message);
@@ -239,10 +238,10 @@ impl App {
     }
 
     pub(super) fn apply_filter_selection(&mut self, selected: Option<usize>) {
-        self.widgets.table.select(selected);
-        self.widgets.sidebar.select(self.store.sidebar_selection());
+        self.list.select_task(selected);
+        self.list.select_sidebar(self.store.sidebar_selection());
         self.prune_task_marks();
-        self.focus = Focus::Tasks;
+        self.list.focus_tasks();
         self.overlay = None;
     }
 
@@ -329,8 +328,7 @@ impl App {
             return Ok(());
         };
         let (message, selected) = self.store.switch_workspace(workspace).await?;
-        self.last_changed_task_id = None;
-        self.last_change_return = None;
+        self.list.clear_last_change();
         self.clear_navigation_history();
         self.apply_filter_selection(selected);
         self.set_success(message);

@@ -2,7 +2,7 @@ use crossterm::event::{MouseButton, MouseEventKind};
 use ratatui::layout::Rect;
 
 use crate::choices::TaskStatus;
-use crate::tui::app::{Focus, WidgetState};
+use crate::tui::list_surface::ListSurface;
 use crate::tui::store::{TaskView, TuiStore};
 use crate::tui::ui::{recent_action_at_position, task_at_position, task_status_at_position};
 
@@ -61,9 +61,7 @@ pub(crate) enum PointerEvent {
 
 pub(crate) struct TaskSurfaceView<'a> {
     pub(crate) store: &'a TuiStore,
-    pub(crate) widgets: &'a WidgetState,
-    pub(crate) focus: Focus,
-    pub(crate) sidebar_visible: bool,
+    pub(crate) list: &'a ListSurface,
     pub(crate) terminal_area: Rect,
     pub(crate) task_area: Rect,
     pub(crate) outside_sidebar: bool,
@@ -72,19 +70,19 @@ pub(crate) struct TaskSurfaceView<'a> {
 pub(crate) fn route_task_surface(view: TaskSurfaceView<'_>, column: u16, row: u16) -> PointerEvent {
     let TaskSurfaceView {
         store,
-        widgets,
-        focus,
-        sidebar_visible,
+        list,
         terminal_area,
         task_area,
         outside_sidebar,
     } = view;
+    let focus = list.focus();
+    let sidebar_visible = list.sidebar_visible();
     route_task_surface_hits(TaskSurfaceHits {
         lane_status: (outside_sidebar && store.view_state.view == TaskView::Columns)
             .then(|| {
                 crate::tui::ui::column_lane_at_position(
                     store,
-                    &widgets.table,
+                    list.table_state(),
                     task_area,
                     column,
                     row,
@@ -96,12 +94,12 @@ pub(crate) fn route_task_surface(view: TaskSurfaceView<'_>, column: u16, row: u1
             .flatten(),
         recent_action: (outside_sidebar && store.view_state.view == TaskView::RecentActions)
             .then(|| {
-                recent_action_at_position(store, &widgets.table, task_area, column, row)
+                recent_action_at_position(store, list.table_state(), task_area, column, row)
                     .map(|hit| hit.action_index)
             })
             .flatten(),
         status: outside_sidebar
-            .then(|| task_status_at_position(store, &widgets.table, task_area, column, row))
+            .then(|| task_status_at_position(store, list.table_state(), task_area, column, row))
             .flatten()
             .map(|hit| PointerTaskHit {
                 task_index: hit.task_index,
@@ -109,7 +107,7 @@ pub(crate) fn route_task_surface(view: TaskSurfaceView<'_>, column: u16, row: u1
                 viewport_row: hit.viewport_row,
             }),
         task: outside_sidebar
-            .then(|| task_at_position(store, &widgets.table, task_area, column, row))
+            .then(|| task_at_position(store, list.table_state(), task_area, column, row))
             .flatten()
             .map(|hit| PointerTaskHit {
                 task_index: hit.task_index,
@@ -118,7 +116,7 @@ pub(crate) fn route_task_surface(view: TaskSurfaceView<'_>, column: u16, row: u1
             }),
         sidebar_entry: crate::tui::ui::sidebar_click_at_for(
             &store.sidebar_entries,
-            &widgets.sidebar,
+            list.sidebar_state(),
             focus,
             sidebar_visible,
             terminal_area,

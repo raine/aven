@@ -1,15 +1,14 @@
-use std::collections::BTreeSet;
 use std::time::Instant;
 
 use anyhow::{Result, bail};
 use aven_core::db::Database;
-use ratatui::widgets::{ListState, TableState};
 
 use crate::config::AppConfig;
 use crate::tui::app_intake::IntakeController;
 use crate::tui::authoring::AuthoringState;
-use crate::tui::bounded_history::BoundedHistory;
 use crate::tui::inline_image_surface::InlineImageSurface;
+use crate::tui::list_surface::ListSurface;
+pub(crate) use crate::tui::list_surface::{Focus, LastChangeReturnState};
 use crate::tui::overlay::OverlayState;
 use crate::tui::shortcut_buffer::ShortcutBuffer;
 use crate::tui::store::{TaskOrder, TaskViewState, TuiStore};
@@ -28,14 +27,7 @@ pub(super) enum TaskCopyKind {
     TitleAndDescription,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Focus {
-    Sidebar,
-    Tasks,
-}
-
 pub(super) const SEARCH_PREVIEW_LIMIT: usize = 8;
-const NAVIGATION_HISTORY_LIMIT: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Notification {
@@ -87,9 +79,6 @@ fn loading_frame(started_at: Instant) -> &'static str {
 
 #[derive(Debug, Clone)]
 pub(crate) struct WidgetState {
-    pub(crate) sidebar: ListState,
-    pub(crate) table: TableState,
-    pub(crate) marked_task_ids: BTreeSet<crate::ids::TaskId>,
     pub(crate) inline_image_placements: Vec<crate::tui::ui::DetailInlineImagePlacement>,
     pub(crate) detail_document: Option<crate::tui::ui::DetailDocument>,
 }
@@ -153,18 +142,6 @@ impl DetailTargetId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct LastChangeReturnState {
-    pub(super) view_state: TaskViewState,
-    pub(super) selected_task_id: Option<crate::ids::TaskId>,
-    pub(super) selected_index: Option<usize>,
-    pub(super) table_offset: usize,
-    pub(super) return_to_detail: bool,
-    pub(super) detail_scroll: u16,
-    pub(super) detail_focus: Option<DetailTargetId>,
-    pub(super) detail_expanded_sections: BTreeSet<DetailSection>,
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct RemovedEpicChild {
     pub(crate) epic_id: crate::ids::TaskId,
@@ -182,7 +159,7 @@ pub(super) struct EpicChildAuthoringContext {
 pub(crate) struct App {
     pub(crate) store: TuiStore,
     pub(crate) should_quit: bool,
-    pub(crate) focus: Focus,
+    pub(crate) list: ListSurface,
     pub(super) intake: IntakeController,
     pub(crate) widgets: WidgetState,
     pub(crate) overlay: Option<OverlayState>,
@@ -192,7 +169,6 @@ pub(crate) struct App {
     pub(super) pending_shortcut_scroll: u16,
     pub(super) footer_choice: Option<FooterChoiceState>,
     pub(crate) detail: crate::tui::detail_session::DetailSession,
-    pub(super) sidebar_visible: bool,
     pub(super) authoring: AuthoringState,
     pub(super) needs_terminal_clear: bool,
     pub(super) search: crate::tui::app_search::SearchController,
@@ -202,9 +178,6 @@ pub(crate) struct App {
     pub(super) inline_images: InlineImageSurface,
     pub(super) preview_controller: crate::tui::preview_controller::PreviewController,
     pub(super) attachment_controller: crate::tui::attachment_controller::AttachmentController,
-    pub(super) navigation_history: BoundedHistory<TaskViewState>,
-    pub(super) last_changed_task_id: Option<crate::ids::TaskId>,
-    pub(super) last_change_return: Option<LastChangeReturnState>,
 }
 
 impl App {
@@ -224,15 +197,13 @@ impl App {
 
     fn new_with_store(store: TuiStore) -> Result<Self> {
         let next_refresh_at = store.last_refresh + crate::tui::app_lifecycle::REFRESH_INTERVAL;
+        let has_tasks = store.main_row_count() > 0;
         let mut app = Self {
             store,
             should_quit: false,
-            focus: Focus::Tasks,
+            list: ListSurface::new(has_tasks),
             intake: IntakeController::new(),
             widgets: WidgetState {
-                sidebar: ListState::default(),
-                table: TableState::default(),
-                marked_task_ids: BTreeSet::new(),
                 inline_image_placements: Vec::new(),
                 detail_document: None,
             },
@@ -243,7 +214,6 @@ impl App {
             pending_shortcut_scroll: 0,
             footer_choice: None,
             detail: crate::tui::detail_session::DetailSession::inactive(),
-            sidebar_visible: true,
             authoring: AuthoringState::default(),
             needs_terminal_clear: false,
             search: crate::tui::app_search::SearchController::new(),
@@ -253,14 +223,8 @@ impl App {
             inline_images: InlineImageSurface::new(),
             preview_controller: crate::tui::preview_controller::PreviewController::new(),
             attachment_controller: crate::tui::attachment_controller::AttachmentController::new(),
-            navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),
-            last_changed_task_id: None,
-            last_change_return: None,
         };
         app.restore_sidebar_selection();
-        app.widgets
-            .table
-            .select((app.store.main_row_count() > 0).then_some(0));
         Ok(app)
     }
 
@@ -268,7 +232,7 @@ impl App {
         if !self.select_task_by_id(task_id) {
             bail!("task target disappeared before the TUI loaded");
         }
-        self.focus = Focus::Tasks;
+        self.list.focus_tasks();
         self.show_detail(0);
         Ok(())
     }
@@ -282,7 +246,7 @@ impl App {
         else {
             return false;
         };
-        self.widgets.table.select(Some(index));
+        self.list.select_task(Some(index));
         true
     }
 
@@ -303,14 +267,11 @@ impl App {
     }
 
     pub(super) fn push_navigation_state(&mut self, previous: TaskViewState) {
-        if previous == self.store.view_state {
-            return;
-        }
-        self.navigation_history.push(previous);
+        self.list.push_navigation(previous, &self.store.view_state);
     }
 
     pub(super) fn clear_navigation_history(&mut self) {
-        self.navigation_history.clear();
+        self.list.clear_navigation();
     }
 
     #[cfg(test)]
@@ -368,8 +329,8 @@ impl App {
                 self.store.show_exact_task(item);
                 0
             };
-            self.widgets.table.select(Some(index));
-            self.focus = Focus::Tasks;
+            self.list.select_task(Some(index));
+            self.list.focus_tasks();
             if let Some(detail) = self.detail.as_mut() {
                 detail.restore_history_entry(&previous);
             }
@@ -386,7 +347,7 @@ impl App {
     }
 
     pub(super) async fn go_back(&mut self) -> Result<()> {
-        let Some(previous) = self.navigation_history.pop() else {
+        let Some(previous) = self.list.pop_navigation() else {
             self.set_info("no previous navigation state");
             return Ok(());
         };

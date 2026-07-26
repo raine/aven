@@ -77,9 +77,9 @@ impl App {
     }
 
     fn selected_task_viewport_row(&self) -> Option<usize> {
-        let selected = self.widgets.table.selected()?;
+        let selected = self.list.selected_task()?;
         crate::tui::ui::task_visual_row(&self.store, selected)
-            .map(|row| row.saturating_sub(self.widgets.table.offset()))
+            .map(|row| row.saturating_sub(self.list.task_offset()))
     }
 
     fn apply_status_mutation_result(
@@ -93,16 +93,17 @@ impl App {
                 .selected
                 .and_then(|index| self.store.tasks.get(index))
                 .is_none_or(|item| item.task.id != task_id);
-            self.last_changed_task_id = Some(task_id);
+            self.list.record_changed_task(task_id);
             if selection_changed {
                 result.message.push_str(" · g . return");
             }
         }
         self.apply_mutation_result(result);
-        if let (Some(viewport_row), Some(selected)) = (viewport_row, self.widgets.table.selected())
+        if let (Some(viewport_row), Some(selected)) = (viewport_row, self.list.selected_task())
             && let Some(visual_row) = crate::tui::ui::task_visual_row(&self.store, selected)
         {
-            *self.widgets.table.offset_mut() = visual_row.saturating_sub(viewport_row);
+            self.list
+                .set_task_offset(visual_row.saturating_sub(viewport_row));
         }
     }
 
@@ -289,11 +290,11 @@ impl App {
         let selected = if in_detail {
             None
         } else {
-            self.widgets.table.selected()
+            self.list.selected_task()
         };
         let focused_link = if in_detail {
             self.store
-                .selected_task(self.widgets.table.selected())
+                .selected_task(self.list.selected_task())
                 .and_then(|parent| {
                     let crate::tui::app::DetailTargetId::Task {
                         section: crate::tui::app::DetailSection::EpicChildren,
@@ -320,7 +321,7 @@ impl App {
                     .as_mut()
                     .and_then(|detail| detail.take_removed_epic_child());
                 if let Some(removed) = removed {
-                    self.widgets.table.select(
+                    self.list.select_task(
                         self.store
                             .tasks
                             .iter()
@@ -341,7 +342,7 @@ impl App {
                                 .all(|candidate| candidate.task_id != child.task_id)
                     })
                 {
-                    self.widgets.table.select(
+                    self.list.select_task(
                         self.store
                             .tasks
                             .iter()
@@ -368,8 +369,8 @@ impl App {
     pub(super) fn resolve_task_selection(&self) -> Option<TaskSelection> {
         TaskSelection::resolve(
             &self.store.tasks,
-            &self.widgets.marked_task_ids,
-            self.widgets.table.selected(),
+            self.list.marked_task_ids(),
+            self.list.selected_task(),
         )
     }
 
@@ -425,7 +426,7 @@ impl App {
 
     fn guard_selected_task(&mut self) -> Option<usize> {
         self.pending_shortcut.clear();
-        let index = self.widgets.table.selected();
+        let index = self.list.selected_task();
         if index.is_some_and(|i| self.store.selected_task(Some(i)).is_some()) {
             index
         } else {
@@ -1178,7 +1179,7 @@ impl App {
 
     pub(super) fn toggle_mark_selected(&mut self) {
         self.pending_shortcut.clear();
-        let Some(index) = self.widgets.table.selected() else {
+        let Some(index) = self.list.selected_task() else {
             self.set_info("no selected task to mark");
             return;
         };
@@ -1190,9 +1191,7 @@ impl App {
             self.set_info("no selected task to mark");
             return;
         };
-        if !self.widgets.marked_task_ids.insert(id.clone()) {
-            self.widgets.marked_task_ids.remove(&id);
-        }
+        self.list.toggle_mark(id);
     }
 
     pub(super) fn toggle_mark_all_in_view(&mut self) {
@@ -1207,28 +1206,23 @@ impl App {
             self.set_info("no visible tasks to mark");
             return;
         }
-        if visible
-            .iter()
-            .all(|id| self.widgets.marked_task_ids.contains(id))
-        {
-            self.widgets
-                .marked_task_ids
-                .retain(|id| !visible.contains(id));
+        if self.list.all_marked(&visible) {
+            self.list.retain_marks(|id| !visible.contains(id));
         } else {
-            self.widgets.marked_task_ids.extend(visible);
+            self.list.mark_all(visible);
         }
     }
 
     pub(super) fn clear_marks(&mut self) {
         self.pending_shortcut.clear();
-        self.widgets.marked_task_ids.clear();
+        self.list.clear_marks();
     }
 
     pub(super) fn marked_task_ids_in_view(&self) -> Vec<crate::ids::TaskId> {
         self.store
             .tasks
             .iter()
-            .filter(|item| self.widgets.marked_task_ids.contains(&item.task.id))
+            .filter(|item| self.list.marked_task_ids().contains(&item.task.id))
             .map(|item| item.task.id.clone())
             .collect()
     }
@@ -1240,9 +1234,7 @@ impl App {
             .iter()
             .map(|item| item.task.id.clone())
             .collect::<BTreeSet<_>>();
-        self.widgets
-            .marked_task_ids
-            .retain(|id| visible.contains(id));
+        self.list.retain_marks(|id| visible.contains(id));
     }
 
     pub(super) async fn submit_remove_dependency(

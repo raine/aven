@@ -99,10 +99,10 @@ impl App {
             Action::ToggleMarkAllInView => self.toggle_mark_all_in_view(),
             Action::ClearMarks => self.clear_marks(),
             Action::ToggleEpicExpanded => {
-                let index = self.widgets.table.selected();
+                let index = self.list.selected_task();
                 if let Some(message) = self.store.toggle_selected_epic(index).await? {
                     self.set_info(message.message);
-                    self.widgets.table.select(message.selected);
+                    self.list.select_task(message.selected);
                 } else {
                     self.set_warning("Select an epic in the Epics list");
                 }

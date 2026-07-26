@@ -2624,6 +2624,7 @@ pub(super) fn render_detail_underlay(
     frame: &mut Frame,
     store: &TuiStore,
     widgets: &mut WidgetState,
+    selected_task: Option<usize>,
     scroll: u16,
     inline_title_editor: Option<&TextInputView>,
     active_target: Option<&DetailTargetId>,
@@ -2634,7 +2635,7 @@ pub(super) fn render_detail_underlay(
     pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
     removed_epic_child: Option<&crate::tui::app::RemovedEpicChild>,
 ) {
-    if let Some(task) = store.selected_task(widgets.table.selected()) {
+    if let Some(task) = store.selected_task(selected_task) {
         let mut task = task.clone();
         if let Some(removed) = removed_epic_child
             && removed.epic_id == task.task.id
@@ -2669,7 +2670,6 @@ mod tests {
 
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use ratatui::widgets::{ListState, TableState};
 
     use super::*;
     use crate::choices::{TaskPriority, TaskStatus};
@@ -3746,9 +3746,6 @@ mod tests {
             interactive_rows: Vec::new(),
         };
         let mut widgets = WidgetState {
-            sidebar: ListState::default(),
-            table: TableState::default(),
-            marked_task_ids: BTreeSet::new(),
             inline_image_placements: Vec::new(),
             detail_document: None,
         };
@@ -3932,9 +3929,6 @@ mod tests {
         item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
         let context = DetailInlineImageContext::default();
         let mut widgets = WidgetState {
-            sidebar: ListState::default(),
-            table: TableState::default(),
-            marked_task_ids: BTreeSet::new(),
             inline_image_placements: Vec::new(),
             detail_document: None,
         };

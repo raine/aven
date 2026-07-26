@@ -121,7 +121,7 @@ impl App {
     }
 
     pub(super) fn begin_add_epic_child(&mut self) {
-        let selected = self.widgets.table.selected();
+        let selected = self.list.selected_task();
         let detail = self.detail.is_some();
         let Some(epic) = self.store.resolve_epic_context(selected, detail) else {
             self.set_warning("Select an epic to add a child");
@@ -213,9 +213,8 @@ impl App {
 
     async fn accept_search_input(&mut self, input: String) -> Result<()> {
         let previous = self.store.view_state.clone();
-        self.widgets
-            .table
-            .select(self.store.accept_search(&input).await?);
+        self.list
+            .select_task(self.store.accept_search(&input).await?);
         self.push_navigation_state(previous);
         Ok(())
     }
@@ -314,7 +313,7 @@ impl App {
                         } else {
                             mutation.message.selected
                         };
-                        self.widgets.table.select(selected);
+                        self.list.select_task(selected);
                         if let Some(detail) = self.detail.as_mut().filter(|_| return_to_detail) {
                             detail.set_focused_target(Some(
                                 crate::tui::app::DetailTargetId::Task {

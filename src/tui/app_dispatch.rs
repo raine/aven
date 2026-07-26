@@ -389,9 +389,7 @@ impl App {
         let pointer = route_task_surface(
             TaskSurfaceView {
                 store: &self.store,
-                widgets: &self.widgets,
-                focus: self.focus,
-                sidebar_visible: self.sidebar_visible,
+                list: &self.list,
                 terminal_area: Rect::new(0, 0, terminal_size.width, terminal_size.height),
                 task_area: self.task_area_for_mouse(terminal_size),
                 outside_sidebar,
@@ -411,19 +409,19 @@ impl App {
                     .await?;
             }
             PointerEvent::SelectRecentAction(action_index) => {
-                self.focus = Focus::Tasks;
-                self.widgets.table.select(Some(action_index));
+                self.list.focus_tasks();
+                self.list.select_task(Some(action_index));
                 self.detail.set_last_task_click(None);
             }
             PointerEvent::EditStatus(hit) => {
                 self.detail.set_last_task_click(None);
-                self.focus = Focus::Tasks;
-                self.widgets.table.select(Some(hit.task_index));
+                self.list.focus_tasks();
+                self.list.select_task(Some(hit.task_index));
                 self.begin_status_picker();
             }
             PointerEvent::SelectTask(hit) => {
-                self.focus = Focus::Tasks;
-                self.widgets.table.select(Some(hit.task_index));
+                self.list.focus_tasks();
+                self.list.select_task(Some(hit.task_index));
                 let now = Instant::now();
                 let is_double_click = self.detail.last_task_click().is_some_and(|previous| {
                     previous.task_id == hit.task_id
@@ -443,7 +441,7 @@ impl App {
             }
             PointerEvent::SelectSidebar(entry_index) => {
                 self.detail.set_last_task_click(None);
-                self.widgets.sidebar.select(Some(entry_index));
+                self.list.select_sidebar(Some(entry_index));
                 self.apply_sidebar_selection().await?;
             }
             PointerEvent::None => self.detail.set_last_task_click(None),
@@ -455,7 +453,7 @@ impl App {
     fn task_area_for_mouse(&self, terminal_size: Size) -> Rect {
         let body_height = terminal_size.height.saturating_sub(4);
         let body = Rect::new(0, 2, terminal_size.width, body_height);
-        if !self.sidebar_visible || body.width < 100 {
+        if !self.list.sidebar_visible() || body.width < 100 {
             body
         } else {
             let sidebar_width = body.width.min(26);
@@ -483,7 +481,7 @@ impl App {
         let hit = if self.store.view_state.view == TaskView::Columns {
             task_at_position(
                 &self.store,
-                &self.widgets.table,
+                self.list.table_state(),
                 self.task_area_for_mouse(terminal_size),
                 mouse.column,
                 mouse.row,
@@ -491,7 +489,7 @@ impl App {
         } else {
             task_status_at_position(
                 &self.store,
-                &self.widgets.table,
+                self.list.table_state(),
                 self.task_area_for_mouse(terminal_size),
                 mouse.column,
                 mouse.row,
@@ -501,29 +499,28 @@ impl App {
             return Ok(());
         };
 
-        self.focus = Focus::Tasks;
-        self.widgets.table.select(Some(hit.task_index));
+        self.list.focus_tasks();
+        self.list.select_task(Some(hit.task_index));
         self.begin_status_picker();
         Ok(())
     }
 
     fn sidebar_contains_mouse(&self, terminal_size: Size, column: u16, row: u16) -> bool {
         let terminal = Rect::new(0, 0, terminal_size.width, terminal_size.height);
-        crate::tui::ui::sidebar_layout_for(terminal, self.focus, self.sidebar_visible).is_some_and(
-            |layout| {
+        crate::tui::ui::sidebar_layout_for(terminal, self.list.focus(), self.list.sidebar_visible())
+            .is_some_and(|layout| {
                 column >= layout.sidebar.x
                     && column < layout.sidebar.x.saturating_add(layout.sidebar.width)
                     && row >= layout.sidebar.y
                     && row < layout.sidebar.y.saturating_add(layout.sidebar.height)
-            },
-        )
+            })
     }
 
     fn rendered_detail_document(
         &self,
         terminal_size: Size,
     ) -> Option<&crate::tui::ui::DetailDocument> {
-        let item = self.store.selected_task(self.widgets.table.selected())?;
+        let item = self.store.selected_task(self.list.selected_task())?;
         if !self
             .detail
             .as_ref()
@@ -545,7 +542,7 @@ impl App {
         let Some(OverlayState::Detail { scroll }) = self.overlay else {
             return false;
         };
-        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
+        let Some(item) = self.store.selected_task(self.list.selected_task()) else {
             return false;
         };
         let cell = self
@@ -582,7 +579,7 @@ impl App {
         let Some(OverlayState::Detail { scroll }) = self.overlay else {
             return;
         };
-        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
+        let Some(item) = self.store.selected_task(self.list.selected_task()) else {
             return;
         };
         let cell = self
@@ -618,7 +615,7 @@ impl App {
                     .and_then(|document| document.selected_text(selection))
                     .or_else(|| {
                         self.store
-                            .selected_task(self.widgets.table.selected())
+                            .selected_task(self.list.selected_task())
                             .and_then(|item| detail_selected_text(item, selection))
                     })
             });
@@ -633,7 +630,7 @@ impl App {
     }
 
     pub(super) fn detail_focus_targets(&self, terminal_size: Size) -> Vec<DetailTargetId> {
-        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
+        let Some(item) = self.store.selected_task(self.list.selected_task()) else {
             return Vec::new();
         };
         let rows = self
@@ -724,7 +721,7 @@ impl App {
         }
         let attachment_ids = self
             .store
-            .selected_task(self.widgets.table.selected())?
+            .selected_task(self.list.selected_task())?
             .attachments
             .iter()
             .filter(|attachment| {
@@ -753,7 +750,7 @@ impl App {
         else {
             return scroll;
         };
-        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
+        let Some(item) = self.store.selected_task(self.list.selected_task()) else {
             return scroll;
         };
         self.rendered_detail_document(terminal_size)
@@ -810,7 +807,7 @@ impl App {
         context.previews_enabled
             && self
                 .store
-                .selected_task(self.widgets.table.selected())
+                .selected_task(self.list.selected_task())
                 .and_then(|item| {
                     item.attachments
                         .iter()
@@ -894,12 +891,12 @@ impl App {
         }
         let Some(target) = self
             .store
-            .resolve_epic_child_target(self.widgets.table.selected(), focused_child)
+            .resolve_epic_child_target(self.list.selected_task(), focused_child)
         else {
             if detail
                 && self
                     .store
-                    .selected_task(self.widgets.table.selected())
+                    .selected_task(self.list.selected_task())
                     .is_some_and(|item| item.task.is_epic)
             {
                 self.set_warning("Select a child with Tab first");
@@ -909,7 +906,7 @@ impl App {
             return Ok(());
         };
         let mutation = self.store.remove_epic_child(target).await?;
-        self.widgets.table.select(mutation.message.selected);
+        self.list.select_task(mutation.message.selected);
         if detail
             && mutation.changed
             && let Some(detail) = self.detail.as_mut()
@@ -945,7 +942,7 @@ impl App {
     pub(super) async fn open_detail_task(&mut self, task_id: &crate::ids::TaskId, scroll: u16) {
         let current_task_id = self
             .store
-            .selected_task(self.widgets.table.selected())
+            .selected_task(self.list.selected_task())
             .map(|item| item.task.id.clone());
         self.show_detail(scroll);
         let item = match self.store.load_task_item(task_id).await {
@@ -975,7 +972,7 @@ impl App {
             }
         }
         self.store.show_exact_task(item);
-        self.widgets.table.select(Some(0));
+        self.list.select_task(Some(0));
         self.detail.set_last_task_click(None);
         if current_task_id.is_none()
             && let Some(detail) = self.detail.as_mut()
@@ -1003,7 +1000,7 @@ impl App {
             .and_then(|document| document.target_at_position(mouse.column, mouse.row))
             .or_else(|| {
                 self.store
-                    .selected_task(self.widgets.table.selected())
+                    .selected_task(self.list.selected_task())
                     .and_then(|item| {
                         detail_target_at_position(
                             item,
@@ -1066,7 +1063,7 @@ impl App {
         terminal_size: Size,
         scroll: u16,
     ) -> Result<bool> {
-        if let Some(item) = self.store.selected_task(self.widgets.table.selected())
+        if let Some(item) = self.store.selected_task(self.list.selected_task())
             && let Some(hit) = detail_copy_target_at(
                 item,
                 terminal_size.width,
@@ -1117,7 +1114,7 @@ impl App {
             .and_then(|document| document.target_at_position(mouse.column, mouse.row))
             .or_else(|| {
                 self.store
-                    .selected_task(self.widgets.table.selected())
+                    .selected_task(self.list.selected_task())
                     .and_then(|item| {
                         detail_target_at_position(
                             item,
@@ -1144,23 +1141,23 @@ impl App {
             || terminal_size.width < 70
             || terminal_size.height < 18
             || self.detail_underlay()
-            || self.focus != Focus::Tasks
+            || self.list.focus() != Focus::Tasks
         {
             return Ok(());
         }
 
         let next = if self.store.view_state.view == TaskView::Columns {
             crate::tui::columns::ColumnBoard::new(&self.store.task_columns, &self.store.tasks)
-                .move_vertical_bounded(self.widgets.table.selected(), delta)
+                .move_vertical_bounded(self.list.selected_task(), delta)
         } else {
             next_index(
-                self.widgets.table.selected(),
+                self.list.selected_task(),
                 self.store.main_row_count(),
                 delta,
                 false,
             )
         };
-        self.widgets.table.select(next);
+        self.list.select_task(next);
         Ok(())
     }
 
@@ -1212,7 +1209,7 @@ impl App {
                 true
             }
             Some(OverlayState::Detail { scroll }) => {
-                let task = self.store.selected_task(self.widgets.table.selected());
+                let task = self.store.selected_task(self.list.selected_task());
                 *scroll = if let Some(cap) = detail_scroll_cap {
                     scroll_with_delta(*scroll, delta, cap)
                 } else {
@@ -1544,7 +1541,7 @@ impl App {
             let inline_images = self.inline_image_context();
             if let (Some(reverse), Some(task)) = (
                 section_direction,
-                self.store.selected_task(self.widgets.table.selected()),
+                self.store.selected_task(self.list.selected_task()),
             ) {
                 let target_scroll = self
                     .rendered_detail_document(terminal_size)
@@ -1580,7 +1577,7 @@ impl App {
             }
 
             let overlay = OverlayState::Detail { scroll };
-            let task = self.store.selected_task(self.widgets.table.selected());
+            let task = self.store.selected_task(self.list.selected_task());
             let outcome = if let Some(document) = self.rendered_detail_document(terminal_size) {
                 handle_detail_overlay_key_with_cap(
                     key,
@@ -1830,7 +1827,7 @@ impl App {
     }
 
     async fn navigate_back_from_detail(&mut self) -> Result<()> {
-        if self.last_change_return.is_some() || !self.go_back_in_detail().await? {
+        if self.list.has_last_change_return() || !self.go_back_in_detail().await? {
             self.close_detail_session().await?;
         }
         Ok(())

@@ -103,7 +103,9 @@ impl App {
 
             if needs_redraw {
                 let view = self.view();
-                terminal.draw(|frame| ui::render(frame, &self.store, &mut self.widgets, &view))?;
+                terminal.draw(|frame| {
+                    ui::render(frame, &self.store, &mut self.widgets, &mut self.list, &view)
+                })?;
                 self.record_detail_document_frame(terminal.size()?);
                 needs_redraw = self.render_inline_images_after_draw(terminal).is_err();
             }
@@ -185,7 +187,9 @@ impl App {
 
         if repaint {
             let view = self.view();
-            terminal.draw(|frame| ui::render(frame, &self.store, &mut self.widgets, &view))?;
+            terminal.draw(|frame| {
+                ui::render(frame, &self.store, &mut self.widgets, &mut self.list, &view)
+            })?;
         }
         if backend == InlineImageBackend::None {
             return Ok(());
@@ -225,8 +229,9 @@ impl App {
                 let repaint = self.erase_previous_inline_images().unwrap_or(false);
                 if repaint {
                     let view = self.view();
-                    let _ = terminal
-                        .draw(|frame| ui::render(frame, &self.store, &mut self.widgets, &view));
+                    let _ = terminal.draw(|frame| {
+                        ui::render(frame, &self.store, &mut self.widgets, &mut self.list, &view)
+                    });
                 }
                 return Err(error.into());
             }
@@ -235,8 +240,9 @@ impl App {
             let repaint = self.erase_previous_inline_images().unwrap_or(false);
             if repaint {
                 let view = self.view();
-                let _ =
-                    terminal.draw(|frame| ui::render(frame, &self.store, &mut self.widgets, &view));
+                let _ = terminal.draw(|frame| {
+                    ui::render(frame, &self.store, &mut self.widgets, &mut self.list, &view)
+                });
             }
             return Err(error.into());
         }
@@ -273,7 +279,7 @@ impl App {
         }
         let Some(task_id) = self
             .store
-            .selected_task(self.widgets.table.selected())
+            .selected_task(self.list.selected_task())
             .map(|item| item.task.id.clone())
         else {
             return;
@@ -290,7 +296,7 @@ impl App {
             state.priority_prefix_active = self.pending_shortcut.has_add_task_priority_prefix();
         }
 
-        let selected_task = self.store.selected_task(self.widgets.table.selected());
+        let selected_task = self.store.selected_task(self.list.selected_task());
         let detail = self.detail.as_ref();
         let detail_focus = detail.and_then(|detail| detail.focused_target()).filter(|focused| {
             selected_task.is_some_and(|item| {
@@ -308,7 +314,7 @@ impl App {
         });
         let inline_images = self.inline_image_context();
         ViewState {
-            focus: self.focus,
+            focus: self.list.focus(),
             overlay,
             onboarding_intro: self.onboarding_intro_visual(),
             detail_underlay: self.detail_underlay(),
@@ -339,7 +345,7 @@ impl App {
             copy_notes_available: selected_task.is_some_and(|task| !task.notes.is_empty()),
             marked_task_count: self.marked_task_ids_in_view().len(),
             footer_choice_mode: self.footer_choice.as_ref().map(|choice| choice.mode),
-            sidebar_visible: self.sidebar_visible,
+            sidebar_visible: self.list.sidebar_visible(),
             update_badge: self.update.badge(),
             surface: if self.intake.view().add_task_only {
                 ViewSurface::AddTask
@@ -412,7 +418,7 @@ impl App {
     }
 
     pub(super) async fn refresh(&mut self) -> Result<()> {
-        let selected = self.widgets.table.selected();
+        let selected = self.list.selected_task();
         let recent_action_selection =
             (self.store.view_state.view == TaskView::RecentActions).then(|| {
                 (
@@ -461,7 +467,7 @@ impl App {
                 }
                 result.selected
             });
-        self.widgets.table.select(selected);
+        self.list.select_task(selected);
         let removed_epic_child = self
             .detail
             .as_ref()
@@ -495,7 +501,7 @@ impl App {
         else {
             return;
         };
-        let Some(_item) = self.store.selected_task(self.widgets.table.selected()) else {
+        let Some(_item) = self.store.selected_task(self.list.selected_task()) else {
             if let Some(detail) = self.detail.as_mut() {
                 detail.set_focused_target(None);
             }

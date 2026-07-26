@@ -21,7 +21,7 @@ impl App {
     pub(super) fn begin_delete_attachment(&mut self, attachment_id: &str, scroll: u16) {
         let Some(attachment) = self
             .store
-            .selected_task(self.widgets.table.selected())
+            .selected_task(self.list.selected_task())
             .and_then(|item| {
                 item.attachments.iter().find(|attachment| {
                     attachment.attachment_id == attachment_id && !attachment.deleted
@@ -77,7 +77,7 @@ impl App {
     fn attachment_focus_after_delete(&self, attachment_id: &str) -> Option<String> {
         let attachment_ids = self
             .store
-            .selected_task(self.widgets.table.selected())?
+            .selected_task(self.list.selected_task())?
             .attachments
             .iter()
             .filter(|attachment| attachment_is_locally_openable(attachment))
@@ -266,11 +266,7 @@ impl App {
     }
 
     fn attach_image_source(&mut self, filename: String, source: AttachmentSource) -> Result<()> {
-        let Some(item) = self
-            .store
-            .selected_task(self.widgets.table.selected())
-            .cloned()
-        else {
+        let Some(item) = self.store.selected_task(self.list.selected_task()).cloned() else {
             self.set_info("no selected task to edit");
             return Ok(());
         };

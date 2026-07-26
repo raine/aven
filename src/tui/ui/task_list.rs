@@ -16,7 +16,8 @@ use super::timestamps::local_timestamp_display;
 use super::truncate::truncate_chars;
 use crate::query::{TaskListItem, TaskSort};
 use crate::queue::{now_seconds, unix_seconds};
-use crate::tui::app::{Focus, WidgetState};
+use crate::tui::app::Focus;
+use crate::tui::list_surface::ListSurface;
 use crate::tui::markdown::render_markdown_preview;
 use crate::tui::overlay::TextInputView;
 use crate::tui::store::{TaskListRenderMode, TaskView, TuiStore};
@@ -186,7 +187,7 @@ pub(crate) fn task_visual_row_count(store: &TuiStore) -> usize {
 pub(super) fn render_tasks(
     frame: &mut Frame,
     store: &TuiStore,
-    widgets: &mut WidgetState,
+    list: &mut ListSurface,
     focus: Focus,
     area: Rect,
     inline_title_editor: Option<&TextInputView>,
@@ -195,17 +196,18 @@ pub(super) fn render_tasks(
         table_area,
         preview_area,
     } = task_list_areas(area);
+    let marked_task_ids = list.marked_task_ids().clone();
     render_task_list(
         frame,
         store,
-        &mut widgets.table,
+        list.table_state_mut(),
         focus,
         table_area,
         inline_title_editor,
-        &widgets.marked_task_ids,
+        &marked_task_ids,
     );
     if preview_area.height > 0 {
-        render_task_preview(frame, store, widgets.table.selected(), preview_area);
+        render_task_preview(frame, store, list.selected_task(), preview_area);
     }
 }
 

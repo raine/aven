@@ -11,7 +11,8 @@ use super::truncate::truncate_chars;
 use crate::change_log::op_type;
 use crate::query::RecentActionItem;
 use crate::queue::{now_seconds, unix_seconds};
-use crate::tui::app::{Focus, WidgetState};
+use crate::tui::app::Focus;
+use crate::tui::list_surface::ListSurface;
 use crate::tui::store::TuiStore;
 use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, PINK, RED, SELECTED,
@@ -64,7 +65,7 @@ pub(crate) fn recent_action_at_position(
 pub(super) fn render_recent_actions(
     frame: &mut Frame,
     store: &TuiStore,
-    widgets: &mut WidgetState,
+    list: &mut ListSurface,
     focus: Focus,
     area: Rect,
 ) {
@@ -74,9 +75,9 @@ pub(super) fn render_recent_actions(
     }
 
     let [list_area, detail_area] = recent_action_areas(area);
-    render_action_list(frame, store, &mut widgets.table, focus, list_area);
+    render_action_list(frame, store, list.table_state_mut(), focus, list_area);
     if detail_area.height > 0 {
-        render_action_detail(frame, store, widgets.table.selected(), detail_area);
+        render_action_detail(frame, store, list.selected_task(), detail_area);
     }
 }
 

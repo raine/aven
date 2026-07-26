@@ -87,7 +87,7 @@ async fn add_real_attachment(
         .await
         .unwrap();
     app.store.refresh(Some(&task_id)).await.unwrap();
-    app.widgets.table.select(Some(selected));
+    app.list.select_task(Some(selected));
     outcome.outcome.attachment.attachment_id
 }
 
@@ -136,7 +136,7 @@ fn test_attachment(
 async fn create_and_select_task(app: &mut App, draft: TaskDraft) -> usize {
     let (_, selected) = app.store.create_task(draft, None).await.unwrap();
     let selected = selected.unwrap();
-    app.widgets.table.select(Some(selected));
+    app.list.select_task(Some(selected));
     selected
 }
 
@@ -344,7 +344,9 @@ fn render_app_buffer(app: &mut App, width: u16, height: u16) -> ratatui::buffer:
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
     let view = app.view();
     terminal
-        .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
+        .draw(|frame| {
+            crate::tui::ui::render(frame, &app.store, &mut app.widgets, &mut app.list, &view)
+        })
         .unwrap();
     terminal.backend().buffer().clone()
 }
@@ -394,15 +396,15 @@ async fn sidebar_click_selects_project_scope_in_wide_layout() {
         app.store.view_state.scope,
         TaskScope::Project("mobile-app".to_string())
     );
-    assert_eq!(app.focus, Focus::Tasks);
-    assert_eq!(app.widgets.sidebar.selected(), Some(project_row as usize));
+    assert_eq!(app.list.focus(), Focus::Tasks);
+    assert_eq!(app.list.selected_sidebar(), Some(project_row as usize));
     assert!(app.overlay.is_none());
 }
 
 #[tokio::test]
 async fn sidebar_click_selects_saved_view_in_narrow_overlay() {
     let mut app = test_app().await;
-    app.focus = Focus::Sidebar;
+    app.list.focus_sidebar();
 
     let view_row = app
         .store
@@ -428,8 +430,8 @@ async fn sidebar_click_selects_saved_view_in_narrow_overlay() {
         .unwrap();
 
     assert_eq!(app.store.view_state.view, TaskView::Open);
-    assert_eq!(app.focus, Focus::Tasks);
-    assert_eq!(app.widgets.sidebar.selected(), Some(view_row as usize));
+    assert_eq!(app.list.focus(), Focus::Tasks);
+    assert_eq!(app.list.selected_sidebar(), Some(view_row as usize));
     assert!(app.overlay.is_none());
 }
 
@@ -456,18 +458,20 @@ async fn sidebar_click_uses_scroll_offset_in_wide_layout() {
             )
         })
         .unwrap();
-    app.focus = Focus::Sidebar;
-    app.widgets.sidebar.select(Some(project_index));
+    app.list.focus_sidebar();
+    app.list.select_sidebar(Some(project_index));
 
     let terminal_size: ratatui::layout::Size = (120, 24).into();
     let backend = ratatui::backend::TestBackend::new(terminal_size.width, terminal_size.height);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
     let view = app.view();
     terminal
-        .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
+        .draw(|frame| {
+            crate::tui::ui::render(frame, &app.store, &mut app.widgets, &mut app.list, &view)
+        })
         .unwrap();
 
-    let offset = app.widgets.sidebar.offset();
+    let offset = app.list.sidebar_state().offset();
     assert!(offset > 0);
     let layout = crate::tui::ui::sidebar_layout(
         ratatui::layout::Rect::new(0, 0, terminal_size.width, terminal_size.height),
@@ -487,7 +491,7 @@ async fn sidebar_click_uses_scroll_offset_in_wide_layout() {
         app.store.view_state.scope,
         TaskScope::Project("project-24".to_string())
     );
-    assert_eq!(app.widgets.sidebar.selected(), Some(project_index));
+    assert_eq!(app.list.selected_sidebar(), Some(project_index));
 }
 
 async fn type_chars(app: &mut App, input: &str) {
@@ -907,43 +911,43 @@ mod keyboard_dispatch {
     #[tokio::test]
     async fn h_and_l_move_between_sidebar_and_tasks() {
         let mut app = test_app().await;
-        app.focus = Focus::Tasks;
+        app.list.focus_tasks();
         app.handle_normal_key(KeyCode::Char('h')).await.unwrap();
-        assert_eq!(app.focus, Focus::Sidebar);
+        assert_eq!(app.list.focus(), Focus::Sidebar);
 
         app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
-        assert_eq!(app.focus, Focus::Tasks);
+        assert_eq!(app.list.focus(), Focus::Tasks);
     }
 
     #[tokio::test]
     async fn sidebar_selection_survives_focus_changes() {
         let mut app = test_app().await;
-        app.focus = Focus::Tasks;
+        app.list.focus_tasks();
 
         app.handle_normal_key(KeyCode::Char('h')).await.unwrap();
-        let initial = app.widgets.sidebar.selected();
+        let initial = app.list.selected_sidebar();
         app.handle_normal_key(KeyCode::Char('j')).await.unwrap();
-        let selected = app.widgets.sidebar.selected();
+        let selected = app.list.selected_sidebar();
         assert_ne!(selected, initial);
 
         app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
-        assert_eq!(app.focus, Focus::Tasks);
+        assert_eq!(app.list.focus(), Focus::Tasks);
         app.handle_normal_key(KeyCode::Char('h')).await.unwrap();
 
-        assert_eq!(app.focus, Focus::Sidebar);
-        assert_eq!(app.widgets.sidebar.selected(), selected);
+        assert_eq!(app.list.focus(), Focus::Sidebar);
+        assert_eq!(app.list.selected_sidebar(), selected);
     }
 
     #[tokio::test]
     async fn sidebar_toggle_shortcut_expands_task_list_and_restores_sidebar_focus() {
         let mut app = test_app().await;
-        app.focus = Focus::Sidebar;
+        app.list.focus_sidebar();
 
         app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
 
-        assert!(!app.sidebar_visible);
-        assert_eq!(app.focus, Focus::Tasks);
+        assert!(!app.list.sidebar_visible());
+        assert_eq!(app.list.focus(), Focus::Tasks);
         assert_eq!(toast_message(&app).as_deref(), Some("task list expanded"));
         let hidden = app.view();
         assert!(!hidden.sidebar_visible);
@@ -951,8 +955,8 @@ mod keyboard_dispatch {
         app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
 
-        assert!(app.sidebar_visible);
-        assert_eq!(app.focus, Focus::Sidebar);
+        assert!(app.list.sidebar_visible());
+        assert_eq!(app.list.focus(), Focus::Sidebar);
         assert_eq!(toast_message(&app).as_deref(), Some("sidebar visible"));
     }
 
@@ -964,8 +968,8 @@ mod keyboard_dispatch {
         type_chars(&mut app, "toggle-sidebar").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-        assert!(!app.sidebar_visible);
-        assert_eq!(app.focus, Focus::Tasks);
+        assert!(!app.list.sidebar_visible());
+        assert_eq!(app.list.focus(), Focus::Tasks);
         assert!(app.overlay.is_none());
     }
 
@@ -974,8 +978,8 @@ mod keyboard_dispatch {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("task one")).await;
         create_and_select_task(&mut app, test_task_draft("task two")).await;
-        app.widgets.table.select(Some(1));
-        app.sidebar_visible = false;
+        app.list.select_task(Some(1));
+        app.list.hide_sidebar();
 
         let area = ratatui::layout::Rect::new(0, 2, 140, 20);
         let mut click = None;
@@ -983,7 +987,7 @@ mod keyboard_dispatch {
             for column in area.x..area.x.saturating_add(area.width) {
                 if crate::tui::ui::task_at_position(
                     &app.store,
-                    &app.widgets.table,
+                    app.list.table_state(),
                     area,
                     column,
                     row,
@@ -999,14 +1003,14 @@ mod keyboard_dispatch {
 
         app.dispatch_mouse(click, (140, 24).into()).await.unwrap();
 
-        assert_eq!(app.widgets.table.selected(), Some(0));
-        assert_eq!(app.focus, Focus::Tasks);
+        assert_eq!(app.list.selected_task(), Some(0));
+        assert_eq!(app.list.focus(), Focus::Tasks);
     }
 
     #[tokio::test]
     async fn hidden_sidebar_is_not_rendered_in_wide_layout() {
         let mut app = test_app().await;
-        app.sidebar_visible = false;
+        app.list.hide_sidebar();
 
         let text = render_app_text(&mut app, 140, 24);
 
@@ -1016,23 +1020,23 @@ mod keyboard_dispatch {
     #[tokio::test]
     async fn h_reveals_sidebar() {
         let mut app = test_app().await;
-        app.sidebar_visible = false;
+        app.list.hide_sidebar();
 
         app.handle_normal_key(KeyCode::Char('h')).await.unwrap();
 
-        assert!(app.sidebar_visible);
-        assert_eq!(app.focus, Focus::Sidebar);
+        assert!(app.list.sidebar_visible());
+        assert_eq!(app.list.focus(), Focus::Sidebar);
     }
 
     #[tokio::test]
     async fn tab_reveals_sidebar_when_task_list_is_expanded() {
         let mut app = test_app().await;
-        app.sidebar_visible = false;
+        app.list.hide_sidebar();
 
         app.handle_normal_key(KeyCode::Tab).await.unwrap();
 
-        assert!(app.sidebar_visible);
-        assert_eq!(app.focus, Focus::Sidebar);
+        assert!(app.list.sidebar_visible());
+        assert_eq!(app.list.focus(), Focus::Sidebar);
         assert_eq!(toast_message(&app).as_deref(), Some("sidebar visible"));
     }
 
@@ -1145,33 +1149,33 @@ mod keyboard_dispatch {
         let mut app = test_app().await;
         let first = create_and_select_task(&mut app, test_task_draft("first")).await;
         create_and_select_task(&mut app, test_task_draft("second")).await;
-        app.widgets.table.select(Some(first));
+        app.list.select_task(Some(first));
         let first_id = app.store.tasks[first].task.id.clone();
         app.notification = None;
 
         app.handle_normal_key(KeyCode::Char(' ')).await.unwrap();
-        assert!(app.widgets.marked_task_ids.contains(&first_id));
+        assert!(app.list.marked_task_ids().contains(&first_id));
         assert!(toast_message(&app).is_none());
 
         app.handle_normal_key(KeyCode::Char(' ')).await.unwrap();
-        assert!(!app.widgets.marked_task_ids.contains(&first_id));
+        assert!(!app.list.marked_task_ids().contains(&first_id));
         assert!(toast_message(&app).is_none());
 
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('V')).await.unwrap();
-        assert_eq!(app.widgets.marked_task_ids.len(), 2);
+        assert_eq!(app.list.marked_task_ids().len(), 2);
         assert!(toast_message(&app).is_none());
 
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('V')).await.unwrap();
-        assert!(app.widgets.marked_task_ids.is_empty());
+        assert!(app.list.marked_task_ids().is_empty());
         assert!(toast_message(&app).is_none());
 
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('V')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
-        assert!(app.widgets.marked_task_ids.is_empty());
+        assert!(app.list.marked_task_ids().is_empty());
         assert!(toast_message(&app).is_none());
     }
 }
@@ -1561,7 +1565,7 @@ mod attachment_paste {
 
         let selected_id = app
             .store
-            .selected_task(app.widgets.table.selected())
+            .selected_task(app.list.selected_task())
             .unwrap()
             .task
             .id
@@ -1742,7 +1746,7 @@ mod attachment_paste {
         app.handle_overlay_key(ctrl_s()).await.unwrap();
 
         assert!(toast_message(&app).is_some_and(|message| message.starts_with("created task ")));
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         let item = &app.store.tasks[selected];
         assert_eq!(item.task.title, "Write docs");
         assert_eq!(item.task.description, "Include setup details");
@@ -1907,7 +1911,7 @@ mod attachment_paste {
         drop(conn);
 
         app.handle_overlay_key(ctrl_s()).await.unwrap();
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         let item = &app.store.tasks[selected];
         assert_eq!(item.task.title, "Retry attachment task");
         let mut conn = pool.acquire().await.unwrap();
@@ -1978,7 +1982,7 @@ mod attachment_paste {
         }
         app.handle_overlay_key(ctrl_s()).await.unwrap();
 
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         let item = &app.store.tasks[selected];
         assert_eq!(item.task.title, "parsed natural task");
         assert_eq!(item.task.description, "model details");
@@ -2257,7 +2261,7 @@ mod command_and_config_overlays {
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
         ));
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.title, "detail needle");
     }
 
@@ -2558,7 +2562,7 @@ mod command_and_config_overlays {
     async fn database_stats_opens_text_panel() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Stats target")).await;
-        let selected = app.widgets.table.selected();
+        let selected = app.list.selected_task();
         app.store.update_status(selected, "done").await.unwrap();
         create_and_select_task(
             &mut app,
@@ -2576,7 +2580,7 @@ mod command_and_config_overlays {
         )
         .await;
         app.store
-            .update_deleted(app.widgets.table.selected(), true)
+            .update_deleted(app.list.selected_task(), true)
             .await
             .unwrap();
 
@@ -2693,7 +2697,7 @@ mod command_and_config_overlays {
             .await
             .unwrap();
 
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Todo);
     }
 
@@ -2706,8 +2710,8 @@ mod command_and_config_overlays {
         let second_id = app.store.tasks[second].task.id.clone();
         let third = create_and_select_task(&mut app, test_task_draft("third")).await;
         let third_id = app.store.tasks[third].task.id.clone();
-        app.widgets.marked_task_ids.insert(first_id.clone());
-        app.widgets.marked_task_ids.insert(second_id.clone());
+        app.list.mark(first_id.clone());
+        app.list.mark(second_id.clone());
 
         app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
         assert_eq!(
@@ -2754,8 +2758,8 @@ mod command_and_config_overlays {
         let third = create_and_select_task(&mut app, test_task_draft("third")).await;
         let third_id = app.store.tasks[third].task.id.clone();
         let original_project = app.store.tasks[third].task.project_key.clone();
-        app.widgets.marked_task_ids.insert(first_id.clone());
-        app.widgets.marked_task_ids.insert(second_id.clone());
+        app.list.mark(first_id.clone());
+        app.list.mark(second_id.clone());
         app.begin_edit_project();
 
         let (selection, mixed) = match &app.overlay {
@@ -2797,13 +2801,13 @@ mod command_and_config_overlays {
         let second_id = app.store.tasks[second].task.id.clone();
         let third = create_and_select_task(&mut app, test_task_draft("third")).await;
         let third_id = app.store.tasks[third].task.id.clone();
-        app.widgets.marked_task_ids.insert(first_id.clone());
-        app.widgets.marked_task_ids.insert(second_id.clone());
+        app.list.mark(first_id.clone());
+        app.list.mark(second_id.clone());
         app.begin_edit_project();
 
-        app.widgets.marked_task_ids.clear();
-        app.widgets.marked_task_ids.insert(third_id.clone());
-        app.widgets.table.select(Some(first));
+        app.list.clear_marks();
+        app.list.mark(third_id.clone());
+        app.list.select_task(Some(first));
         app.store.refresh(None).await.unwrap();
         let (selection, mixed) = match &app.overlay {
             Some(OverlayState::Picker(PickerState {
@@ -2831,7 +2835,7 @@ mod command_and_config_overlays {
         assert_ne!(project_for(&app, &third_id), "mobile-app");
         assert_eq!(
             app.store
-                .selected_task(app.widgets.table.selected())
+                .selected_task(app.list.selected_task())
                 .map(|item| &item.task.id),
             Some(&third_id)
         );
@@ -2846,8 +2850,8 @@ mod command_and_config_overlays {
         let second_id = app.store.tasks[second].task.id.clone();
         let third = create_and_select_task(&mut app, test_task_draft("third")).await;
         let third_id = app.store.tasks[third].task.id.clone();
-        app.widgets.marked_task_ids.insert(first_id.clone());
-        app.widgets.marked_task_ids.insert(second_id.clone());
+        app.list.mark(first_id.clone());
+        app.list.mark(second_id.clone());
         app.begin_edit_priority();
 
         let (selection, mixed) = match &app.overlay {
@@ -2891,8 +2895,8 @@ mod command_and_config_overlays {
         let second_id = app.store.tasks[second].task.id.clone();
         let third = create_and_select_task(&mut app, test_task_draft("third")).await;
         let third_id = app.store.tasks[third].task.id.clone();
-        app.widgets.marked_task_ids.insert(first_id.clone());
-        app.widgets.marked_task_ids.insert(second_id.clone());
+        app.list.mark(first_id.clone());
+        app.list.mark(second_id.clone());
 
         app.begin_edit_due();
         assert!(matches!(
@@ -2941,7 +2945,7 @@ mod command_and_config_overlays {
                 .due_on
                 .is_none()
         );
-        assert_eq!(app.widgets.marked_task_ids.len(), 2);
+        assert_eq!(app.list.marked_task_ids().len(), 2);
 
         app.undo_last().await.unwrap();
         assert_eq!(
@@ -2988,8 +2992,8 @@ mod command_and_config_overlays {
         )
         .await;
         let second_id = app.store.tasks[second].task.id.clone();
-        app.widgets.marked_task_ids.insert(first_id.clone());
-        app.widgets.marked_task_ids.insert(second_id.clone());
+        app.list.mark(first_id.clone());
+        app.list.mark(second_id.clone());
 
         app.begin_edit_due();
         app.handle_overlay_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL))
@@ -3026,8 +3030,8 @@ mod command_and_config_overlays {
         let first_id = app.store.tasks[first].task.id.clone();
         let second = create_and_select_task(&mut app, test_task_draft("second")).await;
         let second_id = app.store.tasks[second].task.id.clone();
-        app.widgets.marked_task_ids.insert(first_id);
-        app.widgets.marked_task_ids.insert(second_id);
+        app.list.mark(first_id);
+        app.list.mark(second_id);
 
         app.begin_delete_task();
 
@@ -3047,8 +3051,8 @@ mod command_and_config_overlays {
         let second_id = app.store.tasks[second].task.id.clone();
         let third = create_and_select_task(&mut app, test_task_draft("third")).await;
         let third_id = app.store.tasks[third].task.id.clone();
-        app.widgets.marked_task_ids.insert(first_id.clone());
-        app.widgets.marked_task_ids.insert(second_id.clone());
+        app.list.mark(first_id.clone());
+        app.list.mark(second_id.clone());
 
         app.update_deleted(true).await.unwrap();
 
@@ -3062,7 +3066,7 @@ mod command_and_config_overlays {
         let mut app = test_app().await;
         let index = create_and_select_task(&mut app, test_task_draft("marked")).await;
         let id = app.store.tasks[index].task.id.clone();
-        app.widgets.marked_task_ids.insert(id);
+        app.list.mark(id);
 
         app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
@@ -3100,8 +3104,8 @@ mod command_and_config_overlays {
         let second_id = app.store.tasks[second].task.id.clone();
         let third = create_and_select_task(&mut app, test_task_draft("third")).await;
         let third_id = app.store.tasks[third].task.id.clone();
-        app.widgets.marked_task_ids.insert(first_id.clone());
-        app.widgets.marked_task_ids.insert(second_id.clone());
+        app.list.mark(first_id.clone());
+        app.list.mark(second_id.clone());
         app.begin_edit_labels();
 
         let selection = match &app.overlay {
@@ -3626,7 +3630,7 @@ mod filters_and_workspaces {
 
         assert!(app.overlay.is_none());
         assert!(!app.detail.is_some());
-        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.list.selected_task(), Some(0));
     }
 
     #[tokio::test]
@@ -3655,7 +3659,7 @@ mod filters_and_workspaces {
 
         assert!(app.overlay.is_none());
         assert!(!app.detail.is_some());
-        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.list.selected_task(), Some(0));
     }
 
     #[tokio::test]
@@ -3663,17 +3667,17 @@ mod filters_and_workspaces {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("first")).await;
         create_and_select_task(&mut app, test_task_draft("second")).await;
-        app.widgets.table.select(Some(0));
+        app.list.select_task(Some(0));
 
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
             .await
             .unwrap();
-        assert_eq!(app.widgets.table.selected(), Some(1));
+        assert_eq!(app.list.selected_task(), Some(1));
 
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollUp), (80, 24).into())
             .await
             .unwrap();
-        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.list.selected_task(), Some(0));
     }
 
     #[tokio::test]
@@ -3681,18 +3685,18 @@ mod filters_and_workspaces {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("first")).await;
         create_and_select_task(&mut app, test_task_draft("second")).await;
-        app.widgets.table.select(Some(0));
+        app.list.select_task(Some(0));
 
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollUp), (80, 24).into())
             .await
             .unwrap();
-        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.list.selected_task(), Some(0));
 
-        app.widgets.table.select(Some(1));
+        app.list.select_task(Some(1));
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
             .await
             .unwrap();
-        assert_eq!(app.widgets.table.selected(), Some(1));
+        assert_eq!(app.list.selected_task(), Some(1));
     }
 
     #[tokio::test]
@@ -3700,13 +3704,13 @@ mod filters_and_workspaces {
         let mut app = test_app().await;
         let _ = create_and_select_task(&mut app, test_task_draft("task")).await;
         app.begin_search();
-        let selected = app.widgets.table.selected();
+        let selected = app.list.selected_task();
 
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
             .await
             .unwrap();
 
-        assert_eq!(app.widgets.table.selected(), selected);
+        assert_eq!(app.list.selected_task(), selected);
         assert!(matches!(app.overlay, Some(OverlayState::Search(_))));
     }
 
@@ -3714,14 +3718,14 @@ mod filters_and_workspaces {
     async fn mouse_wheel_ignored_in_sidebar_focus() {
         let mut app = test_app().await;
         let _ = create_and_select_task(&mut app, test_task_draft("task")).await;
-        app.focus = Focus::Sidebar;
+        app.list.focus_sidebar();
 
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
             .await
             .unwrap();
 
-        assert_eq!(app.widgets.table.selected(), Some(0));
-        assert_eq!(app.focus, Focus::Sidebar);
+        assert_eq!(app.list.selected_task(), Some(0));
+        assert_eq!(app.list.focus(), Focus::Sidebar);
     }
 
     #[tokio::test]
@@ -3734,7 +3738,7 @@ mod filters_and_workspaces {
             .await
             .unwrap();
 
-        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.list.selected_task(), Some(0));
     }
 
     #[tokio::test]
@@ -3745,12 +3749,12 @@ mod filters_and_workspaces {
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (69, 24).into())
             .await
             .unwrap();
-        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.list.selected_task(), Some(0));
 
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 17).into())
             .await
             .unwrap();
-        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.list.selected_task(), Some(0));
     }
 
     #[tokio::test]
@@ -3846,7 +3850,7 @@ mod task_row_mouse {
 
     fn status_right_click_event(app: &App, size: (u16, u16), task_index: usize) -> MouseEvent {
         let task_area = task_list_area(size);
-        let table = &app.widgets.table;
+        let table = app.list.table_state();
         for row in task_area.y..task_area.y.saturating_add(task_area.height) {
             for column in task_area.x..task_area.x.saturating_add(task_area.width) {
                 if crate::tui::ui::task_status_at_position(
@@ -3869,8 +3873,8 @@ mod task_row_mouse {
         let click = row_column_task_click_event((80, 24), 1);
         app.dispatch_mouse(click, (80, 24).into()).await.unwrap();
 
-        assert_eq!(app.widgets.table.selected(), Some(0));
-        assert_eq!(app.focus, Focus::Tasks);
+        assert_eq!(app.list.selected_task(), Some(0));
+        assert_eq!(app.list.focus(), Focus::Tasks);
         assert!(app.overlay.is_none());
     }
 
@@ -3879,13 +3883,13 @@ mod task_row_mouse {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("task one")).await;
         create_and_select_task(&mut app, test_task_draft("task two")).await;
-        app.widgets.table.select(Some(1));
+        app.list.select_task(Some(1));
 
         let click = status_right_click_event(&app, (140, 24), 0);
         app.dispatch_mouse(click, (140, 24).into()).await.unwrap();
 
-        assert_eq!(app.widgets.table.selected(), Some(0));
-        assert_eq!(app.focus, Focus::Tasks);
+        assert_eq!(app.list.selected_task(), Some(0));
+        assert_eq!(app.list.focus(), Focus::Tasks);
         assert_eq!(
             app.footer_choice.as_ref().map(|choice| choice.mode),
             Some(FooterChoiceMode::Status)
@@ -3898,14 +3902,14 @@ mod task_row_mouse {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("task one")).await;
         create_and_select_task(&mut app, test_task_draft("task two")).await;
-        app.widgets.table.select(Some(1));
+        app.list.select_task(Some(1));
 
         let click = row_column_task_click_event((140, 24), 1);
         app.dispatch_mouse(right_click(click.column, click.row), (140, 24).into())
             .await
             .unwrap();
 
-        assert_eq!(app.widgets.table.selected(), Some(1));
+        assert_eq!(app.list.selected_task(), Some(1));
         assert!(app.overlay.is_none());
     }
 
@@ -3940,13 +3944,13 @@ mod task_row_mouse {
 
         let click = row_column_task_click_event((80, 24), 1);
         app.dispatch_mouse(click, (80, 24).into()).await.unwrap();
-        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.list.selected_task(), Some(0));
         assert!(app.overlay.is_none());
         assert!(app.detail.last_task_click().is_some());
 
         app.dispatch_mouse(click, (80, 24).into()).await.unwrap();
         assert!(app.detail.last_task_click().is_none());
-        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.list.selected_task(), Some(0));
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
@@ -3958,8 +3962,8 @@ mod task_row_mouse {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("task one")).await;
         create_and_select_task(&mut app, test_task_draft("task two")).await;
-        app.widgets.table.select(Some(1));
-        app.focus = Focus::Tasks;
+        app.list.select_task(Some(1));
+        app.list.focus_tasks();
 
         let sidebar = crate::tui::ui::sidebar_layout(Rect::new(0, 0, 140, 24), Focus::Tasks)
             .unwrap()
@@ -3971,14 +3975,14 @@ mod task_row_mouse {
         app.dispatch_mouse(sidebar_click, (140, 24).into())
             .await
             .unwrap();
-        assert_eq!(app.widgets.table.selected(), Some(1));
-        assert_eq!(app.focus, Focus::Tasks);
+        assert_eq!(app.list.selected_task(), Some(1));
+        assert_eq!(app.list.focus(), Focus::Tasks);
 
         let click = row_column_task_click_event((140, 24), 1);
         app.dispatch_mouse(click, (140, 24).into()).await.unwrap();
 
-        assert_eq!(app.widgets.table.selected(), Some(0));
-        assert_eq!(app.focus, Focus::Tasks);
+        assert_eq!(app.list.selected_task(), Some(0));
+        assert_eq!(app.list.focus(), Focus::Tasks);
     }
 
     #[tokio::test]
@@ -3986,14 +3990,14 @@ mod task_row_mouse {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("task one")).await;
         create_and_select_task(&mut app, test_task_draft("task two")).await;
-        app.widgets.table.select(Some(1));
+        app.list.select_task(Some(1));
 
         let task_area = task_list_area((140, 40));
         let preview_row = task_area.y + task_area.height.saturating_sub(3);
         let click = task_row_click(task_area.x + 1, preview_row);
         app.dispatch_mouse(click, (140, 40).into()).await.unwrap();
 
-        assert_eq!(app.widgets.table.selected(), Some(1));
+        assert_eq!(app.list.selected_task(), Some(1));
         assert!(app.overlay.is_none());
     }
 
@@ -4013,7 +4017,7 @@ mod task_row_mouse {
             .await
             .unwrap();
 
-        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.list.selected_task(), Some(0));
         assert!(app.overlay.is_none());
     }
 
@@ -4021,7 +4025,7 @@ mod task_row_mouse {
     async fn task_row_click_ignores_narrow_sidebar_overlay() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("task one")).await;
-        app.focus = Focus::Sidebar;
+        app.list.focus_sidebar();
 
         let overlay = crate::tui::ui::sidebar_layout(Rect::new(0, 0, 80, 40), Focus::Sidebar)
             .expect("sidebar overlay should exist in narrow layout")
@@ -4029,9 +4033,9 @@ mod task_row_mouse {
         let click = task_row_click(overlay.x + 1, overlay.y + 1);
         app.dispatch_mouse(click, (80, 40).into()).await.unwrap();
 
-        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.list.selected_task(), Some(0));
         assert!(app.overlay.is_none());
-        assert_eq!(app.focus, Focus::Sidebar);
+        assert_eq!(app.list.focus(), Focus::Sidebar);
     }
 }
 
@@ -4059,7 +4063,7 @@ mod authoring {
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
         assert!(app.overlay.is_none());
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         let task = &app.store.tasks[selected];
         assert_eq!(task.task.title, "Write docs");
         assert_eq!(task.task.status, TaskStatus::Inbox);
@@ -4104,7 +4108,7 @@ mod authoring {
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
         assert!(app.overlay.is_none());
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.title, "Write docs");
         assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Active);
     }
@@ -4145,7 +4149,7 @@ mod authoring {
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
         assert!(app.overlay.is_none());
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.title, "Fix release");
         assert_eq!(app.store.tasks[selected].task.priority, TaskPriority::High);
     }
@@ -4191,7 +4195,7 @@ mod authoring {
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
         assert!(app.overlay.is_none());
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         let task = &app.store.tasks[selected];
         assert_eq!(task.task.title, "Write docs");
         assert_eq!(task.labels, vec!["feature".to_string()]);
@@ -4248,14 +4252,14 @@ mod authoring {
         app.open_task_on_start(&task_id).unwrap();
 
         assert_eq!(app.store.tasks.len(), 1);
-        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.list.selected_task(), Some(0));
         assert_eq!(app.store.tasks[0].task.id, task_id);
         assert!(app.store.tasks[0].task.deleted);
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
         ));
-        assert!(app.navigation_history.pop().is_none());
+        assert!(app.list.pop_navigation().is_none());
         assert!(app.detail.as_mut().unwrap().history.pop().is_none());
 
         app.handle_normal_key(KeyCode::Esc).await.unwrap();
@@ -4301,7 +4305,7 @@ mod authoring {
 
         assert!(!app.store.recent_actions.is_empty());
         assert!(app.store.tasks.is_empty());
-        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.list.selected_task(), Some(0));
     }
 
     #[tokio::test]
@@ -4374,7 +4378,7 @@ mod authoring {
         type_chars(&mut app, "Write docs").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         let task = &app.store.tasks[selected];
         assert_eq!(task.task.title, "Write docs");
         assert_eq!(task.task.project_key, "mobile-app");
@@ -4417,7 +4421,7 @@ mod authoring {
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
         assert!(app.overlay.is_none());
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         let task = &app.store.tasks[selected];
         assert_eq!(task.task.title, "Write docs");
         assert_eq!(task.task.project_key, "mobile-app");
@@ -4469,7 +4473,7 @@ mod authoring {
         app.handle_overlay_key(ctrl_s()).await.unwrap();
 
         assert!(app.overlay.is_none());
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         let task = &app.store.tasks[selected];
         assert_eq!(task.task.title, "Write docs");
         assert_eq!(task.task.description, "Include setup details");
@@ -4560,7 +4564,7 @@ mod authoring {
             .unwrap();
         app.handle_overlay_key(ctrl_s()).await.unwrap();
 
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         let task = &app.store.tasks[selected];
         assert_eq!(task.task.project_key, "mobile-app");
         assert_eq!(task.task.priority, TaskPriority::High);
@@ -4580,12 +4584,12 @@ mod authoring {
             .unwrap();
         app.store.view_state.view = TaskView::RecentActions;
         app.refresh().await.unwrap();
-        app.widgets.table.select(Some(1));
+        app.list.select_task(Some(1));
         let selected_change_id = app.store.recent_actions[1].change_id.clone();
 
         app.refresh().await.unwrap();
 
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(
             app.store.recent_actions[selected].change_id,
             selected_change_id
@@ -4611,8 +4615,8 @@ mod authoring {
             .await
             .unwrap();
 
-        let selected = app.widgets.table.selected().unwrap();
-        assert_eq!(app.focus, Focus::Tasks);
+        let selected = app.list.selected_task().unwrap();
+        assert_eq!(app.list.focus(), Focus::Tasks);
         assert_eq!(
             app.store.recent_actions[selected].change_id,
             expected_change_id
@@ -5145,7 +5149,7 @@ mod authoring {
     #[tokio::test]
     async fn add_note_requires_selected_task() {
         let mut app = test_app().await;
-        app.widgets.table.select(None);
+        app.list.select_task(None);
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('N')).await.unwrap();
 
@@ -5160,7 +5164,7 @@ mod authoring {
     #[tokio::test]
     async fn add_note_alias_requires_selected_task() {
         let mut app = test_app().await;
-        app.widgets.table.select(None);
+        app.list.select_task(None);
         app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
 
         assert!(app.overlay.is_none());
@@ -5303,8 +5307,8 @@ mod detail_mode {
             .unwrap();
 
         assert!(matches!(app.overlay, Some(OverlayState::DetailHelp { .. })));
-        assert_eq!(app.focus, Focus::Tasks);
-        assert!(app.widgets.table.selected().is_some());
+        assert_eq!(app.list.focus(), Focus::Tasks);
+        assert!(app.list.selected_task().is_some());
     }
 
     #[tokio::test]
@@ -5361,7 +5365,7 @@ mod detail_mode {
             app.overlay,
             Some(OverlayState::Detail { scroll }) if scroll == expected
         ));
-        assert_eq!(app.focus, Focus::Tasks);
+        assert_eq!(app.list.focus(), Focus::Tasks);
 
         app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
             .await
@@ -5405,7 +5409,7 @@ mod detail_mode {
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
         ));
-        assert_eq!(app.focus, Focus::Tasks);
+        assert_eq!(app.list.focus(), Focus::Tasks);
     }
 
     #[tokio::test]
@@ -5625,10 +5629,7 @@ mod detail_mode {
 
         let selection = app.detail.as_mut().unwrap().text_selection.clone().unwrap();
         let selected_text = {
-            let item = app
-                .store
-                .selected_task(app.widgets.table.selected())
-                .unwrap();
+            let item = app.store.selected_task(app.list.selected_task()).unwrap();
             crate::tui::ui::detail_selected_text(item, &selection)
         };
         assert_eq!(selected_text.as_deref(), Some("Select"));
@@ -5642,10 +5643,7 @@ mod detail_mode {
             app.overlay,
             Some(OverlayState::Detail { scroll: 1 })
         ));
-        let item = app
-            .store
-            .selected_task(app.widgets.table.selected())
-            .unwrap();
+        let item = app.store.selected_task(app.list.selected_task()).unwrap();
         assert_eq!(
             crate::tui::ui::detail_selected_text(item, &selection).as_deref(),
             Some("Select")
@@ -5783,13 +5781,13 @@ mod detail_mode {
             .iter()
             .position(|item| item.task.title == "Second")
             .unwrap();
-        app.widgets.table.select(Some(first));
+        app.list.select_task(Some(first));
         app.show_detail(7);
 
         app.dispatch_key(key(KeyCode::Char(']')), (80, 24).into())
             .await
             .unwrap();
-        assert_eq!(app.widgets.table.selected(), Some(second));
+        assert_eq!(app.list.selected_task(), Some(second));
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
@@ -5799,7 +5797,7 @@ mod detail_mode {
         app.dispatch_key(key(KeyCode::Char('[')), (80, 24).into())
             .await
             .unwrap();
-        assert_eq!(app.widgets.table.selected(), Some(first));
+        assert_eq!(app.list.selected_task(), Some(first));
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
@@ -5851,7 +5849,7 @@ mod detail_mode {
             .iter()
             .position(|item| item.task.id == parent_id)
             .unwrap();
-        app.widgets.table.select(Some(parent_index));
+        app.list.select_task(Some(parent_index));
         app.show_detail(4);
         let child_ids = app.store.tasks[parent_index]
             .epic_children
@@ -5919,7 +5917,7 @@ mod detail_mode {
         app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
             .await
             .unwrap();
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, child_ids[1]);
         assert!(app.detail.as_mut().unwrap().focused_target.is_none());
         assert!(matches!(
@@ -5930,7 +5928,7 @@ mod detail_mode {
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
             .unwrap();
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, parent_id);
         assert_eq!(
             app.detail
@@ -6010,7 +6008,7 @@ mod detail_mode {
         app.store.view_state.view = TaskView::Inbox;
         app.store.refresh(Some(&parent_id)).await.unwrap();
         assert_eq!(app.store.tasks.len(), 1);
-        app.widgets.table.select(Some(0));
+        app.list.select_task(Some(0));
         app.show_detail(3);
         app.detail
             .as_mut()
@@ -6077,7 +6075,7 @@ mod detail_mode {
             .iter()
             .position(|item| item.task.id == parent_id)
             .unwrap();
-        app.widgets.table.select(Some(parent));
+        app.list.select_task(Some(parent));
         app.show_detail(3);
         if app.detail.is_none() {
             app.show_detail(0);
@@ -6126,7 +6124,7 @@ mod detail_mode {
 
         assert_eq!(
             app.store
-                .selected_task(app.widgets.table.selected())
+                .selected_task(app.list.selected_task())
                 .map(|item| &item.task.id),
             Some(&parent_id)
         );
@@ -6152,9 +6150,7 @@ mod detail_mode {
         );
         assert_eq!(
             crate::tui::ui::detail_selected_text(
-                app.store
-                    .selected_task(app.widgets.table.selected())
-                    .unwrap(),
+                app.store.selected_task(app.list.selected_task()).unwrap(),
                 &parent_selection,
             )
             .as_deref(),
@@ -6251,7 +6247,7 @@ mod detail_mode {
         assert!(!app.detail.is_some());
         assert_eq!(
             app.store
-                .selected_task(app.widgets.table.selected())
+                .selected_task(app.list.selected_task())
                 .map(|item| &item.task.id),
             Some(&parent_id)
         );
@@ -6327,7 +6323,7 @@ mod detail_mode {
             .iter()
             .position(|item| item.task.id == parent_id)
             .unwrap();
-        app.widgets.table.select(Some(parent_index));
+        app.list.select_task(Some(parent_index));
         app.show_detail(0);
 
         for code in [KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')] {
@@ -6392,15 +6388,15 @@ mod detail_mode {
             .iter()
             .position(|item| item.task.id == parent_id)
             .unwrap();
-        app.widgets.table.select(Some(parent_index));
+        app.list.select_task(Some(parent_index));
         app.move_selection(1).await.unwrap();
         assert_eq!(
             app.store
-                .selected_task(app.widgets.table.selected())
+                .selected_task(app.list.selected_task())
                 .map(|item| &item.task.id),
             Some(&child_id)
         );
-        app.widgets.table.select(Some(parent_index));
+        app.list.select_task(Some(parent_index));
         app.show_detail(0);
         app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
             .await
@@ -6443,7 +6439,7 @@ mod detail_mode {
             .unwrap();
         assert_eq!(
             app.store
-                .selected_task(app.widgets.table.selected())
+                .selected_task(app.list.selected_task())
                 .map(|item| &item.task.id),
             Some(&child_id)
         );
@@ -6457,7 +6453,7 @@ mod detail_mode {
         ));
         assert_eq!(
             app.store
-                .selected_task(app.widgets.table.selected())
+                .selected_task(app.list.selected_task())
                 .map(|item| &item.task.id),
             Some(&parent_id)
         );
@@ -6664,10 +6660,7 @@ mod detail_mode {
         assert_eq!(app.inline_images.export_count(), 1);
         assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
 
-        let item = app
-            .store
-            .selected_task(app.widgets.table.selected())
-            .unwrap();
+        let item = app.store.selected_task(app.list.selected_task()).unwrap();
         let (column, row) = (0..30)
             .flat_map(|row| (0..100).map(move |column| (column, row)))
             .find(|(column, row)| {
@@ -6881,7 +6874,7 @@ mod detail_mode {
             .iter()
             .position(|item| item.task.id == parent_id)
             .unwrap();
-        app.widgets.table.select(Some(parent_index));
+        app.list.select_task(Some(parent_index));
         app.store.tasks[parent_index].attachments = vec![test_attachment(
             "FOCUSIMAGE",
             "image/png",
@@ -7157,7 +7150,7 @@ mod detail_mode {
             true,
             Some((640, 480)),
         )];
-        app.widgets.table.select(Some(first));
+        app.list.select_task(Some(first));
         app.show_detail(0);
         if app.detail.is_none() {
             app.show_detail(0);
@@ -7167,10 +7160,10 @@ mod detail_mode {
                 attachment_id: "FIRSTIMAGE".to_string(),
             });
 
-        let previous = app.widgets.table.selected();
+        let previous = app.list.selected_task();
         app.select_detail_task(1);
 
-        assert_ne!(app.widgets.table.selected(), previous);
+        assert_ne!(app.list.selected_task(), previous);
         assert!(app.detail.as_mut().unwrap().focused_target.is_none());
         assert!(app.detail.as_mut().unwrap().focused_target.is_none());
     }
@@ -7289,7 +7282,7 @@ mod detail_mode {
 
         app.refresh().await.unwrap();
 
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, task_id);
         assert_eq!(
             app.store.tasks[selected].attachments[0].attachment_id,
@@ -7302,7 +7295,7 @@ mod detail_mode {
             app.overlay,
             Some(OverlayState::Detail { scroll: 6 })
         ));
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, task_id);
     }
 
@@ -7337,13 +7330,10 @@ mod detail_mode {
             .iter()
             .position(|item| item.task.id == parent_id)
             .unwrap();
-        app.widgets.table.select(Some(parent_index));
+        app.list.select_task(Some(parent_index));
         app.show_detail(3);
 
-        let parent_item = app
-            .store
-            .selected_task(app.widgets.table.selected())
-            .unwrap();
+        let parent_item = app.store.selected_task(app.list.selected_task()).unwrap();
         let click = (0..24)
             .flat_map(|row| (0..80).map(move |column| (column, row)))
             .find(|(column, row)| {
@@ -7354,7 +7344,7 @@ mod detail_mode {
             .expect("expected child task hit target");
 
         app.dispatch_mouse(click, (80, 24).into()).await.unwrap();
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, child_id);
         assert!(matches!(
             app.overlay,
@@ -7368,7 +7358,7 @@ mod detail_mode {
             .await
             .unwrap();
 
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, parent_id);
         assert!(matches!(
             app.overlay,
@@ -7401,7 +7391,7 @@ mod detail_mode {
         .unwrap();
         drop(conn);
         app.store.refresh(Some(&parent_id)).await.unwrap();
-        app.widgets.table.select(Some(
+        app.list.select_task(Some(
             app.store
                 .tasks
                 .iter()
@@ -7422,7 +7412,7 @@ mod detail_mode {
             .await
             .unwrap();
 
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, parent_id);
         assert!(matches!(
             app.overlay,
@@ -7448,16 +7438,14 @@ mod detail_mode {
         let second_id = app.store.tasks[second].task.id.clone();
         app.push_detail_navigation_state(detail_navigation_state(&app, first_id.clone(), 2));
         app.push_detail_navigation_state(detail_navigation_state(&app, second_id.clone(), 4));
-        app.widgets.table.select(Some(first));
+        app.list.select_task(Some(first));
         app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
             .unwrap();
         assert_eq!(
-            app.store.tasks[app.widgets.table.selected().unwrap()]
-                .task
-                .id,
+            app.store.tasks[app.list.selected_task().unwrap()].task.id,
             second_id
         );
         assert!(matches!(
@@ -7469,9 +7457,7 @@ mod detail_mode {
             .await
             .unwrap();
         assert_eq!(
-            app.store.tasks[app.widgets.table.selected().unwrap()]
-                .task
-                .id,
+            app.store.tasks[app.list.selected_task().unwrap()].task.id,
             first_id
         );
         assert!(matches!(
@@ -7498,7 +7484,7 @@ mod detail_mode {
             true,
             Some((640, 480)),
         )];
-        app.widgets.table.select(Some(child));
+        app.list.select_task(Some(child));
         app.show_detail(5);
         if app.detail.is_none() {
             app.show_detail(0);
@@ -7513,7 +7499,7 @@ mod detail_mode {
             .unwrap();
         assert!(app.detail.as_mut().unwrap().focused_target.is_none());
         assert_eq!(
-            app.store.tasks[app.widgets.table.selected().unwrap()]
+            app.store.tasks[app.list.selected_task().unwrap()]
                 .task
                 .title,
             "Child"
@@ -7524,9 +7510,7 @@ mod detail_mode {
             .await
             .unwrap();
         assert_eq!(
-            app.store.tasks[app.widgets.table.selected().unwrap()]
-                .task
-                .id,
+            app.store.tasks[app.list.selected_task().unwrap()].task.id,
             parent_id
         );
     }
@@ -7543,7 +7527,7 @@ mod detail_mode {
             true,
             Some((640, 480)),
         )];
-        app.widgets.table.select(Some(child));
+        app.list.select_task(Some(child));
         app.show_detail(0);
         if app.detail.is_none() {
             app.show_detail(0);
@@ -7561,9 +7545,7 @@ mod detail_mode {
             .unwrap();
 
         assert_eq!(
-            app.store.tasks[app.widgets.table.selected().unwrap()]
-                .task
-                .id,
+            app.store.tasks[app.list.selected_task().unwrap()].task.id,
             parent_id
         );
         assert!(matches!(
@@ -7591,9 +7573,7 @@ mod detail_mode {
             .unwrap();
 
         assert_eq!(
-            app.store.tasks[app.widgets.table.selected().unwrap()]
-                .task
-                .id,
+            app.store.tasks[app.list.selected_task().unwrap()].task.id,
             parent_id
         );
         assert!(matches!(
@@ -7679,9 +7659,7 @@ mod detail_mode {
             .await
             .unwrap();
         assert_eq!(
-            app.store.tasks[app.widgets.table.selected().unwrap()]
-                .task
-                .id,
+            app.store.tasks[app.list.selected_task().unwrap()].task.id,
             parent_id
         );
     }
@@ -7698,9 +7676,7 @@ mod detail_mode {
 
         app.refresh().await.unwrap();
         assert_eq!(
-            app.store.tasks[app.widgets.table.selected().unwrap()]
-                .task
-                .id,
+            app.store.tasks[app.list.selected_task().unwrap()].task.id,
             child_id
         );
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
@@ -7708,9 +7684,7 @@ mod detail_mode {
             .unwrap();
 
         assert_eq!(
-            app.store.tasks[app.widgets.table.selected().unwrap()]
-                .task
-                .id,
+            app.store.tasks[app.list.selected_task().unwrap()].task.id,
             parent_id
         );
         assert!(matches!(
@@ -7778,7 +7752,7 @@ mod detail_mode {
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
         ));
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].notes.len(), 1);
     }
 
@@ -7849,7 +7823,7 @@ mod detail_mode {
         type_chars(&mut app, "2099-01-01").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(
             app.store.tasks[selected].task.due_on.as_deref(),
             Some("2099-01-01")
@@ -7860,11 +7834,11 @@ mod detail_mode {
             .await
             .unwrap();
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert!(app.store.tasks[selected].task.due_on.is_none());
 
         app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(
             app.store.tasks[selected].task.due_on.as_deref(),
             Some("2099-01-01")
@@ -7897,14 +7871,14 @@ mod detail_mode {
                 app.overlay,
                 Some(OverlayState::Detail { scroll: 2 })
             ));
-            let selected = app.widgets.table.selected().unwrap();
+            let selected = app.list.selected_task().unwrap();
             assert_eq!(
                 app.store.tasks[selected].task.available_at.as_deref(),
                 Some(expected.as_str())
             );
 
             app.refresh().await.unwrap();
-            let selected = app.widgets.table.selected().unwrap();
+            let selected = app.list.selected_task().unwrap();
             assert_eq!(app.store.tasks[selected].task.id, task_id);
             assert!(matches!(
                 app.overlay,
@@ -7931,7 +7905,7 @@ mod detail_mode {
             app.overlay,
             Some(OverlayState::Detail { scroll: 2 })
         ));
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert!(app.store.tasks[selected].task.available_at.is_none());
     }
 
@@ -7964,14 +7938,14 @@ mod detail_mode {
         create_and_select_task(&mut app, test_task_draft("Clear from list")).await;
         app.store
             .update_availability(
-                app.widgets.table.selected(),
+                app.list.selected_task(),
                 "2099-01-01T00:00:00Z".to_string(),
                 true,
             )
             .await
             .unwrap();
         app.show_view(TaskView::Upcoming).await.unwrap();
-        app.widgets.table.select(Some(0));
+        app.list.select_task(Some(0));
 
         app.begin_edit_availability();
         app.handle_overlay_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
@@ -8278,9 +8252,7 @@ mod detail_mode {
 
         for (column, row) in [(2, 5), (88, 17), (88, 20), (88, 23)] {
             let value = crate::tui::ui::detail_copy_target_at(
-                app.store
-                    .selected_task(app.widgets.table.selected())
-                    .unwrap(),
+                app.store.selected_task(app.list.selected_task()).unwrap(),
                 terminal_size.width,
                 terminal_size.height,
                 column,
@@ -8345,7 +8317,7 @@ mod detail_mode {
             toast_message(&app).as_deref(),
             Some(format!("set {display_ref} status=done").as_str())
         );
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, selected_task_id);
         assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Done);
     }
@@ -8359,22 +8331,22 @@ mod detail_mode {
         app.show_view(TaskView::Queue).await.unwrap();
         let selected = 1;
         let changed_id = app.store.tasks[selected].task.id.clone();
-        app.widgets.table.select(Some(selected));
-        *app.widgets.table.offset_mut() = 1;
+        app.list.select_task(Some(selected));
+        app.list.set_task_offset(1);
 
         app.update_status(TaskStatus::Active).await.unwrap();
 
-        assert_eq!(app.widgets.table.selected(), Some(selected));
+        assert_eq!(app.list.selected_task(), Some(selected));
         assert_ne!(app.store.tasks[selected].task.id, changed_id);
-        assert_eq!(app.widgets.table.offset(), 2);
-        assert_eq!(app.last_changed_task_id.as_ref(), Some(&changed_id));
+        assert_eq!(app.list.task_offset(), 2);
+        assert_eq!(app.list.last_changed_task_id(), Some(&changed_id));
         assert!(toast_message(&app).unwrap().contains("g . return"));
 
         app.execute(Action::ReturnToLastChange).await.unwrap();
 
         assert_eq!(
             app.store
-                .selected_task(app.widgets.table.selected())
+                .selected_task(app.list.selected_task())
                 .unwrap()
                 .task
                 .id,
@@ -8391,12 +8363,12 @@ mod detail_mode {
         app.show_view(TaskView::Queue).await.unwrap();
         let selected = 1;
         let changed_id = app.store.tasks[selected].task.id.clone();
-        app.widgets.table.select(Some(selected));
-        *app.widgets.table.offset_mut() = 1;
+        app.list.select_task(Some(selected));
+        app.list.set_task_offset(1);
 
         app.update_status(TaskStatus::Done).await.unwrap();
         let replacement_id = app.store.tasks[selected].task.id.clone();
-        let return_offset = app.widgets.table.offset();
+        let return_offset = app.list.task_offset();
         app.execute(Action::ReturnToLastChange).await.unwrap();
 
         assert_eq!(app.store.view_state.view, TaskView::Search);
@@ -8408,10 +8380,10 @@ mod detail_mode {
 
         assert_eq!(app.store.view_state.view, TaskView::Queue);
         assert!(app.overlay.is_none());
-        assert_eq!(app.widgets.table.offset(), return_offset);
+        assert_eq!(app.list.task_offset(), return_offset);
         assert_eq!(
             app.store
-                .selected_task(app.widgets.table.selected())
+                .selected_task(app.list.selected_task())
                 .unwrap()
                 .task
                 .id,
@@ -8438,7 +8410,7 @@ mod detail_mode {
             app.overlay,
             Some(OverlayState::Detail { scroll: 4 })
         ));
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, selected_task_id);
         assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Done);
     }
@@ -8491,7 +8463,7 @@ mod detail_mode {
             .await
             .unwrap();
 
-        assert_eq!(app.widgets.table.selected(), Some(selected));
+        assert_eq!(app.list.selected_task(), Some(selected));
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
@@ -8590,7 +8562,7 @@ mod detail_mode {
             .await
             .unwrap();
 
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, task_id);
         assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Inbox);
         assert!(matches!(
@@ -8709,7 +8681,7 @@ mod task_editing {
     #[tokio::test]
     async fn no_selected_mutating_shortcuts_report_failure() {
         let mut app = test_app().await;
-        app.widgets.table.select(None);
+        app.list.select_task(None);
 
         for sequence in [
             [KeyCode::Char('t'), KeyCode::Char('i')],
@@ -8814,7 +8786,7 @@ mod task_editing {
         type_chars(&mut app, " updated").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.title, "Old title updated");
     }
 
@@ -8825,7 +8797,7 @@ mod task_editing {
         let marked_id = app.store.tasks[marked].task.id.clone();
         let selected = create_and_select_task(&mut app, test_task_draft("Cursor title")).await;
         let selected_id = app.store.tasks[selected].task.id.clone();
-        app.widgets.marked_task_ids.insert(marked_id.clone());
+        app.list.mark(marked_id.clone());
 
         app.begin_edit_title();
         assert!(matches!(
@@ -8845,9 +8817,9 @@ mod task_editing {
             .find(|item| item.task.id == marked_id)
             .unwrap();
         assert_eq!(marked.task.title, "Updated marked title");
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, selected_id);
-        assert!(app.widgets.marked_task_ids.contains(&marked_id));
+        assert!(app.list.marked_task_ids().contains(&marked_id));
     }
 
     #[tokio::test]
@@ -8857,8 +8829,8 @@ mod task_editing {
         let first_id = app.store.tasks[first].task.id.clone();
         let second = create_and_select_task(&mut app, test_task_draft("Second")).await;
         let second_id = app.store.tasks[second].task.id.clone();
-        app.widgets.marked_task_ids.insert(first_id);
-        app.widgets.marked_task_ids.insert(second_id);
+        app.list.mark(first_id);
+        app.list.mark(second_id);
 
         app.begin_edit_title();
 
@@ -8896,7 +8868,7 @@ mod task_editing {
         type_chars(&mut app, " updated").await;
         app.handle_overlay_key(ctrl_s()).await.unwrap();
 
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(
             app.store.tasks[selected].task.description,
             "first\nsecond updated"
@@ -8923,7 +8895,7 @@ mod task_editing {
 
         type_chars(&mut app, "mobile").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.project_key, "mobile-app");
     }
 
@@ -8949,7 +8921,7 @@ mod task_editing {
         app.dispatch_key(key(KeyCode::Char('u')), (80, 24).into())
             .await
             .unwrap();
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(
             app.store.tasks[selected].task.priority,
             TaskPriority::Urgent
@@ -8987,7 +8959,7 @@ mod task_editing {
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].labels, vec!["docs".to_string()]);
     }
 
@@ -9005,7 +8977,7 @@ mod task_editing {
             .await
             .unwrap();
 
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Todo);
     }
 
@@ -9017,12 +8989,12 @@ mod task_editing {
         create_and_select_task(&mut app, test_task_draft("Third")).await;
         let selected = 1;
         let next_title = app.store.tasks[selected + 1].task.title.clone();
-        app.widgets.table.select(Some(selected));
+        app.list.select_task(Some(selected));
 
         app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
 
-        assert_eq!(app.widgets.table.selected(), Some(selected));
-        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.list.selected_task(), Some(selected));
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.title, next_title);
         assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Inbox);
     }
@@ -9038,12 +9010,12 @@ mod task_editing {
             .iter()
             .position(|item| item.task.title == "Second")
             .unwrap();
-        app.widgets.table.select(Some(selected));
+        app.list.select_task(Some(selected));
 
         app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
 
-        assert_eq!(app.widgets.table.selected(), Some(0));
-        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.list.selected_task(), Some(0));
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.title, "First");
     }
 
@@ -9054,14 +9026,14 @@ mod task_editing {
 
         app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
         let selected = app.store.show_view(TaskView::Done).await.unwrap();
-        app.widgets.table.select(selected);
-        let selected = app.widgets.table.selected().unwrap();
+        app.list.select_task(selected);
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Done);
 
         app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
         let selected = app.store.show_view(TaskView::Done).await.unwrap();
-        app.widgets.table.select(selected);
-        let selected = app.widgets.table.selected().unwrap();
+        app.list.select_task(selected);
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Canceled);
     }
 
@@ -9073,7 +9045,7 @@ mod task_editing {
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
 
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert_eq!(
             app.store.tasks[selected].task.priority,
             TaskPriority::Urgent
@@ -9083,7 +9055,7 @@ mod task_editing {
     #[tokio::test]
     async fn edit_shortcuts_require_selected_task() {
         let mut app = test_app().await;
-        app.widgets.table.select(None);
+        app.list.select_task(None);
 
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
@@ -9273,7 +9245,7 @@ mod task_editing {
     #[tokio::test]
     async fn copy_requires_selected_task() {
         let mut app = test_app().await;
-        app.widgets.table.select(None);
+        app.list.select_task(None);
 
         app.copy_selected_ref(TaskRefKind::Short);
 
@@ -9305,14 +9277,14 @@ mod task_editing {
         create_and_select_task(&mut app, test_task_draft("Second")).await;
         create_and_select_task(&mut app, test_task_draft("Third")).await;
         let selected = 1;
-        app.widgets.table.select(Some(selected));
+        app.list.select_task(Some(selected));
 
         app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
-        assert_eq!(app.widgets.table.selected(), Some(selected));
+        assert_eq!(app.list.selected_task(), Some(selected));
 
         app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
 
-        assert_eq!(app.widgets.table.selected(), Some(selected));
+        assert_eq!(app.list.selected_task(), Some(selected));
         assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Inbox);
     }
 
@@ -9396,7 +9368,7 @@ mod delete_and_restore {
             .await
             .unwrap();
 
-        let selected = app.widgets.table.selected().unwrap();
+        let selected = app.list.selected_task().unwrap();
         assert!(app.store.tasks[selected].task.deleted);
         assert!(!app.store.view_state.filter_modifiers.include_deleted);
         assert_eq!(
@@ -9485,7 +9457,7 @@ mod delete_and_restore {
             .create_project("Mobile App".to_string())
             .await
             .unwrap();
-        app.focus = Focus::Sidebar;
+        app.list.focus_sidebar();
         let project_index = app
             .store
             .sidebar_entries
@@ -9497,7 +9469,7 @@ mod delete_and_restore {
                     )))
             })
             .unwrap();
-        app.widgets.sidebar.select(Some(project_index));
+        app.list.select_sidebar(Some(project_index));
 
         app.execute(Action::BeginDeleteProject).await.unwrap();
 
@@ -9548,7 +9520,7 @@ mod delete_and_restore {
             .create_project("Agent Offload".to_string())
             .await
             .unwrap();
-        let selected = app.widgets.table.selected();
+        let selected = app.list.selected_task();
 
         app.execute(Action::BeginRenameProject).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
@@ -9557,7 +9529,7 @@ mod delete_and_restore {
 
         assert!(app.overlay.is_none());
         assert!(!app.view().detail_underlay);
-        assert_eq!(app.widgets.table.selected(), selected);
+        assert_eq!(app.list.selected_task(), selected);
     }
 
     #[tokio::test]
@@ -9611,7 +9583,7 @@ mod delete_and_restore {
             .create_project("Mobile App".to_string())
             .await
             .unwrap();
-        app.focus = Focus::Sidebar;
+        app.list.focus_sidebar();
         let project_index = app
             .store
             .sidebar_entries
@@ -9623,7 +9595,7 @@ mod delete_and_restore {
                     )))
             })
             .unwrap();
-        app.widgets.sidebar.select(Some(project_index));
+        app.list.select_sidebar(Some(project_index));
 
         app.execute(Action::BeginDeleteProject).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
@@ -9711,11 +9683,11 @@ mod conflicts {
             .iter()
             .position(|item| item.task.id == second_id)
             .unwrap();
-        app.widgets.table.select(Some(first));
+        app.list.select_task(Some(first));
 
         app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
-        assert_eq!(app.widgets.table.selected(), Some(second));
+        assert_eq!(app.list.selected_task(), Some(second));
         assert_eq!(
             toast_message(&app).as_deref(),
             Some("selected next conflict")
@@ -9813,7 +9785,7 @@ mod conflicts {
     #[tokio::test]
     async fn conflict_resolution_without_selected_task_reports_message() {
         let mut app = test_app().await;
-        app.widgets.table.select(None);
+        app.list.select_task(None);
 
         app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
@@ -10029,7 +10001,7 @@ mod typed_overlay_submissions {
             .iter()
             .position(|item| item.task.id == blocked_id)
             .unwrap();
-        app.widgets.table.select(Some(blocked_index));
+        app.list.select_task(Some(blocked_index));
 
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('U')).await.unwrap();
@@ -10063,7 +10035,7 @@ mod typed_overlay_submissions {
             .iter()
             .position(|item| item.task.id == blocked_id)
             .unwrap();
-        app.widgets.table.select(Some(blocked_index));
+        app.list.select_task(Some(blocked_index));
 
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('U')).await.unwrap();
@@ -10084,7 +10056,7 @@ mod typed_overlay_submissions {
     #[tokio::test]
     async fn no_selected_task_shows_info() {
         let mut app = test_app().await;
-        app.widgets.table.select(None);
+        app.list.select_task(None);
 
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('B')).await.unwrap();
@@ -10138,7 +10110,7 @@ mod typed_overlay_submissions {
         let index = create_and_select_task(&mut app, test_task_draft("move me")).await;
         let task_id = app.store.tasks[index].task.id.clone();
         app.store.show_view(TaskView::Columns).await.unwrap();
-        app.widgets.table.select(
+        app.list.select_task(
             app.store
                 .tasks
                 .iter()
@@ -10156,7 +10128,7 @@ mod typed_overlay_submissions {
         assert_eq!(moved.task.status, TaskStatus::Backlog);
         assert_eq!(
             app.store
-                .selected_task(app.widgets.table.selected())
+                .selected_task(app.list.selected_task())
                 .unwrap()
                 .task
                 .id,
@@ -10185,8 +10157,8 @@ mod typed_overlay_submissions {
         todo_draft.status = "todo".to_string();
         let todo = create_and_select_task(&mut app, todo_draft).await;
         let todo_id = app.store.tasks[todo].task.id.clone();
-        app.widgets.marked_task_ids.insert(inbox_id.clone());
-        app.widgets.marked_task_ids.insert(todo_id.clone());
+        app.list.mark(inbox_id.clone());
+        app.list.mark(todo_id.clone());
         app.store.show_view(TaskView::Columns).await.unwrap();
 
         app.handle_normal_key(KeyCode::Char('>')).await.unwrap();
@@ -10243,8 +10215,8 @@ mod typed_overlay_submissions {
         backlog_draft.status = "backlog".to_string();
         let backlog = create_and_select_task(&mut app, backlog_draft).await;
         let backlog_id = app.store.tasks[backlog].task.id.clone();
-        app.widgets.marked_task_ids.insert(inbox_id.clone());
-        app.widgets.marked_task_ids.insert(backlog_id.clone());
+        app.list.mark(inbox_id.clone());
+        app.list.mark(backlog_id.clone());
         app.store.show_view(TaskView::Columns).await.unwrap();
 
         app.handle_normal_key(KeyCode::Char('<')).await.unwrap();
@@ -10280,7 +10252,7 @@ mod typed_overlay_submissions {
 
         assert_eq!(
             app.store
-                .selected_task(app.widgets.table.selected())
+                .selected_task(app.list.selected_task())
                 .unwrap()
                 .task
                 .status,
@@ -10294,7 +10266,7 @@ mod typed_overlay_submissions {
         let index = create_and_select_task(&mut app, test_task_draft("mouse move")).await;
         let task_id = app.store.tasks[index].task.id.clone();
         app.store.show_view(TaskView::Columns).await.unwrap();
-        app.widgets.table.select(
+        app.list.select_task(
             app.store
                 .tasks
                 .iter()
@@ -10358,23 +10330,23 @@ mod typed_overlay_submissions {
             .iter()
             .position(|item| item.task.title == "todo")
             .unwrap();
-        app.widgets.table.select(Some(active));
+        app.list.select_task(Some(active));
 
         app.move_selection(1).await.unwrap();
         assert_eq!(
             app.store
-                .selected_task(app.widgets.table.selected())
+                .selected_task(app.list.selected_task())
                 .unwrap()
                 .task
                 .status,
             TaskStatus::Active
         );
         app.move_left();
-        assert_eq!(app.widgets.table.selected(), Some(todo));
+        assert_eq!(app.list.selected_task(), Some(todo));
         app.move_right();
         assert_eq!(
             app.store
-                .selected_task(app.widgets.table.selected())
+                .selected_task(app.list.selected_task())
                 .unwrap()
                 .task
                 .status,
@@ -10391,7 +10363,7 @@ mod typed_overlay_submissions {
         app.show_view(TaskView::Columns).await.unwrap();
         let selected_id = app
             .store
-            .selected_task(app.widgets.table.selected())
+            .selected_task(app.list.selected_task())
             .unwrap()
             .task
             .id
@@ -10399,10 +10371,7 @@ mod typed_overlay_submissions {
 
         app.update_status(TaskStatus::Done).await.unwrap();
 
-        let selected = app
-            .store
-            .selected_task(app.widgets.table.selected())
-            .unwrap();
+        let selected = app.store.selected_task(app.list.selected_task()).unwrap();
         assert_eq!(selected.task.id, selected_id);
         assert_eq!(selected.task.status, TaskStatus::Done);
     }

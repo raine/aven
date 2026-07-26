@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::tui::app::{App, Focus};
+use crate::tui::app::App;
 use crate::tui::conflict_flow::{ConflictResolutionChoice, truncate_value_preview};
 use crate::tui::overlay::{
     ConfirmIntent, MultilineIntent, OverlayState, PickerIntent, PickerItem, TextIntent,
@@ -35,9 +35,7 @@ impl App {
     }
 
     async fn conflict_targets_for_selected(&mut self) -> Result<Option<Vec<ConflictTarget>>> {
-        self.store
-            .conflict_targets(self.widgets.table.selected())
-            .await
+        self.store.conflict_targets(self.list.selected_task()).await
     }
 
     async fn load_conflict_targets_for_resolution(
@@ -62,7 +60,7 @@ impl App {
         if targets.is_empty() {
             let display_ref = self
                 .store
-                .selected_task(self.widgets.table.selected())
+                .selected_task(self.list.selected_task())
                 .map(|item| item.display_ref.clone())
                 .unwrap_or_else(|| "task".to_string());
             self.set_info(format!("{display_ref} has no unresolved conflicts"));
@@ -92,7 +90,7 @@ impl App {
     }
 
     pub(super) fn move_to_conflict(&mut self, delta: isize) {
-        let current = self.widgets.table.selected();
+        let current = self.list.selected_task();
         let Some(next) = self.store.next_conflict_index(current, delta) else {
             self.set_info("no conflicts in current list");
             return;
@@ -101,8 +99,8 @@ impl App {
             self.set_info("selected only conflict");
             return;
         }
-        self.widgets.table.select(Some(next));
-        self.focus = Focus::Tasks;
+        self.list.select_task(Some(next));
+        self.list.focus_tasks();
         let message = if delta > 0 {
             "selected next conflict"
         } else {

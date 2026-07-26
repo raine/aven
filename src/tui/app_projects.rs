@@ -50,8 +50,8 @@ impl App {
         self.pending_shortcut.clear();
         let Some(selection) = crate::tui::task_selection::TaskSelection::resolve(
             &self.store.tasks,
-            &self.widgets.marked_task_ids,
-            self.widgets.table.selected(),
+            self.list.marked_task_ids(),
+            self.list.selected_task(),
         ) else {
             self.set_info("no selected task to edit");
             return;
@@ -69,7 +69,7 @@ impl App {
             ));
             return;
         }
-        let Some(task) = self.store.selected_task(self.widgets.table.selected()) else {
+        let Some(task) = self.store.selected_task(self.list.selected_task()) else {
             self.set_info("no selected task to edit");
             return;
         };
@@ -85,7 +85,7 @@ impl App {
 
     pub(super) fn begin_rename_project(&mut self) {
         self.pending_shortcut.clear();
-        let selected = if self.focus == Focus::Sidebar {
+        let selected = if self.list.focus() == Focus::Sidebar {
             self.selected_sidebar_project()
         } else {
             None
@@ -103,7 +103,7 @@ impl App {
 
     pub(super) fn begin_delete_project(&mut self) {
         self.pending_shortcut.clear();
-        let selected = if self.focus == Focus::Sidebar {
+        let selected = if self.list.focus() == Focus::Sidebar {
             self.selected_sidebar_project()
         } else {
             None
@@ -120,9 +120,8 @@ impl App {
     }
 
     fn selected_sidebar_project(&self) -> Option<String> {
-        self.widgets
-            .sidebar
-            .selected()
+        self.list
+            .selected_sidebar()
             .and_then(|index| self.store.sidebar_entries.get(index))
             .and_then(|entry| entry.target.as_ref())
             .and_then(|target| match target {
@@ -134,7 +133,7 @@ impl App {
     }
 
     pub(super) fn copy_selected_ref(&mut self, kind: TaskRefKind) {
-        let Some(task) = self.store.selected_task(self.widgets.table.selected()) else {
+        let Some(task) = self.store.selected_task(self.list.selected_task()) else {
             self.set_info("no selected task to copy");
             return;
         };
@@ -149,7 +148,7 @@ impl App {
     }
 
     pub(super) fn copy_selected_task_text(&mut self, kind: TaskCopyKind) {
-        let Some(task) = self.store.selected_task(self.widgets.table.selected()) else {
+        let Some(task) = self.store.selected_task(self.list.selected_task()) else {
             self.set_info("no selected task to copy");
             return;
         };
@@ -170,7 +169,7 @@ impl App {
     }
 
     pub(super) fn copy_selected_task_notes(&mut self) {
-        let Some(task) = self.store.selected_task(self.widgets.table.selected()) else {
+        let Some(task) = self.store.selected_task(self.list.selected_task()) else {
             self.set_info("no selected task to copy");
             return;
         };

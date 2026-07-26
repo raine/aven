@@ -69,6 +69,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Paragraph};
 
 use crate::tui::app::{Focus, FooterChoiceMode, WidgetState};
+use crate::tui::list_surface::ListSurface;
 use crate::tui::overlay::{
     HeaderMenuKind, HeaderMenuView, MultilineInputKind, OrderMenuView, OverlayView, TextInputKind,
     TextInputView,
@@ -165,6 +166,7 @@ pub(crate) fn render(
     frame: &mut Frame,
     store: &TuiStore,
     widgets: &mut WidgetState,
+    list: &mut ListSurface,
     view: &ViewState,
 ) {
     widgets.inline_image_placements.clear();
@@ -215,12 +217,20 @@ pub(crate) fn render(
     let inline_title_editor = inline_title_editor(view);
     let inline_detail_title_editor = inline_detail_title_editor(view);
     if body.width < 100 {
-        render_main_surface(frame, store, widgets, view.focus, body, inline_title_editor);
+        render_main_surface(
+            frame,
+            store,
+            widgets,
+            list,
+            view.focus,
+            body,
+            inline_title_editor,
+        );
         if let Some(layout) =
             crate::tui::ui::sidebar_layout_for(inner, view.focus, view.sidebar_visible)
             && layout.overlay
         {
-            render_sidebar_overlay(frame, store, widgets, view.focus, body);
+            render_sidebar_overlay(frame, store, list, view.focus, body);
         }
     } else {
         if let Some(layout) =
@@ -235,14 +245,30 @@ pub(crate) fn render(
             render_sidebar(
                 frame,
                 store,
-                widgets,
+                list,
                 view.focus,
                 layout.sidebar,
                 layout.overlay,
             );
-            render_main_surface(frame, store, widgets, view.focus, main, inline_title_editor);
+            render_main_surface(
+                frame,
+                store,
+                widgets,
+                list,
+                view.focus,
+                main,
+                inline_title_editor,
+            );
         } else {
-            render_main_surface(frame, store, widgets, view.focus, body, inline_title_editor);
+            render_main_surface(
+                frame,
+                store,
+                widgets,
+                list,
+                view.focus,
+                body,
+                inline_title_editor,
+            );
         }
     }
     let footer_mode = match view.footer_mode(footer.width) {
@@ -250,7 +276,7 @@ pub(crate) fn render(
         mode => mode,
     };
     frame.render_widget(
-        footer_bar(footer_mode, footer.width, widgets.marked_task_ids.len()),
+        footer_bar(footer_mode, footer.width, list.marked_task_ids().len()),
         footer,
     );
 
@@ -259,6 +285,7 @@ pub(crate) fn render(
             frame,
             store,
             widgets,
+            list.selected_task(),
             detail_underlay_scroll(view),
             inline_detail_title_editor,
             view.detail_focus.as_ref(),
@@ -275,6 +302,7 @@ pub(crate) fn render(
             frame,
             store,
             widgets,
+            list,
             overlay,
             inline_title_editor.is_some() || inline_detail_title_editor.is_some(),
             view.detail_focus.as_ref(),
@@ -297,25 +325,27 @@ pub(crate) fn render(
 fn render_main_surface(
     frame: &mut Frame,
     store: &TuiStore,
-    widgets: &mut WidgetState,
+    _widgets: &mut WidgetState,
+    list: &mut ListSurface,
     focus: Focus,
     area: ratatui::layout::Rect,
     inline_title_editor: Option<&TextInputView>,
 ) {
     if store.view_state.view == TaskView::RecentActions {
-        render_recent_actions(frame, store, widgets, focus, area);
+        render_recent_actions(frame, store, list, focus, area);
     } else if store.view_state.view == TaskView::Columns {
+        let marked_task_ids = list.marked_task_ids().clone();
         render_columns(
             frame,
             store,
-            &mut widgets.table,
+            list.table_state_mut(),
             focus,
             area,
             inline_title_editor,
-            &widgets.marked_task_ids,
+            &marked_task_ids,
         );
     } else {
-        render_tasks(frame, store, widgets, focus, area, inline_title_editor);
+        render_tasks(frame, store, list, focus, area, inline_title_editor);
     }
 }
 
@@ -699,6 +729,7 @@ fn render_overlay(
     frame: &mut Frame,
     store: &TuiStore,
     widgets: &mut WidgetState,
+    list: &mut ListSurface,
     overlay: &OverlayView,
     inline_title_editor: bool,
     focused_detail_target: Option<&crate::tui::app::DetailTargetId>,
@@ -710,7 +741,7 @@ fn render_overlay(
     removed_epic_child: Option<&crate::tui::app::RemovedEpicChild>,
 ) {
     if let OverlayView::AttachmentPreview { attachment_id, .. } = overlay {
-        if let Some(item) = store.selected_task(widgets.table.selected()) {
+        if let Some(item) = store.selected_task(list.selected_task()) {
             render_attachment_preview(frame, item, attachment_id, widgets, inline_images);
         }
         return;
@@ -728,6 +759,7 @@ fn render_overlay(
             frame,
             store,
             widgets,
+            list.selected_task(),
             scroll,
             None,
             focused_detail_target,
