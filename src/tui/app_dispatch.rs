@@ -23,7 +23,7 @@ use crate::tui::navigation::{
 };
 use crate::tui::overlay::{
     AddTaskMode, CommandState, MultilineIntent, OverlayOutcome, OverlayState, PickerIntent,
-    TagComboboxIntent,
+    ScheduleEditorField, ScheduleEditorMode, TagComboboxIntent,
 };
 use crate::tui::platform::{copy_to_clipboard, is_editor_prefix_key};
 use crate::tui::shortcut_buffer::DetailShortcutResolution;
@@ -329,8 +329,7 @@ impl App {
                     Rect::new(0, 0, terminal_size.width, terminal_size.height),
                     self.intake.view().add_task_only,
                     !state.attachments.is_empty(),
-                    state.recurrence_valid(),
-                    state.recurrence_enabled() || state.focus == AddTaskStep::RepeatRule,
+                    crate::tui::ui::AddTaskScheduleLayout,
                     mouse.column,
                     mouse.row,
                 )
@@ -1350,20 +1349,31 @@ impl App {
                 self.overlay = Some(overlay);
                 return Ok(());
             }
-            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('a') {
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && key.code == KeyCode::Char('a')
+                && state.mode == AddTaskMode::Compose
+            {
                 self.overlay = Some(overlay);
                 if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
-                    state.focus = AddTaskStep::AvailableAt;
+                    let mut editor = state.schedule_editor(ScheduleEditorField::Available);
+                    editor.mode = ScheduleEditorMode::Once;
+                    editor.focus = ScheduleEditorField::Available;
+                    editor.refresh();
+                    state.mode = AddTaskMode::Schedule(editor);
                 }
                 return Ok(());
             }
             if key.modifiers.contains(KeyModifiers::CONTROL)
                 && key.code == KeyCode::Char('u')
-                && state.focus != AddTaskStep::Due
+                && state.mode == AddTaskMode::Compose
             {
                 self.overlay = Some(overlay);
                 if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
-                    state.focus = AddTaskStep::Due;
+                    let mut editor = state.schedule_editor(ScheduleEditorField::Due);
+                    editor.mode = ScheduleEditorMode::Once;
+                    editor.focus = ScheduleEditorField::Due;
+                    editor.refresh();
+                    state.mode = AddTaskMode::Schedule(editor);
                 }
                 return Ok(());
             }
@@ -1414,7 +1424,11 @@ impl App {
 
         let scroll_cap = match &overlay {
             OverlayState::AddTask(state) if matches!(state.mode, AddTaskMode::Help { .. }) => {
-                composer_help_scroll_cap(terminal_size.height, self.intake.view().add_task_only)
+                composer_help_scroll_cap(
+                    terminal_size.height,
+                    self.intake.view().add_task_only,
+                    state.schedule_expanded,
+                )
             }
             OverlayState::DetailHelp { .. } => detail_help_scroll_cap(terminal_size.height),
             OverlayState::DatabaseStats { .. } => database_stats_scroll_cap(terminal_size.height),

@@ -57,7 +57,8 @@ pub(crate) use self::detail::{
     detail_scroll_cap, detail_section_scroll_target,
 };
 pub(crate) use self::overlays::{
-    add_task_field_at, composer_help_scroll_cap, database_stats_scroll_cap, text_panel_scroll_cap,
+    AddTaskScheduleLayout, add_task_field_at, composer_help_scroll_cap, database_stats_scroll_cap,
+    text_panel_scroll_cap,
 };
 pub(crate) use self::recent_actions::recent_action_at_position;
 pub(crate) use self::recurrence::recurrence_series_at_position;

@@ -20,6 +20,7 @@ pub(crate) enum AddTaskStep {
     Status,
     Priority,
     Labels,
+    Schedule,
     Title,
     AvailableAt,
     Due,
@@ -33,16 +34,17 @@ pub(crate) enum AddTaskStep {
 }
 
 impl AddTaskStep {
-    pub(crate) const ALL: [Self; 14] = [
+    pub(crate) const ALL: [Self; 15] = [
         Self::Project,
         Self::Status,
         Self::Priority,
         Self::Labels,
+        Self::Schedule,
         Self::AvailableAt,
         Self::Due,
-        Self::RepeatRule,
         Self::RepeatAt,
         Self::RepeatDue,
+        Self::RepeatRule,
         Self::TimeZone,
         Self::RepeatStartOn,
         Self::Images,
@@ -70,6 +72,7 @@ impl AddTaskStep {
                 | Self::Status
                 | Self::Priority
                 | Self::Labels
+                | Self::Schedule
                 | Self::AvailableAt
                 | Self::Due
                 | Self::RepeatRule
@@ -83,21 +86,35 @@ impl AddTaskStep {
     pub(crate) fn is_inline_text(self) -> bool {
         matches!(
             self,
-            Self::AvailableAt | Self::Due | Self::RepeatAt | Self::RepeatStartOn
+            Self::Schedule | Self::AvailableAt | Self::Due | Self::RepeatAt | Self::RepeatStartOn
+        )
+    }
+
+    pub(crate) fn is_schedule_field(self) -> bool {
+        matches!(
+            self,
+            Self::AvailableAt
+                | Self::Due
+                | Self::RepeatRule
+                | Self::RepeatAt
+                | Self::RepeatDue
+                | Self::TimeZone
+                | Self::RepeatStartOn
         )
     }
 
     pub(crate) fn metadata_next(self, reverse: bool) -> Self {
-        const FIELDS: [AddTaskStep; 11] = [
+        const FIELDS: [AddTaskStep; 12] = [
             AddTaskStep::Project,
             AddTaskStep::Status,
             AddTaskStep::Priority,
             AddTaskStep::Labels,
+            AddTaskStep::Schedule,
             AddTaskStep::AvailableAt,
             AddTaskStep::Due,
-            AddTaskStep::RepeatRule,
             AddTaskStep::RepeatAt,
             AddTaskStep::RepeatDue,
+            AddTaskStep::RepeatRule,
             AddTaskStep::TimeZone,
             AddTaskStep::RepeatStartOn,
         ];
@@ -158,6 +175,7 @@ struct AddTaskDraftState {
     labels: Vec<String>,
     available_at: String,
     due_on: String,
+    schedule_input: String,
     recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
     template_schedule: Option<aven_core::recurrence::RecurrenceSchedule>,
     repeat_rule: String,
@@ -165,6 +183,7 @@ struct AddTaskDraftState {
     repeat_due: String,
     time_zone: String,
     repeat_start_on: String,
+    schedule_expanded: bool,
     attachments: Vec<PendingTaskAttachment>,
     step: AddTaskStep,
 }
@@ -183,6 +202,7 @@ impl Default for AddTaskDraftState {
             labels: Vec::new(),
             available_at: String::new(),
             due_on: String::new(),
+            schedule_input: String::new(),
             recurrence_series_id: None,
             template_schedule: None,
             repeat_rule: String::new(),
@@ -190,6 +210,7 @@ impl Default for AddTaskDraftState {
             repeat_due: "same-day".to_string(),
             time_zone: String::new(),
             repeat_start_on: String::new(),
+            schedule_expanded: false,
             attachments: Vec::new(),
             step: AddTaskStep::Title,
         }
@@ -213,6 +234,7 @@ pub(crate) struct AddTaskContext {
     pub(crate) labels: Vec<String>,
     pub(crate) available_at: String,
     pub(crate) due_on: String,
+    pub(crate) schedule_input: String,
     pub(crate) recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
     pub(crate) template_schedule: Option<aven_core::recurrence::RecurrenceSchedule>,
     pub(crate) repeat_rule: String,
@@ -220,6 +242,7 @@ pub(crate) struct AddTaskContext {
     pub(crate) repeat_due: String,
     pub(crate) time_zone: String,
     pub(crate) repeat_start_on: String,
+    pub(crate) schedule_expanded: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -281,6 +304,20 @@ impl AuthoringState {
             labels: detail.labels.clone(),
             available_at: String::new(),
             due_on: String::new(),
+            schedule_input: crate::schedule_input::format_schedule_input(
+                "",
+                "",
+                &repeat_rule,
+                &series
+                    .available_local_time
+                    .map(|value| value.format("%H:%M").to_string())
+                    .unwrap_or_default(),
+                match series.due_policy {
+                    aven_core::recurrence::RecurrenceDuePolicy::SameDay => "same-day",
+                    aven_core::recurrence::RecurrenceDuePolicy::None => "none",
+                },
+                &series.start_on.to_string(),
+            ),
             recurrence_series_id: Some(series.id.clone()),
             template_schedule: Some(template_schedule),
             repeat_rule,
@@ -294,6 +331,7 @@ impl AuthoringState {
             },
             time_zone: series.timezone.to_string(),
             repeat_start_on: series.start_on.to_string(),
+            schedule_expanded: true,
             attachments: Vec::new(),
             step: AddTaskStep::Title,
         });
@@ -349,6 +387,7 @@ impl AuthoringState {
             labels: draft.labels.clone(),
             available_at: draft.available_at.clone(),
             due_on: draft.due_on.clone(),
+            schedule_input: draft.schedule_input.clone(),
             recurrence_series_id: draft.recurrence_series_id.clone(),
             template_schedule: draft.template_schedule.clone(),
             repeat_rule: draft.repeat_rule.clone(),
@@ -356,6 +395,7 @@ impl AuthoringState {
             repeat_due: draft.repeat_due.clone(),
             time_zone: draft.time_zone.clone(),
             repeat_start_on: draft.repeat_start_on.clone(),
+            schedule_expanded: draft.schedule_expanded,
         })
     }
 
@@ -499,6 +539,14 @@ impl AuthoringState {
             return false;
         };
         draft.available_at = value;
+        draft.schedule_input = crate::schedule_input::format_schedule_input(
+            &draft.available_at,
+            &draft.due_on,
+            &draft.repeat_rule,
+            &draft.repeat_at,
+            &draft.repeat_due,
+            &draft.repeat_start_on,
+        );
         true
     }
 
@@ -507,6 +555,22 @@ impl AuthoringState {
             return false;
         };
         draft.due_on = value;
+        draft.schedule_input = crate::schedule_input::format_schedule_input(
+            &draft.available_at,
+            &draft.due_on,
+            &draft.repeat_rule,
+            &draft.repeat_at,
+            &draft.repeat_due,
+            &draft.repeat_start_on,
+        );
+        true
+    }
+
+    pub(crate) fn apply_add_task_schedule_input(&mut self, value: String) -> bool {
+        let Some(draft) = self.flow.as_mut() else {
+            return false;
+        };
+        draft.schedule_input = value;
         true
     }
 
@@ -531,6 +595,22 @@ impl AuthoringState {
         draft.repeat_due = repeat_due;
         draft.time_zone = time_zone;
         draft.repeat_start_on = repeat_start_on;
+        draft.schedule_input = crate::schedule_input::format_schedule_input(
+            &draft.available_at,
+            &draft.due_on,
+            &draft.repeat_rule,
+            &draft.repeat_at,
+            &draft.repeat_due,
+            &draft.repeat_start_on,
+        );
+        true
+    }
+
+    pub(crate) fn set_add_task_schedule_expanded(&mut self, expanded: bool) -> bool {
+        let Some(draft) = self.flow.as_mut() else {
+            return false;
+        };
+        draft.schedule_expanded = expanded;
         true
     }
 

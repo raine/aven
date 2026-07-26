@@ -18,6 +18,7 @@ mod operations;
 mod projects;
 mod recurrence_input;
 mod render;
+mod schedule_input;
 mod signals;
 mod sync;
 mod task_intake;

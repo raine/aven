@@ -11,9 +11,12 @@ use super::picker::{
     handle_picker_key, normalize_picker_scroll, normalize_picker_selection, picker_submit_outcome,
     visible_picker_indices,
 };
+#[cfg(test)]
+use super::state::ScheduleEditorMode;
 use super::state::{
     AddTaskMode, ConfirmState, HeaderMenuState, MultilineInputMode, OrderMenuState, OverlayOutcome,
-    OverlayState, OverlaySubmit, PickerMode, PickerState, TagComboboxState, TextPanelState,
+    OverlayState, OverlaySubmit, PickerMode, PickerState, ScheduleEditorField, ScheduleEditorState,
+    TagComboboxState, TextPanelState,
 };
 use super::tag_combobox::{
     handle_tag_combobox_key, normalize_tag_combobox_highlight, tag_combobox_matches,
@@ -35,7 +38,20 @@ pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) ->
             OverlayState::Command { state }
         }
         OverlayState::AddTask(mut state) => {
+            if let AddTaskMode::Schedule(editor) = &mut state.mode {
+                if let Some(input) = schedule_editor_input_mut(editor) {
+                    input.insert_paste(text);
+                    editor.validation_requested = false;
+                    editor.refresh();
+                }
+                return OverlayState::AddTask(state);
+            }
             match state.focus {
+                AddTaskStep::Schedule if state.template_schedule.is_none() => {
+                    state.schedule_input.insert_paste(text);
+                    state.schedule_validation_requested = false;
+                    state.apply_schedule_input();
+                }
                 AddTaskStep::Title => state.title.insert_paste(text),
                 AddTaskStep::AvailableAt => state.available_at.insert_paste(text),
                 AddTaskStep::Due => state.due_on.insert_paste(text),
@@ -82,6 +98,17 @@ pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) ->
     }
 }
 
+fn schedule_editor_input_mut(editor: &mut ScheduleEditorState) -> Option<&mut super::LineEdit> {
+    match editor.focus {
+        ScheduleEditorField::Available => Some(&mut editor.available_at),
+        ScheduleEditorField::Due => Some(&mut editor.due_on),
+        ScheduleEditorField::Repeat if !editor.template_locked => Some(&mut editor.repeat_rule),
+        ScheduleEditorField::Time => Some(&mut editor.repeat_at),
+        ScheduleEditorField::Starts if !editor.template_locked => Some(&mut editor.repeat_start_on),
+        _ => None,
+    }
+}
+
 pub(crate) fn handle_generic_overlay_mouse(
     overlay: OverlayState,
     mouse: MouseEvent,
@@ -104,6 +131,63 @@ pub(crate) fn handle_generic_overlay_key(
     match overlay {
         OverlayState::AddTask(mut state) => {
             match std::mem::replace(&mut state.mode, AddTaskMode::Compose) {
+                AddTaskMode::Schedule(mut editor) => {
+                    match key.code {
+                        KeyCode::Esc => {}
+                        KeyCode::Tab | KeyCode::Down => {
+                            editor.validate_current_field();
+                            editor.focus_next(false);
+                            state.mode = AddTaskMode::Schedule(editor);
+                        }
+                        KeyCode::BackTab | KeyCode::Up => {
+                            editor.validate_current_field();
+                            editor.focus_next(true);
+                            state.mode = AddTaskMode::Schedule(editor);
+                        }
+                        KeyCode::Left | KeyCode::Right
+                            if editor.focus == ScheduleEditorField::Mode =>
+                        {
+                            editor.cycle_mode(key.code == KeyCode::Left);
+                            state.mode = AddTaskMode::Schedule(editor);
+                        }
+                        KeyCode::Left | KeyCode::Right
+                            if editor.focus == ScheduleEditorField::DuePolicy =>
+                        {
+                            editor.repeat_due = if editor.repeat_due == "same-day" {
+                                "none".to_string()
+                            } else {
+                                "same-day".to_string()
+                            };
+                            editor.refresh();
+                            state.mode = AddTaskMode::Schedule(editor);
+                        }
+                        KeyCode::Enter | KeyCode::Char('s')
+                            if key.code == KeyCode::Enter
+                                || key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            editor.validate();
+                            if editor.error.is_none() {
+                                state.apply_schedule_editor(editor);
+                            } else {
+                                state.mode = AddTaskMode::Schedule(editor);
+                            }
+                        }
+                        _ => {
+                            if let Some(input) = schedule_editor_input_mut(&mut editor) {
+                                input.handle_key(key);
+                            }
+                            if matches!(
+                                key.code,
+                                KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete
+                            ) {
+                                editor.validation_requested = false;
+                            }
+                            editor.refresh();
+                            state.mode = AddTaskMode::Schedule(editor);
+                        }
+                    }
+                    return OverlayOutcome::None(OverlayState::AddTask(state));
+                }
                 AddTaskMode::Picker {
                     field,
                     state: picker,
@@ -199,6 +283,10 @@ pub(crate) fn handle_generic_overlay_key(
                 }
                 KeyCode::Esc => OverlayOutcome::Cancelled,
                 KeyCode::Tab | KeyCode::BackTab => {
+                    if state.focus == AddTaskStep::Schedule {
+                        state.schedule_validation_requested = true;
+                        state.canonicalize_schedule_input();
+                    }
                     state.focus_next(key.code == KeyCode::BackTab);
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
@@ -219,15 +307,18 @@ pub(crate) fn handle_generic_overlay_key(
                     }
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
-                KeyCode::Left if state.focus.is_metadata() => {
+                KeyCode::Left if state.focus.is_metadata() && !state.focus.is_inline_text() => {
                     state.focus_metadata_next(true);
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
-                KeyCode::Right if state.focus.is_metadata() => {
+                KeyCode::Right if state.focus.is_metadata() && !state.focus.is_inline_text() => {
                     state.focus_metadata_next(false);
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
                 KeyCode::Down if state.focus.is_metadata() => {
+                    if state.focus == AddTaskStep::Schedule {
+                        state.schedule_validation_requested = true;
+                    }
                     state.focus = if state.attachments.is_empty() {
                         AddTaskStep::Title
                     } else {
@@ -261,10 +352,6 @@ pub(crate) fn handle_generic_overlay_key(
                     state.focus = AddTaskStep::Title;
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
-                KeyCode::F(2) => {
-                    state.focus = AddTaskStep::RepeatRule;
-                    OverlayOutcome::None(OverlayState::AddTask(state))
-                }
                 KeyCode::F(1) => {
                     state.mode = AddTaskMode::Help { scroll: 0 };
                     OverlayOutcome::None(OverlayState::AddTask(state))
@@ -286,6 +373,16 @@ pub(crate) fn handle_generic_overlay_key(
                 }
                 _ => {
                     match state.focus {
+                        AddTaskStep::Schedule if state.template_schedule.is_none() => {
+                            state.schedule_input.handle_key(key);
+                            if matches!(
+                                key.code,
+                                KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete
+                            ) {
+                                state.schedule_validation_requested = false;
+                            }
+                            state.apply_schedule_input();
+                        }
                         AddTaskStep::Title => {
                             state.title.handle_key(key);
                             state.title_error = false;
@@ -910,6 +1007,9 @@ mod tests {
             labels: Vec::new(),
             available_at: LineEdit::blank(),
             due_on: LineEdit::blank(),
+            schedule_input: LineEdit::blank(),
+            schedule_error: None,
+            schedule_validation_requested: false,
             attachments: Vec::new(),
             selected_attachment: 0,
             recurrence_series_id: None,
@@ -919,6 +1019,7 @@ mod tests {
             repeat_due: "same-day".to_string(),
             time_zone: "UTC".to_string(),
             repeat_start_on: LineEdit::new("2026-07-20".to_string()),
+            schedule_expanded: false,
             recurrence_preview: Vec::new(),
             recurrence_error: None,
             mode: crate::tui::overlay::AddTaskMode::Compose,
@@ -997,15 +1098,15 @@ mod tests {
     }
 
     #[test]
-    fn add_task_partial_recurrence_keeps_one_off_defaults() {
-        let mut state = add_task_state(AddTaskStep::RepeatRule);
+    fn add_task_partial_recurrence_keeps_composer_schedule_fields_hidden() {
+        let mut state = add_task_state(AddTaskStep::Schedule);
         state.set_repeat_rule("d".to_string());
         assert_eq!(state.status, "inbox");
         assert_eq!(
             state.status_origin,
             crate::tui::authoring::InitialStatusOrigin::UntouchedDefault
         );
-        assert!(state.is_step_editable(AddTaskStep::AvailableAt));
+        assert!(!state.is_step_editable(AddTaskStep::AvailableAt));
         assert!(!state.is_step_editable(AddTaskStep::RepeatAt));
     }
 
@@ -1024,20 +1125,12 @@ mod tests {
     }
 
     #[test]
-    fn add_task_template_navigation_skips_schedule_identity_fields() {
-        let mut state = add_task_state(AddTaskStep::Due);
-        state.template_schedule = Some(aven_core::recurrence::RecurrenceSchedule::new(
-            aven_core::recurrence::RecurrenceRule::daily(),
-            "UTC".parse().unwrap(),
-            chrono::NaiveDate::from_ymd_opt(2026, 7, 20).unwrap(),
-            None,
-            aven_core::recurrence::RecurrenceDuePolicy::SameDay,
-        ));
-        state.focus_metadata_next(false);
-        assert_eq!(state.focus, AddTaskStep::RepeatAt);
-        state.focus = AddTaskStep::RepeatDue;
+    fn add_task_metadata_navigation_treats_schedule_as_one_field() {
+        let mut state = add_task_state(AddTaskStep::Schedule);
         state.focus_metadata_next(false);
         assert_eq!(state.focus, AddTaskStep::Project);
+        state.focus_metadata_next(true);
+        assert_eq!(state.focus, AddTaskStep::Schedule);
     }
 
     #[test]
@@ -1077,9 +1170,7 @@ mod tests {
             AddTaskStep::Status,
             AddTaskStep::Priority,
             AddTaskStep::Labels,
-            AddTaskStep::AvailableAt,
-            AddTaskStep::Due,
-            AddTaskStep::RepeatRule,
+            AddTaskStep::Schedule,
             AddTaskStep::Images,
             AddTaskStep::Title,
             AddTaskStep::Description,
@@ -1107,6 +1198,35 @@ mod tests {
     }
 
     #[test]
+    fn recurring_schedule_tab_order_matches_visual_order() {
+        let mut state = add_task_state(AddTaskStep::Schedule);
+        state.repeat_rule = LineEdit::new("daily".to_string());
+        let editor = state.schedule_editor(ScheduleEditorField::Mode);
+        state.mode = AddTaskMode::Schedule(editor);
+        let mut overlay = OverlayState::AddTask(state);
+
+        for expected in [
+            ScheduleEditorField::Repeat,
+            ScheduleEditorField::Time,
+            ScheduleEditorField::DuePolicy,
+            ScheduleEditorField::Starts,
+            ScheduleEditorField::Mode,
+        ] {
+            let OverlayOutcome::None(next) = handle(key(KeyCode::Tab), overlay) else {
+                panic!("expected composer");
+            };
+            let OverlayState::AddTask(state) = &next else {
+                panic!("expected add task");
+            };
+            let AddTaskMode::Schedule(editor) = &state.mode else {
+                panic!("expected schedule editor");
+            };
+            assert_eq!(editor.focus, expected);
+            overlay = next;
+        }
+    }
+
+    #[test]
     fn add_task_tab_skips_empty_image_field() {
         let state = add_task_state(AddTaskStep::RepeatStartOn);
         let OverlayOutcome::None(OverlayState::AddTask(state)) =
@@ -1120,7 +1240,7 @@ mod tests {
         else {
             panic!("expected add task state");
         };
-        assert_eq!(state.focus, AddTaskStep::RepeatRule);
+        assert_eq!(state.focus, AddTaskStep::Schedule);
     }
 
     #[test]
@@ -1243,14 +1363,127 @@ mod tests {
     }
 
     #[test]
-    fn add_task_f2_focuses_repeat() {
-        let state = add_task_state(AddTaskStep::Title);
-        let OverlayOutcome::None(OverlayState::AddTask(state)) =
-            handle(key(KeyCode::F(2)), OverlayState::AddTask(state))
+    fn add_task_schedule_text_updates_structured_fields() {
+        let state = add_task_state(AddTaskStep::Schedule);
+        let OverlayState::AddTask(state) =
+            handle_generic_overlay_paste("tomorrow", OverlayState::AddTask(state))
         else {
             panic!("expected composer");
         };
-        assert_eq!(state.focus, AddTaskStep::RepeatRule);
+        assert_eq!(state.schedule_input.text, "tomorrow");
+        assert_eq!(state.available_at.text, "tomorrow");
+        assert!(state.schedule_error.is_none());
+    }
+
+    #[test]
+    fn add_task_schedule_text_validates_after_leaving_the_field() {
+        let state = add_task_state(AddTaskStep::Schedule);
+        let OverlayState::AddTask(state) =
+            handle_generic_overlay_paste("d", OverlayState::AddTask(state))
+        else {
+            panic!("expected composer");
+        };
+        assert!(state.schedule_error.is_some());
+        assert!(!state.schedule_validation_requested);
+
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle(key(KeyCode::Tab), OverlayState::AddTask(state))
+        else {
+            panic!("expected composer");
+        };
+        assert!(state.schedule_validation_requested);
+    }
+
+    #[test]
+    fn add_task_schedule_editor_applies_natural_summary() {
+        let mut state = add_task_state(AddTaskStep::Schedule);
+        let mut editor = state.schedule_editor(ScheduleEditorField::Repeat);
+        editor.mode = ScheduleEditorMode::Repeat;
+        editor.focus = ScheduleEditorField::Repeat;
+        editor.repeat_rule = LineEdit::new("daily".to_string());
+        editor.refresh();
+        state.mode = AddTaskMode::Schedule(editor);
+
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle(key(KeyCode::Enter), OverlayState::AddTask(state))
+        else {
+            panic!("expected composer");
+        };
+        assert_eq!(state.mode, AddTaskMode::Compose);
+        assert_eq!(state.repeat_rule.text, "daily");
+        assert!(state.schedule_input.text.starts_with("daily"));
+    }
+
+    #[test]
+    fn schedule_editor_validates_on_tab_and_clears_while_editing() {
+        let mut state = add_task_state(AddTaskStep::Schedule);
+        let mut editor = state.schedule_editor(ScheduleEditorField::Repeat);
+        editor.mode = ScheduleEditorMode::Repeat;
+        editor.refresh();
+        state.mode = AddTaskMode::Schedule(editor);
+        assert!(matches!(
+            &state.mode,
+            AddTaskMode::Schedule(editor) if editor.error.is_none()
+        ));
+
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle(key(KeyCode::Char('d')), OverlayState::AddTask(state))
+        else {
+            panic!("expected composer");
+        };
+        assert!(matches!(
+            &state.mode,
+            AddTaskMode::Schedule(editor) if editor.error.is_none()
+        ));
+
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle(key(KeyCode::Tab), OverlayState::AddTask(state))
+        else {
+            panic!("expected composer");
+        };
+        assert!(matches!(
+            &state.mode,
+            AddTaskMode::Schedule(editor)
+                if editor.focus == ScheduleEditorField::Time && editor.error.is_some()
+        ));
+
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle(key(KeyCode::Char('0')), OverlayState::AddTask(state))
+        else {
+            panic!("expected composer");
+        };
+        assert!(matches!(
+            &state.mode,
+            AddTaskMode::Schedule(editor) if editor.error.is_none()
+        ));
+    }
+
+    #[test]
+    fn schedule_editor_up_and_down_navigate_fields() {
+        let mut state = add_task_state(AddTaskStep::Schedule);
+        let mut editor = state.schedule_editor(ScheduleEditorField::Repeat);
+        editor.mode = ScheduleEditorMode::Repeat;
+        state.mode = AddTaskMode::Schedule(editor);
+
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle(key(KeyCode::Down), OverlayState::AddTask(state))
+        else {
+            panic!("expected composer");
+        };
+        assert!(matches!(
+            &state.mode,
+            AddTaskMode::Schedule(editor) if editor.focus == ScheduleEditorField::Time
+        ));
+
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle(key(KeyCode::Up), OverlayState::AddTask(state))
+        else {
+            panic!("expected composer");
+        };
+        assert!(matches!(
+            &state.mode,
+            AddTaskMode::Schedule(editor) if editor.focus == ScheduleEditorField::Repeat
+        ));
     }
 
     #[test]

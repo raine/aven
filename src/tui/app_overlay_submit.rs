@@ -45,6 +45,14 @@ impl App {
     }
 
     async fn handle_add_task_submit(&mut self, mut state: AddTaskState) -> Result<()> {
+        if let Some(error) = state.schedule_error.clone() {
+            state.focus = AddTaskStep::Schedule;
+            state.schedule_validation_requested = true;
+            state.mode = AddTaskMode::Compose;
+            self.overlay = Some(OverlayState::AddTask(Box::new(state)));
+            self.set_warning(error);
+            return Ok(());
+        }
         let title = state.title.text.trim();
         if title.is_empty() {
             state.focus = AddTaskStep::Title;
@@ -58,11 +66,20 @@ impl App {
         let recurrence_schedule = match state.recurrence_schedule() {
             Ok(value) => value,
             Err(error) => {
-                state.focus = AddTaskStep::RepeatRule;
+                let message = format!("{error:#}");
+                state.focus = if message.contains("invalid-repeat-at") {
+                    AddTaskStep::RepeatAt
+                } else if message.contains("invalid-repeat-due") {
+                    AddTaskStep::RepeatDue
+                } else if message.contains("invalid-recurrence-date") {
+                    AddTaskStep::RepeatStartOn
+                } else {
+                    AddTaskStep::RepeatRule
+                };
                 state.mode = AddTaskMode::Compose;
-                state.recurrence_error = Some(format!("{error:#}"));
+                state.recurrence_error = Some(message.clone());
                 self.overlay = Some(OverlayState::AddTask(Box::new(state)));
-                self.set_warning(format!("{error:#}"));
+                self.set_warning(message);
                 return Ok(());
             }
         };

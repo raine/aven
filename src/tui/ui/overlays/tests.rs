@@ -3,11 +3,11 @@ use crate::query::SyncHistoryStats;
 use crate::tui::authoring::{AddTaskStep, PendingTaskAttachmentSummary};
 use crate::tui::config_overlay::{CONFIG_STATUS_TITLE, DATABASE_STATS_TITLE};
 use crate::tui::overlay::{
-    AddTaskAttachmentsView, AddTaskMode, AddTaskView, ConfirmView, MultilineInputKind,
+    AddTaskAttachmentsView, AddTaskMode, AddTaskView, ConfirmView, LineEdit, MultilineInputKind,
     MultilineInputMode, MultilineInputView, OverlayState, OverlayView, PickerIntent, PickerItem,
-    PickerKind, PickerMode, PickerState, PickerView, SearchKind, SearchResultItem,
-    TagComboboxIntent, TagComboboxKind, TagComboboxView, TextInputKind, TextInputView,
-    TextPanelView,
+    PickerKind, PickerMode, PickerState, PickerView, ScheduleEditorField, ScheduleEditorMode,
+    ScheduleEditorState, SearchKind, SearchResultItem, TagComboboxIntent, TagComboboxKind,
+    TagComboboxView, TextInputKind, TextInputView, TextPanelView,
 };
 use crate::tui::store::{
     DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts, SyncStatusCheck, TuiDatabaseStats,
@@ -158,6 +158,10 @@ fn add_task_view() -> AddTaskView {
         available_at_cursor: 0,
         due_on: String::new(),
         due_on_cursor: 0,
+        schedule_input: String::new(),
+        schedule_input_cursor: 0,
+        schedule_error: None,
+        schedule_validation_requested: false,
         attachments: Box::new(AddTaskAttachmentsView {
             items: Vec::new().into_boxed_slice(),
             selected: 0,
@@ -172,12 +176,31 @@ fn add_task_view() -> AddTaskView {
         time_zone: "UTC".to_string(),
         repeat_start_on: "2026-07-20".to_string(),
         repeat_start_on_cursor: 0,
+        schedule_expanded: false,
         recurrence_preview: Vec::new(),
         recurrence_error: None,
         mode: Box::new(crate::tui::overlay::AddTaskMode::Compose),
         title_error: false,
         status_prefix_active: false,
         priority_prefix_active: false,
+    }
+}
+
+fn schedule_editor(mode: ScheduleEditorMode) -> ScheduleEditorState {
+    ScheduleEditorState {
+        mode,
+        focus: ScheduleEditorField::Mode,
+        available_at: LineEdit::blank(),
+        due_on: LineEdit::blank(),
+        repeat_rule: LineEdit::new("every Friday".to_string()),
+        repeat_at: LineEdit::new("09:00".to_string()),
+        repeat_due: "same-day".to_string(),
+        repeat_start_on: LineEdit::new("2026-08-03".to_string()),
+        time_zone: "UTC".to_string(),
+        template_locked: false,
+        preview: vec!["Fri Aug 7".to_string(), "Fri Aug 14".to_string()],
+        error: None,
+        validation_requested: false,
     }
 }
 
@@ -669,10 +692,10 @@ mod add_task_overlay {
         assert!(rendered.contains("Status: ▣ inbox"));
         assert!(rendered.contains("Priority: ● high"));
         assert!(rendered.contains("Labels: none"));
-        assert!(rendered.contains("Available: Now"));
+        assert!(rendered.contains("Schedule: none"));
         assert!(rendered.contains("Title"));
         assert!(rendered.contains("Description"));
-        assert!(rendered.find("Available: Now").unwrap() < rendered.find("Title").unwrap());
+        assert!(rendered.find("Schedule: none").unwrap() < rendered.find("Title").unwrap());
         assert!(rendered.contains("  ship dialogs"));
         assert!(rendered.contains("Optional details, links, or handoff context..."));
         assert!(rendered.contains("Tab next"));
@@ -681,18 +704,111 @@ mod add_task_overlay {
     }
 
     #[test]
-    fn focused_add_task_availability_teaches_relative_input() {
+    fn schedule_fields_align_with_the_metadata_grid() {
+        let buffer = overlay_buffer(OverlayView::AddTask(AddTaskView {
+            available_at: "tomorrow".to_string(),
+            ..add_task_view()
+        }));
+        let status_row = (0..buffer.area.height)
+            .map(|row| buffer_row(&buffer, row))
+            .find(|row| row.contains("Status:"))
+            .unwrap();
+        let schedule_row = (0..buffer.area.height)
+            .map(|row| buffer_row(&buffer, row))
+            .find(|row| row.contains("Schedule:"))
+            .unwrap();
+
+        let cell_position = |row: &str, label: &str| {
+            let byte = row.find(label).unwrap();
+            unicode_width::UnicodeWidthStr::width(&row[..byte])
+        };
+        assert_eq!(
+            cell_position(&status_row, "Status:"),
+            cell_position(&schedule_row, "Schedule:")
+        );
+    }
+
+    #[test]
+    fn schedule_editor_keeps_the_composer_compact() {
+        let default = overlay_buffer(OverlayView::AddTask(add_task_view()));
+        let configured = overlay_buffer(OverlayView::AddTask(AddTaskView {
+            schedule_input: "every Friday at 09:00, due same day".to_string(),
+            repeat_rule: "every Friday".to_string(),
+            repeat_at: "09:00".to_string(),
+            ..add_task_view()
+        }));
+        let title_row = |buffer: &ratatui::buffer::Buffer| {
+            (0..buffer.area.height)
+                .position(|row| buffer_row(buffer, row).contains("Add task"))
+                .unwrap()
+        };
+
+        assert_eq!(title_row(&default), title_row(&configured));
+    }
+
+    #[test]
+    fn schedule_field_renders_natural_language_settings() {
         let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
-            focus: AddTaskStep::AvailableAt,
+            schedule_input: "available tomorrow, due next Friday".to_string(),
+            available_at: "tomorrow".to_string(),
+            due_on: "next Friday".to_string(),
+            ..add_task_view()
+        }));
+        assert!(rendered.contains("Schedule: available tomorrow, due next Friday"));
+        assert!(!rendered.contains("Available:"));
+    }
+
+    #[test]
+    fn schedule_hit_testing_uses_the_summary_row() {
+        let terminal = ratatui::layout::Rect::new(0, 0, 120, 30);
+        for column in [70, 100] {
+            assert_eq!(
+                add_task_field_at(terminal, false, false, AddTaskScheduleLayout, column, 4,),
+                Some(AddTaskStep::Schedule)
+            );
+        }
+    }
+
+    #[test]
+    fn schedule_focus_footer_explains_direct_input_and_details() {
+        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+            focus: AddTaskStep::Schedule,
             ..add_task_view()
         }));
 
-        assert!(rendered.contains("Available: tomorrow"));
-        let labels = rendered.find("^L Labels:").unwrap();
-        let availability = rendered.find("Available:").unwrap();
-        assert!(availability.saturating_sub(labels) < 40);
-        assert!(rendered.contains("empty/now immediate"));
-        assert!(rendered.contains("F1 formats"));
+        assert!(rendered.contains("type schedule"));
+        assert!(rendered.contains("Enter details"));
+        assert!(rendered.contains("^A available"));
+        assert!(rendered.contains("^U due"));
+    }
+
+    #[test]
+    fn focused_schedule_field_teaches_natural_input() {
+        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+            focus: AddTaskStep::Schedule,
+            ..add_task_view()
+        }));
+
+        assert!(rendered.contains("Schedule: type a schedule or press enter"));
+        assert!(rendered.contains("Enter details"));
+    }
+
+    #[test]
+    fn focused_schedule_field_waits_to_show_validation() {
+        let draft = AddTaskView {
+            focus: AddTaskStep::Schedule,
+            schedule_input: "d".to_string(),
+            schedule_error: Some("invalid schedule".to_string()),
+            ..add_task_view()
+        };
+        let editing = render_overlay_view(OverlayView::AddTask(draft.clone()));
+        let blurred = render_overlay_view(OverlayView::AddTask(AddTaskView {
+            schedule_validation_requested: true,
+            ..draft
+        }));
+
+        assert!(!editing.contains("Schedule: Try tomorrow"));
+        assert!(blurred.contains("Schedule: Try tomorrow"));
     }
 
     #[test]
@@ -746,7 +862,7 @@ mod add_task_overlay {
                 "Status",
                 "Priority",
                 "Labels",
-                "Available",
+                "Schedule",
                 "Title",
                 "Description",
             ] {
@@ -763,6 +879,34 @@ mod add_task_overlay {
                 assert!(
                     rendered.contains(shortcut),
                     "missing {shortcut} at {width}x{height}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn structured_schedule_dialog_stays_coherent_across_responsive_layouts() {
+        for (width, height) in [(120, 30), (80, 24), (42, 30)] {
+            let rendered = render_overlay_view_at(
+                OverlayView::AddTask(AddTaskView {
+                    mode: AddTaskMode::Schedule(schedule_editor(ScheduleEditorMode::Repeat)),
+                    ..add_task_view()
+                }),
+                width,
+                height,
+            );
+            for label in [
+                "Schedule",
+                "Type",
+                "Available",
+                "Due",
+                "Repeat",
+                "Starts",
+                "Next",
+            ] {
+                assert!(
+                    rendered.contains(label),
+                    "missing {label} at {width}x{height}"
                 );
             }
         }
@@ -806,9 +950,10 @@ mod add_task_overlay {
         assert!(help.contains("Composer help"));
         assert!(help.contains("Shift+Tab"));
         assert!(help.contains("create with AI"));
-        assert!(help.contains("next mon at 9am"));
-        assert!(help.contains("Due"));
-        assert!(help.contains("confirm discard"));
+        assert!(help.contains("one-off Available / Due"));
+        assert!(help.contains("Schedule editor"));
+        assert!(help.contains("↑/↓ move"));
+        assert!(help.contains("aven.raine.dev/tui/#capture-tasks"));
     }
 
     #[test]
@@ -845,7 +990,7 @@ mod add_task_overlay {
         let bottom = render_overlay_view_at(
             OverlayView::AddTask(AddTaskView {
                 mode: Box::new(AddTaskMode::Help {
-                    scroll: composer_help_scroll_cap(20, false),
+                    scroll: composer_help_scroll_cap(20, false, false),
                 }),
                 ..add_task_view()
             }),
@@ -872,17 +1017,29 @@ mod add_task_overlay {
 
     #[test]
     fn composer_help_scroll_cap_matches_add_task_layout() {
-        assert_eq!(composer_help_scroll_cap(20, false), 3);
-        assert_eq!(composer_help_scroll_cap(20, true), 1);
-        assert_eq!(composer_help_scroll_cap(30, false), 0);
+        assert_eq!(composer_help_scroll_cap(20, false, false), 9);
+        assert_eq!(composer_help_scroll_cap(20, false, true), 7);
+        assert_eq!(composer_help_scroll_cap(20, true, false), 5);
+        assert_eq!(composer_help_scroll_cap(30, false, false), 4);
     }
 
     #[test]
     fn composer_help_uses_muted_keys_and_dim_descriptions() {
         let line = composer_help_line("Ctrl-a", "jump to availability");
+        let long = composer_help_line("Ctrl-Enter / Ctrl-s", "create from any field");
+        let docs = composer_help_line("Docs", "https://aven.raine.dev/tui/#capture-tasks");
 
         assert_eq!(line.spans[0].style.fg, Some(crate::tui::theme::FG_MUTED));
         assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
+        assert!(long.to_string().contains("Ctrl-s   create"));
+        assert_eq!(docs.spans[0].style.fg, Some(ACCENT));
+        assert_eq!(docs.spans[1].style.fg, Some(ACCENT));
+        assert!(
+            docs.spans[1]
+                .style
+                .add_modifier
+                .contains(ratatui::style::Modifier::UNDERLINED)
+        );
     }
 
     #[test]
@@ -1263,94 +1420,171 @@ mod add_task_overlay {
     }
 
     #[test]
-    fn recurring_composer_renders_plain_fields_and_concise_preview() {
+    fn recurring_schedule_dialog_renders_fields_and_preview() {
         let rendered = render_overlay_view_at(
             OverlayView::AddTask(AddTaskView {
-                repeat_rule: "every Monday and Thursday".to_string(),
-                repeat_at: "09:00".to_string(),
-                repeat_due: "same-day".to_string(),
-                time_zone: "Europe/Stockholm".to_string(),
-                repeat_start_on: "2026-07-20".to_string(),
-                recurrence_preview: vec![
-                    "Mon Jul 20".to_string(),
-                    "Thu Jul 23".to_string(),
-                    "Mon Jul 27".to_string(),
-                ],
+                mode: AddTaskMode::Schedule(schedule_editor(ScheduleEditorMode::Repeat)),
                 ..add_task_view()
             }),
             120,
             30,
         );
         for expected in [
-            "Repeat: every Monday and Thursday",
-            "Available: 09:00",
-            "Due: Same day",
-            "Starts: Jul 20",
-            "Next: Mon Jul 20, Thu Jul 23, Mon Jul 27",
+            " Repeating ",
+            "Repeat    every Friday",
+            "Available 09:00",
+            "Same day - due on the occurrence day",
+            "Starts    2026-08-03",
+            "Next      Fri Aug 7, Fri Aug 14",
         ] {
             assert!(rendered.contains(expected), "missing {expected}");
         }
-        assert!(!rendered.contains("Europe/Stockholm"));
-        assert!(!rendered.contains("Repeat due"));
-        assert!(!rendered.contains("Next slots"));
     }
 
     #[test]
-    fn recurring_composer_keeps_validation_guidance_visible() {
+    fn recurring_schedule_dialog_keeps_validation_guidance_visible() {
+        let mut editor = schedule_editor(ScheduleEditorMode::Repeat);
+        editor.repeat_rule = LineEdit::new("sometimes".to_string());
+        editor.error = Some(crate::recurrence_input::rule_guidance().to_string());
         let rendered = render_overlay_view_at(
             OverlayView::AddTask(AddTaskView {
-                repeat_rule: "sometimes".to_string(),
-                recurrence_error: Some(crate::recurrence_input::rule_guidance().to_string()),
+                mode: AddTaskMode::Schedule(editor),
                 ..add_task_view()
             }),
             100,
             28,
         );
-        assert!(rendered.contains("Repeat:"));
-        assert!(rendered.contains("Try daily"));
+        assert!(rendered.contains("Repeat"));
+        assert!(rendered.contains("Repeat: use daily"));
+        assert!(rendered.contains("←/→ choose"));
+        assert!(rendered.contains("↑/↓ move"));
     }
 
     #[test]
-    fn one_off_composer_omits_recurrence_defaults_and_zone() {
+    fn once_schedule_dialog_explains_available_and_due_inputs() {
+        let mut editor = schedule_editor(ScheduleEditorMode::Once);
+        editor.focus = ScheduleEditorField::Available;
         let rendered = render_overlay_view_at(
             OverlayView::AddTask(AddTaskView {
-                time_zone: "Europe/Stockholm".to_string(),
+                mode: AddTaskMode::Schedule(editor),
+                ..add_task_view()
+            }),
+            100,
+            28,
+        );
+        assert!(rendered.contains(" One-off "));
+        assert!(!rendered.contains(" None "));
+        assert!(rendered.contains("Available tomorrow or next monday at 9am"));
+        assert!(rendered.contains("Due       next friday or none"));
+    }
+
+    #[test]
+    fn once_schedule_dialog_aligns_type_and_field_values() {
+        let buffer = overlay_buffer(OverlayView::AddTask(AddTaskView {
+            mode: AddTaskMode::Schedule(schedule_editor(ScheduleEditorMode::Once)),
+            ..add_task_view()
+        }));
+        let rows = (0..buffer.area.height)
+            .map(|row| buffer_row(&buffer, row))
+            .collect::<Vec<_>>();
+        let type_row_index = rows
+            .iter()
+            .position(|row| row.contains(" One-off "))
+            .unwrap();
+        let type_row = &rows[type_row_index];
+        let available_row = rows
+            .iter()
+            .find(|row| row.contains("tomorrow or next monday at 9am"))
+            .unwrap();
+
+        let type_start = type_row.find(" One-off ").unwrap();
+        let available_start = available_row
+            .find("tomorrow or next monday at 9am")
+            .unwrap();
+        let type_column = type_row[..type_start].chars().count();
+        assert_eq!(
+            type_column,
+            available_row[..available_start].chars().count()
+        );
+        assert_eq!(
+            buffer[(type_column as u16, type_row_index as u16)]
+                .style()
+                .bg,
+            Some(ACCENT)
+        );
+    }
+
+    #[test]
+    fn repeating_schedule_dialog_aligns_field_values() {
+        let buffer = overlay_buffer(OverlayView::AddTask(AddTaskView {
+            mode: AddTaskMode::Schedule(schedule_editor(ScheduleEditorMode::Repeat)),
+            ..add_task_view()
+        }));
+        let rows = (0..buffer.area.height)
+            .map(|row| buffer_row(&buffer, row))
+            .collect::<Vec<_>>();
+        let value_columns = [
+            " One-off ",
+            "every Friday",
+            "09:00",
+            "Same day",
+            "2026-08-03",
+            "Fri Aug 7",
+        ]
+        .map(|value| {
+            let row = rows.iter().find(|row| row.contains(value)).unwrap();
+            let start = row.find(value).unwrap();
+            row[..start].chars().count()
+        });
+
+        assert!(
+            value_columns
+                .iter()
+                .all(|column| *column == value_columns[0])
+        );
+    }
+
+    #[test]
+    fn repeating_schedule_dialog_waits_to_validate_an_empty_rule() {
+        let mut editor = schedule_editor(ScheduleEditorMode::Repeat);
+        editor.repeat_rule = LineEdit::blank();
+        editor.refresh();
+        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+            mode: AddTaskMode::Schedule(editor),
+            ..add_task_view()
+        }));
+
+        assert!(!rendered.contains("Repeat: use daily"));
+    }
+
+    #[test]
+    fn composer_shows_configured_natural_schedule_without_detail_fields() {
+        let rendered = render_overlay_view_at(
+            OverlayView::AddTask(AddTaskView {
+                schedule_input: "daily at 09:00, no due, starting 2026-08-03".to_string(),
+                repeat_rule: "daily".to_string(),
+                repeat_at: "09:00".to_string(),
+                repeat_due: "none".to_string(),
+                repeat_start_on: "2026-08-03".to_string(),
                 ..add_task_view()
             }),
             100,
             30,
         );
-        assert!(rendered.contains("Available: Now"));
-        assert!(rendered.contains("Due: None"));
-        assert!(rendered.contains("F2 repeat"));
-        assert!(!rendered.contains("Repeat:"));
-        assert!(!rendered.contains("Try daily"));
-        assert!(!rendered.contains("Europe/Stockholm"));
-        assert!(!rendered.contains("Start of day"));
-        assert!(!rendered.contains("Same day"));
+        assert!(rendered.contains("Schedule: daily at 09:00, no due, starting 2026-08-03"));
+        assert!(!rendered.contains("Available:"));
+        assert!(!rendered.contains("Starts:"));
     }
 
     #[test]
-    fn focused_repeat_field_uses_concise_inline_placeholder() {
-        let rendered = render_overlay_view_at(
-            OverlayView::AddTask(AddTaskView {
-                focus: AddTaskStep::RepeatRule,
-                ..add_task_view()
-            }),
-            100,
-            30,
-        );
-        assert!(rendered.contains("Repeat: daily or every Friday"));
-        assert!(!rendered.contains("Try daily"));
-    }
-
-    #[test]
-    fn add_task_template_renders_natural_schedule_without_fixed_labels() {
+    fn add_task_template_shows_natural_schedule_summary() {
         let rendered = render_overlay_view_at(
             OverlayView::AddTask(AddTaskView {
                 editing_template: true,
+                schedule_input:
+                    "Every 4 weeks on Monday and Thursday, due same day, starting 2026-07-20"
+                        .to_string(),
                 repeat_rule: "Every 4 weeks on Monday and Thursday".to_string(),
-                time_zone: "Europe/Stockholm".to_string(),
                 repeat_start_on: "2026-07-20".to_string(),
                 ..add_task_view()
             }),
@@ -1358,11 +1592,7 @@ mod add_task_overlay {
             30,
         );
         assert!(rendered.contains("Edit recurring template"));
-        assert!(rendered.contains("Every 4 weeks on Monday and Thursday"));
-        assert!(rendered.contains("Available: Start of day"));
-        assert!(rendered.contains("Due: Same day"));
-        assert!(rendered.contains("Starts: Jul 20"));
-        assert!(!rendered.contains("fixed"));
+        assert!(rendered.contains("Schedule: Every 4 weeks"));
         assert!(!rendered.contains("Europe/Stockholm"));
     }
 

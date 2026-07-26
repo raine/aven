@@ -595,9 +595,168 @@ pub(crate) enum ConfirmIntent {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScheduleEditorMode {
+    Once,
+    Repeat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScheduleEditorField {
+    Mode,
+    Available,
+    Due,
+    Repeat,
+    Time,
+    DuePolicy,
+    Starts,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ScheduleEditorState {
+    pub(crate) mode: ScheduleEditorMode,
+    pub(crate) focus: ScheduleEditorField,
+    pub(crate) available_at: LineEdit,
+    pub(crate) due_on: LineEdit,
+    pub(crate) repeat_rule: LineEdit,
+    pub(crate) repeat_at: LineEdit,
+    pub(crate) repeat_due: String,
+    pub(crate) repeat_start_on: LineEdit,
+    pub(crate) time_zone: String,
+    pub(crate) template_locked: bool,
+    pub(crate) preview: Vec<String>,
+    pub(crate) error: Option<String>,
+    pub(crate) validation_requested: bool,
+}
+
+impl ScheduleEditorState {
+    pub(crate) fn fields(&self) -> &'static [ScheduleEditorField] {
+        match self.mode {
+            ScheduleEditorMode::Once => &[
+                ScheduleEditorField::Mode,
+                ScheduleEditorField::Available,
+                ScheduleEditorField::Due,
+            ],
+            ScheduleEditorMode::Repeat if self.template_locked => &[
+                ScheduleEditorField::Mode,
+                ScheduleEditorField::Time,
+                ScheduleEditorField::DuePolicy,
+            ],
+            ScheduleEditorMode::Repeat => &[
+                ScheduleEditorField::Mode,
+                ScheduleEditorField::Repeat,
+                ScheduleEditorField::Time,
+                ScheduleEditorField::DuePolicy,
+                ScheduleEditorField::Starts,
+            ],
+        }
+    }
+
+    pub(crate) fn focus_next(&mut self, reverse: bool) {
+        let fields = self.fields();
+        let index = fields
+            .iter()
+            .position(|field| *field == self.focus)
+            .unwrap_or(0);
+        self.focus = if reverse {
+            fields[index.checked_sub(1).unwrap_or(fields.len() - 1)]
+        } else {
+            fields[(index + 1) % fields.len()]
+        };
+    }
+
+    pub(crate) fn cycle_mode(&mut self, _reverse: bool) {
+        if self.template_locked {
+            return;
+        }
+        self.mode = match self.mode {
+            ScheduleEditorMode::Once => ScheduleEditorMode::Repeat,
+            ScheduleEditorMode::Repeat => ScheduleEditorMode::Once,
+        };
+        self.focus = ScheduleEditorField::Mode;
+        self.validation_requested = false;
+        self.refresh();
+    }
+
+    pub(crate) fn refresh(&mut self) {
+        self.preview.clear();
+        let error = match self.mode {
+            ScheduleEditorMode::Once => {
+                let available = if self.available_at.text.trim().is_empty() {
+                    Ok(String::new())
+                } else {
+                    crate::time_input::parse_available_at_input(&self.available_at.text)
+                };
+                available
+                    .and_then(|_| {
+                        if self.due_on.text.trim().is_empty() {
+                            Ok(String::new())
+                        } else {
+                            crate::time_input::parse_due_on_input(&self.due_on.text)
+                        }
+                    })
+                    .err()
+                    .map(|error| format!("{error:#}"))
+            }
+            ScheduleEditorMode::Repeat => {
+                let repeat_at = Some(self.repeat_at.text.trim()).filter(|value| !value.is_empty());
+                let starts_on =
+                    Some(self.repeat_start_on.text.trim()).filter(|value| !value.is_empty());
+                match crate::recurrence_input::canonical_rule_input(&self.repeat_rule.text)
+                    .and_then(|rule| {
+                        let Some(rule) = rule else {
+                            anyhow::bail!(crate::recurrence_input::rule_guidance());
+                        };
+                        crate::commands::recurrence_schedule(
+                            &rule,
+                            repeat_at,
+                            Some(&self.repeat_due),
+                            Some(self.time_zone.trim()).filter(|value| !value.is_empty()),
+                            starts_on,
+                        )
+                    }) {
+                    Ok(schedule) => {
+                        let zone = schedule
+                            .timezone
+                            .as_str()
+                            .parse::<chrono_tz::Tz>()
+                            .expect("validated recurrence time zone parses");
+                        let from = schedule
+                            .start_on
+                            .max(Utc::now().with_timezone(&zone).date_naive());
+                        self.preview = schedule
+                            .slots_on_or_after(from)
+                            .take(3)
+                            .map(|date| date.format("%a %b %-d").to_string())
+                            .collect();
+                        None
+                    }
+                    Err(error) => Some(format!("{error:#}")),
+                }
+            }
+        };
+        self.error = self.validation_requested.then_some(error).flatten();
+    }
+
+    pub(crate) fn validate_current_field(&mut self) {
+        if !matches!(
+            self.focus,
+            ScheduleEditorField::Mode | ScheduleEditorField::DuePolicy
+        ) {
+            self.validate();
+        }
+    }
+
+    pub(crate) fn validate(&mut self) {
+        self.validation_requested = true;
+        self.refresh();
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AddTaskMode {
     Compose,
+    Schedule(ScheduleEditorState),
     Picker {
         field: AddTaskStep,
         state: PickerState,
@@ -624,6 +783,9 @@ pub(crate) struct AddTaskState {
     pub(crate) labels: Vec<String>,
     pub(crate) available_at: LineEdit,
     pub(crate) due_on: LineEdit,
+    pub(crate) schedule_input: LineEdit,
+    pub(crate) schedule_error: Option<String>,
+    pub(crate) schedule_validation_requested: bool,
     pub(crate) attachments: Vec<PendingTaskAttachmentSummary>,
     pub(crate) selected_attachment: usize,
     pub(crate) recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
@@ -633,6 +795,7 @@ pub(crate) struct AddTaskState {
     pub(crate) repeat_due: String,
     pub(crate) time_zone: String,
     pub(crate) repeat_start_on: LineEdit,
+    pub(crate) schedule_expanded: bool,
     pub(crate) recurrence_preview: Vec<String>,
     pub(crate) recurrence_error: Option<String>,
     pub(crate) mode: AddTaskMode,
@@ -640,6 +803,116 @@ pub(crate) struct AddTaskState {
 }
 
 impl AddTaskState {
+    pub(crate) fn schedule_editor(&self, focus: ScheduleEditorField) -> ScheduleEditorState {
+        let mode = if self.recurrence_enabled() {
+            ScheduleEditorMode::Repeat
+        } else {
+            ScheduleEditorMode::Once
+        };
+        ScheduleEditorState {
+            mode,
+            focus,
+            available_at: self.available_at.clone(),
+            due_on: self.due_on.clone(),
+            repeat_rule: self.repeat_rule.clone(),
+            repeat_at: self.repeat_at.clone(),
+            repeat_due: self.repeat_due.clone(),
+            repeat_start_on: self.repeat_start_on.clone(),
+            time_zone: self.time_zone.clone(),
+            template_locked: self.template_schedule.is_some(),
+            preview: self.recurrence_preview.clone(),
+            validation_requested: self.recurrence_error.is_some(),
+            error: self.recurrence_error.clone(),
+        }
+    }
+
+    pub(crate) fn apply_schedule_input(&mut self) {
+        match crate::schedule_input::parse_schedule_input(&self.schedule_input.text) {
+            Ok(crate::schedule_input::ParsedScheduleInput::None) => {
+                self.available_at = LineEdit::blank();
+                self.due_on = LineEdit::blank();
+                self.repeat_rule = LineEdit::blank();
+                self.schedule_error = None;
+            }
+            Ok(crate::schedule_input::ParsedScheduleInput::Once {
+                available_at,
+                due_on,
+            }) => {
+                self.available_at = LineEdit::new(available_at);
+                self.due_on = LineEdit::new(due_on);
+                self.repeat_rule = LineEdit::blank();
+                self.schedule_error = None;
+            }
+            Ok(crate::schedule_input::ParsedScheduleInput::Recurring {
+                rule,
+                available_time,
+                due_policy,
+                starts_on,
+            }) if self.template_schedule.is_none() => {
+                self.available_at = LineEdit::blank();
+                self.due_on = LineEdit::blank();
+                self.repeat_rule = LineEdit::new(rule);
+                self.repeat_at = LineEdit::new(available_time);
+                self.repeat_due = due_policy;
+                if !starts_on.is_empty() {
+                    self.repeat_start_on = LineEdit::new(starts_on);
+                }
+                self.schedule_error = None;
+            }
+            Ok(crate::schedule_input::ParsedScheduleInput::Recurring { .. }) => {
+                self.schedule_error =
+                    Some("The repeat rule and start date are fixed for this template".to_string());
+            }
+            Err(error) => self.schedule_error = Some(format!("{error:#}")),
+        }
+        self.refresh_repeat_status();
+        self.refresh_recurrence_preview();
+    }
+
+    pub(crate) fn canonicalize_schedule_input(&mut self) {
+        if self.schedule_error.is_none() {
+            self.schedule_input = LineEdit::new(crate::schedule_input::format_schedule_input(
+                &self.available_at.text,
+                &self.due_on.text,
+                &self.repeat_rule.text,
+                &self.repeat_at.text,
+                &self.repeat_due,
+                &self.repeat_start_on.text,
+            ));
+        }
+    }
+
+    pub(crate) fn apply_schedule_editor(&mut self, editor: ScheduleEditorState) {
+        match editor.mode {
+            ScheduleEditorMode::Once if !editor.template_locked => {
+                self.available_at = editor.available_at;
+                self.due_on = editor.due_on;
+                self.repeat_rule = LineEdit::blank();
+            }
+            ScheduleEditorMode::Repeat => {
+                self.available_at = LineEdit::blank();
+                self.due_on = LineEdit::blank();
+                self.repeat_rule = editor.repeat_rule;
+                self.repeat_at = editor.repeat_at;
+                self.repeat_due = editor.repeat_due;
+                self.repeat_start_on = editor.repeat_start_on;
+                self.time_zone = editor.time_zone;
+            }
+            _ => {}
+        }
+        self.schedule_input = LineEdit::new(crate::schedule_input::format_schedule_input(
+            &self.available_at.text,
+            &self.due_on.text,
+            &self.repeat_rule.text,
+            &self.repeat_at.text,
+            &self.repeat_due,
+            &self.repeat_start_on.text,
+        ));
+        self.schedule_error = None;
+        self.refresh_repeat_status();
+        self.refresh_recurrence_preview();
+    }
+
     pub(crate) fn is_populated(&self) -> bool {
         !self.title.text.trim().is_empty()
             || self
@@ -679,21 +952,13 @@ impl AddTaskState {
     }
 
     pub(crate) fn is_step_editable(&self, step: AddTaskStep) -> bool {
-        if step == AddTaskStep::TimeZone {
+        if step == AddTaskStep::Schedule {
+            return true;
+        }
+        if step.is_schedule_field() {
             return false;
         }
-        if self.recurrence_valid() {
-            if matches!(step, AddTaskStep::AvailableAt | AddTaskStep::Due) {
-                return false;
-            }
-        } else if matches!(
-            step,
-            AddTaskStep::RepeatAt | AddTaskStep::RepeatDue | AddTaskStep::RepeatStartOn
-        ) {
-            return false;
-        }
-        self.template_schedule.is_none()
-            || !matches!(step, AddTaskStep::RepeatRule | AddTaskStep::RepeatStartOn)
+        true
     }
 
     #[cfg(test)]

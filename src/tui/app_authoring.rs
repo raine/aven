@@ -11,7 +11,7 @@ use crate::tui::authoring::{
 use crate::tui::natural_add_runtime::task_intake_log_path;
 use crate::tui::overlay::{
     AddTaskMode, AddTaskState, LineEdit, MultilineInputState, MultilineIntent, OverlayState,
-    PickerIntent, PickerItem, PickerState, TagComboboxIntent,
+    PickerIntent, PickerState, ScheduleEditorField, TagComboboxIntent,
 };
 use crate::tui::platform::edit_text_externally;
 use crate::tui::store::TaskScope;
@@ -77,6 +77,9 @@ impl App {
             labels: context.labels,
             available_at: LineEdit::new(context.available_at),
             due_on: LineEdit::new(context.due_on),
+            schedule_input: LineEdit::new(context.schedule_input),
+            schedule_error: None,
+            schedule_validation_requested: false,
             selected_attachment: attachments.len().saturating_sub(1),
             attachments,
             recurrence_series_id: context.recurrence_series_id,
@@ -86,6 +89,7 @@ impl App {
             repeat_due: context.repeat_due,
             time_zone: context.time_zone,
             repeat_start_on: LineEdit::new(context.repeat_start_on),
+            schedule_expanded: context.schedule_expanded,
             recurrence_preview: Vec::new(),
             recurrence_error: None,
             mode: crate::tui::overlay::AddTaskMode::Compose,
@@ -148,6 +152,10 @@ impl App {
                 state.time_zone.clone(),
                 state.repeat_start_on.text.clone(),
             );
+            self.authoring
+                .apply_add_task_schedule_input(state.schedule_input.text.clone());
+            self.authoring
+                .set_add_task_schedule_expanded(state.schedule_expanded);
         }
         captured
     }
@@ -224,23 +232,13 @@ impl App {
                 };
                 AddTaskMode::Labels(labels)
             }
+            AddTaskStep::Schedule => {
+                let mut editor = state.schedule_editor(ScheduleEditorField::Mode);
+                editor.refresh();
+                AddTaskMode::Schedule(editor)
+            }
             AddTaskStep::RepeatRule => AddTaskMode::Compose,
-            AddTaskStep::RepeatDue => AddTaskMode::Picker {
-                field: state.focus,
-                state: PickerState::new(
-                    PickerIntent::AddTaskStatus,
-                    "Add task: recurrence due policy",
-                    ["same-day", "none"]
-                        .into_iter()
-                        .map(|value| PickerItem {
-                            label: value.to_string(),
-                            value: value.to_string(),
-                            selected: value == state.repeat_due,
-                        })
-                        .collect(),
-                    false,
-                ),
-            },
+
             _ => AddTaskMode::Compose,
         };
         self.overlay = Some(OverlayState::AddTask(state));
