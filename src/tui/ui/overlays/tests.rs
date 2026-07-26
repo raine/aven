@@ -1300,7 +1300,7 @@ mod add_task_overlay {
         let rendered = render_overlay_view_at(
             OverlayView::AddTask(AddTaskView {
                 repeat_rule: "sometimes".to_string(),
-                recurrence_error: Some(crate::tui::recurrence_text::rule_guidance().to_string()),
+                recurrence_error: Some(crate::recurrence_input::rule_guidance().to_string()),
                 ..add_task_view()
             }),
             100,

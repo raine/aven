@@ -3716,7 +3716,7 @@ mod workspace_scoping {
         let draft = intake.await.unwrap().unwrap();
 
         assert_eq!(store.active_workspace.id, other.id);
-        assert_eq!(draft.project.as_deref(), Some("default-only"));
+        assert_eq!(draft.task.project.as_deref(), Some("default-only"));
     }
 
     #[tokio::test]

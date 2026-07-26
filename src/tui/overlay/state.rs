@@ -729,7 +729,7 @@ impl AddTaskState {
     }
 
     pub(crate) fn recurrence_rule_input(&self) -> anyhow::Result<Option<String>> {
-        crate::tui::recurrence_text::canonical_rule_input(&self.repeat_rule.text)
+        crate::recurrence_input::canonical_rule_input(&self.repeat_rule.text)
     }
 
     pub(crate) fn recurrence_schedule(

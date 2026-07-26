@@ -14,6 +14,7 @@ use crate::config::TaskIntakeConfig;
 use crate::operations::TaskDraft;
 use crate::query::ProjectListItem;
 use crate::workspaces::Workspace;
+use aven_core::operations::RecurrenceSeriesDraft;
 
 #[derive(Debug, Deserialize)]
 struct ParsedTaskPayload {
@@ -30,6 +31,36 @@ struct ParsedTaskPayload {
     available_at: Option<String>,
     #[serde(default)]
     due_on: Option<String>,
+    #[serde(default)]
+    repeat: Option<String>,
+    #[serde(default)]
+    repeat_at: Option<String>,
+    #[serde(default)]
+    repeat_due: Option<String>,
+    #[serde(default)]
+    time_zone: Option<String>,
+    #[serde(default)]
+    repeat_start_on: Option<String>,
+}
+
+pub(crate) struct TaskIntakeResult {
+    pub(crate) task: TaskDraft,
+    pub(crate) recurrence: Option<aven_core::recurrence::RecurrenceSchedule>,
+}
+
+impl TaskIntakeResult {
+    pub(crate) fn into_recurrence_draft(self) -> Option<RecurrenceSeriesDraft> {
+        let schedule = self.recurrence?;
+        Some(RecurrenceSeriesDraft {
+            title: self.task.title,
+            description: self.task.description,
+            project: self.task.project.unwrap_or_default(),
+            priority: self.task.priority,
+            initial_status: self.task.status,
+            labels: self.task.labels,
+            schedule,
+        })
+    }
 }
 
 pub(crate) struct TaskIntakeContext {
@@ -147,7 +178,7 @@ fn task_intake_prompt(
 fn default_task_intake_system_prompt() -> &'static str {
     "You turn raw task intake text into one Aven task payload.\n\n\
 Return only JSON with this shape:\n\
-{\"title\":\"task title\",\"description\":\"optional durable context\",\"project\":\"optional project key or name\",\"priority\":\"none|low|medium|high|urgent\",\"labels\":[\"existing-label\"],\"available_at\":\"optional defer expression or empty\",\"due_on\":\"optional deadline expression or empty\"}\n\n\
+{\"title\":\"task title\",\"description\":\"optional durable context\",\"project\":\"optional project key or name\",\"priority\":\"none|low|medium|high|urgent\",\"labels\":[\"existing-label\"],\"available_at\":\"optional one-off defer expression\",\"due_on\":\"optional one-off deadline\",\"repeat\":\"optional recurrence rule\",\"repeat_at\":\"optional HH:MM\",\"repeat_due\":\"same-day|none\",\"time_zone\":\"optional IANA zone\",\"repeat_start_on\":\"optional YYYY-MM-DD\"}\n\n\
 Rules:\n\
 - The title is required and should be concise.\n\
 - Prefer a concise imperative task title that reads like an existing Aven task.\n\
@@ -157,9 +188,14 @@ Rules:\n\
 - Use project only when the text clearly names one of the available projects.\n\
 - When Selected project is not none, use that project regardless of the raw text.\n\
 - Use only existing labels.\n\
-- Set available_at only when the task should not be worked before a stated time. Preserve relative expressions such as tomorrow for Aven to resolve.\n\
-- Set due_on only for a deadline or a day by which work should be complete. Use date expressions without times.\n\
+- Set available_at only when a one-off task should not be worked before a stated time. Preserve relative expressions such as tomorrow for Aven to resolve.\n\
+- Set due_on only for a one-off deadline or day by which work should be complete. Use date expressions without times.\n\
 - Keep available_at and due_on independent when the input states both.\n\
+- Set repeat only for clear recurrence intent such as daily, every Friday, or every Monday and Thursday. Ambiguous timing remains one-off.\n\
+- Use natural repeat rules such as daily, weekdays, monthly, fortnightly, every Friday, every 3 weeks, or every 4 weeks on Monday and Thursday.\n\
+- For recurrence, omit available_at and due_on. Set repeat_at only for a stated recurring availability time, repeat_due only for an explicit same-day or no-due policy, time_zone only for an explicit IANA zone, and repeat_start_on only for an explicit YYYY-MM-DD start date.\n\
+- Recurrence defaults are no availability time, same-day due, the local time zone, and today in that zone.\n\
+- Omit optional fields when they do not apply.\n\
 - Put durable context in description when helpful.\n\n\
 Use only these priorities: {priorities}.\n\n\
 Selected project: {selected_project}\n\n\
@@ -207,12 +243,12 @@ fn task_intake_labels_prompt(context: &TaskIntakeContext) -> String {
     }
 }
 
-pub(crate) async fn parsed_output_to_draft_with_database(
+pub(crate) async fn parsed_output_to_result_with_database(
     database: &Database,
     context: &TaskIntakeContext,
     output: &str,
     source: TaskSource,
-) -> Result<TaskDraft> {
+) -> Result<TaskIntakeResult> {
     let json = extract_json(output).context("error task-intake-json-missing")?;
     let parsed: ParsedTaskPayload =
         serde_json::from_str(json).context("error task-intake-json-invalid")?;
@@ -242,6 +278,41 @@ pub(crate) async fn parsed_output_to_draft_with_database(
     let labels = database
         .resolve_labels(&context.workspace_id, &parsed.labels)
         .await?;
+    let repeat = optional_text(parsed.repeat.as_deref());
+    let recurrence_options = [
+        optional_text(parsed.repeat_at.as_deref()),
+        optional_text(parsed.repeat_due.as_deref()),
+        optional_text(parsed.time_zone.as_deref()),
+        optional_text(parsed.repeat_start_on.as_deref()),
+    ];
+    if repeat.is_none() && recurrence_options.iter().any(Option::is_some) {
+        bail!(
+            "error task-intake-recurrence-rule-required hint=\"set repeat when recurrence scheduling fields are present\""
+        );
+    }
+    let recurrence = repeat
+        .map(|repeat| {
+            let rule = crate::recurrence_input::canonical_rule_input(repeat)?;
+            let Some(rule) = rule else {
+                if recurrence_options.iter().any(Option::is_some) {
+                    bail!(
+                        "error task-intake-recurrence-rule-required hint=\"set repeat to a recurrence rule when recurrence scheduling fields are present\""
+                    );
+                }
+                return Ok(None);
+            };
+            crate::commands::recurrence_schedule(
+                &rule,
+                recurrence_options[0],
+                recurrence_options[1],
+                recurrence_options[2],
+                recurrence_options[3],
+            )
+            .map(Some)
+        })
+        .transpose()
+        .context("error task-intake-recurrence-invalid")?
+        .flatten();
     let description = parsed.description.trim().to_string();
     let available_at = parsed
         .available_at
@@ -257,18 +328,35 @@ pub(crate) async fn parsed_output_to_draft_with_database(
         .filter(|value| !value.is_empty())
         .map(crate::time_input::parse_due_on_input)
         .transpose()?;
-    Ok(TaskDraft {
-        title: title.to_string(),
-        description,
-        project,
-        status: "inbox".to_string(),
-        priority,
-        source,
-        labels,
-        available_at,
-        due_on,
-        is_epic: false,
+    if recurrence.is_some() && (available_at.is_some() || due_on.is_some()) {
+        bail!(
+            "error task-intake-recurrence-absolute-time-conflict hint=\"use repeat_at and repeat_due for recurring tasks, not available_at or due_on\""
+        );
+    }
+    let status = if recurrence.is_some() {
+        "todo"
+    } else {
+        "inbox"
+    };
+    Ok(TaskIntakeResult {
+        task: TaskDraft {
+            title: title.to_string(),
+            description,
+            project,
+            status: status.to_string(),
+            priority,
+            source,
+            labels,
+            available_at,
+            due_on,
+            is_epic: false,
+        },
+        recurrence,
     })
+}
+
+fn optional_text(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 fn extract_json(output: &str) -> Option<&str> {

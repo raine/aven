@@ -1198,6 +1198,13 @@ async fn add_real_attachment(
     outcome.outcome.attachment.attachment_id
 }
 
+fn test_task_intake_result(title: &str) -> crate::task_intake::TaskIntakeResult {
+    crate::task_intake::TaskIntakeResult {
+        task: test_task_draft(title),
+        recurrence: None,
+    }
+}
+
 fn test_task_draft(title: &str) -> TaskDraft {
     TaskDraft {
         title: title.to_string(),
@@ -6440,7 +6447,7 @@ mod authoring {
         let mut app = test_app().await;
         let handle = tokio::spawn(async {
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            Ok(test_task_draft("pending task"))
+            Ok(test_task_intake_result("pending task"))
         });
         app.notification = Some(Notification::loading("adding task with LLM"));
         app.intake.start_handle(
@@ -6458,7 +6465,9 @@ mod authoring {
     async fn canceling_authoring_aborts_pending_task_intake() {
         let mut app = test_app().await;
         app.intake.start_handle(
-            tokio::spawn(async { std::future::pending::<Result<TaskDraft>>().await }),
+            tokio::spawn(async {
+                std::future::pending::<Result<crate::task_intake::TaskIntakeResult>>().await
+            }),
             NaturalRetry::Dialog,
             "pending task".to_string(),
             false,
@@ -6473,7 +6482,7 @@ mod authoring {
     async fn finished_task_intake_poll_requests_redraw() {
         let mut app = test_app().await;
         app.authoring.begin_add_task(None, None);
-        let handle = tokio::spawn(async { Ok(test_task_draft("ready task")) });
+        let handle = tokio::spawn(async { Ok(test_task_intake_result("ready task")) });
         app.notification = Some(Notification::loading("adding task with LLM"));
         app.intake.start_handle(
             handle,

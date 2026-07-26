@@ -261,7 +261,7 @@ impl AuthoringState {
         project: String,
     ) {
         let series = &detail.series;
-        let repeat_rule = crate::tui::recurrence_text::natural_rule_label(series.rule);
+        let repeat_rule = crate::recurrence_input::natural_rule_label(series.rule);
         let template_schedule = aven_core::recurrence::RecurrenceSchedule::new(
             series.rule.clone(),
             series.timezone.clone(),
@@ -543,6 +543,35 @@ impl AuthoringState {
         Some(draft.priority.clone())
     }
 
+    pub(crate) fn apply_task_intake_result(
+        &mut self,
+        intake: crate::task_intake::TaskIntakeResult,
+    ) -> bool {
+        let recurrence = intake.recurrence.clone();
+        if !self.apply_add_task_draft(intake.task) {
+            return false;
+        }
+        let Some(schedule) = recurrence else {
+            return true;
+        };
+        self.capture_add_task_status("todo".to_string(), InitialStatusOrigin::RecurrenceDefault);
+        self.apply_add_task_recurrence(
+            None,
+            None,
+            crate::recurrence_input::natural_rule_label(schedule.rule),
+            schedule
+                .available_local_time
+                .map(|value| value.format("%H:%M").to_string())
+                .unwrap_or_default(),
+            match schedule.due_policy {
+                aven_core::recurrence::RecurrenceDuePolicy::SameDay => "same-day".to_string(),
+                aven_core::recurrence::RecurrenceDuePolicy::None => "none".to_string(),
+            },
+            schedule.timezone.to_string(),
+            schedule.start_on.to_string(),
+        )
+    }
+
     pub(crate) fn apply_add_task_draft(&mut self, task: TaskDraft) -> bool {
         let Some(draft) = self.flow.as_mut() else {
             return false;
@@ -754,6 +783,55 @@ mod tests {
             state.submit_add_task(),
             AddTaskTitleSubmit::Create(create) if create.draft.project.is_none()
         ));
+    }
+
+    #[test]
+    fn parsed_recurrence_populates_add_task_review_fields() {
+        let mut state = AuthoringState::default();
+        state.begin_add_task(None, Some("app".to_string()));
+        let schedule = aven_core::recurrence::RecurrenceSchedule::new(
+            aven_core::recurrence::RecurrenceRule::weekly_on([
+                chrono::Weekday::Mon,
+                chrono::Weekday::Thu,
+            ])
+            .unwrap(),
+            "Europe/Stockholm".parse().unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2026, 8, 3).unwrap(),
+            chrono::NaiveTime::from_hms_opt(9, 30, 0),
+            aven_core::recurrence::RecurrenceDuePolicy::None,
+        );
+
+        assert!(
+            state.apply_task_intake_result(crate::task_intake::TaskIntakeResult {
+                task: TaskDraft {
+                    title: "Review metrics".to_string(),
+                    description: String::new(),
+                    project: Some("app".to_string()),
+                    status: "todo".to_string(),
+                    priority: "high".to_string(),
+                    labels: vec!["ops".to_string()],
+                    available_at: None,
+                    due_on: None,
+                    is_epic: false,
+                },
+                recurrence: Some(schedule),
+            })
+        );
+
+        let context = state.add_task_context().unwrap();
+        assert_eq!(context.title, "Review metrics");
+        assert_eq!(context.status, "todo");
+        assert_eq!(
+            context.status_origin,
+            InitialStatusOrigin::RecurrenceDefault
+        );
+        assert_eq!(context.repeat_rule, "Every Monday and Thursday");
+        assert_eq!(context.repeat_at, "09:30");
+        assert_eq!(context.repeat_due, "none");
+        assert_eq!(context.time_zone, "Europe/Stockholm");
+        assert_eq!(context.repeat_start_on, "2026-08-03");
+        assert!(context.available_at.is_empty());
+        assert!(context.due_on.is_empty());
     }
 
     #[test]

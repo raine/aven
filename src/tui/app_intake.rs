@@ -5,7 +5,7 @@ use tokio::task::JoinHandle;
 
 use crate::config::AppConfig;
 use crate::ids::WorkspaceId;
-use crate::operations::TaskDraft;
+use crate::task_intake::TaskIntakeResult;
 use crate::tui::natural_add_runtime::spawn_add_task_only_natural;
 use crate::tui::store::TuiStore;
 
@@ -16,14 +16,14 @@ pub(super) enum NaturalRetry {
 }
 
 struct PendingTaskIntake {
-    handle: JoinHandle<Result<TaskDraft>>,
+    handle: JoinHandle<Result<TaskIntakeResult>>,
     retry: NaturalRetry,
     value: String,
     create_on_success: bool,
 }
 
 struct ReadyTaskIntake {
-    outcome: Result<TaskDraft>,
+    outcome: Result<TaskIntakeResult>,
     retry: NaturalRetry,
     value: String,
     create_on_success: bool,
@@ -32,7 +32,7 @@ struct ReadyTaskIntake {
 enum IntakeState {
     Idle,
     Pending(PendingTaskIntake),
-    Ready(ReadyTaskIntake),
+    Ready(Box<ReadyTaskIntake>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,7 +56,7 @@ pub(super) enum IntakePoll {
 }
 
 pub(super) struct IntakeCompletion {
-    pub(super) outcome: Result<TaskDraft>,
+    pub(super) outcome: Result<TaskIntakeResult>,
     pub(super) retry: NaturalRetry,
     pub(super) value: String,
     pub(super) create_on_success: bool,
@@ -109,7 +109,7 @@ impl IntakeController {
 
     fn start_worker(
         &mut self,
-        handle: JoinHandle<Result<TaskDraft>>,
+        handle: JoinHandle<Result<TaskIntakeResult>>,
         retry: NaturalRetry,
         value: String,
         create_on_success: bool,
@@ -126,7 +126,7 @@ impl IntakeController {
     #[cfg(test)]
     pub(super) fn start_handle(
         &mut self,
-        handle: JoinHandle<Result<TaskDraft>>,
+        handle: JoinHandle<Result<TaskIntakeResult>>,
         retry: NaturalRetry,
         value: String,
         create_on_success: bool,
@@ -177,12 +177,12 @@ impl IntakeController {
         };
         let outcome = pending.handle.await?;
         let failed = outcome.is_err();
-        self.state = IntakeState::Ready(ReadyTaskIntake {
+        self.state = IntakeState::Ready(Box::new(ReadyTaskIntake {
             outcome,
             retry: pending.retry,
             value: pending.value,
             create_on_success: pending.create_on_success,
-        });
+        }));
         Ok(IntakePoll::Ready { failed })
     }
 
@@ -246,18 +246,21 @@ mod tests {
         }
     }
 
-    fn draft(title: &str) -> TaskDraft {
-        TaskDraft {
-            title: title.to_string(),
-            description: String::new(),
-            project: None,
-            status: "inbox".to_string(),
-            priority: "none".to_string(),
-            source: crate::choices::TaskSource::Tui,
-            labels: Vec::new(),
-            available_at: None,
-            due_on: None,
-            is_epic: false,
+    fn draft(title: &str) -> TaskIntakeResult {
+        TaskIntakeResult {
+            task: crate::operations::TaskDraft {
+                title: title.to_string(),
+                description: String::new(),
+                project: None,
+                status: "inbox".to_string(),
+                priority: "none".to_string(),
+                source: crate::choices::TaskSource::Tui,
+                labels: Vec::new(),
+                available_at: None,
+                due_on: None,
+                is_epic: false,
+            },
+            recurrence: None,
         }
     }
 
@@ -282,7 +285,7 @@ mod tests {
         let IntakePoll::Completed(completion) = controller.poll().await.unwrap() else {
             panic!("ready intake should complete on the next poll");
         };
-        assert_eq!(completion.outcome.unwrap().title, "ready");
+        assert_eq!(completion.outcome.unwrap().task.title, "ready");
         assert_eq!(completion.retry, NaturalRetry::Dialog);
         assert_eq!(completion.value, "raw input");
         assert!(!completion.create_on_success);
@@ -297,7 +300,7 @@ mod tests {
         controller.start_worker(
             tokio::spawn(async move {
                 let _signal = signal;
-                std::future::pending::<Result<TaskDraft>>().await
+                std::future::pending::<Result<TaskIntakeResult>>().await
             }),
             NaturalRetry::AddTask,
             "first".to_string(),
@@ -330,7 +333,7 @@ mod tests {
         controller.start_worker(
             tokio::spawn(async move {
                 let _signal = signal;
-                std::future::pending::<Result<TaskDraft>>().await
+                std::future::pending::<Result<TaskIntakeResult>>().await
             }),
             NaturalRetry::AddTask,
             "pending".to_string(),

@@ -16,6 +16,7 @@ mod logging;
 mod notification;
 mod operations;
 mod projects;
+mod recurrence_input;
 mod render;
 mod signals;
 mod sync;

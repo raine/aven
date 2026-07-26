@@ -52,7 +52,7 @@ impl TuiStore {
         config: TaskIntakeConfig,
         input: String,
         project: Option<String>,
-    ) -> JoinHandle<Result<TaskDraft>> {
+    ) -> JoinHandle<Result<crate::task_intake::TaskIntakeResult>> {
         let database = self.database.clone();
         let workspace = self.active_workspace.clone();
         tokio::spawn(async move {
@@ -64,7 +64,7 @@ impl TuiStore {
             .await?;
             let output =
                 crate::task_intake::run_task_intake_command(&config, &context, &input).await?;
-            crate::task_intake::parsed_output_to_draft_with_database(
+            crate::task_intake::parsed_output_to_result_with_database(
                 &database,
                 &context,
                 &output,

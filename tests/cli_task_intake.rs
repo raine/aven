@@ -2,7 +2,7 @@ mod common;
 
 use std::fs;
 
-use common::{TestEnv, contains_all, extract_ref, ok};
+use common::{TestEnv, contains_all, extract_ref, fail, ok};
 
 #[test]
 fn add_assigns_cli_source() {
@@ -262,6 +262,150 @@ agent:
     let created = ok(env.aven_config(["--workspace", "client", "show", &task_ref, "--full"]));
     contains_all(&created, &["title=\"fix undoable sync\""]);
     assert_eq!(pending_undo_count(&db, &client_workspace_id), 1);
+}
+
+#[test]
+fn natural_add_creates_recurring_series_and_documents_contract() {
+    let env = TestEnv::new();
+    let db = env.db("natural-recurrence.sqlite");
+    let command = env.path("task-intake-recurrence.sh");
+    let prompt = env.path("recurrence-prompt.txt");
+    fs::write(
+        &command,
+        format!(
+            "#!/bin/sh\ncat >'{}'\nprintf '%s\\n' '{{\"title\":\"Review metrics\",\"description\":\"\",\"project\":\"app\",\"priority\":\"high\",\"labels\":[],\"repeat\":\"every Monday and Thursday\",\"repeat_at\":\"09:30\",\"repeat_due\":\"none\",\"time_zone\":\"Europe/Stockholm\",\"repeat_start_on\":\"2026-08-03\"}}'\n",
+            prompt.display()
+        ),
+    )
+    .unwrap();
+    set_executable(&command);
+    env.write_config(&format!(
+        r#"
+local:
+  db_path: "{}"
+
+agent:
+  task_intake:
+    command: "{}"
+    args: []
+    timeout_seconds: 5
+"#,
+        db.display(),
+        command.display()
+    ));
+    ok(env.aven_config(["project", "create", "app"]));
+
+    let output = ok(env.aven_config([
+        "add",
+        "Review metrics every Monday and Thursday",
+        "--natural",
+    ]));
+    contains_all(&output, &["created RCR-", "status=todo"]);
+    assert_eq!(
+        sqlite_scalar(
+            &db,
+            "SELECT frequency || '|' || interval || '|' || weekdays || '|' || timezone || '|' || start_on || '|' || available_local_time || '|' || due_policy FROM recurrence_series"
+        ),
+        "weekly|1|mon,thu|Europe/Stockholm|2026-08-03|09:30:00|none"
+    );
+
+    let prompt = fs::read_to_string(prompt).unwrap();
+    contains_all(
+        &prompt,
+        &[
+            "daily, every Friday, or every Monday and Thursday",
+            "Ambiguous timing remains one-off",
+            "Recurrence defaults are no availability time, same-day due, the local time zone, and today",
+        ],
+    );
+}
+
+#[test]
+fn internal_natural_add_persists_recurrence_defaults() {
+    let env = TestEnv::new();
+    let db = env.db("natural-recurrence-internal.sqlite");
+    let command = env.path("task-intake-recurrence-internal.sh");
+    fs::write(
+        &command,
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"title\":\"Review metrics\",\"description\":\"\",\"project\":null,\"priority\":\"none\",\"labels\":[],\"repeat\":\"daily\"}'\n",
+    )
+    .unwrap();
+    set_executable(&command);
+    env.write_config(&format!(
+        r#"
+local:
+  db_path: "{}"
+
+agent:
+  task_intake:
+    command: "{}"
+    args: []
+    timeout_seconds: 5
+"#,
+        db.display(),
+        command.display()
+    ));
+    ok(env.aven_config(["list"]));
+    let workspace_id = sqlite_scalar(&db, "SELECT id FROM workspaces LIMIT 1");
+
+    let output = ok(env.aven_config([
+        "internal",
+        "natural-add",
+        "--workspace-id",
+        &workspace_id,
+        "--input",
+        "Review metrics daily",
+    ]));
+    contains_all(&output, &["created ", "status=todo"]);
+    let persisted = sqlite_scalar(
+        &db,
+        "SELECT frequency || '|' || available_local_time || '|' || due_policy || '|' || timezone || '|' || start_on FROM recurrence_series",
+    );
+    let fields = persisted.split('|').collect::<Vec<_>>();
+    assert_eq!(fields[0], "daily");
+    assert_eq!(fields[1], "");
+    assert_eq!(fields[2], "same_day");
+    assert!(!fields[3].is_empty());
+    assert_eq!(fields[4].len(), 10);
+    assert_eq!(
+        sqlite_scalar(&db, "SELECT count(*) FROM recurrence_occurrences"),
+        "1"
+    );
+}
+
+#[test]
+fn invalid_model_recurrence_output_fails_without_creating_task() {
+    let env = TestEnv::new();
+    let db = env.db("natural-recurrence-invalid.sqlite");
+    let command = env.path("task-intake-recurrence-invalid.sh");
+    fs::write(
+        &command,
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"title\":\"Review metrics\",\"description\":\"\",\"project\":null,\"priority\":\"none\",\"labels\":[],\"repeat\":\"whenever convenient\"}'\n",
+    )
+    .unwrap();
+    set_executable(&command);
+    env.write_config(&format!(
+        r#"
+local:
+  db_path: "{}"
+
+agent:
+  task_intake:
+    command: "{}"
+    args: []
+    timeout_seconds: 5
+"#,
+        db.display(),
+        command.display()
+    ));
+
+    let error = fail(env.aven_config(["add", "Review metrics whenever convenient", "--natural"]));
+    contains_all(&error, &["task-intake-recurrence-invalid", "Try daily"]);
+    assert_eq!(sqlite_scalar(&db, "SELECT count(*) FROM tasks"), "0");
+    assert_eq!(
+        sqlite_scalar(&db, "SELECT count(*) FROM recurrence_series"),
+        "0"
+    );
 }
 
 fn workspace_id(db: &std::path::Path, key: &str) -> String {

@@ -412,11 +412,22 @@ impl App {
 
     async fn finish_ready_task_intake(&mut self, ready: IntakeCompletion) -> Result<()> {
         match ready.outcome {
-            Ok(draft) if ready.create_on_success => {
-                self.submit_created_task(draft).await?;
+            Ok(intake) if ready.create_on_success => {
+                if intake.recurrence.is_some() && self.authoring.add_task_has_pending_attachments()
+                {
+                    if self.authoring.apply_task_intake_result(intake) {
+                        self.set_warning(
+                            "recurring tasks cannot include occurrence attachments; review the task",
+                        );
+                        self.begin_add_task_step();
+                    }
+                } else {
+                    self.submit_created_intake(intake).await?;
+                    self.authoring.clear();
+                }
             }
-            Ok(draft) => {
-                if self.authoring.apply_add_task_draft(draft) {
+            Ok(intake) => {
+                if self.authoring.apply_task_intake_result(intake) {
                     self.set_success("parsed task draft, review and save");
                     self.begin_add_task_step();
                 }
@@ -449,6 +460,34 @@ impl App {
                 TaskScope::Project(project) => Some(project.clone()),
                 TaskScope::Workspace => None,
             })
+    }
+
+    async fn submit_created_intake(
+        &mut self,
+        intake: crate::task_intake::TaskIntakeResult,
+    ) -> Result<()> {
+        if intake.recurrence.is_none() {
+            return self.submit_created_task(intake.task).await;
+        }
+        let draft = intake
+            .into_recurrence_draft()
+            .expect("recurring intake has a recurrence schedule");
+        let (message, selected) = self
+            .store
+            .create_recurrence_series(draft, self.list.selected_task())
+            .await?;
+        self.list.select_task(selected);
+        self.preserve_or_restore_sidebar_selection();
+        self.prune_task_marks();
+        if selected.is_none() {
+            self.restore_selection_after_mutation();
+        }
+        self.set_success(message.clone());
+        if self.intake.view().add_task_only {
+            self.intake.set_message(message);
+            self.should_quit = true;
+        }
+        Ok(())
     }
 
     pub(super) async fn submit_created_task(&mut self, draft: TaskDraft) -> Result<()> {

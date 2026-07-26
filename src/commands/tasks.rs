@@ -119,13 +119,36 @@ pub(crate) async fn cmd_add(
             &args.title,
         )
         .await?;
-        crate::task_intake::parsed_output_to_draft_with_database(
+        let intake = crate::task_intake::parsed_output_to_result_with_database(
             database,
             &context,
             &output,
             TaskSource::Cli,
         )
-        .await?
+        .await?;
+        if intake.recurrence.is_some() {
+            let mut recurring = intake
+                .into_recurrence_draft()
+                .expect("recurring intake has a recurrence schedule");
+            if recurring.project.is_empty() {
+                recurring.project = resolve_add_project(database, workspace, None).await?;
+            }
+            let outcome = database
+                .create_recurrence_series(workspace, recurring)
+                .await?;
+            let display_refs = database.display_ref_context(&workspace.id).await?;
+            println!(
+                "created {} occurrence={} slot={} status={} priority={} title={}",
+                outcome.series_ref,
+                display_refs.display_ref(&outcome.task),
+                outcome.occurrence.slot_on,
+                outcome.task.status,
+                outcome.task.priority,
+                quote(&outcome.task.title)
+            );
+            return Ok(());
+        }
+        intake.task
     } else {
         TaskDraft {
             title: args.title,
@@ -208,22 +231,34 @@ pub(crate) async fn cmd_internal_natural_add(
             &args.input,
         )
         .await?;
-        let draft = crate::task_intake::parsed_output_to_draft_with_database(
+        let intake = crate::task_intake::parsed_output_to_result_with_database(
             database,
             &context,
             &output,
             TaskSource::Tui,
         )
         .await?;
+        if intake.recurrence.is_some() {
+            let mut draft = intake
+                .into_recurrence_draft()
+                .expect("recurring intake has a recurrence schedule");
+            if draft.project.is_empty() {
+                draft.project = resolve_add_project(database, &workspace, None).await?;
+            }
+            return Ok(database
+                .create_recurrence_series(&workspace, draft)
+                .await?
+                .task);
+        }
         let undo = if args.tui_undo {
             aven_core::operations::TaskCreationUndo::TuiTask
         } else {
             aven_core::operations::TaskCreationUndo::None
         };
-        let outcome = database
-            .create_task_with_undo(&workspace, draft, undo)
-            .await?;
-        Ok(outcome)
+        Ok(database
+            .create_task_with_undo(&workspace, intake.task, undo)
+            .await?
+            .task)
     }
     .await;
     let outcome = match outcome {
@@ -238,7 +273,7 @@ pub(crate) async fn cmd_internal_natural_add(
             return Err(error);
         }
     };
-    let task = outcome.task;
+    let task = outcome;
     let display_refs = database.display_ref_context(&workspace.id).await?;
     if let Some(tui_pid) = args.tui_pid {
         crate::notification::notify_intake_task_added_if_tui_exited(

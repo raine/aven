@@ -312,7 +312,7 @@ const REPEAT_EXAMPLE: &str = "daily or every Friday";
 
 fn recurrence_active(state: &AddTaskView) -> bool {
     state.editing_template
-        || crate::tui::recurrence_text::canonical_rule_input(&state.repeat_rule)
+        || crate::recurrence_input::canonical_rule_input(&state.repeat_rule)
             .is_ok_and(|rule| rule.is_some())
 }
 

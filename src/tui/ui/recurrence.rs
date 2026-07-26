@@ -128,7 +128,7 @@ fn render_row(
         .as_ref()
         .map(|occurrence| format!("{} {}", occurrence.slot_on, occurrence.task_ref))
         .unwrap_or_else(|| "-".to_string());
-    let schedule = crate::tui::recurrence_text::natural_rule_label(item.series.rule);
+    let schedule = crate::recurrence_input::natural_rule_label(item.series.rule);
     let values = [
         item.series.title.as_str(),
         item.series_ref.as_str(),
@@ -234,7 +234,7 @@ pub(super) fn render_recurrence_detail(
         Line::from(""),
         Line::from(format!(
             "Repeat       {}",
-            crate::tui::recurrence_text::natural_rule_label(detail.series.rule)
+            crate::recurrence_input::natural_rule_label(detail.series.rule)
         )),
         Line::from(format!("Available    {available}")),
         Line::from(format!("Due          {due}")),
