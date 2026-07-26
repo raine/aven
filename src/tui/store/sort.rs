@@ -31,12 +31,20 @@ impl TuiStore {
     }
 
     pub(crate) async fn set_order(&mut self, order: TaskOrder) -> Result<Option<usize>> {
-        self.set_view_order(order);
-        self.refresh(None).await
+        let mut view_state = self.view_state.clone();
+        Self::set_view_order(&mut view_state, order);
+        Ok(self
+            .refresh_with_view_state(view_state, None)
+            .await?
+            .selected)
     }
 
     pub(crate) async fn reverse_sort(&mut self) -> Result<Option<usize>> {
-        self.reverse_view_order();
-        self.refresh(None).await
+        let mut view_state = self.view_state.clone();
+        Self::reverse_view_order(&mut view_state);
+        Ok(self
+            .refresh_with_view_state(view_state, None)
+            .await?
+            .selected)
     }
 }

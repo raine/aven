@@ -44,16 +44,18 @@ impl TuiStore {
             }
             (item.task.id.clone(), item.display_ref.clone())
         };
-        let message = if self.view_state.expanded_epic_ids.contains(&task_id) {
-            self.view_state.expanded_epic_ids.remove(&task_id);
-            self.view_state.collapsed_epic_ids.insert(task_id.clone());
+        let mut view_state = self.view_state.clone();
+        let message = if view_state.expanded_epic_ids.contains(&task_id) {
+            view_state.expanded_epic_ids.remove(&task_id);
+            view_state.collapsed_epic_ids.insert(task_id.clone());
             format!("collapsed epic {display_ref}")
         } else {
-            self.view_state.collapsed_epic_ids.remove(&task_id);
-            self.view_state.expanded_epic_ids.insert(task_id.clone());
+            view_state.collapsed_epic_ids.remove(&task_id);
+            view_state.expanded_epic_ids.insert(task_id.clone());
             format!("expanded epic {display_ref}")
         };
-        self.refresh(Some(&task_id)).await?;
+        self.refresh_with_view_state(view_state, Some(&task_id))
+            .await?;
         let selected = self.tasks.iter().position(|task| task.task.id == task_id);
         Ok(Some(MutationMessage::new(message, selected)))
     }
@@ -150,13 +152,13 @@ impl TuiStore {
                 UndoContext::tui(format!("add {child_ref} to {}", epic.display_ref)),
             )
             .await?;
-        if self.view_state.render_mode() == TaskListRenderMode::Epics {
-            self.view_state.collapsed_epic_ids.remove(&epic.epic_id);
-            self.view_state
-                .expanded_epic_ids
-                .insert(epic.epic_id.clone());
+        let mut view_state = self.view_state.clone();
+        if view_state.render_mode() == TaskListRenderMode::Epics {
+            view_state.collapsed_epic_ids.remove(&epic.epic_id);
+            view_state.expanded_epic_ids.insert(epic.epic_id.clone());
         }
-        self.refresh(Some(&epic.epic_id)).await?;
+        self.refresh_with_view_state(view_state, Some(&epic.epic_id))
+            .await?;
         let selected = self.tasks.iter().position(|item| item.task.id == child_id);
         let live_child = self
             .tasks

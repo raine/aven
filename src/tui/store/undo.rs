@@ -26,22 +26,26 @@ impl TuiStore {
             return Ok(None);
         };
 
+        let mut view_state = self.view_state.clone();
         if let Some(include_deleted) = outcome.include_deleted {
-            self.view_state.filter_modifiers.include_deleted = include_deleted;
+            view_state.filter_modifiers.include_deleted = include_deleted;
         }
         if let Some(project_rename) = &outcome.project_rename
             && self.scope_project() == Some(project_rename.after_key.as_str())
         {
-            self.view_state.scope = TaskScope::Project(project_rename.before_key.clone());
+            view_state.scope = TaskScope::Project(project_rename.before_key.clone());
         }
 
         let selected = if selected.is_some() {
-            self.refresh(None).await.map_err(committed_mutation_error)?;
+            self.refresh_with_view_state(view_state, None)
+                .await
+                .map_err(committed_mutation_error)?;
             self.restored_task_selection_at_index(selected)
         } else {
-            self.refresh(outcome.task_id.as_ref())
+            self.refresh_with_view_state(view_state, outcome.task_id.as_ref())
                 .await
                 .map_err(committed_mutation_error)?
+                .selected
         };
         Ok(Some(MutationMessage::new(
             format!("undid {}", outcome.summary),

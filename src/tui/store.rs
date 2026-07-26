@@ -44,6 +44,7 @@ pub(crate) use types::{DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts};
 use crate::query::{ProjectListItem, SidebarCounts, TaskListItem};
 use crate::workspaces::Workspace;
 
+#[derive(Clone)]
 pub(crate) struct TuiStore {
     database: Database,
     pub(crate) tasks: Vec<TaskListItem>,
@@ -61,7 +62,13 @@ pub(crate) struct TuiStore {
     pub(crate) db_stats: TuiDatabaseStats,
     pub(crate) last_refresh: Instant,
     #[cfg(test)]
-    fail_next_refresh: bool,
+    fail_next_refresh: Option<RefreshFailureStage>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RefreshFailureStage {
+    Projects,
+    Tasks,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,7 +105,7 @@ impl TuiStore {
             db_stats: TuiDatabaseStats::default(),
             last_refresh: Instant::now(),
             #[cfg(test)]
-            fail_next_refresh: false,
+            fail_next_refresh: None,
         };
         store.database.clear_pending_tui_undo_entries().await?;
         store.refresh(None).await?;
@@ -107,7 +114,12 @@ impl TuiStore {
 
     #[cfg(test)]
     pub(crate) fn fail_next_refresh(&mut self) {
-        self.fail_next_refresh = true;
+        self.fail_next_refresh_at(RefreshFailureStage::Projects);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_refresh_at(&mut self, stage: RefreshFailureStage) {
+        self.fail_next_refresh = Some(stage);
     }
 
     pub(crate) async fn load_task_item(
@@ -170,12 +182,60 @@ impl TuiStore {
         &mut self,
         selected_id: Option<&crate::ids::TaskId>,
     ) -> Result<ScopeRefreshResult> {
-        #[cfg(test)]
-        if std::mem::take(&mut self.fail_next_refresh) {
-            anyhow::bail!("injected refresh failure");
+        self.refresh_replacement(selected_id, None, None).await
+    }
+
+    pub(super) async fn refresh_with_view_state(
+        &mut self,
+        view_state: TaskViewState,
+        selected_id: Option<&crate::ids::TaskId>,
+    ) -> Result<ScopeRefreshResult> {
+        self.refresh_replacement(selected_id, Some(view_state), None)
+            .await
+    }
+
+    pub(super) async fn refresh_with_workspace_and_view_state(
+        &mut self,
+        active_workspace: Workspace,
+        view_state: TaskViewState,
+    ) -> Result<ScopeRefreshResult> {
+        self.refresh_replacement(None, Some(view_state), Some(active_workspace))
+            .await
+    }
+
+    async fn refresh_replacement(
+        &mut self,
+        selected_id: Option<&crate::ids::TaskId>,
+        view_state: Option<TaskViewState>,
+        active_workspace: Option<Workspace>,
+    ) -> Result<ScopeRefreshResult> {
+        let mut replacement = self.clone();
+        if let Some(active_workspace) = active_workspace {
+            replacement.active_workspace = active_workspace;
         }
+        if let Some(view_state) = view_state {
+            replacement.view_state = view_state;
+        }
+        #[cfg(test)]
+        {
+            replacement.fail_next_refresh = self.fail_next_refresh.take();
+        }
+        let result = replacement.refresh_in_place(selected_id).await?;
+        #[cfg(test)]
+        {
+            replacement.fail_next_refresh = None;
+        }
+        *self = replacement;
+        Ok(result)
+    }
+
+    async fn refresh_in_place(
+        &mut self,
+        selected_id: Option<&crate::ids::TaskId>,
+    ) -> Result<ScopeRefreshResult> {
         let workspace_id = self.active_workspace.id.clone();
         self.workspaces = self.database.list_workspaces().await?;
+        self.inject_refresh_failure(RefreshFailureStage::Projects)?;
         self.projects = self.database.list_project_items(&workspace_id).await?;
         self.labels = self.database.list_labels(&workspace_id, None).await?;
         let fallback_scope = self.ensure_valid_scope();
@@ -188,6 +248,7 @@ impl TuiStore {
             .database
             .list_recent_actions(&workspace_id, project_scope.as_deref())
             .await?;
+        self.inject_refresh_failure(RefreshFailureStage::Tasks)?;
         if self.view_state.view == TaskView::RecentActions {
             self.tasks.clear();
         } else {
@@ -213,6 +274,20 @@ impl TuiStore {
             selected: self.restored_task_selection(selected_id),
             fallback_scope,
         })
+    }
+
+    #[cfg(test)]
+    fn inject_refresh_failure(&mut self, stage: RefreshFailureStage) -> Result<()> {
+        if self.fail_next_refresh == Some(stage) {
+            self.fail_next_refresh = None;
+            anyhow::bail!("injected refresh failure at {stage:?}");
+        }
+        Ok(())
+    }
+
+    #[cfg(not(test))]
+    fn inject_refresh_failure(&mut self, _stage: RefreshFailureStage) -> Result<()> {
+        Ok(())
     }
 
     pub(crate) fn scope_project(&self) -> Option<&str> {

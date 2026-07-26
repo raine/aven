@@ -33,10 +33,14 @@ impl TuiStore {
             .delete_project(&self.active_workspace, &project.key)
             .await?;
 
+        let mut view_state = self.view_state.clone();
         if self.scope_project() == Some(outcome.project.key.as_str()) {
-            self.view_state.scope = TaskScope::Workspace;
+            view_state.scope = TaskScope::Workspace;
         }
-        let selected = self.refresh(None).await?;
+        let selected = self
+            .refresh_with_view_state(view_state, None)
+            .await?
+            .selected;
         let mut message = format!("deleted project {}", outcome.project.key);
         if config_mapping {
             message.push_str("; config path mappings were left unchanged");
@@ -67,10 +71,14 @@ impl TuiStore {
             )
             .unwrap_or(false)
         };
+        let mut view_state = self.view_state.clone();
         if self.scope_project() == Some(outcome.previous.key.as_str()) {
-            self.view_state.scope = TaskScope::Project(outcome.project.key.clone());
+            view_state.scope = TaskScope::Project(outcome.project.key.clone());
         }
-        let selected = self.refresh(None).await?;
+        let selected = self
+            .refresh_with_view_state(view_state, None)
+            .await?
+            .selected;
         let mut message = format!(
             "renamed project {} prefix={}",
             outcome.project.key, outcome.project.prefix

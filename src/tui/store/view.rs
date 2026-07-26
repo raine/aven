@@ -58,50 +58,70 @@ impl TuiStore {
     }
 
     pub(crate) async fn show_view(&mut self, view: TaskView) -> Result<Option<usize>> {
-        self.view_state.view = view;
+        let mut view_state = self.view_state.clone();
+        view_state.view = view;
         if view == TaskView::Upcoming {
-            self.view_state.direction = SortDirection::Asc;
+            view_state.direction = SortDirection::Asc;
         }
         if view != TaskView::Search {
-            self.view_state.filter_modifiers.task_ids.clear();
+            view_state.filter_modifiers.task_ids.clear();
         }
-        self.refresh(None).await
+        Ok(self
+            .refresh_with_view_state(view_state, None)
+            .await?
+            .selected)
     }
 
     pub(crate) async fn restore_view_state(
         &mut self,
         view_state: super::TaskViewState,
     ) -> Result<super::ScopeRefreshResult> {
-        self.view_state = view_state;
-        self.refresh_with_scope_fallback(None).await
+        self.refresh_with_view_state(view_state, None).await
     }
 
     pub(crate) async fn show_scope(&mut self, target: TaskScopeTarget) -> Result<Option<usize>> {
-        self.view_state.filter_modifiers.task_ids.clear();
-        self.view_state.scope = match target {
+        let mut view_state = self.view_state.clone();
+        view_state.filter_modifiers.task_ids.clear();
+        view_state.scope = match target {
             TaskScopeTarget::Workspace => TaskScope::Workspace,
             TaskScopeTarget::Project(project) => TaskScope::Project(project),
         };
-        self.refresh(None).await
+        Ok(self
+            .refresh_with_view_state(view_state, None)
+            .await?
+            .selected)
     }
 
     pub(crate) async fn clear_filters(&mut self) -> Result<Option<usize>> {
-        self.view_state.filter_modifiers = TaskFilterModifiers::default();
-        self.refresh(None).await
+        let mut view_state = self.view_state.clone();
+        view_state.filter_modifiers = TaskFilterModifiers::default();
+        Ok(self
+            .refresh_with_view_state(view_state, None)
+            .await?
+            .selected)
     }
 
     pub(crate) async fn filter_label(&mut self, label: String) -> Result<Option<usize>> {
-        self.view_state.filter_modifiers.label = Some(label);
-        self.refresh(None).await
+        let mut view_state = self.view_state.clone();
+        view_state.filter_modifiers.label = Some(label);
+        Ok(self
+            .refresh_with_view_state(view_state, None)
+            .await?
+            .selected)
     }
 
     pub(crate) async fn filter_priority(&mut self, priority: String) -> Result<Option<usize>> {
-        self.view_state.filter_modifiers.priority = Some(priority);
-        self.refresh(None).await
+        let mut view_state = self.view_state.clone();
+        view_state.filter_modifiers.priority = Some(priority);
+        Ok(self
+            .refresh_with_view_state(view_state, None)
+            .await?
+            .selected)
     }
 
     pub(crate) async fn toggle_deleted_filter(&mut self) -> Result<Option<usize>> {
-        let modifiers = &mut self.view_state.filter_modifiers;
+        let mut view_state = self.view_state.clone();
+        let modifiers = &mut view_state.filter_modifiers;
         if modifiers.deleted_only {
             modifiers.deleted_only = false;
             modifiers.include_deleted = false;
@@ -110,7 +130,10 @@ impl TuiStore {
         } else {
             modifiers.include_deleted = true;
         }
-        self.refresh(None).await
+        Ok(self
+            .refresh_with_view_state(view_state, None)
+            .await?
+            .selected)
     }
 
     #[cfg(test)]
@@ -144,9 +167,13 @@ impl TuiStore {
     pub(crate) async fn accept_search(&mut self, input: &str) -> Result<Option<usize>> {
         let text = input.trim();
         if text.is_empty() {
-            self.view_state.filter_modifiers.task_ids.clear();
-            self.view_state.view = TaskView::Queue;
-            return self.refresh(None).await;
+            let mut view_state = self.view_state.clone();
+            view_state.filter_modifiers.task_ids.clear();
+            view_state.view = TaskView::Queue;
+            return Ok(self
+                .refresh_with_view_state(view_state, None)
+                .await?
+                .selected);
         }
         let results = self
             .database
@@ -159,33 +186,37 @@ impl TuiStore {
                 },
             )
             .await?;
-        self.view_state.scope = TaskScope::Workspace;
-        self.view_state.view = TaskView::Search;
-        self.view_state.filter_modifiers = TaskFilterModifiers {
+        let mut view_state = self.view_state.clone();
+        view_state.scope = TaskScope::Workspace;
+        view_state.view = TaskView::Search;
+        view_state.filter_modifiers = TaskFilterModifiers {
             task_ids: results
                 .iter()
                 .map(|result| result.item.task.id.clone())
                 .collect(),
             ..TaskFilterModifiers::default()
         };
-        self.refresh(None).await
+        Ok(self
+            .refresh_with_view_state(view_state, None)
+            .await?
+            .selected)
     }
 
-    pub(crate) fn set_view_order(&mut self, order: TaskOrder) {
-        if self.view_state.view == TaskView::Queue {
-            self.view_state.view = TaskView::Open;
+    pub(super) fn set_view_order(view_state: &mut super::TaskViewState, order: TaskOrder) {
+        if view_state.view == TaskView::Queue {
+            view_state.view = TaskView::Open;
         }
-        self.view_state.order = order;
+        view_state.order = order;
         if order == TaskOrder::Created {
-            self.view_state.direction = SortDirection::Desc;
+            view_state.direction = SortDirection::Desc;
         }
     }
 
-    pub(crate) fn reverse_view_order(&mut self) {
-        if self.view_state.view == TaskView::Queue {
-            self.view_state.view = TaskView::Open;
+    pub(super) fn reverse_view_order(view_state: &mut super::TaskViewState) {
+        if view_state.view == TaskView::Queue {
+            view_state.view = TaskView::Open;
         }
-        self.view_state.direction = self.view_state.direction.toggled();
+        view_state.direction = view_state.direction.toggled();
     }
 
     pub(super) fn restored_task_selection(

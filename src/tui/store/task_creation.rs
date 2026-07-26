@@ -231,11 +231,11 @@ impl TuiStore {
         child_ref: &str,
     ) -> Result<CreatedTaskMessage> {
         let task_id = outcome.task.id.clone();
-        self.view_state.collapsed_epic_ids.remove(&epic.epic_id);
-        self.view_state
-            .expanded_epic_ids
-            .insert(epic.epic_id.clone());
-        self.refresh(Some(&epic.epic_id)).await?;
+        let mut view_state = self.view_state.clone();
+        view_state.collapsed_epic_ids.remove(&epic.epic_id);
+        view_state.expanded_epic_ids.insert(epic.epic_id.clone());
+        self.refresh_with_view_state(view_state, Some(&epic.epic_id))
+            .await?;
         let selected = self.tasks.iter().position(|item| item.task.id == task_id);
         Ok(CreatedTaskMessage {
             message: format!("Added {child_ref} to {}", epic.display_ref),

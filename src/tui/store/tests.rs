@@ -1478,6 +1478,84 @@ mod task_creation_and_updates {
             .unwrap();
         assert_eq!(persisted, "todo");
         assert_eq!(store.tasks[selected].task.status, TaskStatus::Inbox);
+
+        let recovered = store.refresh(Some(&task_id)).await.unwrap();
+        assert_eq!(recovered, Some(selected));
+        assert_eq!(store.tasks[selected].task.status, TaskStatus::Todo);
+    }
+
+    #[tokio::test]
+    async fn late_refresh_failure_preserves_view_and_cached_state() {
+        let mut store = test_store().await;
+        let (task_id, _) = create_selected_task(&mut store, "Late refresh failure").await;
+        let original_view_state = store.view_state.clone();
+        let original_task_ids = store
+            .tasks
+            .iter()
+            .map(|item| item.task.id.clone())
+            .collect::<Vec<_>>();
+        let original_projects = store
+            .projects
+            .iter()
+            .map(|project| project.key.clone())
+            .collect::<Vec<_>>();
+        let original_labels = store.labels.clone();
+        let original_counts = (
+            store.counts.open,
+            store.counts.inbox,
+            store.counts.todo,
+            store.counts.done,
+        );
+        let original_sidebar = store
+            .sidebar_entries
+            .iter()
+            .map(|entry| (entry.label.clone(), entry.count))
+            .collect::<Vec<_>>();
+        store.fail_next_refresh_at(RefreshFailureStage::Tasks);
+
+        let error = store.show_view(TaskView::Todo).await.unwrap_err();
+
+        assert!(error.to_string().contains("Tasks"));
+        assert_eq!(store.view_state, original_view_state);
+        assert_eq!(
+            store
+                .tasks
+                .iter()
+                .map(|item| item.task.id.clone())
+                .collect::<Vec<_>>(),
+            original_task_ids
+        );
+        assert_eq!(store.tasks[0].task.id, task_id);
+        assert_eq!(
+            store
+                .projects
+                .iter()
+                .map(|project| project.key.clone())
+                .collect::<Vec<_>>(),
+            original_projects
+        );
+        assert_eq!(store.labels, original_labels);
+        assert_eq!(
+            (
+                store.counts.open,
+                store.counts.inbox,
+                store.counts.todo,
+                store.counts.done,
+            ),
+            original_counts
+        );
+        assert_eq!(
+            store
+                .sidebar_entries
+                .iter()
+                .map(|entry| (entry.label.clone(), entry.count))
+                .collect::<Vec<_>>(),
+            original_sidebar
+        );
+
+        store.show_view(TaskView::Todo).await.unwrap();
+        assert_eq!(store.view_state.view, TaskView::Todo);
+        assert!(store.tasks.is_empty());
     }
 
     #[tokio::test]
