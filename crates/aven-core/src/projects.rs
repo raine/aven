@@ -3,7 +3,7 @@ use serde_json::json;
 use sqlx::{Row, SqliteConnection};
 use std::path::Path;
 
-use crate::db::{Database, insert_change};
+use crate::db::{Database, begin_immediate, insert_change};
 use crate::ids::{ProjectId, WorkspaceId, now};
 use crate::types::Project;
 use crate::workspaces::Workspace;
@@ -82,14 +82,16 @@ impl Database {
         path: &Path,
     ) -> Result<()> {
         let mut conn = self.acquire().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
         sqlx::query(
             "DELETE FROM project_paths WHERE workspace_id = ? AND project_id = ? AND path = ?",
         )
         .bind(workspace_id)
         .bind(project_id)
         .bind(path.display().to_string())
-        .execute(&mut *conn)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -99,7 +101,11 @@ impl Database {
         project: &str,
     ) -> Result<Project> {
         let mut conn = self.acquire().await?;
-        resolve_or_create_project_in_workspace(&mut conn, workspace_id, project).await
+        let mut tx = begin_immediate(&mut conn).await?;
+        let project =
+            resolve_or_create_project_in_workspace(&mut tx, workspace_id, project).await?;
+        tx.commit().await?;
+        Ok(project)
     }
 
     pub async fn resolve_project_for_stored_value(
@@ -108,7 +114,10 @@ impl Database {
         value: &str,
     ) -> Result<Project> {
         let mut conn = self.acquire().await?;
-        resolve_project_for_stored_value(&mut conn, workspace_id, value).await
+        let mut tx = begin_immediate(&mut conn).await?;
+        let project = resolve_project_for_stored_value(&mut tx, workspace_id, value).await?;
+        tx.commit().await?;
+        Ok(project)
     }
 }
 

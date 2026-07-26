@@ -3,7 +3,7 @@ use anyhow::{Result, bail};
 use serde_json::json;
 use sqlx::{Row, SqliteConnection};
 
-use crate::db::{Database, insert_change};
+use crate::db::{Database, begin_immediate, insert_change};
 use crate::ids::now;
 use crate::projects::normalize_key;
 
@@ -66,12 +66,18 @@ impl Database {
 
     pub async fn create_workspace(&self, name: &str) -> Result<Workspace> {
         let mut conn = self.acquire().await?;
-        create_workspace(&mut conn, name).await
+        let mut tx = begin_immediate(&mut conn).await?;
+        let workspace = create_workspace(&mut tx, name).await?;
+        tx.commit().await?;
+        Ok(workspace)
     }
 
     pub async fn rename_workspace(&self, workspace_ref: &str, new_name: &str) -> Result<Workspace> {
         let mut conn = self.acquire().await?;
-        rename_workspace(&mut conn, workspace_ref, new_name).await
+        let mut tx = begin_immediate(&mut conn).await?;
+        let workspace = rename_workspace(&mut tx, workspace_ref, new_name).await?;
+        tx.commit().await?;
+        Ok(workspace)
     }
 }
 

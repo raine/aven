@@ -328,8 +328,8 @@ pub async fn delete_project_operation(
     workspace: &Workspace,
     project: &str,
 ) -> Result<ProjectDeleteOutcome> {
-    let project = resolve_existing_project_in_workspace(conn, &workspace.id, project).await?;
     let mut tx = begin_immediate(conn).await?;
+    let project = resolve_existing_project_in_workspace(&mut tx, &workspace.id, project).await?;
     let deleted_at = now();
     let task_refs: i64 =
         sqlx::query_scalar("SELECT count(*) FROM tasks WHERE workspace_id = ? AND project_id = ?")
@@ -407,13 +407,14 @@ async fn rename_project_operation_before_commit<T, F>(
 where
     F: FnOnce(&ProjectRenameOutcome) -> Result<T>,
 {
-    let previous = resolve_existing_project_in_workspace(conn, &workspace.id, project).await?;
+    let mut tx = begin_immediate(conn).await?;
+    let previous = resolve_existing_project_in_workspace(&mut tx, &workspace.id, project).await?;
     let new_name = new_name.trim();
     let key = normalize_key(new_name);
     if key.is_empty() {
         bail!("error invalid-project input={new_name:?}");
     }
-    if let Some(existing) = resolve_project_key(conn, &workspace.id, &key).await?
+    if let Some(existing) = resolve_project_key(&mut tx, &workspace.id, &key).await?
         && existing.id != previous.id
     {
         bail!("error project-exists project={key}");
@@ -421,13 +422,14 @@ where
     let prefix = match prefix {
         Some(prefix) => {
             let prefix = normalize_prefix(prefix)?;
-            if project_prefix_exists(conn, &workspace.id, &prefix, Some(&previous.id)).await? {
+            if project_prefix_exists(&mut tx, &workspace.id, &prefix, Some(&previous.id)).await? {
                 bail!("error project-prefix-exists prefix={prefix}");
             }
             prefix
         }
         None => {
-            unique_project_prefix_excluding(conn, &workspace.id, &key, Some(&previous.id)).await?
+            unique_project_prefix_excluding(&mut tx, &workspace.id, &key, Some(&previous.id))
+                .await?
         }
     };
     let changed = previous.key != key || previous.name != new_name || previous.prefix != prefix;
@@ -438,9 +440,9 @@ where
             changed: false,
         };
         let value = before_commit(&outcome)?;
+        tx.commit().await?;
         return Ok((outcome, value));
     }
-    let mut tx = begin_immediate(conn).await?;
     let project = set_project_metadata(
         &mut tx,
         workspace,

@@ -231,6 +231,100 @@ async fn label_and_project_creation_roll_back_when_change_logging_fails() {
 }
 
 #[tokio::test]
+async fn workspace_mutations_roll_back_when_change_logging_fails() {
+    for rename in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("aven.sqlite");
+        let database = Database::open(&path).await.unwrap();
+        if rename {
+            database.create_workspace("Before").await.unwrap();
+        }
+        let mut conn = SqliteConnection::connect_with(
+            &SqliteConnectOptions::from_str(&path.display().to_string()).unwrap(),
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER reject_change_insert BEFORE INSERT ON changes
+             BEGIN SELECT RAISE(FAIL, 'injected change failure'); END",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        let error = if rename {
+            database
+                .rename_workspace("before", "After")
+                .await
+                .unwrap_err()
+        } else {
+            database.create_workspace("Rejected").await.unwrap_err()
+        };
+        assert!(error.to_string().contains("injected change failure"));
+
+        let workspaces = database.list_workspaces().await.unwrap();
+        if rename {
+            let workspace = workspaces
+                .iter()
+                .find(|workspace| workspace.key == "before")
+                .expect("original workspace remains");
+            assert_eq!(workspace.name, "Before");
+            assert!(workspaces.iter().all(|workspace| workspace.key != "after"));
+        } else {
+            assert!(
+                workspaces
+                    .iter()
+                    .all(|workspace| workspace.key != "rejected")
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn resolving_a_missing_project_rolls_back_when_change_logging_fails() {
+    for stored_value in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("aven.sqlite");
+        let database = Database::open(&path).await.unwrap();
+        let workspace = database.list_workspaces().await.unwrap().remove(0);
+        let mut conn = SqliteConnection::connect_with(
+            &SqliteConnectOptions::from_str(&path.display().to_string()).unwrap(),
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER reject_change_insert BEFORE INSERT ON changes
+             BEGIN SELECT RAISE(FAIL, 'injected change failure'); END",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        let error = if stored_value {
+            database
+                .resolve_project_for_stored_value(&workspace.id, "Rejected Project")
+                .await
+                .unwrap_err()
+        } else {
+            database
+                .resolve_or_create_project(&workspace.id, "Rejected Project")
+                .await
+                .unwrap_err()
+        };
+        assert!(error.to_string().contains("injected change failure"));
+
+        let projects = database.list_projects(&workspace.id, None).await.unwrap();
+        assert!(
+            projects
+                .iter()
+                .all(|project| project.key != "rejected-project")
+        );
+    }
+}
+
+#[tokio::test]
 async fn database_task_field_rolls_back_when_change_logging_fails() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("aven.sqlite");
