@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::tui::app::{App, Focus, LastChangeReturnState};
+use crate::tui::app::{App, Focus, LastChangeDetailState, LastChangeReturnState};
 use crate::tui::navigation::{next_index, next_selectable_sidebar};
 use crate::tui::overlay::{OverlayState, PickerIntent, PickerItem};
 use crate::tui::store::{TaskFilterModifiers, TaskScope, TaskView, TaskViewState};
@@ -239,34 +239,15 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn restore_detail_overlay(&mut self, return_to_detail: bool) {
-        let scroll = self.detail.as_ref().map_or(0, |detail| detail.scroll());
-        self.restore_detail_overlay_at_scroll(return_to_detail, scroll);
-    }
-
-    pub(super) fn restore_detail_overlay_at_scroll(&mut self, return_to_detail: bool, scroll: u16) {
-        if return_to_detail
-            && self.detail.is_some()
-            && self
-                .store
-                .selected_task(self.list.selected_task())
-                .is_some()
-        {
-            if let Some(detail) = self.detail.as_mut() {
-                detail.set_scroll(scroll);
-            }
-            self.show_detail(scroll);
-        }
-    }
-
     pub(super) fn cancel_overlay(&mut self) {
         self.pending_shortcut.clear();
         self.authoring.clear();
         self.clear_live_search_preview();
-        self.detail.close();
         self.epic_child_authoring = None;
         let had_overlay = self.overlay.take().is_some();
-        if !had_overlay && self.list.focus() == Focus::Sidebar {
+        if !had_overlay && self.detail.is_some() {
+            self.detail.close();
+        } else if !had_overlay && self.list.focus() == Focus::Sidebar {
             self.list.focus_tasks();
             self.preserve_or_restore_sidebar_selection();
         }
@@ -303,17 +284,11 @@ impl App {
                 .map(|item| item.task.id.clone()),
             selected_index,
             table_offset: self.list.task_offset(),
-            return_to_detail: self.detail.is_some(),
-            detail_scroll: self.detail.as_ref().map_or(0, |detail| detail.scroll()),
-            detail_focus: self
-                .detail
-                .as_ref()
-                .and_then(|detail| detail.focused_target().cloned()),
-            detail_expanded_sections: self
-                .detail
-                .as_ref()
-                .map(|detail| detail.expanded_sections().clone())
-                .unwrap_or_default(),
+            detail: self.detail.as_ref().map(|detail| LastChangeDetailState {
+                scroll: detail.scroll(),
+                focus: detail.focused_target().cloned(),
+                expanded_sections: detail.expanded_sections().clone(),
+            }),
         };
         self.store.view_state = TaskViewState {
             scope: TaskScope::Workspace,
@@ -370,15 +345,14 @@ impl App {
             });
         self.list.select_task(selected);
         self.list.set_task_offset(return_state.table_offset);
-        if return_state.return_to_detail {
-            let mut detail =
-                crate::tui::detail_session::DetailSession::open(return_state.detail_scroll);
+        if let Some(return_detail) = return_state.detail {
+            let mut detail = crate::tui::detail_session::DetailSession::open(return_detail.scroll);
             if let Some(state) = detail.as_mut() {
-                state.set_focused_target(return_state.detail_focus);
-                *state.expanded_sections_mut() = return_state.detail_expanded_sections;
+                state.set_focused_target(return_detail.focus);
+                *state.expanded_sections_mut() = return_detail.expanded_sections;
             }
             self.detail = detail;
-            self.show_detail(return_state.detail_scroll);
+            self.show_detail(return_detail.scroll);
         }
         self.preserve_or_restore_sidebar_selection();
         self.prune_task_marks();

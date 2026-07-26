@@ -4,7 +4,6 @@ use crate::query::TaskListItem;
 use crate::tui::event::{
     Action, CommandContext, ShortcutLookup, resolve_shortcut_for, shortcut_label,
 };
-use crate::tui::overlay::{OverlayOutcome, OverlayState};
 use crate::tui::store::SidebarEntry;
 use crate::tui::ui::{DetailInlineImageContext, detail_scroll_cap_with_images};
 
@@ -37,68 +36,53 @@ pub(crate) fn detail_scroll_with_delta_with_images(
 }
 
 #[cfg(test)]
-pub(crate) fn handle_detail_overlay_key(
+pub(crate) fn handle_detail_scroll_key(
     key: KeyEvent,
-    overlay: OverlayState,
+    scroll: u16,
     terminal_width: u16,
     terminal_height: u16,
     task: Option<&TaskListItem>,
-) -> OverlayOutcome {
-    handle_detail_overlay_key_with_images(key, overlay, terminal_width, terminal_height, task, None)
+) -> u16 {
+    handle_detail_scroll_key_with_images(key, scroll, terminal_width, terminal_height, task, None)
 }
 
-pub(crate) fn handle_detail_overlay_key_with_images(
+pub(crate) fn handle_detail_scroll_key_with_images(
     key: KeyEvent,
-    overlay: OverlayState,
+    scroll: u16,
     terminal_width: u16,
     terminal_height: u16,
     task: Option<&TaskListItem>,
     inline_images: Option<&DetailInlineImageContext>,
-) -> OverlayOutcome {
+) -> u16 {
     let cap = task
         .map(|task| {
             detail_scroll_cap_with_images(task, terminal_width, terminal_height, inline_images)
         })
         .unwrap_or(0);
-    handle_detail_overlay_key_with_cap(key, overlay, terminal_height, cap)
+    handle_detail_scroll_key_with_cap(key, scroll, terminal_height, cap)
 }
 
-pub(crate) fn handle_detail_overlay_key_with_cap(
+pub(crate) fn handle_detail_scroll_key_with_cap(
     key: KeyEvent,
-    overlay: OverlayState,
+    scroll: u16,
     terminal_height: u16,
     cap: u16,
-) -> OverlayOutcome {
-    let OverlayState::Detail { scroll } = overlay else {
-        return OverlayOutcome::None(overlay);
-    };
+) -> u16 {
     let scroll_by = |scroll, delta| scroll_with_delta(scroll, delta, cap);
     let scroll = scroll_by(scroll, 0);
     let page = detail_page_scroll_rows(terminal_height);
     match key.code {
-        KeyCode::Char('j') | KeyCode::Down => OverlayOutcome::None(OverlayState::Detail {
-            scroll: scroll_by(scroll, 1),
-        }),
-        KeyCode::Char('k') | KeyCode::Up => OverlayOutcome::None(OverlayState::Detail {
-            scroll: scroll_by(scroll, -1),
-        }),
+        KeyCode::Char('j') | KeyCode::Down => scroll_by(scroll, 1),
+        KeyCode::Char('k') | KeyCode::Up => scroll_by(scroll, -1),
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            OverlayOutcome::None(OverlayState::Detail {
-                scroll: scroll_by(scroll, page as isize),
-            })
+            scroll_by(scroll, page as isize)
         }
         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            OverlayOutcome::None(OverlayState::Detail {
-                scroll: scroll_by(scroll, -(page as isize)),
-            })
+            scroll_by(scroll, -(page as isize))
         }
-        KeyCode::PageDown => OverlayOutcome::None(OverlayState::Detail {
-            scroll: scroll_by(scroll, page as isize),
-        }),
-        KeyCode::PageUp => OverlayOutcome::None(OverlayState::Detail {
-            scroll: scroll_by(scroll, -(page as isize)),
-        }),
-        _ => OverlayOutcome::None(OverlayState::Detail { scroll }),
+        KeyCode::PageDown => scroll_by(scroll, page as isize),
+        KeyCode::PageUp => scroll_by(scroll, -(page as isize)),
+        _ => scroll,
     }
 }
 
@@ -240,30 +224,26 @@ mod tests {
 
     #[test]
     fn detail_down_scroll_stops_at_cap() {
-        let OverlayOutcome::None(OverlayState::Detail { scroll }) = handle_detail_overlay_key(
+        let scroll = handle_detail_scroll_key(
             KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
-            OverlayState::Detail { scroll: 4 },
+            4,
             80,
             24,
             None,
-        ) else {
-            panic!("expected detail overlay");
-        };
+        );
 
         assert_eq!(scroll, 0);
     }
 
     #[test]
     fn detail_up_scroll_moves_after_resisted_down_scroll() {
-        let OverlayOutcome::None(OverlayState::Detail { scroll }) = handle_detail_overlay_key(
+        let scroll = handle_detail_scroll_key(
             KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
-            OverlayState::Detail { scroll: 4 },
+            4,
             80,
             24,
             None,
-        ) else {
-            panic!("expected detail overlay");
-        };
+        );
 
         assert_eq!(scroll, 0);
     }
@@ -278,15 +258,13 @@ mod tests {
 
     #[test]
     fn ignored_detail_keys_clamp_stale_scroll_to_cap() {
-        let OverlayOutcome::None(OverlayState::Detail { scroll }) = handle_detail_overlay_key(
+        let scroll = handle_detail_scroll_key(
             KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
-            OverlayState::Detail { scroll: 4 },
+            4,
             80,
             24,
             None,
-        ) else {
-            panic!("expected detail overlay");
-        };
+        );
 
         assert_eq!(scroll, 0);
     }

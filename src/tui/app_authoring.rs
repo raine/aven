@@ -196,12 +196,10 @@ impl App {
             self.set_info("no selected task for note");
             return;
         };
-        let return_to_detail = self.detail.is_some();
         self.overlay = Some(OverlayState::blank_multiline_input(
             MultilineIntent::AddNote {
                 task_id: item.task.id,
                 display_ref: item.display_ref,
-                return_to_detail,
             },
             ADD_NOTE_TITLE,
             "note body:",
@@ -495,17 +493,14 @@ impl App {
         &mut self,
         task_id: crate::ids::TaskId,
         display_ref: String,
-        return_to_detail: bool,
         body: String,
     ) -> Result<()> {
         if body.trim().is_empty() {
-            self.restore_detail_overlay(return_to_detail);
             self.set_warning("note body is required");
             return Ok(());
         }
         let note_id = self.store.add_note_to_task(&task_id, body).await?;
         self.refresh().await?;
-        self.restore_detail_overlay(return_to_detail);
         self.set_success(format!("added note {note_id} to {display_ref}"));
         Ok(())
     }
@@ -515,18 +510,13 @@ impl App {
         self.intake.cancel();
         if let Some(context) = self.epic_child_authoring.take() {
             self.authoring.clear_add_task();
-            let return_to_detail = context.return_to_detail;
             let mut search = context.search;
             self.schedule_search_preview(&mut search);
             self.overlay = Some(OverlayState::Search(search));
-            if !return_to_detail {
-                self.detail.close();
-            }
             return;
         }
-        let return_to_detail = self.authoring.cancel() || self.detail.is_some();
+        self.authoring.cancel();
         self.overlay = None;
-        self.restore_detail_overlay(return_to_detail);
     }
 }
 

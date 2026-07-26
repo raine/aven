@@ -135,21 +135,12 @@ impl App {
             TextIntent::EditTitle { selection } => {
                 self.submit_edit_title(selection, value).await?;
             }
-            TextIntent::EditAvailability {
-                selection,
-                mixed,
-                return_to_detail,
-            } => {
-                self.submit_edit_availability(selection, mixed, return_to_detail, value)
+            TextIntent::EditAvailability { selection, mixed } => {
+                self.submit_edit_availability(selection, mixed, value)
                     .await?;
             }
-            TextIntent::EditDue {
-                selection,
-                mixed,
-                return_to_detail,
-            } => {
-                self.submit_edit_due(selection, mixed, return_to_detail, value)
-                    .await?;
+            TextIntent::EditDue { selection, mixed } => {
+                self.submit_edit_due(selection, mixed, value).await?;
             }
             TextIntent::ResolveConflictManually { target } => {
                 self.submit_manual_conflict_value(target, value).await?;
@@ -180,10 +171,8 @@ impl App {
             MultilineIntent::AddNote {
                 task_id,
                 display_ref,
-                return_to_detail,
             } => {
-                self.submit_add_note(task_id, display_ref, return_to_detail, value)
-                    .await?;
+                self.submit_add_note(task_id, display_ref, value).await?;
             }
             MultilineIntent::EditDescription { selection } => {
                 self.submit_edit_description(selection, value).await?;
@@ -309,33 +298,17 @@ impl App {
             ConfirmIntent::DeleteProject { project } => {
                 self.submit_delete_project(project).await?;
             }
-            ConfirmIntent::DeleteTasks {
-                selection,
-                return_to_detail,
-            } => {
+            ConfirmIntent::DeleteTasks { selection } => {
                 self.submit_delete_selection(selection).await?;
-                self.restore_detail_overlay(return_to_detail);
             }
-            ConfirmIntent::DeleteAttachment {
-                attachment_id,
-                return_to_detail,
-                detail_scroll,
-            } => {
-                self.submit_delete_attachment(attachment_id, return_to_detail, detail_scroll)
-                    .await?;
+            ConfirmIntent::DeleteAttachment { attachment_id } => {
+                self.submit_delete_attachment(attachment_id).await?;
             }
-            ConfirmIntent::ClearAvailability {
-                selection,
-                return_to_detail,
-            } => {
-                self.submit_clear_availability(selection, return_to_detail)
-                    .await?;
+            ConfirmIntent::ClearAvailability { selection } => {
+                self.submit_clear_availability(selection).await?;
             }
-            ConfirmIntent::ClearDue {
-                selection,
-                return_to_detail,
-            } => {
-                self.submit_clear_due(selection, return_to_detail).await?;
+            ConfirmIntent::ClearDue { selection } => {
+                self.submit_clear_due(selection).await?;
             }
             ConfirmIntent::InstallUpdate { plan } => self.confirm_update(plan)?,
         }

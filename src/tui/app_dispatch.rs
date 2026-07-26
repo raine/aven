@@ -20,23 +20,21 @@ use crate::tui::input::mouse::{
     MouseInput, PointerEvent, TaskSurfaceView, route_mouse, route_task_surface,
 };
 use crate::tui::navigation::{
-    detail_scroll_with_delta_with_images, detail_task_delta, handle_detail_overlay_key_with_cap,
-    handle_detail_overlay_key_with_images, next_index, scroll_with_delta,
+    detail_scroll_with_delta_with_images, detail_task_delta, handle_detail_scroll_key_with_cap,
+    handle_detail_scroll_key_with_images, next_index, scroll_with_delta,
 };
 use crate::tui::overlay::{
-    AddTaskMode, CommandState, MultilineIntent, OverlayOutcome, OverlayState, PickerIntent,
-    TagComboboxIntent,
+    AddTaskMode, CommandState, MultilineIntent, OverlayOutcome, OverlayState, OverlayView,
+    PickerIntent, TagComboboxIntent, TextInputKind,
 };
 use crate::tui::platform::{copy_to_clipboard, is_editor_prefix_key};
 use crate::tui::shortcut_buffer::DetailShortcutResolution;
 use crate::tui::store::TaskView;
 use crate::tui::ui::{
-    attachment_is_locally_previewable, composer_help_scroll_cap, database_stats_scroll_cap,
-    detail_copy_target_at, detail_help_scroll_cap, detail_interactive_rows,
-    detail_section_scroll_target_with_images, detail_selected_text, detail_target_at_position,
-    detail_target_is_actionable, detail_target_scroll_target, detail_text_cell_at_position,
-    help_scroll_cap, prefix_hint_scroll_cap, task_at_position, task_status_at_position,
-    text_panel_scroll_cap,
+    DetailRenderContext, attachment_is_locally_previewable, composer_help_scroll_cap,
+    database_stats_scroll_cap, detail_copy_target_at, detail_help_scroll_cap, detail_selected_text,
+    detail_target_is_actionable, help_scroll_cap, prefix_hint_scroll_cap, task_at_position,
+    task_status_at_position, text_panel_scroll_cap,
 };
 
 impl App {
@@ -68,8 +66,9 @@ impl App {
                 footer_choice: self.footer_choice.is_some(),
                 shortcut_pending: !self.pending_shortcut.is_empty(),
                 prefix_hints: self.prefix_hints_active(),
-                overlay_captures: self.overlay_captures_input(),
-                detail_overlay: matches!(self.overlay, Some(OverlayState::Detail { .. })),
+                overlay_captures: self.overlay_captures_input()
+                    || (self.detail.is_some() && self.overlay.is_none()),
+                detail_overlay: self.detail.is_some() && self.overlay.is_none(),
                 detail_target_focused: self
                     .detail
                     .as_ref()
@@ -176,9 +175,6 @@ impl App {
         self.footer_choice = None;
         self.submit_edit_status(selection, status.to_string())
             .await?;
-        if self.detail.is_some() && self.overlay.is_none() {
-            self.restore_detail_overlay(true);
-        }
         Ok(())
     }
 
@@ -190,9 +186,6 @@ impl App {
         self.footer_choice = None;
         self.submit_edit_priority(selection, false, priority.to_string())
             .await?;
-        if self.detail.is_some() && self.overlay.is_none() {
-            self.restore_detail_overlay(true);
-        }
         Ok(())
     }
 
@@ -291,9 +284,6 @@ impl App {
             };
             self.submit_header_menu_at(state, mouse.column, mouse.row, terminal_size)
                 .await?;
-            if self.detail.is_some() && self.overlay.is_none() {
-                self.restore_detail_overlay(true);
-            }
             return Ok(());
         }
         if matches!(self.overlay, Some(OverlayState::OrderMenu(_))) {
@@ -302,17 +292,16 @@ impl App {
             };
             self.submit_order_menu_at(state, mouse.column, mouse.row, terminal_size)
                 .await?;
-            if self.detail.is_some() && self.overlay.is_none() {
-                self.restore_detail_overlay(true);
-            }
             return Ok(());
         }
-        if let Some(OverlayState::Detail { scroll }) = self.overlay
-            && self
+        if self.detail.is_some() && self.overlay.is_none() {
+            let scroll = self.detail.as_ref().map_or(0, |detail| detail.scroll());
+            if self
                 .handle_detail_mouse_click(mouse, terminal_size, scroll)
                 .await?
-        {
-            return Ok(());
+            {
+                return Ok(());
+            }
         }
         let add_task_field = self.overlay.as_ref().and_then(|overlay| match overlay {
             OverlayState::AddTask(state) if state.mode == AddTaskMode::Compose => {
@@ -516,48 +505,53 @@ impl App {
             })
     }
 
-    fn rendered_detail_document(
+    pub(super) fn detail_document_for_query(
         &self,
         terminal_size: Size,
-    ) -> Option<&crate::tui::ui::DetailDocument> {
+    ) -> Option<crate::tui::ui::DetailDocument> {
         let item = self.store.selected_task(self.list.selected_task())?;
-        if !self
-            .detail
-            .as_ref()
-            .is_some_and(|detail| detail.matches_document_frame(&item.task.id, terminal_size))
-        {
-            return self
-                .widgets
-                .detail_document
-                .as_ref()
-                .filter(|document| document.matches_frame(item, terminal_size));
-        }
-        self.widgets
+        let overlay = self.overlay.as_ref().map(OverlayView::from);
+        let inline_title_editor = match overlay.as_ref() {
+            Some(OverlayView::TextInput(state)) if state.kind == TextInputKind::EditTitle => {
+                Some(state)
+            }
+            _ => None,
+        };
+        let detail = self.detail.as_ref()?;
+        let inline_images = self.inline_image_context();
+        let pending_attachments = self.attachment_controller.views();
+        let context = DetailRenderContext {
+            terminal_area: Rect::new(0, 0, terminal_size.width, terminal_size.height),
+            scroll: detail.scroll(),
+            inline_title_editor,
+            active_target: detail.focused_target(),
+            hovered_target: detail.hovered_target(),
+            expanded_sections: detail.expanded_sections(),
+            selection: detail.text_selection(),
+            inline_images: inline_images.as_ref(),
+            pending_attachments: &pending_attachments,
+        };
+        if let Some(document) = self
+            .widgets
             .detail_document
             .as_ref()
-            .filter(|document| document.matches_frame(item, terminal_size))
+            .filter(|document| document.matches_frame(item, &context))
+        {
+            return Some(document.clone());
+        }
+        Some(crate::tui::ui::DetailDocument::build(item, &context))
     }
 
     fn begin_detail_text_selection(&mut self, mouse: MouseEvent, terminal_size: Size) -> bool {
-        let Some(OverlayState::Detail { scroll }) = self.overlay else {
+        if self.detail.is_none() || self.overlay.is_some() {
             return false;
-        };
+        }
         let Some(item) = self.store.selected_task(self.list.selected_task()) else {
             return false;
         };
         let cell = self
-            .rendered_detail_document(terminal_size)
-            .and_then(|document| document.text_cell_at_position(mouse.column, mouse.row))
-            .or_else(|| {
-                detail_text_cell_at_position(
-                    item,
-                    terminal_size.width,
-                    terminal_size.height,
-                    mouse.column,
-                    mouse.row,
-                    scroll,
-                )
-            });
+            .detail_document_for_query(terminal_size)
+            .and_then(|document| document.text_cell_at_position(mouse.column, mouse.row));
         let Some(cell) = cell else {
             return false;
         };
@@ -576,25 +570,15 @@ impl App {
         {
             return;
         }
-        let Some(OverlayState::Detail { scroll }) = self.overlay else {
+        if self.detail.is_none() || self.overlay.is_some() {
             return;
-        };
+        }
         let Some(item) = self.store.selected_task(self.list.selected_task()) else {
             return;
         };
         let cell = self
-            .rendered_detail_document(terminal_size)
-            .and_then(|document| document.text_cell_at_position(mouse.column, mouse.row))
-            .or_else(|| {
-                detail_text_cell_at_position(
-                    item,
-                    terminal_size.width,
-                    terminal_size.height,
-                    mouse.column,
-                    mouse.row,
-                    scroll,
-                )
-            });
+            .detail_document_for_query(terminal_size)
+            .and_then(|document| document.text_cell_at_position(mouse.column, mouse.row));
         let Some(cell) = cell else {
             return;
         };
@@ -634,20 +618,9 @@ impl App {
             return Vec::new();
         };
         let rows = self
-            .rendered_detail_document(terminal_size)
+            .detail_document_for_query(terminal_size)
             .map(|document| document.interactive_rows().to_vec())
-            .unwrap_or_else(|| {
-                detail_interactive_rows(
-                    item,
-                    terminal_size.width,
-                    terminal_size.height,
-                    self.inline_image_context().as_ref(),
-                    self.detail
-                        .as_ref()
-                        .map(|detail| detail.expanded_sections())
-                        .expect("active detail session"),
-                )
-            });
+            .unwrap_or_default();
         let mut targets = rows
             .into_iter()
             .map(|row| row.target)
@@ -750,25 +723,8 @@ impl App {
         else {
             return scroll;
         };
-        let Some(item) = self.store.selected_task(self.list.selected_task()) else {
-            return scroll;
-        };
-        self.rendered_detail_document(terminal_size)
+        self.detail_document_for_query(terminal_size)
             .and_then(|document| document.target_scroll_target(target, scroll))
-            .or_else(|| {
-                detail_target_scroll_target(
-                    item,
-                    target,
-                    scroll,
-                    terminal_size.width,
-                    terminal_size.height,
-                    self.inline_image_context().as_ref(),
-                    self.detail
-                        .as_ref()
-                        .map(|detail| detail.expanded_sections())
-                        .expect("active detail session"),
-                )
-            })
             .unwrap_or(scroll)
     }
 
@@ -989,34 +945,16 @@ impl App {
         mouse: MouseEvent,
         terminal_size: Size,
     ) -> Result<bool> {
-        let Some(OverlayState::Detail { scroll }) = self.overlay else {
+        if self.detail.is_none() || self.overlay.is_some() {
             return Ok(false);
-        };
+        }
+        let scroll = self.detail.as_ref().map_or(0, |detail| detail.scroll());
         let Some(context) = self.inline_image_context() else {
             return Ok(false);
         };
         let hit = self
-            .rendered_detail_document(terminal_size)
-            .and_then(|document| document.target_at_position(mouse.column, mouse.row))
-            .or_else(|| {
-                self.store
-                    .selected_task(self.list.selected_task())
-                    .and_then(|item| {
-                        detail_target_at_position(
-                            item,
-                            terminal_size.width,
-                            terminal_size.height,
-                            mouse.column,
-                            mouse.row,
-                            scroll,
-                            Some(&context),
-                            self.detail
-                                .as_ref()
-                                .map(|detail| detail.expanded_sections())
-                                .expect("active detail session"),
-                        )
-                    })
-            });
+            .detail_document_for_query(terminal_size)
+            .and_then(|document| document.target_at_position(mouse.column, mouse.row));
         let Some(hit) = hit else {
             return Ok(false);
         };
@@ -1102,35 +1040,15 @@ impl App {
     }
 
     fn handle_detail_mouse_move(&mut self, mouse: MouseEvent, terminal_size: Size) {
-        let Some(OverlayState::Detail { scroll }) = self.overlay else {
+        if self.detail.is_none() || self.overlay.is_some() {
             if let Some(detail) = self.detail.as_mut() {
                 detail.set_hovered_target(None);
             }
             return;
-        };
-        let inline_images = self.inline_image_context();
+        }
         let hovered = self
-            .rendered_detail_document(terminal_size)
-            .and_then(|document| document.target_at_position(mouse.column, mouse.row))
-            .or_else(|| {
-                self.store
-                    .selected_task(self.list.selected_task())
-                    .and_then(|item| {
-                        detail_target_at_position(
-                            item,
-                            terminal_size.width,
-                            terminal_size.height,
-                            mouse.column,
-                            mouse.row,
-                            scroll,
-                            inline_images.as_ref(),
-                            self.detail
-                                .as_ref()
-                                .map(|detail| detail.expanded_sections())
-                                .expect("active detail session"),
-                        )
-                    })
-            });
+            .detail_document_for_query(terminal_size)
+            .and_then(|document| document.target_at_position(mouse.column, mouse.row));
         if let Some(detail) = self.detail.as_mut() {
             detail.set_hovered_target(hovered);
         }
@@ -1195,8 +1113,28 @@ impl App {
 
         let inline_images = self.inline_image_context();
         let detail_scroll_cap = self
-            .rendered_detail_document(terminal_size)
-            .map(crate::tui::ui::DetailDocument::scroll_cap);
+            .detail_document_for_query(terminal_size)
+            .map(|document| document.scroll_cap());
+        if self.detail.is_some() && self.overlay.is_none() {
+            let scroll = self.detail.as_ref().map_or(0, |detail| detail.scroll());
+            let task = self.store.selected_task(self.list.selected_task());
+            let scroll = if let Some(cap) = detail_scroll_cap {
+                scroll_with_delta(scroll, delta, cap)
+            } else {
+                detail_scroll_with_delta_with_images(
+                    scroll,
+                    delta,
+                    terminal_size.width,
+                    terminal_size.height,
+                    task,
+                    inline_images.as_ref(),
+                )
+            };
+            if let Some(detail) = self.detail.as_mut() {
+                detail.set_scroll(scroll);
+            }
+            return true;
+        }
         match &mut self.overlay {
             Some(OverlayState::Help { scroll }) => {
                 let cap = help_scroll_cap(terminal_size.height);
@@ -1206,25 +1144,6 @@ impl App {
             Some(OverlayState::DetailHelp { scroll }) => {
                 let cap = detail_help_scroll_cap(terminal_size.height);
                 *scroll = scroll_with_delta(*scroll, delta, cap);
-                true
-            }
-            Some(OverlayState::Detail { scroll }) => {
-                let task = self.store.selected_task(self.list.selected_task());
-                *scroll = if let Some(cap) = detail_scroll_cap {
-                    scroll_with_delta(*scroll, delta, cap)
-                } else {
-                    detail_scroll_with_delta_with_images(
-                        *scroll,
-                        delta,
-                        terminal_size.width,
-                        terminal_size.height,
-                        task,
-                        inline_images.as_ref(),
-                    )
-                };
-                if let Some(detail) = self.detail.as_mut() {
-                    detail.set_scroll(*scroll);
-                }
                 true
             }
             Some(OverlayState::TextPanel(state)) => {
@@ -1270,7 +1189,11 @@ impl App {
         key: KeyEvent,
         terminal_size: Size,
     ) -> Result<()> {
-        let Some(overlay) = self.overlay.take() else {
+        let overlay = if let Some(overlay) = self.overlay.take() {
+            overlay
+        } else if self.detail.is_some() {
+            OverlayState::Detail
+        } else {
             return Ok(());
         };
 
@@ -1306,10 +1229,6 @@ impl App {
             }
         }
 
-        if self.detail.is_some() && self.overlay.is_none() {
-            self.restore_detail_overlay(true);
-        }
-
         Ok(())
     }
 
@@ -1335,9 +1254,6 @@ impl App {
             crate::tui::overlay::handle_generic_overlay_mouse(overlay, mouse, terminal_size);
         self.apply_generic_overlay_outcome(outcome, false, false, was_add_task_picker)
             .await?;
-        if self.detail.is_some() && self.overlay.is_none() {
-            self.restore_detail_overlay(true);
-        }
         Ok(())
     }
 
@@ -1405,7 +1321,8 @@ impl App {
             self.remove_selected_add_task_image();
             return Ok(());
         }
-        if let OverlayState::Detail { scroll } = overlay {
+        if let OverlayState::Detail = overlay {
+            let scroll = self.detail.as_ref().map_or(0, |detail| detail.scroll());
             if key.code == KeyCode::Esc
                 && self
                     .detail
@@ -1539,23 +1456,11 @@ impl App {
                 return Ok(());
             }
             let inline_images = self.inline_image_context();
-            if let (Some(reverse), Some(task)) = (
-                section_direction,
-                self.store.selected_task(self.list.selected_task()),
-            ) {
+            if let Some(reverse) = section_direction {
                 let target_scroll = self
-                    .rendered_detail_document(terminal_size)
+                    .detail_document_for_query(terminal_size)
                     .map(|document| document.section_scroll_target(reverse))
-                    .unwrap_or_else(|| {
-                        detail_section_scroll_target_with_images(
-                            task,
-                            scroll,
-                            terminal_size.width,
-                            terminal_size.height,
-                            reverse,
-                            inline_images.as_ref(),
-                        )
-                    });
+                    .unwrap_or(scroll);
                 self.show_detail(target_scroll);
                 return Ok(());
             }
@@ -1576,36 +1481,25 @@ impl App {
                 return Ok(());
             }
 
-            let overlay = OverlayState::Detail { scroll };
             let task = self.store.selected_task(self.list.selected_task());
-            let outcome = if let Some(document) = self.rendered_detail_document(terminal_size) {
-                handle_detail_overlay_key_with_cap(
+            let scroll = if let Some(document) = self.detail_document_for_query(terminal_size) {
+                handle_detail_scroll_key_with_cap(
                     key,
-                    overlay,
+                    scroll,
                     terminal_size.height,
                     document.scroll_cap(),
                 )
             } else {
-                handle_detail_overlay_key_with_images(
+                handle_detail_scroll_key_with_images(
                     key,
-                    overlay,
+                    scroll,
                     terminal_size.width,
                     terminal_size.height,
                     task,
                     inline_images.as_ref(),
                 )
             };
-            match outcome {
-                OverlayOutcome::None(OverlayState::Detail { scroll }) => self.show_detail(scroll),
-                OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
-                OverlayOutcome::Cancelled => {
-                    if !self.restore_last_change_return().await? {
-                        self.cancel_authoring_overlay();
-                        self.refresh().await?;
-                    }
-                }
-                OverlayOutcome::Submitted(submit) => self.handle_overlay_submit(submit).await?,
-            }
+            self.show_detail(scroll);
             return Ok(());
         }
 
@@ -1805,7 +1699,7 @@ impl App {
     ) -> Result<()> {
         match outcome {
             OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
-            OverlayOutcome::Cancelled if was_detail_help => self.show_detail(0),
+            OverlayOutcome::Cancelled if was_detail_help => {}
             OverlayOutcome::Cancelled if was_add_task_description_editor || was_add_task_picker => {
                 self.begin_add_task_step()
             }
@@ -1858,9 +1752,6 @@ impl App {
                     detail.set_scroll(scroll);
                 }
                 self.execute(action).await?;
-                if self.detail.is_some() && self.overlay.is_none() {
-                    self.restore_detail_overlay_at_scroll(true, scroll);
-                }
                 Ok(true)
             }
             DetailShortcutResolution::Action(_) => {
@@ -1905,19 +1796,16 @@ impl App {
                     detail.set_scroll(scroll);
                 }
                 self.execute(action).await?;
-                if self.detail.is_some() && self.overlay.is_none() {
-                    self.restore_detail_overlay_at_scroll(true, scroll);
-                }
                 Ok(Some(self.overlay.take()))
             }
             DetailShortcutResolution::Prefix => {
                 self.pending_shortcut_scroll = 0;
-                Ok(Some(Some(OverlayState::Detail { scroll })))
+                Ok(Some(None))
             }
             DetailShortcutResolution::MissingAfterPrefix(label) => {
                 self.pending_shortcut_scroll = 0;
                 self.set_warning(format!("invalid shortcut: {label}"));
-                Ok(Some(Some(OverlayState::Detail { scroll })))
+                Ok(Some(None))
             }
             DetailShortcutResolution::PassThrough => Ok(None),
         }
@@ -1999,8 +1887,8 @@ impl App {
     pub(super) fn toggle_help_at_height(&mut self, _terminal_height: u16) {
         match self.overlay {
             Some(OverlayState::Help { .. }) => self.overlay = None,
-            Some(OverlayState::DetailHelp { .. }) => self.show_detail(0),
-            Some(OverlayState::Detail { .. }) => {
+            Some(OverlayState::DetailHelp { .. }) => self.overlay = None,
+            None if self.detail.is_some() => {
                 self.overlay = Some(OverlayState::DetailHelp { scroll: 0 })
             }
             _ => self.overlay = Some(OverlayState::Help { scroll: 0 }),

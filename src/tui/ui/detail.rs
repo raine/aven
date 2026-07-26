@@ -119,7 +119,7 @@ pub(crate) struct DetailInteractiveRow {
     pub(crate) height: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DetailInlineImageContext {
     pub(crate) previews_enabled: bool,
     pub(crate) unavailable_hashes: HashSet<String>,
@@ -192,6 +192,11 @@ struct DetailSelectableDocument {
 pub(crate) struct DetailDocument {
     task_id: crate::ids::TaskId,
     layout: DetailContentLayout,
+    scroll: u16,
+    expanded_sections: BTreeSet<DetailSection>,
+    inline_images: Option<DetailInlineImageContext>,
+    pending_attachments: Vec<crate::tui::attachment_controller::PendingAttachmentView>,
+    inline_title_editor: Option<(String, usize)>,
     model: DetailContentRenderModel,
     selectable: DetailSelectableDocument,
     section_body_indices: Vec<usize>,
@@ -257,6 +262,13 @@ impl DetailDocument {
         Self {
             task_id: item.task.id.clone(),
             layout,
+            scroll: context.scroll,
+            expanded_sections: context.expanded_sections.clone(),
+            inline_images: context.inline_images.cloned(),
+            pending_attachments: context.pending_attachments.to_vec(),
+            inline_title_editor: context
+                .inline_title_editor
+                .map(|editor| (editor.input.clone(), editor.cursor)),
             model,
             selectable,
             section_body_indices: detail_section_body_indices(item, width, context.inline_images),
@@ -283,11 +295,20 @@ impl DetailDocument {
     pub(crate) fn matches_frame(
         &self,
         item: &TaskListItem,
-        terminal_size: ratatui::layout::Size,
+        context: &DetailRenderContext<'_>,
     ) -> bool {
         self.task_id == item.task.id
-            && self.layout
-                == detail_content_layout(Rect::new(0, 0, terminal_size.width, terminal_size.height))
+            && self.layout == context.content_layout()
+            && self.scroll == context.scroll
+            && self.expanded_sections == *context.expanded_sections
+            && self.inline_images.as_ref() == context.inline_images
+            && self.pending_attachments == context.pending_attachments
+            && self.inline_title_editor.as_ref()
+                == context
+                    .inline_title_editor
+                    .map(|editor| (&editor.input, editor.cursor))
+                    .map(|(input, cursor)| (input.clone(), cursor))
+                    .as_ref()
     }
 
     fn sticky_height(&self) -> usize {
@@ -629,6 +650,7 @@ pub(crate) fn detail_section_scroll_target(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn detail_interactive_rows(
     item: &TaskListItem,
     terminal_width: u16,
@@ -648,52 +670,6 @@ pub(crate) fn detail_interactive_rows(
     )
     .interactive_rows()
     .to_vec()
-}
-
-pub(crate) fn detail_target_scroll_target(
-    item: &TaskListItem,
-    target: &DetailTargetId,
-    scroll: u16,
-    terminal_width: u16,
-    terminal_height: u16,
-    inline_images: Option<&DetailInlineImageContext>,
-    expanded_sections: &BTreeSet<DetailSection>,
-) -> Option<u16> {
-    DetailDocument::build(
-        item,
-        &detail_query_context(
-            terminal_width,
-            terminal_height,
-            scroll,
-            expanded_sections,
-            inline_images,
-        ),
-    )
-    .target_scroll_target(target, scroll)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn detail_target_at_position(
-    item: &TaskListItem,
-    terminal_width: u16,
-    terminal_height: u16,
-    column: u16,
-    row: u16,
-    scroll: u16,
-    inline_images: Option<&DetailInlineImageContext>,
-    expanded_sections: &BTreeSet<DetailSection>,
-) -> Option<DetailTargetId> {
-    DetailDocument::build(
-        item,
-        &detail_query_context(
-            terminal_width,
-            terminal_height,
-            scroll,
-            expanded_sections,
-            inline_images,
-        ),
-    )
-    .target_at_position(column, row)
 }
 
 #[cfg(test)]
@@ -724,6 +700,7 @@ pub(crate) fn detail_attachment_scroll_target(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn detail_section_scroll_target_with_images(
     item: &TaskListItem,
     scroll: u16,
@@ -2361,6 +2338,7 @@ fn metadata_label(label: &'static str) -> Line<'static> {
     ))
 }
 
+#[cfg(test)]
 pub(crate) fn detail_text_cell_at_position(
     item: &TaskListItem,
     terminal_width: u16,

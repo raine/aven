@@ -42,23 +42,13 @@ impl App {
         self.overlay = Some(OverlayState::confirm(
             ConfirmIntent::DeleteAttachment {
                 attachment_id: attachment_id.to_string(),
-                return_to_detail: true,
-                detail_scroll: scroll,
             },
             DELETE_ATTACHMENT_TITLE,
             format!("Remove {label}?"),
         ));
     }
 
-    pub(super) async fn submit_delete_attachment(
-        &mut self,
-        attachment_id: String,
-        return_to_detail: bool,
-        detail_scroll: u16,
-    ) -> Result<()> {
-        if let Some(detail) = self.detail.as_mut() {
-            detail.set_scroll(detail_scroll);
-        }
+    pub(super) async fn submit_delete_attachment(&mut self, attachment_id: String) -> Result<()> {
         let replacement_attachment_id = self.attachment_focus_after_delete(&attachment_id);
         self.store.delete_attachment(&attachment_id).await?;
         if let Some(detail) = self.detail.as_mut() {
@@ -70,7 +60,6 @@ impl App {
         self.inline_images.remove_exports_for(&attachment_id);
         self.refresh().await?;
         self.set_success("removed image");
-        self.restore_detail_overlay(return_to_detail);
         Ok(())
     }
 
@@ -256,7 +245,8 @@ impl App {
     }
 
     fn detail_accepts_image_paste(&self) -> bool {
-        matches!(self.overlay, Some(OverlayState::Detail { .. }))
+        self.detail.is_some()
+            && self.overlay.is_none()
             && self.pending_shortcut.is_empty()
             && self.footer_choice.is_none()
     }

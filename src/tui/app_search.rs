@@ -133,7 +133,6 @@ impl App {
             epic_id: epic.epic_id,
             display_ref: epic.display_ref,
             project_key: epic.project_key,
-            return_to_detail: detail,
         });
         Self::set_create_epic_child_result(&mut state);
         self.overlay = Some(OverlayState::Search(state));
@@ -261,7 +260,6 @@ impl App {
                 epic_id,
                 display_ref,
                 project_key,
-                return_to_detail,
             } => {
                 let epic = crate::tui::store::EpicContext {
                     epic_id,
@@ -273,14 +271,10 @@ impl App {
                         epic_id: epic.epic_id.clone(),
                         display_ref: epic.display_ref.clone(),
                         project_key: epic.project_key.clone(),
-                        return_to_detail,
                     });
                     search.input = LineEdit::new(input.clone());
-                    self.epic_child_authoring = Some(crate::tui::app::EpicChildAuthoringContext {
-                        epic,
-                        search,
-                        return_to_detail,
-                    });
+                    self.epic_child_authoring =
+                        Some(crate::tui::app::EpicChildAuthoringContext { epic, search });
                     let project_key = self
                         .epic_child_authoring
                         .as_ref()
@@ -299,7 +293,7 @@ impl App {
                 }
                 if let Some(reason) = result.unavailable_reason {
                     self.set_warning(reason);
-                    self.reopen_add_epic_child_search(epic, return_to_detail, input);
+                    self.reopen_add_epic_child_search(epic, input);
                     return Ok(());
                 }
                 match self
@@ -309,7 +303,7 @@ impl App {
                 {
                     Ok(mutation) => {
                         let child_id = mutation.child.task_id.clone();
-                        let selected = if return_to_detail {
+                        let selected = if self.detail.is_some() {
                             self.store
                                 .tasks
                                 .iter()
@@ -318,7 +312,7 @@ impl App {
                             mutation.message.selected
                         };
                         self.list.select_task(selected);
-                        if let Some(detail) = self.detail.as_mut().filter(|_| return_to_detail) {
+                        if let Some(detail) = self.detail.as_mut() {
                             detail.set_focused_target(Some(
                                 crate::tui::app::DetailTargetId::Task {
                                     section: crate::tui::app::DetailSection::EpicChildren,
@@ -329,13 +323,10 @@ impl App {
                             detail.set_scroll(0);
                         }
                         self.set_success(mutation.message.message);
-                        if return_to_detail {
-                            self.show_detail(0);
-                        }
                     }
                     Err(error) => {
                         self.set_warning(epic_child_error_message(&error, &epic));
-                        self.reopen_add_epic_child_search(epic, return_to_detail, input);
+                        self.reopen_add_epic_child_search(epic, input);
                     }
                 }
             }
@@ -361,14 +352,12 @@ impl App {
     fn reopen_add_epic_child_search(
         &mut self,
         epic: crate::tui::store::EpicContext,
-        return_to_detail: bool,
         input: String,
     ) {
         let mut state = SearchState::for_intent(SearchIntent::AddEpicChild {
             epic_id: epic.epic_id,
             display_ref: epic.display_ref,
             project_key: epic.project_key,
-            return_to_detail,
         });
         state.input = LineEdit::new(input);
         self.schedule_search_preview(&mut state);

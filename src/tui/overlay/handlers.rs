@@ -447,23 +447,7 @@ pub(crate) fn handle_generic_overlay_key(
                 }
             }
         }
-        OverlayState::Detail { scroll } => {
-            match handle_scroll_key(
-                key,
-                ScrollState {
-                    scroll,
-                    cap: u16::MAX,
-                },
-                &[KeyCode::Esc, KeyCode::Enter],
-                0,
-            ) {
-                ScrollKeyOutcome::Cancelled => OverlayOutcome::Cancelled,
-                ScrollKeyOutcome::Continue(s) => {
-                    OverlayOutcome::None(OverlayState::Detail { scroll: s.scroll })
-                }
-                ScrollKeyOutcome::Ignored => OverlayOutcome::None(OverlayState::Detail { scroll }),
-            }
-        }
+        OverlayState::Detail => OverlayOutcome::None(OverlayState::Detail),
         other => OverlayOutcome::None(other),
     }
 }
@@ -861,7 +845,6 @@ mod tests {
         MultilineIntent::AddNote {
             task_id: crate::test_support::task_id("task-1"),
             display_ref: "APP-1234".to_string(),
-            return_to_detail: false,
         }
     }
 
@@ -878,7 +861,6 @@ mod tests {
         TextIntent::EditDue {
             selection: task_selection(),
             mixed: false,
-            return_to_detail: false,
         }
     }
 
@@ -1386,19 +1368,11 @@ mod tests {
     }
 
     #[test]
-    fn detail_scrolls_with_line_navigation_keys() {
-        let OverlayOutcome::None(OverlayState::Detail { scroll }) =
-            handle(key(KeyCode::Char('j')), OverlayState::Detail { scroll: 0 })
-        else {
-            panic!("expected scrolled detail");
-        };
-        assert_eq!(scroll, 1);
-        let OverlayOutcome::None(OverlayState::Detail { scroll }) =
-            handle(key(KeyCode::Char('k')), OverlayState::Detail { scroll })
-        else {
-            panic!("expected scrolled detail");
-        };
-        assert_eq!(scroll, 0);
+    fn detail_marker_does_not_own_scroll_input() {
+        assert!(matches!(
+            handle(key(KeyCode::Char('j')), OverlayState::Detail),
+            OverlayOutcome::None(OverlayState::Detail)
+        ));
     }
 
     #[test]

@@ -337,7 +337,7 @@ impl From<&OverlayState> for OverlayView {
                 splash_underlay: *persist_on_exit,
             },
             Help { scroll } => Self::Help { scroll: *scroll },
-            Detail { scroll } => Self::Detail { scroll: *scroll },
+            Detail => Self::Detail { scroll: 0 },
             AttachmentPreview {
                 attachment_id,
                 scroll,

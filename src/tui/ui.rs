@@ -44,10 +44,9 @@ use self::toast::render_toast;
 
 pub(crate) use self::detail::{
     DetailDocument, DetailInlineImageContext, DetailInlineImagePlacement, DetailMetadataTarget,
-    attachment_is_locally_openable, attachment_is_locally_previewable, detail_copy_target_at,
-    detail_interactive_rows, detail_metadata_target_at, detail_scroll_cap_with_images,
-    detail_section_scroll_target_with_images, detail_selected_text, detail_target_at_position,
-    detail_target_is_actionable, detail_target_scroll_target, detail_text_cell_at_position,
+    DetailRenderContext, attachment_is_locally_openable, attachment_is_locally_previewable,
+    detail_copy_target_at, detail_metadata_target_at, detail_scroll_cap_with_images,
+    detail_selected_text, detail_target_is_actionable,
 };
 #[cfg(test)]
 pub(crate) use self::detail::{
@@ -120,10 +119,9 @@ impl ViewState {
         }
         if matches!(self.overlay, Some(OverlayView::AttachmentPreview { .. })) {
             FooterMode::AttachmentPreview
-        } else if matches!(
-            self.overlay,
-            Some(OverlayView::Detail { .. } | OverlayView::DetailHelp { .. })
-        ) {
+        } else if self.detail_underlay
+            || matches!(self.overlay, Some(OverlayView::DetailHelp { .. }))
+        {
             if matches!(
                 self.detail_focus,
                 Some(crate::tui::app::DetailTargetId::Task {
@@ -152,10 +150,10 @@ impl ViewState {
 }
 
 fn detail_underlay_scroll(view: &ViewState) -> u16 {
-    match &view.overlay {
-        Some(OverlayView::Detail { scroll }) => *scroll,
-        Some(OverlayView::DetailHelp { .. }) => 0,
-        _ => view.detail_underlay_scroll,
+    if matches!(view.overlay, Some(OverlayView::DetailHelp { .. })) {
+        0
+    } else {
+        view.detail_underlay_scroll
     }
 }
 
@@ -746,33 +744,25 @@ fn render_overlay(
         }
         return;
     }
-    if matches!(
-        overlay,
-        OverlayView::Detail { .. } | OverlayView::DetailHelp { .. }
-    ) {
-        let scroll = match overlay {
-            OverlayView::Detail { scroll } => *scroll,
-            OverlayView::DetailHelp { .. } => 0,
-            _ => 0,
+    if matches!(overlay, OverlayView::Detail { .. }) {
+        let OverlayView::Detail { scroll } = overlay else {
+            unreachable!();
         };
         render_detail_underlay(
             frame,
             store,
             widgets,
             list.selected_task(),
-            scroll,
+            *scroll,
             None,
             focused_detail_target,
             hovered_detail_target,
             detail_expanded_sections,
             detail_text_selection,
-            inline_images.filter(|_| matches!(overlay, OverlayView::Detail { .. })),
+            inline_images,
             pending_attachments,
             removed_epic_child,
         );
-        if matches!(overlay, OverlayView::DetailHelp { .. }) {
-            render_overlay_content(frame, overlay, inline_title_editor);
-        }
         return;
     }
     render_overlay_content(frame, overlay, inline_title_editor);

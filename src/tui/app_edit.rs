@@ -600,19 +600,13 @@ impl App {
         let (aggregate, available_at) = Self::aggregate_value(&selection, |item| {
             item.task.available_at.clone().unwrap_or_default()
         });
-        self.open_edit_availability_overlay(
-            selection,
-            aggregate,
-            self.detail.is_some(),
-            available_at,
-        );
+        self.open_edit_availability_overlay(selection, aggregate, available_at);
     }
 
     fn open_edit_availability_overlay(
         &mut self,
         selection: TaskSelection,
         aggregate: EditAggregate,
-        return_to_detail: bool,
         input: String,
     ) {
         let prompt = if aggregate == EditAggregate::Mixed {
@@ -627,7 +621,6 @@ impl App {
             TextIntent::EditAvailability {
                 selection,
                 mixed: aggregate == EditAggregate::Mixed,
-                return_to_detail,
             },
             title,
             prompt,
@@ -642,14 +635,13 @@ impl App {
         let (aggregate, due_on) = Self::aggregate_value(&selection, |item| {
             item.task.due_on.clone().unwrap_or_default()
         });
-        self.open_edit_due_overlay(selection, aggregate, self.detail.is_some(), due_on);
+        self.open_edit_due_overlay(selection, aggregate, due_on);
     }
 
     fn open_edit_due_overlay(
         &mut self,
         selection: TaskSelection,
         aggregate: EditAggregate,
-        return_to_detail: bool,
         input: String,
     ) {
         let prompt = if aggregate == EditAggregate::Mixed {
@@ -664,7 +656,6 @@ impl App {
             TextIntent::EditDue {
                 selection,
                 mixed: aggregate == EditAggregate::Mixed,
-                return_to_detail,
             },
             title,
             prompt,
@@ -858,7 +849,6 @@ impl App {
         &mut self,
         selection: TaskSelection,
         mixed: bool,
-        return_to_detail: bool,
         input: String,
     ) -> Result<()> {
         if selection.len() > 1 && input.trim().is_empty() {
@@ -869,12 +859,7 @@ impl App {
                 ));
             } else {
                 self.set_info("use Ctrl+D to clear availability on marked tasks");
-                self.open_edit_availability_overlay(
-                    selection,
-                    EditAggregate::Uniform,
-                    return_to_detail,
-                    input,
-                );
+                self.open_edit_availability_overlay(selection, EditAggregate::Uniform, input);
             }
             return Ok(());
         }
@@ -891,7 +876,6 @@ impl App {
                         } else {
                             EditAggregate::Uniform
                         },
-                        return_to_detail,
                         input,
                     );
                     self.set_warning(crate::time_input::available_at_error_message(&error));
@@ -906,7 +890,7 @@ impl App {
                 &selection,
                 crate::tui::store::TaskDateField::Availability,
                 (!available_at.is_empty()).then_some(available_at),
-                return_to_detail,
+                self.detail.is_some(),
             )
             .await
             .map(Some);
@@ -918,7 +902,6 @@ impl App {
                 } else {
                     EditAggregate::Uniform
                 },
-                return_to_detail,
                 input,
             )
         });
@@ -929,7 +912,6 @@ impl App {
         &mut self,
         selection: TaskSelection,
         mixed: bool,
-        return_to_detail: bool,
         input: String,
     ) -> Result<()> {
         if selection.len() > 1 && input.trim().is_empty() {
@@ -937,12 +919,7 @@ impl App {
                 self.set_info(format!("due date unchanged on {} tasks", selection.len()));
             } else {
                 self.set_info("use Ctrl+D to clear due dates on marked tasks");
-                self.open_edit_due_overlay(
-                    selection,
-                    EditAggregate::Uniform,
-                    return_to_detail,
-                    input,
-                );
+                self.open_edit_due_overlay(selection, EditAggregate::Uniform, input);
             }
             return Ok(());
         }
@@ -959,7 +936,6 @@ impl App {
                         } else {
                             EditAggregate::Uniform
                         },
-                        return_to_detail,
                         input,
                     );
                     self.set_warning(crate::time_input::due_on_error_message(&error));
@@ -974,7 +950,7 @@ impl App {
                 &selection,
                 crate::tui::store::TaskDateField::Due,
                 (!due_on.is_empty()).then_some(due_on),
-                return_to_detail,
+                self.detail.is_some(),
             )
             .await
             .map(Some);
@@ -986,7 +962,6 @@ impl App {
                 } else {
                     EditAggregate::Uniform
                 },
-                return_to_detail,
                 input,
             )
         });
@@ -994,31 +969,15 @@ impl App {
     }
 
     pub(super) async fn begin_clear_edit_value(&mut self, intent: TextIntent) -> Result<()> {
-        let (selection, return_to_detail, confirm_intent, field) = match intent {
-            TextIntent::EditAvailability {
-                selection,
-                return_to_detail,
-                ..
-            } => (
+        let (selection, confirm_intent, field) = match intent {
+            TextIntent::EditAvailability { selection, .. } => (
                 selection.clone(),
-                return_to_detail,
-                ConfirmIntent::ClearAvailability {
-                    selection,
-                    return_to_detail,
-                },
+                ConfirmIntent::ClearAvailability { selection },
                 "availability",
             ),
-            TextIntent::EditDue {
-                selection,
-                return_to_detail,
-                ..
-            } => (
+            TextIntent::EditDue { selection, .. } => (
                 selection.clone(),
-                return_to_detail,
-                ConfirmIntent::ClearDue {
-                    selection,
-                    return_to_detail,
-                },
+                ConfirmIntent::ClearDue { selection },
                 "due date",
             ),
             _ => return Ok(()),
@@ -1026,12 +985,9 @@ impl App {
         if selection.len() <= 1 {
             match confirm_intent {
                 ConfirmIntent::ClearAvailability { .. } => {
-                    self.submit_clear_availability(selection, return_to_detail)
-                        .await?
+                    self.submit_clear_availability(selection).await?
                 }
-                ConfirmIntent::ClearDue { .. } => {
-                    self.submit_clear_due(selection, return_to_detail).await?
-                }
+                ConfirmIntent::ClearDue { .. } => self.submit_clear_due(selection).await?,
                 _ => unreachable!(),
             }
             return Ok(());
@@ -1047,7 +1003,6 @@ impl App {
     pub(super) async fn submit_clear_availability(
         &mut self,
         selection: TaskSelection,
-        return_to_detail: bool,
     ) -> Result<()> {
         let retry_selection = selection.clone();
         let result = self
@@ -1056,7 +1011,7 @@ impl App {
                 &selection,
                 crate::tui::store::TaskDateField::Availability,
                 None,
-                return_to_detail,
+                self.detail.is_some(),
             )
             .await
             .map(Some);
@@ -1064,16 +1019,12 @@ impl App {
             let (aggregate, value) = Self::aggregate_value(&retry_selection, |item| {
                 item.task.available_at.clone().unwrap_or_default()
             });
-            app.open_edit_availability_overlay(retry_selection, aggregate, return_to_detail, value)
+            app.open_edit_availability_overlay(retry_selection, aggregate, value)
         });
         Ok(())
     }
 
-    pub(super) async fn submit_clear_due(
-        &mut self,
-        selection: TaskSelection,
-        return_to_detail: bool,
-    ) -> Result<()> {
+    pub(super) async fn submit_clear_due(&mut self, selection: TaskSelection) -> Result<()> {
         let retry_selection = selection.clone();
         let result = self
             .store
@@ -1081,7 +1032,7 @@ impl App {
                 &selection,
                 crate::tui::store::TaskDateField::Due,
                 None,
-                return_to_detail,
+                self.detail.is_some(),
             )
             .await
             .map(Some);
@@ -1089,7 +1040,7 @@ impl App {
             let (aggregate, value) = Self::aggregate_value(&retry_selection, |item| {
                 item.task.due_on.clone().unwrap_or_default()
             });
-            app.open_edit_due_overlay(retry_selection, aggregate, return_to_detail, value)
+            app.open_edit_due_overlay(retry_selection, aggregate, value)
         });
         Ok(())
     }

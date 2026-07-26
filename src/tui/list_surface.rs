@@ -16,15 +16,19 @@ pub(crate) enum Focus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LastChangeDetailState {
+    pub(crate) scroll: u16,
+    pub(crate) focus: Option<DetailTargetId>,
+    pub(crate) expanded_sections: BTreeSet<DetailSection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LastChangeReturnState {
     pub(crate) view_state: TaskViewState,
     pub(crate) selected_task_id: Option<TaskId>,
     pub(crate) selected_index: Option<usize>,
     pub(crate) table_offset: usize,
-    pub(crate) return_to_detail: bool,
-    pub(crate) detail_scroll: u16,
-    pub(crate) detail_focus: Option<DetailTargetId>,
-    pub(crate) detail_expanded_sections: BTreeSet<DetailSection>,
+    pub(crate) detail: Option<LastChangeDetailState>,
 }
 
 pub(crate) struct ListSurface {

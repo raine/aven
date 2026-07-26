@@ -1,8 +1,6 @@
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
-use ratatui::layout::Size;
-
 use crate::tui::app::{DetailSection, DetailTargetId, RemovedEpicChild};
 use crate::tui::bounded_history::BoundedHistory;
 use crate::tui::detail_selection::{DetailTextSelection, TextCell};
@@ -117,7 +115,6 @@ pub(crate) struct DetailState {
     pub(crate) text_dragging: bool,
     pub(crate) history: BoundedHistory<DetailNavigationState>,
     pub(crate) removed_epic_child: Option<RemovedEpicChild>,
-    document_frame: Option<(crate::ids::TaskId, Size)>,
 }
 
 impl DetailState {
@@ -131,7 +128,6 @@ impl DetailState {
             text_dragging: false,
             history: BoundedHistory::new(DETAIL_HISTORY_LIMIT),
             removed_epic_child: None,
-            document_frame: None,
         }
     }
 
@@ -227,7 +223,6 @@ impl DetailState {
         self.hovered_target = None;
         self.expanded_sections.clear();
         self.text_dragging = false;
-        self.document_frame = None;
     }
 
     pub(crate) fn pop_history(&mut self) -> Option<DetailNavigationState> {
@@ -240,7 +235,6 @@ impl DetailState {
         self.hovered_target = None;
         self.expanded_sections = entry.expanded_sections.clone();
         self.text_dragging = false;
-        self.document_frame = None;
     }
 
     pub(crate) fn reset_task_state(&mut self, scroll: u16) {
@@ -250,7 +244,6 @@ impl DetailState {
         self.expanded_sections.clear();
         self.text_selection = None;
         self.text_dragging = false;
-        self.document_frame = None;
     }
 
     pub(crate) fn selected_target(&self, targets: &[DetailTargetId]) -> Option<DetailTargetId> {
@@ -349,26 +342,6 @@ impl DetailState {
 
     pub(crate) fn take_removed_epic_child(&mut self) -> Option<RemovedEpicChild> {
         self.removed_epic_child.take()
-    }
-
-    pub(crate) fn record_document_frame(
-        &mut self,
-        task_id: crate::ids::TaskId,
-        terminal_size: Size,
-    ) {
-        self.document_frame = Some((task_id, terminal_size));
-    }
-
-    pub(crate) fn matches_document_frame(
-        &self,
-        task_id: &crate::ids::TaskId,
-        terminal_size: Size,
-    ) -> bool {
-        self.document_frame
-            .as_ref()
-            .is_some_and(|(cached_task_id, cached_size)| {
-                cached_task_id == task_id && *cached_size == terminal_size
-            })
     }
 }
 

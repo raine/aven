@@ -16,9 +16,7 @@ pub(crate) enum OverlayState {
     Help {
         scroll: u16,
     },
-    Detail {
-        scroll: u16,
-    },
+    Detail,
     AttachmentPreview {
         attachment_id: String,
         scroll: u16,
@@ -78,7 +76,6 @@ pub(crate) enum SearchIntent {
         epic_id: crate::ids::TaskId,
         display_ref: String,
         project_key: String,
-        return_to_detail: bool,
     },
 }
 
@@ -350,12 +347,10 @@ pub(crate) enum TextIntent {
     EditAvailability {
         selection: TaskSelection,
         mixed: bool,
-        return_to_detail: bool,
     },
     EditDue {
         selection: TaskSelection,
         mixed: bool,
-        return_to_detail: bool,
     },
     ResolveConflictManually {
         target: ConflictTarget,
@@ -375,7 +370,6 @@ pub(crate) enum MultilineIntent {
     AddNote {
         task_id: crate::ids::TaskId,
         display_ref: String,
-        return_to_detail: bool,
     },
     EditDescription {
         selection: TaskSelection,
@@ -462,20 +456,15 @@ pub(crate) enum ConfirmIntent {
     },
     DeleteTasks {
         selection: TaskSelection,
-        return_to_detail: bool,
     },
     DeleteAttachment {
         attachment_id: String,
-        return_to_detail: bool,
-        detail_scroll: u16,
     },
     ClearAvailability {
         selection: TaskSelection,
-        return_to_detail: bool,
     },
     ClearDue {
         selection: TaskSelection,
-        return_to_detail: bool,
     },
     InstallUpdate {
         plan: crate::update::InstallPlan,
@@ -945,23 +934,19 @@ mod tests {
             epic_id: crate::test_support::task_id("epic-1"),
             display_ref: "APP-1234".to_string(),
             project_key: "app".to_string(),
-            return_to_detail: true,
         });
         assert!(matches!(
             search.intent,
             SearchIntent::AddEpicChild {
                 ref display_ref,
                 ref project_key,
-                return_to_detail: true,
-                ..
+                    ..
             } if display_ref == "APP-1234" && project_key == "app"
         ));
 
         let confirm = ConfirmState::new(
             ConfirmIntent::DeleteAttachment {
                 attachment_id: "attachment-1".to_string(),
-                return_to_detail: true,
-                detail_scroll: 7,
             },
             "Delete attachment",
             "Delete attachment?",
@@ -970,9 +955,7 @@ mod tests {
             confirm.intent,
             ConfirmIntent::DeleteAttachment {
                 ref attachment_id,
-                return_to_detail: true,
-                detail_scroll: 7,
-            } if attachment_id == "attachment-1"
+                } if attachment_id == "attachment-1"
         ));
     }
 

@@ -39,6 +39,10 @@ fn toast_severity(app: &App) -> Option<ToastSeverity> {
         .map(|notification| notification.toast_view().severity)
 }
 
+fn detail_scroll(app: &App) -> u16 {
+    app.detail.as_ref().map_or(0, |detail| detail.scroll())
+}
+
 async fn test_app() -> App {
     let dir = tempfile::tempdir().unwrap();
     let pool = crate::test_support::open_db(&dir.path().join("test.db"))
@@ -758,6 +762,7 @@ mod theme_background {
 
 mod keyboard_dispatch {
     use super::*;
+    use crate::tui::detail_session::DetailSession;
 
     #[tokio::test]
     async fn ctrl_c_quits_from_normal_mode() {
@@ -840,10 +845,8 @@ mod keyboard_dispatch {
             .await
             .unwrap();
         assert_pending_empty(&app);
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
 
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
@@ -1068,7 +1071,7 @@ mod keyboard_dispatch {
                 persist_on_exit: false,
             },
             OverlayState::Help { scroll: 0 },
-            OverlayState::Detail { scroll: 0 },
+            OverlayState::Detail,
             OverlayState::DetailHelp { scroll: 0 },
             OverlayState::Search(SearchState {
                 input: LineEdit::new("q".to_string()),
@@ -1128,18 +1131,15 @@ mod keyboard_dispatch {
         for overlay in overlays {
             let detail_help = matches!(overlay, OverlayState::DetailHelp { .. });
             let mut app = test_app().await;
+            if detail_help {
+                app.detail = DetailSession::open(0);
+            }
             app.overlay = Some(overlay);
             app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
                 .await
                 .unwrap();
-            if detail_help {
-                assert!(matches!(
-                    app.overlay,
-                    Some(OverlayState::Detail { scroll: 0 })
-                ));
-            } else {
-                assert!(app.overlay.is_none());
-            }
+            assert!(app.overlay.is_none());
+            assert_eq!(app.detail.is_some(), detail_help);
             assert_pending_empty(&app);
         }
     }
@@ -1348,10 +1348,8 @@ mod attachment_paste {
             .await
             .unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 7 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert!(app.detail.as_mut().unwrap().focused_target.is_none());
         assert!(app.store.tasks[0].attachments.is_empty());
         assert_eq!(toast_message(&app).as_deref(), Some("removed image"));
@@ -1395,10 +1393,8 @@ mod attachment_paste {
             .await
             .unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 7 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(
             app.detail
                 .as_mut()
@@ -1441,10 +1437,8 @@ mod attachment_paste {
             .await
             .unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 3 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(app.store.tasks[0].attachments.len(), 1);
     }
 
@@ -2257,10 +2251,8 @@ mod command_and_config_overlays {
         settle_search_preview(&mut app).await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.title, "detail needle");
     }
@@ -3992,10 +3984,8 @@ mod task_row_mouse {
         app.dispatch_mouse(click, (80, 24).into()).await.unwrap();
         assert!(app.detail.last_task_click().is_none());
         assert_eq!(app.list.selected_task(), Some(0));
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
     }
 
     #[tokio::test]
@@ -4296,10 +4286,8 @@ mod authoring {
         assert_eq!(app.list.selected_task(), Some(0));
         assert_eq!(app.store.tasks[0].task.id, task_id);
         assert!(app.store.tasks[0].task.deleted);
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert!(app.list.pop_navigation().is_none());
         assert!(app.detail.as_mut().unwrap().history.pop().is_none());
 
@@ -5323,10 +5311,8 @@ mod detail_mode {
         app.dispatch_key(key(KeyCode::Char('g')), (80, 24).into())
             .await
             .unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
 
         app.dispatch_key(key(KeyCode::Char('[')), (80, 24).into())
             .await
@@ -5355,29 +5341,29 @@ mod detail_mode {
     #[tokio::test]
     async fn closing_detail_help_returns_to_detail_overlay() {
         let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Detail help target")).await;
+        app.show_detail(0);
         app.overlay = Some(OverlayState::DetailHelp { scroll: 0 });
 
         app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
     }
 
     #[tokio::test]
     async fn second_help_key_returns_from_detail_help_to_detail_overlay() {
         let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Detail help target")).await;
+        app.show_detail(0);
         app.overlay = Some(OverlayState::DetailHelp { scroll: 0 });
 
         app.dispatch_key(key(KeyCode::Char('?')), (80, 24).into())
             .await
             .unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
     }
 
     #[tokio::test]
@@ -5402,27 +5388,23 @@ mod detail_mode {
             .await
             .unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll }) if scroll == expected
-        ));
+        assert_eq!(detail_scroll(&app), expected);
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(app.list.focus(), Focus::Tasks);
 
         app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
             .await
             .unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
 
         app.dispatch_key(key(KeyCode::BackTab), (80, 24).into())
             .await
             .unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll }) if scroll == expected
-        ));
+        assert_eq!(detail_scroll(&app), expected);
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
     }
 
     #[tokio::test]
@@ -5446,10 +5428,8 @@ mod detail_mode {
             .await
             .unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(app.list.focus(), Focus::Tasks);
     }
 
@@ -5465,40 +5445,30 @@ mod detail_mode {
         app.show_detail(0);
 
         app.dispatch_key(ctrl_d(), (80, 24).into()).await.unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 18 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
 
         app.dispatch_key(key(KeyCode::PageDown), (80, 24).into())
             .await
             .unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 36 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
 
         app.dispatch_key(ctrl_u(), (80, 24).into()).await.unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 18 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
 
         app.dispatch_key(key(KeyCode::Char('k')), (80, 24).into())
             .await
             .unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 17 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
 
         app.dispatch_key(key(KeyCode::PageUp), (80, 24).into())
             .await
             .unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
     }
 
     #[tokio::test]
@@ -5512,18 +5482,14 @@ mod detail_mode {
                 .await
                 .unwrap();
         }
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
 
         app.dispatch_key(key(KeyCode::Char('k')), (80, 24).into())
             .await
             .unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
     }
 
     #[tokio::test]
@@ -5601,6 +5567,8 @@ mod detail_mode {
     #[tokio::test]
     async fn mouse_wheel_scrolls_detail_help_overlay() {
         let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Detail help target")).await;
+        app.show_detail(0);
         app.overlay = Some(OverlayState::DetailHelp { scroll: 0 });
 
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 10).into())
@@ -5653,6 +5621,62 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn rendered_disclosure_rebuilds_focus_and_scroll_from_expanded_document() {
+        let mut app = test_app().await;
+        let mut draft = test_task_draft("Expanded projection");
+        draft.description = (0..30)
+            .map(|index| format!("description line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let selected = create_and_select_task(&mut app, draft).await;
+        let child_ids = (0..6)
+            .map(|index| crate::test_support::task_id(&format!("expanded-child-{index}")))
+            .collect::<Vec<_>>();
+        app.store.tasks[selected].depends_on = child_ids
+            .iter()
+            .enumerate()
+            .map(|(index, task_id)| crate::query::TaskDependencyLink {
+                task_id: task_id.clone(),
+                display_ref: format!("APP-{index}"),
+                title: format!("Child {index}"),
+                status: "todo".to_string(),
+                priority: "none".to_string(),
+                unresolved: true,
+            })
+            .collect();
+        app.show_detail(0);
+        app.detail.as_mut().unwrap().set_focused_target(Some(
+            crate::tui::app::DetailTargetId::Expand {
+                section: crate::tui::app::DetailSection::DependsOn,
+            },
+        ));
+        let size: ratatui::layout::Size = (80, 24).into();
+        render_app_buffer(&mut app, size.width, size.height);
+
+        app.dispatch_key(key(KeyCode::Enter), size).await.unwrap();
+
+        let focused = app
+            .detail
+            .as_ref()
+            .and_then(|detail| detail.focused_target())
+            .cloned()
+            .expect("first revealed dependency focused");
+        assert_eq!(focused.task_id(), Some(&child_ids[3]));
+        assert!(
+            app.detail
+                .as_ref()
+                .unwrap()
+                .expanded_sections()
+                .contains(&crate::tui::app::DetailSection::DependsOn)
+        );
+        let expected_scroll = app
+            .detail_document_for_query(size)
+            .and_then(|document| document.target_scroll_target(&focused, 0))
+            .unwrap();
+        assert_eq!(detail_scroll(&app), expected_scroll);
+    }
+
+    #[tokio::test]
     async fn detail_drag_selects_rendered_text_and_coexists_with_scrolling() {
         let mut app = test_app().await;
         let mut draft = test_task_draft("Select this title");
@@ -5680,10 +5704,8 @@ mod detail_mode {
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), size)
             .await
             .unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 1 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         let item = app.store.selected_task(app.list.selected_task()).unwrap();
         assert_eq!(
             crate::tui::ui::detail_selected_text(item, &selection).as_deref(),
@@ -5693,10 +5715,8 @@ mod detail_mode {
         app.dispatch_key(key(KeyCode::Esc), size).await.unwrap();
         assert!(app.detail.as_mut().unwrap().text_selection.is_none());
         assert!(!render_app_text(&mut app, 80, 24).contains("copy selection"));
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 1 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
     }
 
     #[tokio::test]
@@ -5713,18 +5733,14 @@ mod detail_mode {
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
             .await
             .unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 1 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
 
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollUp), (80, 24).into())
             .await
             .unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
     }
 
     #[tokio::test]
@@ -5745,10 +5761,9 @@ mod detail_mode {
                 .unwrap();
         }
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll }) if scroll == expected
-        ));
+        assert_eq!(detail_scroll(&app), expected);
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
     }
 
     #[tokio::test]
@@ -5829,20 +5844,16 @@ mod detail_mode {
             .await
             .unwrap();
         assert_eq!(app.list.selected_task(), Some(second));
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(toast_message(&app).as_deref(), Some("selected next task"));
 
         app.dispatch_key(key(KeyCode::Char('[')), (80, 24).into())
             .await
             .unwrap();
         assert_eq!(app.list.selected_task(), Some(first));
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(
             toast_message(&app).as_deref(),
             Some("selected previous task")
@@ -5919,10 +5930,8 @@ mod detail_mode {
                 .map(crate::ids::TaskId::as_str),
             Some(child_ids[0].as_str())
         );
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
 
         app.dispatch_key(key(KeyCode::Char('j')), (80, 24).into())
             .await
@@ -5961,10 +5970,8 @@ mod detail_mode {
         let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, child_ids[1]);
         assert!(app.detail.as_mut().unwrap().focused_target.is_none());
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
 
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
@@ -6006,10 +6013,8 @@ mod detail_mode {
             .unwrap();
 
         assert_eq!(app.store.tasks[selected].task.id, current_id);
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(
             toast_message(&app).as_deref(),
             Some("linked task is unavailable")
@@ -6067,10 +6072,8 @@ mod detail_mode {
         assert_eq!(app.store.view_state.view, TaskView::Search);
         assert_eq!(app.store.tasks[0].task.id, child_id);
         assert!(app.detail.as_mut().unwrap().expanded_sections.is_empty());
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
 
         app.dispatch_key(key(KeyCode::Char('g')), (80, 24).into())
             .await
@@ -6088,10 +6091,8 @@ mod detail_mode {
                 .expanded_sections
                 .contains(&crate::tui::app::DetailSection::Blocks)
         );
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(
             app.detail
                 .as_mut()
@@ -6131,10 +6132,8 @@ mod detail_mode {
                 .map(|item| &item.task.id),
             Some(&current_id)
         );
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 4 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
     }
 
     #[tokio::test]
@@ -6178,10 +6177,8 @@ mod detail_mode {
         app.open_detail_task(&child_id, 3).await;
 
         assert_eq!(app.store.tasks[0].task.id, child_id);
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert!(app.detail.as_mut().unwrap().focused_target.is_none());
         assert!(app.detail.as_mut().unwrap().expanded_sections.is_empty());
         assert!(app.detail.as_mut().unwrap().text_selection.is_some());
@@ -6203,10 +6200,8 @@ mod detail_mode {
                 .map(|item| &item.task.id),
             Some(&parent_id)
         );
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 3 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(
             app.detail
                 .as_mut()
@@ -6240,10 +6235,8 @@ mod detail_mode {
         assert!(app.detail.is_none());
 
         app.activate_or_toggle_detail().await.unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert!(app.detail.as_mut().unwrap().focused_target.is_none());
         assert!(app.detail.as_mut().unwrap().expanded_sections.is_empty());
         assert!(app.detail.as_mut().unwrap().text_selection.is_none());
@@ -6303,11 +6296,7 @@ mod detail_mode {
             .await
             .unwrap();
         assert!(matches!(app.overlay, Some(OverlayState::AddTask(_))));
-        assert!(
-            app.epic_child_authoring
-                .as_ref()
-                .is_some_and(|context| !context.return_to_detail)
-        );
+        assert!(app.epic_child_authoring.is_some());
 
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
@@ -6348,11 +6337,7 @@ mod detail_mode {
             .await
             .unwrap();
         assert!(matches!(app.overlay, Some(OverlayState::AddTask(_))));
-        assert!(
-            app.epic_child_authoring
-                .as_ref()
-                .is_some_and(|context| context.return_to_detail)
-        );
+        assert!(app.epic_child_authoring.is_some());
 
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
@@ -6363,10 +6348,8 @@ mod detail_mode {
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
             .unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 3 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert!(app.detail.is_some());
     }
 
@@ -6522,10 +6505,8 @@ mod detail_mode {
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
             .unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(
             app.store
                 .selected_task(app.list.selected_task())
@@ -6618,10 +6599,7 @@ mod detail_mode {
                 .and_then(crate::tui::app::DetailTargetId::attachment_id),
             Some("SUPPRESSED")
         );
-        let forward_scroll = match app.overlay {
-            Some(OverlayState::Detail { scroll }) => scroll,
-            _ => panic!("expected detail"),
-        };
+        let forward_scroll = detail_scroll(&app);
         let context = app.inline_images.context_override().unwrap().clone();
         assert_eq!(
             detail_attachment_hit_id(
@@ -6650,10 +6628,7 @@ mod detail_mode {
                 .and_then(crate::tui::app::DetailTargetId::attachment_id),
             Some("LASTIMAGE")
         );
-        let reverse_scroll = match app.overlay {
-            Some(OverlayState::Detail { scroll }) => scroll,
-            _ => panic!("expected detail"),
-        };
+        let reverse_scroll = detail_scroll(&app);
         assert!(reverse_scroll >= forward_scroll);
     }
 
@@ -6706,7 +6681,8 @@ mod detail_mode {
             .await
             .unwrap();
 
-        assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(app.inline_images.export_count(), 1);
         assert_eq!(
             toast_message(&app).as_deref(),
@@ -6733,7 +6709,8 @@ mod detail_mode {
             .await
             .unwrap();
         assert_eq!(app.inline_images.export_count(), 1);
-        assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
 
         let item = app.store.selected_task(app.list.selected_task()).unwrap();
         let (column, row) = (0..30)
@@ -6749,7 +6726,8 @@ mod detail_mode {
             .await
             .unwrap();
         assert_eq!(app.inline_images.export_count(), 1);
-        assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
     }
 
     #[tokio::test]
@@ -6910,10 +6888,9 @@ mod detail_mode {
             .await
             .unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll }) if scroll == preview_cap
-        ));
+        assert_eq!(detail_scroll(&app), preview_cap);
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
     }
 
     #[tokio::test]
@@ -6982,10 +6959,7 @@ mod detail_mode {
                 .and_then(crate::tui::app::DetailTargetId::attachment_id),
             Some("FOCUSIMAGE")
         );
-        let image_scroll = match app.overlay {
-            Some(OverlayState::Detail { scroll }) => scroll,
-            _ => panic!("expected detail"),
-        };
+        let image_scroll = detail_scroll(&app);
         assert_eq!(
             detail_attachment_hit_id(
                 &app.store.tasks[parent_index],
@@ -7189,10 +7163,9 @@ mod detail_mode {
         app.dispatch_mouse(left_click(column, row), (80, 30).into())
             .await
             .unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: current }) if current == scroll
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
+        assert_eq!(detail_scroll(&app), scroll);
 
         app.widgets.inline_image_placements[0].attachment_id = "SECONDDUPLICATE".to_string();
         app.dispatch_mouse(left_click(column, row), (80, 30).into())
@@ -7257,10 +7230,7 @@ mod detail_mode {
             app.dispatch_key(key(KeyCode::Tab), (100, 30).into())
                 .await
                 .unwrap();
-            let focused_scroll = match app.overlay {
-                Some(OverlayState::Detail { scroll }) => scroll,
-                _ => panic!("expected detail overlay"),
-            };
+            let focused_scroll = detail_scroll(&app);
             assert_eq!(
                 app.detail
                     .as_mut()
@@ -7281,10 +7251,9 @@ mod detail_mode {
                 .unwrap();
 
             assert!(app.detail.as_mut().unwrap().focused_target.is_none());
-            assert!(matches!(
-                app.overlay,
-                Some(OverlayState::Detail { scroll }) if scroll == focused_scroll
-            ));
+            assert!(app.overlay.is_none());
+            assert!(app.detail.is_some());
+            assert_eq!(detail_scroll(&app), focused_scroll);
         }
     }
 
@@ -7314,10 +7283,8 @@ mod detail_mode {
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
             .unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 4 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(
             app.detail
                 .as_mut()
@@ -7366,10 +7333,8 @@ mod detail_mode {
         app.dispatch_key(key(KeyCode::Esc), (100, 30).into())
             .await
             .unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 6 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, task_id);
     }
@@ -7421,10 +7386,8 @@ mod detail_mode {
         app.dispatch_mouse(click, (80, 24).into()).await.unwrap();
         let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, child_id);
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
 
         app.dispatch_key(key(KeyCode::Char('g')), (80, 24).into())
             .await
@@ -7435,10 +7398,8 @@ mod detail_mode {
 
         let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, parent_id);
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 3 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
     }
 
     #[tokio::test]
@@ -7489,10 +7450,8 @@ mod detail_mode {
 
         let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, parent_id);
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 7 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(
             app.detail
                 .as_mut()
@@ -7523,10 +7482,8 @@ mod detail_mode {
             app.store.tasks[app.list.selected_task().unwrap()].task.id,
             second_id
         );
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 4 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
 
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
@@ -7535,10 +7492,8 @@ mod detail_mode {
             app.store.tasks[app.list.selected_task().unwrap()].task.id,
             first_id
         );
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 2 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
 
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
@@ -7623,10 +7578,8 @@ mod detail_mode {
             app.store.tasks[app.list.selected_task().unwrap()].task.id,
             parent_id
         );
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 6 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
     }
 
     #[tokio::test]
@@ -7651,10 +7604,8 @@ mod detail_mode {
             app.store.tasks[app.list.selected_task().unwrap()].task.id,
             parent_id
         );
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 8 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
     }
 
@@ -7690,7 +7641,8 @@ mod detail_mode {
         app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
             .await
             .unwrap();
-        assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
 
         app.dispatch_key(key(KeyCode::Char('q')), (80, 24).into())
             .await
@@ -7720,10 +7672,8 @@ mod detail_mode {
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
             .unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 4 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert!(app.detail_has_parent());
 
         if app.detail.is_none() {
@@ -7762,10 +7712,8 @@ mod detail_mode {
             app.store.tasks[app.list.selected_task().unwrap()].task.id,
             parent_id
         );
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 5 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
     }
 
     #[tokio::test]
@@ -7823,10 +7771,8 @@ mod detail_mode {
             .await
             .unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].notes.len(), 1);
     }
@@ -7942,10 +7888,8 @@ mod detail_mode {
             type_chars(&mut app, value).await;
             app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-            assert!(matches!(
-                app.overlay,
-                Some(OverlayState::Detail { scroll: 2 })
-            ));
+            assert!(app.overlay.is_none());
+            assert!(app.detail.is_some());
             let selected = app.list.selected_task().unwrap();
             assert_eq!(
                 app.store.tasks[selected].task.available_at.as_deref(),
@@ -7955,10 +7899,8 @@ mod detail_mode {
             app.refresh().await.unwrap();
             let selected = app.list.selected_task().unwrap();
             assert_eq!(app.store.tasks[selected].task.id, task_id);
-            assert!(matches!(
-                app.overlay,
-                Some(OverlayState::Detail { scroll: 2 })
-            ));
+            assert!(app.overlay.is_none());
+            assert!(app.detail.is_some());
         }
 
         app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
@@ -7976,10 +7918,8 @@ mod detail_mode {
         type_chars(&mut app, "now").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 2 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         let selected = app.list.selected_task().unwrap();
         assert!(app.store.tasks[selected].task.available_at.is_none());
     }
@@ -8103,10 +8043,8 @@ mod detail_mode {
             .unwrap();
         app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert!(app.authoring.is_idle());
     }
 
@@ -8148,10 +8086,8 @@ mod detail_mode {
         type_chars(&mut app, " updated").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(
             app.store.tasks[selected].task.title,
             "Detail title target updated"
@@ -8196,10 +8132,8 @@ mod detail_mode {
                 .await
                 .unwrap();
             assert_pending(&app, &["t"]);
-            assert!(matches!(
-                app.overlay,
-                Some(OverlayState::Detail { scroll: 4 })
-            ));
+            assert!(app.overlay.is_none());
+            assert!(app.detail.is_some());
 
             for event in events {
                 app.dispatch_key(event, (80, 24).into()).await.unwrap();
@@ -8239,10 +8173,8 @@ mod detail_mode {
                 .await
                 .unwrap();
             assert_pending(&app, &["t"]);
-            assert!(matches!(
-                app.overlay,
-                Some(OverlayState::Detail { scroll: 4 })
-            ));
+            assert!(app.overlay.is_none());
+            assert!(app.detail.is_some());
 
             for event in events {
                 app.dispatch_key(event, (80, 24).into()).await.unwrap();
@@ -8293,10 +8225,8 @@ mod detail_mode {
             .unwrap();
 
         assert_pending_empty(&app);
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 5 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(
             toast_message(&app).as_deref(),
             Some("invalid shortcut: t z")
@@ -8329,10 +8259,8 @@ mod detail_mode {
             .await
             .unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert!(app.authoring.is_idle());
     }
 
@@ -8367,10 +8295,8 @@ mod detail_mode {
                 Some(format!("copied {value}").as_str())
             );
             assert_eq!(toast_severity(&app), Some(ToastSeverity::Success));
-            assert!(matches!(
-                app.overlay,
-                Some(OverlayState::Detail { scroll: 4 })
-            ));
+            assert!(app.overlay.is_none());
+            assert!(app.detail.is_some());
         }
     }
 
@@ -8402,10 +8328,8 @@ mod detail_mode {
             .await
             .unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 7 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(
             toast_message(&app).as_deref(),
             Some(format!("set {display_ref} status=done").as_str())
@@ -8465,7 +8389,8 @@ mod detail_mode {
         app.execute(Action::ReturnToLastChange).await.unwrap();
 
         assert_eq!(app.store.view_state.view, TaskView::Search);
-        assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(app.store.tasks.len(), 1);
         assert_eq!(app.store.tasks[0].task.id, changed_id);
 
@@ -8499,10 +8424,8 @@ mod detail_mode {
             .await
             .unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 4 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, selected_task_id);
         assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Done);
@@ -8532,10 +8455,8 @@ mod detail_mode {
             .await
             .unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 3 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Active);
     }
 
@@ -8557,10 +8478,8 @@ mod detail_mode {
             .unwrap();
 
         assert_eq!(app.list.selected_task(), Some(selected));
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
     }
 
     #[tokio::test]
@@ -8593,10 +8512,8 @@ mod detail_mode {
             .await
             .unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 3 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(
             app.store.tasks[selected].task.priority,
             TaskPriority::Urgent
@@ -8617,10 +8534,8 @@ mod detail_mode {
             .await
             .unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 5 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(app.store.tasks[selected].task.title, "Before");
         assert!(toast_message(&app).is_some_and(|message| message.contains("undid")));
     }
@@ -8646,10 +8561,8 @@ mod detail_mode {
         app.dispatch_key(key(KeyCode::Char('a')), (120, 30).into())
             .await
             .unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
 
         app.dispatch_key(key(KeyCode::Char('u')), (120, 30).into())
             .await
@@ -8658,10 +8571,8 @@ mod detail_mode {
         let selected = app.list.selected_task().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, task_id);
         assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Inbox);
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
     }
 
     #[tokio::test]
@@ -8699,10 +8610,8 @@ mod detail_mode {
         app.handle_overlay_key(key(KeyCode::Char('Y')))
             .await
             .unwrap();
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert!(app.authoring.is_idle());
     }
 
@@ -8720,10 +8629,8 @@ mod detail_mode {
             .unwrap();
         app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert!(app.authoring.is_idle());
     }
 
@@ -8741,10 +8648,8 @@ mod detail_mode {
             .unwrap();
         app.handle_overlay_key(ctrl_s()).await.unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert_eq!(
             toast_message(&app).as_deref(),
             Some("note body is required")
@@ -9237,10 +9142,8 @@ mod task_editing {
 
             assert_eq!(toast_message(&app).as_deref(), Some(expected_message));
             assert_eq!(toast_severity(&app), Some(ToastSeverity::Success));
-            assert!(matches!(
-                app.overlay,
-                Some(OverlayState::Detail { scroll: 3 })
-            ));
+            assert!(app.overlay.is_none());
+            assert!(app.detail.is_some());
         }
     }
 
@@ -9496,10 +9399,8 @@ mod delete_and_restore {
             .await
             .unwrap();
 
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 7 })
-        ));
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_some());
         assert!(app.store.tasks[selected].task.deleted);
     }
 

@@ -106,7 +106,6 @@ impl App {
                 terminal.draw(|frame| {
                     ui::render(frame, &self.store, &mut self.widgets, &mut self.list, &view)
                 })?;
-                self.record_detail_document_frame(terminal.size()?);
                 needs_redraw = self.render_inline_images_after_draw(terminal).is_err();
             }
 
@@ -273,23 +272,8 @@ impl App {
         InlineImageSurface::write_cleanup(&mut stdout, placements, backend)
     }
 
-    fn record_detail_document_frame(&mut self, terminal_size: ratatui::layout::Size) {
-        if self.widgets.detail_document.is_none() {
-            return;
-        }
-        let Some(task_id) = self
-            .store
-            .selected_task(self.list.selected_task())
-            .map(|item| item.task.id.clone())
-        else {
-            return;
-        };
-        if let Some(detail) = self.detail.as_mut() {
-            detail.record_document_frame(task_id, terminal_size);
-        }
-    }
-
     pub(crate) fn view(&self) -> ViewState {
+        let detail = self.detail.as_ref();
         let mut overlay = self.overlay.as_ref().map(OverlayView::from);
         if let Some(AddTask(state)) = &mut overlay {
             state.status_prefix_active = self.pending_shortcut.has_add_task_status_prefix();
@@ -297,7 +281,6 @@ impl App {
         }
 
         let selected_task = self.store.selected_task(self.list.selected_task());
-        let detail = self.detail.as_ref();
         let detail_focus = detail.and_then(|detail| detail.focused_target()).filter(|focused| {
             selected_task.is_some_and(|item| {
                 ui::detail_target_is_actionable(item, focused)
@@ -407,7 +390,7 @@ impl App {
     fn detail_surface_accepts_inline_images(&self) -> bool {
         matches!(
             self.overlay,
-            None | Some(OverlayState::Detail { .. } | OverlayState::AttachmentPreview { .. })
+            None | Some(OverlayState::AttachmentPreview { .. })
         )
     }
 

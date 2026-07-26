@@ -8,7 +8,7 @@ use crate::tui::app_intake::IntakeController;
 use crate::tui::authoring::AuthoringState;
 use crate::tui::inline_image_surface::InlineImageSurface;
 use crate::tui::list_surface::ListSurface;
-pub(crate) use crate::tui::list_surface::{Focus, LastChangeReturnState};
+pub(crate) use crate::tui::list_surface::{Focus, LastChangeDetailState, LastChangeReturnState};
 use crate::tui::overlay::OverlayState;
 use crate::tui::shortcut_buffer::ShortcutBuffer;
 use crate::tui::store::{TaskOrder, TaskViewState, TuiStore};
@@ -153,7 +153,6 @@ pub(crate) struct RemovedEpicChild {
 pub(super) struct EpicChildAuthoringContext {
     pub(super) epic: crate::tui::store::EpicContext,
     pub(super) search: crate::tui::overlay::SearchState,
-    pub(super) return_to_detail: bool,
 }
 
 pub(crate) struct App {
@@ -299,7 +298,7 @@ impl App {
         } else {
             self.detail = crate::tui::detail_session::DetailSession::open(scroll);
         }
-        self.overlay = Some(OverlayState::Detail { scroll });
+        self.overlay = None;
     }
 
     pub(super) fn clear_detail_session(&mut self) {
