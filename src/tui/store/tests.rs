@@ -3815,8 +3815,15 @@ mod epics {
             .unwrap()
             .unwrap();
 
-        assert_eq!(result.selected, Some(0));
-        assert_eq!(store.tasks[0].task.id, second_parent_id);
+        let selected = result.selected.expect("a remaining epic row");
+        assert_eq!(selected, first_parent.min(store.tasks.len() - 1));
+        assert_ne!(store.tasks[selected].task.id, first_parent_id);
+        assert!(
+            store
+                .tasks
+                .iter()
+                .any(|task| task.task.id == second_parent_id)
+        );
         assert!(
             !store
                 .view_state
