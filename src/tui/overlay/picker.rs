@@ -164,7 +164,7 @@ pub(super) fn picker_submit_outcome(state: PickerState) -> OverlayOutcome {
             .unwrap_or_default()
     };
     OverlayOutcome::Submitted(OverlaySubmit::Picker {
-        route: state.route,
+        intent: state.intent,
         values,
         partial_values: Vec::new(),
     })
@@ -192,7 +192,7 @@ fn move_picker_selection(state: &mut PickerState, delta: isize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::overlay::OverlayRoute;
+    use crate::tui::overlay::PickerIntent;
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -204,7 +204,7 @@ mod tests {
 
     fn picker_navigation_state() -> PickerState {
         PickerState {
-            route: OverlayRoute::MessageOnly,
+            intent: PickerIntent::FilterLabel,
             title: "Pick".to_string(),
             filter: crate::tui::overlay::LineEdit::blank(),
             items: vec![
@@ -228,7 +228,7 @@ mod tests {
 
     fn picker_state_with_items(count: usize) -> PickerState {
         PickerState {
-            route: OverlayRoute::EditLabels,
+            intent: PickerIntent::FilterLabel,
             title: "Pick".to_string(),
             filter: crate::tui::overlay::LineEdit::blank(),
             items: (0..count)
@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn picker_filter_and_selection_normalize() {
         let mut state = PickerState {
-            route: OverlayRoute::MessageOnly,
+            intent: PickerIntent::FilterLabel,
             title: "Pick".to_string(),
             filter: crate::tui::overlay::LineEdit::new("alp".to_string()),
             items: vec![
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn picker_filter_ignores_dashes_in_labels() {
         let state = PickerState {
-            route: OverlayRoute::MessageOnly,
+            intent: PickerIntent::FilterLabel,
             title: "Go: project".to_string(),
             filter: crate::tui::overlay::LineEdit::new("gitsur".to_string()),
             items: vec![PickerItem {
@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn picker_filter_preserves_dash_matching() {
         let state = PickerState {
-            route: OverlayRoute::MessageOnly,
+            intent: PickerIntent::FilterLabel,
             title: "Pick".to_string(),
             filter: crate::tui::overlay::LineEdit::new("git-sur".to_string()),
             items: vec![PickerItem {

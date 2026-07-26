@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::tui::app::{App, Focus};
 use crate::tui::overlay::{
     HeaderMenuAction, HeaderMenuItem, HeaderMenuKind, HeaderMenuState, OrderMenuState,
-    OverlayRoute, OverlayState,
+    OverlayState, PickerIntent,
 };
 use crate::tui::store::{TaskOrder, TaskScope, TaskScopeTarget, TaskView};
 
@@ -20,7 +20,7 @@ impl App {
             item.selected =
                 Some(&item.value) == self.store.view_state.filter_modifiers.label.as_ref();
         }
-        self.open_picker_overlay(OverlayRoute::FilterLabel, FILTER_LABEL_TITLE, items, false);
+        self.open_picker_overlay(PickerIntent::FilterLabel, FILTER_LABEL_TITLE, items, false);
     }
 
     pub(super) fn begin_filter_priority(&mut self) {
@@ -34,7 +34,7 @@ impl App {
             .unwrap_or_default();
         let items = self.store.priority_picker_items(selected);
         self.open_picker_overlay(
-            OverlayRoute::FilterPriority,
+            PickerIntent::FilterPriority,
             FILTER_PRIORITY_TITLE,
             items,
             false,
@@ -46,7 +46,7 @@ impl App {
         self.store.refresh(None).await?;
         let items = self.store.workspace_picker_items();
         self.open_picker_overlay(
-            OverlayRoute::SwitchWorkspace,
+            PickerIntent::SwitchWorkspace,
             SWITCH_WORKSPACE_TITLE,
             items,
             false,
@@ -62,7 +62,7 @@ impl App {
         };
         let items = self.store.existing_project_picker_items(selected);
         self.open_picker_overlay(
-            OverlayRoute::ScopeProject,
+            PickerIntent::ScopeProject,
             SCOPE_PROJECT_TITLE,
             items,
             false,

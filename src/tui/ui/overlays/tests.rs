@@ -3,9 +3,10 @@ use crate::query::SyncHistoryStats;
 use crate::tui::authoring::{AddTaskStep, PendingTaskAttachmentSummary};
 use crate::tui::config_overlay::{CONFIG_STATUS_TITLE, DATABASE_STATS_TITLE};
 use crate::tui::overlay::{
-    AddTaskAttachmentsView, AddTaskMode, AddTaskView, ConfirmView, MultilineInputMode,
-    MultilineInputView, OverlayRoute, OverlayState, OverlayView, PickerItem, PickerMode,
-    PickerState, PickerView, SearchPurpose, SearchResultItem, TagComboboxView, TextInputView,
+    AddTaskAttachmentsView, AddTaskMode, AddTaskView, ConfirmView, MultilineInputKind,
+    MultilineInputMode, MultilineInputView, OverlayState, OverlayView, PickerIntent, PickerItem,
+    PickerKind, PickerMode, PickerState, PickerView, SearchKind, SearchResultItem,
+    TagComboboxIntent, TagComboboxKind, TagComboboxView, TextInputKind, TextInputView,
     TextPanelView,
 };
 use crate::tui::store::{
@@ -39,7 +40,7 @@ fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
             total_matches,
             stale,
             no_matches_cached,
-            purpose,
+            intent,
         } => render_search(
             frame,
             SearchRenderView {
@@ -52,7 +53,7 @@ fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
                     stale: *stale,
                     no_matches_cached: *no_matches_cached,
                 },
-                purpose,
+                intent,
             },
         ),
         OverlayView::AddTask(state) => render_add_task(frame, state),
@@ -161,7 +162,7 @@ fn add_task_view() -> AddTaskView {
             items: Vec::new().into_boxed_slice(),
             selected: 0,
         }),
-        mode: crate::tui::overlay::AddTaskMode::Compose,
+        mode: Box::new(crate::tui::overlay::AddTaskMode::Compose),
         title_error: false,
         status_prefix_active: false,
         priority_prefix_active: false,
@@ -170,7 +171,7 @@ fn add_task_view() -> AddTaskView {
 
 fn picker_view() -> PickerView {
     PickerView {
-        route: OverlayRoute::MessageOnly,
+        kind: PickerKind::Generic,
         title: String::new(),
         filter: String::new(),
         filter_cursor: 0,
@@ -185,7 +186,7 @@ fn picker_view() -> PickerView {
 
 fn project_picker_view() -> PickerView {
     PickerView {
-        route: OverlayRoute::ScopeProject,
+        kind: PickerKind::ScopeProject,
         title: "Scope: project".to_string(),
         filter: String::new(),
         filter_cursor: 0,
@@ -297,7 +298,7 @@ mod text_panel_and_search {
             total_matches: 12,
             stale: false,
             no_matches_cached: false,
-            purpose: SearchPurpose::Navigate,
+            intent: SearchKind::Navigate,
         });
         assert!(rendered.contains("Search"));
         assert!(rendered.contains("query"));
@@ -316,7 +317,7 @@ mod text_panel_and_search {
             total_matches: 0,
             stale: false,
             no_matches_cached: false,
-            purpose: SearchPurpose::Navigate,
+            intent: SearchKind::Navigate,
         });
 
         assert!(rendered.contains("0 matches"));
@@ -333,7 +334,7 @@ mod text_panel_and_search {
             total_matches: 0,
             stale: true,
             no_matches_cached: false,
-            purpose: SearchPurpose::Navigate,
+            intent: SearchKind::Navigate,
         });
 
         assert!(!rendered.contains("searching..."));
@@ -351,7 +352,7 @@ mod text_panel_and_search {
             total_matches: 0,
             stale: true,
             no_matches_cached: true,
-            purpose: SearchPurpose::Navigate,
+            intent: SearchKind::Navigate,
         });
 
         assert!(rendered.contains("0 matches"));
@@ -369,10 +370,7 @@ mod text_panel_and_search {
             total_matches: 0,
             stale: false,
             no_matches_cached: false,
-            purpose: SearchPurpose::AddDependency {
-                task_id: crate::test_support::task_id("task-1"),
-                display_ref: "AVN-1".to_string(),
-            },
+            intent: SearchKind::AddDependency,
         });
 
         assert!(rendered.contains("Add dependency"));
@@ -386,10 +384,8 @@ mod text_panel_and_search {
         let mut create = search_result_item("Create a child using \"Ship account security\"...");
         create.display_ref.clear();
         create.create_new = true;
-        let purpose = SearchPurpose::AddEpicChild {
-            epic_id: crate::test_support::task_id("epic-1"),
+        let intent = SearchKind::AddEpicChild {
             display_ref: "APP-YDKM".to_string(),
-            project_key: "app".to_string(),
         };
         let buffer = overlay_buffer(OverlayView::Search {
             input: "Ship account security".to_string(),
@@ -399,7 +395,7 @@ mod text_panel_and_search {
             total_matches: 1,
             stale: false,
             no_matches_cached: false,
-            purpose,
+            intent,
         });
         let create_row = (0..buffer.area.height)
             .map(|row| buffer_row(&buffer, row))
@@ -430,10 +426,8 @@ mod text_panel_and_search {
             total_matches: 1,
             stale: false,
             no_matches_cached: false,
-            purpose: SearchPurpose::AddEpicChild {
-                epic_id: crate::test_support::task_id("epic-1"),
+            intent: SearchKind::AddEpicChild {
                 display_ref: "APP-YDKM".to_string(),
-                project_key: "app".to_string(),
             },
         });
 
@@ -453,7 +447,7 @@ mod text_panel_and_search {
             total_matches: 1,
             stale: false,
             no_matches_cached: false,
-            purpose: SearchPurpose::Navigate,
+            intent: SearchKind::Navigate,
         });
 
         assert!(rendered.contains(crate::tui::ui::task_list::EPIC_MARKER));
@@ -469,7 +463,7 @@ mod text_panel_and_search {
             total_matches: 12,
             stale: false,
             no_matches_cached: false,
-            purpose: SearchPurpose::Navigate,
+            intent: SearchKind::Navigate,
         });
         let prefix_cell = buffer
             .content
@@ -490,7 +484,7 @@ mod text_panel_and_search {
             total_matches: 0,
             stale: false,
             no_matches_cached: false,
-            purpose: SearchPurpose::Navigate,
+            intent: SearchKind::Navigate,
         });
         let populated = overlay_buffer(OverlayView::Search {
             input: "query".to_string(),
@@ -503,7 +497,7 @@ mod text_panel_and_search {
             total_matches: 12,
             stale: false,
             no_matches_cached: false,
-            purpose: SearchPurpose::Navigate,
+            intent: SearchKind::Navigate,
         });
         let title_row = |buffer: &ratatui::buffer::Buffer| {
             (0..buffer.area.height)
@@ -532,7 +526,7 @@ mod text_input {
     #[test]
     fn overlay_render_includes_text_input_prompt_and_hints() {
         let rendered = render_overlay_view(OverlayView::TextInput(TextInputView {
-            route: OverlayRoute::MessageOnly,
+            kind: TextInputKind::EditTitle,
             title: "Edit title".to_string(),
             prompt: "New title".to_string(),
             input: "alpha".to_string(),
@@ -546,7 +540,7 @@ mod text_input {
     #[test]
     fn mixed_date_edit_uses_keep_and_clear_hints() {
         let rendered = render_overlay_view(OverlayView::TextInput(TextInputView {
-            route: OverlayRoute::EditDue,
+            kind: TextInputKind::EditDate,
             title: "Edit due date · 2 marked tasks".to_string(),
             prompt: "Current: varies\nType a date to set it on all tasks".to_string(),
             input: String::new(),
@@ -562,7 +556,7 @@ mod text_input {
     #[test]
     fn overlay_render_omits_empty_text_input_prompt() {
         let rendered = render_overlay_view(OverlayView::TextInput(TextInputView {
-            route: OverlayRoute::MessageOnly,
+            kind: TextInputKind::EditTitle,
             title: "Edit title".to_string(),
             prompt: String::new(),
             input: "alpha".to_string(),
@@ -577,7 +571,7 @@ mod text_input {
     #[test]
     fn delete_project_name_confirmation_separates_prompt_and_input() {
         let buffer = overlay_buffer(OverlayView::TextInput(TextInputView {
-            route: OverlayRoute::DeleteProjectNameConfirm,
+            kind: TextInputKind::ConfirmDeleteProject,
             title: "Delete project".to_string(),
             prompt: "Type blocked-test to delete project:".to_string(),
             input: "blocked-test".to_string(),
@@ -594,44 +588,44 @@ mod text_input {
     }
 
     #[test]
-    fn placeholder_text_input_routes_use_placeholder_style() {
-        for (route, title, prompt, placeholder) in [
+    fn placeholder_text_input_kinds_use_placeholder_style() {
+        for (kind, title, prompt, placeholder) in [
             (
-                OverlayRoute::AddProject,
+                TextInputKind::AddProject,
                 "Add project",
                 "project name:",
                 ADD_PROJECT_NAME_PLACEHOLDER,
             ),
             (
-                OverlayRoute::AddLabel,
+                TextInputKind::AddLabel,
                 "Add label",
                 "label name:",
                 ADD_LABEL_NAME_PLACEHOLDER,
             ),
             (
-                OverlayRoute::RenameProjectName,
+                TextInputKind::RenameProject,
                 "Rename project",
                 "new project name:",
                 RENAME_PROJECT_NAME_PLACEHOLDER,
             ),
             (
-                OverlayRoute::ConflictManual,
+                TextInputKind::ConflictManual,
                 "Resolve manually",
                 "manual value for field=title:",
                 CONFLICT_MANUAL_VALUE_PLACEHOLDER,
             ),
         ] {
             let rendered = render_overlay_view(OverlayView::TextInput(TextInputView {
-                route,
+                kind,
                 title: title.to_string(),
                 prompt: prompt.to_string(),
                 input: String::new(),
                 cursor: 0,
             }));
-            assert!(rendered.contains(title), "{route:?}");
-            assert!(rendered.contains(placeholder), "{route:?}");
-            assert!(!rendered.contains(prompt), "{route:?}");
-            assert!(rendered.contains("Enter submit"), "{route:?}");
+            assert!(rendered.contains(title), "{kind:?}");
+            assert!(rendered.contains(placeholder), "{kind:?}");
+            assert!(!rendered.contains(prompt), "{kind:?}");
+            assert!(rendered.contains("Enter submit"), "{kind:?}");
         }
     }
 
@@ -794,7 +788,7 @@ mod add_task_overlay {
         assert!(validation.contains("Title is required"));
 
         let help = render_overlay_view(OverlayView::AddTask(AddTaskView {
-            mode: crate::tui::overlay::AddTaskMode::Help { scroll: 0 },
+            mode: Box::new(crate::tui::overlay::AddTaskMode::Help { scroll: 0 }),
             ..add_task_view()
         }));
         assert!(help.contains("Composer help"));
@@ -830,7 +824,7 @@ mod add_task_overlay {
     fn composer_help_scrolls_with_a_stable_dialog_and_scrollbar() {
         let top = render_overlay_view_at(
             OverlayView::AddTask(AddTaskView {
-                mode: AddTaskMode::Help { scroll: 0 },
+                mode: Box::new(AddTaskMode::Help { scroll: 0 }),
                 ..add_task_view()
             }),
             100,
@@ -838,9 +832,9 @@ mod add_task_overlay {
         );
         let bottom = render_overlay_view_at(
             OverlayView::AddTask(AddTaskView {
-                mode: AddTaskMode::Help {
+                mode: Box::new(AddTaskMode::Help {
                     scroll: composer_help_scroll_cap(20, false),
-                },
+                }),
                 ..add_task_view()
             }),
             100,
@@ -882,7 +876,7 @@ mod add_task_overlay {
     #[test]
     fn add_task_child_modes_use_shared_dialog_and_control_styles() {
         let mut picker = PickerState::new(
-            OverlayRoute::AddTaskTitlePriority,
+            PickerIntent::AddTaskPriority,
             "Add task: priority",
             vec![
                 PickerItem {
@@ -901,10 +895,10 @@ mod add_task_overlay {
         picker.filter.text = "hi".to_string();
         picker.filter.cursor = 2;
         let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
-            mode: AddTaskMode::Picker {
+            mode: Box::new(AddTaskMode::Picker {
                 field: AddTaskStep::Priority,
                 state: picker,
-            },
+            }),
             ..add_task_view()
         }));
         assert!(rendered.contains("╭─ Add task: priority"));
@@ -913,7 +907,7 @@ mod add_task_overlay {
         assert!(!rendered.contains("/hi"));
 
         let OverlayState::TagCombobox(labels) = OverlayState::tag_combobox(
-            OverlayRoute::AddTaskTitleLabels,
+            TagComboboxIntent::AddTaskLabels,
             "Add task: labels",
             vec!["feature".to_string()],
             vec!["feature".to_string()],
@@ -921,7 +915,7 @@ mod add_task_overlay {
             panic!("expected labels control");
         };
         let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
-            mode: AddTaskMode::Labels(labels),
+            mode: Box::new(AddTaskMode::Labels(labels)),
             ..add_task_view()
         }));
         assert!(rendered.contains("╭─ Add task: labels"));
@@ -929,7 +923,7 @@ mod add_task_overlay {
         assert!(rendered.contains("Enter add/save"));
 
         let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
-            mode: AddTaskMode::ConfirmDiscard,
+            mode: Box::new(AddTaskMode::ConfirmDiscard),
             ..add_task_view()
         }));
         assert!(rendered.contains("╭─ Discard draft?"));
@@ -1266,7 +1260,7 @@ mod multiline_overlays {
     #[test]
     fn overlay_render_includes_multiline_submit_hints() {
         let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
-            route: OverlayRoute::MessageOnly,
+            kind: MultilineInputKind::EditDescription,
             title: "Description".to_string(),
             prompt: "Body".to_string(),
             lines: vec!["line one".to_string()],
@@ -1275,7 +1269,7 @@ mod multiline_overlays {
             mode: MultilineInputMode::Compose,
         }));
         assert!(rendered.contains("Description"));
-        assert!(rendered.contains("Body"));
+        assert!(rendered.contains("line one"));
         assert!(rendered.contains("Ctrl-Enter / ^S submit"));
     }
 
@@ -1295,7 +1289,7 @@ mod multiline_overlays {
     #[test]
     fn edit_description_blank_line_does_not_show_placeholder() {
         let state = MultilineInputView {
-            route: OverlayRoute::EditDescription,
+            kind: MultilineInputKind::EditDescription,
             title: "Edit description".to_string(),
             prompt: String::new(),
             lines: vec!["body".to_string(), String::new()],
@@ -1312,7 +1306,7 @@ mod multiline_overlays {
     #[test]
     fn edit_description_overlay_wraps_long_lines() {
         let overlay = OverlayView::MultilineInput(MultilineInputView {
-            route: OverlayRoute::EditDescription,
+            kind: MultilineInputKind::EditDescription,
             title: "Edit description".to_string(),
             prompt: String::new(),
             lines: vec!["a".repeat(160)],
@@ -1362,7 +1356,7 @@ mod multiline_overlays {
     #[test]
     fn edit_description_cursor_row_tracks_wrapped_segment() {
         let state = MultilineInputView {
-            route: OverlayRoute::EditDescription,
+            kind: MultilineInputKind::EditDescription,
             title: "Edit description".to_string(),
             prompt: String::new(),
             lines: vec!["abcdefghij".to_string()],
@@ -1378,7 +1372,7 @@ mod multiline_overlays {
     #[test]
     fn overlay_render_omits_empty_multiline_prompt() {
         let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
-            route: OverlayRoute::EditDescription,
+            kind: MultilineInputKind::EditDescription,
             title: "Edit description".to_string(),
             prompt: String::new(),
             lines: vec!["line one".to_string()],
@@ -1403,9 +1397,9 @@ mod multiline_overlays {
     }
 
     #[test]
-    fn add_task_natural_overlay_uses_route_and_add_task_free_text_style() {
+    fn add_task_natural_overlay_uses_kind_and_add_task_free_text_style() {
         let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
-            route: OverlayRoute::AddTaskNatural,
+            kind: MultilineInputKind::AddTaskNatural,
             title: "Anything".to_string(),
             prompt: "wrong prompt".to_string(),
             lines: vec![String::new()],
@@ -1421,9 +1415,9 @@ mod multiline_overlays {
     }
 
     #[test]
-    fn generic_multiline_does_not_use_natural_style_by_title() {
+    fn edit_description_kind_does_not_use_natural_style_by_title() {
         let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
-            route: OverlayRoute::MessageOnly,
+            kind: MultilineInputKind::EditDescription,
             title: "Add task: natural language".to_string(),
             prompt: "body:".to_string(),
             lines: vec![String::new()],
@@ -1432,7 +1426,7 @@ mod multiline_overlays {
             mode: MultilineInputMode::Compose,
         }));
         assert!(rendered.contains("Add task: natural language"));
-        assert!(rendered.contains("body:"));
+        assert!(rendered.contains("Enter task description here"));
         assert!(rendered.contains("Ctrl-Enter / ^S submit"));
         assert!(!rendered.contains("Ctrl-Enter / ^S parse"));
         assert!(!rendered.contains("Describe the task in natural language..."));
@@ -1441,7 +1435,7 @@ mod multiline_overlays {
     #[test]
     fn conflict_manual_multiline_uses_placeholder_style() {
         let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
-            route: OverlayRoute::ConflictManual,
+            kind: MultilineInputKind::ConflictManual,
             title: "Resolve manually".to_string(),
             prompt: "manual value for field=description:".to_string(),
             lines: vec![String::new()],
@@ -1458,7 +1452,7 @@ mod multiline_overlays {
     #[test]
     fn add_note_overlay_uses_placeholder_key_styles_and_spacing() {
         let overlay = OverlayView::MultilineInput(MultilineInputView {
-            route: OverlayRoute::AddNote,
+            kind: MultilineInputKind::AddNote,
             title: "Add note".to_string(),
             prompt: "note body:".to_string(),
             lines: vec![String::new()],
@@ -1487,7 +1481,7 @@ mod multiline_overlays {
     #[test]
     fn add_note_discard_confirmation_renders_explicit_controls() {
         let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
-            route: OverlayRoute::AddNote,
+            kind: MultilineInputKind::AddNote,
             title: "Add note".to_string(),
             prompt: "note body:".to_string(),
             lines: vec!["draft note text".to_string()],
@@ -1506,7 +1500,7 @@ mod multiline_overlays {
     #[test]
     fn add_note_overlay_hides_placeholder_on_later_empty_lines() {
         let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
-            route: OverlayRoute::AddNote,
+            kind: MultilineInputKind::AddNote,
             title: "Add note".to_string(),
             prompt: "note body:".to_string(),
             lines: vec!["existing note text".to_string(), String::new()],
@@ -1524,7 +1518,7 @@ mod multiline_overlays {
     fn add_note_overlay_keeps_hints_visible_when_input_wraps() {
         let body = "wrapped note text ".repeat(12);
         let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
-            route: OverlayRoute::AddNote,
+            kind: MultilineInputKind::AddNote,
             title: "Add note".to_string(),
             prompt: "note body:".to_string(),
             lines: vec![body.clone()],
@@ -1556,7 +1550,7 @@ mod multiline_overlays {
                 render_multiline_input(
                     frame,
                     &MultilineInputView {
-                        route: OverlayRoute::EditDescription,
+                        kind: MultilineInputKind::EditDescription,
                         title: "Edit description".to_string(),
                         prompt: String::new(),
                         lines,
@@ -1620,12 +1614,12 @@ mod picker_overlays {
 
     #[test]
     fn priority_picker_shows_priority_icons() {
-        for (route, title) in [
-            (OverlayRoute::EditPriority, "Edit task: priority"),
-            (OverlayRoute::AddTaskTitlePriority, "Add task: priority"),
+        for (kind, title) in [
+            (PickerKind::EditPriority, "Edit task: priority"),
+            (PickerKind::AddTaskPriority, "Add task: priority"),
         ] {
             let rendered = render_overlay_view(OverlayView::Picker(PickerView {
-                route,
+                kind,
                 title: title.to_string(),
                 items: vec![picker_item("urgent", "urgent")],
                 visible_indices: vec![0],
@@ -1677,8 +1671,8 @@ mod picker_overlays {
 
     #[test]
     fn tag_combobox_shows_selected_labels_input_completion_and_matches() {
-        let rendered = render_overlay_view(OverlayView::TagCombobox(TagComboboxView {
-            route: OverlayRoute::EditLabels,
+        let rendered = render_overlay_view(OverlayView::TagCombobox(Box::new(TagComboboxView {
+            kind: TagComboboxKind::EditLabels,
             title: "Edit task: labels".to_string(),
             input: "bu".to_string(),
             input_cursor: 2,
@@ -1689,7 +1683,7 @@ mod picker_overlays {
             highlighted: 0,
             visible_indices: vec![0],
             visible_start: 0,
-        }));
+        })));
 
         assert!(rendered.contains("Edit task: labels"));
         assert!(rendered.contains("feature"));
@@ -1702,8 +1696,8 @@ mod picker_overlays {
 
     #[test]
     fn tag_combobox_shows_partial_label_membership() {
-        let rendered = render_overlay_view(OverlayView::TagCombobox(TagComboboxView {
-            route: OverlayRoute::EditLabelsMulti,
+        let rendered = render_overlay_view(OverlayView::TagCombobox(Box::new(TagComboboxView {
+            kind: TagComboboxKind::EditLabelsMulti,
             title: "Edit labels · 2 marked tasks".to_string(),
             input: String::new(),
             input_cursor: 0,
@@ -1714,19 +1708,19 @@ mod picker_overlays {
             highlighted: 0,
             visible_indices: vec![0],
             visible_start: 0,
-        }));
+        })));
 
         assert!(rendered.contains("~ urgent"));
     }
 
     #[test]
     fn edit_project_uses_structured_project_picker() {
-        for (route, title) in [
-            (OverlayRoute::EditProject, "Edit project"),
-            (OverlayRoute::AddTaskTitleProject, "Add task: project"),
+        for (kind, title) in [
+            (PickerKind::EditProject, "Edit project"),
+            (PickerKind::AddTaskProject, "Add task: project"),
         ] {
             let rendered = render_overlay_view(OverlayView::Picker(PickerView {
-                route,
+                kind,
                 title: title.to_string(),
                 filter: "claude".to_string(),
                 filter_cursor: 6,
@@ -1889,7 +1883,7 @@ mod sync_status_overlay {
     }
 }
 
-mod route_specific_rendering {
+mod presentation_kind_rendering {
     use super::*;
 
     #[test]
@@ -1903,7 +1897,7 @@ mod route_specific_rendering {
                 total_matches: 12,
                 stale: false,
                 no_matches_cached: false,
-                purpose: SearchPurpose::Navigate,
+                intent: SearchKind::Navigate,
             },
             OverlayView::AddTask(AddTaskView {
                 title: "ship dialogs".to_string(),
@@ -1912,14 +1906,14 @@ mod route_specific_rendering {
                 ..add_task_view()
             }),
             OverlayView::TextInput(TextInputView {
-                route: OverlayRoute::MessageOnly,
+                kind: TextInputKind::EditTitle,
                 title: "Edit title".to_string(),
                 prompt: "New title".to_string(),
                 input: "alpha".to_string(),
                 cursor: 5,
             }),
             OverlayView::MultilineInput(MultilineInputView {
-                route: OverlayRoute::MessageOnly,
+                kind: MultilineInputKind::EditDescription,
                 title: "Description".to_string(),
                 prompt: "Body".to_string(),
                 lines: vec!["line one".to_string()],
@@ -1936,8 +1930,8 @@ mod route_specific_rendering {
                 visible_indices: vec![0],
                 ..picker_view()
             }),
-            OverlayView::TagCombobox(TagComboboxView {
-                route: OverlayRoute::EditLabels,
+            OverlayView::TagCombobox(Box::new(TagComboboxView {
+                kind: TagComboboxKind::EditLabels,
                 title: "Labels".to_string(),
                 input: String::new(),
                 input_cursor: 0,
@@ -1948,9 +1942,8 @@ mod route_specific_rendering {
                 highlighted: 0,
                 visible_indices: vec![0],
                 visible_start: 0,
-            }),
+            })),
             OverlayView::Confirm(ConfirmView {
-                route: OverlayRoute::MessageOnly,
                 title: "Delete".to_string(),
                 prompt: "Delete task?".to_string(),
             }),
@@ -1978,9 +1971,9 @@ mod route_specific_rendering {
     }
 
     #[test]
-    fn add_note_route_uses_specialized_renderer_with_changed_title() {
+    fn add_note_kind_uses_specialized_renderer_with_changed_title() {
         let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
-            route: OverlayRoute::AddNote,
+            kind: MultilineInputKind::AddNote,
             title: "Changed note title".to_string(),
             prompt: "note body:".to_string(),
             lines: vec![String::new()],
@@ -1994,9 +1987,9 @@ mod route_specific_rendering {
     }
 
     #[test]
-    fn edit_description_route_uses_specialized_renderer_with_changed_title() {
+    fn edit_description_kind_uses_specialized_renderer_with_changed_title() {
         let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
-            route: OverlayRoute::EditDescription,
+            kind: MultilineInputKind::EditDescription,
             title: "Changed description title".to_string(),
             prompt: String::new(),
             lines: vec!["a".repeat(160)],
@@ -2010,9 +2003,9 @@ mod route_specific_rendering {
     }
 
     #[test]
-    fn add_task_description_route_uses_specialized_renderer_with_changed_title() {
+    fn add_task_description_kind_uses_specialized_renderer_with_changed_title() {
         let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
-            route: OverlayRoute::AddTaskDescription,
+            kind: MultilineInputKind::AddTaskDescription,
             title: "Changed add task description".to_string(),
             prompt: String::new(),
             lines: vec![String::new()],
@@ -2026,45 +2019,45 @@ mod route_specific_rendering {
     }
 
     #[test]
-    fn project_picker_routes_control_submit_hints_with_changed_titles() {
-        for (route, title, hint) in [
+    fn project_picker_kinds_control_submit_hints_with_changed_titles() {
+        for (kind, title, hint) in [
             (
-                OverlayRoute::ScopeProject,
+                PickerKind::ScopeProject,
                 "Changed scope title",
                 "Enter scope",
             ),
             (
-                OverlayRoute::EditProject,
+                PickerKind::EditProject,
                 "Changed edit title",
                 "Enter submit",
             ),
             (
-                OverlayRoute::AddTaskTitleProject,
+                PickerKind::AddTaskProject,
                 "Changed add-task project title",
                 "Enter submit",
             ),
             (
-                OverlayRoute::DeleteProjectPicker,
+                PickerKind::DeleteProject,
                 "Changed delete title",
                 "Enter delete",
             ),
         ] {
             let rendered = render_overlay_view(OverlayView::Picker(PickerView {
-                route,
+                kind,
                 title: title.to_string(),
                 items: vec![picker_item("AVN aven", "aven")],
                 ..project_picker_view()
             }));
-            assert!(rendered.contains(title), "{route:?}");
-            assert!(rendered.contains("PREFIX"), "{route:?}");
-            assert!(rendered.contains(hint), "{route:?}");
+            assert!(rendered.contains(title), "{kind:?}");
+            assert!(rendered.contains("PREFIX"), "{kind:?}");
+            assert!(rendered.contains(hint), "{kind:?}");
         }
     }
 
     #[test]
-    fn priority_picker_route_controls_icon_rendering_with_changed_title() {
+    fn priority_picker_kind_controls_icon_rendering_with_changed_title() {
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
-            route: OverlayRoute::EditPriority,
+            kind: PickerKind::EditPriority,
             title: "Changed priority title".to_string(),
             items: vec![picker_item("urgent", "urgent")],
             visible_indices: vec![0],
@@ -2075,9 +2068,9 @@ mod route_specific_rendering {
     }
 
     #[test]
-    fn add_task_priority_route_uses_priority_renderer() {
+    fn add_task_priority_kind_uses_priority_renderer() {
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
-            route: OverlayRoute::AddTaskTitlePriority,
+            kind: PickerKind::AddTaskPriority,
             title: "Changed add task priority".to_string(),
             items: vec![picker_item("urgent", "urgent")],
             visible_indices: vec![0],
@@ -2096,7 +2089,6 @@ mod confirm_overlays {
     #[test]
     fn overlay_render_includes_confirm_prompt_and_hints() {
         let rendered = render_overlay_view(OverlayView::Confirm(ConfirmView {
-            route: OverlayRoute::MessageOnly,
             title: "Delete".to_string(),
             prompt: "Delete task?".to_string(),
         }));
@@ -2110,7 +2102,6 @@ mod confirm_overlays {
         let prompt =
             "Delete WI-2ZB3 Option to track treadmill sessions as HealthKit workouts ".repeat(2);
         let overlay = OverlayView::Confirm(ConfirmView {
-            route: OverlayRoute::MessageOnly,
             title: "Delete task".to_string(),
             prompt: prompt.clone(),
         });

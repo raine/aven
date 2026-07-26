@@ -8,67 +8,22 @@ use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::input::{InputWidth, input_cursor_spans, input_line};
 use super::confirm::render_confirm_with_hints;
 use super::shared::{tail_viewport_start, viewport_start_for_cursor};
-use crate::tui::overlay::{ConfirmView, MultilineInputMode, MultilineInputView, OverlayRoute};
+use crate::tui::overlay::{
+    ConfirmView, MultilineInputKind, MultilineInputMode, MultilineInputView,
+};
 use crate::tui::text::{
     cell_width_ranges, char_boundary_at_or_before, char_count_ranges, char_count_segment_index,
 };
 use crate::tui::theme::{FG, FG_DIM, FG_MUTED};
 
 pub(in crate::tui::ui) fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
-    match state.route {
-        OverlayRoute::AddNote => {
-            render_add_note_input(frame, state);
-            return;
-        }
-        OverlayRoute::EditDescription => {
-            render_description_input(frame, state);
-            return;
-        }
-        OverlayRoute::AddTaskDescription => {
-            render_add_task_description_input(frame, state);
-            return;
-        }
-        OverlayRoute::AddTaskNatural => {
-            render_add_task_natural_input(frame, state);
-            return;
-        }
-        OverlayRoute::ConflictManual => {
-            render_conflict_manual_input(frame, state);
-            return;
-        }
-        _ => {}
+    match state.kind {
+        MultilineInputKind::AddNote => render_add_note_input(frame, state),
+        MultilineInputKind::EditDescription => render_description_input(frame, state),
+        MultilineInputKind::AddTaskDescription => render_add_task_description_input(frame, state),
+        MultilineInputKind::AddTaskNatural => render_add_task_natural_input(frame, state),
+        MultilineInputKind::ConflictManual => render_conflict_manual_input(frame, state),
     }
-
-    let visible_rows = 10usize;
-    let content_rows = state.lines.len().min(visible_rows).max(1);
-    let prompt_rows = usize::from(!state.prompt.is_empty());
-    let height = (content_rows + prompt_rows + 4).min(16) as u16;
-    let start = tail_viewport_start(state.row, visible_rows);
-    let mut lines = Vec::new();
-    if !state.prompt.is_empty() {
-        lines.push(Line::from(Span::styled(
-            &state.prompt,
-            Style::new().fg(FG_DIM),
-        )));
-    }
-    for (row_index, line) in state
-        .lines
-        .iter()
-        .enumerate()
-        .skip(start)
-        .take(visible_rows)
-    {
-        if row_index == state.row {
-            lines.push(input_line("", line, state.column));
-        } else {
-            lines.push(Line::from(line.clone()));
-        }
-    }
-    lines.push(Line::from(""));
-    lines.push(multiline_hint_line());
-    Dialog::new(&state.title, 60, height)
-        .wrap()
-        .render_text(frame, Text::from(lines));
 }
 
 fn render_description_input(frame: &mut Frame, state: &MultilineInputView) {
@@ -272,7 +227,6 @@ pub(in crate::tui::ui) fn render_add_note_input(frame: &mut Frame, state: &Multi
         render_confirm_with_hints(
             frame,
             &ConfirmView {
-                route: OverlayRoute::MessageOnly,
                 title: "Discard note draft?".to_string(),
                 prompt: "The note text will be lost.".to_string(),
             },

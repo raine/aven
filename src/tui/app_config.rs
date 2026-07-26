@@ -38,8 +38,8 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn submit_config_init(&mut self) -> Result<()> {
-        let message = self.store.init_config()?;
+    pub(super) fn submit_config_init(&mut self, path: std::path::PathBuf) -> Result<()> {
+        let message = self.store.init_config(path)?;
         self.set_success(message);
         Ok(())
     }

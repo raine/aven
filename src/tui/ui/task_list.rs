@@ -1467,7 +1467,7 @@ mod tests {
     use super::*;
     use crate::choices::TaskPriority;
     use crate::operations::TaskDraft;
-    use crate::tui::overlay::OverlayRoute;
+    use crate::tui::overlay::TextInputKind;
     use crate::tui::test_support::task_list_item;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -2025,7 +2025,7 @@ mod tests {
     fn selected_row_renders_inline_title_editor() {
         let item = task_list_item("original title");
         let editor = TextInputView {
-            route: OverlayRoute::EditTitle,
+            kind: TextInputKind::EditTitle,
             title: "Edit title".to_string(),
             prompt: String::new(),
             input: "edited title".to_string(),
@@ -2043,7 +2043,7 @@ mod tests {
     fn inline_title_editor_draws_end_cursor_in_title_column() {
         let item = task_list_item("original title");
         let editor = TextInputView {
-            route: OverlayRoute::EditTitle,
+            kind: TextInputKind::EditTitle,
             title: "Edit title".to_string(),
             prompt: String::new(),
             input: "edited".to_string(),
@@ -2108,7 +2108,7 @@ mod tests {
     #[test]
     fn inline_title_editor_clips_to_cursor_cell() {
         let editor = TextInputView {
-            route: OverlayRoute::EditTitle,
+            kind: TextInputKind::EditTitle,
             title: "Edit title".to_string(),
             prompt: String::new(),
             input: "abcdef".to_string(),
@@ -2271,7 +2271,7 @@ mod tests {
     fn task_row_cells_use_inline_title_when_selected() {
         let item = task_list_item("original title");
         let editor = TextInputView {
-            route: OverlayRoute::EditTitle,
+            kind: TextInputKind::EditTitle,
             title: "Edit title".to_string(),
             prompt: String::new(),
             input: "edited title".to_string(),

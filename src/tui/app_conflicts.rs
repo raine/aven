@@ -1,10 +1,11 @@
 use anyhow::Result;
 
 use crate::tui::app::{App, Focus};
-use crate::tui::conflict_flow::{
-    ConflictResolutionChoice, ConflictSubmit, ConflictTransition, truncate_value_preview,
+use crate::tui::conflict_flow::{ConflictResolutionChoice, truncate_value_preview};
+use crate::tui::overlay::{
+    ConfirmIntent, MultilineIntent, OverlayState, PickerIntent, PickerItem, TextIntent,
+    TextPanelState,
 };
-use crate::tui::overlay::{OverlayRoute, OverlayState, PickerItem, TextPanelState};
 use crate::tui::store::deleted_picker_items;
 use crate::tui::store::{ConflictTarget, TaskView};
 
@@ -110,17 +111,6 @@ impl App {
         self.set_info(message);
     }
 
-    fn apply_conflict_transition(&mut self, transition: ConflictTransition) {
-        match transition {
-            ConflictTransition::PickField { targets } => self.open_conflict_field_picker(&targets),
-            ConflictTransition::Confirm { choice, target } => {
-                self.open_conflict_confirm(choice, target)
-            }
-            ConflictTransition::EditManual { target } => self.open_manual_conflict_editor(target),
-            ConflictTransition::Message(message) => self.set_warning(message),
-        }
-    }
-
     pub(super) async fn begin_conflict_resolution(
         &mut self,
         choice: ConflictResolutionChoice,
@@ -128,8 +118,17 @@ impl App {
         let Some(targets) = self.load_conflict_targets_for_resolution().await? else {
             return Ok(());
         };
-        let transition = self.conflict_flow.begin_resolution(choice, targets);
-        self.apply_conflict_transition(transition);
+        if targets.len() == 1 {
+            self.open_conflict_confirm(choice, targets.into_iter().next().unwrap());
+        } else {
+            self.open_conflict_field_picker(
+                PickerIntent::PickConflictVariant {
+                    choice,
+                    targets: targets.clone(),
+                },
+                &targets,
+            );
+        }
         Ok(())
     }
 
@@ -137,12 +136,20 @@ impl App {
         let Some(targets) = self.load_conflict_targets_for_resolution().await? else {
             return Ok(());
         };
-        let transition = self.conflict_flow.begin_manual(targets);
-        self.apply_conflict_transition(transition);
+        if targets.len() == 1 {
+            self.open_manual_conflict_editor(targets.into_iter().next().unwrap());
+        } else {
+            self.open_conflict_field_picker(
+                PickerIntent::PickConflictManual {
+                    targets: targets.clone(),
+                },
+                &targets,
+            );
+        }
         Ok(())
     }
 
-    fn open_conflict_field_picker(&mut self, targets: &[ConflictTarget]) {
+    fn open_conflict_field_picker(&mut self, intent: PickerIntent, targets: &[ConflictTarget]) {
         let items = targets
             .iter()
             .map(|target| PickerItem {
@@ -151,49 +158,64 @@ impl App {
                 selected: false,
             })
             .collect();
-        self.open_picker_overlay(
-            OverlayRoute::ConflictField,
-            CONFLICT_FIELD_TITLE,
-            items,
-            false,
-        );
+        self.open_picker_overlay(intent, CONFLICT_FIELD_TITLE, items, false);
     }
 
-    pub(super) async fn submit_conflict_field_picker(&mut self, values: Vec<String>) -> Result<()> {
-        let transition = self.conflict_flow.submit_field(values);
-        self.apply_conflict_transition(transition);
+    pub(super) async fn submit_conflict_field_picker(
+        &mut self,
+        intent: PickerIntent,
+        values: Vec<String>,
+    ) -> Result<()> {
+        let Some(field) = values.first().filter(|value| !value.is_empty()) else {
+            self.set_warning("no conflict field selected");
+            return Ok(());
+        };
+        let (choice, targets) = match intent {
+            PickerIntent::PickConflictVariant { choice, targets } => (Some(choice), targets),
+            PickerIntent::PickConflictManual { targets } => (None, targets),
+            _ => return Ok(()),
+        };
+        let Some(target) = targets.into_iter().find(|target| target.field == *field) else {
+            self.set_warning(format!("no conflict for field={field}"));
+            return Ok(());
+        };
+        if let Some(choice) = choice {
+            self.open_conflict_confirm(choice, target);
+        } else {
+            self.open_manual_conflict_editor(target);
+        }
         Ok(())
     }
 
     fn open_conflict_confirm(&mut self, choice: ConflictResolutionChoice, target: ConflictTarget) {
         let value = match choice {
-            ConflictResolutionChoice::Local => target.local_value.as_str(),
-            ConflictResolutionChoice::Remote => target.remote_value.as_str(),
+            ConflictResolutionChoice::Local => target.local_value.clone(),
+            ConflictResolutionChoice::Remote => target.remote_value.clone(),
         };
         let title = match choice {
             ConflictResolutionChoice::Local => CONFLICT_CONFIRM_LOCAL_TITLE,
             ConflictResolutionChoice::Remote => CONFLICT_CONFIRM_REMOTE_TITLE,
         };
+        let prompt = format!(
+            "Resolve field={} with {}?",
+            target.field,
+            truncate_value_preview(&value, 60)
+        );
         self.overlay = Some(OverlayState::confirm(
-            OverlayRoute::ConflictConfirm,
+            ConfirmIntent::ResolveConflict { target, value },
             title,
-            format!(
-                "Resolve field={} with {}?",
-                target.field,
-                truncate_value_preview(value, 60)
-            ),
+            prompt,
         ));
     }
 
-    pub(super) async fn submit_confirmed_conflict_resolution(&mut self) -> Result<()> {
-        match self.conflict_flow.submit_confirmed_variant() {
-            ConflictSubmit::Resolve { target, value } => {
-                match self.store.resolve_conflict_value(target, value).await {
-                    Ok(result) => self.apply_mutation_result(result),
-                    Err(error) => self.set_error(format!("{error:#}")),
-                }
-            }
-            ConflictSubmit::Inactive { message } => self.set_warning(message),
+    pub(super) async fn submit_confirmed_conflict_resolution(
+        &mut self,
+        target: ConflictTarget,
+        value: String,
+    ) -> Result<()> {
+        match self.store.resolve_conflict_value(target, value).await {
+            Ok(result) => self.apply_mutation_result(result),
+            Err(error) => self.set_error(format!("{error:#}")),
         }
         Ok(())
     }
@@ -202,7 +224,9 @@ impl App {
         match target.field.as_str() {
             "description" => {
                 self.overlay = Some(OverlayState::multiline_input(
-                    OverlayRoute::ConflictManual,
+                    MultilineIntent::ResolveConflictManually {
+                        target: target.clone(),
+                    },
                     CONFLICT_MANUAL_TITLE,
                     format!("manual value for field={}:", target.field),
                     target.local_value.clone(),
@@ -210,7 +234,9 @@ impl App {
             }
             "title" => {
                 self.overlay = Some(OverlayState::text_input(
-                    OverlayRoute::ConflictManual,
+                    TextIntent::ResolveConflictManually {
+                        target: target.clone(),
+                    },
                     CONFLICT_MANUAL_TITLE,
                     format!("manual value for field={}:", target.field),
                     target.local_value.clone(),
@@ -221,7 +247,9 @@ impl App {
                     .store
                     .status_picker_items(Some(target.local_value.as_str()));
                 self.open_picker_overlay(
-                    OverlayRoute::ConflictManual,
+                    PickerIntent::ResolveConflictManually {
+                        target: target.clone(),
+                    },
                     CONFLICT_MANUAL_TITLE,
                     items,
                     false,
@@ -232,7 +260,9 @@ impl App {
                     .store
                     .priority_picker_items(target.local_value.as_str());
                 self.open_picker_overlay(
-                    OverlayRoute::ConflictManual,
+                    PickerIntent::ResolveConflictManually {
+                        target: target.clone(),
+                    },
                     CONFLICT_MANUAL_TITLE,
                     items,
                     false,
@@ -243,7 +273,9 @@ impl App {
                     .store
                     .existing_project_picker_items(target.local_value.as_str());
                 self.open_picker_overlay(
-                    OverlayRoute::ConflictManual,
+                    PickerIntent::ResolveConflictManually {
+                        target: target.clone(),
+                    },
                     CONFLICT_MANUAL_TITLE,
                     items,
                     false,
@@ -252,14 +284,15 @@ impl App {
             "deleted" => {
                 let items = deleted_picker_items(&target.local_value);
                 self.open_picker_overlay(
-                    OverlayRoute::ConflictManual,
+                    PickerIntent::ResolveConflictManually {
+                        target: target.clone(),
+                    },
                     CONFLICT_MANUAL_TITLE,
                     items,
                     false,
                 );
             }
             _ => {
-                self.conflict_flow.clear();
                 self.overlay = None;
                 self.set_warning(format!(
                     "manual merge is not supported for field={}",
@@ -269,25 +302,23 @@ impl App {
         }
     }
 
-    pub(super) async fn submit_manual_conflict_value(&mut self, value: String) -> Result<()> {
-        match self.conflict_flow.submit_manual_value(value) {
-            ConflictSubmit::Resolve { target, value } => {
-                match self
-                    .store
-                    .resolve_conflict_value(target.clone(), value.clone())
-                    .await
-                {
-                    Ok(result) => self.apply_mutation_result(result),
-                    Err(error) => {
-                        self.set_error(format!("{error:#}"));
-                        let mut retry_target = target;
-                        retry_target.local_value = value;
-                        let transition = self.conflict_flow.retry_manual_edit(retry_target);
-                        self.apply_conflict_transition(transition);
-                    }
-                }
+    pub(super) async fn submit_manual_conflict_value(
+        &mut self,
+        target: ConflictTarget,
+        value: String,
+    ) -> Result<()> {
+        match self
+            .store
+            .resolve_conflict_value(target.clone(), value.clone())
+            .await
+        {
+            Ok(result) => self.apply_mutation_result(result),
+            Err(error) => {
+                self.set_error(format!("{error:#}"));
+                let mut retry_target = target;
+                retry_target.local_value = value;
+                self.open_manual_conflict_editor(retry_target);
             }
-            ConflictSubmit::Inactive { message } => self.set_warning(message),
         }
         Ok(())
     }

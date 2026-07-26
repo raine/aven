@@ -3,7 +3,7 @@ use ratatui::widgets::{Block, Borders, Padding};
 
 use crate::tui::text::char_count_ranges;
 
-use super::{OverlayRoute, PickerView, TagComboboxView, picker_viewport_start};
+use super::{PickerKind, PickerView, TagComboboxView, picker_viewport_start};
 
 pub(crate) const GENERIC_PICKER_VIEWPORT_ROWS: usize = 8;
 pub(crate) const PROJECT_PICKER_VIEWPORT_ROWS: usize = 10;
@@ -69,7 +69,13 @@ pub(crate) fn dialog_inner_area(area: Rect) -> Rect {
 }
 
 pub(crate) fn picker_layout(state: &PickerView, terminal_size: Size) -> PickerLayout {
-    if project_picker_layout(state.route) {
+    if matches!(
+        state.kind,
+        PickerKind::AddTaskProject
+            | PickerKind::EditProject
+            | PickerKind::ScopeProject
+            | PickerKind::DeleteProject
+    ) {
         let height = (PROJECT_PICKER_VIEWPORT_ROWS as u16).saturating_add(6);
         let area = dialog_area(
             Rect::new(0, 0, terminal_size.width, terminal_size.height),
@@ -184,14 +190,4 @@ pub(crate) fn text_panel_layout(terminal_size: Size, line_count: usize) -> TextP
         inner: dialog_inner_area(area),
         visible_rows: TEXT_PANEL_VISIBLE_ROWS,
     }
-}
-
-fn project_picker_layout(route: OverlayRoute) -> bool {
-    matches!(
-        route,
-        OverlayRoute::ScopeProject
-            | OverlayRoute::EditProject
-            | OverlayRoute::AddTaskTitleProject
-            | OverlayRoute::DeleteProjectPicker
-    )
 }

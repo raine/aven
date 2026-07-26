@@ -17,7 +17,10 @@ use crate::tui::navigation::{
     detail_scroll_with_delta_with_images, detail_task_delta, handle_detail_overlay_key_with_cap,
     handle_detail_overlay_key_with_images, next_index, scroll_with_delta,
 };
-use crate::tui::overlay::{AddTaskMode, CommandState, OverlayOutcome, OverlayRoute, OverlayState};
+use crate::tui::overlay::{
+    AddTaskMode, CommandState, MultilineIntent, OverlayOutcome, OverlayState, PickerIntent,
+    TagComboboxIntent,
+};
 use crate::tui::platform::{copy_to_clipboard, is_editor_prefix_key};
 use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
 use crate::tui::store::TaskView;
@@ -72,14 +75,14 @@ impl App {
                 Some(OverlayState::AddTask(_))
                     | Some(OverlayState::MultilineInput(
                         crate::tui::overlay::MultilineInputState {
-                            route: OverlayRoute::AddTaskNatural,
+                            intent: MultilineIntent::AddTaskNatural,
                             ..
                         }
                     ))
             )
         {
             self.paste_add_task_image_from_clipboard().await
-        } else if self.footer_choice_mode.is_some() {
+        } else if self.footer_choice.is_some() {
             self.handle_footer_choice_key(key).await
         } else if key.code == KeyCode::Esc && self.pending_shortcut.cancel() {
             self.pending_shortcut_scroll = 0;
@@ -109,66 +112,79 @@ impl App {
     }
 
     async fn handle_footer_choice_key(&mut self, key: KeyEvent) -> Result<()> {
-        let Some(mode) = self.footer_choice_mode else {
+        let Some(choice) = self.footer_choice.clone() else {
             return Ok(());
         };
         if !key.modifiers.is_empty() {
             return Ok(());
         }
-        match (mode, key.code) {
+        match (choice.mode, key.code) {
             (_, KeyCode::Esc) => {
-                self.footer_choice_mode = None;
+                self.footer_choice = None;
                 Ok(())
             }
             (FooterChoiceMode::Status, KeyCode::Char('i')) => {
-                self.submit_footer_status("inbox").await
+                self.submit_footer_status(choice.selection, "inbox").await
             }
             (FooterChoiceMode::Status, KeyCode::Char('b')) => {
-                self.submit_footer_status("backlog").await
+                self.submit_footer_status(choice.selection, "backlog").await
             }
             (FooterChoiceMode::Status, KeyCode::Char('t')) => {
-                self.submit_footer_status("todo").await
+                self.submit_footer_status(choice.selection, "todo").await
             }
             (FooterChoiceMode::Status, KeyCode::Char('a')) => {
-                self.submit_footer_status("active").await
+                self.submit_footer_status(choice.selection, "active").await
             }
             (FooterChoiceMode::Status, KeyCode::Char('d')) => {
-                self.submit_footer_status("done").await
+                self.submit_footer_status(choice.selection, "done").await
             }
             (FooterChoiceMode::Status, KeyCode::Char('x')) => {
-                self.submit_footer_status("canceled").await
+                self.submit_footer_status(choice.selection, "canceled")
+                    .await
             }
             (FooterChoiceMode::Priority, KeyCode::Char('n')) => {
-                self.submit_footer_priority("none").await
+                self.submit_footer_priority(choice.selection, "none").await
             }
             (FooterChoiceMode::Priority, KeyCode::Char('l')) => {
-                self.submit_footer_priority("low").await
+                self.submit_footer_priority(choice.selection, "low").await
             }
             (FooterChoiceMode::Priority, KeyCode::Char('m')) => {
-                self.submit_footer_priority("medium").await
+                self.submit_footer_priority(choice.selection, "medium")
+                    .await
             }
             (FooterChoiceMode::Priority, KeyCode::Char('h')) => {
-                self.submit_footer_priority("high").await
+                self.submit_footer_priority(choice.selection, "high").await
             }
             (FooterChoiceMode::Priority, KeyCode::Char('u')) => {
-                self.submit_footer_priority("urgent").await
+                self.submit_footer_priority(choice.selection, "urgent")
+                    .await
             }
             _ => Ok(()),
         }
     }
 
-    async fn submit_footer_status(&mut self, status: &'static str) -> Result<()> {
-        self.footer_choice_mode = None;
-        self.submit_edit_status(status.to_string()).await?;
+    async fn submit_footer_status(
+        &mut self,
+        selection: crate::tui::task_selection::TaskSelection,
+        status: &'static str,
+    ) -> Result<()> {
+        self.footer_choice = None;
+        self.submit_edit_status(selection, status.to_string())
+            .await?;
         if self.detail_context && self.overlay.is_none() {
             self.restore_detail_overlay(true);
         }
         Ok(())
     }
 
-    async fn submit_footer_priority(&mut self, priority: &'static str) -> Result<()> {
-        self.footer_choice_mode = None;
-        self.submit_edit_priority(priority.to_string()).await?;
+    async fn submit_footer_priority(
+        &mut self,
+        selection: crate::tui::task_selection::TaskSelection,
+        priority: &'static str,
+    ) -> Result<()> {
+        self.footer_choice = None;
+        self.submit_edit_priority(selection, false, priority.to_string())
+            .await?;
         if self.detail_context && self.overlay.is_none() {
             self.restore_detail_overlay(true);
         }
@@ -376,7 +392,13 @@ impl App {
                 crate::tui::columns::lane_entry_status(&self.store.task_columns, lane_index)
         {
             self.last_task_click = None;
-            return self.move_tasks_to_column(status.as_str().to_string()).await;
+            let Some(selection) = self.resolve_task_selection() else {
+                self.set_info("no selected task to move");
+                return Ok(());
+            };
+            return self
+                .move_tasks_to_column(selection, status.as_str().to_string())
+                .await;
         }
 
         if !self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row)
@@ -407,7 +429,7 @@ impl App {
             self.last_task_click = None;
             self.focus = Focus::Tasks;
             self.widgets.table.select(Some(hit.task_index));
-            self.footer_choice_mode = Some(FooterChoiceMode::Status);
+            self.begin_status_picker();
             return Ok(());
         }
 
@@ -509,7 +531,7 @@ impl App {
 
         self.focus = Focus::Tasks;
         self.widgets.table.select(Some(hit.task_index));
-        self.footer_choice_mode = Some(FooterChoiceMode::Status);
+        self.begin_status_picker();
         Ok(())
     }
 
@@ -1087,12 +1109,8 @@ impl App {
         self.detail_context = true;
         self.detail_context_scroll = scroll;
         match target {
-            crate::tui::ui::DetailMetadataTarget::Status => {
-                self.footer_choice_mode = Some(FooterChoiceMode::Status)
-            }
-            crate::tui::ui::DetailMetadataTarget::Priority => {
-                self.footer_choice_mode = Some(FooterChoiceMode::Priority)
-            }
+            crate::tui::ui::DetailMetadataTarget::Status => self.begin_status_picker(),
+            crate::tui::ui::DetailMetadataTarget::Priority => self.begin_edit_priority(),
         }
         if self.overlay.is_none() {
             self.overlay = Some(OverlayState::Detail { scroll });
@@ -1340,12 +1358,13 @@ impl App {
             &overlay,
             OverlayState::Picker(state)
                 if matches!(
-                    state.route,
-                    OverlayRoute::AddTaskTitleProject | OverlayRoute::AddTaskTitlePriority
+                    state.intent,
+                    PickerIntent::AddTaskProject | PickerIntent::AddTaskPriority
                 )
         ) || matches!(
             &overlay,
-            OverlayState::TagCombobox(state) if state.route == OverlayRoute::AddTaskTitleLabels
+            OverlayState::TagCombobox(state)
+                if state.intent == TagComboboxIntent::AddTaskLabels
         );
         let outcome =
             crate::tui::overlay::handle_generic_overlay_mouse(overlay, mouse, terminal_size);
@@ -1665,9 +1684,7 @@ impl App {
 
         if self.pending_shortcut.take_editor_open_request(key) {
             match &overlay {
-                OverlayState::MultilineInput(state)
-                    if state.route == OverlayRoute::EditDescription =>
-                {
+                OverlayState::MultilineInput(state) if state.intent.is_description_edit() => {
                     self.open_description_external_editor(state.clone());
                 }
                 OverlayState::AddTask(state) if state.focus == AddTaskStep::Description => {
@@ -1684,7 +1701,7 @@ impl App {
             && matches!(
                 &overlay,
                 OverlayState::MultilineInput(state)
-                    if state.route == OverlayRoute::EditDescription
+                    if state.intent.is_description_edit()
             )
         {
             self.pending_shortcut.begin_editor_prefix();
@@ -1773,18 +1790,20 @@ impl App {
         let was_detail_help = matches!(overlay, OverlayState::DetailHelp { .. });
         let was_add_task_description_editor = matches!(
             &overlay,
-            OverlayState::MultilineInput(state) if state.route == OverlayRoute::AddTaskDescription
+            OverlayState::MultilineInput(state)
+                if state.intent == MultilineIntent::AddTaskDescription
         );
         let was_add_task_picker = matches!(
             &overlay,
             OverlayState::Picker(state)
                 if matches!(
-                    state.route,
-                    OverlayRoute::AddTaskTitleProject | OverlayRoute::AddTaskTitlePriority
+                    state.intent,
+                    PickerIntent::AddTaskProject | PickerIntent::AddTaskPriority
                 )
         ) || matches!(
             &overlay,
-            OverlayState::TagCombobox(state) if state.route == OverlayRoute::AddTaskTitleLabels
+            OverlayState::TagCombobox(state)
+                if state.intent == TagComboboxIntent::AddTaskLabels
         );
         let outcome = crate::tui::overlay::handle_generic_overlay_key(key, overlay, scroll_cap);
         self.apply_generic_overlay_outcome(

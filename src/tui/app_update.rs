@@ -10,7 +10,7 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use crate::tui::app::App;
-use crate::tui::overlay::{OverlayRoute, OverlayState, UpdateOverlayState};
+use crate::tui::overlay::{ConfirmIntent, OverlayState, UpdateOverlayState};
 use crate::update::{self, CheckOutcome, InstallPlan, InstallSuccess, Release, UpdateProgress};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,7 +33,6 @@ pub(super) struct UpdateController {
     install: Option<JoinHandle<Result<InstallSuccess>>>,
     progress: Option<watch::Receiver<UpdateProgress>>,
     cancelled: Option<Arc<AtomicBool>>,
-    pending_plan: Option<InstallPlan>,
 }
 
 #[cfg(not(test))]
@@ -57,7 +56,6 @@ impl UpdateController {
             install: None,
             progress: None,
             cancelled: None,
-            pending_plan: None,
         }
     }
 
@@ -226,20 +224,20 @@ impl App {
                 lines,
                 cached,
             }));
-            self.update.pending_plan = None;
             return;
         }
         let target = plan
             .direct_target()
             .expect("direct plan must have target")
-            .display();
+            .display()
+            .to_string();
         let cached_note = if cached {
             " Release information is cached because GitHub is unavailable."
         } else {
             ""
         };
         self.overlay = Some(OverlayState::confirm(
-            OverlayRoute::UpdateConfirm,
+            ConfirmIntent::InstallUpdate { plan },
             "Update aven",
             format!(
                 "Install aven v{} over v{} at {target}?{cached_note}",
@@ -247,15 +245,9 @@ impl App {
                 update::CURRENT_VERSION
             ),
         ));
-        self.update.pending_plan = Some(plan);
     }
 
-    pub(super) fn confirm_update(&mut self) -> Result<()> {
-        let plan = self
-            .update
-            .pending_plan
-            .take()
-            .ok_or_else(|| anyhow::anyhow!("update plan expired; run :update again"))?;
+    pub(super) fn confirm_update(&mut self, plan: InstallPlan) -> Result<()> {
         let version = plan.release.version.to_string();
         let (progress_tx, progress_rx) = update::progress_channel();
         let cancelled = Arc::new(AtomicBool::new(false));

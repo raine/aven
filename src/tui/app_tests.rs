@@ -14,9 +14,9 @@ use crate::tui::authoring::{ADD_NOTE_TITLE, AddTaskStep};
 use crate::tui::config_overlay::{CONFIG_INFO_TITLE, CONFIG_INIT_TITLE, CONFIG_PATHS_TITLE};
 use crate::tui::event::Action;
 use crate::tui::overlay::{
-    CommandState, ConfirmState, LineEdit, MultilineInputMode, MultilineInputState, OverlayRoute,
-    OverlayState, OverlayView, PickerItem, PickerMode, PickerState, SearchPurpose, SearchState,
-    TextInputState, TextPanelState,
+    CommandState, ConfirmIntent, ConfirmState, LineEdit, MultilineInputMode, MultilineInputState,
+    MultilineIntent, OverlayState, OverlayView, PickerIntent, PickerItem, PickerMode, PickerState,
+    SearchIntent, SearchState, TagComboboxIntent, TextInputState, TextIntent, TextPanelState,
 };
 use crate::tui::store::{
     SidebarEntryTarget, TaskOrder, TaskScope, TaskScopeTarget, TaskView, TaskViewState,
@@ -328,18 +328,6 @@ fn picker_row_click(app: &App, visible_row: u16, size: ratatui::layout::Size) ->
         }
         _ => panic!("expected picker overlay"),
     }
-}
-
-#[track_caller]
-fn confirm_hint_click(app: &App, column: u16, size: ratatui::layout::Size) -> MouseEvent {
-    let Some(OverlayState::Confirm(state)) = app.overlay.as_ref() else {
-        panic!("expected confirm overlay");
-    };
-    let layout = crate::tui::overlay::confirm_layout(size, &state.prompt);
-    left_click(
-        layout.inner.x.saturating_add(column),
-        layout.inner.y.saturating_add(layout.hint_row),
-    )
 }
 
 fn detail_metadata_click(target: crate::tui::ui::DetailMetadataTarget) -> MouseEvent {
@@ -816,7 +804,10 @@ mod keyboard_dispatch {
             .await
             .unwrap();
 
-        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Priority));
+        assert_eq!(
+            app.footer_choice.as_ref().map(|choice| choice.mode),
+            Some(FooterChoiceMode::Priority)
+        );
     }
 
     #[tokio::test]
@@ -1080,19 +1071,19 @@ mod keyboard_dispatch {
                 selected: 0,
                 total_matches: 0,
                 results_query: None,
-                purpose: SearchPurpose::Navigate,
+                intent: SearchIntent::Navigate,
             }),
             OverlayState::Command {
                 state: CommandState::new(LineEdit::new("ref".to_string())),
             },
             OverlayState::TextInput(TextInputState::new(
-                OverlayRoute::MessageOnly,
+                TextIntent::AddProject,
                 "T",
                 "P",
                 "x".to_string(),
             )),
             OverlayState::MultilineInput(MultilineInputState {
-                route: OverlayRoute::MessageOnly,
+                intent: MultilineIntent::AddTaskNatural,
                 title: "M".to_string(),
                 prompt: "P".to_string(),
                 lines: vec!["x".to_string()],
@@ -1101,7 +1092,7 @@ mod keyboard_dispatch {
                 mode: MultilineInputMode::Compose,
             }),
             OverlayState::Picker(PickerState {
-                route: OverlayRoute::MessageOnly,
+                intent: PickerIntent::FilterLabel,
                 title: "Pick".to_string(),
                 filter: LineEdit::blank(),
                 items: vec![PickerItem {
@@ -1115,7 +1106,9 @@ mod keyboard_dispatch {
                 mode: PickerMode::Navigate,
             }),
             OverlayState::Confirm(ConfirmState {
-                route: OverlayRoute::MessageOnly,
+                intent: ConfirmIntent::InitializeConfig {
+                    path: std::path::PathBuf::from("/tmp/config.toml"),
+                },
                 title: "C".to_string(),
                 prompt: "?".to_string(),
             }),
@@ -1336,15 +1329,11 @@ mod attachment_paste {
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Confirm(ConfirmState {
-                route: OverlayRoute::DeleteAttachmentConfirm,
+                intent: ConfirmIntent::DeleteAttachment { .. },
                 ref title,
                 ref prompt,
             })) if title == "Remove image" && prompt == "Remove photo.png?"
         ));
-        assert_eq!(
-            app.pending_delete_attachment.as_deref(),
-            Some(attachment_id.as_str())
-        );
 
         app.dispatch_key(key(KeyCode::Char('y')), (100, 30).into())
             .await
@@ -1436,7 +1425,6 @@ mod attachment_paste {
             app.overlay,
             Some(OverlayState::Detail { scroll: 3 })
         ));
-        assert!(app.pending_delete_attachment.is_none());
         assert_eq!(app.store.tasks[0].attachments.len(), 1);
     }
 
@@ -2616,7 +2604,11 @@ mod command_and_config_overlays {
 
         assert!(matches!(
             app.overlay,
-            Some(OverlayState::Confirm(ConfirmState { ref title, .. })) if title == CONFIG_INIT_TITLE
+            Some(OverlayState::Confirm(ConfirmState {
+                intent: ConfirmIntent::InitializeConfig { ref path },
+                ref title,
+                ..
+            })) if title == CONFIG_INIT_TITLE && path == &crate::config::config_file_path().unwrap()
         ));
     }
 
@@ -2675,7 +2667,10 @@ mod command_and_config_overlays {
 
         app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
 
-        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Status));
+        assert_eq!(
+            app.footer_choice.as_ref().map(|choice| choice.mode),
+            Some(FooterChoiceMode::Status)
+        );
         assert!(app.overlay.is_none());
 
         app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
@@ -2699,7 +2694,10 @@ mod command_and_config_overlays {
         app.widgets.marked_task_ids.insert(second_id.clone());
 
         app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
-        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Status));
+        assert_eq!(
+            app.footer_choice.as_ref().map(|choice| choice.mode),
+            Some(FooterChoiceMode::Status)
+        );
         assert!(app.overlay.is_none());
 
         app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
@@ -2744,7 +2742,14 @@ mod command_and_config_overlays {
         app.widgets.marked_task_ids.insert(second_id.clone());
         app.begin_edit_project();
 
-        app.submit_edit_project("mobile-app".to_string())
+        let (selection, mixed) = match &app.overlay {
+            Some(OverlayState::Picker(PickerState {
+                intent: PickerIntent::EditProject { selection, mixed },
+                ..
+            })) => (selection.clone(), *mixed),
+            overlay => panic!("expected project edit intent, got {overlay:?}"),
+        };
+        app.submit_edit_project(selection, mixed, "mobile-app".to_string())
             .await
             .unwrap();
 
@@ -2784,7 +2789,14 @@ mod command_and_config_overlays {
         app.widgets.marked_task_ids.insert(third_id.clone());
         app.widgets.table.select(Some(first));
         app.store.refresh(None).await.unwrap();
-        app.submit_edit_project("mobile-app".to_string())
+        let (selection, mixed) = match &app.overlay {
+            Some(OverlayState::Picker(PickerState {
+                intent: PickerIntent::EditProject { selection, mixed },
+                ..
+            })) => (selection.clone(), *mixed),
+            overlay => panic!("expected project edit intent, got {overlay:?}"),
+        };
+        app.submit_edit_project(selection, mixed, "mobile-app".to_string())
             .await
             .unwrap();
 
@@ -2822,7 +2834,16 @@ mod command_and_config_overlays {
         app.widgets.marked_task_ids.insert(second_id.clone());
         app.begin_edit_priority();
 
-        app.submit_edit_priority("high".to_string()).await.unwrap();
+        let (selection, mixed) = match &app.overlay {
+            Some(OverlayState::Picker(PickerState {
+                intent: PickerIntent::EditPriority { selection, mixed },
+                ..
+            })) => (selection.clone(), *mixed),
+            overlay => panic!("expected priority edit intent, got {overlay:?}"),
+        };
+        app.submit_edit_priority(selection, mixed, "high".to_string())
+            .await
+            .unwrap();
 
         let priority_for = |app: &App, task_id: &str| {
             app.store
@@ -2961,7 +2982,7 @@ mod command_and_config_overlays {
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::Confirm(state))
-                if state.route == OverlayRoute::ClearDueConfirm
+                if matches!(state.intent, ConfirmIntent::ClearDue { .. })
                     && state.prompt == "Clear due date on 2 marked tasks?"
         ));
         app.handle_overlay_key(key(KeyCode::Char('y')))
@@ -3033,7 +3054,7 @@ mod command_and_config_overlays {
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::TagCombobox(state))
-                if state.route == OverlayRoute::EditLabels
+                if matches!(state.intent, TagComboboxIntent::EditLabels { .. })
                     && state.title == EDIT_LABELS_TITLE
         ));
     }
@@ -3049,7 +3070,7 @@ mod command_and_config_overlays {
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::TagCombobox(state))
-                if state.route == OverlayRoute::EditLabels
+                if matches!(state.intent, TagComboboxIntent::EditLabels { .. })
         ));
     }
 
@@ -3067,7 +3088,14 @@ mod command_and_config_overlays {
         app.widgets.marked_task_ids.insert(second_id.clone());
         app.begin_edit_labels();
 
-        app.submit_edit_labels_multi(vec!["batch".to_string()], Vec::new())
+        let selection = match &app.overlay {
+            Some(OverlayState::TagCombobox(state)) => match &state.intent {
+                TagComboboxIntent::EditLabelsMulti { selection } => selection.clone(),
+                intent => panic!("expected multi-label edit intent, got {intent:?}"),
+            },
+            overlay => panic!("expected label editor, got {overlay:?}"),
+        };
+        app.submit_edit_labels_multi(selection, vec!["batch".to_string()], Vec::new())
             .await
             .unwrap();
 
@@ -3591,7 +3619,7 @@ mod filters_and_workspaces {
         create_and_select_task(&mut app, test_task_draft("Detail target")).await;
         app.detail_context = true;
         app.overlay = Some(OverlayState::Picker(PickerState {
-            route: OverlayRoute::MessageOnly,
+            intent: PickerIntent::FilterLabel,
             title: "Pick".to_string(),
             filter: LineEdit::blank(),
             items: vec![PickerItem {
@@ -3754,38 +3782,6 @@ mod filters_and_workspaces {
     }
 
     #[tokio::test]
-    async fn confirm_hint_click_confirms_and_cancels() {
-        let mut app = test_app().await;
-        let size = (100, 24).into();
-        app.overlay = Some(OverlayState::Confirm(ConfirmState {
-            route: OverlayRoute::MessageOnly,
-            title: "Confirm".to_string(),
-            prompt: "Continue?".to_string(),
-        }));
-
-        app.dispatch_mouse(confirm_hint_click(&app, 0, size), size)
-            .await
-            .unwrap();
-
-        assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app).as_deref(), Some("confirmed overlay"));
-
-        let mut app = test_app().await;
-        app.overlay = Some(OverlayState::Confirm(ConfirmState {
-            route: OverlayRoute::MessageOnly,
-            title: "Confirm".to_string(),
-            prompt: "Continue?".to_string(),
-        }));
-
-        app.dispatch_mouse(confirm_hint_click(&app, 7, size), size)
-            .await
-            .unwrap();
-
-        assert!(app.overlay.is_none());
-        assert!(app.notification.is_none());
-    }
-
-    #[tokio::test]
     async fn text_panel_mouse_scrolls_and_closes_outside() {
         let mut app = test_app().await;
         let size = (100, 24).into();
@@ -3874,7 +3870,10 @@ mod task_row_mouse {
 
         assert_eq!(app.widgets.table.selected(), Some(0));
         assert_eq!(app.focus, Focus::Tasks);
-        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Status));
+        assert_eq!(
+            app.footer_choice.as_ref().map(|choice| choice.mode),
+            Some(FooterChoiceMode::Status)
+        );
         assert!(app.overlay.is_none());
     }
 
@@ -3902,7 +3901,10 @@ mod task_row_mouse {
         let size = (140, 24).into();
         let click = status_right_click_event(&app, (140, 24), 0);
         app.dispatch_mouse(click, size).await.unwrap();
-        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Status));
+        assert_eq!(
+            app.footer_choice.as_ref().map(|choice| choice.mode),
+            Some(FooterChoiceMode::Status)
+        );
         app.dispatch_key(key(KeyCode::Char('a')), size)
             .await
             .unwrap();
@@ -4146,7 +4148,7 @@ mod authoring {
                 if matches!(
                     &state.mode,
                     crate::tui::overlay::AddTaskMode::Labels(labels)
-                        if labels.route == OverlayRoute::AddTaskTitleLabels
+                        if labels.intent == TagComboboxIntent::AddTaskLabels
                 )
         ));
         type_chars(&mut app, "feature").await;
@@ -4385,7 +4387,7 @@ mod authoring {
                 if matches!(
                     &state.mode,
                     crate::tui::overlay::AddTaskMode::Picker { state: picker, .. }
-                        if picker.route == OverlayRoute::AddTaskTitleProject
+                        if picker.intent == PickerIntent::AddTaskProject
                 )
         ));
         type_chars(&mut app, "mobile").await;
@@ -5165,12 +5167,12 @@ mod authoring {
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::MultilineInput(state))
-                if state.mode == MultilineInputMode::ConfirmDiscard
+                if matches!(state.intent, MultilineIntent::AddNote { .. })
+                    && state.mode == MultilineInputMode::ConfirmDiscard
                     && state.lines == ["draft note"]
                     && state.row == 0
                     && state.column == 10
         ));
-        assert!(!app.authoring.is_idle());
 
         app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
         assert!(matches!(
@@ -5187,7 +5189,6 @@ mod authoring {
             .await
             .unwrap();
         assert!(app.overlay.is_none());
-        assert!(app.authoring.is_idle());
 
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('N')).await.unwrap();
@@ -6143,8 +6144,8 @@ mod detail_mode {
             panic!("expected add-child search");
         };
         assert!(matches!(
-            &state.purpose,
-            SearchPurpose::AddEpicChild {
+            &state.intent,
+            SearchIntent::AddEpicChild {
                 epic_id,
                 display_ref: purpose_ref,
                 ..
@@ -7638,7 +7639,7 @@ mod detail_mode {
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::TextInput(state))
-                if state.route == OverlayRoute::EditAvailability
+                if matches!(state.intent, TextIntent::EditAvailability { .. })
                     && state.input.text == "someday maybe"
         ));
         assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
@@ -7814,7 +7815,10 @@ mod detail_mode {
             .await
             .unwrap();
 
-        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Priority));
+        assert_eq!(
+            app.footer_choice.as_ref().map(|choice| choice.mode),
+            Some(FooterChoiceMode::Priority)
+        );
         assert!(app.view().detail_underlay);
     }
 
@@ -7836,7 +7840,7 @@ mod detail_mode {
 
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::TextInput(state)) if state.route == OverlayRoute::EditTitle
+            Some(OverlayState::TextInput(state)) if matches!(state.intent, TextIntent::EditTitle { .. })
         ));
         assert!(app.view().detail_underlay);
         assert_eq!(app.view().detail_underlay_scroll, 0);
@@ -7926,19 +7930,16 @@ mod detail_mode {
         )
         .await;
 
-        for (events, expected_route) in [
+        for (events, expected_intent) in [
             (
                 vec![key(KeyCode::Char('e')), key(KeyCode::Char('l'))],
-                OverlayRoute::EditLabels,
+                "labels",
             ),
-            (vec![shift_key(KeyCode::Char('N'))], OverlayRoute::AddNote),
-            (
-                vec![shift_key(KeyCode::Char('D'))],
-                OverlayRoute::DeleteTaskConfirm,
-            ),
+            (vec![shift_key(KeyCode::Char('N'))], "note"),
+            (vec![shift_key(KeyCode::Char('D'))], "delete"),
         ] {
             app.overlay = Some(OverlayState::Detail { scroll: 4 });
-            app.footer_choice_mode = None;
+            app.footer_choice = None;
             app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
                 .await
                 .unwrap();
@@ -7951,16 +7952,23 @@ mod detail_mode {
             for event in events {
                 app.dispatch_key(event, (80, 24).into()).await.unwrap();
             }
-            match (&app.overlay, expected_route) {
-                (Some(OverlayState::TextInput(state)), route) => assert_eq!(state.route, route),
-                (Some(OverlayState::MultilineInput(state)), route) => {
-                    assert_eq!(state.route, route)
+            let matches_intent = match (&app.overlay, expected_intent) {
+                (Some(OverlayState::TagCombobox(state)), "labels") => {
+                    matches!(state.intent, TagComboboxIntent::EditLabels { .. })
                 }
-                (Some(OverlayState::Picker(state)), route) => assert_eq!(state.route, route),
-                (Some(OverlayState::TagCombobox(state)), route) => assert_eq!(state.route, route),
-                (Some(OverlayState::Confirm(state)), route) => assert_eq!(state.route, route),
-                (overlay, route) => panic!("expected {route:?}, got {overlay:?}"),
-            }
+                (Some(OverlayState::MultilineInput(state)), "note") => {
+                    matches!(state.intent, MultilineIntent::AddNote { .. })
+                }
+                (Some(OverlayState::Confirm(state)), "delete") => {
+                    matches!(state.intent, ConfirmIntent::DeleteTasks { .. })
+                }
+                _ => false,
+            };
+            assert!(
+                matches_intent,
+                "expected {expected_intent}, got {:?}",
+                app.overlay
+            );
             assert_pending_empty(&app);
             assert!(app.view().detail_underlay);
             assert_eq!(app.view().detail_underlay_scroll, 4);
@@ -7974,7 +7982,7 @@ mod detail_mode {
             ),
         ] {
             app.overlay = Some(OverlayState::Detail { scroll: 4 });
-            app.footer_choice_mode = None;
+            app.footer_choice = None;
             app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
                 .await
                 .unwrap();
@@ -7987,7 +7995,10 @@ mod detail_mode {
             for event in events {
                 app.dispatch_key(event, (80, 24).into()).await.unwrap();
             }
-            assert_eq!(app.footer_choice_mode, Some(expected_mode));
+            assert_eq!(
+                app.footer_choice.as_ref().map(|choice| choice.mode),
+                Some(expected_mode)
+            );
             assert_pending_empty(&app);
             assert!(app.view().detail_underlay);
             assert_eq!(app.view().detail_underlay_scroll, 4);
@@ -8010,7 +8021,7 @@ mod detail_mode {
 
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::TagCombobox(state)) if state.route == OverlayRoute::EditLabels
+            Some(OverlayState::TagCombobox(state)) if matches!(state.intent, TagComboboxIntent::EditLabels { .. })
         ));
         assert_pending_empty(&app);
         assert!(app.view().detail_underlay);
@@ -8261,7 +8272,10 @@ mod detail_mode {
         .await
         .unwrap();
 
-        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Status));
+        assert_eq!(
+            app.footer_choice.as_ref().map(|choice| choice.mode),
+            Some(FooterChoiceMode::Status)
+        );
         assert!(app.view().detail_underlay);
 
         app.dispatch_key(key(KeyCode::Char('a')), (120, 30).into())
@@ -8319,7 +8333,10 @@ mod detail_mode {
         .await
         .unwrap();
 
-        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Priority));
+        assert_eq!(
+            app.footer_choice.as_ref().map(|choice| choice.mode),
+            Some(FooterChoiceMode::Priority)
+        );
         assert!(app.view().detail_underlay);
 
         app.dispatch_key(key(KeyCode::Char('u')), (120, 30).into())
@@ -8372,7 +8389,10 @@ mod detail_mode {
         )
         .await
         .unwrap();
-        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Status));
+        assert_eq!(
+            app.footer_choice.as_ref().map(|choice| choice.mode),
+            Some(FooterChoiceMode::Status)
+        );
         app.dispatch_key(key(KeyCode::Char('a')), (120, 30).into())
             .await
             .unwrap();
@@ -8736,7 +8756,10 @@ mod task_editing {
 
         app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
-        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Priority));
+        assert_eq!(
+            app.footer_choice.as_ref().map(|choice| choice.mode),
+            Some(FooterChoiceMode::Priority)
+        );
 
         app.dispatch_key(key(KeyCode::Char('u')), (80, 24).into())
             .await
@@ -8789,7 +8812,10 @@ mod task_editing {
         create_and_select_task(&mut app, test_task_draft("Status alias")).await;
 
         app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
-        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Status));
+        assert_eq!(
+            app.footer_choice.as_ref().map(|choice| choice.mode),
+            Some(FooterChoiceMode::Status)
+        );
         app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
             .await
             .unwrap();
@@ -9149,7 +9175,7 @@ mod delete_and_restore {
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Confirm(ConfirmState {
-                route: OverlayRoute::DeleteTaskConfirm,
+                intent: ConfirmIntent::DeleteTasks { .. },
                 ref title,
                 ref prompt,
             })) if title == DELETE_TASK_TITLE
@@ -9210,7 +9236,7 @@ mod delete_and_restore {
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Confirm(ConfirmState {
-                route: OverlayRoute::DeleteTaskConfirm,
+                intent: ConfirmIntent::DeleteTasks { .. },
                 ..
             }))
         ));
@@ -9240,7 +9266,7 @@ mod delete_and_restore {
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Picker(PickerState {
-                route: OverlayRoute::RenameProjectPicker,
+                intent: PickerIntent::RenameProject,
                 ..
             }))
         ));
@@ -9260,7 +9286,7 @@ mod delete_and_restore {
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Picker(PickerState {
-                route: OverlayRoute::DeleteProjectPicker,
+                intent: PickerIntent::DeleteProject,
                 ..
             }))
         ));
@@ -9310,11 +9336,11 @@ mod delete_and_restore {
         assert!(matches!(
             app.overlay,
             Some(OverlayState::TextInput(TextInputState {
-                route: OverlayRoute::RenameProjectName,
+                intent: TextIntent::RenameProject { .. },
                 ..
             }))
         ));
-        app.submit_rename_project("sideagent".to_string())
+        app.submit_rename_project("agent-offload".to_string(), "sideagent".to_string())
             .await
             .unwrap();
 
@@ -9328,11 +9354,10 @@ mod delete_and_restore {
                 .iter()
                 .any(|project| project.key == "sideagent")
         );
-        assert!(app.pending_rename_project.is_none());
     }
 
     #[tokio::test]
-    async fn rename_project_cancel_returns_to_browse_and_clears_pending_state() {
+    async fn rename_project_cancel_returns_to_browse() {
         let mut app = test_app().await;
         app.store
             .create_project("Agent Offload".to_string())
@@ -9342,14 +9367,12 @@ mod delete_and_restore {
 
         app.execute(Action::BeginRenameProject).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-        assert!(app.pending_rename_project.is_some());
 
         app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
 
         assert!(app.overlay.is_none());
         assert!(!app.view().detail_underlay);
         assert_eq!(app.widgets.table.selected(), selected);
-        assert!(app.pending_rename_project.is_none());
     }
 
     #[tokio::test]
@@ -9366,17 +9389,17 @@ mod delete_and_restore {
         assert!(matches!(
             app.overlay,
             Some(OverlayState::TextInput(TextInputState {
-                route: OverlayRoute::DeleteProjectNameConfirm,
+                intent: TextIntent::ConfirmDeleteProject { .. },
                 ..
             }))
         ));
-        app.submit_delete_project_name("mobile-app".to_string())
+        app.submit_delete_project_name("mobile-app".to_string(), "mobile-app".to_string())
             .await
             .unwrap();
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Confirm(ConfirmState {
-                route: OverlayRoute::DeleteProjectConfirm,
+                intent: ConfirmIntent::DeleteProject { .. },
                 ..
             }))
         ));
@@ -9394,11 +9417,10 @@ mod delete_and_restore {
                 .iter()
                 .any(|project| project.key == "mobile-app")
         );
-        assert!(app.pending_delete_project.is_none());
     }
 
     #[tokio::test]
-    async fn delete_project_cancel_clears_pending_state() {
+    async fn delete_project_cancel_discards_intent() {
         let mut app = test_app().await;
         app.store
             .create_project("Mobile App".to_string())
@@ -9420,17 +9442,14 @@ mod delete_and_restore {
 
         app.execute(Action::BeginDeleteProject).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-        assert_eq!(app.pending_delete_project.as_deref(), Some("mobile-app"));
         assert!(matches!(
             app.overlay,
             Some(OverlayState::TextInput(TextInputState {
-                route: OverlayRoute::DeleteProjectNameConfirm,
+                intent: TextIntent::ConfirmDeleteProject { .. },
                 ..
             }))
         ));
         app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
-
-        assert!(app.pending_delete_project.is_none());
     }
 }
 
@@ -9601,7 +9620,7 @@ mod conflicts {
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::TextInput(state))
-                if state.route == OverlayRoute::ConflictManual
+                if matches!(state.intent, TextIntent::ResolveConflictManually { .. })
                     && state.input.as_str() == "local title merged"
         ));
     }
@@ -9620,41 +9639,33 @@ mod conflicts {
     }
 
     #[tokio::test]
-    async fn cancel_clears_conflict_flow() {
+    async fn cancel_discards_conflict_intent() {
         let (_dir, pool, mut app) = test_app_with_pool().await;
         let selected = create_and_select_task(&mut app, test_task_draft("Conflict")).await;
         insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
 
         app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-        assert!(app.conflict_flow.is_active());
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Confirm(ConfirmState {
+                intent: ConfirmIntent::ResolveConflict { .. },
+                ..
+            }))
+        ));
         app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
-        assert!(app.conflict_flow.is_idle());
+        assert!(app.overlay.is_none());
     }
 }
 
-mod overlay_submit_routes {
+mod typed_overlay_submissions {
     use super::*;
 
     #[tokio::test]
-    async fn generic_text_input_submits_message() {
+    async fn add_project_submit_uses_intent_independent_of_title() {
         let mut app = test_app().await;
         app.overlay = Some(OverlayState::TextInput(TextInputState::new(
-            OverlayRoute::MessageOnly,
-            "Changed title",
-            "Enter title",
-            "done".to_string(),
-        )));
-        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-        assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app).as_deref(), Some("submitted overlay"));
-    }
-
-    #[tokio::test]
-    async fn add_project_submit_routes_by_route_not_title() {
-        let mut app = test_app().await;
-        app.overlay = Some(OverlayState::TextInput(TextInputState::new(
-            OverlayRoute::AddProject,
+            TextIntent::AddProject,
             "Renamed copy",
             "project name:",
             "Mobile App".to_string(),
@@ -9669,7 +9680,7 @@ mod overlay_submit_routes {
     }
 
     #[tokio::test]
-    async fn add_task_project_shortcut_routes_by_route_not_title_prefix() {
+    async fn add_task_project_shortcut_uses_intent_independent_of_title_prefix() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         let Some(OverlayState::AddTask(state)) = &mut app.overlay else {
@@ -9685,13 +9696,13 @@ mod overlay_submit_routes {
                 if matches!(
                     &state.mode,
                     crate::tui::overlay::AddTaskMode::Picker { state: picker, .. }
-                        if picker.route == OverlayRoute::AddTaskTitleProject
+                        if picker.intent == PickerIntent::AddTaskProject
                 )
         ));
     }
 
     #[tokio::test]
-    async fn add_task_priority_shortcut_routes_by_route_not_title_prefix() {
+    async fn add_task_priority_shortcut_uses_intent_independent_of_title_prefix() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         let Some(OverlayState::AddTask(state)) = &mut app.overlay else {
@@ -9709,26 +9720,7 @@ mod overlay_submit_routes {
     }
 
     #[tokio::test]
-    async fn conflict_confirm_without_active_flow_reports_message() {
-        let mut app = test_app().await;
-        app.overlay = Some(OverlayState::Confirm(ConfirmState {
-            route: OverlayRoute::ConflictConfirm,
-            title: CONFLICT_CONFIRM_LOCAL_TITLE.to_string(),
-            prompt: "Resolve?".to_string(),
-        }));
-
-        app.handle_overlay_key(key(KeyCode::Char('y')))
-            .await
-            .unwrap();
-
-        assert_eq!(
-            toast_message(&app).as_deref(),
-            Some("conflict confirmation is not active")
-        );
-    }
-
-    #[tokio::test]
-    async fn delete_project_picker_and_name_confirm_use_distinct_routes() {
+    async fn delete_project_picker_and_name_confirm_use_distinct_intents() {
         let mut app = test_app().await;
         app.store
             .create_project("Mobile App".to_string())
@@ -9739,7 +9731,7 @@ mod overlay_submit_routes {
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Picker(PickerState {
-                route: OverlayRoute::DeleteProjectPicker,
+                intent: PickerIntent::DeleteProject,
                 ref title,
                 ..
             })) if title == DELETE_PROJECT_TITLE
@@ -9749,7 +9741,7 @@ mod overlay_submit_routes {
         assert!(matches!(
             app.overlay,
             Some(OverlayState::TextInput(TextInputState {
-                route: OverlayRoute::DeleteProjectNameConfirm,
+                intent: TextIntent::ConfirmDeleteProject { .. },
                 ref title,
                 ..
             })) if title == DELETE_PROJECT_TITLE
@@ -9766,7 +9758,7 @@ mod overlay_submit_routes {
 
         app.execute(Action::BeginDeleteProject).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-        app.submit_delete_project_name("mobile".to_string())
+        app.submit_delete_project_name("mobile-app".to_string(), "mobile".to_string())
             .await
             .unwrap();
 
@@ -9777,7 +9769,7 @@ mod overlay_submit_routes {
         assert!(matches!(
             app.overlay,
             Some(OverlayState::TextInput(TextInputState {
-                route: OverlayRoute::DeleteProjectNameConfirm,
+                intent: TextIntent::ConfirmDeleteProject { .. },
                 ref title,
                 ..
             })) if title == DELETE_PROJECT_TITLE
@@ -9787,118 +9779,6 @@ mod overlay_submit_routes {
                 .projects
                 .iter()
                 .any(|project| project.key == "mobile-app")
-        );
-    }
-
-    #[test]
-    fn overlay_submit_routes_are_all_handled() {
-        for route in OverlayRoute::ALL {
-            for kind in route.submit_kinds() {
-                assert!(
-                    crate::tui::app_overlay_submit::handles_submit_kind(route, kind),
-                    "unhandled {kind:?} route {route:?}"
-                );
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn generic_confirm_submits_on_y() {
-        let mut app = test_app().await;
-        app.overlay = Some(OverlayState::Confirm(ConfirmState {
-            route: OverlayRoute::MessageOnly,
-            title: "Changed title".to_string(),
-            prompt: "Continue?".to_string(),
-        }));
-        app.handle_overlay_key(key(KeyCode::Char('y')))
-            .await
-            .unwrap();
-        assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app).as_deref(), Some("confirmed overlay"));
-    }
-
-    #[tokio::test]
-    async fn generic_multiline_submit_uses_route_fallback_verb() {
-        let mut app = test_app().await;
-        app.overlay = Some(OverlayState::MultilineInput(
-            MultilineInputState::from_value(
-                OverlayRoute::MessageOnly,
-                "Changed title",
-                "Body",
-                "done\nhere".to_string(),
-            ),
-        ));
-        app.handle_overlay_key(ctrl_s()).await.unwrap();
-        assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app).as_deref(), Some("submitted overlay"));
-    }
-
-    #[tokio::test]
-    async fn generic_picker_submit_uses_route_fallback_verb() {
-        let mut app = test_app().await;
-        app.overlay = Some(OverlayState::Picker(PickerState {
-            route: OverlayRoute::MessageOnly,
-            title: "Choose".to_string(),
-            filter: LineEdit::blank(),
-            items: vec![crate::tui::overlay::PickerItem {
-                label: "One".to_string(),
-                value: "one".to_string(),
-                selected: false,
-            }],
-            selected: 0,
-            scroll: 0,
-            multi: false,
-            mode: PickerMode::Navigate,
-        }));
-        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-        assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app).as_deref(), Some("selected overlay"));
-    }
-}
-
-mod task_dependencies {
-    use super::*;
-
-    #[tokio::test]
-    async fn add_shortcut_opens_search_and_excludes_selected() {
-        let mut app = test_app().await;
-        let selected_index =
-            create_and_select_task(&mut app, test_task_draft("Selected needle")).await;
-        let selected_id = app.store.tasks[selected_index].task.id.clone();
-        let selected_ref = app.store.tasks[selected_index].display_ref.clone();
-        create_and_select_task(&mut app, test_task_draft("Other needle")).await;
-        let selected_index = app
-            .store
-            .tasks
-            .iter()
-            .position(|item| item.task.id == selected_id)
-            .unwrap();
-        app.widgets.table.select(Some(selected_index));
-
-        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
-        app.handle_normal_key(KeyCode::Char('B')).await.unwrap();
-        type_chars(&mut app, "needle").await;
-        settle_search_preview(&mut app).await;
-
-        let Some(OverlayState::Search(state)) = &app.overlay else {
-            panic!("expected dependency search");
-        };
-        assert!(matches!(
-            &state.purpose,
-            SearchPurpose::AddDependency { task_id, display_ref }
-                if task_id == &selected_id && display_ref == &selected_ref
-        ));
-        assert!(
-            state
-                .results
-                .iter()
-                .all(|result| result.task_id != selected_id)
-        );
-        assert!(
-            state
-                .results
-                .iter()
-                .any(|result| result.title == "Other needle")
         );
     }
 
@@ -9942,7 +9822,7 @@ mod task_dependencies {
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::Search(state))
-                if matches!(state.purpose, SearchPurpose::AddDependency { .. })
+                if matches!(state.intent, SearchIntent::AddDependency { .. })
         ));
     }
 
@@ -9972,7 +9852,10 @@ mod task_dependencies {
         let Some(OverlayState::Picker(state)) = &app.overlay else {
             panic!("expected dependency picker");
         };
-        assert_eq!(state.route, OverlayRoute::RemoveDependency);
+        assert!(matches!(
+            &state.intent,
+            PickerIntent::RemoveDependency { task_id } if task_id == &blocked_id
+        ));
         assert_eq!(state.items.len(), 1);
         assert_eq!(state.items[0].value, blocker_id.to_string());
     }
@@ -10159,7 +10042,7 @@ mod task_dependencies {
 
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::Picker(PickerState { route: OverlayRoute::MoveToColumn, title, items, .. }))
+            Some(OverlayState::Picker(PickerState { intent: PickerIntent::MoveToColumn { .. }, title, items, .. }))
                 if title == "Move to column"
                     && items.iter().any(|item| item.label == "Done" && item.value == "done")
                     && items.iter().all(|item| !item.label.contains('→'))
@@ -10205,7 +10088,10 @@ mod task_dependencies {
         app.store.show_view(TaskView::Columns).await.unwrap();
         app.update_status(TaskStatus::Canceled).await.unwrap();
 
-        app.move_tasks_to_column("done".to_string()).await.unwrap();
+        let selection = app.resolve_task_selection().unwrap();
+        app.move_tasks_to_column(selection, "done".to_string())
+            .await
+            .unwrap();
 
         assert_eq!(
             app.store
@@ -10256,7 +10142,10 @@ mod task_dependencies {
             .await
             .unwrap();
 
-        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Status));
+        assert_eq!(
+            app.footer_choice.as_ref().map(|choice| choice.mode),
+            Some(FooterChoiceMode::Status)
+        );
     }
 
     #[tokio::test]

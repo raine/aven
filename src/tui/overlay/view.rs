@@ -5,10 +5,62 @@ use super::layout::TAG_COMBOBOX_VIEWPORT_ROWS;
 use super::picker::visible_picker_indices;
 use super::state::{
     AddTaskMode, HeaderMenuItem, HeaderMenuKind, HeaderMenuState, MultilineInputMode,
-    OrderMenuState, OverlayRoute, OverlayState, OverlayState::*, PickerItem, PickerMode,
-    SearchPurpose, SearchResultItem,
+    MultilineIntent, OrderMenuState, OverlayState, OverlayState::*, PickerIntent, PickerItem,
+    PickerMode, SearchIntent, SearchResultItem, TagComboboxIntent, TextIntent,
 };
 use super::tag_combobox::{tag_combobox_completion, tag_combobox_matches};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SearchKind {
+    Navigate,
+    AddDependency,
+    AddEpicChild { display_ref: String },
+}
+
+impl From<&SearchIntent> for SearchKind {
+    fn from(intent: &SearchIntent) -> Self {
+        match intent {
+            SearchIntent::Navigate => Self::Navigate,
+            SearchIntent::AddDependency { .. } => Self::AddDependency,
+            SearchIntent::AddEpicChild { display_ref, .. } => Self::AddEpicChild {
+                display_ref: display_ref.clone(),
+            },
+        }
+    }
+}
+
+impl SearchKind {
+    pub(crate) fn title(&self) -> String {
+        match self {
+            Self::Navigate => "Search".to_string(),
+            Self::AddDependency => "Add dependency".to_string(),
+            Self::AddEpicChild { display_ref } => format!("Add child to {display_ref}"),
+        }
+    }
+
+    pub(crate) fn enter_hint(&self) -> &'static str {
+        match self {
+            Self::Navigate => "open task",
+            Self::AddDependency => "add selected as blocker",
+            Self::AddEpicChild { .. } => "add selected child",
+        }
+    }
+
+    pub(crate) fn placeholder(&self) -> &'static str {
+        match self {
+            Self::Navigate => "Search tasks, notes, labels, and projects...",
+            Self::AddDependency => "Search for the task that blocks this task...",
+            Self::AddEpicChild { .. } => "Search for an existing task or create a child...",
+        }
+    }
+
+    pub(crate) fn tab_hint(&self) -> Option<&'static str> {
+        match self {
+            Self::Navigate => Some("open results"),
+            Self::AddDependency | Self::AddEpicChild { .. } => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlayView {
@@ -36,7 +88,7 @@ pub(crate) enum OverlayView {
         total_matches: usize,
         stale: bool,
         no_matches_cached: bool,
-        purpose: SearchPurpose,
+        intent: SearchKind,
     },
     Command {
         input: String,
@@ -48,7 +100,7 @@ pub(crate) enum OverlayView {
     TextInput(TextInputView),
     MultilineInput(MultilineInputView),
     Picker(PickerView),
-    TagCombobox(TagComboboxView),
+    TagCombobox(Box<TagComboboxView>),
     HeaderMenu(HeaderMenuView),
     OrderMenu(OrderMenuView),
     Confirm(ConfirmView),
@@ -91,24 +143,70 @@ pub(crate) struct AddTaskView {
     pub(crate) due_on: String,
     pub(crate) due_on_cursor: usize,
     pub(crate) attachments: Box<AddTaskAttachmentsView>,
-    pub(crate) mode: AddTaskMode,
+    pub(crate) mode: Box<AddTaskMode>,
     pub(crate) title_error: bool,
     pub(crate) status_prefix_active: bool,
     pub(crate) priority_prefix_active: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TextInputKind {
+    AddProject,
+    AddLabel,
+    RenameProject,
+    ConfirmDeleteProject,
+    EditTitle,
+    EditDate,
+    ConflictManual,
+}
+
+impl From<&TextIntent> for TextInputKind {
+    fn from(intent: &TextIntent) -> Self {
+        match intent {
+            TextIntent::AddProject => Self::AddProject,
+            TextIntent::AddLabel => Self::AddLabel,
+            TextIntent::RenameProject { .. } => Self::RenameProject,
+            TextIntent::ConfirmDeleteProject { .. } => Self::ConfirmDeleteProject,
+            TextIntent::EditTitle { .. } => Self::EditTitle,
+            TextIntent::EditAvailability { .. } | TextIntent::EditDue { .. } => Self::EditDate,
+            TextIntent::ResolveConflictManually { .. } => Self::ConflictManual,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TextInputView {
-    pub(crate) route: OverlayRoute,
+    pub(crate) kind: TextInputKind,
     pub(crate) title: String,
     pub(crate) prompt: String,
     pub(crate) input: String,
     pub(crate) cursor: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MultilineInputKind {
+    AddTaskDescription,
+    AddTaskNatural,
+    AddNote,
+    EditDescription,
+    ConflictManual,
+}
+
+impl From<&MultilineIntent> for MultilineInputKind {
+    fn from(intent: &MultilineIntent) -> Self {
+        match intent {
+            MultilineIntent::AddTaskDescription => Self::AddTaskDescription,
+            MultilineIntent::AddTaskNatural => Self::AddTaskNatural,
+            MultilineIntent::AddNote { .. } => Self::AddNote,
+            MultilineIntent::EditDescription { .. } => Self::EditDescription,
+            MultilineIntent::ResolveConflictManually { .. } => Self::ConflictManual,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MultilineInputView {
-    pub(crate) route: OverlayRoute,
+    pub(crate) kind: MultilineInputKind,
     pub(crate) title: String,
     pub(crate) prompt: String,
     pub(crate) lines: Vec<String>,
@@ -117,9 +215,34 @@ pub(crate) struct MultilineInputView {
     pub(crate) mode: MultilineInputMode,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PickerKind {
+    AddTaskProject,
+    AddTaskPriority,
+    EditProject,
+    ScopeProject,
+    DeleteProject,
+    EditPriority,
+    Generic,
+}
+
+impl From<&PickerIntent> for PickerKind {
+    fn from(intent: &PickerIntent) -> Self {
+        match intent {
+            PickerIntent::AddTaskProject => Self::AddTaskProject,
+            PickerIntent::AddTaskPriority => Self::AddTaskPriority,
+            PickerIntent::EditProject { .. } => Self::EditProject,
+            PickerIntent::ScopeProject => Self::ScopeProject,
+            PickerIntent::DeleteProject => Self::DeleteProject,
+            PickerIntent::EditPriority { .. } => Self::EditPriority,
+            _ => Self::Generic,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PickerView {
-    pub(crate) route: OverlayRoute,
+    pub(crate) kind: PickerKind,
     pub(crate) title: String,
     pub(crate) filter: String,
     pub(crate) filter_cursor: usize,
@@ -131,9 +254,26 @@ pub(crate) struct PickerView {
     pub(crate) visible_indices: Vec<usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TagComboboxKind {
+    AddTaskLabels,
+    EditLabels,
+    EditLabelsMulti,
+}
+
+impl From<&TagComboboxIntent> for TagComboboxKind {
+    fn from(intent: &TagComboboxIntent) -> Self {
+        match intent {
+            TagComboboxIntent::AddTaskLabels => Self::AddTaskLabels,
+            TagComboboxIntent::EditLabels { .. } => Self::EditLabels,
+            TagComboboxIntent::EditLabelsMulti { .. } => Self::EditLabelsMulti,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TagComboboxView {
-    pub(crate) route: OverlayRoute,
+    pub(crate) kind: TagComboboxKind,
     pub(crate) title: String,
     pub(crate) input: String,
     pub(crate) input_cursor: usize,
@@ -186,7 +326,6 @@ impl From<&OrderMenuState> for OrderMenuView {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConfirmView {
-    pub(crate) route: OverlayRoute,
     pub(crate) title: String,
     pub(crate) prompt: String,
 }
@@ -217,7 +356,7 @@ impl From<&OverlayState> for OverlayView {
                 no_matches_cached: state.results_query.is_some()
                     && state.results.is_empty()
                     && state.total_matches == 0,
-                purpose: state.purpose.clone(),
+                intent: (&state.intent).into(),
             },
             Command { state } => Self::Command {
                 input: state.input.text.clone(),
@@ -244,20 +383,20 @@ impl From<&OverlayState> for OverlayView {
                     items: state.attachments.clone().into_boxed_slice(),
                     selected: state.selected_attachment,
                 }),
-                mode: state.mode.clone(),
+                mode: Box::new(state.mode.clone()),
                 title_error: state.title_error,
                 status_prefix_active: false,
                 priority_prefix_active: false,
             }),
             TextInput(state) => Self::TextInput(TextInputView {
-                route: state.route,
+                kind: (&state.intent).into(),
                 title: state.title.clone(),
                 prompt: state.prompt.clone(),
                 input: state.input.text.clone(),
                 cursor: state.input.cursor,
             }),
             MultilineInput(state) => Self::MultilineInput(MultilineInputView {
-                route: state.route,
+                kind: (&state.intent).into(),
                 title: state.title.clone(),
                 prompt: state.prompt.clone(),
                 lines: state.lines.clone(),
@@ -266,7 +405,7 @@ impl From<&OverlayState> for OverlayView {
                 mode: state.mode,
             }),
             Picker(state) => Self::Picker(PickerView {
-                route: state.route,
+                kind: (&state.intent).into(),
                 title: state.title.clone(),
                 filter: state.filter.text.clone(),
                 filter_cursor: state.filter.cursor,
@@ -279,8 +418,8 @@ impl From<&OverlayState> for OverlayView {
             }),
             TagCombobox(state) => {
                 let visible_indices = tag_combobox_matches(state);
-                Self::TagCombobox(TagComboboxView {
-                    route: state.route,
+                Self::TagCombobox(Box::new(TagComboboxView {
+                    kind: (&state.intent).into(),
                     title: state.title.clone(),
                     input: state.input.text.clone(),
                     input_cursor: state.input.cursor,
@@ -295,12 +434,11 @@ impl From<&OverlayState> for OverlayView {
                         .unwrap_or(0)
                         .saturating_sub(TAG_COMBOBOX_VIEWPORT_ROWS.saturating_sub(1)),
                     visible_indices,
-                })
+                }))
             }
             HeaderMenu(state) => Self::HeaderMenu(HeaderMenuView::from(state)),
             OrderMenu(state) => Self::OrderMenu(OrderMenuView::from(state)),
             Confirm(state) => Self::Confirm(ConfirmView {
-                route: state.route,
                 title: state.title.clone(),
                 prompt: state.prompt.clone(),
             }),
@@ -322,26 +460,13 @@ impl From<&OverlayState> for OverlayView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::overlay::{
-        ConfirmState, LineEdit, MultilineInputState, OverlayRoute, PickerState,
-    };
+    use crate::tui::overlay::{LineEdit, PickerIntent, PickerState};
 
     #[test]
-    fn overlay_view_projection_carries_routes() {
-        let multiline = OverlayView::from(&OverlayState::MultilineInput(
-            MultilineInputState::blank(OverlayRoute::AddNote, "Changed note title", "note body:"),
-        ));
-        assert!(matches!(
-            multiline,
-            OverlayView::MultilineInput(MultilineInputView {
-                route: OverlayRoute::AddNote,
-                ..
-            })
-        ));
-
+    fn overlay_view_projection_keeps_picker_presentation_kind() {
         let picker = OverlayView::from(&OverlayState::Picker(PickerState {
-            route: OverlayRoute::DeleteProjectPicker,
-            title: "Changed delete title".to_string(),
+            intent: PickerIntent::DeleteProject,
+            title: "Delete project".to_string(),
             filter: LineEdit::blank(),
             items: vec![PickerItem {
                 label: "AVN aven".to_string(),
@@ -351,25 +476,12 @@ mod tests {
             selected: 0,
             scroll: 0,
             multi: false,
-            mode: PickerMode::Navigate,
+            mode: PickerMode::Filter,
         }));
         assert!(matches!(
             picker,
             OverlayView::Picker(PickerView {
-                route: OverlayRoute::DeleteProjectPicker,
-                ..
-            })
-        ));
-
-        let confirm = OverlayView::from(&OverlayState::Confirm(ConfirmState {
-            route: OverlayRoute::DeleteTaskConfirm,
-            title: "Delete task".to_string(),
-            prompt: "Delete task?".to_string(),
-        }));
-        assert!(matches!(
-            confirm,
-            OverlayView::Confirm(ConfirmView {
-                route: OverlayRoute::DeleteTaskConfirm,
+                kind: PickerKind::DeleteProject,
                 ..
             })
         ));

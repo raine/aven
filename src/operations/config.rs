@@ -50,7 +50,10 @@ pub fn show_config_paths() -> Result<ConfigPathsOutcome> {
 }
 
 pub fn init_config() -> Result<ConfigInitOutcome> {
-    let path = app_config::config_file_path()?;
+    init_config_at(app_config::config_file_path()?)
+}
+
+pub fn init_config_at(path: std::path::PathBuf) -> Result<ConfigInitOutcome> {
     app_config::write_default_config(&path)?;
     Ok(ConfigInitOutcome { path })
 }

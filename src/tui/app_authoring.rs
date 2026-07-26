@@ -6,12 +6,12 @@ use crate::operations::TaskDraft;
 use crate::tui::app::{App, Notification};
 use crate::tui::app_intake::{IntakeCompletion, IntakePoll, NaturalRetry};
 use crate::tui::authoring::{
-    ADD_NOTE_TITLE, ADD_TASK_LABELS_TITLE, ADD_TASK_TITLE_PROJECT_TITLE, AddNoteSubmit, AddTaskStep,
+    ADD_NOTE_TITLE, ADD_TASK_LABELS_TITLE, ADD_TASK_TITLE_PROJECT_TITLE, AddTaskStep,
 };
 use crate::tui::natural_add_runtime::task_intake_log_path;
 use crate::tui::overlay::{
-    AddTaskMode, AddTaskState, LineEdit, MultilineInputState, OverlayRoute, OverlayState,
-    PickerState,
+    AddTaskMode, AddTaskState, LineEdit, MultilineInputState, MultilineIntent, OverlayState,
+    PickerIntent, PickerState, TagComboboxIntent,
 };
 use crate::tui::platform::edit_text_externally;
 use crate::tui::store::TaskScope;
@@ -51,7 +51,7 @@ impl App {
         self.overlay = Some(OverlayState::AddTask(Box::new(AddTaskState {
             title: LineEdit::new(context.title),
             description: MultilineInputState::from_value(
-                OverlayRoute::AddTaskDescription,
+                MultilineIntent::AddTaskDescription,
                 "Add task: description",
                 "",
                 context.description,
@@ -149,7 +149,7 @@ impl App {
             AddTaskStep::Project => AddTaskMode::Picker {
                 field: state.focus,
                 state: PickerState::new(
-                    OverlayRoute::AddTaskTitleProject,
+                    PickerIntent::AddTaskProject,
                     ADD_TASK_TITLE_PROJECT_TITLE,
                     self.store
                         .project_picker_items(state.selected_project.as_deref()),
@@ -159,7 +159,7 @@ impl App {
             AddTaskStep::Status => AddTaskMode::Picker {
                 field: state.focus,
                 state: PickerState::new(
-                    OverlayRoute::EditStatus,
+                    PickerIntent::AddTaskStatus,
                     "Add task: status",
                     self.store.status_picker_items(Some(&state.status)),
                     false,
@@ -168,7 +168,7 @@ impl App {
             AddTaskStep::Priority => AddTaskMode::Picker {
                 field: state.focus,
                 state: PickerState::new(
-                    OverlayRoute::AddTaskTitlePriority,
+                    PickerIntent::AddTaskPriority,
                     "Add task: priority",
                     self.store.priority_picker_items(&state.priority),
                     false,
@@ -176,7 +176,7 @@ impl App {
             },
             AddTaskStep::Labels => {
                 let OverlayState::TagCombobox(labels) = OverlayState::tag_combobox(
-                    OverlayRoute::AddTaskTitleLabels,
+                    TagComboboxIntent::AddTaskLabels,
                     ADD_TASK_LABELS_TITLE,
                     self.store.labels.clone(),
                     state.labels.clone(),
@@ -202,14 +202,13 @@ impl App {
         };
         let return_to_detail =
             self.detail_context || matches!(self.overlay, Some(OverlayState::Detail { .. }));
-        self.authoring.begin_add_note(
-            item.task.id.clone(),
-            item.display_ref.clone(),
-            return_to_detail,
-        );
         self.detail_context = return_to_detail;
         self.overlay = Some(OverlayState::blank_multiline_input(
-            OverlayRoute::AddNote,
+            MultilineIntent::AddNote {
+                task_id: item.task.id,
+                display_ref: item.display_ref,
+                return_to_detail,
+            },
             ADD_NOTE_TITLE,
             "note body:",
         ));
@@ -220,7 +219,7 @@ impl App {
             return;
         };
         self.overlay = Some(OverlayState::tag_combobox(
-            OverlayRoute::AddTaskTitleLabels,
+            TagComboboxIntent::AddTaskLabels,
             ADD_TASK_LABELS_TITLE,
             self.store.labels.clone(),
             context.labels,
@@ -250,7 +249,7 @@ impl App {
 
     fn begin_add_task_natural_with_value(&mut self, value: String) {
         self.overlay = Some(OverlayState::multiline_input(
-            OverlayRoute::AddTaskNatural,
+            MultilineIntent::AddTaskNatural,
             ADD_TASK_NATURAL_TITLE,
             "",
             value,
@@ -496,30 +495,22 @@ impl App {
         Ok(())
     }
 
-    pub(super) async fn submit_add_note(&mut self, body: String) -> Result<()> {
-        match self.authoring.submit_add_note(body) {
-            AddNoteSubmit::Create {
-                task_id,
-                display_ref,
-                body,
-                return_to_detail,
-            } => {
-                let note_id = self.store.add_note_to_task(&task_id, body).await?;
-                self.refresh().await?;
-                self.restore_detail_overlay(return_to_detail);
-                self.set_success(format!("added note {note_id} to {display_ref}"));
-            }
-            AddNoteSubmit::Blank {
-                return_to_detail,
-                message,
-            } => {
-                self.restore_detail_overlay(return_to_detail);
-                self.set_warning(message);
-            }
-            AddNoteSubmit::Inactive { message } => {
-                self.set_info(message);
-            }
+    pub(super) async fn submit_add_note(
+        &mut self,
+        task_id: crate::ids::TaskId,
+        display_ref: String,
+        return_to_detail: bool,
+        body: String,
+    ) -> Result<()> {
+        if body.trim().is_empty() {
+            self.restore_detail_overlay(return_to_detail);
+            self.set_warning("note body is required");
+            return Ok(());
         }
+        let note_id = self.store.add_note_to_task(&task_id, body).await?;
+        self.refresh().await?;
+        self.restore_detail_overlay(return_to_detail);
+        self.set_success(format!("added note {note_id} to {display_ref}"));
         Ok(())
     }
 
@@ -537,10 +528,6 @@ impl App {
         }
         let return_to_detail = self.authoring.cancel() || self.detail_context;
         self.overlay = None;
-        self.conflict_flow.clear();
-        self.pending_rename_project = None;
-        self.pending_delete_project = None;
-        self.pending_delete_attachment = None;
         self.detail_context = false;
         self.restore_detail_overlay(return_to_detail);
     }

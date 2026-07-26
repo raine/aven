@@ -16,6 +16,16 @@ struct TaskSelectionAnchor {
     index: usize,
 }
 
+impl PartialEq for TaskSelection {
+    fn eq(&self, other: &Self) -> bool {
+        self.ids().eq(other.ids())
+            && self.anchor == other.anchor
+            && self.uses_marks == other.uses_marks
+    }
+}
+
+impl Eq for TaskSelection {}
+
 impl TaskSelection {
     pub(crate) fn resolve(
         tasks: &[TaskListItem],

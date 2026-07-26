@@ -452,7 +452,7 @@ impl App {
                 .is_some_and(|task| !task.task.description.is_empty()),
             copy_notes_available: selected_task.is_some_and(|task| !task.notes.is_empty()),
             marked_task_count: self.marked_task_ids_in_view().len(),
-            footer_choice_mode: self.footer_choice_mode,
+            footer_choice_mode: self.footer_choice.as_ref().map(|choice| choice.mode),
             sidebar_visible: self.sidebar_visible,
             update_badge: self.update.badge(),
             surface: if self.intake.view().add_task_only {

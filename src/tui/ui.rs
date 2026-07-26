@@ -70,7 +70,8 @@ use ratatui::widgets::{Block, Paragraph};
 
 use crate::tui::app::{Focus, FooterChoiceMode, WidgetState};
 use crate::tui::overlay::{
-    HeaderMenuKind, HeaderMenuView, OrderMenuView, OverlayRoute, OverlayView, TextInputView,
+    HeaderMenuKind, HeaderMenuView, MultilineInputKind, OrderMenuView, OverlayView, TextInputKind,
+    TextInputView,
 };
 use crate::tui::store::{TaskOrder, TaskView, TuiStore};
 use crate::tui::theme::{ACCENT, BG, BG_ALT, BG_PANEL, FG, FG_DIM, GREEN, PINK, SELECTED};
@@ -353,8 +354,8 @@ fn render_add_task_surface_overlay(frame: &mut Frame, _view: &ViewState, overlay
         OverlayView::AddTask(state) => self::overlays::render_add_task_full_frame(frame, state),
         OverlayView::MultilineInput(state)
             if matches!(
-                state.route,
-                OverlayRoute::AddTaskDescription | OverlayRoute::AddTaskNatural
+                state.kind,
+                MultilineInputKind::AddTaskDescription | MultilineInputKind::AddTaskNatural
             ) =>
         {
             render_add_task_multiline_full_frame(frame, state)
@@ -367,16 +368,14 @@ fn render_add_task_multiline_full_frame(
     frame: &mut Frame,
     state: &crate::tui::overlay::MultilineInputView,
 ) {
-    use crate::tui::overlay::OverlayRoute::{AddTaskDescription, AddTaskNatural};
-
-    let placeholder = match state.route {
-        AddTaskDescription => "Optional details, links, or handoff context...",
-        AddTaskNatural => "Describe the task in natural language...",
+    let placeholder = match state.kind {
+        MultilineInputKind::AddTaskDescription => "Optional details, links, or handoff context...",
+        MultilineInputKind::AddTaskNatural => "Describe the task in natural language...",
         _ => return,
     };
-    let hint_line = match state.route {
-        AddTaskDescription => self::overlays::add_task_description_hint_line(),
-        AddTaskNatural => self::overlays::add_task_natural_hint_line(),
+    let hint_line = match state.kind {
+        MultilineInputKind::AddTaskDescription => self::overlays::add_task_description_hint_line(),
+        MultilineInputKind::AddTaskNatural => self::overlays::add_task_natural_hint_line(),
         _ => return,
     };
     let content = dialog::Dialog::new(&state.title, frame.area().width, frame.area().height)
@@ -414,7 +413,7 @@ fn render_add_task_multiline_full_frame(
 
 fn edit_title_view(view: &ViewState) -> Option<&TextInputView> {
     match &view.overlay {
-        Some(OverlayView::TextInput(state)) if state.route == OverlayRoute::EditTitle => {
+        Some(OverlayView::TextInput(state)) if state.kind == TextInputKind::EditTitle => {
             Some(state)
         }
         _ => None,
@@ -647,7 +646,7 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
             total_matches,
             stale,
             no_matches_cached,
-            purpose,
+            intent,
         } => render_search(
             frame,
             SearchRenderView {
@@ -660,7 +659,7 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
                     stale: *stale,
                     no_matches_cached: *no_matches_cached,
                 },
-                purpose,
+                intent,
             },
         ),
         OverlayView::Command {
@@ -677,7 +676,7 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
         ),
         OverlayView::AddTask(state) => self::overlays::render_add_task(frame, state),
         OverlayView::TextInput(state)
-            if state.route == OverlayRoute::EditTitle && inline_title_editor => {}
+            if state.kind == TextInputKind::EditTitle && inline_title_editor => {}
         OverlayView::TextInput(state) => render_text_input(frame, state),
         OverlayView::MultilineInput(state) => render_multiline_input(frame, state),
         OverlayView::Picker(state) => render_picker(frame, state),

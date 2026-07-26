@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::tui::overlay::{OverlayRoute, OverlayState, TextPanelState};
+use crate::tui::overlay::{ConfirmIntent, OverlayState, TextPanelState};
 use crate::tui::store::TuiStore;
 
 pub(crate) const CONFIG_STATUS_TITLE: &str = "Sync status";
@@ -39,7 +39,7 @@ pub(crate) fn database_stats_overlay(store: &TuiStore) -> Result<OverlayState> {
 pub(crate) fn config_init_overlay() -> Result<OverlayState> {
     let path = crate::config::config_file_path()?;
     Ok(OverlayState::confirm(
-        OverlayRoute::ConfigInit,
+        ConfirmIntent::InitializeConfig { path: path.clone() },
         CONFIG_INIT_TITLE,
         format!("Create default config at {}?", path.display()),
     ))

@@ -455,6 +455,7 @@ impl TuiStore {
         Ok(MutationMessage::new(message, selected))
     }
 
+    #[cfg(test)]
     pub(crate) async fn add_dependency(
         &mut self,
         index: Option<usize>,

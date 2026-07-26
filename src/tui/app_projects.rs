@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use crate::tui::app::{App, Focus, TaskCopyKind, TaskRefKind};
-use crate::tui::overlay::{OverlayRoute, OverlayState};
+use crate::tui::overlay::{ConfirmIntent, OverlayState, PickerIntent, TextIntent};
 use crate::tui::platform::copy_to_clipboard;
 
 pub(crate) const ADD_PROJECT_TITLE: &str = "Add project";
@@ -31,7 +31,7 @@ impl App {
     pub(super) fn begin_add_project(&mut self) {
         self.pending_shortcut.clear();
         self.overlay = Some(OverlayState::blank_text_input(
-            OverlayRoute::AddProject,
+            TextIntent::AddProject,
             ADD_PROJECT_TITLE,
             "project name:",
         ));
@@ -40,7 +40,7 @@ impl App {
     pub(super) fn begin_add_label(&mut self) {
         self.pending_shortcut.clear();
         self.overlay = Some(OverlayState::blank_text_input(
-            OverlayRoute::AddLabel,
+            TextIntent::AddLabel,
             ADD_LABEL_TITLE,
             "label name:",
         ));
@@ -56,13 +56,16 @@ impl App {
             self.set_info("no selected task to edit");
             return;
         };
-        self.edit_selection = Some(selection.clone());
+        let return_to_detail =
+            self.detail_context || matches!(self.overlay, Some(OverlayState::Detail { .. }));
         if !self.marked_task_ids_in_view().is_empty() {
             let count = selection.len();
-            self.detail_context =
-                self.detail_context || matches!(self.overlay, Some(OverlayState::Detail { .. }));
+            self.detail_context = return_to_detail;
             self.overlay = Some(OverlayState::confirm(
-                OverlayRoute::DeleteTaskConfirm,
+                ConfirmIntent::DeleteTasks {
+                    selection,
+                    return_to_detail,
+                },
                 DELETE_TASK_TITLE,
                 format!("Delete {count} marked tasks?"),
             ));
@@ -72,10 +75,12 @@ impl App {
             self.set_info("no selected task to edit");
             return;
         };
-        self.detail_context =
-            self.detail_context || matches!(self.overlay, Some(OverlayState::Detail { .. }));
+        self.detail_context = return_to_detail;
         self.overlay = Some(OverlayState::confirm(
-            OverlayRoute::DeleteTaskConfirm,
+            ConfirmIntent::DeleteTasks {
+                selection,
+                return_to_detail,
+            },
             DELETE_TASK_TITLE,
             format!("Delete {} {}?", task.display_ref, task.task.title),
         ));
@@ -92,7 +97,7 @@ impl App {
             .store
             .existing_project_picker_items(selected.as_deref().unwrap_or_default());
         self.open_picker_overlay(
-            OverlayRoute::RenameProjectPicker,
+            PickerIntent::RenameProject,
             RENAME_PROJECT_TITLE,
             items,
             false,
@@ -110,7 +115,7 @@ impl App {
             .store
             .existing_project_picker_items(selected.as_deref().unwrap_or_default());
         self.open_picker_overlay(
-            OverlayRoute::DeleteProjectPicker,
+            PickerIntent::DeleteProject,
             DELETE_PROJECT_TITLE,
             items,
             false,
@@ -187,29 +192,29 @@ impl App {
             self.begin_rename_project();
             return;
         };
-        self.pending_rename_project = Some(project.clone());
         self.overlay = Some(OverlayState::text_input(
-            OverlayRoute::RenameProjectName,
+            TextIntent::RenameProject {
+                project: project.clone(),
+            },
             RENAME_PROJECT_TITLE,
             "new project name:",
             project,
         ));
     }
 
-    pub(super) async fn submit_rename_project(&mut self, value: String) -> Result<()> {
-        let Some(project) = self.pending_rename_project.clone() else {
-            self.set_warning("project rename is not active");
-            return Ok(());
-        };
+    pub(super) async fn submit_rename_project(
+        &mut self,
+        project: String,
+        value: String,
+    ) -> Result<()> {
         match self.store.rename_project(&project, value.clone()).await {
             Ok(result) => {
-                self.pending_rename_project = None;
                 self.apply_mutation_result(result);
             }
             Err(error) => {
                 self.set_error(format!("{error:#}"));
                 self.overlay = Some(OverlayState::text_input(
-                    OverlayRoute::RenameProjectName,
+                    TextIntent::RenameProject { project },
                     RENAME_PROJECT_TITLE,
                     "new project name:",
                     value,
@@ -224,24 +229,27 @@ impl App {
             self.begin_delete_project();
             return;
         };
-        self.pending_delete_project = Some(project.clone());
         self.overlay = Some(OverlayState::text_input(
-            OverlayRoute::DeleteProjectNameConfirm,
+            TextIntent::ConfirmDeleteProject {
+                project: project.clone(),
+            },
             DELETE_PROJECT_TITLE,
             format!("Type {project} to delete project:"),
             String::new(),
         ));
     }
 
-    pub(super) async fn submit_delete_project_name(&mut self, value: String) -> Result<()> {
-        let Some(project) = self.pending_delete_project.clone() else {
-            self.set_warning("project delete confirmation is not active");
-            return Ok(());
-        };
+    pub(super) async fn submit_delete_project_name(
+        &mut self,
+        project: String,
+        value: String,
+    ) -> Result<()> {
         if value.trim() != project {
             self.set_warning("project name does not match");
             self.overlay = Some(OverlayState::text_input(
-                OverlayRoute::DeleteProjectNameConfirm,
+                TextIntent::ConfirmDeleteProject {
+                    project: project.clone(),
+                },
                 DELETE_PROJECT_TITLE,
                 format!("Type {project} to delete project:"),
                 value,
@@ -249,18 +257,16 @@ impl App {
             return Ok(());
         }
         self.overlay = Some(OverlayState::confirm(
-            OverlayRoute::DeleteProjectConfirm,
+            ConfirmIntent::DeleteProject {
+                project: project.clone(),
+            },
             DELETE_PROJECT_TITLE,
             format!("Delete project {project}?"),
         ));
         Ok(())
     }
 
-    pub(super) async fn submit_delete_project(&mut self) -> Result<()> {
-        let Some(project) = self.pending_delete_project.take() else {
-            self.set_warning("project delete confirmation is not active");
-            return Ok(());
-        };
+    pub(super) async fn submit_delete_project(&mut self, project: String) -> Result<()> {
         match self.store.delete_project(&project).await {
             Ok(result) => self.apply_mutation_result(result),
             Err(error) => self.set_error(format!("{error:#}")),

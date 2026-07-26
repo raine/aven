@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::tui::app::{App, Focus, LastChangeReturnState};
 use crate::tui::navigation::{next_index, next_selectable_sidebar};
-use crate::tui::overlay::{OverlayRoute, OverlayState, PickerItem};
+use crate::tui::overlay::{OverlayState, PickerIntent, PickerItem};
 use crate::tui::store::{TaskFilterModifiers, TaskScope, TaskView, TaskViewState};
 
 impl App {
@@ -280,10 +280,6 @@ impl App {
     pub(super) fn cancel_overlay(&mut self) {
         self.pending_shortcut.clear();
         self.authoring.clear();
-        self.conflict_flow.clear();
-        self.pending_rename_project = None;
-        self.pending_delete_project = None;
-        self.pending_delete_attachment = None;
         self.clear_live_search_preview();
         self.detail_navigation_history.clear();
         self.detail_focus = None;
@@ -415,12 +411,12 @@ impl App {
 
     pub(super) fn open_picker_overlay(
         &mut self,
-        route: OverlayRoute,
+        intent: PickerIntent,
         title: impl Into<String>,
         items: Vec<PickerItem>,
         multi: bool,
     ) {
-        self.overlay = Some(OverlayState::picker(route, title, items, multi));
+        self.overlay = Some(OverlayState::picker(intent, title, items, multi));
     }
 
     pub(super) fn require_picker_value(

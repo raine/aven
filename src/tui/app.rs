@@ -9,7 +9,6 @@ use crate::config::AppConfig;
 use crate::tui::app_intake::IntakeController;
 use crate::tui::authoring::AuthoringState;
 use crate::tui::bounded_history::BoundedHistory;
-use crate::tui::conflict_flow::ConflictFlowState;
 use crate::tui::overlay::OverlayState;
 use crate::tui::shortcut_buffer::ShortcutBuffer;
 use crate::tui::store::{TaskOrder, TaskViewState, TuiStore};
@@ -120,6 +119,12 @@ pub(crate) enum FooterChoiceMode {
     Priority,
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct FooterChoiceState {
+    pub(super) mode: FooterChoiceMode,
+    pub(super) selection: crate::tui::task_selection::TaskSelection,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum DetailSection {
     EpicParent,
@@ -209,21 +214,15 @@ pub(crate) struct App {
     pub(super) intake: IntakeController,
     pub(crate) widgets: WidgetState,
     pub(crate) overlay: Option<OverlayState>,
-    pub(super) edit_selection: Option<crate::tui::task_selection::TaskSelection>,
-    pub(super) edit_aggregate: crate::tui::app_edit::EditAggregate,
     pub(super) onboarding_intro: Option<crate::tui::app_onboarding::OnboardingIntro>,
     pub(crate) notification: Option<Notification>,
     pub(super) pending_shortcut: ShortcutBuffer,
     pub(super) pending_shortcut_scroll: u16,
-    pub(super) footer_choice_mode: Option<FooterChoiceMode>,
+    pub(super) footer_choice: Option<FooterChoiceState>,
     pub(super) detail_context: bool,
     pub(super) sidebar_visible: bool,
     pub(super) detail_context_scroll: u16,
     pub(super) authoring: AuthoringState,
-    pub(super) conflict_flow: ConflictFlowState,
-    pub(super) pending_rename_project: Option<String>,
-    pub(super) pending_delete_project: Option<String>,
-    pub(super) pending_delete_attachment: Option<String>,
     pub(super) needs_terminal_clear: bool,
     pub(super) search: crate::tui::app_search::SearchController,
     pub(super) update: crate::tui::app_update::UpdateController,
@@ -282,21 +281,15 @@ impl App {
                 detail_document: None,
             },
             overlay: None,
-            edit_selection: None,
-            edit_aggregate: crate::tui::app_edit::EditAggregate::Uniform,
             onboarding_intro: None,
             notification: None,
             pending_shortcut: ShortcutBuffer::default(),
             pending_shortcut_scroll: 0,
-            footer_choice_mode: None,
+            footer_choice: None,
             detail_context: false,
             sidebar_visible: true,
             detail_context_scroll: 0,
             authoring: AuthoringState::default(),
-            conflict_flow: ConflictFlowState::default(),
-            pending_rename_project: None,
-            pending_delete_project: None,
-            pending_delete_attachment: None,
             needs_terminal_clear: false,
             search: crate::tui::app_search::SearchController::new(),
             update: crate::tui::app_update::UpdateController::new(),

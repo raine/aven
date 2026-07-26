@@ -115,19 +115,9 @@ impl Default for AddTaskDraftState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum AuthoringFlow {
-    AddTask(AddTaskDraftState),
-    AddNote {
-        task_id: crate::ids::TaskId,
-        display_ref: String,
-        return_to_detail: bool,
-    },
-}
-
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct AuthoringState {
-    flow: Option<AuthoringFlow>,
+    flow: Option<AddTaskDraftState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,52 +146,21 @@ pub(crate) enum AddTaskTitleSubmit {
     Inactive,
 }
 
-pub(crate) enum AddNoteSubmit {
-    Create {
-        task_id: crate::ids::TaskId,
-        display_ref: String,
-        body: String,
-        return_to_detail: bool,
-    },
-    Blank {
-        return_to_detail: bool,
-        message: &'static str,
-    },
-    Inactive {
-        message: &'static str,
-    },
-}
-
 impl AuthoringState {
     pub(crate) fn begin_add_task(
         &mut self,
         active_project: Option<String>,
         inferred_project: Option<String>,
     ) {
-        self.flow = Some(AuthoringFlow::AddTask(AddTaskDraftState {
+        self.flow = Some(AddTaskDraftState {
             project: active_project,
             inferred_project,
             ..AddTaskDraftState::default()
-        }));
-    }
-
-    pub(crate) fn begin_add_note(
-        &mut self,
-        task_id: crate::ids::TaskId,
-        display_ref: String,
-        return_to_detail: bool,
-    ) {
-        self.flow = Some(AuthoringFlow::AddNote {
-            task_id,
-            display_ref,
-            return_to_detail,
         });
     }
 
     pub(crate) fn add_task_context(&self) -> Option<AddTaskContext> {
-        let AuthoringFlow::AddTask(draft) = self.flow.as_ref()? else {
-            return None;
-        };
+        let draft = self.flow.as_ref()?;
         let project = draft
             .project
             .as_deref()
@@ -221,16 +180,12 @@ impl AuthoringState {
     }
 
     pub(crate) fn selected_add_task_project(&self) -> Option<Option<String>> {
-        let AuthoringFlow::AddTask(draft) = self.flow.as_ref()? else {
-            return None;
-        };
+        let draft = self.flow.as_ref()?;
         Some(draft.project.clone())
     }
 
     pub(crate) fn apply_add_task_status(&mut self, status: &str) -> Option<String> {
-        let AuthoringFlow::AddTask(draft) = self.flow.as_mut()? else {
-            return None;
-        };
+        let draft = self.flow.as_mut()?;
         if !crate::choices::STATUSES.contains(&status) {
             return None;
         }
@@ -242,9 +197,7 @@ impl AuthoringState {
         &mut self,
         attachment: PendingTaskAttachment,
     ) -> Option<bool> {
-        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
-            return None;
-        };
+        let draft = self.flow.as_mut()?;
         if draft
             .attachments
             .iter()
@@ -257,18 +210,18 @@ impl AuthoringState {
     }
 
     pub(crate) fn add_task_has_pending_attachments(&self) -> bool {
-        matches!(self.flow.as_ref(), Some(AuthoringFlow::AddTask(draft)) if !draft.attachments.is_empty())
+        matches!(self.flow.as_ref(), Some(draft) if !draft.attachments.is_empty())
     }
 
     pub(crate) fn add_task_attachments(&self) -> Vec<PendingTaskAttachment> {
-        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_ref() else {
+        let Some(draft) = self.flow.as_ref() else {
             return Vec::new();
         };
         draft.attachments.clone()
     }
 
     pub(crate) fn add_task_attachment_summaries(&self) -> Vec<PendingTaskAttachmentSummary> {
-        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_ref() else {
+        let Some(draft) = self.flow.as_ref() else {
             return Vec::new();
         };
         draft
@@ -288,9 +241,7 @@ impl AuthoringState {
     }
 
     pub(crate) fn remove_add_task_attachment(&mut self, index: usize) -> Option<String> {
-        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
-            return None;
-        };
+        let draft = self.flow.as_mut()?;
         if index >= draft.attachments.len() {
             return None;
         }
@@ -304,9 +255,7 @@ impl AuthoringState {
     }
 
     pub(crate) fn clear_add_task(&mut self) {
-        if matches!(self.flow, Some(AuthoringFlow::AddTask(_))) {
-            self.flow = None;
-        }
+        self.flow = None;
     }
 
     pub(crate) fn capture_add_task_fields(
@@ -315,7 +264,7 @@ impl AuthoringState {
         description: String,
         step: AddTaskStep,
     ) -> bool {
-        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
+        let Some(draft) = self.flow.as_mut() else {
             return false;
         };
         draft.title = title;
@@ -325,7 +274,7 @@ impl AuthoringState {
     }
 
     pub(crate) fn apply_add_task_project(&mut self, values: Vec<String>) -> bool {
-        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
+        let Some(draft) = self.flow.as_mut() else {
             return false;
         };
         draft.project = values.first().filter(|value| !value.is_empty()).cloned();
@@ -333,7 +282,7 @@ impl AuthoringState {
     }
 
     pub(crate) fn apply_add_task_priority(&mut self, values: Vec<String>) -> bool {
-        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
+        let Some(draft) = self.flow.as_mut() else {
             return false;
         };
         draft.priority = values
@@ -344,7 +293,7 @@ impl AuthoringState {
     }
 
     pub(crate) fn apply_add_task_labels(&mut self, values: Vec<String>) -> bool {
-        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
+        let Some(draft) = self.flow.as_mut() else {
             return false;
         };
         draft.labels = values;
@@ -352,7 +301,7 @@ impl AuthoringState {
     }
 
     pub(crate) fn apply_add_task_available_at(&mut self, value: String) -> bool {
-        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
+        let Some(draft) = self.flow.as_mut() else {
             return false;
         };
         draft.available_at = value;
@@ -360,7 +309,7 @@ impl AuthoringState {
     }
 
     pub(crate) fn apply_add_task_due_on(&mut self, value: String) -> bool {
-        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
+        let Some(draft) = self.flow.as_mut() else {
             return false;
         };
         draft.due_on = value;
@@ -368,9 +317,7 @@ impl AuthoringState {
     }
 
     pub(crate) fn apply_add_task_priority_value(&mut self, priority: &str) -> Option<String> {
-        let AuthoringFlow::AddTask(draft) = self.flow.as_mut()? else {
-            return None;
-        };
+        let draft = self.flow.as_mut()?;
         if !crate::choices::PRIORITIES.contains(&priority) {
             return None;
         }
@@ -379,7 +326,7 @@ impl AuthoringState {
     }
 
     pub(crate) fn apply_add_task_draft(&mut self, task: TaskDraft) -> bool {
-        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
+        let Some(draft) = self.flow.as_mut() else {
             return false;
         };
         draft.title = task.title;
@@ -396,12 +343,12 @@ impl AuthoringState {
 
     #[cfg(test)]
     pub(crate) fn submit_add_task(&mut self) -> AddTaskTitleSubmit {
-        let Some(AuthoringFlow::AddTask(draft)) = self.flow.take() else {
+        let Some(draft) = self.flow.take() else {
             return AddTaskTitleSubmit::Inactive;
         };
         let trimmed = draft.title.trim();
         if trimmed.is_empty() {
-            self.flow = Some(AuthoringFlow::AddTask(draft));
+            self.flow = Some(draft);
             return AddTaskTitleSubmit::ReopenTitle {
                 message: "task title is required",
             };
@@ -423,52 +370,13 @@ impl AuthoringState {
         }))
     }
 
-    pub(crate) fn submit_add_note(&mut self, body: String) -> AddNoteSubmit {
-        let Some(AuthoringFlow::AddNote {
-            task_id,
-            display_ref,
-            return_to_detail,
-        }) = self.flow.take()
-        else {
-            return AddNoteSubmit::Inactive {
-                message: "no selected task for note",
-            };
-        };
-        let trimmed = body.trim();
-        if trimmed.is_empty() {
-            return AddNoteSubmit::Blank {
-                return_to_detail,
-                message: "note body is required",
-            };
-        }
-        AddNoteSubmit::Create {
-            task_id,
-            display_ref,
-            body: trimmed.to_string(),
-            return_to_detail,
-        }
-    }
-
     pub(crate) fn cancel(&mut self) -> bool {
-        let return_to_detail = matches!(
-            self.flow,
-            Some(AuthoringFlow::AddNote {
-                return_to_detail: true,
-                ..
-            })
-        );
         self.flow = None;
-        return_to_detail
+        false
     }
 
     pub(crate) fn detail_underlay(&self) -> bool {
-        matches!(
-            self.flow,
-            Some(AuthoringFlow::AddNote {
-                return_to_detail: true,
-                ..
-            })
-        )
+        false
     }
 
     pub(crate) fn clear(&mut self) {
@@ -657,23 +565,5 @@ mod tests {
         state.begin_add_task(None, None);
 
         assert!(!state.add_task_has_pending_attachments());
-    }
-
-    #[test]
-    fn add_note_blank_submit_consumes_flow_and_returns_detail_flag() {
-        let mut state = AuthoringState::default();
-        state.begin_add_note(
-            crate::test_support::task_id("task-1"),
-            "APP-1234".to_string(),
-            true,
-        );
-        assert!(matches!(
-            state.submit_add_note("   ".to_string()),
-            AddNoteSubmit::Blank {
-                return_to_detail: true,
-                message: "note body is required"
-            }
-        ));
-        assert!(state.is_idle());
     }
 }

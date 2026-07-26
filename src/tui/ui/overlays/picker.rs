@@ -5,14 +5,14 @@ use ratatui::text::{Line, Span, Text};
 use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::input::prefixed_input_line;
 use crate::tui::overlay::{
-    GENERIC_PICKER_VIEWPORT_ROWS, GENERIC_PICKER_WIDTH, OverlayRoute, PROJECT_PICKER_VIEWPORT_ROWS,
-    PROJECT_PICKER_WIDTH, PickerItem, PickerMode, PickerView, picker_viewport_start,
+    GENERIC_PICKER_VIEWPORT_ROWS, GENERIC_PICKER_WIDTH, PROJECT_PICKER_VIEWPORT_ROWS,
+    PROJECT_PICKER_WIDTH, PickerItem, PickerKind, PickerMode, PickerView, picker_viewport_start,
 };
 use crate::tui::theme::{self, ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, SELECTED};
 use crate::tui::widgets::priority_icon;
 
 pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, state: &PickerView) {
-    if let Some(submit_label) = project_picker_submit_label(state.route) {
+    if let Some(submit_label) = project_picker_submit_label(state.kind) {
         render_project_picker(frame, state, submit_label);
         return;
     }
@@ -45,7 +45,7 @@ pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, state: &PickerView) {
         } else {
             ""
         };
-        if priority_picker_submit_label(state.route).is_some() {
+        if priority_picker_submit_label(state.kind).is_some() {
             lines.push(priority_picker_line(item, *index == state.selected));
         } else {
             lines.push(Line::from(format!("{marker}{}{check}", item.label)));
@@ -55,7 +55,7 @@ pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, state: &PickerView) {
     lines.push(picker_hint_line(
         state.mode,
         state.multi,
-        priority_picker_submit_label(state.route).unwrap_or("submit"),
+        priority_picker_submit_label(state.kind).unwrap_or("submit"),
     ));
     let height = (lines.len() as u16).saturating_add(2);
     Dialog::new(&state.title, GENERIC_PICKER_WIDTH, height).render_text(frame, Text::from(lines));
@@ -161,20 +161,17 @@ fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'
     Dialog::new(&state.title, PROJECT_PICKER_WIDTH, height).render_text(frame, Text::from(lines));
 }
 
-pub(in crate::tui::ui) fn project_picker_submit_label(route: OverlayRoute) -> Option<&'static str> {
-    match route {
-        OverlayRoute::ScopeProject => Some("scope"),
-        OverlayRoute::EditProject | OverlayRoute::AddTaskTitleProject => Some("submit"),
-        OverlayRoute::DeleteProjectPicker => Some("delete"),
+pub(in crate::tui::ui) fn project_picker_submit_label(kind: PickerKind) -> Option<&'static str> {
+    match kind {
+        PickerKind::ScopeProject => Some("scope"),
+        PickerKind::EditProject | PickerKind::AddTaskProject => Some("submit"),
+        PickerKind::DeleteProject => Some("delete"),
         _ => None,
     }
 }
 
-fn priority_picker_submit_label(route: OverlayRoute) -> Option<&'static str> {
-    match route {
-        OverlayRoute::EditPriority | OverlayRoute::AddTaskTitlePriority => Some("submit"),
-        _ => None,
-    }
+fn priority_picker_submit_label(kind: PickerKind) -> Option<&'static str> {
+    matches!(kind, PickerKind::EditPriority | PickerKind::AddTaskPriority).then_some("submit")
 }
 
 pub(in crate::tui::ui) fn project_picker_line(item: &PickerItem, selected: bool) -> Line<'static> {

@@ -2,8 +2,7 @@ use anyhow::Result;
 
 use crate::config as app_config;
 use crate::operations::{
-    init_config as init_config_operation, show_config as show_config_operation,
-    show_config_paths as show_config_paths_operation,
+    show_config as show_config_operation, show_config_paths as show_config_paths_operation,
 };
 use crate::sync::sync_server_url_is_valid;
 
@@ -25,8 +24,8 @@ impl TuiStore {
         Ok(show_config_paths_operation()?.lines)
     }
 
-    pub(crate) fn init_config(&self) -> Result<String> {
-        let outcome = init_config_operation()?;
+    pub(crate) fn init_config(&self, path: std::path::PathBuf) -> Result<String> {
+        let outcome = crate::operations::init_config_at(path)?;
         Ok(format!("created config {}", outcome.path.display()))
     }
 

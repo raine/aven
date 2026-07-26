@@ -11,7 +11,7 @@ use crate::tui::attachment_controller::{
     AttachmentCompletion, AttachmentRequest, AttachmentSource,
 };
 use crate::tui::authoring::PendingTaskAttachment;
-use crate::tui::overlay::{MultilineInputState, OverlayRoute, OverlayState};
+use crate::tui::overlay::{ConfirmIntent, MultilineInputState, MultilineIntent, OverlayState};
 use crate::tui::platform::{ClipboardImage, read_clipboard_image, read_clipboard_text};
 use crate::tui::ui::attachment_is_locally_openable;
 
@@ -36,22 +36,26 @@ impl App {
             .as_deref()
             .or(attachment.alt_text.as_deref())
             .unwrap_or("attached image");
-        self.pending_delete_attachment = Some(attachment_id.to_string());
         self.detail_context = true;
         self.detail_context_scroll = scroll;
         self.overlay = Some(OverlayState::confirm(
-            OverlayRoute::DeleteAttachmentConfirm,
+            ConfirmIntent::DeleteAttachment {
+                attachment_id: attachment_id.to_string(),
+                return_to_detail: true,
+                detail_scroll: scroll,
+            },
             DELETE_ATTACHMENT_TITLE,
             format!("Remove {label}?"),
         ));
     }
 
-    pub(super) async fn submit_delete_attachment(&mut self) -> Result<()> {
-        let Some(attachment_id) = self.pending_delete_attachment.take() else {
-            self.set_warning("image removal confirmation is not active");
-            self.restore_detail_overlay(true);
-            return Ok(());
-        };
+    pub(super) async fn submit_delete_attachment(
+        &mut self,
+        attachment_id: String,
+        return_to_detail: bool,
+        detail_scroll: u16,
+    ) -> Result<()> {
+        self.detail_context_scroll = detail_scroll;
         let replacement_attachment_id = self.attachment_focus_after_delete(&attachment_id);
         self.store.delete_attachment(&attachment_id).await?;
         self.detail_focus = replacement_attachment_id
@@ -60,7 +64,7 @@ impl App {
             .retain(|(retained_id, _)| retained_id != &attachment_id);
         self.refresh().await?;
         self.set_success("removed image");
-        self.restore_detail_overlay(true);
+        self.restore_detail_overlay(return_to_detail);
         Ok(())
     }
 
@@ -171,11 +175,11 @@ impl App {
             self.overlay,
             Some(OverlayState::AddTask(_))
                 | Some(OverlayState::MultilineInput(MultilineInputState {
-                    route: OverlayRoute::AddTaskNatural,
+                    intent: MultilineIntent::AddTaskNatural,
                     ..
                 }))
         ) && self.pending_shortcut.is_empty()
-            && self.footer_choice_mode.is_none()
+            && self.footer_choice.is_none()
     }
 
     fn attach_add_task_image_bytes(&mut self, filename: String, bytes: Vec<u8>) -> Result<()> {
@@ -248,7 +252,7 @@ impl App {
     fn detail_accepts_image_paste(&self) -> bool {
         matches!(self.overlay, Some(OverlayState::Detail { .. }))
             && self.pending_shortcut.is_empty()
-            && self.footer_choice_mode.is_none()
+            && self.footer_choice.is_none()
     }
 
     async fn attach_clipboard_image(&mut self, image: ClipboardImage) -> Result<()> {

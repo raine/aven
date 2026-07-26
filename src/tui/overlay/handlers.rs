@@ -13,8 +13,7 @@ use super::picker::{
 };
 use super::state::{
     AddTaskMode, ConfirmState, HeaderMenuState, MultilineInputMode, OrderMenuState, OverlayOutcome,
-    OverlayRoute, OverlayState, OverlaySubmit, PickerMode, PickerState, TagComboboxState,
-    TextPanelState,
+    OverlayState, OverlaySubmit, PickerMode, PickerState, TagComboboxState, TextPanelState,
 };
 use super::tag_combobox::{
     handle_tag_combobox_key, normalize_tag_combobox_highlight, tag_combobox_matches,
@@ -137,7 +136,9 @@ pub(crate) fn handle_generic_overlay_key(
                             state.mode = AddTaskMode::Labels(labels);
                         }
                         OverlayOutcome::Cancelled => {}
-                        OverlayOutcome::Submitted(OverlaySubmit::Picker { values, .. }) => {
+                        OverlayOutcome::Submitted(OverlaySubmit::TagCombobox {
+                            values, ..
+                        }) => {
                             state.labels = values;
                         }
                         _ => {}
@@ -302,16 +303,14 @@ pub(crate) fn handle_generic_overlay_key(
         OverlayState::TextInput(mut state) => match key.code {
             KeyCode::Esc => OverlayOutcome::Cancelled,
             KeyCode::Char('d')
-                if key.modifiers.contains(KeyModifiers::CONTROL)
-                    && matches!(
-                        state.route,
-                        super::OverlayRoute::EditAvailability | super::OverlayRoute::EditDue
-                    ) =>
+                if key.modifiers.contains(KeyModifiers::CONTROL) && state.intent.is_date_edit() =>
             {
-                OverlayOutcome::Submitted(OverlaySubmit::Clear { route: state.route })
+                OverlayOutcome::Submitted(OverlaySubmit::ClearDate {
+                    intent: state.intent,
+                })
             }
             KeyCode::Enter => OverlayOutcome::Submitted(OverlaySubmit::Text {
-                route: state.route,
+                intent: state.intent,
                 value: state.input.text.clone(),
             }),
             _ => {
@@ -335,13 +334,14 @@ pub(crate) fn handle_generic_overlay_key(
             {
                 let value = state.lines.join("\n");
                 return OverlayOutcome::Submitted(OverlaySubmit::Multiline {
-                    route: state.route,
+                    intent: state.intent,
                     value,
                 });
             }
             match key.code {
                 KeyCode::Esc
-                    if state.route == OverlayRoute::AddNote && state.has_meaningful_content() =>
+                    if matches!(state.intent, super::MultilineIntent::AddNote { .. })
+                        && state.has_meaningful_content() =>
                 {
                     state.mode = MultilineInputMode::ConfirmDiscard;
                     OverlayOutcome::None(OverlayState::MultilineInput(state))
@@ -360,7 +360,9 @@ pub(crate) fn handle_generic_overlay_key(
         OverlayState::Confirm(state) => match key.code {
             KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => OverlayOutcome::Cancelled,
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                OverlayOutcome::Submitted(OverlaySubmit::Confirm { route: state.route })
+                OverlayOutcome::Submitted(OverlaySubmit::Confirm {
+                    intent: state.intent,
+                })
             }
             _ => OverlayOutcome::None(OverlayState::Confirm(state)),
         },
@@ -535,7 +537,7 @@ fn tag_combobox_mouse_target(
     terminal_size: Size,
 ) -> TagComboboxMouseTarget {
     let view = crate::tui::overlay::TagComboboxView {
-        route: state.route,
+        kind: (&state.intent).into(),
         title: state.title.clone(),
         input: state.input.text.clone(),
         input_cursor: state.input.cursor,
@@ -636,7 +638,7 @@ fn picker_mouse_target(
     terminal_size: Size,
 ) -> PickerMouseTarget {
     let view = crate::tui::overlay::PickerView {
-        route: state.route,
+        kind: (&state.intent).into(),
         title: state.title.clone(),
         filter: state.filter.text.clone(),
         filter_cursor: state.filter.cursor,
@@ -680,9 +682,9 @@ fn handle_confirm_mouse(
         return OverlayOutcome::None(OverlayState::Confirm(state));
     }
     match confirm_mouse_target(&state.prompt, mouse.column, mouse.row, terminal_size) {
-        ConfirmMouseTarget::Yes => {
-            OverlayOutcome::Submitted(OverlaySubmit::Confirm { route: state.route })
-        }
+        ConfirmMouseTarget::Yes => OverlayOutcome::Submitted(OverlaySubmit::Confirm {
+            intent: state.intent,
+        }),
         ConfirmMouseTarget::No | ConfirmMouseTarget::Cancel | ConfirmMouseTarget::Outside => {
             OverlayOutcome::Cancelled
         }
@@ -842,8 +844,10 @@ fn previous_order(order: TaskOrder) -> TaskOrder {
 mod tests {
     use super::*;
     use crate::tui::overlay::{
-        LineEdit, MultilineInputState, OverlayRoute, PickerItem, TextInputState,
+        ConfirmIntent, LineEdit, MultilineInputState, MultilineIntent, PickerIntent, PickerItem,
+        TextInputState, TextIntent,
     };
+    use crate::tui::task_selection::TaskSelection;
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -851,6 +855,37 @@ mod tests {
 
     fn ctrl(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
+
+    fn add_note_intent() -> MultilineIntent {
+        MultilineIntent::AddNote {
+            task_id: crate::test_support::task_id("task-1"),
+            display_ref: "APP-1234".to_string(),
+            return_to_detail: false,
+        }
+    }
+
+    fn task_selection() -> TaskSelection {
+        TaskSelection::resolve(
+            &[crate::tui::test_support::task_list_item("Task")],
+            &std::collections::BTreeSet::new(),
+            Some(0),
+        )
+        .unwrap()
+    }
+
+    fn due_intent() -> TextIntent {
+        TextIntent::EditDue {
+            selection: task_selection(),
+            mixed: false,
+            return_to_detail: false,
+        }
+    }
+
+    fn config_intent() -> ConfirmIntent {
+        ConfirmIntent::InitializeConfig {
+            path: std::path::PathBuf::from("/tmp/config.toml"),
+        }
     }
 
     fn pending_attachment(filename: &str) -> crate::tui::authoring::PendingTaskAttachmentSummary {
@@ -865,7 +900,7 @@ mod tests {
         Box::new(crate::tui::overlay::AddTaskState {
             title: LineEdit::blank(),
             description: MultilineInputState::blank(
-                OverlayRoute::AddTaskDescription,
+                MultilineIntent::AddTaskDescription,
                 "Add task: description",
                 "",
             ),
@@ -1133,7 +1168,7 @@ mod tests {
     #[test]
     fn multiline_ctrl_s_submits() {
         let state = MultilineInputState {
-            route: OverlayRoute::MessageOnly,
+            intent: MultilineIntent::AddTaskNatural,
             title: "Notes".to_string(),
             prompt: "Body".to_string(),
             lines: vec!["line".to_string()],
@@ -1154,7 +1189,7 @@ mod tests {
     #[test]
     fn multiline_ctrl_enter_submits() {
         let state = MultilineInputState {
-            route: OverlayRoute::AddNote,
+            intent: add_note_intent(),
             title: "Add note".to_string(),
             prompt: "note body:".to_string(),
             lines: vec!["line".to_string()],
@@ -1172,7 +1207,7 @@ mod tests {
     #[test]
     fn populated_add_note_requires_discard_confirmation() {
         let mut state = MultilineInputState::from_value(
-            OverlayRoute::AddNote,
+            add_note_intent(),
             "Add note",
             "note body:",
             " first\nsecond ".to_string(),
@@ -1197,7 +1232,7 @@ mod tests {
             vec!["   ".to_string()],
             vec!["\t".to_string(), "  ".to_string(), String::new()],
         ] {
-            let mut state = MultilineInputState::blank(OverlayRoute::AddNote, "Add note", "");
+            let mut state = MultilineInputState::blank(add_note_intent(), "Add note", "");
             state.lines = lines;
             assert!(matches!(
                 handle(key(KeyCode::Esc), OverlayState::MultilineInput(state)),
@@ -1210,7 +1245,7 @@ mod tests {
     fn add_note_discard_confirmation_accepts_y_and_rejects_submission() {
         for code in [KeyCode::Char('y'), KeyCode::Char('Y')] {
             let mut state = MultilineInputState::from_value(
-                OverlayRoute::AddNote,
+                add_note_intent(),
                 "Add note",
                 "",
                 "draft".to_string(),
@@ -1224,7 +1259,7 @@ mod tests {
 
         for key in [ctrl(KeyCode::Char('s')), ctrl(KeyCode::Enter)] {
             let mut state = MultilineInputState::from_value(
-                OverlayRoute::AddNote,
+                add_note_intent(),
                 "Add note",
                 "",
                 "draft".to_string(),
@@ -1244,7 +1279,7 @@ mod tests {
     fn add_note_discard_confirmation_preserves_draft_when_cancelled() {
         for code in [KeyCode::Char('n'), KeyCode::Char('N'), KeyCode::Esc] {
             let mut state = MultilineInputState::from_value(
-                OverlayRoute::AddNote,
+                add_note_intent(),
                 "Add note",
                 "",
                 "first\nsecond".to_string(),
@@ -1265,12 +1300,8 @@ mod tests {
 
     #[test]
     fn repeated_esc_never_discards_populated_add_note() {
-        let state = MultilineInputState::from_value(
-            OverlayRoute::AddNote,
-            "Add note",
-            "",
-            "draft".to_string(),
-        );
+        let state =
+            MultilineInputState::from_value(add_note_intent(), "Add note", "", "draft".to_string());
         let OverlayOutcome::None(OverlayState::MultilineInput(state)) =
             handle(key(KeyCode::Esc), OverlayState::MultilineInput(state))
         else {
@@ -1371,16 +1402,16 @@ mod tests {
     }
 
     #[test]
-    fn esc_cancels_all_generic_overlay_variants() {
+    fn esc_cancels_all_input_overlay_variants() {
         let overlays = vec![
             OverlayState::TextInput(TextInputState::new(
-                OverlayRoute::MessageOnly,
+                TextIntent::AddProject,
                 "Title",
                 "Prompt",
                 "value".to_string(),
             )),
             OverlayState::MultilineInput(MultilineInputState {
-                route: OverlayRoute::MessageOnly,
+                intent: MultilineIntent::AddTaskNatural,
                 title: "Body".to_string(),
                 prompt: "Prompt".to_string(),
                 lines: vec!["value".to_string()],
@@ -1389,7 +1420,7 @@ mod tests {
                 mode: MultilineInputMode::Compose,
             }),
             OverlayState::Picker(PickerState {
-                route: OverlayRoute::MessageOnly,
+                intent: PickerIntent::FilterLabel,
                 title: "Pick".to_string(),
                 filter: LineEdit::blank(),
                 items: vec![PickerItem {
@@ -1403,7 +1434,7 @@ mod tests {
                 mode: PickerMode::Navigate,
             }),
             OverlayState::Confirm(ConfirmState {
-                route: OverlayRoute::MessageOnly,
+                intent: config_intent(),
                 title: "Confirm".to_string(),
                 prompt: "Continue?".to_string(),
             }),
@@ -1435,7 +1466,7 @@ mod tests {
     #[test]
     fn confirm_yes_and_no() {
         let state = ConfirmState {
-            route: OverlayRoute::MessageOnly,
+            intent: config_intent(),
             title: "Delete".to_string(),
             prompt: "Sure?".to_string(),
         };
@@ -1445,8 +1476,7 @@ mod tests {
                 OverlayState::Confirm(state.clone())
             ),
             OverlayOutcome::Submitted(OverlaySubmit::Confirm {
-                route: OverlayRoute::MessageOnly,
-                ..
+                intent: ConfirmIntent::InitializeConfig { .. },
             })
         ));
         assert!(matches!(
@@ -1460,7 +1490,7 @@ mod tests {
         let outcome = handle(
             ctrl(KeyCode::Char('d')),
             OverlayState::TextInput(TextInputState::new(
-                OverlayRoute::EditDue,
+                due_intent(),
                 "Edit due date",
                 "",
                 String::new(),
@@ -1469,18 +1499,18 @@ mod tests {
 
         assert!(matches!(
             outcome,
-            OverlayOutcome::Submitted(OverlaySubmit::Clear {
-                route: OverlayRoute::EditDue
+            OverlayOutcome::Submitted(OverlaySubmit::ClearDate {
+                intent: TextIntent::EditDue { .. }
             })
         ));
     }
 
     #[test]
-    fn generic_submit_variants_propagate_route() {
+    fn submit_variants_propagate_intents() {
         let text = handle(
             key(KeyCode::Enter),
             OverlayState::TextInput(TextInputState::new(
-                OverlayRoute::AddProject,
+                TextIntent::AddProject,
                 "Add project",
                 "name:",
                 "app".to_string(),
@@ -1489,7 +1519,7 @@ mod tests {
         assert!(matches!(
             text,
             OverlayOutcome::Submitted(OverlaySubmit::Text {
-                route: OverlayRoute::AddProject,
+                intent: TextIntent::AddProject,
                 ..
             })
         ));
@@ -1497,7 +1527,7 @@ mod tests {
         let multiline = handle(
             ctrl(KeyCode::Char('s')),
             OverlayState::MultilineInput(MultilineInputState {
-                route: OverlayRoute::AddNote,
+                intent: add_note_intent(),
                 title: "Add note".to_string(),
                 prompt: "body:".to_string(),
                 lines: vec!["note".to_string()],
@@ -1509,7 +1539,7 @@ mod tests {
         assert!(matches!(
             multiline,
             OverlayOutcome::Submitted(OverlaySubmit::Multiline {
-                route: OverlayRoute::AddNote,
+                intent: MultilineIntent::AddNote { .. },
                 ..
             })
         ));
@@ -1517,7 +1547,7 @@ mod tests {
         let picker = handle(
             key(KeyCode::Enter),
             OverlayState::Picker(PickerState {
-                route: OverlayRoute::EditStatus,
+                intent: PickerIntent::FilterLabel,
                 title: "Edit task: status".to_string(),
                 filter: LineEdit::blank(),
                 items: vec![PickerItem {
@@ -1534,7 +1564,7 @@ mod tests {
         assert!(matches!(
             picker,
             OverlayOutcome::Submitted(OverlaySubmit::Picker {
-                route: OverlayRoute::EditStatus,
+                intent: PickerIntent::FilterLabel,
                 ..
             })
         ));

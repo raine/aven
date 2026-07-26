@@ -1,7 +1,9 @@
 use crate::query::SearchMatchedField;
 use crate::tui::authoring::{AddTaskStep, PendingTaskAttachmentSummary};
+use crate::tui::conflict_flow::ConflictResolutionChoice;
 use crate::tui::overlay::text_input::LineEdit;
-use crate::tui::store::{TaskOrder, TaskView, TuiDatabaseStats, TuiSyncStatus};
+use crate::tui::store::{ConflictTarget, TaskOrder, TaskView, TuiDatabaseStats, TuiSyncStatus};
+use crate::tui::task_selection::TaskSelection;
 use crate::tui::text::{char_boundary_at_or_before, normalize_pasted_newlines};
 use unicode_width::UnicodeWidthStr;
 
@@ -66,7 +68,7 @@ pub(crate) struct SearchResultItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum SearchPurpose {
+pub(crate) enum SearchIntent {
     Navigate,
     AddDependency {
         task_id: crate::ids::TaskId,
@@ -76,40 +78,8 @@ pub(crate) enum SearchPurpose {
         epic_id: crate::ids::TaskId,
         display_ref: String,
         project_key: String,
+        return_to_detail: bool,
     },
-}
-
-impl SearchPurpose {
-    pub(crate) fn title(&self) -> String {
-        match self {
-            Self::Navigate => "Search".to_string(),
-            Self::AddDependency { .. } => "Add dependency".to_string(),
-            Self::AddEpicChild { display_ref, .. } => format!("Add child to {display_ref}"),
-        }
-    }
-
-    pub(crate) fn enter_hint(&self) -> &'static str {
-        match self {
-            Self::Navigate => "open task",
-            Self::AddDependency { .. } => "add selected as blocker",
-            Self::AddEpicChild { .. } => "add selected child",
-        }
-    }
-
-    pub(crate) fn placeholder(&self) -> &'static str {
-        match self {
-            Self::Navigate => "Search tasks, notes, labels, and projects...",
-            Self::AddDependency { .. } => "Search for the task that blocks this task...",
-            Self::AddEpicChild { .. } => "Search for an existing task or create a child...",
-        }
-    }
-
-    pub(crate) fn tab_hint(&self) -> Option<&'static str> {
-        match self {
-            Self::Navigate => Some("open results"),
-            Self::AddDependency { .. } | Self::AddEpicChild { .. } => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,22 +89,22 @@ pub(crate) struct SearchState {
     pub(crate) selected: usize,
     pub(crate) total_matches: usize,
     pub(crate) results_query: Option<String>,
-    pub(crate) purpose: SearchPurpose,
+    pub(crate) intent: SearchIntent,
 }
 
 impl SearchState {
     pub(crate) fn blank() -> Self {
-        Self::for_purpose(SearchPurpose::Navigate)
+        Self::for_intent(SearchIntent::Navigate)
     }
 
-    pub(crate) fn for_purpose(purpose: SearchPurpose) -> Self {
+    pub(crate) fn for_intent(intent: SearchIntent) -> Self {
         Self {
             input: LineEdit::blank(),
             results: Vec::new(),
             selected: 0,
             total_matches: 0,
             results_query: None,
-            purpose,
+            intent,
         }
     }
 
@@ -364,436 +334,152 @@ impl TextPanelState {
     }
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OverlayRoute {
-    MessageOnly,
-    AddTaskTitle,
-    AddTaskDescription,
-    AddTaskNatural,
-    AddTaskTitleProject,
-    AddTaskTitlePriority,
-    AddTaskTitleLabels,
-    AddNote,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TextIntent {
     AddProject,
     AddLabel,
-    EditStatus,
-    MoveToColumn,
-    EditTitle,
-    EditDescription,
-    EditProject,
-    EditPriority,
-    EditAvailability,
-    EditDue,
-    EditLabels,
-    EditLabelsMulti,
+    RenameProject {
+        project: String,
+    },
+    ConfirmDeleteProject {
+        project: String,
+    },
+    EditTitle {
+        selection: TaskSelection,
+    },
+    EditAvailability {
+        selection: TaskSelection,
+        mixed: bool,
+        return_to_detail: bool,
+    },
+    EditDue {
+        selection: TaskSelection,
+        mixed: bool,
+        return_to_detail: bool,
+    },
+    ResolveConflictManually {
+        target: ConflictTarget,
+    },
+}
+
+impl TextIntent {
+    pub(crate) fn is_date_edit(&self) -> bool {
+        matches!(self, Self::EditAvailability { .. } | Self::EditDue { .. })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum MultilineIntent {
+    AddTaskDescription,
+    AddTaskNatural,
+    AddNote {
+        task_id: crate::ids::TaskId,
+        display_ref: String,
+        return_to_detail: bool,
+    },
+    EditDescription {
+        selection: TaskSelection,
+    },
+    ResolveConflictManually {
+        target: ConflictTarget,
+    },
+}
+
+impl MultilineIntent {
+    pub(crate) fn is_description_edit(&self) -> bool {
+        matches!(self, Self::EditDescription { .. })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PickerIntent {
+    AddTaskProject,
+    AddTaskStatus,
+    AddTaskPriority,
+    MoveToColumn {
+        selection: TaskSelection,
+    },
+    EditProject {
+        selection: TaskSelection,
+        mixed: bool,
+    },
+    EditPriority {
+        selection: TaskSelection,
+        mixed: bool,
+    },
     FilterLabel,
     FilterPriority,
     ScopeProject,
-    RenameProjectPicker,
-    RenameProjectName,
-    DeleteProjectPicker,
-    DeleteProjectNameConfirm,
-    DeleteProjectConfirm,
-    DeleteTaskConfirm,
-    DeleteAttachmentConfirm,
-    ClearAvailabilityConfirm,
-    ClearDueConfirm,
+    RenameProject,
+    DeleteProject,
     SwitchWorkspace,
-    ConflictField,
-    ConflictConfirm,
-    ConflictManual,
-    ConfigInit,
-    AddDependency,
-    RemoveDependency,
-    UpdateConfirm,
+    PickConflictVariant {
+        choice: ConflictResolutionChoice,
+        targets: Vec<ConflictTarget>,
+    },
+    PickConflictManual {
+        targets: Vec<ConflictTarget>,
+    },
+    ResolveConflictManually {
+        target: ConflictTarget,
+    },
+    RemoveDependency {
+        task_id: crate::ids::TaskId,
+    },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TextSubmitRoute {
-    AddTaskTitleToast,
-    AddProject,
-    AddLabel,
-    RenameProjectName,
-    DeleteProjectNameConfirm,
-    EditTitle,
-    EditAvailability,
-    EditDue,
-    ConflictManual,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MultilineSubmitRoute {
-    AddTaskDescription,
-    AddTaskNatural,
-    AddNote,
-    EditDescription,
-    ConflictManual,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PickerSubmitRoute {
-    AddTaskTitleProject,
-    AddTaskTitlePriority,
-    AddTaskTitleLabels,
-    EditStatus,
-    MoveToColumn,
-    EditProject,
-    EditPriority,
-    EditLabels,
-    EditLabelsMulti,
-    FilterLabel,
-    FilterPriority,
-    ScopeProject,
-    RenameProjectPicker,
-    DeleteProjectPicker,
-    SwitchWorkspace,
-    ConflictField,
-    ConflictManual,
-    AddDependency,
-    RemoveDependency,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ConfirmSubmitRoute {
-    ConflictConfirm,
-    ConfigInit,
-    DeleteProjectConfirm,
-    DeleteTaskConfirm,
-    DeleteAttachmentConfirm,
-    ClearAvailabilityConfirm,
-    ClearDueConfirm,
-    UpdateConfirm,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OverlaySubmitKind {
-    Text,
-    Multiline,
-    Picker,
-    Confirm,
-}
-
-impl OverlaySubmitKind {
-    #[cfg(test)]
-    pub(crate) const ALL: [Self; 4] = [Self::Text, Self::Multiline, Self::Picker, Self::Confirm];
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct OverlayFallbackMessages {
-    pub(crate) text: &'static str,
-    pub(crate) multiline: &'static str,
-    pub(crate) picker: &'static str,
-    pub(crate) confirm: &'static str,
-}
-
-impl Default for OverlayFallbackMessages {
-    fn default() -> Self {
-        Self {
-            text: "submitted overlay",
-            multiline: "submitted overlay",
-            picker: "selected overlay",
-            confirm: "confirmed overlay",
-        }
-    }
-}
-
-impl OverlayFallbackMessages {
-    pub(crate) fn message(self, kind: OverlaySubmitKind) -> &'static str {
-        match kind {
-            OverlaySubmitKind::Text => self.text,
-            OverlaySubmitKind::Multiline => self.multiline,
-            OverlaySubmitKind::Picker => self.picker,
-            OverlaySubmitKind::Confirm => self.confirm,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct OverlayRouteDescriptor {
-    pub(crate) text_submit: Option<TextSubmitRoute>,
-    pub(crate) multiline_submit: Option<MultilineSubmitRoute>,
-    pub(crate) picker_submit: Option<PickerSubmitRoute>,
-    pub(crate) confirm_submit: Option<ConfirmSubmitRoute>,
-    pub(crate) initial_picker_mode: PickerMode,
-    pub(crate) fallback: OverlayFallbackMessages,
-}
-
-impl Default for OverlayRouteDescriptor {
-    fn default() -> Self {
-        Self {
-            text_submit: None,
-            multiline_submit: None,
-            picker_submit: None,
-            confirm_submit: None,
-            initial_picker_mode: PickerMode::Navigate,
-            fallback: OverlayFallbackMessages::default(),
-        }
-    }
-}
-
-impl OverlayRoute {
-    pub(crate) fn descriptor(self) -> OverlayRouteDescriptor {
+impl PickerIntent {
+    pub(crate) fn initial_mode(&self) -> PickerMode {
         match self {
-            Self::MessageOnly => OverlayRouteDescriptor {
-                fallback: OverlayFallbackMessages {
-                    text: "submitted overlay",
-                    multiline: "submitted overlay",
-                    picker: "selected overlay",
-                    confirm: "confirmed overlay",
-                },
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::AddTaskTitle => OverlayRouteDescriptor {
-                text_submit: Some(TextSubmitRoute::AddTaskTitleToast),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::AddTaskDescription => OverlayRouteDescriptor {
-                multiline_submit: Some(MultilineSubmitRoute::AddTaskDescription),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::AddTaskNatural => OverlayRouteDescriptor {
-                multiline_submit: Some(MultilineSubmitRoute::AddTaskNatural),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::AddTaskTitleProject => OverlayRouteDescriptor {
-                picker_submit: Some(PickerSubmitRoute::AddTaskTitleProject),
-                initial_picker_mode: PickerMode::Filter,
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::AddTaskTitlePriority => OverlayRouteDescriptor {
-                picker_submit: Some(PickerSubmitRoute::AddTaskTitlePriority),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::AddTaskTitleLabels => OverlayRouteDescriptor {
-                picker_submit: Some(PickerSubmitRoute::AddTaskTitleLabels),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::AddNote => OverlayRouteDescriptor {
-                multiline_submit: Some(MultilineSubmitRoute::AddNote),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::AddProject => OverlayRouteDescriptor {
-                text_submit: Some(TextSubmitRoute::AddProject),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::AddLabel => OverlayRouteDescriptor {
-                text_submit: Some(TextSubmitRoute::AddLabel),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::EditStatus => OverlayRouteDescriptor {
-                picker_submit: Some(PickerSubmitRoute::EditStatus),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::MoveToColumn => OverlayRouteDescriptor {
-                picker_submit: Some(PickerSubmitRoute::MoveToColumn),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::EditTitle => OverlayRouteDescriptor {
-                text_submit: Some(TextSubmitRoute::EditTitle),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::EditDescription => OverlayRouteDescriptor {
-                multiline_submit: Some(MultilineSubmitRoute::EditDescription),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::EditProject => OverlayRouteDescriptor {
-                picker_submit: Some(PickerSubmitRoute::EditProject),
-                initial_picker_mode: PickerMode::Filter,
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::EditPriority => OverlayRouteDescriptor {
-                picker_submit: Some(PickerSubmitRoute::EditPriority),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::EditAvailability => OverlayRouteDescriptor {
-                text_submit: Some(TextSubmitRoute::EditAvailability),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::EditDue => OverlayRouteDescriptor {
-                text_submit: Some(TextSubmitRoute::EditDue),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::EditLabels => OverlayRouteDescriptor {
-                picker_submit: Some(PickerSubmitRoute::EditLabels),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::EditLabelsMulti => OverlayRouteDescriptor {
-                picker_submit: Some(PickerSubmitRoute::EditLabelsMulti),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::FilterLabel => OverlayRouteDescriptor {
-                picker_submit: Some(PickerSubmitRoute::FilterLabel),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::FilterPriority => OverlayRouteDescriptor {
-                picker_submit: Some(PickerSubmitRoute::FilterPriority),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::ScopeProject => OverlayRouteDescriptor {
-                picker_submit: Some(PickerSubmitRoute::ScopeProject),
-                initial_picker_mode: PickerMode::Filter,
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::RenameProjectPicker => OverlayRouteDescriptor {
-                picker_submit: Some(PickerSubmitRoute::RenameProjectPicker),
-                initial_picker_mode: PickerMode::Filter,
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::RenameProjectName => OverlayRouteDescriptor {
-                text_submit: Some(TextSubmitRoute::RenameProjectName),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::DeleteProjectPicker => OverlayRouteDescriptor {
-                picker_submit: Some(PickerSubmitRoute::DeleteProjectPicker),
-                initial_picker_mode: PickerMode::Filter,
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::DeleteProjectNameConfirm => OverlayRouteDescriptor {
-                text_submit: Some(TextSubmitRoute::DeleteProjectNameConfirm),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::DeleteProjectConfirm => OverlayRouteDescriptor {
-                confirm_submit: Some(ConfirmSubmitRoute::DeleteProjectConfirm),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::DeleteTaskConfirm => OverlayRouteDescriptor {
-                confirm_submit: Some(ConfirmSubmitRoute::DeleteTaskConfirm),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::DeleteAttachmentConfirm => OverlayRouteDescriptor {
-                confirm_submit: Some(ConfirmSubmitRoute::DeleteAttachmentConfirm),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::ClearAvailabilityConfirm => OverlayRouteDescriptor {
-                confirm_submit: Some(ConfirmSubmitRoute::ClearAvailabilityConfirm),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::ClearDueConfirm => OverlayRouteDescriptor {
-                confirm_submit: Some(ConfirmSubmitRoute::ClearDueConfirm),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::SwitchWorkspace => OverlayRouteDescriptor {
-                picker_submit: Some(PickerSubmitRoute::SwitchWorkspace),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::ConflictField => OverlayRouteDescriptor {
-                picker_submit: Some(PickerSubmitRoute::ConflictField),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::ConflictConfirm => OverlayRouteDescriptor {
-                confirm_submit: Some(ConfirmSubmitRoute::ConflictConfirm),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::ConflictManual => OverlayRouteDescriptor {
-                text_submit: Some(TextSubmitRoute::ConflictManual),
-                multiline_submit: Some(MultilineSubmitRoute::ConflictManual),
-                picker_submit: Some(PickerSubmitRoute::ConflictManual),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::ConfigInit => OverlayRouteDescriptor {
-                confirm_submit: Some(ConfirmSubmitRoute::ConfigInit),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::AddDependency => OverlayRouteDescriptor {
-                picker_submit: Some(PickerSubmitRoute::AddDependency),
-                initial_picker_mode: PickerMode::Filter,
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::RemoveDependency => OverlayRouteDescriptor {
-                picker_submit: Some(PickerSubmitRoute::RemoveDependency),
-                ..OverlayRouteDescriptor::default()
-            },
-            Self::UpdateConfirm => OverlayRouteDescriptor {
-                confirm_submit: Some(ConfirmSubmitRoute::UpdateConfirm),
-                ..OverlayRouteDescriptor::default()
-            },
+            Self::AddTaskProject
+            | Self::EditProject { .. }
+            | Self::ScopeProject
+            | Self::RenameProject
+            | Self::DeleteProject => PickerMode::Filter,
+            _ => PickerMode::Navigate,
         }
-    }
-
-    pub(crate) fn text_submit_route(self) -> Option<TextSubmitRoute> {
-        self.descriptor().text_submit
-    }
-
-    pub(crate) fn multiline_submit_route(self) -> Option<MultilineSubmitRoute> {
-        self.descriptor().multiline_submit
-    }
-
-    pub(crate) fn picker_submit_route(self) -> Option<PickerSubmitRoute> {
-        self.descriptor().picker_submit
-    }
-
-    pub(crate) fn initial_picker_mode(self) -> PickerMode {
-        self.descriptor().initial_picker_mode
-    }
-
-    pub(crate) fn confirm_submit_route(self) -> Option<ConfirmSubmitRoute> {
-        self.descriptor().confirm_submit
-    }
-
-    pub(crate) fn fallback_message(self, kind: OverlaySubmitKind) -> &'static str {
-        self.descriptor().fallback.message(kind)
     }
 }
 
-#[cfg(test)]
-impl OverlayRoute {
-    pub(crate) const ALL: [Self; 40] = [
-        Self::MessageOnly,
-        Self::AddTaskTitle,
-        Self::AddTaskDescription,
-        Self::AddTaskNatural,
-        Self::AddTaskTitleProject,
-        Self::AddTaskTitlePriority,
-        Self::AddTaskTitleLabels,
-        Self::AddNote,
-        Self::AddProject,
-        Self::AddLabel,
-        Self::EditStatus,
-        Self::MoveToColumn,
-        Self::EditTitle,
-        Self::EditDescription,
-        Self::EditProject,
-        Self::EditPriority,
-        Self::EditAvailability,
-        Self::EditDue,
-        Self::EditLabels,
-        Self::EditLabelsMulti,
-        Self::FilterLabel,
-        Self::FilterPriority,
-        Self::ScopeProject,
-        Self::RenameProjectPicker,
-        Self::RenameProjectName,
-        Self::DeleteProjectPicker,
-        Self::DeleteProjectNameConfirm,
-        Self::DeleteProjectConfirm,
-        Self::DeleteTaskConfirm,
-        Self::DeleteAttachmentConfirm,
-        Self::ClearAvailabilityConfirm,
-        Self::ClearDueConfirm,
-        Self::SwitchWorkspace,
-        Self::ConflictField,
-        Self::ConflictConfirm,
-        Self::ConflictManual,
-        Self::ConfigInit,
-        Self::AddDependency,
-        Self::RemoveDependency,
-        Self::UpdateConfirm,
-    ];
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TagComboboxIntent {
+    AddTaskLabels,
+    EditLabels { selection: TaskSelection },
+    EditLabelsMulti { selection: TaskSelection },
+}
 
-    pub(crate) fn submit_kinds(self) -> Vec<OverlaySubmitKind> {
-        let descriptor = self.descriptor();
-        OverlaySubmitKind::ALL
-            .iter()
-            .copied()
-            .filter(|kind| match kind {
-                OverlaySubmitKind::Text => descriptor.text_submit.is_some(),
-                OverlaySubmitKind::Multiline => descriptor.multiline_submit.is_some(),
-                OverlaySubmitKind::Picker => descriptor.picker_submit.is_some(),
-                OverlaySubmitKind::Confirm => descriptor.confirm_submit.is_some(),
-            })
-            .collect()
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ConfirmIntent {
+    ResolveConflict {
+        target: ConflictTarget,
+        value: String,
+    },
+    InitializeConfig {
+        path: std::path::PathBuf,
+    },
+    DeleteProject {
+        project: String,
+    },
+    DeleteTasks {
+        selection: TaskSelection,
+        return_to_detail: bool,
+    },
+    DeleteAttachment {
+        attachment_id: String,
+        return_to_detail: bool,
+        detail_scroll: u16,
+    },
+    ClearAvailability {
+        selection: TaskSelection,
+        return_to_detail: bool,
+    },
+    ClearDue {
+        selection: TaskSelection,
+        return_to_detail: bool,
+    },
+    InstallUpdate {
+        plan: crate::update::InstallPlan,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -857,7 +543,7 @@ impl AddTaskState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TextInputState {
-    pub(crate) route: OverlayRoute,
+    pub(crate) intent: TextIntent,
     pub(crate) title: String,
     pub(crate) prompt: String,
     pub(crate) input: LineEdit,
@@ -865,13 +551,13 @@ pub(crate) struct TextInputState {
 
 impl TextInputState {
     pub(crate) fn new(
-        route: OverlayRoute,
+        intent: TextIntent,
         title: impl Into<String>,
         prompt: impl Into<String>,
         input: String,
     ) -> Self {
         Self {
-            route,
+            intent,
             title: title.into(),
             prompt: prompt.into(),
             input: LineEdit::new(input),
@@ -879,11 +565,11 @@ impl TextInputState {
     }
 
     pub(crate) fn blank(
-        route: OverlayRoute,
+        intent: TextIntent,
         title: impl Into<String>,
         prompt: impl Into<String>,
     ) -> Self {
-        Self::new(route, title, prompt, String::new())
+        Self::new(intent, title, prompt, String::new())
     }
 }
 
@@ -895,7 +581,7 @@ pub(crate) enum MultilineInputMode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MultilineInputState {
-    pub(crate) route: OverlayRoute,
+    pub(crate) intent: MultilineIntent,
     pub(crate) title: String,
     pub(crate) prompt: String,
     pub(crate) lines: Vec<String>,
@@ -935,12 +621,12 @@ impl MultilineInputState {
     }
 
     pub(crate) fn blank(
-        route: OverlayRoute,
+        intent: MultilineIntent,
         title: impl Into<String>,
         prompt: impl Into<String>,
     ) -> Self {
         Self {
-            route,
+            intent,
             title: title.into(),
             prompt: prompt.into(),
             lines: vec![String::new()],
@@ -951,7 +637,7 @@ impl MultilineInputState {
     }
 
     pub(crate) fn from_value(
-        route: OverlayRoute,
+        intent: MultilineIntent,
         title: impl Into<String>,
         prompt: impl Into<String>,
         value: String,
@@ -963,52 +649,13 @@ impl MultilineInputState {
         let row = lines.len() - 1;
         let column = lines[row].len();
         Self {
-            route,
+            intent,
             title: title.into(),
             prompt: prompt.into(),
             lines,
             row,
             column,
             mode: MultilineInputMode::Compose,
-        }
-    }
-}
-
-impl PickerState {
-    pub(crate) fn new(
-        route: OverlayRoute,
-        title: impl Into<String>,
-        items: Vec<PickerItem>,
-        multi: bool,
-    ) -> Self {
-        let selected = Self::selected_index(&items);
-        Self {
-            route,
-            title: title.into(),
-            filter: LineEdit::blank(),
-            items,
-            selected,
-            scroll: 0,
-            multi,
-            mode: route.initial_picker_mode(),
-        }
-    }
-
-    fn selected_index(items: &[PickerItem]) -> usize {
-        items.iter().position(|item| item.selected).unwrap_or(0)
-    }
-}
-
-impl ConfirmState {
-    pub(crate) fn new(
-        route: OverlayRoute,
-        title: impl Into<String>,
-        prompt: impl Into<String>,
-    ) -> Self {
-        Self {
-            route,
-            title: title.into(),
-            prompt: prompt.into(),
         }
     }
 }
@@ -1021,7 +668,7 @@ pub(crate) enum PickerMode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PickerState {
-    pub(crate) route: OverlayRoute,
+    pub(crate) intent: PickerIntent,
     pub(crate) title: String,
     pub(crate) filter: LineEdit,
     pub(crate) items: Vec<PickerItem>,
@@ -1031,9 +678,35 @@ pub(crate) struct PickerState {
     pub(crate) mode: PickerMode,
 }
 
+impl PickerState {
+    pub(crate) fn new(
+        intent: PickerIntent,
+        title: impl Into<String>,
+        items: Vec<PickerItem>,
+        multi: bool,
+    ) -> Self {
+        let selected = Self::selected_index(&items);
+        let mode = intent.initial_mode();
+        Self {
+            intent,
+            title: title.into(),
+            filter: LineEdit::blank(),
+            items,
+            selected,
+            scroll: 0,
+            multi,
+            mode,
+        }
+    }
+
+    fn selected_index(items: &[PickerItem]) -> usize {
+        items.iter().position(|item| item.selected).unwrap_or(0)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TagComboboxState {
-    pub(crate) route: OverlayRoute,
+    pub(crate) intent: TagComboboxIntent,
     pub(crate) title: String,
     pub(crate) input: LineEdit,
     pub(crate) options: Vec<String>,
@@ -1051,27 +724,46 @@ pub(crate) struct PickerItem {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConfirmState {
-    pub(crate) route: OverlayRoute,
+    pub(crate) intent: ConfirmIntent,
     pub(crate) title: String,
     pub(crate) prompt: String,
+}
+
+impl ConfirmState {
+    pub(crate) fn new(
+        intent: ConfirmIntent,
+        title: impl Into<String>,
+        prompt: impl Into<String>,
+    ) -> Self {
+        Self {
+            intent,
+            title: title.into(),
+            prompt: prompt.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlaySubmit {
     AddTask(Box<AddTaskState>),
     Text {
-        route: OverlayRoute,
+        intent: TextIntent,
         value: String,
     },
-    Clear {
-        route: OverlayRoute,
+    ClearDate {
+        intent: TextIntent,
     },
     Multiline {
-        route: OverlayRoute,
+        intent: MultilineIntent,
         value: String,
     },
     Picker {
-        route: OverlayRoute,
+        intent: PickerIntent,
+        values: Vec<String>,
+        partial_values: Vec<String>,
+    },
+    TagCombobox {
+        intent: TagComboboxIntent,
         values: Vec<String>,
         partial_values: Vec<String>,
     },
@@ -1082,7 +774,7 @@ pub(crate) enum OverlaySubmit {
         order: TaskOrder,
     },
     Confirm {
-        route: OverlayRoute,
+        intent: ConfirmIntent,
     },
 }
 
@@ -1095,50 +787,52 @@ pub(crate) enum OverlayOutcome {
 
 impl OverlayState {
     pub(crate) fn text_input(
-        route: OverlayRoute,
+        intent: TextIntent,
         title: impl Into<String>,
         prompt: impl Into<String>,
         input: String,
     ) -> Self {
-        Self::TextInput(TextInputState::new(route, title, prompt, input))
+        Self::TextInput(TextInputState::new(intent, title, prompt, input))
     }
 
     pub(crate) fn blank_text_input(
-        route: OverlayRoute,
+        intent: TextIntent,
         title: impl Into<String>,
         prompt: impl Into<String>,
     ) -> Self {
-        Self::TextInput(TextInputState::blank(route, title, prompt))
+        Self::TextInput(TextInputState::blank(intent, title, prompt))
     }
 
     pub(crate) fn multiline_input(
-        route: OverlayRoute,
+        intent: MultilineIntent,
         title: impl Into<String>,
         prompt: impl Into<String>,
         value: String,
     ) -> Self {
-        Self::MultilineInput(MultilineInputState::from_value(route, title, prompt, value))
+        Self::MultilineInput(MultilineInputState::from_value(
+            intent, title, prompt, value,
+        ))
     }
 
     pub(crate) fn blank_multiline_input(
-        route: OverlayRoute,
+        intent: MultilineIntent,
         title: impl Into<String>,
         prompt: impl Into<String>,
     ) -> Self {
-        Self::MultilineInput(MultilineInputState::blank(route, title, prompt))
+        Self::MultilineInput(MultilineInputState::blank(intent, title, prompt))
     }
 
     pub(crate) fn picker(
-        route: OverlayRoute,
+        intent: PickerIntent,
         title: impl Into<String>,
         items: Vec<PickerItem>,
         multi: bool,
     ) -> Self {
-        Self::Picker(PickerState::new(route, title, items, multi))
+        Self::Picker(PickerState::new(intent, title, items, multi))
     }
 
     pub(crate) fn tag_combobox(
-        route: OverlayRoute,
+        intent: TagComboboxIntent,
         title: impl Into<String>,
         options: Vec<String>,
         selected: Vec<String>,
@@ -1148,7 +842,7 @@ impl OverlayState {
             .position(|label| selected.contains(label))
             .unwrap_or(0);
         Self::TagCombobox(TagComboboxState {
-            route,
+            intent,
             title: title.into(),
             input: LineEdit::blank(),
             options,
@@ -1159,7 +853,7 @@ impl OverlayState {
     }
 
     pub(crate) fn partial_tag_combobox(
-        route: OverlayRoute,
+        intent: TagComboboxIntent,
         title: impl Into<String>,
         options: Vec<String>,
         selected: Vec<String>,
@@ -1170,7 +864,7 @@ impl OverlayState {
             .position(|label| selected.contains(label) || partial.contains(label))
             .unwrap_or(0);
         Self::TagCombobox(TagComboboxState {
-            route,
+            intent,
             title: title.into(),
             input: LineEdit::blank(),
             options,
@@ -1181,17 +875,16 @@ impl OverlayState {
     }
 
     pub(crate) fn confirm(
-        route: OverlayRoute,
+        intent: ConfirmIntent,
         title: impl Into<String>,
         prompt: impl Into<String>,
     ) -> Self {
-        Self::Confirm(ConfirmState::new(route, title, prompt))
+        Self::Confirm(ConfirmState::new(intent, title, prompt))
     }
 
     pub(crate) fn captures_input(&self) -> bool {
         true
     }
-
     pub(crate) fn header_menu(
         kind: HeaderMenuKind,
         column: u16,
@@ -1222,10 +915,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn picker_builder_uses_first_selected_item() {
+    fn picker_builder_uses_intent_mode_and_first_selected_item() {
         let state = PickerState::new(
-            OverlayRoute::EditLabels,
-            "Labels",
+            PickerIntent::ScopeProject,
+            "Project",
             vec![
                 PickerItem {
                     label: "One".to_string(),
@@ -1238,123 +931,69 @@ mod tests {
                     selected: true,
                 },
             ],
-            true,
+            false,
         );
 
         assert_eq!(state.selected, 1);
-        assert_eq!(state.filter, LineEdit::blank());
-        assert_eq!(state.mode, PickerMode::Navigate);
-        assert!(state.multi);
+        assert_eq!(state.mode, PickerMode::Filter);
+        assert_eq!(state.intent, PickerIntent::ScopeProject);
     }
 
     #[test]
-    fn project_pickers_open_in_filter_mode() {
-        for route in [
-            OverlayRoute::AddTaskTitleProject,
-            OverlayRoute::EditProject,
-            OverlayRoute::ScopeProject,
-            OverlayRoute::RenameProjectPicker,
-            OverlayRoute::DeleteProjectPicker,
-        ] {
-            let state = PickerState::new(
-                route,
-                "Project",
-                vec![PickerItem {
-                    label: "One".to_string(),
-                    value: "one".to_string(),
-                    selected: false,
-                }],
-                false,
-            );
-            assert_eq!(state.mode, PickerMode::Filter);
-        }
+    fn payload_bearing_intents_keep_flow_data_inside_state() {
+        let search = SearchState::for_intent(SearchIntent::AddEpicChild {
+            epic_id: crate::test_support::task_id("epic-1"),
+            display_ref: "APP-1234".to_string(),
+            project_key: "app".to_string(),
+            return_to_detail: true,
+        });
+        assert!(matches!(
+            search.intent,
+            SearchIntent::AddEpicChild {
+                ref display_ref,
+                ref project_key,
+                return_to_detail: true,
+                ..
+            } if display_ref == "APP-1234" && project_key == "app"
+        ));
+
+        let confirm = ConfirmState::new(
+            ConfirmIntent::DeleteAttachment {
+                attachment_id: "attachment-1".to_string(),
+                return_to_detail: true,
+                detail_scroll: 7,
+            },
+            "Delete attachment",
+            "Delete attachment?",
+        );
+        assert!(matches!(
+            confirm.intent,
+            ConfirmIntent::DeleteAttachment {
+                ref attachment_id,
+                return_to_detail: true,
+                detail_scroll: 7,
+            } if attachment_id == "attachment-1"
+        ));
     }
 
     #[test]
-    fn overlay_builders_preserve_text_multiline_and_confirm_metadata() {
-        let OverlayState::TextInput(text) = OverlayState::text_input(
-            OverlayRoute::EditTitle,
-            "Edit title",
-            "title:",
-            "old".to_string(),
-        ) else {
+    fn input_builders_store_intents_with_editor_state() {
+        let OverlayState::TextInput(text) =
+            OverlayState::blank_text_input(TextIntent::AddProject, "Add project", "project name:")
+        else {
             panic!("expected text input");
         };
-        assert_eq!(text.route, OverlayRoute::EditTitle);
-        assert_eq!(text.title, "Edit title");
-        assert_eq!(text.prompt, "title:");
-        assert_eq!(text.input.as_str(), "old");
+        assert_eq!(text.intent, TextIntent::AddProject);
 
         let OverlayState::MultilineInput(multiline) = OverlayState::multiline_input(
-            OverlayRoute::EditDescription,
-            "Edit description",
-            "body:",
-            "a\nb".to_string(),
+            MultilineIntent::AddTaskNatural,
+            "Add task",
+            "",
+            "one\ntwo".to_string(),
         ) else {
             panic!("expected multiline input");
         };
-        assert_eq!(multiline.route, OverlayRoute::EditDescription);
-        assert_eq!(multiline.title, "Edit description");
-        assert_eq!(multiline.prompt, "body:");
-        assert_eq!(multiline.lines, vec!["a".to_string(), "b".to_string()]);
-        assert_eq!(multiline.row, 1);
-        assert_eq!(multiline.column, 1);
-
-        let OverlayState::Confirm(confirm) =
-            OverlayState::confirm(OverlayRoute::DeleteTaskConfirm, "Delete", "Sure?")
-        else {
-            panic!("expected confirm");
-        };
-        assert_eq!(confirm.route, OverlayRoute::DeleteTaskConfirm);
-        assert_eq!(confirm.title, "Delete");
-        assert_eq!(confirm.prompt, "Sure?");
-    }
-
-    #[test]
-    fn message_only_fallback_preserves_submit_kind_verbs() {
-        assert_eq!(
-            OverlayRoute::MessageOnly.fallback_message(OverlaySubmitKind::Text),
-            "submitted overlay"
-        );
-        assert_eq!(
-            OverlayRoute::MessageOnly.fallback_message(OverlaySubmitKind::Multiline),
-            "submitted overlay"
-        );
-        assert_eq!(
-            OverlayRoute::MessageOnly.fallback_message(OverlaySubmitKind::Picker),
-            "selected overlay"
-        );
-        assert_eq!(
-            OverlayRoute::MessageOnly.fallback_message(OverlaySubmitKind::Confirm),
-            "confirmed overlay"
-        );
-    }
-
-    #[test]
-    fn all_route_kind_fallback_messages_are_non_empty() {
-        for route in OverlayRoute::ALL {
-            for kind in OverlaySubmitKind::ALL {
-                assert!(
-                    !route.fallback_message(kind).is_empty(),
-                    "{route:?} {kind:?}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn update_confirmation_uses_the_update_submit_route() {
-        assert_eq!(
-            OverlayRoute::UpdateConfirm.confirm_submit_route(),
-            Some(ConfirmSubmitRoute::UpdateConfirm)
-        );
-    }
-
-    #[test]
-    fn conflict_manual_supports_multiple_submit_kinds() {
-        let descriptor = OverlayRoute::ConflictManual.descriptor();
-        assert!(descriptor.text_submit.is_some());
-        assert!(descriptor.multiline_submit.is_some());
-        assert!(descriptor.picker_submit.is_some());
+        assert_eq!(multiline.intent, MultilineIntent::AddTaskNatural);
+        assert_eq!(multiline.lines, vec!["one".to_string(), "two".to_string()]);
     }
 }

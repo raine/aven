@@ -137,10 +137,10 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Debug builds require an explicit database path from `--db`, `AVEN_DEV_DB`, `AVEN_DB`, or `local.db_path`; they never fall back to the release database under `~/.local/state/aven`. `--db` has highest precedence, followed by `AVEN_DEV_DB`, so a worktree's isolated database wins over an inherited `AVEN_DB`. Worktree setup writes `AVEN_DEV_DB`, and direct debug invocations honor it without recipe-specific environment translation.
 - Treat TUI column names as presentation. Column configuration must partition the six fixed semantic statuses exactly once so tasks remain visible without changing CLI, queue, readiness, dependency, or sync semantics.
 - Derive TUI task list filters, query mode, and render mode from `TaskViewState`; do not keep parallel project, status, view, or queue-sort state.
-- Keep live search preview state transitions and worker ownership in `SearchController` in `src/tui/app_search.rs`; keep search overlay coordination in `App` helpers, search read-model behavior in `crates/aven-core/src/query/`, and overlay rendering in `src/tui/ui/overlays/search.rs`.
+- Keep live search preview state transitions and worker ownership in `SearchController` in `src/tui/app_search.rs`; keep the active `SearchIntent` and its complete mutation target payload in `SearchState`, search read-model behavior in `crates/aven-core/src/query/`, and overlay rendering in `src/tui/ui/overlays/search.rs`.
 - Keep natural-add mode, configuration, worker handles, pending and ready states, cancellation, and polling transitions in `IntakeController` in `src/tui/app_intake.rs`; keep authoring overlay effects in `src/tui/app_authoring.rs` and process construction in `src/tui/natural_add_runtime.rs`.
 - Treat project selection in the TUI as scope. Project scope must not be modeled as a filter modifier or view.
-- TUI overlays carry `OverlayRoute`; behavior resolves through `OverlayRoute::descriptor` and never depends on title text. Titles are render-only chrome.
+- TUI editor, picker, combobox, confirmation, and search states own exhaustive typed intents carrying every payload required to submit or retry the flow. `src/tui/app_overlay_submit.rs` consumes those intents through exhaustive matches. Overlay view projection derives payload-free presentation kinds for renderers, and titles remain render-only chrome.
 - TUI shortcuts use intent prefixes in the command catalog. Navigation and scope use `g`, named views use `v`, composable filters use `f`, ordering uses `o`, editable task fields use `e`, other selected-task actions use `t`, project administration uses `p`, label administration uses `L`, conflicts use `c`, and config uses `C`.
 - Overlay dialogs should use shared helpers in `src/tui/ui/dialog.rs` for title edges, frame clearing, background, border, and footer hint styling.
 - Overlay behavior tests live in the overlay module they exercise under `src/tui/overlay/`; the facade in `src/tui/overlay.rs` stays focused on module wiring and exports.
@@ -181,7 +181,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 | Change TUI task selection or mutation routing | `src/tui/task_selection.rs`, `src/tui/app_edit.rs`, `src/tui/store/task_commands.rs` | action value types, edit-flow capture, row restoration, preserve-visible policy, mutation messages, core structured reports | `cargo test --lib tui::task_selection`, `cargo test --lib tui::store::tests::task_creation_and_updates`, and focused app filters for marked, hidden, deleted, and captured-selection behavior |
 | Add or change a persisted TUI mutation | owning module under `crates/aven-core/src/operations/` | `crates/aven-core/src/undo.rs`, the focused `src/tui/store/` adapter, mutation report consumers, CLI and reusable no-undo callers | focused core operation test plus the related `tui::store` filter, including undo-write failure, no-op, conflict, single-target, and batch cases |
 | Change CLI or TUI update behavior | `src/update/`, `src/commands/self_update.rs`, `src/tui/app_update.rs` | `src/lib.rs`, `src/tui/app_lifecycle.rs`, `src/tui/overlay/`, `src/tui/ui/overlays/update.rs`, `src/tui/ui/header.rs`, release artifact names in `.github/workflows/release.yml` | updater unit tests, CLI surface checks, focused app, overlay, and header tests |
-| Add or change TUI overlay behavior | `src/tui/overlay.rs`, `src/tui/overlay/`, `src/tui/app_overlay_submit.rs` | `OverlayRoute::descriptor`, input helpers, state builders, view projection, submit dispatch, module-local tests | `cargo test tui::overlay` |
+| Add or change TUI overlay behavior | `src/tui/overlay/state.rs`, `src/tui/overlay/view.rs`, `src/tui/app_overlay_submit.rs` | typed intent payload, input helper, state builder, presentation-kind projection, exhaustive submit dispatch, cancellation, module-local tests | `cargo test --lib tui::overlay` |
 | Add or change TUI overlay rendering | `src/tui/ui/overlays.rs`, `src/tui/ui/overlays/` | overlay view models, shared dialog helpers, input helpers, theme | overlay rendering tests in `src/tui/ui/overlays/tests.rs` |
 | Change sync protocol, transport boundary, or conflict handling | `crates/aven-core/src/sync/session.rs`, `crates/aven-core/src/sync/wire.rs`, `crates/aven-core/src/sync/persistence.rs`, `crates/aven-core/src/sync/apply/` | `src/sync/server.rs`, `src/sync/client.rs`, `src/daemon.rs`, core mutation and field helpers, migrations if persisted | `crates/aven-core` sync session tests, `tests/cli_sync*.rs`, `tests/cli_conflicts.rs`; focused bounded-sync checks include `cargo test --test cli_sync sync_server_returns_bounded_pull_pages`, `cargo test --test cli_sync sync_client_drains_paged_remote_changes`, `cargo test --test cli_sync sync_client_drains_paged_local_changes`, and `cargo test --test cli_sync wrong_response_protocol_version_is_rejected` |
 | Add or change backup, export, or import commands | `src/cli.rs`, `src/lib.rs`, `src/commands/data_safety/mod.rs`, `crates/aven-core/src/data_safety.rs` | core database open and migration behavior in `crates/aven-core/src/db.rs`, doctor presentation in `src/commands/doctor.rs` | `tests/cli_data_safety.rs`, `tests/cli_doctor.rs` |
@@ -210,14 +210,13 @@ SQLite stores synced task data and local UI state. Config files store local rout
 6. Update CLI rendering, TUI rendering, filters, or sorting if exposed there.
 7. Run `just sqlx-prepare` after query or migration changes.
 
-### Add a TUI overlay route
+### Add a TUI overlay intent
 
-1. Add the `OverlayRoute` variant and include it in `OverlayRoute::ALL`.
-2. Add one arm to `OverlayRoute::descriptor` for submit kind, picker mode, and fallback message.
-3. Add the submit route enum variant that matches the input kind.
-4. Add the corresponding `handle_*_submit` branch in `src/tui/app_overlay_submit.rs`.
-5. Branch on `route` in `src/tui/ui/overlays/` when rendering differs by route.
-6. Add focused overlay or app overlay tests for input, submit, and rendering behavior.
+1. Add a variant to the intent enum for the owning input shape in `src/tui/overlay/state.rs`.
+2. Put every value needed for submission, retry, cancellation, and underlay restoration in the variant.
+3. Add the exhaustive submit branch in `src/tui/app_overlay_submit.rs`.
+4. Map the intent to a payload-free presentation kind in `src/tui/overlay/view.rs` when rendering differs.
+5. Add focused state, handler, submission, cancellation, and rendering tests. Include construction-level coverage when the intent shape makes invalid payload combinations unrepresentable.
 
 ### Change bounded sync behavior
 
@@ -234,11 +233,11 @@ SQLite stores synced task data and local UI state. Config files store local rout
 
 1. Add an `Action` variant and register it in the command catalog under `src/tui/event/`.
 2. Route action execution through `App` dispatch helpers.
-3. Add or reuse overlay state and set the correct `OverlayRoute` for submitted input.
-4. Add flow helpers when the action spans multiple submits.
+3. Add or reuse overlay state with the typed intent and complete submission payload.
+4. Add flow helpers only for state that lives outside an active overlay or search intent.
 5. Add `TuiStore` facade methods and focused store logic.
 6. For persisted mutations, request TUI undo from the owning core operation and consume its structured report. Keep CLI and reusable callers on the explicit no-undo operation path.
-7. Add tests for shortcut resolution, action dispatch, overlay route propagation, core transaction rollback, and store behavior.
+7. Add tests for shortcut resolution, action dispatch, intent payload propagation, cancellation cleanup, core transaction rollback, and store behavior.
 
 ## Development and validation
 

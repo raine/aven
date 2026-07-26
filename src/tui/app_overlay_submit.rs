@@ -4,52 +4,42 @@ use crate::operations::TaskDraft;
 use crate::tui::app::App;
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::{
-    AddTaskMode, AddTaskState, ConfirmSubmitRoute, MultilineSubmitRoute, OverlayRoute,
-    OverlayState, OverlaySubmit, OverlaySubmitKind, PickerSubmitRoute, TextSubmitRoute,
+    AddTaskMode, AddTaskState, ConfirmIntent, MultilineIntent, OverlayState, OverlaySubmit,
+    PickerIntent, TagComboboxIntent, TextIntent,
 };
-
-#[cfg(test)]
-pub(crate) fn handles_submit_kind(route: OverlayRoute, kind: OverlaySubmitKind) -> bool {
-    match kind {
-        OverlaySubmitKind::Text => route.text_submit_route().is_some(),
-        OverlaySubmitKind::Multiline => route.multiline_submit_route().is_some(),
-        OverlaySubmitKind::Picker => route.picker_submit_route().is_some(),
-        OverlaySubmitKind::Confirm => route.confirm_submit_route().is_some(),
-    }
-}
 
 impl App {
     pub(super) async fn handle_overlay_submit(&mut self, submit: OverlaySubmit) -> Result<()> {
         match submit {
-            OverlaySubmit::AddTask(state) => {
-                self.handle_add_task_submit(*state).await?;
-            }
+            OverlaySubmit::AddTask(state) => self.handle_add_task_submit(*state).await?,
             OverlaySubmit::Picker {
-                route,
+                intent,
                 values,
                 partial_values,
             } => {
-                self.handle_picker_submit(route, values, partial_values)
+                debug_assert!(partial_values.is_empty());
+                self.handle_picker_submit(intent, values).await?;
+            }
+            OverlaySubmit::TagCombobox {
+                intent,
+                values,
+                partial_values,
+            } => {
+                self.handle_tag_combobox_submit(intent, values, partial_values)
                     .await?;
             }
-            OverlaySubmit::HeaderMenu { action } => {
-                self.submit_header_menu(action).await?;
+            OverlaySubmit::HeaderMenu { action } => self.submit_header_menu(action).await?,
+            OverlaySubmit::Order { order } => self.submit_order_menu(order).await?,
+            OverlaySubmit::Text { intent, value } => {
+                self.handle_text_submit(intent, value).await?;
             }
-            OverlaySubmit::Order { order } => {
-                self.submit_order_menu(order).await?;
+            OverlaySubmit::ClearDate { intent } => {
+                self.begin_clear_edit_value(intent).await?;
             }
-            OverlaySubmit::Text { route, value } => {
-                self.handle_text_submit(route, value).await?;
+            OverlaySubmit::Multiline { intent, value } => {
+                self.handle_multiline_submit(intent, value).await?;
             }
-            OverlaySubmit::Clear { route } => {
-                self.begin_clear_edit_value(route).await?;
-            }
-            OverlaySubmit::Multiline { route, value } => {
-                self.handle_multiline_submit(route, value).await?;
-            }
-            OverlaySubmit::Confirm { route } => {
-                self.handle_confirm_submit(route).await?;
-            }
+            OverlaySubmit::Confirm { intent } => self.handle_confirm_submit(intent).await?,
         }
         Ok(())
     }
@@ -125,46 +115,56 @@ impl App {
         Ok(())
     }
 
-    async fn handle_text_submit(&mut self, route: OverlayRoute, value: String) -> Result<()> {
-        match route.text_submit_route() {
-            Some(TextSubmitRoute::AddTaskTitleToast) => {
-                self.set_success(route.fallback_message(OverlaySubmitKind::Text))
-            }
-            Some(TextSubmitRoute::AddProject) => {
+    async fn handle_text_submit(&mut self, intent: TextIntent, value: String) -> Result<()> {
+        match intent {
+            TextIntent::AddProject => {
                 let message = self.store.create_project(value).await?;
                 self.restore_selection_after_mutation();
                 self.set_success(message);
             }
-            Some(TextSubmitRoute::AddLabel) => {
+            TextIntent::AddLabel => {
                 let message = self.store.create_label(value).await?;
                 self.set_success(message);
             }
-            Some(TextSubmitRoute::RenameProjectName) => {
-                self.submit_rename_project(value).await?;
+            TextIntent::RenameProject { project } => {
+                self.submit_rename_project(project, value).await?;
             }
-            Some(TextSubmitRoute::DeleteProjectNameConfirm) => {
-                self.submit_delete_project_name(value).await?;
+            TextIntent::ConfirmDeleteProject { project } => {
+                self.submit_delete_project_name(project, value).await?;
             }
-            Some(TextSubmitRoute::EditTitle) => {
-                self.submit_edit_title(value).await?;
+            TextIntent::EditTitle { selection } => {
+                self.submit_edit_title(selection, value).await?;
             }
-            Some(TextSubmitRoute::EditAvailability) => {
-                self.submit_edit_availability(value).await?;
+            TextIntent::EditAvailability {
+                selection,
+                mixed,
+                return_to_detail,
+            } => {
+                self.submit_edit_availability(selection, mixed, return_to_detail, value)
+                    .await?;
             }
-            Some(TextSubmitRoute::EditDue) => {
-                self.submit_edit_due(value).await?;
+            TextIntent::EditDue {
+                selection,
+                mixed,
+                return_to_detail,
+            } => {
+                self.submit_edit_due(selection, mixed, return_to_detail, value)
+                    .await?;
             }
-            Some(TextSubmitRoute::ConflictManual) => {
-                self.submit_manual_conflict_value(value).await?;
+            TextIntent::ResolveConflictManually { target } => {
+                self.submit_manual_conflict_value(target, value).await?;
             }
-            None => self.set_success(route.fallback_message(OverlaySubmitKind::Text)),
         }
         Ok(())
     }
 
-    async fn handle_multiline_submit(&mut self, route: OverlayRoute, value: String) -> Result<()> {
-        match route.multiline_submit_route() {
-            Some(MultilineSubmitRoute::AddTaskDescription) => {
+    async fn handle_multiline_submit(
+        &mut self,
+        intent: MultilineIntent,
+        value: String,
+    ) -> Result<()> {
+        match intent {
+            MultilineIntent::AddTaskDescription => {
                 if self.authoring.capture_add_task_fields(
                     self.authoring
                         .add_task_context()
@@ -176,155 +176,169 @@ impl App {
                     self.begin_add_task_step();
                 }
             }
-            Some(MultilineSubmitRoute::AddTaskNatural) => {
-                self.submit_add_task_natural(value).await?;
+            MultilineIntent::AddTaskNatural => self.submit_add_task_natural(value).await?,
+            MultilineIntent::AddNote {
+                task_id,
+                display_ref,
+                return_to_detail,
+            } => {
+                self.submit_add_note(task_id, display_ref, return_to_detail, value)
+                    .await?;
             }
-            Some(MultilineSubmitRoute::AddNote) => {
-                self.submit_add_note(value).await?;
+            MultilineIntent::EditDescription { selection } => {
+                self.submit_edit_description(selection, value).await?;
             }
-            Some(MultilineSubmitRoute::EditDescription) => {
-                self.submit_edit_description(value).await?;
+            MultilineIntent::ResolveConflictManually { target } => {
+                self.submit_manual_conflict_value(target, value).await?;
             }
-            Some(MultilineSubmitRoute::ConflictManual) => {
-                self.submit_manual_conflict_value(value).await?;
-            }
-            None => self.set_success(route.fallback_message(OverlaySubmitKind::Multiline)),
         }
         Ok(())
     }
 
     async fn handle_picker_submit(
         &mut self,
-        route: OverlayRoute,
+        intent: PickerIntent,
         values: Vec<String>,
-        partial_values: Vec<String>,
     ) -> Result<()> {
-        match route.picker_submit_route() {
-            Some(PickerSubmitRoute::AddTaskTitleProject) => {
+        match intent {
+            PickerIntent::AddTaskProject => {
                 if self.authoring.apply_add_task_project(values) {
                     self.begin_add_task_step();
                 }
             }
-            Some(PickerSubmitRoute::AddTaskTitlePriority) => {
+            PickerIntent::AddTaskStatus => {
+                if let Some(value) = values.first() {
+                    self.authoring.apply_add_task_status(value);
+                    self.begin_add_task_step();
+                }
+            }
+            PickerIntent::AddTaskPriority => {
                 if self.authoring.apply_add_task_priority(values) {
                     self.begin_add_task_step();
                 }
             }
-            Some(PickerSubmitRoute::AddTaskTitleLabels) => {
-                self.submit_add_task_title_labels(values).await?;
-            }
-            Some(PickerSubmitRoute::EditStatus) => match values.first() {
-                Some(status) => self.submit_edit_status(status.clone()).await?,
-                None => {
-                    self.set_warning("no matching status");
-                    self.begin_status_picker();
+            PickerIntent::MoveToColumn { selection } => match values.first() {
+                Some(status) => {
+                    self.move_tasks_to_column(selection, status.clone()).await?;
                 }
-            },
-            Some(PickerSubmitRoute::MoveToColumn) => match values.first() {
-                Some(status) => self.move_tasks_to_column(status.clone()).await?,
                 None => {
                     self.set_warning("no matching column");
                     self.begin_move_to_column();
                 }
             },
-            Some(PickerSubmitRoute::EditProject) => match values.first() {
-                Some(project) => self.submit_edit_project(project.clone()).await?,
+            PickerIntent::EditProject { selection, mixed } => match values.first() {
+                Some(project) => {
+                    self.submit_edit_project(selection, mixed, project.clone())
+                        .await?;
+                }
                 None => {
                     self.set_warning("no matching project");
                     self.begin_edit_project();
                 }
             },
-            Some(PickerSubmitRoute::EditPriority) => match values.first() {
-                Some(priority) => self.submit_edit_priority(priority.clone()).await?,
+            PickerIntent::EditPriority { selection, mixed } => match values.first() {
+                Some(priority) => {
+                    self.submit_edit_priority(selection, mixed, priority.clone())
+                        .await?;
+                }
                 None => {
                     self.set_warning("no matching priority");
                     self.begin_edit_priority();
                 }
             },
-            Some(PickerSubmitRoute::EditLabels) => {
-                self.submit_edit_labels(values).await?;
+            PickerIntent::FilterLabel => self.submit_filter_label(values).await?,
+            PickerIntent::FilterPriority => self.submit_filter_priority(values).await?,
+            PickerIntent::ScopeProject => self.submit_scope_project(values).await?,
+            PickerIntent::RenameProject => self.submit_rename_project_picker(values),
+            PickerIntent::DeleteProject => self.submit_delete_project_picker(values),
+            PickerIntent::SwitchWorkspace => self.submit_switch_workspace(values).await?,
+            intent @ (PickerIntent::PickConflictVariant { .. }
+            | PickerIntent::PickConflictManual { .. }) => {
+                self.submit_conflict_field_picker(intent, values).await?;
             }
-            Some(PickerSubmitRoute::EditLabelsMulti) => {
-                self.submit_edit_labels_multi(values, partial_values)
-                    .await?;
-            }
-            Some(PickerSubmitRoute::FilterLabel) => {
-                self.submit_filter_label(values).await?;
-            }
-            Some(PickerSubmitRoute::FilterPriority) => {
-                self.submit_filter_priority(values).await?;
-            }
-            Some(PickerSubmitRoute::ScopeProject) => {
-                self.submit_scope_project(values).await?;
-            }
-            Some(PickerSubmitRoute::RenameProjectPicker) => {
-                self.submit_rename_project_picker(values);
-            }
-            Some(PickerSubmitRoute::DeleteProjectPicker) => {
-                self.submit_delete_project_picker(values);
-            }
-            Some(PickerSubmitRoute::SwitchWorkspace) => {
-                self.submit_switch_workspace(values).await?;
-            }
-            Some(PickerSubmitRoute::ConflictField) => {
-                self.submit_conflict_field_picker(values).await?;
-            }
-            Some(PickerSubmitRoute::ConflictManual) => {
+            PickerIntent::ResolveConflictManually { target } => {
                 if let Some(value) = values.first() {
-                    self.submit_manual_conflict_value(value.clone()).await?;
+                    self.submit_manual_conflict_value(target, value.clone())
+                        .await?;
                 } else {
                     self.set_warning("no value selected");
                 }
             }
-            Some(PickerSubmitRoute::AddDependency) => match values.first() {
-                Some(task_id) => self.submit_add_dependency(task_id.parse()?).await?,
-                None => {
-                    self.set_warning("no matching task");
-                    self.begin_add_dependency().await?;
+            PickerIntent::RemoveDependency { task_id } => match values.first() {
+                Some(depends_on_task_id) => {
+                    self.submit_remove_dependency(task_id, depends_on_task_id.parse()?)
+                        .await?;
                 }
-            },
-            Some(PickerSubmitRoute::RemoveDependency) => match values.first() {
-                Some(task_id) => self.submit_remove_dependency(task_id.parse()?).await?,
                 None => {
                     self.set_warning("no matching dependency");
                     self.begin_remove_dependency();
                 }
             },
-            None => self.set_success(route.fallback_message(OverlaySubmitKind::Picker)),
         }
         Ok(())
     }
 
-    async fn handle_confirm_submit(&mut self, route: OverlayRoute) -> Result<()> {
-        match route.confirm_submit_route() {
-            Some(ConfirmSubmitRoute::ConflictConfirm) => {
-                self.submit_confirmed_conflict_resolution().await?;
+    async fn handle_tag_combobox_submit(
+        &mut self,
+        intent: TagComboboxIntent,
+        values: Vec<String>,
+        partial_values: Vec<String>,
+    ) -> Result<()> {
+        match intent {
+            TagComboboxIntent::AddTaskLabels => {
+                self.submit_add_task_title_labels(values).await?;
             }
-            Some(ConfirmSubmitRoute::ConfigInit) => {
-                self.submit_config_init()?;
+            TagComboboxIntent::EditLabels { selection } => {
+                self.submit_edit_labels(selection, values).await?;
             }
-            Some(ConfirmSubmitRoute::DeleteProjectConfirm) => {
-                self.submit_delete_project().await?;
+            TagComboboxIntent::EditLabelsMulti { selection } => {
+                self.submit_edit_labels_multi(selection, values, partial_values)
+                    .await?;
             }
-            Some(ConfirmSubmitRoute::DeleteTaskConfirm) => {
-                let return_to_detail = self.detail_context;
-                self.submit_delete_selection().await?;
+        }
+        Ok(())
+    }
+
+    async fn handle_confirm_submit(&mut self, intent: ConfirmIntent) -> Result<()> {
+        match intent {
+            ConfirmIntent::ResolveConflict { target, value } => {
+                self.submit_confirmed_conflict_resolution(target, value)
+                    .await?;
+            }
+            ConfirmIntent::InitializeConfig { path } => self.submit_config_init(path)?,
+            ConfirmIntent::DeleteProject { project } => {
+                self.submit_delete_project(project).await?;
+            }
+            ConfirmIntent::DeleteTasks {
+                selection,
+                return_to_detail,
+            } => {
+                self.submit_delete_selection(selection).await?;
                 self.detail_context = false;
                 self.restore_detail_overlay(return_to_detail);
             }
-            Some(ConfirmSubmitRoute::DeleteAttachmentConfirm) => {
-                self.submit_delete_attachment().await?;
+            ConfirmIntent::DeleteAttachment {
+                attachment_id,
+                return_to_detail,
+                detail_scroll,
+            } => {
+                self.submit_delete_attachment(attachment_id, return_to_detail, detail_scroll)
+                    .await?;
             }
-            Some(ConfirmSubmitRoute::ClearAvailabilityConfirm) => {
-                self.submit_clear_availability().await?;
+            ConfirmIntent::ClearAvailability {
+                selection,
+                return_to_detail,
+            } => {
+                self.submit_clear_availability(selection, return_to_detail)
+                    .await?;
             }
-            Some(ConfirmSubmitRoute::ClearDueConfirm) => {
-                self.submit_clear_due().await?;
+            ConfirmIntent::ClearDue {
+                selection,
+                return_to_detail,
+            } => {
+                self.submit_clear_due(selection, return_to_detail).await?;
             }
-            Some(ConfirmSubmitRoute::UpdateConfirm) => {
-                self.confirm_update()?;
-            }
-            None => self.set_success(route.fallback_message(OverlaySubmitKind::Confirm)),
+            ConfirmIntent::InstallUpdate { plan } => self.confirm_update(plan)?,
         }
         Ok(())
     }

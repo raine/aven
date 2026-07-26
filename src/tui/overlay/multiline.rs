@@ -143,7 +143,7 @@ fn kill_multiline_word_before_cursor(state: &mut MultilineInputState) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::overlay::OverlayRoute;
+    use crate::tui::overlay::MultilineIntent;
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -155,7 +155,7 @@ mod tests {
 
     fn state_with_lines(lines: Vec<String>, row: usize, column: usize) -> MultilineInputState {
         MultilineInputState {
-            route: OverlayRoute::MessageOnly,
+            intent: MultilineIntent::AddTaskNatural,
             title: "Title".to_string(),
             prompt: "Prompt".to_string(),
             lines,

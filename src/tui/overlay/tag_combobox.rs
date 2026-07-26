@@ -112,8 +112,8 @@ fn activate_highlighted(state: &mut TagComboboxState) -> OverlayOutcome {
 }
 
 fn tag_combobox_submit(state: TagComboboxState) -> OverlayOutcome {
-    OverlayOutcome::Submitted(OverlaySubmit::Picker {
-        route: state.route,
+    OverlayOutcome::Submitted(OverlaySubmit::TagCombobox {
+        intent: state.intent,
         values: dedupe_labels(state.selected),
         partial_values: dedupe_labels(state.partial),
     })
@@ -207,7 +207,7 @@ fn dedupe_labels(labels: Vec<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::overlay::{LineEdit, OverlayRoute};
+    use crate::tui::overlay::{LineEdit, TagComboboxIntent};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -219,7 +219,7 @@ mod tests {
 
     fn tag_combobox_state() -> TagComboboxState {
         TagComboboxState {
-            route: OverlayRoute::EditLabels,
+            intent: TagComboboxIntent::AddTaskLabels,
             title: "Labels".to_string(),
             input: LineEdit::blank(),
             options: vec!["bug".to_string(), "feature".to_string()],
@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn enter_accepts_pending_highlighted_label() {
         let mut state = tag_combobox_state();
-        state.route = OverlayRoute::AddTaskTitleLabels;
+        state.intent = TagComboboxIntent::AddTaskLabels;
         state.input = LineEdit::new("bu".to_string());
 
         let OverlayOutcome::None(OverlayState::TagCombobox(state)) =
@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn space_accepts_pending_label() {
         let mut state = tag_combobox_state();
-        state.route = OverlayRoute::AddTaskTitleLabels;
+        state.intent = TagComboboxIntent::AddTaskLabels;
         state.input = LineEdit::new("bug".to_string());
 
         let OverlayOutcome::None(OverlayState::TagCombobox(state)) =
@@ -264,15 +264,15 @@ mod tests {
     #[test]
     fn enter_without_pending_label_submits_selected_labels() {
         let mut state = tag_combobox_state();
-        state.route = OverlayRoute::AddTaskTitleLabels;
+        state.intent = TagComboboxIntent::AddTaskLabels;
         state.selected.push("feature".to_string());
 
         let outcome = handle_tag_combobox_key(state, key(KeyCode::Enter));
 
         assert!(matches!(
             outcome,
-            OverlayOutcome::Submitted(OverlaySubmit::Picker {
-                route: OverlayRoute::AddTaskTitleLabels,
+            OverlayOutcome::Submitted(OverlaySubmit::TagCombobox {
+                intent: TagComboboxIntent::AddTaskLabels,
                 values,
                 ..
             }) if values == vec!["feature".to_string()]
@@ -282,7 +282,7 @@ mod tests {
     #[test]
     fn partial_label_cycles_to_all_then_none() {
         let mut state = tag_combobox_state();
-        state.route = OverlayRoute::EditLabelsMulti;
+        state.intent = TagComboboxIntent::AddTaskLabels;
         state.partial = vec!["bug".to_string()];
 
         let OverlayOutcome::None(OverlayState::TagCombobox(state)) =
@@ -325,8 +325,8 @@ mod tests {
         let outcome = handle_tag_combobox_key(state, ctrl(KeyCode::Char('s')));
         assert!(matches!(
             outcome,
-            OverlayOutcome::Submitted(OverlaySubmit::Picker {
-                route: OverlayRoute::EditLabels,
+            OverlayOutcome::Submitted(OverlaySubmit::TagCombobox {
+                intent: TagComboboxIntent::AddTaskLabels,
                 values,
                 ..
             }) if values == vec!["bug".to_string()]

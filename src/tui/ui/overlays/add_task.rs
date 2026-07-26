@@ -19,7 +19,7 @@ use super::tag_combobox::tag_combobox_lines;
 use crate::task_render::human_file_size;
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::{
-    AddTaskMode, AddTaskView, ConfirmView, OverlayRoute, PickerView, TAG_COMBOBOX_VIEWPORT_ROWS,
+    AddTaskMode, AddTaskView, ConfirmView, PickerKind, PickerView, TAG_COMBOBOX_VIEWPORT_ROWS,
     TagComboboxView, tag_combobox_completion, tag_combobox_matches, visible_picker_indices,
 };
 use crate::tui::text::cell_width_ranges;
@@ -503,27 +503,26 @@ pub(crate) fn composer_help_scroll_cap(frame_height: u16, full_frame: bool) -> u
 }
 
 fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) {
-    if matches!(&state.mode, AddTaskMode::ConfirmDiscard) {
+    if matches!(state.mode.as_ref(), AddTaskMode::ConfirmDiscard) {
         render_confirm(
             frame,
             &ConfirmView {
-                route: OverlayRoute::MessageOnly,
                 title: "Discard draft?".to_string(),
                 prompt: "Discard this task draft?".to_string(),
             },
         );
         return;
     }
-    if let AddTaskMode::Help { scroll } = &state.mode {
+    if let AddTaskMode::Help { scroll } = state.mode.as_ref() {
         render_composer_help(frame, content, *scroll);
         return;
     }
 
-    let (title, lines, width, background) = match &state.mode {
+    let (title, lines, width, background) = match state.mode.as_ref() {
         AddTaskMode::Compose => return,
         AddTaskMode::Picker { state, .. } => {
             let view = PickerView {
-                route: state.route,
+                kind: (&state.intent).into(),
                 title: state.title.clone(),
                 filter: state.filter.text.clone(),
                 filter_cursor: state.filter.cursor,
@@ -539,7 +538,7 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
         AddTaskMode::Labels(state) => {
             let visible_indices = tag_combobox_matches(state);
             let view = TagComboboxView {
-                route: state.route,
+                kind: (&state.intent).into(),
                 title: state.title.clone(),
                 input: state.input.text.clone(),
                 input_cursor: state.input.cursor,
@@ -651,13 +650,9 @@ fn add_task_picker_lines(state: &PickerView) -> Vec<Line<'static>> {
     for index in visible {
         let item = &state.items[index];
         let selected = index == state.selected;
-        let line = match state.route {
-            crate::tui::overlay::OverlayRoute::AddTaskTitleProject => {
-                project_picker_line(item, selected)
-            }
-            crate::tui::overlay::OverlayRoute::AddTaskTitlePriority => {
-                priority_picker_line(item, selected)
-            }
+        let line = match state.kind {
+            PickerKind::AddTaskProject => project_picker_line(item, selected),
+            PickerKind::AddTaskPriority => priority_picker_line(item, selected),
             _ => {
                 let marker = if selected { "▸ " } else { "  " };
                 let style = if selected {

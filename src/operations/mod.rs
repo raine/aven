@@ -29,7 +29,7 @@ pub async fn create_task(
     aven_core::test_support::create_task(conn, workspace, draft).await
 }
 
-pub use config::{init_config, show_config, show_config_paths};
+pub use config::{init_config, init_config_at, show_config, show_config_paths};
 
 pub use projects::{
     add_project_path_operation, create_project_operation, delete_project_operation,

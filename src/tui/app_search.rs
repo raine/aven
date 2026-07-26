@@ -5,7 +5,7 @@ use tokio::task::JoinHandle;
 
 use crate::query::{SearchMatchedField, TaskSearchPreviewResultSet};
 use crate::tui::app::{App, SEARCH_PREVIEW_LIMIT};
-use crate::tui::overlay::{LineEdit, OverlayState, SearchPurpose, SearchResultItem, SearchState};
+use crate::tui::overlay::{LineEdit, OverlayState, SearchIntent, SearchResultItem, SearchState};
 
 struct PendingSearchPreview {
     query: String,
@@ -129,10 +129,11 @@ impl App {
         };
         self.pending_shortcut.clear();
         self.clear_live_search_preview();
-        let mut state = SearchState::for_purpose(SearchPurpose::AddEpicChild {
+        let mut state = SearchState::for_intent(SearchIntent::AddEpicChild {
             epic_id: epic.epic_id,
             display_ref: epic.display_ref,
             project_key: epic.project_key,
+            return_to_detail: detail,
         });
         Self::set_create_epic_child_result(&mut state);
         self.overlay = Some(OverlayState::Search(state));
@@ -154,12 +155,12 @@ impl App {
             }
             KeyCode::Enter
                 if open_search_results_key(key)
-                    && matches!(state.purpose, SearchPurpose::Navigate) =>
+                    && matches!(state.intent, SearchIntent::Navigate) =>
             {
                 self.clear_live_search_preview();
                 self.accept_search_input(state.input.text).await?;
             }
-            KeyCode::Tab if matches!(state.purpose, SearchPurpose::Navigate) => {
+            KeyCode::Tab if matches!(state.intent, SearchIntent::Navigate) => {
                 self.clear_live_search_preview();
                 self.accept_search_input(state.input.text).await?;
             }
@@ -169,7 +170,7 @@ impl App {
             KeyCode::Enter => {
                 self.clear_live_search_preview();
                 if let Some(result) = state.selected_current_result().cloned() {
-                    self.accept_search_result(state.purpose.clone(), state.input.text, result)
+                    self.accept_search_result(state.intent.clone(), state.input.text, result)
                         .await?;
                 } else {
                     self.accept_search_input(state.input.text).await?;
@@ -221,17 +222,17 @@ impl App {
 
     async fn accept_search_result(
         &mut self,
-        purpose: SearchPurpose,
+        intent: SearchIntent,
         input: String,
         result: SearchResultItem,
     ) -> Result<()> {
-        match purpose {
-            SearchPurpose::Navigate => {
+        match intent {
+            SearchIntent::Navigate => {
                 self.accept_search_input(result.display_ref.clone()).await?;
                 self.select_task_by_id(&result.task_id);
                 self.overlay = Some(OverlayState::Detail { scroll: 0 });
             }
-            SearchPurpose::AddDependency {
+            SearchIntent::AddDependency {
                 task_id,
                 display_ref,
             } => {
@@ -252,27 +253,30 @@ impl App {
                     }
                 }
             }
-            SearchPurpose::AddEpicChild {
+            SearchIntent::AddEpicChild {
                 epic_id,
                 display_ref,
                 project_key,
+                return_to_detail,
             } => {
+                self.detail_context = return_to_detail;
                 let epic = crate::tui::store::EpicContext {
                     epic_id,
                     display_ref,
                     project_key,
                 };
                 if result.create_new {
-                    let mut search = SearchState::for_purpose(SearchPurpose::AddEpicChild {
+                    let mut search = SearchState::for_intent(SearchIntent::AddEpicChild {
                         epic_id: epic.epic_id.clone(),
                         display_ref: epic.display_ref.clone(),
                         project_key: epic.project_key.clone(),
+                        return_to_detail,
                     });
                     search.input = LineEdit::new(input.clone());
                     self.epic_child_authoring = Some(crate::tui::app::EpicChildAuthoringContext {
                         epic,
                         search,
-                        return_to_detail: self.detail_context,
+                        return_to_detail,
                     });
                     let project_key = self
                         .epic_child_authoring
@@ -292,7 +296,7 @@ impl App {
                 }
                 if let Some(reason) = result.unavailable_reason {
                     self.set_warning(reason);
-                    self.reopen_add_epic_child_search(epic, input);
+                    self.reopen_add_epic_child_search(epic, return_to_detail, input);
                     return Ok(());
                 }
                 match self
@@ -325,7 +329,7 @@ impl App {
                     }
                     Err(error) => {
                         self.set_warning(epic_child_error_message(&error, &epic));
-                        self.reopen_add_epic_child_search(epic, input);
+                        self.reopen_add_epic_child_search(epic, return_to_detail, input);
                     }
                 }
             }
@@ -339,7 +343,7 @@ impl App {
         display_ref: String,
         input: String,
     ) {
-        let mut state = SearchState::for_purpose(SearchPurpose::AddDependency {
+        let mut state = SearchState::for_intent(SearchIntent::AddDependency {
             task_id,
             display_ref,
         });
@@ -351,12 +355,14 @@ impl App {
     fn reopen_add_epic_child_search(
         &mut self,
         epic: crate::tui::store::EpicContext,
+        return_to_detail: bool,
         input: String,
     ) {
-        let mut state = SearchState::for_purpose(SearchPurpose::AddEpicChild {
+        let mut state = SearchState::for_intent(SearchIntent::AddEpicChild {
             epic_id: epic.epic_id,
             display_ref: epic.display_ref,
             project_key: epic.project_key,
+            return_to_detail,
         });
         state.input = LineEdit::new(input);
         self.schedule_search_preview(&mut state);
@@ -381,7 +387,7 @@ impl App {
     pub(super) fn schedule_search_preview(&mut self, state: &mut SearchState) {
         let query = state.current_query();
         if query.is_empty() {
-            if matches!(state.purpose, SearchPurpose::AddEpicChild { .. }) {
+            if matches!(state.intent, SearchIntent::AddEpicChild { .. }) {
                 Self::set_create_epic_child_result(state);
             } else {
                 state.clear_results();
@@ -425,35 +431,35 @@ impl App {
     ) {
         state.results_query = Some(query.clone());
         state.total_matches = result_set.total_matches;
-        let purpose = state.purpose.clone();
+        let intent = state.intent.clone();
         state.results = result_set
             .items
             .into_iter()
-            .filter(|result| match &purpose {
-                SearchPurpose::Navigate => true,
-                SearchPurpose::AddDependency { task_id, .. } => result.task_id != *task_id,
-                SearchPurpose::AddEpicChild { project_key, .. } => {
+            .filter(|result| match &intent {
+                SearchIntent::Navigate => true,
+                SearchIntent::AddDependency { task_id, .. } => result.task_id != *task_id,
+                SearchIntent::AddEpicChild { project_key, .. } => {
                     result.project_key == *project_key
                 }
             })
             .map(|result| {
-                let unavailable_reason = match &purpose {
-                    SearchPurpose::AddEpicChild {
+                let unavailable_reason = match &intent {
+                    SearchIntent::AddEpicChild {
                         epic_id,
                         display_ref,
                         ..
                     } if result.task_id == *epic_id => {
                         Some(format!("{display_ref} cannot be its own child"))
                     }
-                    SearchPurpose::AddEpicChild { .. } if result.is_epic => Some(format!(
+                    SearchIntent::AddEpicChild { .. } if result.is_epic => Some(format!(
                         "{} is unavailable: epics cannot be children",
                         result.display_ref
                     )),
-                    SearchPurpose::AddEpicChild { .. } if result.deleted => Some(format!(
+                    SearchIntent::AddEpicChild { .. } if result.deleted => Some(format!(
                         "{} is unavailable: task is deleted",
                         result.display_ref
                     )),
-                    SearchPurpose::AddEpicChild { display_ref, .. }
+                    SearchIntent::AddEpicChild { display_ref, .. }
                         if result
                             .epic_parent_display_ref
                             .as_ref()
@@ -490,7 +496,7 @@ impl App {
                 }
             })
             .collect();
-        if matches!(purpose, SearchPurpose::AddEpicChild { .. }) {
+        if matches!(intent, SearchIntent::AddEpicChild { .. }) {
             state.results.insert(0, create_epic_child_result(&query));
         }
         state.normalize_selection();

@@ -11,7 +11,7 @@ use super::super::task_list::EPIC_MARKER;
 use super::super::truncate::truncate_chars;
 use crate::query::SearchMatchedField;
 use crate::queue::{now_seconds, unix_seconds};
-use crate::tui::overlay::{SearchPurpose, SearchResultItem};
+use crate::tui::overlay::{SearchKind, SearchResultItem};
 use crate::tui::theme::{self, ACCENT, BG, FG, FG_DIM, FG_MUTED, SELECTED};
 use crate::tui::widgets::{priority_icon, status_span};
 
@@ -30,7 +30,7 @@ pub(in crate::tui::ui) struct SearchRenderView<'a> {
     pub(in crate::tui::ui) selected: usize,
     pub(in crate::tui::ui) total_matches: usize,
     pub(in crate::tui::ui) status: SearchRenderStatus,
-    pub(in crate::tui::ui) purpose: &'a SearchPurpose,
+    pub(in crate::tui::ui) intent: &'a SearchKind,
 }
 
 pub(in crate::tui::ui) fn render_search(frame: &mut Frame, view: SearchRenderView<'_>) {
@@ -41,7 +41,7 @@ pub(in crate::tui::ui) fn render_search(frame: &mut Frame, view: SearchRenderVie
         selected,
         total_matches,
         status,
-        purpose,
+        intent,
     } = view;
     let width = frame.area().width.saturating_sub(8).clamp(72, 110);
     let result_rows = results.len().min(RESULT_ROWS) as u16;
@@ -50,7 +50,7 @@ pub(in crate::tui::ui) fn render_search(frame: &mut Frame, view: SearchRenderVie
     } else {
         (result_rows * 2 + 6).min(frame.area().height.saturating_sub(2))
     };
-    let title = purpose.title();
+    let title = intent.title();
     let mut dialog = Dialog::new(&title, width, height);
     if let Some(summary) = search_summary_line(
         input,
@@ -71,11 +71,11 @@ pub(in crate::tui::ui) fn render_search(frame: &mut Frame, view: SearchRenderVie
         ])
         .areas(area);
         frame.render_widget(
-            Paragraph::new(search_input_line(input, cursor, purpose)),
+            Paragraph::new(search_input_line(input, cursor, intent)),
             input_area,
         );
         frame.render_widget(Paragraph::new(""), input_spacer_area);
-        frame.render_widget(Paragraph::new(search_hint_line(purpose, None)), hint_area);
+        frame.render_widget(Paragraph::new(search_hint_line(intent, None)), hint_area);
         return;
     }
 
@@ -94,7 +94,7 @@ pub(in crate::tui::ui) fn render_search(frame: &mut Frame, view: SearchRenderVie
     ])
     .areas(area);
     frame.render_widget(
-        Paragraph::new(search_input_line(input, cursor, purpose)),
+        Paragraph::new(search_input_line(input, cursor, intent)),
         input_area,
     );
     frame.render_widget(Paragraph::new(""), input_spacer_area);
@@ -103,7 +103,7 @@ pub(in crate::tui::ui) fn render_search(frame: &mut Frame, view: SearchRenderVie
 
     frame.render_widget(Paragraph::new(""), hint_spacer_area);
     frame.render_widget(
-        Paragraph::new(search_hint_line(purpose, results.get(selected))),
+        Paragraph::new(search_hint_line(intent, results.get(selected))),
         hint_area,
     );
 }
@@ -158,9 +158,9 @@ fn search_dialog_area(frame: Rect, width: u16, height: u16) -> Rect {
     }
 }
 
-fn search_input_line(input: &str, cursor: usize, purpose: &SearchPurpose) -> Line<'static> {
+fn search_input_line(input: &str, cursor: usize, intent: &SearchKind) -> Line<'static> {
     if input.is_empty() {
-        let mut chars = purpose.placeholder().chars();
+        let mut chars = intent.placeholder().chars();
         let first = chars.next().unwrap_or_default().to_string();
         return Line::from(vec![
             cursor_cell(first),
@@ -456,11 +456,11 @@ fn compact_age(age_seconds: i64) -> String {
     format!("{}mo", days / 30)
 }
 
-fn search_hint_line(purpose: &SearchPurpose, selected: Option<&SearchResultItem>) -> Line<'static> {
+fn search_hint_line(intent: &SearchKind, selected: Option<&SearchResultItem>) -> Line<'static> {
     let enter_hint = if selected.is_some_and(|result| result.create_new) {
         "create child"
     } else {
-        purpose.enter_hint()
+        intent.enter_hint()
     };
     let mut spans = vec![
         Span::styled(
@@ -471,7 +471,7 @@ fn search_hint_line(purpose: &SearchPurpose, selected: Option<&SearchResultItem>
         Span::styled("  Enter", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
         Span::styled(format!(" {enter_hint}"), Style::new().fg(FG_DIM)),
     ];
-    if let Some(tab_hint) = purpose.tab_hint() {
+    if let Some(tab_hint) = intent.tab_hint() {
         spans.extend([
             Span::styled("  Tab", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
             Span::styled(format!(" {tab_hint}"), Style::new().fg(FG_DIM)),

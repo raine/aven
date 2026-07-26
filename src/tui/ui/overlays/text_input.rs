@@ -9,11 +9,11 @@ use super::add_task::{
     add_task_hint_line, add_task_metadata_title, add_task_title_input_line, add_task_title_metadata,
 };
 use crate::tui::authoring::AddTaskStep;
-use crate::tui::overlay::{OverlayRoute, TextInputView};
+use crate::tui::overlay::{TextInputKind, TextInputView};
 use crate::tui::theme::{FG, FG_DIM};
 
 pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInputView) {
-    if let Some(placeholder) = text_input_placeholder(state.route) {
+    if let Some(placeholder) = text_input_placeholder(state.kind) {
         render_placeholder_text_input(frame, state, placeholder);
         return;
     }
@@ -59,13 +59,11 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
         return;
     }
 
-    let edit_date = matches!(
-        state.route,
-        OverlayRoute::EditAvailability | OverlayRoute::EditDue
-    );
+    let edit_date = state.kind == TextInputKind::EditDate;
     let dialog_width = if edit_date { 64 } else { 54 };
     let input = input_line("", &state.input, state.cursor);
-    let lines = if state.route == OverlayRoute::DeleteProjectNameConfirm {
+    let confirms_project_delete = state.kind == TextInputKind::ConfirmDeleteProject;
+    let lines = if confirms_project_delete {
         vec![
             Line::from(Span::styled(&state.prompt, Style::new().fg(FG_DIM))),
             Line::from(""),
@@ -98,7 +96,7 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
             dialog_hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
         ]
     };
-    let height = if state.route == OverlayRoute::DeleteProjectNameConfirm {
+    let height = if confirms_project_delete {
         7
     } else if edit_date {
         state.prompt.lines().count() as u16 + 5
@@ -113,12 +111,12 @@ pub(in crate::tui::ui) const ADD_LABEL_NAME_PLACEHOLDER: &str = "Enter label nam
 pub(in crate::tui::ui) const RENAME_PROJECT_NAME_PLACEHOLDER: &str = "Enter project name here...";
 pub(in crate::tui::ui) const CONFLICT_MANUAL_VALUE_PLACEHOLDER: &str = "Enter manual value here...";
 
-fn text_input_placeholder(route: OverlayRoute) -> Option<&'static str> {
-    match route {
-        OverlayRoute::AddProject => Some(ADD_PROJECT_NAME_PLACEHOLDER),
-        OverlayRoute::AddLabel => Some(ADD_LABEL_NAME_PLACEHOLDER),
-        OverlayRoute::RenameProjectName => Some(RENAME_PROJECT_NAME_PLACEHOLDER),
-        OverlayRoute::ConflictManual => Some(CONFLICT_MANUAL_VALUE_PLACEHOLDER),
+fn text_input_placeholder(kind: TextInputKind) -> Option<&'static str> {
+    match kind {
+        TextInputKind::AddProject => Some(ADD_PROJECT_NAME_PLACEHOLDER),
+        TextInputKind::AddLabel => Some(ADD_LABEL_NAME_PLACEHOLDER),
+        TextInputKind::RenameProject => Some(RENAME_PROJECT_NAME_PLACEHOLDER),
+        TextInputKind::ConflictManual => Some(CONFLICT_MANUAL_VALUE_PLACEHOLDER),
         _ => None,
     }
 }
