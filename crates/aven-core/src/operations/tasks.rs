@@ -121,6 +121,19 @@ pub struct TaskMutationReport {
     pub outcomes: Vec<TaskMutationOutcome>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TaskMutationDetail {
+    Report,
+    Compact,
+}
+
+struct TaskMutationExecutionOutcome {
+    task: Task,
+    before: Option<TaskUndoSnapshot>,
+    after: Option<TaskUndoSnapshot>,
+    changed: bool,
+}
+
 impl TaskMutationReport {
     pub fn changed_count(&self) -> usize {
         self.outcomes
@@ -274,14 +287,15 @@ impl Database {
         task_id: &TaskId,
         update: TaskUpdate,
     ) -> Result<TaskUpdateOutcome> {
-        let report = self
-            .mutate_tasks(
+        let outcomes = self
+            .mutate_tasks_owned(
                 workspace,
                 vec![(task_id.clone(), update)],
                 UndoContext::None,
+                TaskMutationDetail::Compact,
             )
             .await?;
-        let outcome = report.outcomes.into_iter().next().unwrap();
+        let outcome = outcomes.into_iter().next().unwrap();
         Ok(TaskUpdateOutcome {
             task: outcome.task,
             changed: outcome.changed,
@@ -294,9 +308,13 @@ impl Database {
         updates: Vec<(TaskId, TaskUpdate)>,
     ) -> Result<Vec<TaskUpdateOutcome>> {
         Ok(self
-            .mutate_tasks(workspace, updates, UndoContext::None)
+            .mutate_tasks_owned(
+                workspace,
+                updates,
+                UndoContext::None,
+                TaskMutationDetail::Compact,
+            )
             .await?
-            .outcomes
             .into_iter()
             .map(|outcome| TaskUpdateOutcome {
                 task: outcome.task,
@@ -311,13 +329,37 @@ impl Database {
         updates: Vec<(TaskId, TaskUpdate)>,
         undo: UndoContext,
     ) -> Result<TaskMutationReport> {
+        let outcomes = self
+            .mutate_tasks_owned(workspace, updates, undo, TaskMutationDetail::Report)
+            .await?;
+        Ok(TaskMutationReport {
+            outcomes: outcomes
+                .into_iter()
+                .map(|outcome| TaskMutationOutcome {
+                    task: outcome.task,
+                    before: outcome.before.expect("report mutation before snapshot"),
+                    after: outcome.after.expect("report mutation after snapshot"),
+                    changed: outcome.changed,
+                })
+                .collect(),
+        })
+    }
+
+    async fn mutate_tasks_owned(
+        &self,
+        workspace: &Workspace,
+        updates: Vec<(TaskId, TaskUpdate)>,
+        undo: UndoContext,
+        detail: TaskMutationDetail,
+    ) -> Result<Vec<TaskMutationExecutionOutcome>> {
         for (_, update) in &updates {
             validate_task_update(update)?;
         }
         if updates.is_empty() {
-            return Ok(TaskMutationReport {
-                outcomes: Vec::new(),
-            });
+            return Ok(Vec::new());
+        }
+        if detail == TaskMutationDetail::Compact && !matches!(&undo, UndoContext::None) {
+            bail!("compact task mutations cannot record undo");
         }
 
         let mut conn = self.acquire().await?;
@@ -325,15 +367,29 @@ impl Database {
         let mut outcomes = Vec::with_capacity(updates.len());
         let mut undo_commands = Vec::new();
         for (task_id, update) in &updates {
-            let before = task_snapshot(&mut tx, &workspace.id, task_id).await?;
-            let update = materialize_task_update(update, &before)?;
-            apply_task_update(&mut tx, workspace, task_id, &update).await?;
+            let before =
+                if detail == TaskMutationDetail::Report || task_update_requires_snapshot(update) {
+                    Some(task_snapshot(&mut tx, &workspace.id, task_id).await?)
+                } else {
+                    None
+                };
+            let update = match before.as_ref() {
+                Some(before) => materialize_task_update(update, before)?,
+                None => update.clone(),
+            };
+            let changed = apply_task_update(&mut tx, workspace, task_id, &update).await?;
             let task = get_task_in_workspace(&mut tx, workspace, task_id).await?;
-            let after = task_snapshot(&mut tx, &workspace.id, task_id).await?;
-            append_task_undo_commands(task_id, &before, &after, &mut undo_commands);
-            outcomes.push(TaskMutationOutcome {
+            let after = if detail == TaskMutationDetail::Report {
+                Some(task_snapshot(&mut tx, &workspace.id, task_id).await?)
+            } else {
+                None
+            };
+            if let (Some(before), Some(after)) = (&before, &after) {
+                append_task_undo_commands(task_id, before, after, &mut undo_commands);
+            }
+            outcomes.push(TaskMutationExecutionOutcome {
                 task,
-                changed: before != after,
+                changed,
                 before,
                 after,
             });
@@ -355,7 +411,7 @@ impl Database {
         for outcome in &outcomes {
             info!(task_id = %outcome.task.id, changed = outcome.changed, "task updated");
         }
-        Ok(TaskMutationReport { outcomes })
+        Ok(outcomes)
     }
 
     pub async fn set_task_deleted(
@@ -914,6 +970,10 @@ fn cycled_priority(priority: TaskPriority, reverse: bool) -> TaskPriority {
         (index + 1) % TaskPriority::ALL.len()
     };
     TaskPriority::ALL[next]
+}
+
+fn task_update_requires_snapshot(update: &TaskUpdate) -> bool {
+    update.cycle_priority.is_some() || update.label_selection.is_some()
 }
 
 fn materialize_task_update(update: &TaskUpdate, before: &TaskUndoSnapshot) -> Result<TaskUpdate> {
