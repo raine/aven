@@ -168,7 +168,6 @@ pub(crate) fn render(
     view: &ViewState,
 ) {
     widgets.inline_image_placements.clear();
-    widgets.detail_document = None;
     frame.render_widget(Block::new().style(Style::new().bg(BG)), frame.area());
 
     if view.surface == ViewSurface::AddTask {

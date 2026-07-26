@@ -122,7 +122,7 @@ impl App {
 
     pub(super) fn begin_add_epic_child(&mut self) {
         let selected = self.list.selected_task();
-        let detail = self.detail.is_some();
+        let detail = self.detail.is_active();
         let Some(epic) = self.store.resolve_epic_context(selected, detail) else {
             self.set_warning("Select an epic to add a child");
             return;
@@ -303,7 +303,7 @@ impl App {
                 {
                     Ok(mutation) => {
                         let child_id = mutation.child.task_id.clone();
-                        let selected = if self.detail.is_some() {
+                        let selected = if self.detail.is_active() {
                             self.store
                                 .tasks
                                 .iter()
@@ -312,7 +312,7 @@ impl App {
                             mutation.message.selected
                         };
                         self.list.select_task(selected);
-                        if let Some(detail) = self.detail.as_mut() {
+                        if let Some(detail) = self.detail.state_mut() {
                             detail.set_focused_target(Some(
                                 crate::tui::app::DetailTargetId::Task {
                                     section: crate::tui::app::DetailSection::EpicChildren,

@@ -1,29 +1,19 @@
 use std::collections::BTreeSet;
-use std::time::{Duration, Instant};
 
 use crate::tui::app::{DetailSection, DetailTargetId, RemovedEpicChild};
 use crate::tui::bounded_history::BoundedHistory;
 use crate::tui::detail_selection::{DetailTextSelection, TextCell};
 use crate::tui::store::TaskViewState;
 
-pub(crate) const TASK_ROW_DOUBLE_CLICK: Duration = Duration::from_millis(500);
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TaskRowClick {
-    pub(crate) task_id: crate::ids::TaskId,
-    pub(crate) viewport_row: u16,
-    pub(crate) at: Instant,
-}
-
 const DETAIL_HISTORY_LIMIT: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct DetailNavigationState {
-    pub(super) task_id: crate::ids::TaskId,
-    pub(super) scroll: u16,
-    pub(super) focused_target: Option<DetailTargetId>,
-    pub(super) expanded_sections: BTreeSet<DetailSection>,
-    pub(super) view_state: TaskViewState,
+pub(crate) struct DetailSnapshot {
+    pub(crate) task_id: crate::ids::TaskId,
+    pub(crate) scroll: u16,
+    pub(crate) focused_target: Option<DetailTargetId>,
+    pub(crate) expanded_sections: BTreeSet<DetailSection>,
+    pub(crate) view_state: TaskViewState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,26 +24,18 @@ pub(crate) enum DetailTargetActivation {
 }
 
 pub(crate) enum DetailSession {
-    Inactive {
-        last_task_click: Option<TaskRowClick>,
-    },
-    Active {
-        state: Box<DetailState>,
-        last_task_click: Option<TaskRowClick>,
-    },
+    Inactive,
+    Active { state: Box<DetailState> },
 }
 
 impl DetailSession {
     pub(crate) fn inactive() -> Self {
-        Self::Inactive {
-            last_task_click: None,
-        }
+        Self::Inactive
     }
 
     pub(crate) fn open(scroll: u16) -> Self {
         Self::Active {
             state: Box::new(DetailState::new(scroll)),
-            last_task_click: None,
         }
     }
 
@@ -61,47 +43,25 @@ impl DetailSession {
         *self = Self::inactive();
     }
 
-    pub(crate) fn is_some(&self) -> bool {
+    pub(crate) fn is_active(&self) -> bool {
         matches!(self, Self::Active { .. })
     }
 
-    pub(crate) fn is_none(&self) -> bool {
-        !self.is_some()
+    pub(crate) fn is_inactive(&self) -> bool {
+        !self.is_active()
     }
 
-    pub(crate) fn as_ref(&self) -> Option<&DetailState> {
+    pub(crate) fn state(&self) -> Option<&DetailState> {
         match self {
-            Self::Active { state, .. } => Some(state),
-            Self::Inactive { .. } => None,
+            Self::Active { state } => Some(state),
+            Self::Inactive => None,
         }
     }
 
-    pub(crate) fn as_mut(&mut self) -> Option<&mut DetailState> {
+    pub(crate) fn state_mut(&mut self) -> Option<&mut DetailState> {
         match self {
-            Self::Active { state, .. } => Some(state),
-            Self::Inactive { .. } => None,
-        }
-    }
-
-    pub(crate) fn last_task_click(&self) -> Option<&TaskRowClick> {
-        match self {
-            Self::Inactive {
-                last_task_click, ..
-            }
-            | Self::Active {
-                last_task_click, ..
-            } => last_task_click.as_ref(),
-        }
-    }
-
-    pub(crate) fn set_last_task_click(&mut self, click: Option<TaskRowClick>) {
-        match self {
-            Self::Inactive {
-                last_task_click, ..
-            }
-            | Self::Active {
-                last_task_click, ..
-            } => *last_task_click = click,
+            Self::Active { state } => Some(state),
+            Self::Inactive => None,
         }
     }
 }
@@ -113,7 +73,7 @@ pub(crate) struct DetailState {
     pub(crate) expanded_sections: BTreeSet<DetailSection>,
     pub(crate) text_selection: Option<DetailTextSelection>,
     pub(crate) text_dragging: bool,
-    pub(crate) history: BoundedHistory<DetailNavigationState>,
+    pub(crate) history: BoundedHistory<DetailSnapshot>,
     pub(crate) removed_epic_child: Option<RemovedEpicChild>,
 }
 
@@ -157,10 +117,6 @@ impl DetailState {
 
     pub(crate) fn expanded_sections(&self) -> &BTreeSet<DetailSection> {
         &self.expanded_sections
-    }
-
-    pub(crate) fn expanded_sections_mut(&mut self) -> &mut BTreeSet<DetailSection> {
-        &mut self.expanded_sections
     }
 
     pub(crate) fn text_selection(&self) -> Option<&DetailTextSelection> {
@@ -207,16 +163,30 @@ impl DetailState {
         self.text_dragging = false;
     }
 
+    pub(crate) fn snapshot(
+        &self,
+        task_id: crate::ids::TaskId,
+        view_state: TaskViewState,
+    ) -> DetailSnapshot {
+        DetailSnapshot {
+            task_id,
+            scroll: self.scroll,
+            focused_target: self.focused_target.clone(),
+            expanded_sections: self.expanded_sections.clone(),
+            view_state,
+        }
+    }
+
     pub(crate) fn has_parent(&self) -> bool {
         !self.history.is_empty()
     }
 
     #[cfg(test)]
-    pub(crate) fn push_history(&mut self, previous: DetailNavigationState) {
+    pub(crate) fn push_history(&mut self, previous: DetailSnapshot) {
         self.history.push(previous);
     }
 
-    pub(crate) fn follow_link(&mut self, previous: DetailNavigationState) {
+    pub(crate) fn follow_link(&mut self, previous: DetailSnapshot) {
         self.history.push(previous);
         self.scroll = 0;
         self.focused_target = None;
@@ -225,15 +195,15 @@ impl DetailState {
         self.text_dragging = false;
     }
 
-    pub(crate) fn pop_history(&mut self) -> Option<DetailNavigationState> {
+    pub(crate) fn pop_history(&mut self) -> Option<DetailSnapshot> {
         self.history.pop()
     }
 
-    pub(crate) fn restore_history_entry(&mut self, entry: &DetailNavigationState) {
-        self.scroll = entry.scroll;
-        self.focused_target = entry.focused_target.clone();
+    pub(crate) fn restore_snapshot(&mut self, snapshot: &DetailSnapshot) {
+        self.scroll = snapshot.scroll;
+        self.focused_target = snapshot.focused_target.clone();
         self.hovered_target = None;
-        self.expanded_sections = entry.expanded_sections.clone();
+        self.expanded_sections = snapshot.expanded_sections.clone();
         self.text_dragging = false;
     }
 
@@ -360,9 +330,7 @@ mod tests {
         session.set_focused_target(Some(DetailTargetId::Expand {
             section: DetailSection::Blocks,
         }));
-        session
-            .expanded_sections_mut()
-            .insert(DetailSection::Blocks);
+        session.expanded_sections.insert(DetailSection::Blocks);
         session.begin_text_selection(
             parsed_task_id("ABCD000000000000"),
             80,
@@ -394,23 +362,13 @@ mod tests {
     }
 
     #[test]
-    fn activity_and_click_tracking_share_one_owner() {
-        let mut detail = DetailSession::inactive();
-        detail.set_last_task_click(Some(TaskRowClick {
-            task_id: parsed_task_id("ABCD000000000000"),
-            viewport_row: 2,
-            at: std::time::Instant::now(),
-        }));
-        assert!(detail.is_none());
-        assert!(detail.last_task_click().is_some());
-
-        detail = DetailSession::open(4);
-        assert!(detail.is_some());
-        assert_eq!(detail.as_ref().unwrap().scroll(), 4);
+    fn activity_lifecycle_owns_active_state() {
+        let mut detail = DetailSession::open(4);
+        assert!(detail.is_active());
+        assert_eq!(detail.state().unwrap().scroll(), 4);
 
         detail.close();
-        assert!(detail.is_none());
-        assert!(detail.last_task_click().is_none());
+        assert!(detail.is_inactive());
     }
 
     #[test]
@@ -419,7 +377,7 @@ mod tests {
         let focused = DetailTargetId::Expand {
             section: DetailSection::DependsOn,
         };
-        let entry = DetailNavigationState {
+        let entry = DetailSnapshot {
             task_id,
             scroll: 6,
             focused_target: Some(focused.clone()),
@@ -433,7 +391,7 @@ mod tests {
         assert_eq!(session.scroll(), 0);
 
         let restored = session.pop_history().unwrap();
-        session.restore_history_entry(&restored);
+        session.restore_snapshot(&restored);
         assert_eq!(session.scroll(), 6);
         assert_eq!(session.focused_target(), Some(&focused));
         assert!(

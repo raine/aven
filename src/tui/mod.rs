@@ -7,6 +7,7 @@ mod app_attachments;
 mod app_authoring;
 mod app_config;
 mod app_conflicts;
+mod app_detail;
 mod app_dispatch;
 mod app_edit;
 mod app_filters;

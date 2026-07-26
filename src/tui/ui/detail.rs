@@ -82,6 +82,7 @@ struct DetailContentLayout {
     metadata_area: Rect,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct DetailRenderContext<'a> {
     pub(crate) terminal_area: Rect,
     pub(crate) scroll: u16,
@@ -188,7 +189,7 @@ struct DetailSelectableDocument {
     description: Vec<SelectableLine>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct DetailDocument {
     task_id: crate::ids::TaskId,
     layout: DetailContentLayout,
@@ -227,44 +228,29 @@ pub(crate) enum DetailMetadataTarget {
 impl DetailDocument {
     pub(crate) fn build(item: &TaskListItem, context: &DetailRenderContext<'_>) -> Self {
         let layout = context.content_layout();
-        let selection = context
-            .selection
-            .filter(|selection| selection.terminal_width == context.terminal_area.width);
-        let mut model = build_detail_content_model_with_pending(
+        let inline_images = context.inline_images.cloned().map(|mut images| {
+            images.focused_attachment_id = None;
+            images
+        });
+        let model = build_detail_content_model_with_pending(
             item,
             layout.content_area,
             context.scroll,
             context.inline_title_editor,
-            context.active_target,
+            None,
             context.expanded_sections,
             None,
-            context.inline_images,
+            inline_images.as_ref(),
             context.pending_attachments,
         );
         let width = layout.content_area.width as usize;
-        let selectable = detail_selectable_document(item, width, context.inline_images);
-        if context.inline_title_editor.is_none()
-            && let Some(selection) = selection.filter(|selection| selection.task_id == item.task.id)
-        {
-            apply_detail_selection_from_document(
-                &selectable,
-                selection,
-                &mut model.sticky_lines,
-                &mut model.lines,
-                model.body_start,
-            );
-        }
-        if context.hovered_target != context.active_target
-            && let Some(hovered_target) = context.hovered_target
-        {
-            apply_hover_style(&mut model, hovered_target);
-        }
+        let selectable = detail_selectable_document(item, width, inline_images.as_ref());
         Self {
             task_id: item.task.id.clone(),
             layout,
             scroll: context.scroll,
             expanded_sections: context.expanded_sections.clone(),
-            inline_images: context.inline_images.cloned(),
+            inline_images,
             pending_attachments: context.pending_attachments.to_vec(),
             inline_title_editor: context
                 .inline_title_editor
@@ -277,7 +263,13 @@ impl DetailDocument {
         }
     }
 
-    fn render(&self, frame: &mut Frame, item: &TaskListItem, widgets: &mut WidgetState) {
+    fn render(
+        &self,
+        frame: &mut Frame,
+        item: &TaskListItem,
+        context: &DetailRenderContext<'_>,
+        widgets: &mut WidgetState,
+    ) {
         frame.render_widget(Clear, self.layout.body_area);
         frame.render_widget(
             Block::new().style(Style::new().bg(BG)),
@@ -286,7 +278,30 @@ impl DetailDocument {
         if self.layout.body_area.width == 0 || self.layout.body_area.height == 0 {
             return;
         }
-        render_detail_content_from_model(frame, self.layout.content_area, &self.model, widgets);
+        let mut model = self.model.clone();
+        if let Some(active_target) = context.active_target {
+            apply_active_style(&mut model, active_target);
+        }
+        if context.hovered_target != context.active_target
+            && let Some(hovered_target) = context.hovered_target
+        {
+            apply_hover_style(&mut model, hovered_target);
+        }
+        if context.inline_title_editor.is_none()
+            && let Some(selection) = context.selection.filter(|selection| {
+                selection.task_id == item.task.id
+                    && selection.terminal_width == context.terminal_area.width
+            })
+        {
+            apply_detail_selection_from_document(
+                &self.selectable,
+                selection,
+                &mut model.sticky_lines,
+                &mut model.lines,
+                model.body_start,
+            );
+        }
+        render_detail_content_from_model(frame, self.layout.content_area, &model, widgets);
         if self.layout.metadata_area.width > 0 {
             render_detail_metadata(frame, item, self.layout.metadata_area);
         }
@@ -301,7 +316,10 @@ impl DetailDocument {
             && self.layout == context.content_layout()
             && self.scroll == context.scroll
             && self.expanded_sections == *context.expanded_sections
-            && self.inline_images.as_ref() == context.inline_images
+            && detail_inline_image_geometry_matches(
+                self.inline_images.as_ref(),
+                context.inline_images,
+            )
             && self.pending_attachments == context.pending_attachments
             && self.inline_title_editor.as_ref()
                 == context
@@ -545,8 +563,13 @@ fn render_detail(
     context: &DetailRenderContext<'_>,
     widgets: &mut WidgetState,
 ) {
-    let document = DetailDocument::build(item, context);
-    document.render(frame, item, widgets);
+    let document = widgets
+        .detail_document
+        .as_ref()
+        .filter(|document| document.matches_frame(item, context))
+        .cloned()
+        .unwrap_or_else(|| std::rc::Rc::new(DetailDocument::build(item, context)));
+    document.render(frame, item, context, widgets);
     widgets.detail_document = Some(document);
 }
 
@@ -807,6 +830,74 @@ fn build_detail_content_model_with_pending(
         scrollbar_position,
         image_placements,
         interactive_rows,
+    }
+}
+
+fn detail_inline_image_geometry_matches(
+    cached: Option<&DetailInlineImageContext>,
+    current: Option<&DetailInlineImageContext>,
+) -> bool {
+    match (cached, current) {
+        (None, None) => true,
+        (Some(cached), Some(current)) => {
+            cached.previews_enabled == current.previews_enabled
+                && cached.unavailable_hashes == current.unavailable_hashes
+        }
+        _ => false,
+    }
+}
+
+fn apply_active_style(model: &mut DetailContentRenderModel, target: &DetailTargetId) {
+    let Some(row) = model
+        .interactive_rows
+        .iter()
+        .find(|row| &row.target == target)
+    else {
+        return;
+    };
+    let start = row.line_index.saturating_sub(model.body_start);
+    let end = start.saturating_add(row.height).min(model.lines.len());
+    let lines_len = model.lines.len();
+    let lines = &mut model.lines[start.min(lines_len)..end];
+    match target {
+        DetailTargetId::Expand { .. } => {
+            for line in lines {
+                for (index, span) in line.spans.iter_mut().enumerate() {
+                    span.style = span.style.bg(BG_PANEL);
+                    if index == 0 {
+                        span.style = span.style.fg(BORDER);
+                    } else {
+                        span.style = span.style.fg(ACCENT).add_modifier(Modifier::BOLD);
+                    }
+                }
+            }
+        }
+        DetailTargetId::Attachment { .. } => {
+            for line in lines {
+                for span in line.spans.iter_mut().skip(1) {
+                    span.style = span.style.fg(ACCENT);
+                }
+            }
+        }
+        DetailTargetId::Task {
+            section: DetailSection::EpicParent | DetailSection::EpicChildren,
+            ..
+        } => {
+            for line in lines {
+                for (index, span) in line.spans.iter_mut().enumerate() {
+                    span.style = span.style.bg(BG_PANEL);
+                    match index {
+                        0 => span.style = span.style.fg(BORDER),
+                        1 => {
+                            span.style = span.style.fg(ACCENT).add_modifier(Modifier::BOLD);
+                        }
+                        2 => span.style = span.style.fg(FG_DIM),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        DetailTargetId::Task { .. } => apply_link_row_style(lines),
     }
 }
 
@@ -3957,6 +4048,105 @@ mod tests {
         assert!(placement.y > area.y);
         assert!(placement.x.saturating_add(placement.width) < area.x + area.width);
         assert!(placement.y.saturating_add(placement.height) < area.y + area.height);
+    }
+
+    #[test]
+    fn cached_geometry_accepts_frame_specific_detail_styles() {
+        let item = detail_test_item();
+        let expanded_sections = BTreeSet::new();
+        let images = DetailInlineImageContext::default();
+        let base = DetailRenderContext {
+            terminal_area: Rect::new(0, 0, 80, 24),
+            scroll: 0,
+            inline_title_editor: None,
+            active_target: None,
+            hovered_target: None,
+            expanded_sections: &expanded_sections,
+            selection: None,
+            inline_images: Some(&images),
+            pending_attachments: &[],
+        };
+        let document = DetailDocument::build(&item, &base);
+        let active = DetailTargetId::Task {
+            section: DetailSection::DependsOn,
+            task_id: item.depends_on[0].task_id.clone(),
+        };
+        let hovered = DetailTargetId::Task {
+            section: DetailSection::Blocks,
+            task_id: item.blocks[0].task_id.clone(),
+        };
+        let selection =
+            DetailTextSelection::new(item.task.id.clone(), 80, TextCell { start: 0, end: 3 });
+        let focused_images = DetailInlineImageContext {
+            focused_attachment_id: Some("attachment".to_string()),
+            ..images.clone()
+        };
+        let styled = DetailRenderContext {
+            terminal_area: base.terminal_area,
+            scroll: 0,
+            inline_title_editor: None,
+            active_target: Some(&active),
+            hovered_target: Some(&hovered),
+            expanded_sections: &expanded_sections,
+            selection: Some(&selection),
+            inline_images: Some(&focused_images),
+            pending_attachments: &[],
+        };
+
+        assert!(document.matches_frame(&item, &styled));
+    }
+
+    #[test]
+    fn cached_geometry_invalidates_for_semantic_detail_changes() {
+        let item = detail_test_item();
+        let expanded_sections = BTreeSet::new();
+        let images = DetailInlineImageContext::default();
+        let base = DetailRenderContext {
+            terminal_area: Rect::new(0, 0, 80, 24),
+            scroll: 0,
+            inline_title_editor: None,
+            active_target: None,
+            hovered_target: None,
+            expanded_sections: &expanded_sections,
+            selection: None,
+            inline_images: Some(&images),
+            pending_attachments: &[],
+        };
+        let document = DetailDocument::build(&item, &base);
+        assert!(document.matches_frame(&item, &base));
+
+        let pending = [crate::tui::attachment_controller::PendingAttachmentView {
+            attachment_id: "pending".to_string(),
+            task_id: item.task.id.clone(),
+            status: crate::tui::attachment_controller::PendingAttachmentStatus::Preparing,
+        }];
+        let pending_context = DetailRenderContext {
+            pending_attachments: &pending,
+            ..base
+        };
+        assert!(!document.matches_frame(&item, &pending_context));
+
+        let editor = TextInputView {
+            kind: crate::tui::overlay::TextInputKind::EditTitle,
+            title: "Edit title".to_string(),
+            prompt: String::new(),
+            input: item.task.title.clone(),
+            cursor: 2,
+        };
+        let editor_context = DetailRenderContext {
+            inline_title_editor: Some(&editor),
+            pending_attachments: &[],
+            ..base
+        };
+        assert!(!document.matches_frame(&item, &editor_context));
+
+        let expanded_sections = [DetailSection::DependsOn].into_iter().collect();
+        let expanded_context = DetailRenderContext {
+            expanded_sections: &expanded_sections,
+            pending_attachments: &[],
+            ..base
+        };
+        assert!(!document.matches_frame(&item, &expanded_context));
     }
 
     fn attachment_metadata(

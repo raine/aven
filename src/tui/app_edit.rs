@@ -54,7 +54,8 @@ impl App {
     }
 
     fn status_change_preserves_task(&self) -> bool {
-        self.store.view_state.view == crate::tui::store::TaskView::Columns || self.detail.is_some()
+        self.store.view_state.view == crate::tui::store::TaskView::Columns
+            || self.detail.is_active()
     }
 
     fn changed_status_target(
@@ -280,7 +281,7 @@ impl App {
             self.set_info("no selected task to edit");
             return Ok(());
         };
-        let preserve_task = self.detail.is_some();
+        let preserve_task = self.detail.is_active();
         let result = self
             .store
             .mutate_deleted_selection(&selection, deleted, preserve_task)
@@ -290,7 +291,7 @@ impl App {
     }
 
     pub(super) async fn submit_delete_selection(&mut self, selection: TaskSelection) -> Result<()> {
-        let preserve_task = self.detail.is_some();
+        let preserve_task = self.detail.is_active();
         let result = self
             .store
             .mutate_deleted_selection(&selection, true, preserve_task)
@@ -300,7 +301,7 @@ impl App {
     }
 
     pub(super) async fn undo_last(&mut self) -> Result<()> {
-        let in_detail = self.detail.is_some();
+        let in_detail = self.detail.is_active();
         let selected = if in_detail {
             None
         } else {
@@ -313,7 +314,7 @@ impl App {
                     let crate::tui::app::DetailTargetId::Task {
                         section: crate::tui::app::DetailSection::EpicChildren,
                         task_id: child_id,
-                    } = self.detail.as_ref()?.focused_target()?
+                    } = self.detail.state()?.focused_target()?
                     else {
                         return None;
                     };
@@ -332,7 +333,7 @@ impl App {
                 self.apply_mutation_result(result);
                 let removed = self
                     .detail
-                    .as_mut()
+                    .state_mut()
                     .and_then(|detail| detail.take_removed_epic_child());
                 if let Some(removed) = removed {
                     self.list.select_task(
@@ -341,7 +342,7 @@ impl App {
                             .iter()
                             .position(|item| item.task.id == removed.epic_id),
                     );
-                    if let Some(detail) = self.detail.as_mut() {
+                    if let Some(detail) = self.detail.state_mut() {
                         detail.set_focused_target(Some(crate::tui::app::DetailTargetId::Task {
                             section: crate::tui::app::DetailSection::EpicChildren,
                             task_id: removed.child.task_id,
@@ -362,7 +363,7 @@ impl App {
                             .iter()
                             .position(|item| item.task.id == epic_id),
                     );
-                    if let Some(detail) = self.detail.as_mut() {
+                    if let Some(detail) = self.detail.state_mut() {
                         detail.set_focused_target(Some(crate::tui::app::DetailTargetId::Task {
                             section: crate::tui::app::DetailSection::EpicChildren,
                             task_id: child.task_id.clone(),
@@ -481,7 +482,7 @@ impl App {
     }
 
     fn open_edit_title_overlay(&mut self, selection: TaskSelection, input: String) {
-        if let Some(detail) = self.detail.as_mut() {
+        if let Some(detail) = self.detail.state_mut() {
             detail.set_scroll(0);
         }
         self.overlay = Some(OverlayState::text_input(
@@ -892,7 +893,7 @@ impl App {
                 &selection,
                 crate::tui::store::TaskDateField::Availability,
                 (!available_at.is_empty()).then_some(available_at),
-                self.detail.is_some(),
+                self.detail.is_active(),
             )
             .await
             .map(Some);
@@ -952,7 +953,7 @@ impl App {
                 &selection,
                 crate::tui::store::TaskDateField::Due,
                 (!due_on.is_empty()).then_some(due_on),
-                self.detail.is_some(),
+                self.detail.is_active(),
             )
             .await
             .map(Some);
@@ -1013,7 +1014,7 @@ impl App {
                 &selection,
                 crate::tui::store::TaskDateField::Availability,
                 None,
-                self.detail.is_some(),
+                self.detail.is_active(),
             )
             .await
             .map(Some);
@@ -1034,7 +1035,7 @@ impl App {
                 &selection,
                 crate::tui::store::TaskDateField::Due,
                 None,
-                self.detail.is_some(),
+                self.detail.is_active(),
             )
             .await
             .map(Some);

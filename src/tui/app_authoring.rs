@@ -434,7 +434,7 @@ impl App {
                     .position(|item| item.task.id == context.epic.epic_id)
                     .or(selected),
             );
-            if let Some(detail) = self.detail.as_mut() {
+            if let Some(detail) = self.detail.state_mut() {
                 detail.set_focused_target(Some(crate::tui::app::DetailTargetId::Task {
                     section: crate::tui::app::DetailSection::EpicChildren,
                     task_id,

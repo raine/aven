@@ -1,13 +1,22 @@
 use std::collections::BTreeSet;
+use std::time::{Duration, Instant};
 
 use ratatui::widgets::{ListState, TableState};
 
 use crate::ids::TaskId;
-use crate::tui::app::{DetailSection, DetailTargetId};
 use crate::tui::bounded_history::BoundedHistory;
+use crate::tui::detail_session::DetailSnapshot;
 use crate::tui::store::TaskViewState;
 
 const NAVIGATION_HISTORY_LIMIT: usize = 32;
+const TASK_ROW_DOUBLE_CLICK: Duration = Duration::from_millis(500);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TaskRowClick {
+    task_id: TaskId,
+    viewport_row: u16,
+    at: Instant,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Focus {
@@ -16,19 +25,12 @@ pub(crate) enum Focus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct LastChangeDetailState {
-    pub(crate) scroll: u16,
-    pub(crate) focus: Option<DetailTargetId>,
-    pub(crate) expanded_sections: BTreeSet<DetailSection>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LastChangeReturnState {
     pub(crate) view_state: TaskViewState,
     pub(crate) selected_task_id: Option<TaskId>,
     pub(crate) selected_index: Option<usize>,
     pub(crate) table_offset: usize,
-    pub(crate) detail: Option<LastChangeDetailState>,
+    pub(crate) detail: Option<DetailSnapshot>,
 }
 
 pub(crate) struct ListSurface {
@@ -40,6 +42,7 @@ pub(crate) struct ListSurface {
     navigation_history: BoundedHistory<TaskViewState>,
     last_changed_task_id: Option<TaskId>,
     last_change_return: Option<LastChangeReturnState>,
+    last_task_click: Option<TaskRowClick>,
 }
 
 impl ListSurface {
@@ -55,6 +58,7 @@ impl ListSurface {
             navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),
             last_changed_task_id: None,
             last_change_return: None,
+            last_task_click: None,
         }
     }
 
@@ -215,6 +219,44 @@ impl ListSurface {
         self.last_change_return.take()
     }
 
+    pub(crate) fn register_task_click(
+        &mut self,
+        task_id: TaskId,
+        viewport_row: u16,
+        at: Instant,
+    ) -> bool {
+        let is_double_click = self.last_task_click.as_ref().is_some_and(|previous| {
+            previous.task_id == task_id
+                && previous.viewport_row == viewport_row
+                && at.duration_since(previous.at) <= TASK_ROW_DOUBLE_CLICK
+        });
+        self.last_task_click = (!is_double_click).then_some(TaskRowClick {
+            task_id,
+            viewport_row,
+            at,
+        });
+        is_double_click
+    }
+
+    pub(crate) fn clear_task_click(&mut self) {
+        self.last_task_click = None;
+    }
+
+    pub(crate) fn expire_task_click(&mut self, at: Instant) {
+        if self
+            .last_task_click
+            .as_ref()
+            .is_some_and(|click| at.duration_since(click.at) > TASK_ROW_DOUBLE_CLICK)
+        {
+            self.last_task_click = None;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_task_click(&self) -> bool {
+        self.last_task_click.is_some()
+    }
+
     pub(crate) fn has_last_change_return(&self) -> bool {
         self.last_change_return.is_some()
     }
@@ -241,6 +283,40 @@ mod tests {
 
         assert!(!surface.toggle_sidebar());
         assert_eq!(surface.focus(), Focus::Tasks);
+    }
+
+    #[test]
+    fn task_double_click_requires_same_task_and_viewport_row() {
+        let mut surface = ListSurface::new(true);
+        let task_id = TaskId::new();
+        let other_id = TaskId::new();
+        let start = Instant::now();
+
+        assert!(!surface.register_task_click(task_id.clone(), 2, start));
+        assert!(!surface.register_task_click(other_id, 2, start + Duration::from_millis(10)));
+        assert!(!surface.register_task_click(
+            task_id.clone(),
+            3,
+            start + Duration::from_millis(20),
+        ));
+        assert!(surface.register_task_click(task_id, 3, start + Duration::from_millis(30),));
+        assert!(!surface.has_task_click());
+    }
+
+    #[test]
+    fn expired_task_click_starts_a_new_click_sequence() {
+        let mut surface = ListSurface::new(true);
+        let task_id = TaskId::new();
+        let start = Instant::now();
+
+        assert!(!surface.register_task_click(task_id.clone(), 2, start));
+        surface.expire_task_click(start + TASK_ROW_DOUBLE_CLICK + Duration::from_millis(1));
+        assert!(!surface.register_task_click(
+            task_id,
+            2,
+            start + TASK_ROW_DOUBLE_CLICK + Duration::from_millis(2),
+        ));
+        assert!(surface.has_task_click());
     }
 
     #[test]

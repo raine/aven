@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::tui::app::{App, Focus, LastChangeDetailState, LastChangeReturnState};
+use crate::tui::app::{App, Focus, LastChangeReturnState};
 use crate::tui::navigation::{next_index, next_selectable_sidebar};
 use crate::tui::overlay::{OverlayState, PickerIntent, PickerItem};
 use crate::tui::store::{TaskFilterModifiers, TaskScope, TaskView, TaskViewState};
@@ -191,7 +191,7 @@ impl App {
         self.list.select_task(next);
         self.list.focus_tasks();
         if current != next {
-            if let Some(detail) = self.detail.as_mut() {
+            if let Some(detail) = self.detail.state_mut() {
                 detail.reset_task_state(0);
             }
             let message = if delta > 0 {
@@ -206,7 +206,7 @@ impl App {
     pub(super) async fn activate_or_toggle_detail(&mut self) -> Result<()> {
         if self.list.focus() == Focus::Sidebar {
             self.apply_sidebar_selection().await?;
-        } else if self.detail.is_some() {
+        } else if self.detail.is_active() {
             self.clear_detail_session();
         } else if self.store.view_state.view == crate::tui::store::TaskView::RecentActions {
             self.set_info("recent actions are read-only");
@@ -245,7 +245,7 @@ impl App {
         self.clear_live_search_preview();
         self.epic_child_authoring = None;
         let had_overlay = self.overlay.take().is_some();
-        if !had_overlay && self.detail.is_some() {
+        if !had_overlay && self.detail.is_active() {
             self.detail.close();
         } else if !had_overlay && self.list.focus() == Focus::Sidebar {
             self.list.focus_tasks();
@@ -268,7 +268,7 @@ impl App {
         {
             self.list.focus_tasks();
             self.list.select_task(Some(index));
-            if let Some(detail) = self.detail.as_mut() {
+            if let Some(detail) = self.detail.state_mut() {
                 detail.reset_task_state(0);
                 self.show_detail(0);
             }
@@ -276,18 +276,19 @@ impl App {
         }
 
         let selected_index = self.list.selected_task();
+        let selected_task_id = self
+            .store
+            .selected_task(selected_index)
+            .map(|item| item.task.id.clone());
         let return_state = LastChangeReturnState {
             view_state: self.store.view_state.clone(),
-            selected_task_id: self
-                .store
-                .selected_task(selected_index)
-                .map(|item| item.task.id.clone()),
+            selected_task_id: selected_task_id.clone(),
             selected_index,
             table_offset: self.list.task_offset(),
-            detail: self.detail.as_ref().map(|detail| LastChangeDetailState {
-                scroll: detail.scroll(),
-                focus: detail.focused_target().cloned(),
-                expanded_sections: detail.expanded_sections().clone(),
+            detail: self.detail.state().and_then(|detail| {
+                selected_task_id
+                    .clone()
+                    .map(|task_id| detail.snapshot(task_id, self.store.view_state.clone()))
             }),
         };
         self.store.view_state = TaskViewState {
@@ -347,9 +348,8 @@ impl App {
         self.list.set_task_offset(return_state.table_offset);
         if let Some(return_detail) = return_state.detail {
             let mut detail = crate::tui::detail_session::DetailSession::open(return_detail.scroll);
-            if let Some(state) = detail.as_mut() {
-                state.set_focused_target(return_detail.focus);
-                *state.expanded_sections_mut() = return_detail.expanded_sections;
+            if let Some(state) = detail.state_mut() {
+                state.restore_snapshot(&return_detail);
             }
             self.detail = detail;
             self.show_detail(return_detail.scroll);

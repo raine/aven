@@ -8,7 +8,7 @@ use crate::tui::app_intake::IntakeController;
 use crate::tui::authoring::AuthoringState;
 use crate::tui::inline_image_surface::InlineImageSurface;
 use crate::tui::list_surface::ListSurface;
-pub(crate) use crate::tui::list_surface::{Focus, LastChangeDetailState, LastChangeReturnState};
+pub(crate) use crate::tui::list_surface::{Focus, LastChangeReturnState};
 use crate::tui::overlay::OverlayState;
 use crate::tui::shortcut_buffer::ShortcutBuffer;
 use crate::tui::store::{TaskOrder, TaskViewState, TuiStore};
@@ -80,7 +80,7 @@ fn loading_frame(started_at: Instant) -> &'static str {
 #[derive(Debug, Clone)]
 pub(crate) struct WidgetState {
     pub(crate) inline_image_placements: Vec<crate::tui::ui::DetailInlineImagePlacement>,
-    pub(crate) detail_document: Option<crate::tui::ui::DetailDocument>,
+    pub(crate) detail_document: Option<std::rc::Rc<crate::tui::ui::DetailDocument>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -276,24 +276,24 @@ impl App {
     #[cfg(test)]
     pub(super) fn push_detail_navigation_state(
         &mut self,
-        previous: crate::tui::detail_session::DetailNavigationState,
+        previous: crate::tui::detail_session::DetailSnapshot,
     ) {
-        if self.detail.is_none() {
+        if self.detail.is_inactive() {
             self.detail = crate::tui::detail_session::DetailSession::open(0);
         }
-        if let Some(detail) = self.detail.as_mut() {
+        if let Some(detail) = self.detail.state_mut() {
             detail.push_history(previous);
         }
     }
 
     pub(super) fn detail_has_parent(&self) -> bool {
         self.detail
-            .as_ref()
+            .state()
             .is_some_and(|detail| detail.has_parent())
     }
 
     pub(super) fn show_detail(&mut self, scroll: u16) {
-        if let Some(detail) = self.detail.as_mut() {
+        if let Some(detail) = self.detail.state_mut() {
             detail.set_scroll(scroll);
         } else {
             self.detail = crate::tui::detail_session::DetailSession::open(scroll);
@@ -310,7 +310,11 @@ impl App {
 
     pub(super) async fn go_back_in_detail(&mut self) -> Result<bool> {
         let mut skipped = false;
-        while let Some(previous) = self.detail.as_mut().and_then(|detail| detail.pop_history()) {
+        while let Some(previous) = self
+            .detail
+            .state_mut()
+            .and_then(|detail| detail.pop_history())
+        {
             let Some(item) = self.store.load_task_item(&previous.task_id).await? else {
                 skipped = true;
                 continue;
@@ -330,8 +334,8 @@ impl App {
             };
             self.list.select_task(Some(index));
             self.list.focus_tasks();
-            if let Some(detail) = self.detail.as_mut() {
-                detail.restore_history_entry(&previous);
+            if let Some(detail) = self.detail.state_mut() {
+                detail.restore_snapshot(&previous);
             }
             self.show_detail(previous.scroll);
             if skipped {

@@ -273,7 +273,7 @@ impl App {
     }
 
     pub(crate) fn view(&self) -> ViewState {
-        let detail = self.detail.as_ref();
+        let detail = self.detail.state();
         let mut overlay = self.overlay.as_ref().map(OverlayView::from);
         if let Some(AddTask(state)) = &mut overlay {
             state.status_prefix_active = self.pending_shortcut.has_add_task_status_prefix();
@@ -350,7 +350,7 @@ impl App {
                 unavailable_hashes: Default::default(),
                 focused_attachment_id: self
                     .detail
-                    .as_ref()
+                    .state()
                     .and_then(|detail| detail.focused_target())
                     .and_then(crate::tui::app::DetailTargetId::attachment_id)
                     .map(str::to_string),
@@ -367,7 +367,7 @@ impl App {
                 unavailable_hashes: Default::default(),
                 focused_attachment_id: self
                     .detail
-                    .as_ref()
+                    .state()
                     .and_then(|detail| detail.focused_target())
                     .and_then(crate::tui::app::DetailTargetId::attachment_id)
                     .map(str::to_string),
@@ -380,7 +380,7 @@ impl App {
             unavailable_hashes: self.preview_controller.suppressed_hashes(&blob_dir),
             focused_attachment_id: self
                 .detail
-                .as_ref()
+                .state()
                 .and_then(|detail| detail.focused_target())
                 .and_then(crate::tui::app::DetailTargetId::attachment_id)
                 .map(str::to_string),
@@ -395,7 +395,7 @@ impl App {
     }
 
     pub(super) fn detail_underlay(&self) -> bool {
-        (self.detail.is_some()
+        (self.detail.is_active()
             && !matches!(self.overlay, Some(OverlayState::AttachmentPreview { .. })))
             || self.authoring.detail_underlay()
     }
@@ -453,7 +453,7 @@ impl App {
         self.list.select_task(selected);
         let removed_epic_child = self
             .detail
-            .as_ref()
+            .state()
             .and_then(|detail| detail.removed_epic_child());
         if let Some(removed) = removed_epic_child
             && self.store.tasks.iter().any(|item| {
@@ -463,7 +463,7 @@ impl App {
                         .iter()
                         .any(|child| child.task_id == removed.child.task_id)
             })
-            && let Some(detail) = self.detail.as_mut()
+            && let Some(detail) = self.detail.state_mut()
         {
             detail.set_removed_epic_child(None);
         }
@@ -479,13 +479,13 @@ impl App {
     fn reconcile_detail_focus(&mut self, previous_targets: &[crate::tui::app::DetailTargetId]) {
         let Some(focused) = self
             .detail
-            .as_ref()
+            .state()
             .and_then(|detail| detail.focused_target().cloned())
         else {
             return;
         };
         let Some(_item) = self.store.selected_task(self.list.selected_task()) else {
-            if let Some(detail) = self.detail.as_mut() {
+            if let Some(detail) = self.detail.state_mut() {
                 detail.set_focused_target(None);
             }
             return;
@@ -505,7 +505,7 @@ impl App {
             .filter(|target| target.section() == section)
             .collect::<Vec<_>>();
         if !same_section.is_empty() {
-            if let Some(detail) = self.detail.as_mut() {
+            if let Some(detail) = self.detail.state_mut() {
                 detail.set_focused_target(Some(
                     (*same_section[prior_section_index.min(same_section.len() - 1)]).clone(),
                 ));
@@ -527,7 +527,7 @@ impl App {
                     .cloned()
             })
             .or_else(|| targets.first().cloned());
-        if let Some(detail) = self.detail.as_mut() {
+        if let Some(detail) = self.detail.state_mut() {
             detail.set_focused_target(replacement);
         }
     }
