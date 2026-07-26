@@ -4914,6 +4914,7 @@ mod authoring {
     #[tokio::test]
     async fn finished_task_intake_poll_requests_redraw() {
         let mut app = test_app().await;
+        app.authoring.begin_add_task(None, None);
         let handle = tokio::spawn(async { Ok(test_task_draft("ready task")) });
         app.notification = Some(Notification::loading("adding task with LLM"));
         app.intake.start_handle(

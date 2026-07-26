@@ -293,7 +293,7 @@ mod tests {
             .await
             .unwrap();
         let workspace = Workspace::default();
-        seed_demo(&database, &workspace, fixed_clock())
+        seed_demo(&database, &workspace, DemoClock::now())
             .await
             .unwrap();
 
