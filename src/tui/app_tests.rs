@@ -9356,6 +9356,7 @@ mod delete_and_restore {
     async fn confirm_delete_task_soft_deletes_selected_task() {
         let mut app = test_app().await;
         let selected = create_and_select_task(&mut app, test_task_draft("Delete target")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
         let display_ref = app.store.tasks[selected].display_ref.clone();
 
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
@@ -9364,8 +9365,17 @@ mod delete_and_restore {
             .await
             .unwrap();
 
-        let selected = app.list.selected_task().unwrap();
-        assert!(app.store.tasks[selected].task.deleted);
+        assert!(app.list.selected_task().is_none());
+        assert!(app.store.tasks.is_empty());
+        assert!(
+            app.store
+                .load_task_item(&task_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .task
+                .deleted
+        );
         assert!(!app.store.view_state.filter_modifiers.include_deleted);
         assert_eq!(
             toast_message(&app).as_deref(),

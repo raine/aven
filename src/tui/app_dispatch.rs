@@ -273,8 +273,7 @@ impl App {
                 Some(crate::tui::ui::HeaderTarget::Home)
             )
         {
-            self.detail.set_last_task_click(None);
-            self.cancel_overlay();
+            self.clear_detail_session();
             return Ok(());
         }
 

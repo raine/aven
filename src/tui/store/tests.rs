@@ -1286,7 +1286,7 @@ mod task_creation_and_updates {
         store.tasks.remove(0);
 
         let outcome = store
-            .mutate_deleted_selection(&selection, true)
+            .mutate_deleted_selection(&selection, true, false)
             .await
             .unwrap();
 

@@ -378,6 +378,7 @@ impl TuiStore {
         &mut self,
         selection: &TaskSelection,
         deleted: bool,
+        preserve_task: bool,
     ) -> Result<MutationMessage> {
         let updates = selection
             .ids()
@@ -426,7 +427,7 @@ impl TuiStore {
                 (false, _) => format!("restored {changed} tasks"),
             }
         };
-        self.refresh_task_selection(selection, report, message, false, false)
+        self.refresh_task_selection(selection, report, message, preserve_task, false)
             .await
     }
 
@@ -832,7 +833,8 @@ impl TuiStore {
             return Ok(None);
         };
         Ok(Some(
-            self.mutate_deleted_selection(&selection, deleted).await?,
+            self.mutate_deleted_selection(&selection, deleted, false)
+                .await?,
         ))
     }
 
@@ -846,7 +848,8 @@ impl TuiStore {
             return Ok(None);
         };
         Ok(Some(
-            self.mutate_deleted_selection(&selection, deleted).await?,
+            self.mutate_deleted_selection(&selection, deleted, false)
+                .await?,
         ))
     }
 }

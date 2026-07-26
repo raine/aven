@@ -280,18 +280,20 @@ impl App {
             self.set_info("no selected task to edit");
             return Ok(());
         };
+        let preserve_task = self.detail.is_some();
         let result = self
             .store
-            .mutate_deleted_selection(&selection, deleted)
+            .mutate_deleted_selection(&selection, deleted, preserve_task)
             .await?;
         self.apply_mutation_result(result);
         Ok(())
     }
 
     pub(super) async fn submit_delete_selection(&mut self, selection: TaskSelection) -> Result<()> {
+        let preserve_task = self.detail.is_some();
         let result = self
             .store
-            .mutate_deleted_selection(&selection, true)
+            .mutate_deleted_selection(&selection, true, preserve_task)
             .await?;
         self.apply_mutation_result(result);
         Ok(())
