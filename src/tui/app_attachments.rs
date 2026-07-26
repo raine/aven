@@ -36,8 +36,9 @@ impl App {
             .as_deref()
             .or(attachment.alt_text.as_deref())
             .unwrap_or("attached image");
-        self.detail_context = true;
-        self.detail_context_scroll = scroll;
+        if let Some(detail) = self.detail.as_mut() {
+            detail.set_scroll(scroll);
+        }
         self.overlay = Some(OverlayState::confirm(
             ConfirmIntent::DeleteAttachment {
                 attachment_id: attachment_id.to_string(),
@@ -55,11 +56,17 @@ impl App {
         return_to_detail: bool,
         detail_scroll: u16,
     ) -> Result<()> {
-        self.detail_context_scroll = detail_scroll;
+        if let Some(detail) = self.detail.as_mut() {
+            detail.set_scroll(detail_scroll);
+        }
         let replacement_attachment_id = self.attachment_focus_after_delete(&attachment_id);
         self.store.delete_attachment(&attachment_id).await?;
-        self.detail_focus = replacement_attachment_id
-            .map(|attachment_id| DetailTargetId::Attachment { attachment_id });
+        if let Some(detail) = self.detail.as_mut() {
+            detail.set_focused_target(
+                replacement_attachment_id
+                    .map(|attachment_id| DetailTargetId::Attachment { attachment_id }),
+            );
+        }
         self.external_image_exports
             .retain(|(retained_id, _)| retained_id != &attachment_id);
         self.refresh().await?;

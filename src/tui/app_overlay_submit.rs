@@ -314,7 +314,6 @@ impl App {
                 return_to_detail,
             } => {
                 self.submit_delete_selection(selection).await?;
-                self.detail_context = false;
                 self.restore_detail_overlay(return_to_detail);
             }
             ConfirmIntent::DeleteAttachment {

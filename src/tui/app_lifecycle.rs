@@ -215,6 +215,7 @@ impl App {
             if needs_redraw {
                 let view = self.view();
                 terminal.draw(|frame| ui::render(frame, &self.store, &mut self.widgets, &view))?;
+                self.record_detail_document_frame(terminal.size()?);
                 needs_redraw = self.render_inline_images_after_draw(terminal).is_err();
             }
 
@@ -401,6 +402,22 @@ impl App {
         write_inline_image_cleanup(&mut stdout, placements, backend)
     }
 
+    fn record_detail_document_frame(&mut self, terminal_size: ratatui::layout::Size) {
+        if self.widgets.detail_document.is_none() {
+            return;
+        }
+        let Some(task_id) = self
+            .store
+            .selected_task(self.widgets.table.selected())
+            .map(|item| item.task.id.clone())
+        else {
+            return;
+        };
+        if let Some(detail) = self.detail.as_mut() {
+            detail.record_document_frame(task_id, terminal_size);
+        }
+    }
+
     pub(crate) fn view(&self) -> ViewState {
         let mut overlay = self.overlay.as_ref().map(OverlayView::from);
         if let Some(AddTask(state)) = &mut overlay {
@@ -409,7 +426,8 @@ impl App {
         }
 
         let selected_task = self.store.selected_task(self.widgets.table.selected());
-        let detail_focus = self.detail_focus.as_ref().filter(|focused| {
+        let detail = self.detail.as_ref();
+        let detail_focus = detail.and_then(|detail| detail.focused_target()).filter(|focused| {
             selected_task.is_some_and(|item| {
                 ui::detail_target_is_actionable(item, focused)
                     || matches!(
@@ -417,7 +435,7 @@ impl App {
                         crate::tui::app::DetailTargetId::Task {
                             section: crate::tui::app::DetailSection::EpicChildren,
                             task_id,
-                        } if self.removed_epic_child.as_ref().is_some_and(|removed| {
+                        } if detail.and_then(|detail| detail.removed_epic_child()).is_some_and(|removed| {
                             removed.epic_id == item.task.id && removed.child.task_id == *task_id
                         })
                     )
@@ -429,15 +447,18 @@ impl App {
             overlay,
             onboarding_intro: self.onboarding_intro_visual(),
             detail_underlay: self.detail_underlay(),
-            detail_underlay_scroll: self.detail_context_scroll,
+            detail_underlay_scroll: detail.map_or(0, |detail| detail.scroll()),
             detail_has_parent: self.detail_has_parent(),
             detail_focus: detail_focus.cloned(),
-            detail_hover: self.detail_hover.clone(),
-            detail_expanded_sections: self.detail_expanded_sections.clone(),
-            removed_epic_child: self.removed_epic_child.clone(),
-            detail_text_selection: self
-                .detail_text_selection
-                .as_ref()
+            detail_hover: detail.and_then(|detail| detail.hovered_target()).cloned(),
+            detail_expanded_sections: detail
+                .map(|detail| detail.expanded_sections().clone())
+                .unwrap_or_default(),
+            removed_epic_child: detail
+                .and_then(|detail| detail.removed_epic_child())
+                .cloned(),
+            detail_text_selection: detail
+                .and_then(|detail| detail.text_selection())
                 .filter(|selection| {
                     selected_task.is_some_and(|task| task.task.id == selection.task_id)
                 })
@@ -474,8 +495,9 @@ impl App {
                 previews_enabled: false,
                 unavailable_hashes: Default::default(),
                 focused_attachment_id: self
-                    .detail_focus
+                    .detail
                     .as_ref()
+                    .and_then(|detail| detail.focused_target())
                     .and_then(crate::tui::app::DetailTargetId::attachment_id)
                     .map(str::to_string),
             });
@@ -490,8 +512,9 @@ impl App {
                 previews_enabled: false,
                 unavailable_hashes: Default::default(),
                 focused_attachment_id: self
-                    .detail_focus
+                    .detail
                     .as_ref()
+                    .and_then(|detail| detail.focused_target())
                     .and_then(crate::tui::app::DetailTargetId::attachment_id)
                     .map(str::to_string),
             });
@@ -502,8 +525,9 @@ impl App {
             previews_enabled: true,
             unavailable_hashes: self.preview_controller.suppressed_hashes(&blob_dir),
             focused_attachment_id: self
-                .detail_focus
+                .detail
                 .as_ref()
+                .and_then(|detail| detail.focused_target())
                 .and_then(crate::tui::app::DetailTargetId::attachment_id)
                 .map(str::to_string),
         })
@@ -517,11 +541,8 @@ impl App {
     }
 
     pub(super) fn detail_underlay(&self) -> bool {
-        self.detail_context
-            || matches!(
-                self.overlay,
-                Some(OverlayState::Detail { .. } | OverlayState::DetailHelp { .. })
-            )
+        (self.detail.is_some()
+            && !matches!(self.overlay, Some(OverlayState::AttachmentPreview { .. })))
             || self.authoring.detail_underlay()
     }
 
@@ -576,7 +597,11 @@ impl App {
                 result.selected
             });
         self.widgets.table.select(selected);
-        if let Some(removed) = &self.removed_epic_child
+        let removed_epic_child = self
+            .detail
+            .as_ref()
+            .and_then(|detail| detail.removed_epic_child());
+        if let Some(removed) = removed_epic_child
             && self.store.tasks.iter().any(|item| {
                 item.task.id == removed.epic_id
                     && item
@@ -584,8 +609,9 @@ impl App {
                         .iter()
                         .any(|child| child.task_id == removed.child.task_id)
             })
+            && let Some(detail) = self.detail.as_mut()
         {
-            self.removed_epic_child = None;
+            detail.set_removed_epic_child(None);
         }
         self.reconcile_detail_focus(&previous_detail_targets);
         self.preserve_or_restore_sidebar_selection();
@@ -597,11 +623,17 @@ impl App {
     }
 
     fn reconcile_detail_focus(&mut self, previous_targets: &[crate::tui::app::DetailTargetId]) {
-        let Some(focused) = self.detail_focus.clone() else {
+        let Some(focused) = self
+            .detail
+            .as_ref()
+            .and_then(|detail| detail.focused_target().cloned())
+        else {
             return;
         };
         let Some(_item) = self.store.selected_task(self.widgets.table.selected()) else {
-            self.detail_focus = None;
+            if let Some(detail) = self.detail.as_mut() {
+                detail.set_focused_target(None);
+            }
             return;
         };
         let targets = self.detail_focus_targets(ratatui::layout::Size::new(80, 24));
@@ -619,15 +651,18 @@ impl App {
             .filter(|target| target.section() == section)
             .collect::<Vec<_>>();
         if !same_section.is_empty() {
-            self.detail_focus =
-                Some((*same_section[prior_section_index.min(same_section.len() - 1)]).clone());
+            if let Some(detail) = self.detail.as_mut() {
+                detail.set_focused_target(Some(
+                    (*same_section[prior_section_index.min(same_section.len() - 1)]).clone(),
+                ));
+            }
             return;
         }
         let previous_index = previous_targets
             .iter()
             .position(|target| target == &focused)
             .unwrap_or(0);
-        self.detail_focus = previous_targets
+        let replacement = previous_targets
             .iter()
             .skip(previous_index.saturating_add(1))
             .map(crate::tui::app::DetailTargetId::section)
@@ -638,6 +673,9 @@ impl App {
                     .cloned()
             })
             .or_else(|| targets.first().cloned());
+        if let Some(detail) = self.detail.as_mut() {
+            detail.set_focused_target(replacement);
+        }
     }
 
     fn restored_recent_action_selection(

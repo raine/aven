@@ -54,9 +54,7 @@ impl App {
     }
 
     fn status_change_preserves_task(&self) -> bool {
-        self.store.view_state.view == crate::tui::store::TaskView::Columns
-            || self.detail_context
-            || matches!(self.overlay, Some(OverlayState::Detail { .. }))
+        self.store.view_state.view == crate::tui::store::TaskView::Columns || self.detail.is_some()
     }
 
     fn changed_status_target(
@@ -287,8 +285,7 @@ impl App {
     }
 
     pub(super) async fn undo_last(&mut self) -> Result<()> {
-        let in_detail =
-            self.detail_context || matches!(self.overlay, Some(OverlayState::Detail { .. }));
+        let in_detail = self.detail.is_some();
         let selected = if in_detail {
             None
         } else {
@@ -301,7 +298,7 @@ impl App {
                     let crate::tui::app::DetailTargetId::Task {
                         section: crate::tui::app::DetailSection::EpicChildren,
                         task_id: child_id,
-                    } = self.detail_focus.as_ref()?
+                    } = self.detail.as_ref()?.focused_target()?
                     else {
                         return None;
                     };
@@ -318,17 +315,23 @@ impl App {
         match self.store.undo_last(selected).await? {
             Some(result) => {
                 self.apply_mutation_result(result);
-                if let Some(removed) = self.removed_epic_child.take() {
+                let removed = self
+                    .detail
+                    .as_mut()
+                    .and_then(|detail| detail.take_removed_epic_child());
+                if let Some(removed) = removed {
                     self.widgets.table.select(
                         self.store
                             .tasks
                             .iter()
                             .position(|item| item.task.id == removed.epic_id),
                     );
-                    self.detail_focus = Some(crate::tui::app::DetailTargetId::Task {
-                        section: crate::tui::app::DetailSection::EpicChildren,
-                        task_id: removed.child.task_id,
-                    });
+                    if let Some(detail) = self.detail.as_mut() {
+                        detail.set_focused_target(Some(crate::tui::app::DetailTargetId::Task {
+                            section: crate::tui::app::DetailSection::EpicChildren,
+                            task_id: removed.child.task_id,
+                        }));
+                    }
                 } else if let Some((epic_id, original_position, child)) = focused_link
                     && self.store.tasks.iter().any(|item| {
                         item.task.id == epic_id
@@ -344,15 +347,17 @@ impl App {
                             .iter()
                             .position(|item| item.task.id == epic_id),
                     );
-                    self.detail_focus = Some(crate::tui::app::DetailTargetId::Task {
-                        section: crate::tui::app::DetailSection::EpicChildren,
-                        task_id: child.task_id.clone(),
-                    });
-                    self.removed_epic_child = Some(crate::tui::app::RemovedEpicChild {
-                        epic_id,
-                        child,
-                        original_position,
-                    });
+                    if let Some(detail) = self.detail.as_mut() {
+                        detail.set_focused_target(Some(crate::tui::app::DetailTargetId::Task {
+                            section: crate::tui::app::DetailSection::EpicChildren,
+                            task_id: child.task_id.clone(),
+                        }));
+                        detail.set_removed_epic_child(Some(crate::tui::app::RemovedEpicChild {
+                            epic_id,
+                            child,
+                            original_position,
+                        }));
+                    }
                 }
             }
             None => self.set_info("nothing to undo"),
@@ -469,7 +474,9 @@ impl App {
     }
 
     fn open_edit_title_overlay(&mut self, selection: TaskSelection, input: String) {
-        self.detail_context_scroll = 0;
+        if let Some(detail) = self.detail.as_mut() {
+            detail.set_scroll(0);
+        }
         self.overlay = Some(OverlayState::text_input(
             TextIntent::EditTitle { selection },
             EDIT_TITLE_TITLE,
@@ -587,7 +594,7 @@ impl App {
         self.open_edit_availability_overlay(
             selection,
             aggregate,
-            self.detail_context,
+            self.detail.is_some(),
             available_at,
         );
     }
@@ -626,7 +633,7 @@ impl App {
         let (aggregate, due_on) = Self::aggregate_value(&selection, |item| {
             item.task.due_on.clone().unwrap_or_default()
         });
-        self.open_edit_due_overlay(selection, aggregate, self.detail_context, due_on);
+        self.open_edit_due_overlay(selection, aggregate, self.detail.is_some(), due_on);
     }
 
     fn open_edit_due_overlay(
@@ -834,7 +841,6 @@ impl App {
         return_to_detail: bool,
         input: String,
     ) -> Result<()> {
-        self.detail_context = return_to_detail;
         if selection.len() > 1 && input.trim().is_empty() {
             if mixed {
                 self.set_info(format!(
@@ -906,7 +912,6 @@ impl App {
         return_to_detail: bool,
         input: String,
     ) -> Result<()> {
-        self.detail_context = return_to_detail;
         if selection.len() > 1 && input.trim().is_empty() {
             if mixed {
                 self.set_info(format!("due date unchanged on {} tasks", selection.len()));
@@ -998,7 +1003,6 @@ impl App {
             ),
             _ => return Ok(()),
         };
-        self.detail_context = return_to_detail;
         if selection.len() <= 1 {
             match confirm_intent {
                 ConfirmIntent::ClearAvailability { .. } => {
@@ -1025,7 +1029,6 @@ impl App {
         selection: TaskSelection,
         return_to_detail: bool,
     ) -> Result<()> {
-        self.detail_context = return_to_detail;
         let retry_selection = selection.clone();
         let result = self
             .store
@@ -1051,7 +1054,6 @@ impl App {
         selection: TaskSelection,
         return_to_detail: bool,
     ) -> Result<()> {
-        self.detail_context = return_to_detail;
         let retry_selection = selection.clone();
         let result = self
             .store

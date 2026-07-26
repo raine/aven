@@ -122,7 +122,7 @@ impl App {
 
     pub(super) fn begin_add_epic_child(&mut self) {
         let selected = self.widgets.table.selected();
-        let detail = matches!(self.overlay, Some(OverlayState::Detail { .. }));
+        let detail = self.detail.is_some();
         let Some(epic) = self.store.resolve_epic_context(selected, detail) else {
             self.set_warning("Select an epic to add a child");
             return;
@@ -230,7 +230,8 @@ impl App {
             SearchIntent::Navigate => {
                 self.accept_search_input(result.display_ref.clone()).await?;
                 self.select_task_by_id(&result.task_id);
-                self.overlay = Some(OverlayState::Detail { scroll: 0 });
+                self.detail = crate::tui::detail_session::DetailSession::open(0);
+                self.show_detail(0);
             }
             SearchIntent::AddDependency {
                 task_id,
@@ -259,7 +260,6 @@ impl App {
                 project_key,
                 return_to_detail,
             } => {
-                self.detail_context = return_to_detail;
                 let epic = crate::tui::store::EpicContext {
                     epic_id,
                     display_ref,
@@ -306,7 +306,7 @@ impl App {
                 {
                     Ok(mutation) => {
                         let child_id = mutation.child.task_id.clone();
-                        let selected = if self.detail_context {
+                        let selected = if return_to_detail {
                             self.store
                                 .tasks
                                 .iter()
@@ -315,16 +315,19 @@ impl App {
                             mutation.message.selected
                         };
                         self.widgets.table.select(selected);
-                        self.detail_focus =
-                            self.detail_context
-                                .then_some(crate::tui::app::DetailTargetId::Task {
+                        if let Some(detail) = self.detail.as_mut().filter(|_| return_to_detail) {
+                            detail.set_focused_target(Some(
+                                crate::tui::app::DetailTargetId::Task {
                                     section: crate::tui::app::DetailSection::EpicChildren,
                                     task_id: child_id,
-                                });
-                        self.removed_epic_child = None;
+                                },
+                            ));
+                            detail.set_removed_epic_child(None);
+                            detail.set_scroll(0);
+                        }
                         self.set_success(mutation.message.message);
-                        if self.detail_context {
-                            self.overlay = Some(OverlayState::Detail { scroll: 0 });
+                        if return_to_detail {
+                            self.show_detail(0);
                         }
                     }
                     Err(error) => {

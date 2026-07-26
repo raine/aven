@@ -4,11 +4,14 @@ use ratatui::layout::{Rect, Size};
 use std::time::Instant;
 
 use crate::tui::app::{
-    App, DetailNavigationState, DetailSection, DetailTargetId, Focus, FooterChoiceMode,
-    MAX_EXTERNAL_IMAGE_EXPORTS, TASK_ROW_DOUBLE_CLICK, TaskCopyKind, TaskRefKind,
+    App, DetailSection, DetailTargetId, Focus, FooterChoiceMode, MAX_EXTERNAL_IMAGE_EXPORTS,
+    TaskCopyKind, TaskRefKind,
 };
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::conflict_flow::ConflictResolutionChoice;
+use crate::tui::detail_session::{
+    DetailNavigationState, DetailTargetActivation, TASK_ROW_DOUBLE_CLICK, TaskRowClick,
+};
 use crate::tui::event::{
     Action, CommandCompletion, CommandLookup, command_cycle_options, complete_command,
     lookup_command,
@@ -90,7 +93,11 @@ impl App {
         } else if self.overlay_captures_input() {
             if key.code == KeyCode::Char('?')
                 && matches!(self.overlay, Some(OverlayState::Detail { .. }))
-                && self.detail_focus.is_none()
+                && self
+                    .detail
+                    .as_ref()
+                    .and_then(|detail| detail.focused_target())
+                    .is_none()
             {
                 self.toggle_help_at_height(terminal_size.height);
                 Ok(())
@@ -171,7 +178,7 @@ impl App {
         self.footer_choice = None;
         self.submit_edit_status(selection, status.to_string())
             .await?;
-        if self.detail_context && self.overlay.is_none() {
+        if self.detail.is_some() && self.overlay.is_none() {
             self.restore_detail_overlay(true);
         }
         Ok(())
@@ -185,7 +192,7 @@ impl App {
         self.footer_choice = None;
         self.submit_edit_priority(selection, false, priority.to_string())
             .await?;
-        if self.detail_context && self.overlay.is_none() {
+        if self.detail.is_some() && self.overlay.is_none() {
             self.restore_detail_overlay(true);
         }
         Ok(())
@@ -225,15 +232,18 @@ impl App {
                 if self.begin_detail_text_selection(mouse, terminal_size) {
                     return Ok(());
                 }
-                self.detail_text_selection = None;
-                self.detail_text_dragging = false;
+                if let Some(detail) = self.detail.as_mut() {
+                    detail.clear_text_selection();
+                }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 self.update_detail_text_selection(mouse, terminal_size);
                 return Ok(());
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                self.detail_text_dragging = false;
+                if let Some(detail) = self.detail.as_mut() {
+                    detail.finish_text_drag();
+                }
                 return Ok(());
             }
             MouseEventKind::Moved => {
@@ -248,11 +258,12 @@ impl App {
             _ => return Ok(()),
         }
 
-        self.last_task_click = self
-            .last_task_click
-            .as_ref()
+        let last_task_click = self
+            .detail
+            .last_task_click()
             .filter(|last| last.at.elapsed() <= TASK_ROW_DOUBLE_CLICK)
             .cloned();
+        self.detail.set_last_task_click(last_task_click);
 
         let header = ratatui::layout::Rect {
             x: 0,
@@ -274,7 +285,7 @@ impl App {
                 Some(crate::tui::ui::HeaderTarget::Home)
             )
         {
-            self.last_task_click = None;
+            self.detail.set_last_task_click(None);
             self.cancel_overlay();
             return Ok(());
         }
@@ -285,7 +296,7 @@ impl App {
             };
             self.submit_header_menu_at(state, mouse.column, mouse.row, terminal_size)
                 .await?;
-            if self.detail_context && self.overlay.is_none() {
+            if self.detail.is_some() && self.overlay.is_none() {
                 self.restore_detail_overlay(true);
             }
             return Ok(());
@@ -296,7 +307,7 @@ impl App {
             };
             self.submit_order_menu_at(state, mouse.column, mouse.row, terminal_size)
                 .await?;
-            if self.detail_context && self.overlay.is_none() {
+            if self.detail.is_some() && self.overlay.is_none() {
                 self.restore_detail_overlay(true);
             }
             return Ok(());
@@ -333,7 +344,7 @@ impl App {
             self.overlay,
             Some(OverlayState::Picker(_) | OverlayState::Confirm(_) | OverlayState::TextPanel(_))
         ) {
-            self.last_task_click = None;
+            self.detail.set_last_task_click(None);
             let Some(overlay) = self.overlay.take() else {
                 return Ok(());
             };
@@ -351,7 +362,7 @@ impl App {
             mouse.column,
             mouse.row,
         ) {
-            self.last_task_click = None;
+            self.detail.set_last_task_click(None);
             return match target {
                 crate::tui::ui::HeaderTarget::Home => Ok(()),
                 crate::tui::ui::HeaderTarget::Workspace { column } => {
@@ -391,7 +402,7 @@ impl App {
             && let Some(status) =
                 crate::tui::columns::lane_entry_status(&self.store.task_columns, lane_index)
         {
-            self.last_task_click = None;
+            self.detail.set_last_task_click(None);
             let Some(selection) = self.resolve_task_selection() else {
                 self.set_info("no selected task to move");
                 return Ok(());
@@ -413,7 +424,7 @@ impl App {
         {
             self.focus = Focus::Tasks;
             self.widgets.table.select(Some(hit.action_index));
-            self.last_task_click = None;
+            self.detail.set_last_task_click(None);
             return Ok(());
         }
 
@@ -426,7 +437,7 @@ impl App {
                 mouse.row,
             )
         {
-            self.last_task_click = None;
+            self.detail.set_last_task_click(None);
             self.focus = Focus::Tasks;
             self.widgets.table.select(Some(hit.task_index));
             self.begin_status_picker();
@@ -445,25 +456,25 @@ impl App {
             self.focus = Focus::Tasks;
             self.widgets.table.select(Some(hit.task_index));
             let now = Instant::now();
-            let is_double_click = self.last_task_click.as_ref().is_some_and(|previous| {
+            let is_double_click = self.detail.last_task_click().is_some_and(|previous| {
                 previous.task_id == hit.task_id
                     && previous.viewport_row == hit.viewport_row
                     && now.duration_since(previous.at) <= TASK_ROW_DOUBLE_CLICK
             });
             if is_double_click {
-                self.last_task_click = None;
-                self.overlay = Some(OverlayState::Detail { scroll: 0 });
+                self.detail.set_last_task_click(None);
+                self.show_detail(0);
             } else {
-                self.last_task_click = Some(crate::tui::app::TaskRowClick {
+                self.detail.set_last_task_click(Some(TaskRowClick {
                     task_id: hit.task_id,
                     viewport_row: hit.viewport_row,
                     at: now,
-                });
+                }));
             }
             return Ok(());
         }
 
-        self.last_task_click = None;
+        self.detail.set_last_task_click(None);
         if let Some(click) = crate::tui::ui::sidebar_click_at_for(
             &self.store.sidebar_entries,
             &self.widgets.sidebar,
@@ -501,7 +512,7 @@ impl App {
         mouse: MouseEvent,
         terminal_size: Size,
     ) -> Result<()> {
-        self.last_task_click = None;
+        self.detail.set_last_task_click(None);
         if self.overlay.is_some() || terminal_size.width < 70 || terminal_size.height < 18 {
             return Ok(());
         }
@@ -552,6 +563,17 @@ impl App {
         terminal_size: Size,
     ) -> Option<&crate::tui::ui::DetailDocument> {
         let item = self.store.selected_task(self.widgets.table.selected())?;
+        if !self
+            .detail
+            .as_ref()
+            .is_some_and(|detail| detail.matches_document_frame(&item.task.id, terminal_size))
+        {
+            return self
+                .widgets
+                .detail_document
+                .as_ref()
+                .filter(|document| document.matches_frame(item, terminal_size));
+        }
         self.widgets
             .detail_document
             .as_ref()
@@ -581,18 +603,19 @@ impl App {
         let Some(cell) = cell else {
             return false;
         };
-        self.detail_text_selection = Some(crate::tui::detail_selection::DetailTextSelection::new(
-            item.task.id.clone(),
-            terminal_size.width,
-            cell,
-        ));
-        self.detail_text_dragging = true;
-        self.last_task_click = None;
+        if let Some(detail) = self.detail.as_mut() {
+            detail.begin_text_selection(item.task.id.clone(), terminal_size.width, cell);
+        }
+        self.detail.set_last_task_click(None);
         true
     }
 
     fn update_detail_text_selection(&mut self, mouse: MouseEvent, terminal_size: Size) {
-        if !self.detail_text_dragging {
+        if !self
+            .detail
+            .as_ref()
+            .is_some_and(|detail| detail.text_dragging())
+        {
             return;
         }
         let Some(OverlayState::Detail { scroll }) = self.overlay else {
@@ -617,26 +640,27 @@ impl App {
         let Some(cell) = cell else {
             return;
         };
-        if let Some(selection) = self.detail_text_selection.as_mut()
-            && selection.task_id == item.task.id
-            && selection.terminal_width == terminal_size.width
-        {
-            selection.focus = cell;
+        if let Some(detail) = self.detail.as_mut() {
+            detail.update_text_selection(&item.task.id, terminal_size.width, cell);
         }
     }
 
     fn copy_detail_text_selection(&mut self) {
-        let value = self.detail_text_selection.as_ref().and_then(|selection| {
-            self.widgets
-                .detail_document
-                .as_ref()
-                .and_then(|document| document.selected_text(selection))
-                .or_else(|| {
-                    self.store
-                        .selected_task(self.widgets.table.selected())
-                        .and_then(|item| detail_selected_text(item, selection))
-                })
-        });
+        let value = self
+            .detail
+            .as_ref()
+            .and_then(|detail| detail.text_selection())
+            .and_then(|selection| {
+                self.widgets
+                    .detail_document
+                    .as_ref()
+                    .and_then(|document| document.selected_text(selection))
+                    .or_else(|| {
+                        self.store
+                            .selected_task(self.widgets.table.selected())
+                            .and_then(|item| detail_selected_text(item, selection))
+                    })
+            });
         let Some(value) = value.filter(|value| !value.is_empty()) else {
             self.set_info("no detail text selected");
             return;
@@ -660,7 +684,10 @@ impl App {
                     terminal_size.width,
                     terminal_size.height,
                     self.inline_image_context().as_ref(),
-                    &self.detail_expanded_sections,
+                    self.detail
+                        .as_ref()
+                        .map(|detail| detail.expanded_sections())
+                        .expect("active detail session"),
                 )
             });
         let mut targets = rows
@@ -668,7 +695,10 @@ impl App {
             .map(|row| row.target)
             .filter(|target| detail_target_is_actionable(item, target))
             .collect::<Vec<_>>();
-        if let Some(removed) = &self.removed_epic_child
+        if let Some(removed) = self
+            .detail
+            .as_ref()
+            .and_then(|detail| detail.removed_epic_child())
             && removed.epic_id == item.task.id
             && !item
                 .epic_children
@@ -702,70 +732,24 @@ impl App {
     }
 
     fn selected_detail_focus_target(&self, terminal_size: Size) -> Option<DetailTargetId> {
-        let selected = self.detail_focus.clone()?;
-        self.detail_focus_targets(terminal_size)
-            .contains(&selected)
-            .then_some(selected)
+        let targets = self.detail_focus_targets(terminal_size);
+        self.detail
+            .as_ref()
+            .and_then(|detail| detail.selected_target(&targets))
     }
 
     fn focus_detail_section(&mut self, reverse: bool, terminal_size: Size) -> bool {
         let targets = self.detail_focus_targets(terminal_size);
-        if targets.is_empty() {
-            return false;
-        }
-        let sections = targets.iter().map(DetailTargetId::section).fold(
-            Vec::new(),
-            |mut sections, section| {
-                if sections.last() != Some(&section) {
-                    sections.push(section);
-                }
-                sections
-            },
-        );
-        let next_section = self
-            .detail_focus
-            .as_ref()
-            .map(DetailTargetId::section)
-            .and_then(|section| sections.iter().position(|candidate| *candidate == section))
-            .map(|index| {
-                let delta = if reverse { -1 } else { 1 };
-                sections[(index as isize + delta).rem_euclid(sections.len() as isize) as usize]
-            })
-            .unwrap_or_else(|| {
-                if reverse {
-                    *sections.last().expect("non-empty detail sections")
-                } else {
-                    sections[0]
-                }
-            });
-        let target = if reverse {
-            targets
-                .iter()
-                .rev()
-                .find(|target| target.section() == next_section)
-        } else {
-            targets
-                .iter()
-                .find(|target| target.section() == next_section)
-        };
-        self.detail_text_selection = None;
-        self.detail_text_dragging = false;
-        self.detail_focus = target.cloned();
-        true
+        self.detail
+            .as_mut()
+            .is_some_and(|detail| detail.focus_section(&targets, reverse))
     }
 
     fn move_detail_focus_selection(&mut self, delta: isize, terminal_size: Size) -> bool {
-        let Some(selected) = self.detail_focus.clone() else {
-            return false;
-        };
         let targets = self.detail_focus_targets(terminal_size);
-        let Some(index) = targets.iter().position(|target| target == &selected) else {
-            self.detail_focus = None;
-            return false;
-        };
-        let next = (index as isize + delta).rem_euclid(targets.len() as isize) as usize;
-        self.detail_focus = Some(targets[next].clone());
-        true
+        self.detail
+            .as_mut()
+            .is_some_and(|detail| detail.move_focus(&targets, delta))
     }
 
     fn move_attachment_preview_selection(
@@ -792,14 +776,20 @@ impl App {
             .position(|candidate| candidate == attachment_id)?;
         let next = (index as isize + delta).rem_euclid(attachment_ids.len() as isize) as usize;
         let attachment_id = attachment_ids[next].clone();
-        self.detail_focus = Some(DetailTargetId::Attachment {
-            attachment_id: attachment_id.clone(),
-        });
+        if let Some(detail) = self.detail.as_mut() {
+            detail.set_focused_target(Some(DetailTargetId::Attachment {
+                attachment_id: attachment_id.clone(),
+            }));
+        }
         Some(attachment_id)
     }
 
     fn detail_focus_scroll(&self, scroll: u16, terminal_size: Size) -> u16 {
-        let Some(target) = self.detail_focus.as_ref() else {
+        let Some(target) = self
+            .detail
+            .as_ref()
+            .and_then(|detail| detail.focused_target())
+        else {
             return scroll;
         };
         let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
@@ -815,7 +805,10 @@ impl App {
                     terminal_size.width,
                     terminal_size.height,
                     self.inline_image_context().as_ref(),
-                    &self.detail_expanded_sections,
+                    self.detail
+                        .as_ref()
+                        .map(|detail| detail.expanded_sections())
+                        .expect("active detail session"),
                 )
             })
             .unwrap_or(scroll)
@@ -829,12 +822,14 @@ impl App {
                 target.section() == section && matches!(target, DetailTargetId::Task { .. })
             })
             .count();
-        if !self.detail_expanded_sections.insert(section) {
-            self.detail_expanded_sections.remove(&section);
-            self.detail_focus = Some(DetailTargetId::Expand { section });
+        let expanded = self
+            .detail
+            .as_mut()
+            .is_some_and(|detail| detail.toggle_section(section));
+        if !expanded {
             return;
         }
-        self.detail_focus = self
+        let target = self
             .detail_focus_targets(terminal_size)
             .into_iter()
             .filter(|target| {
@@ -842,6 +837,9 @@ impl App {
             })
             .nth(first_revealed_index)
             .or(Some(DetailTargetId::Expand { section }));
+        if let Some(detail) = self.detail.as_mut() {
+            detail.set_focused_target(target);
+        }
     }
 
     fn detail_attachment_supports_inline_preview(&self, attachment_id: &str) -> bool {
@@ -912,9 +910,12 @@ impl App {
     }
 
     async fn remove_selected_epic_child(&mut self) -> Result<()> {
-        let detail =
-            matches!(self.overlay, Some(OverlayState::Detail { .. })) || self.detail_context;
-        let focused_child = match &self.detail_focus {
+        let detail = self.detail.is_some();
+        let focused_child = match self
+            .detail
+            .as_ref()
+            .and_then(|detail| detail.focused_target())
+        {
             Some(DetailTargetId::Task {
                 section: DetailSection::EpicChildren,
                 task_id,
@@ -922,8 +923,12 @@ impl App {
             _ => None,
         };
         let focused_child = detail.then_some(focused_child).flatten();
-        if let (Some(removed), Some(child_id)) = (&self.removed_epic_child, focused_child)
-            && removed.child.task_id == *child_id
+        if let (Some(removed), Some(child_id)) = (
+            self.detail
+                .as_ref()
+                .and_then(|detail| detail.removed_epic_child()),
+            focused_child,
+        ) && removed.child.task_id == *child_id
         {
             self.set_info(format!(
                 "{} is already removed from its epic",
@@ -949,28 +954,32 @@ impl App {
         };
         let mutation = self.store.remove_epic_child(target).await?;
         self.widgets.table.select(mutation.message.selected);
-        if detail && mutation.changed {
-            self.removed_epic_child = Some(crate::tui::app::RemovedEpicChild {
+        if detail
+            && mutation.changed
+            && let Some(detail) = self.detail.as_mut()
+        {
+            detail.set_removed_epic_child(Some(crate::tui::app::RemovedEpicChild {
                 epic_id: mutation.epic.epic_id,
                 child: mutation.child.clone(),
                 original_position: mutation.original_position,
-            });
-            self.detail_focus = Some(DetailTargetId::Task {
+            }));
+            detail.set_focused_target(Some(DetailTargetId::Task {
                 section: DetailSection::EpicChildren,
                 task_id: mutation.child.task_id,
-            });
+            }));
         }
         self.set_success(mutation.message.message);
         Ok(())
     }
 
     fn open_detail_attachment(&mut self, attachment_id: String, scroll: u16) {
-        self.last_task_click = None;
-        self.detail_text_selection = None;
-        self.detail_text_dragging = false;
-        self.detail_focus = Some(DetailTargetId::Attachment {
-            attachment_id: attachment_id.clone(),
-        });
+        self.detail.set_last_task_click(None);
+        if let Some(detail) = self.detail.as_mut() {
+            detail.clear_text_selection();
+            detail.set_focused_target(Some(DetailTargetId::Attachment {
+                attachment_id: attachment_id.clone(),
+            }));
+        }
         self.overlay = Some(OverlayState::AttachmentPreview {
             attachment_id,
             scroll,
@@ -982,7 +991,7 @@ impl App {
             .store
             .selected_task(self.widgets.table.selected())
             .map(|item| item.task.id.clone());
-        self.overlay = Some(OverlayState::Detail { scroll });
+        self.show_detail(scroll);
         let item = match self.store.load_task_item(task_id).await {
             Ok(Some(item)) => item,
             Ok(None) => {
@@ -994,24 +1003,32 @@ impl App {
                 return;
             }
         };
-        if let Some(current_task_id) = current_task_id {
-            self.push_detail_navigation_state(DetailNavigationState {
+        if let Some(current_task_id) = current_task_id.clone() {
+            let detail = self.detail.as_ref();
+            let previous = DetailNavigationState {
                 task_id: current_task_id,
                 scroll,
-                focused_target: self.detail_focus.clone(),
-                expanded_sections: self.detail_expanded_sections.clone(),
+                focused_target: detail.and_then(|detail| detail.focused_target().cloned()),
+                expanded_sections: detail
+                    .map(|detail| detail.expanded_sections().clone())
+                    .unwrap_or_default(),
                 view_state: self.store.view_state.clone(),
-            });
+            };
+            if let Some(detail) = self.detail.as_mut() {
+                detail.follow_link(previous);
+            }
         }
         self.store.show_exact_task(item);
         self.widgets.table.select(Some(0));
-        self.detail_focus = None;
-        self.detail_hover = None;
-        self.detail_expanded_sections.clear();
-        self.last_task_click = None;
-        self.detail_context = true;
-        self.detail_context_scroll = 0;
-        self.overlay = Some(OverlayState::Detail { scroll: 0 });
+        self.detail.set_last_task_click(None);
+        if current_task_id.is_none()
+            && let Some(detail) = self.detail.as_mut()
+        {
+            detail.reset_task_state(0);
+        } else if self.detail.is_none() {
+            self.detail = crate::tui::detail_session::DetailSession::open(0);
+        }
+        self.show_detail(0);
     }
 
     async fn handle_detail_attachment_mouse_click(
@@ -1040,7 +1057,10 @@ impl App {
                             mouse.row,
                             scroll,
                             Some(&context),
-                            &self.detail_expanded_sections,
+                            self.detail
+                                .as_ref()
+                                .map(|detail| detail.expanded_sections())
+                                .expect("active detail session"),
                         )
                     })
             });
@@ -1051,24 +1071,33 @@ impl App {
             DetailTargetId::Task { task_id, .. } => {
                 self.open_detail_task(&task_id, scroll).await;
             }
-            DetailTargetId::Expand { section } => {
-                self.activate_detail_disclosure(section, terminal_size);
-                let scroll = self.detail_focus_scroll(scroll, terminal_size);
-                self.overlay = Some(OverlayState::Detail { scroll });
-            }
-            DetailTargetId::Attachment { attachment_id } => {
-                let has_inline_placement = self
-                    .widgets
-                    .inline_image_placements
-                    .iter()
-                    .any(|placement| placement.attachment_id == attachment_id);
-                if context.previews_enabled && has_inline_placement {
-                    self.open_detail_attachment(attachment_id, scroll);
-                } else {
-                    self.detail_focus = Some(DetailTargetId::Attachment {
-                        attachment_id: attachment_id.clone(),
-                    });
-                    self.open_attachment_externally(&attachment_id).await;
+            target => {
+                let activation = self
+                    .detail
+                    .as_mut()
+                    .map(|detail| detail.activate_target(target));
+                match activation {
+                    Some(DetailTargetActivation::ToggleSection(section)) => {
+                        self.activate_detail_disclosure(section, terminal_size);
+                        let scroll = self.detail_focus_scroll(scroll, terminal_size);
+                        if let Some(detail) = self.detail.as_mut() {
+                            detail.set_scroll(scroll);
+                        }
+                        self.show_detail(scroll);
+                    }
+                    Some(DetailTargetActivation::OpenAttachment(attachment_id)) => {
+                        let has_inline_placement = self
+                            .widgets
+                            .inline_image_placements
+                            .iter()
+                            .any(|placement| placement.attachment_id == attachment_id);
+                        if context.previews_enabled && has_inline_placement {
+                            self.open_detail_attachment(attachment_id, scroll);
+                        } else {
+                            self.open_attachment_externally(&attachment_id).await;
+                        }
+                    }
+                    Some(DetailTargetActivation::FollowTask(_)) | None => {}
                 }
             }
         }
@@ -1105,26 +1134,29 @@ impl App {
         ) else {
             return Ok(false);
         };
-        self.last_task_click = None;
-        self.detail_context = true;
-        self.detail_context_scroll = scroll;
+        self.detail.set_last_task_click(None);
+        if let Some(detail) = self.detail.as_mut() {
+            detail.set_scroll(scroll);
+        }
         match target {
             crate::tui::ui::DetailMetadataTarget::Status => self.begin_status_picker(),
             crate::tui::ui::DetailMetadataTarget::Priority => self.begin_edit_priority(),
         }
         if self.overlay.is_none() {
-            self.overlay = Some(OverlayState::Detail { scroll });
+            self.show_detail(scroll);
         }
         Ok(true)
     }
 
     fn handle_detail_mouse_move(&mut self, mouse: MouseEvent, terminal_size: Size) {
         let Some(OverlayState::Detail { scroll }) = self.overlay else {
-            self.detail_hover = None;
+            if let Some(detail) = self.detail.as_mut() {
+                detail.set_hovered_target(None);
+            }
             return;
         };
         let inline_images = self.inline_image_context();
-        self.detail_hover = self
+        let hovered = self
             .rendered_detail_document(terminal_size)
             .and_then(|document| document.target_at_position(mouse.column, mouse.row))
             .or_else(|| {
@@ -1139,10 +1171,16 @@ impl App {
                             mouse.row,
                             scroll,
                             inline_images.as_ref(),
-                            &self.detail_expanded_sections,
+                            self.detail
+                                .as_ref()
+                                .map(|detail| detail.expanded_sections())
+                                .expect("active detail session"),
                         )
                     })
             });
+        if let Some(detail) = self.detail.as_mut() {
+            detail.set_hovered_target(hovered);
+        }
     }
 
     async fn handle_task_list_wheel(&mut self, delta: isize, terminal_size: Size) -> Result<()> {
@@ -1245,6 +1283,9 @@ impl App {
                         inline_images.as_ref(),
                     )
                 };
+                if let Some(detail) = self.detail.as_mut() {
+                    detail.set_scroll(*scroll);
+                }
                 true
             }
             Some(OverlayState::TextPanel(state)) => {
@@ -1341,7 +1382,7 @@ impl App {
             }
         }
 
-        if self.detail_context && self.overlay.is_none() {
+        if self.detail.is_some() && self.overlay.is_none() {
             self.restore_detail_overlay(true);
         }
 
@@ -1370,7 +1411,7 @@ impl App {
             crate::tui::overlay::handle_generic_overlay_mouse(overlay, mouse, terminal_size);
         self.apply_generic_overlay_outcome(outcome, false, false, was_add_task_picker)
             .await?;
-        if self.detail_context && self.overlay.is_none() {
+        if self.detail.is_some() && self.overlay.is_none() {
             self.restore_detail_overlay(true);
         }
         Ok(())
@@ -1416,14 +1457,14 @@ impl App {
                     .unwrap_or_else(|| attachment_id.clone()),
                 _ => attachment_id.clone(),
             };
-            self.overlay = Some(if key.code == KeyCode::Esc {
-                OverlayState::Detail { scroll: *scroll }
+            if key.code == KeyCode::Esc {
+                self.show_detail(*scroll);
             } else {
-                OverlayState::AttachmentPreview {
+                self.overlay = Some(OverlayState::AttachmentPreview {
                     attachment_id: next_attachment_id,
                     scroll: *scroll,
-                }
-            });
+                });
+            }
             return Ok(());
         }
         let removes_add_task_image = matches!(
@@ -1441,9 +1482,16 @@ impl App {
             return Ok(());
         }
         if let OverlayState::Detail { scroll } = overlay {
-            if key.code == KeyCode::Esc && self.detail_text_selection.take().is_some() {
-                self.detail_text_dragging = false;
-                self.overlay = Some(OverlayState::Detail { scroll });
+            if key.code == KeyCode::Esc
+                && self
+                    .detail
+                    .as_mut()
+                    .is_some_and(|detail| detail.clear_text_selection())
+            {
+                if let Some(detail) = self.detail.as_mut() {
+                    detail.finish_text_drag();
+                }
+                self.show_detail(scroll);
                 return Ok(());
             }
             if key.code == KeyCode::Char('q') && key.modifiers.is_empty() {
@@ -1453,17 +1501,21 @@ impl App {
             if key.code == KeyCode::Esc && !self.pending_shortcut.is_empty() {
                 self.pending_shortcut.clear();
                 self.pending_shortcut_scroll = 0;
-                self.overlay = Some(OverlayState::Detail { scroll });
+                self.show_detail(scroll);
                 return Ok(());
             }
             if key.code == KeyCode::Char('y')
                 && key.modifiers.is_empty()
-                && self.detail_text_selection.is_some()
+                && self
+                    .detail
+                    .as_ref()
+                    .and_then(|detail| detail.text_selection())
+                    .is_some()
             {
                 self.pending_shortcut.clear();
                 self.pending_shortcut_scroll = 0;
                 self.copy_detail_text_selection();
-                self.overlay = Some(OverlayState::Detail { scroll });
+                self.show_detail(scroll);
                 return Ok(());
             }
             if (!self.pending_shortcut.is_empty() || key.code == KeyCode::Char('g'))
@@ -1472,11 +1524,17 @@ impl App {
                 self.overlay = outcome;
                 return Ok(());
             }
-            let had_detail_focus = self.detail_focus.is_some();
+            let had_detail_focus = self
+                .detail
+                .as_ref()
+                .and_then(|detail| detail.focused_target())
+                .is_some();
             let selected_target = self.selected_detail_focus_target(terminal_size);
             if had_detail_focus && selected_target.is_none() {
-                self.detail_focus = None;
-                self.overlay = Some(OverlayState::Detail { scroll });
+                if let Some(detail) = self.detail.as_mut() {
+                    detail.set_focused_target(None);
+                }
+                self.show_detail(scroll);
                 return Ok(());
             }
             if let Some(selected_target) = selected_target {
@@ -1511,7 +1569,7 @@ impl App {
                                 self.open_detail_attachment(attachment_id, scroll);
                             } else {
                                 self.open_attachment_externally(&attachment_id).await;
-                                self.overlay = Some(OverlayState::Detail { scroll });
+                                self.show_detail(scroll);
                             }
                             return Ok(());
                         }
@@ -1520,7 +1578,11 @@ impl App {
                             focused_scroll = self.detail_focus_scroll(scroll, terminal_size);
                         }
                     },
-                    (KeyCode::Esc, _) => self.detail_focus = None,
+                    (KeyCode::Esc, _) => {
+                        if let Some(detail) = self.detail.as_mut() {
+                            detail.set_focused_target(None);
+                        }
+                    }
                     (KeyCode::Tab, KeyModifiers::NONE) => {
                         self.focus_detail_section(false, terminal_size);
                         focused_scroll = self.detail_focus_scroll(scroll, terminal_size);
@@ -1536,9 +1598,7 @@ impl App {
                         }
                     }
                 }
-                self.overlay = Some(OverlayState::Detail {
-                    scroll: focused_scroll,
-                });
+                self.show_detail(focused_scroll);
                 return Ok(());
             }
             let section_direction = match (key.code, key.modifiers) {
@@ -1551,9 +1611,7 @@ impl App {
                 && self.focus_detail_section(reverse, terminal_size)
             {
                 let focused_scroll = self.detail_focus_scroll(scroll, terminal_size);
-                self.overlay = Some(OverlayState::Detail {
-                    scroll: focused_scroll,
-                });
+                self.show_detail(focused_scroll);
                 return Ok(());
             }
             let inline_images = self.inline_image_context();
@@ -1574,9 +1632,7 @@ impl App {
                             inline_images.as_ref(),
                         )
                     });
-                self.overlay = Some(OverlayState::Detail {
-                    scroll: target_scroll,
-                });
+                self.show_detail(target_scroll);
                 return Ok(());
             }
 
@@ -1587,7 +1643,7 @@ impl App {
 
             if let Some(delta) = detail_task_delta(key) {
                 self.select_detail_task(delta);
-                self.overlay = Some(OverlayState::Detail { scroll: 0 });
+                self.show_detail(0);
                 return Ok(());
             }
 
@@ -1616,6 +1672,7 @@ impl App {
                 )
             };
             match outcome {
+                OverlayOutcome::None(OverlayState::Detail { scroll }) => self.show_detail(scroll),
                 OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
                 OverlayOutcome::Cancelled => {
                     if !self.restore_last_change_return().await? {
@@ -1824,9 +1881,7 @@ impl App {
     ) -> Result<()> {
         match outcome {
             OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
-            OverlayOutcome::Cancelled if was_detail_help => {
-                self.overlay = Some(OverlayState::Detail { scroll: 0 })
-            }
+            OverlayOutcome::Cancelled if was_detail_help => self.show_detail(0),
             OverlayOutcome::Cancelled if was_add_task_description_editor || was_add_task_picker => {
                 self.begin_add_task_step()
             }
@@ -1856,7 +1911,9 @@ impl App {
 
     async fn handle_focused_child_shortcut(&mut self, key: KeyEvent, scroll: u16) -> Result<bool> {
         let child_is_focused = matches!(
-            self.detail_focus,
+            self.detail
+                .as_ref()
+                .and_then(|detail| detail.focused_target()),
             Some(DetailTargetId::Task {
                 section: DetailSection::EpicChildren,
                 ..
@@ -1873,10 +1930,11 @@ impl App {
                 action @ (Action::BeginAddEpicChild | Action::RemoveEpicChild | Action::Undo),
             ) => {
                 self.pending_shortcut_scroll = 0;
-                self.detail_context = true;
-                self.detail_context_scroll = scroll;
+                if let Some(detail) = self.detail.as_mut() {
+                    detail.set_scroll(scroll);
+                }
                 self.execute(action).await?;
-                if self.detail_context && self.overlay.is_none() {
+                if self.detail.is_some() && self.overlay.is_none() {
                     self.restore_detail_overlay_at_scroll(true, scroll);
                 }
                 Ok(true)
@@ -1884,18 +1942,18 @@ impl App {
             DetailShortcutResolution::Action(_) => {
                 self.pending_shortcut_scroll = 0;
                 self.set_warning("Leave child focus before using that command");
-                self.overlay = Some(OverlayState::Detail { scroll });
+                self.show_detail(scroll);
                 Ok(true)
             }
             DetailShortcutResolution::Prefix => {
                 self.pending_shortcut_scroll = 0;
-                self.overlay = Some(OverlayState::Detail { scroll });
+                self.show_detail(scroll);
                 Ok(true)
             }
             DetailShortcutResolution::MissingAfterPrefix(label) => {
                 self.pending_shortcut_scroll = 0;
                 self.set_warning(format!("invalid shortcut: {label}"));
-                self.overlay = Some(OverlayState::Detail { scroll });
+                self.show_detail(scroll);
                 Ok(true)
             }
             DetailShortcutResolution::PassThrough => Ok(false),
@@ -1919,10 +1977,11 @@ impl App {
             }
             DetailShortcutResolution::Action(action) => {
                 self.pending_shortcut_scroll = 0;
-                self.detail_context = true;
-                self.detail_context_scroll = scroll;
+                if let Some(detail) = self.detail.as_mut() {
+                    detail.set_scroll(scroll);
+                }
                 self.execute(action).await?;
-                if self.detail_context && self.overlay.is_none() {
+                if self.detail.is_some() && self.overlay.is_none() {
                     self.restore_detail_overlay_at_scroll(true, scroll);
                 }
                 Ok(Some(self.overlay.take()))
@@ -2143,9 +2202,7 @@ impl App {
     pub(super) fn toggle_help_at_height(&mut self, _terminal_height: u16) {
         match self.overlay {
             Some(OverlayState::Help { .. }) => self.overlay = None,
-            Some(OverlayState::DetailHelp { .. }) => {
-                self.overlay = Some(OverlayState::Detail { scroll: 0 })
-            }
+            Some(OverlayState::DetailHelp { .. }) => self.show_detail(0),
             Some(OverlayState::Detail { .. }) => {
                 self.overlay = Some(OverlayState::DetailHelp { scroll: 0 })
             }

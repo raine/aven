@@ -206,9 +206,9 @@ impl App {
         self.widgets.table.select(next);
         self.focus = Focus::Tasks;
         if current != next {
-            self.detail_focus = None;
-            self.detail_hover = None;
-            self.detail_expanded_sections.clear();
+            if let Some(detail) = self.detail.as_mut() {
+                detail.reset_task_state(0);
+            }
             let message = if delta > 0 {
                 "selected next task"
             } else {
@@ -221,17 +221,13 @@ impl App {
     pub(super) async fn activate_or_toggle_detail(&mut self) -> Result<()> {
         if self.focus == Focus::Sidebar {
             self.apply_sidebar_selection().await?;
-        } else if matches!(self.overlay, Some(OverlayState::Detail { .. })) {
+        } else if self.detail.is_some() {
             self.clear_detail_session();
         } else if self.store.view_state.view == crate::tui::store::TaskView::RecentActions {
             self.set_info("recent actions are read-only");
         } else {
-            self.detail_navigation_history.clear();
-            self.detail_focus = None;
-            self.detail_hover = None;
-            self.detail_expanded_sections.clear();
-            self.overlay = Some(OverlayState::Detail { scroll: 0 });
-            self.detail_context_scroll = 0;
+            self.detail = crate::tui::detail_session::DetailSession::open(0);
+            self.show_detail(0);
         }
         Ok(())
     }
@@ -261,19 +257,22 @@ impl App {
     }
 
     pub(super) fn restore_detail_overlay(&mut self, return_to_detail: bool) {
-        self.restore_detail_overlay_at_scroll(return_to_detail, self.detail_context_scroll);
+        let scroll = self.detail.as_ref().map_or(0, |detail| detail.scroll());
+        self.restore_detail_overlay_at_scroll(return_to_detail, scroll);
     }
 
     pub(super) fn restore_detail_overlay_at_scroll(&mut self, return_to_detail: bool, scroll: u16) {
         if return_to_detail
+            && self.detail.is_some()
             && self
                 .store
                 .selected_task(self.widgets.table.selected())
                 .is_some()
         {
-            self.detail_context = false;
-            self.detail_context_scroll = scroll;
-            self.overlay = Some(OverlayState::Detail { scroll });
+            if let Some(detail) = self.detail.as_mut() {
+                detail.set_scroll(scroll);
+            }
+            self.show_detail(scroll);
         }
     }
 
@@ -281,14 +280,9 @@ impl App {
         self.pending_shortcut.clear();
         self.authoring.clear();
         self.clear_live_search_preview();
-        self.detail_navigation_history.clear();
-        self.detail_focus = None;
-        self.detail_hover = None;
-        self.detail_expanded_sections.clear();
-        self.removed_epic_child = None;
+        self.detail.close();
         self.epic_child_authoring = None;
         let had_overlay = self.overlay.take().is_some();
-        self.detail_context = false;
         if !had_overlay && self.focus == Focus::Sidebar {
             self.focus = Focus::Tasks;
             self.preserve_or_restore_sidebar_selection();
@@ -310,8 +304,9 @@ impl App {
         {
             self.focus = Focus::Tasks;
             self.widgets.table.select(Some(index));
-            if matches!(self.overlay, Some(OverlayState::Detail { .. })) {
-                self.overlay = Some(OverlayState::Detail { scroll: 0 });
+            if let Some(detail) = self.detail.as_mut() {
+                detail.reset_task_state(0);
+                self.show_detail(0);
             }
             return Ok(());
         }
@@ -325,14 +320,17 @@ impl App {
                 .map(|item| item.task.id.clone()),
             selected_index,
             table_offset: self.widgets.table.offset(),
-            return_to_detail: matches!(self.overlay, Some(OverlayState::Detail { .. }))
-                || self.detail_context,
-            detail_scroll: match self.overlay {
-                Some(OverlayState::Detail { scroll }) => scroll,
-                _ => self.detail_context_scroll,
-            },
-            detail_focus: self.detail_focus.clone(),
-            detail_expanded_sections: self.detail_expanded_sections.clone(),
+            return_to_detail: self.detail.is_some(),
+            detail_scroll: self.detail.as_ref().map_or(0, |detail| detail.scroll()),
+            detail_focus: self
+                .detail
+                .as_ref()
+                .and_then(|detail| detail.focused_target().cloned()),
+            detail_expanded_sections: self
+                .detail
+                .as_ref()
+                .map(|detail| detail.expanded_sections().clone())
+                .unwrap_or_default(),
         };
         self.store.view_state = TaskViewState {
             scope: TaskScope::Workspace,
@@ -366,7 +364,8 @@ impl App {
         self.last_change_return = Some(return_state);
         self.focus = Focus::Tasks;
         self.widgets.table.select(Some(selected));
-        self.overlay = Some(OverlayState::Detail { scroll: 0 });
+        self.detail = crate::tui::detail_session::DetailSession::open(0);
+        self.show_detail(0);
         Ok(())
     }
 
@@ -376,7 +375,7 @@ impl App {
         };
         self.cancel_authoring_overlay();
         self.overlay = None;
-        self.detail_context = false;
+        self.detail.close();
         self.store.view_state = return_state.view_state;
         let selected = self
             .store
@@ -388,14 +387,15 @@ impl App {
             });
         self.widgets.table.select(selected);
         *self.widgets.table.offset_mut() = return_state.table_offset;
-        self.detail_context_scroll = return_state.detail_scroll;
-        self.detail_focus = return_state.detail_focus;
-        self.detail_hover = None;
-        self.detail_expanded_sections = return_state.detail_expanded_sections;
         if return_state.return_to_detail {
-            self.overlay = Some(OverlayState::Detail {
-                scroll: return_state.detail_scroll,
-            });
+            let mut detail =
+                crate::tui::detail_session::DetailSession::open(return_state.detail_scroll);
+            if let Some(state) = detail.as_mut() {
+                state.set_focused_target(return_state.detail_focus);
+                *state.expanded_sections_mut() = return_state.detail_expanded_sections;
+            }
+            self.detail = detail;
+            self.show_detail(return_state.detail_scroll);
         }
         self.preserve_or_restore_sidebar_selection();
         self.prune_task_marks();

@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::{Result, bail};
 use aven_core::db::Database;
@@ -14,7 +14,6 @@ use crate::tui::shortcut_buffer::ShortcutBuffer;
 use crate::tui::store::{TaskOrder, TaskViewState, TuiStore};
 use crate::tui::toast::{Toast, ToastSeverity};
 
-pub(crate) const TASK_ROW_DOUBLE_CLICK: Duration = Duration::from_millis(500);
 pub(super) const MAX_EXTERNAL_IMAGE_EXPORTS: usize = 8;
 
 #[cfg(not(test))]
@@ -25,13 +24,6 @@ fn default_image_viewer_launcher() -> fn(&std::path::Path) -> anyhow::Result<()>
 #[cfg(test)]
 fn default_image_viewer_launcher() -> fn(&std::path::Path) -> anyhow::Result<()> {
     |_| Ok(())
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TaskRowClick {
-    pub(crate) task_id: crate::ids::TaskId,
-    pub(crate) viewport_row: u16,
-    pub(crate) at: Instant,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -173,15 +165,6 @@ impl DetailTargetId {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct DetailNavigationState {
-    pub(super) task_id: crate::ids::TaskId,
-    pub(super) scroll: u16,
-    pub(super) focused_target: Option<DetailTargetId>,
-    pub(super) expanded_sections: std::collections::BTreeSet<DetailSection>,
-    pub(super) view_state: TaskViewState,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct LastChangeReturnState {
     pub(super) view_state: TaskViewState,
     pub(super) selected_task_id: Option<crate::ids::TaskId>,
@@ -219,22 +202,14 @@ pub(crate) struct App {
     pub(super) pending_shortcut: ShortcutBuffer,
     pub(super) pending_shortcut_scroll: u16,
     pub(super) footer_choice: Option<FooterChoiceState>,
-    pub(super) detail_context: bool,
+    pub(crate) detail: crate::tui::detail_session::DetailSession,
     pub(super) sidebar_visible: bool,
-    pub(super) detail_context_scroll: u16,
     pub(super) authoring: AuthoringState,
     pub(super) needs_terminal_clear: bool,
     pub(super) search: crate::tui::app_search::SearchController,
     pub(super) update: crate::tui::app_update::UpdateController,
     pub(super) next_refresh_at: Instant,
-    pub(crate) last_task_click: Option<TaskRowClick>,
-    pub(crate) detail_focus: Option<DetailTargetId>,
-    pub(crate) detail_hover: Option<DetailTargetId>,
-    pub(crate) detail_expanded_sections: std::collections::BTreeSet<DetailSection>,
-    pub(crate) removed_epic_child: Option<RemovedEpicChild>,
     pub(super) epic_child_authoring: Option<EpicChildAuthoringContext>,
-    pub(crate) detail_text_selection: Option<crate::tui::detail_selection::DetailTextSelection>,
-    pub(crate) detail_text_dragging: bool,
     pub(super) previous_inline_image_placements: Vec<crate::tui::ui::DetailInlineImagePlacement>,
     pub(super) previous_inline_image_backend: crate::tui::inline_images::InlineImageBackend,
     pub(super) deferred_inline_image_placements: Vec<crate::tui::ui::DetailInlineImagePlacement>,
@@ -246,7 +221,6 @@ pub(crate) struct App {
     #[cfg(test)]
     pub(crate) inline_image_context_override: Option<crate::tui::ui::DetailInlineImageContext>,
     pub(super) navigation_history: BoundedHistory<TaskViewState>,
-    pub(super) detail_navigation_history: BoundedHistory<DetailNavigationState>,
     pub(super) last_changed_task_id: Option<crate::ids::TaskId>,
     pub(super) last_change_return: Option<LastChangeReturnState>,
 }
@@ -286,22 +260,14 @@ impl App {
             pending_shortcut: ShortcutBuffer::default(),
             pending_shortcut_scroll: 0,
             footer_choice: None,
-            detail_context: false,
+            detail: crate::tui::detail_session::DetailSession::inactive(),
             sidebar_visible: true,
-            detail_context_scroll: 0,
             authoring: AuthoringState::default(),
             needs_terminal_clear: false,
             search: crate::tui::app_search::SearchController::new(),
             update: crate::tui::app_update::UpdateController::new(),
             next_refresh_at,
-            last_task_click: None,
-            detail_focus: None,
-            detail_hover: None,
-            detail_expanded_sections: std::collections::BTreeSet::new(),
-            removed_epic_child: None,
             epic_child_authoring: None,
-            detail_text_selection: None,
-            detail_text_dragging: false,
             previous_inline_image_placements: Vec::new(),
             previous_inline_image_backend: crate::tui::inline_images::InlineImageBackend::None,
             deferred_inline_image_placements: Vec::new(),
@@ -313,7 +279,6 @@ impl App {
             #[cfg(test)]
             inline_image_context_override: None,
             navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),
-            detail_navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),
             last_changed_task_id: None,
             last_change_return: None,
         };
@@ -329,7 +294,7 @@ impl App {
             bail!("task target disappeared before the TUI loaded");
         }
         self.focus = Focus::Tasks;
-        self.overlay = Some(OverlayState::Detail { scroll: 0 });
+        self.show_detail(0);
         Ok(())
     }
 
@@ -373,33 +338,45 @@ impl App {
         self.navigation_history.clear();
     }
 
-    pub(super) fn push_detail_navigation_state(&mut self, previous: DetailNavigationState) {
-        self.detail_navigation_history.push(previous);
+    #[cfg(test)]
+    pub(super) fn push_detail_navigation_state(
+        &mut self,
+        previous: crate::tui::detail_session::DetailNavigationState,
+    ) {
+        if self.detail.is_none() {
+            self.detail = crate::tui::detail_session::DetailSession::open(0);
+        }
+        if let Some(detail) = self.detail.as_mut() {
+            detail.push_history(previous);
+        }
     }
 
     pub(super) fn detail_has_parent(&self) -> bool {
-        !self.detail_navigation_history.is_empty()
+        self.detail
+            .as_ref()
+            .is_some_and(|detail| detail.has_parent())
+    }
+
+    pub(super) fn show_detail(&mut self, scroll: u16) {
+        if let Some(detail) = self.detail.as_mut() {
+            detail.set_scroll(scroll);
+        } else {
+            self.detail = crate::tui::detail_session::DetailSession::open(scroll);
+        }
+        self.overlay = Some(OverlayState::Detail { scroll });
     }
 
     pub(super) fn clear_detail_session(&mut self) {
         self.pending_shortcut.clear();
         self.pending_shortcut_scroll = 0;
-        self.detail_navigation_history.clear();
-        self.detail_focus = None;
-        self.detail_hover = None;
-        self.detail_expanded_sections.clear();
-        self.detail_text_selection = None;
-        self.detail_text_dragging = false;
-        self.last_task_click = None;
-        self.detail_context = false;
-        self.detail_context_scroll = 0;
+        self.detail.close();
         self.overlay = None;
     }
 
     pub(super) async fn go_back_in_detail(&mut self) -> Result<bool> {
         let mut skipped = false;
-        while let Some(previous) = self.detail_navigation_history.pop() {
-            self.store.view_state = previous.view_state;
+        while let Some(previous) = self.detail.as_mut().and_then(|detail| detail.pop_history()) {
+            self.store.view_state = previous.view_state.clone();
             let selected = self.store.refresh(Some(&previous.task_id)).await?;
             let index = if let Some(index) = selected.filter(|&index| {
                 self.store
@@ -418,14 +395,10 @@ impl App {
             };
             self.widgets.table.select(Some(index));
             self.focus = Focus::Tasks;
-            self.detail_context = false;
-            self.detail_context_scroll = previous.scroll;
-            self.detail_focus = previous.focused_target;
-            self.detail_hover = None;
-            self.detail_expanded_sections = previous.expanded_sections;
-            self.overlay = Some(crate::tui::overlay::OverlayState::Detail {
-                scroll: previous.scroll,
-            });
+            if let Some(detail) = self.detail.as_mut() {
+                detail.restore_history_entry(&previous);
+            }
+            self.show_detail(previous.scroll);
             if skipped {
                 self.set_warning("some previous linked tasks are unavailable");
             }

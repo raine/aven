@@ -25,6 +25,7 @@ mod columns;
 mod config_overlay;
 mod conflict_flow;
 mod detail_selection;
+mod detail_session;
 mod event;
 mod inline_images;
 mod markdown;

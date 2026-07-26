@@ -12,6 +12,7 @@ use crate::tui::app_projects::{DELETE_PROJECT_TITLE, DELETE_TASK_TITLE};
 use crate::tui::app_search::SearchControllerView;
 use crate::tui::authoring::{ADD_NOTE_TITLE, AddTaskStep};
 use crate::tui::config_overlay::{CONFIG_INFO_TITLE, CONFIG_INIT_TITLE, CONFIG_PATHS_TITLE};
+use crate::tui::detail_session::DetailNavigationState;
 use crate::tui::event::Action;
 use crate::tui::overlay::{
     CommandState, ConfirmIntent, ConfirmState, LineEdit, MultilineInputMode, MultilineInputState,
@@ -826,7 +827,7 @@ mod keyboard_dispatch {
     #[tokio::test]
     async fn esc_cancels_prefix_before_overlay() {
         let mut app = test_app().await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
         app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
             .await
             .unwrap();
@@ -1253,7 +1254,7 @@ mod attachment_paste {
         let image = dir.path().join("photo.png");
         let original_bytes = compressible_png_bytes();
         std::fs::write(&image, &original_bytes).unwrap();
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
         let pending = app.attachment_controller.views();
@@ -1313,14 +1314,18 @@ mod attachment_paste {
         create_and_select_task(&mut app, test_task_draft("image target")).await;
         let image = dir.path().join("photo.png");
         std::fs::write(&image, compressible_png_bytes()).unwrap();
-        app.overlay = Some(OverlayState::Detail { scroll: 7 });
+        app.show_detail(7);
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
         finish_attachment_work(&mut app).await;
         let attachment_id = app.store.tasks[0].attachments[0].attachment_id.clone();
-        app.detail_focus = Some(crate::tui::app::DetailTargetId::Attachment {
-            attachment_id: attachment_id.clone(),
-        });
-        app.overlay = Some(OverlayState::Detail { scroll: 7 });
+        if app.detail.is_none() {
+            app.show_detail(0);
+        }
+        app.detail.as_mut().unwrap().focused_target =
+            Some(crate::tui::app::DetailTargetId::Attachment {
+                attachment_id: attachment_id.clone(),
+            });
+        app.show_detail(7);
 
         app.dispatch_key(shift_key(KeyCode::Char('D')), (100, 30).into())
             .await
@@ -1343,7 +1348,7 @@ mod attachment_paste {
             app.overlay,
             Some(OverlayState::Detail { scroll: 7 })
         ));
-        assert!(app.detail_focus.is_none());
+        assert!(app.detail.as_mut().unwrap().focused_target.is_none());
         assert!(app.store.tasks[0].attachments.is_empty());
         assert_eq!(toast_message(&app).as_deref(), Some("removed image"));
         let deleted: i64 =
@@ -1364,16 +1369,20 @@ mod attachment_paste {
         let second = dir.path().join("second.jpg");
         std::fs::write(&first, compressible_png_bytes()).unwrap();
         std::fs::write(&second, jpeg_bytes()).unwrap();
-        app.overlay = Some(OverlayState::Detail { scroll: 7 });
+        app.show_detail(7);
         app.dispatch_paste(first.to_str().unwrap()).await.unwrap();
         app.dispatch_paste(second.to_str().unwrap()).await.unwrap();
         finish_attachment_work(&mut app).await;
         let first_id = app.store.tasks[0].attachments[0].attachment_id.clone();
         let second_id = app.store.tasks[0].attachments[1].attachment_id.clone();
-        app.detail_focus = Some(crate::tui::app::DetailTargetId::Attachment {
-            attachment_id: first_id,
-        });
-        app.overlay = Some(OverlayState::Detail { scroll: 7 });
+        if app.detail.is_none() {
+            app.show_detail(0);
+        }
+        app.detail.as_mut().unwrap().focused_target =
+            Some(crate::tui::app::DetailTargetId::Attachment {
+                attachment_id: first_id,
+            });
+        app.show_detail(7);
 
         app.dispatch_key(shift_key(KeyCode::Char('D')), (100, 30).into())
             .await
@@ -1387,7 +1396,10 @@ mod attachment_paste {
             Some(OverlayState::Detail { scroll: 7 })
         ));
         assert_eq!(
-            app.detail_focus
+            app.detail
+                .as_mut()
+                .unwrap()
+                .focused_target
                 .as_ref()
                 .and_then(crate::tui::app::DetailTargetId::attachment_id),
             Some(second_id.as_str())
@@ -1402,13 +1414,17 @@ mod attachment_paste {
         create_and_select_task(&mut app, test_task_draft("image target")).await;
         let image = dir.path().join("photo.png");
         std::fs::write(&image, compressible_png_bytes()).unwrap();
-        app.overlay = Some(OverlayState::Detail { scroll: 3 });
+        app.show_detail(3);
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
         finish_attachment_work(&mut app).await;
         let attachment_id = app.store.tasks[0].attachments[0].attachment_id.clone();
-        app.detail_focus = Some(crate::tui::app::DetailTargetId::Attachment {
-            attachment_id: attachment_id.clone(),
-        });
+        if app.detail.is_none() {
+            app.show_detail(0);
+        }
+        app.detail.as_mut().unwrap().focused_target =
+            Some(crate::tui::app::DetailTargetId::Attachment {
+                attachment_id: attachment_id.clone(),
+            });
         app.overlay = Some(OverlayState::AttachmentPreview {
             attachment_id: attachment_id.clone(),
             scroll: 3,
@@ -1440,7 +1456,7 @@ mod attachment_paste {
         let image = dir.path().join("photo.png");
         let bytes = compressible_png_bytes();
         std::fs::write(&image, &bytes).unwrap();
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
@@ -1475,7 +1491,7 @@ mod attachment_paste {
         let image = dir.path().join("optimized.png");
         let bytes = compressible_png_bytes();
         std::fs::write(&image, &bytes).unwrap();
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
         assert_eq!(app.attachment_controller.views().len(), 1);
@@ -1501,7 +1517,7 @@ mod attachment_paste {
         create_and_select_task(&mut app, test_task_draft("invalid image target")).await;
         let image = dir.path().join("invalid.png");
         std::fs::write(&image, b"not an image").unwrap();
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
         finish_attachment_work(&mut app).await;
@@ -1535,7 +1551,7 @@ mod attachment_paste {
         assert!(app.select_task_by_id(&first_id));
         let image = dir.path().join("switch.png");
         std::fs::write(&image, compressible_png_bytes()).unwrap();
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
         assert!(app.select_task_by_id(&second_id));
@@ -1575,7 +1591,7 @@ mod attachment_paste {
         create_and_select_task(&mut app, test_task_draft("failing target")).await;
         let image = dir.path().join("failure.png");
         std::fs::write(&image, compressible_png_bytes()).unwrap();
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
         let mut conn = pool.acquire().await.unwrap();
         sqlx::query(
             "CREATE TRIGGER fail_background_attachment BEFORE INSERT ON task_attachments
@@ -1620,7 +1636,7 @@ mod attachment_paste {
         let second = dir.path().join("second.jpg");
         std::fs::write(&first, compressible_png_bytes()).unwrap();
         std::fs::write(&second, jpeg_bytes()).unwrap();
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_paste(first.to_str().unwrap()).await.unwrap();
         app.dispatch_paste(second.to_str().unwrap()).await.unwrap();
@@ -1649,7 +1665,7 @@ mod attachment_paste {
         create_and_select_task(&mut app, test_task_draft("shutdown target")).await;
         let image = dir.path().join("shutdown.png");
         std::fs::write(&image, compressible_png_bytes()).unwrap();
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
         app.attachment_controller.shutdown().await;
@@ -1671,7 +1687,7 @@ mod attachment_paste {
         let task_id = app.store.tasks[selected].task.id.clone();
         let image = dir.path().join("photo.png");
         std::fs::write(&image, compressible_png_bytes()).unwrap();
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
@@ -3602,14 +3618,14 @@ mod filters_and_workspaces {
     async fn header_home_click_closes_detail_overlay() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Detail target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 3 });
+        app.show_detail(3);
 
         app.dispatch_mouse(header_click(2), (140, 24).into())
             .await
             .unwrap();
 
         assert!(app.overlay.is_none());
-        assert!(!app.detail_context);
+        assert!(!app.detail.is_some());
         assert_eq!(app.widgets.table.selected(), Some(0));
     }
 
@@ -3617,7 +3633,7 @@ mod filters_and_workspaces {
     async fn header_home_click_closes_detail_underlay() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Detail target")).await;
-        app.detail_context = true;
+        app.detail = crate::tui::detail_session::DetailSession::open(0);
         app.overlay = Some(OverlayState::Picker(PickerState {
             intent: PickerIntent::FilterLabel,
             title: "Pick".to_string(),
@@ -3638,7 +3654,7 @@ mod filters_and_workspaces {
             .unwrap();
 
         assert!(app.overlay.is_none());
-        assert!(!app.detail_context);
+        assert!(!app.detail.is_some());
         assert_eq!(app.widgets.table.selected(), Some(0));
     }
 
@@ -3712,7 +3728,7 @@ mod filters_and_workspaces {
     async fn mouse_wheel_ignored_with_detail_underlay() {
         let mut app = test_app().await;
         let _ = create_and_select_task(&mut app, test_task_draft("task")).await;
-        app.detail_context = true;
+        app.detail = crate::tui::detail_session::DetailSession::open(0);
 
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
             .await
@@ -3926,10 +3942,10 @@ mod task_row_mouse {
         app.dispatch_mouse(click, (80, 24).into()).await.unwrap();
         assert_eq!(app.widgets.table.selected(), Some(0));
         assert!(app.overlay.is_none());
-        assert!(app.last_task_click.is_some());
+        assert!(app.detail.last_task_click().is_some());
 
         app.dispatch_mouse(click, (80, 24).into()).await.unwrap();
-        assert!(app.last_task_click.is_none());
+        assert!(app.detail.last_task_click().is_none());
         assert_eq!(app.widgets.table.selected(), Some(0));
         assert!(matches!(
             app.overlay,
@@ -4240,7 +4256,7 @@ mod authoring {
             Some(OverlayState::Detail { scroll: 0 })
         ));
         assert!(app.navigation_history.pop().is_none());
-        assert!(app.detail_navigation_history.pop().is_none());
+        assert!(app.detail.as_mut().unwrap().history.pop().is_none());
 
         app.handle_normal_key(KeyCode::Esc).await.unwrap();
         assert!(app.overlay.is_none());
@@ -5243,7 +5259,7 @@ mod detail_mode {
     async fn q_closes_detail_overlay() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Detail target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Char('q')), (80, 24).into())
             .await
@@ -5257,7 +5273,7 @@ mod detail_mode {
     async fn back_shortcut_closes_detail_overlay() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Detail target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Char('g')), (80, 24).into())
             .await
@@ -5272,7 +5288,7 @@ mod detail_mode {
             .unwrap();
 
         assert!(app.overlay.is_none());
-        assert!(!app.detail_context);
+        assert!(!app.detail.is_some());
         assert!(app.pending_shortcut.is_empty());
     }
 
@@ -5280,7 +5296,7 @@ mod detail_mode {
     async fn help_key_opens_detail_help_from_detail_overlay() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Detail help target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Char('?')), (80, 24).into())
             .await
@@ -5335,7 +5351,7 @@ mod detail_mode {
             24,
             false,
         );
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
             .await
@@ -5379,7 +5395,7 @@ mod detail_mode {
             ),
             0
         );
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
             .await
@@ -5401,7 +5417,7 @@ mod detail_mode {
             .collect::<Vec<_>>()
             .join("\n");
         create_and_select_task(&mut app, draft).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(ctrl_d(), (80, 24).into()).await.unwrap();
         assert!(matches!(
@@ -5444,7 +5460,7 @@ mod detail_mode {
     async fn detail_scroll_resists_down_input_at_bottom() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Short detail")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         for _ in 0..10 {
             app.dispatch_key(key(KeyCode::Char('j')), (80, 24).into())
@@ -5558,7 +5574,7 @@ mod detail_mode {
         draft.description =
             "**wrapped Markdown** remains stable across pointer movement".to_string();
         create_and_select_task(&mut app, draft).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
         let size: ratatui::layout::Size = (80, 24).into();
         render_app_buffer(&mut app, size.width, size.height);
         let projection_id = app
@@ -5600,14 +5616,14 @@ mod detail_mode {
             .collect::<Vec<_>>()
             .join("\n");
         create_and_select_task(&mut app, draft).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
         let size = (80, 24).into();
 
         app.dispatch_mouse(left_click(0, 3), size).await.unwrap();
         app.dispatch_mouse(left_drag(7, 3), size).await.unwrap();
         app.dispatch_mouse(left_release(7, 3), size).await.unwrap();
 
-        let selection = app.detail_text_selection.clone().unwrap();
+        let selection = app.detail.as_mut().unwrap().text_selection.clone().unwrap();
         let selected_text = {
             let item = app
                 .store
@@ -5616,7 +5632,7 @@ mod detail_mode {
             crate::tui::ui::detail_selected_text(item, &selection)
         };
         assert_eq!(selected_text.as_deref(), Some("Select"));
-        assert!(!app.detail_text_dragging);
+        assert!(!app.detail.as_mut().unwrap().text_dragging);
         assert!(render_app_text(&mut app, 80, 24).contains("copy selection"));
 
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), size)
@@ -5636,7 +5652,7 @@ mod detail_mode {
         );
 
         app.dispatch_key(key(KeyCode::Esc), size).await.unwrap();
-        assert!(app.detail_text_selection.is_none());
+        assert!(app.detail.as_mut().unwrap().text_selection.is_none());
         assert!(!render_app_text(&mut app, 80, 24).contains("copy selection"));
         assert!(matches!(
             app.overlay,
@@ -5653,7 +5669,7 @@ mod detail_mode {
             .collect::<Vec<_>>()
             .join("\n");
         create_and_select_task(&mut app, draft).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
             .await
@@ -5682,7 +5698,7 @@ mod detail_mode {
             .join("\n");
         let selected = create_and_select_task(&mut app, draft).await;
         let expected = crate::tui::ui::detail_scroll_cap(&app.store.tasks[selected], 80, 24);
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         for _ in 0..200 {
             app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
@@ -5768,7 +5784,7 @@ mod detail_mode {
             .position(|item| item.task.title == "Second")
             .unwrap();
         app.widgets.table.select(Some(first));
-        app.overlay = Some(OverlayState::Detail { scroll: 7 });
+        app.show_detail(7);
 
         app.dispatch_key(key(KeyCode::Char(']')), (80, 24).into())
             .await
@@ -5836,7 +5852,7 @@ mod detail_mode {
             .position(|item| item.task.id == parent_id)
             .unwrap();
         app.widgets.table.select(Some(parent_index));
-        app.overlay = Some(OverlayState::Detail { scroll: 4 });
+        app.show_detail(4);
         let child_ids = app.store.tasks[parent_index]
             .epic_children
             .iter()
@@ -5847,7 +5863,10 @@ mod detail_mode {
             .await
             .unwrap();
         assert_eq!(
-            app.detail_focus
+            app.detail
+                .as_mut()
+                .unwrap()
+                .focused_target
                 .as_ref()
                 .and_then(crate::tui::app::DetailTargetId::task_id)
                 .map(crate::ids::TaskId::as_str),
@@ -5870,7 +5889,10 @@ mod detail_mode {
             .await
             .unwrap();
         assert_eq!(
-            app.detail_focus
+            app.detail
+                .as_mut()
+                .unwrap()
+                .focused_target
                 .as_ref()
                 .and_then(crate::tui::app::DetailTargetId::task_id)
                 .map(crate::ids::TaskId::as_str),
@@ -5881,7 +5903,10 @@ mod detail_mode {
             .await
             .unwrap();
         assert_eq!(
-            app.detail_focus
+            app.detail
+                .as_mut()
+                .unwrap()
+                .focused_target
                 .as_ref()
                 .and_then(crate::tui::app::DetailTargetId::task_id)
                 .map(crate::ids::TaskId::as_str),
@@ -5896,7 +5921,7 @@ mod detail_mode {
             .unwrap();
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, child_ids[1]);
-        assert!(app.detail_focus.is_none());
+        assert!(app.detail.as_mut().unwrap().focused_target.is_none());
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
@@ -5908,7 +5933,10 @@ mod detail_mode {
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, parent_id);
         assert_eq!(
-            app.detail_focus
+            app.detail
+                .as_mut()
+                .unwrap()
+                .focused_target
                 .as_ref()
                 .and_then(crate::tui::app::DetailTargetId::task_id),
             Some(&child_ids[1])
@@ -5929,7 +5957,7 @@ mod detail_mode {
             priority: "high".to_string(),
             unresolved: true,
         }];
-        app.overlay = Some(OverlayState::Detail { scroll: 2 });
+        app.show_detail(2);
 
         app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
             .await
@@ -5947,7 +5975,7 @@ mod detail_mode {
             toast_message(&app).as_deref(),
             Some("linked task is unavailable")
         );
-        assert!(app.detail_navigation_history.is_empty());
+        assert!(app.detail.as_mut().unwrap().history.is_empty());
     }
 
     #[tokio::test]
@@ -5983,9 +6011,12 @@ mod detail_mode {
         app.store.refresh(Some(&parent_id)).await.unwrap();
         assert_eq!(app.store.tasks.len(), 1);
         app.widgets.table.select(Some(0));
-        app.detail_expanded_sections
+        app.show_detail(3);
+        app.detail
+            .as_mut()
+            .unwrap()
+            .expanded_sections
             .insert(crate::tui::app::DetailSection::Blocks);
-        app.overlay = Some(OverlayState::Detail { scroll: 3 });
 
         app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
             .await
@@ -5996,7 +6027,7 @@ mod detail_mode {
 
         assert_eq!(app.store.view_state.view, TaskView::Search);
         assert_eq!(app.store.tasks[0].task.id, child_id);
-        assert!(app.detail_expanded_sections.is_empty());
+        assert!(app.detail.as_mut().unwrap().expanded_sections.is_empty());
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
@@ -6012,7 +6043,10 @@ mod detail_mode {
         assert_eq!(app.store.view_state.view, TaskView::Inbox);
         assert_eq!(app.store.tasks[0].task.id, parent_id);
         assert!(
-            app.detail_expanded_sections
+            app.detail
+                .as_mut()
+                .unwrap()
+                .expanded_sections
                 .contains(&crate::tui::app::DetailSection::Blocks)
         );
         assert!(matches!(
@@ -6020,7 +6054,10 @@ mod detail_mode {
             Some(OverlayState::Detail { scroll: 0 })
         ));
         assert_eq!(
-            app.detail_focus
+            app.detail
+                .as_mut()
+                .unwrap()
+                .focused_target
                 .as_ref()
                 .and_then(crate::tui::app::DetailTargetId::task_id),
             Some(&child_id)
@@ -6041,17 +6078,24 @@ mod detail_mode {
             .position(|item| item.task.id == parent_id)
             .unwrap();
         app.widgets.table.select(Some(parent));
-        app.overlay = Some(OverlayState::Detail { scroll: 3 });
-        app.detail_focus = Some(DetailTargetId::Task {
+        app.show_detail(3);
+        if app.detail.is_none() {
+            app.show_detail(0);
+        }
+        app.detail.as_mut().unwrap().focused_target = Some(DetailTargetId::Task {
             section: DetailSection::Blocks,
             task_id: child_id.clone(),
         });
-        app.detail_expanded_sections.insert(DetailSection::Blocks);
+        app.detail
+            .as_mut()
+            .unwrap()
+            .expanded_sections
+            .insert(DetailSection::Blocks);
         let size = (80, 24).into();
         app.dispatch_mouse(left_click(0, 3), size).await.unwrap();
         app.dispatch_mouse(left_drag(10, 3), size).await.unwrap();
         app.dispatch_mouse(left_release(10, 3), size).await.unwrap();
-        let parent_selection = app.detail_text_selection.clone().unwrap();
+        let parent_selection = app.detail.as_mut().unwrap().text_selection.clone().unwrap();
         let parent_text = crate::tui::ui::detail_selected_text(
             app.store.selected_task(Some(parent)).unwrap(),
             &parent_selection,
@@ -6065,9 +6109,9 @@ mod detail_mode {
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
         ));
-        assert!(app.detail_focus.is_none());
-        assert!(app.detail_expanded_sections.is_empty());
-        assert!(app.detail_text_selection.is_some());
+        assert!(app.detail.as_mut().unwrap().focused_target.is_none());
+        assert!(app.detail.as_mut().unwrap().expanded_sections.is_empty());
+        assert!(app.detail.as_mut().unwrap().text_selection.is_some());
         assert!(
             crate::tui::ui::detail_selected_text(&app.store.tasks[0], &parent_selection).is_none()
         );
@@ -6080,21 +6124,40 @@ mod detail_mode {
             .await
             .unwrap();
 
-        assert_eq!(app.store.tasks[0].task.id, parent_id);
+        assert_eq!(
+            app.store
+                .selected_task(app.widgets.table.selected())
+                .map(|item| &item.task.id),
+            Some(&parent_id)
+        );
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Detail { scroll: 3 })
         ));
         assert_eq!(
-            app.detail_focus.as_ref().and_then(DetailTargetId::task_id),
+            app.detail
+                .as_mut()
+                .unwrap()
+                .focused_target
+                .as_ref()
+                .and_then(DetailTargetId::task_id),
             Some(&child_id)
         );
         assert!(
-            app.detail_expanded_sections
+            app.detail
+                .as_mut()
+                .unwrap()
+                .expanded_sections
                 .contains(&DetailSection::Blocks)
         );
         assert_eq!(
-            crate::tui::ui::detail_selected_text(&app.store.tasks[0], &parent_selection).as_deref(),
+            crate::tui::ui::detail_selected_text(
+                app.store
+                    .selected_task(app.widgets.table.selected())
+                    .unwrap(),
+                &parent_selection,
+            )
+            .as_deref(),
             Some(parent_text.as_str())
         );
         assert!(!app.detail_has_parent());
@@ -6103,22 +6166,17 @@ mod detail_mode {
             .await
             .unwrap();
         assert!(app.overlay.is_none());
-        assert!(app.detail_focus.is_none());
-        assert!(app.detail_expanded_sections.is_empty());
-        assert!(app.detail_text_selection.is_none());
-        assert!(!app.detail_text_dragging);
-        assert!(app.detail_navigation_history.is_empty());
-        assert_eq!(app.detail_context_scroll, 0);
+        assert!(app.detail.is_none());
 
         app.activate_or_toggle_detail().await.unwrap();
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
         ));
-        assert!(app.detail_focus.is_none());
-        assert!(app.detail_expanded_sections.is_empty());
-        assert!(app.detail_text_selection.is_none());
-        assert!(app.detail_navigation_history.is_empty());
+        assert!(app.detail.as_mut().unwrap().focused_target.is_none());
+        assert!(app.detail.as_mut().unwrap().expanded_sections.is_empty());
+        assert!(app.detail.as_mut().unwrap().text_selection.is_none());
+        assert!(app.detail.as_mut().unwrap().history.is_empty());
     }
 
     #[tokio::test]
@@ -6134,7 +6192,7 @@ mod detail_mode {
         .await;
         let parent_id = app.store.tasks[parent_index].task.id.clone();
         let display_ref = app.store.tasks[parent_index].display_ref.clone();
-        app.overlay = Some(OverlayState::Detail { scroll: 3 });
+        app.show_detail(3);
 
         for code in [KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')] {
             app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
@@ -6184,19 +6242,61 @@ mod detail_mode {
             .await
             .unwrap();
         assert!(matches!(app.overlay, Some(OverlayState::Search(_))));
-        assert!(!app.detail_context);
+        assert!(!app.detail.is_some());
 
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
             .unwrap();
         assert!(app.overlay.is_none());
-        assert!(!app.detail_context);
+        assert!(!app.detail.is_some());
         assert_eq!(
             app.store
                 .selected_task(app.widgets.table.selected())
                 .map(|item| &item.task.id),
             Some(&parent_id)
         );
+    }
+
+    #[tokio::test]
+    async fn canceling_new_epic_child_authoring_returns_to_detail_origin() {
+        let mut app = test_app().await;
+        create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        app.show_detail(3);
+
+        for code in [KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')] {
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        }
+        app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::AddTask(_))));
+        assert!(
+            app.epic_child_authoring
+                .as_ref()
+                .is_some_and(|context| context.return_to_detail)
+        );
+
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::Search(_))));
+        assert!(app.detail.is_some());
+
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 3 })
+        ));
+        assert!(app.detail.is_some());
     }
 
     #[tokio::test]
@@ -6228,7 +6328,7 @@ mod detail_mode {
             .position(|item| item.task.id == parent_id)
             .unwrap();
         app.widgets.table.select(Some(parent_index));
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         for code in [KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')] {
             app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
@@ -6301,7 +6401,7 @@ mod detail_mode {
             Some(&child_id)
         );
         app.widgets.table.select(Some(parent_index));
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
         app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
             .await
             .unwrap();
@@ -6311,13 +6411,21 @@ mod detail_mode {
         }
 
         assert_eq!(
-            app.removed_epic_child
+            app.detail
+                .as_mut()
+                .unwrap()
+                .removed_epic_child
                 .as_ref()
                 .map(|removed| &removed.child.task_id),
             Some(&child_id)
         );
         assert_eq!(
-            app.detail_focus.as_ref().and_then(DetailTargetId::task_id),
+            app.detail
+                .as_mut()
+                .unwrap()
+                .focused_target
+                .as_ref()
+                .and_then(DetailTargetId::task_id),
             Some(&child_id)
         );
         let linked: i64 = sqlx::query_scalar(
@@ -6354,11 +6462,19 @@ mod detail_mode {
             Some(&parent_id)
         );
         assert_eq!(
-            app.detail_focus.as_ref().and_then(DetailTargetId::task_id),
+            app.detail
+                .as_mut()
+                .unwrap()
+                .focused_target
+                .as_ref()
+                .and_then(DetailTargetId::task_id),
             Some(&child_id)
         );
         assert_eq!(
-            app.removed_epic_child
+            app.detail
+                .as_mut()
+                .unwrap()
+                .removed_epic_child
                 .as_ref()
                 .map(|removed| &removed.child.task_id),
             Some(&child_id)
@@ -6368,9 +6484,14 @@ mod detail_mode {
             .await
             .unwrap();
 
-        assert!(app.removed_epic_child.is_none());
+        assert!(app.detail.as_mut().unwrap().removed_epic_child.is_none());
         assert_eq!(
-            app.detail_focus.as_ref().and_then(DetailTargetId::task_id),
+            app.detail
+                .as_mut()
+                .unwrap()
+                .focused_target
+                .as_ref()
+                .and_then(DetailTargetId::task_id),
             Some(&child_id)
         );
         let linked: i64 = sqlx::query_scalar(
@@ -6404,13 +6525,16 @@ mod detail_mode {
             test_attachment("FIRSTIMAGE", "image/png", true, Some((640, 480))),
             test_attachment("LASTIMAGE", "image/jpeg", true, Some((800, 600))),
         ];
-        app.overlay = Some(OverlayState::Detail { scroll: 3 });
+        app.show_detail(3);
 
         app.dispatch_key(key(KeyCode::Tab), (100, 30).into())
             .await
             .unwrap();
         assert_eq!(
-            app.detail_focus
+            app.detail
+                .as_mut()
+                .unwrap()
+                .focused_target
                 .as_ref()
                 .and_then(crate::tui::app::DetailTargetId::attachment_id),
             Some("SUPPRESSED")
@@ -6446,7 +6570,10 @@ mod detail_mode {
             .await
             .unwrap();
         assert_eq!(
-            app.detail_focus
+            app.detail
+                .as_mut()
+                .unwrap()
+                .focused_target
                 .as_ref()
                 .and_then(crate::tui::app::DetailTargetId::attachment_id),
             Some("LASTIMAGE")
@@ -6468,7 +6595,7 @@ mod detail_mode {
         app.inline_image_context_override =
             Some(crate::tui::ui::DetailInlineImageContext::default());
         create_and_select_task(&mut app, test_task_draft("Image task")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.set_success("opened attachment in default image viewer");
 
@@ -6488,13 +6615,16 @@ mod detail_mode {
             previews_enabled: false,
             ..crate::tui::ui::DetailInlineImageContext::default()
         });
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Tab), (100, 30).into())
             .await
             .unwrap();
         assert_eq!(
-            app.detail_focus
+            app.detail
+                .as_mut()
+                .unwrap()
+                .focused_target
                 .as_ref()
                 .and_then(crate::tui::app::DetailTargetId::attachment_id),
             Some(attachment_id.as_str())
@@ -6522,7 +6652,7 @@ mod detail_mode {
             ..crate::tui::ui::DetailInlineImageContext::default()
         };
         app.inline_image_context_override = Some(context.clone());
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
         app.dispatch_key(key(KeyCode::Tab), (100, 30).into())
             .await
             .unwrap();
@@ -6695,7 +6825,7 @@ mod detail_mode {
             true,
             Some((640, 480)),
         )];
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
         let text_only_cap = crate::tui::ui::detail_scroll_cap(&app.store.tasks[selected], 80, 26);
         let preview_cap = crate::tui::ui::detail_scroll_cap_with_images(
             &app.store.tasks[selected],
@@ -6755,13 +6885,16 @@ mod detail_mode {
             true,
             Some((640, 480)),
         )];
-        app.overlay = Some(OverlayState::Detail { scroll: 5 });
+        app.show_detail(5);
 
         app.dispatch_key(key(KeyCode::Tab), (100, 30).into())
             .await
             .unwrap();
         assert_eq!(
-            app.detail_focus
+            app.detail
+                .as_mut()
+                .unwrap()
+                .focused_target
                 .as_ref()
                 .and_then(crate::tui::app::DetailTargetId::task_id),
             Some(&child_id)
@@ -6770,7 +6903,10 @@ mod detail_mode {
             .await
             .unwrap();
         assert_eq!(
-            app.detail_focus
+            app.detail
+                .as_mut()
+                .unwrap()
+                .focused_target
                 .as_ref()
                 .and_then(crate::tui::app::DetailTargetId::attachment_id),
             Some("FOCUSIMAGE")
@@ -6794,7 +6930,10 @@ mod detail_mode {
             .await
             .unwrap();
         assert_eq!(
-            app.detail_focus
+            app.detail
+                .as_mut()
+                .unwrap()
+                .focused_target
                 .as_ref()
                 .and_then(crate::tui::app::DetailTargetId::task_id),
             Some(&child_id)
@@ -6832,9 +6971,13 @@ mod detail_mode {
             unavailable_hashes: [suppressed_hash].into_iter().collect(),
             ..crate::tui::ui::DetailInlineImageContext::default()
         });
-        app.detail_focus = Some(crate::tui::app::DetailTargetId::Attachment {
-            attachment_id: "FIRSTIMAGE".to_string(),
-        });
+        if app.detail.is_none() {
+            app.show_detail(0);
+        }
+        app.detail.as_mut().unwrap().focused_target =
+            Some(crate::tui::app::DetailTargetId::Attachment {
+                attachment_id: "FIRSTIMAGE".to_string(),
+            });
         app.overlay = Some(OverlayState::AttachmentPreview {
             attachment_id: "FIRSTIMAGE".to_string(),
             scroll: 4,
@@ -6851,7 +6994,10 @@ mod detail_mode {
             }) if attachment_id == "SECONDIMAGE"
         ));
         assert_eq!(
-            app.detail_focus
+            app.detail
+                .as_mut()
+                .unwrap()
+                .focused_target
                 .as_ref()
                 .and_then(crate::tui::app::DetailTargetId::attachment_id),
             Some("SECONDIMAGE")
@@ -6889,7 +7035,7 @@ mod detail_mode {
         let attachment = test_attachment("CLICKIMAGE", "image/png", true, Some((640, 480)));
         let source_hash = attachment.sha256.clone();
         app.store.tasks[selected].attachments = vec![attachment];
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
         app.widgets.inline_image_placements = vec![crate::tui::ui::DetailInlineImagePlacement {
             attachment_id: "CLICKIMAGE".to_string(),
             source_hash,
@@ -6943,7 +7089,7 @@ mod detail_mode {
             &context,
         )
         .expect("second attachment scroll target");
-        app.overlay = Some(OverlayState::Detail { scroll });
+        app.show_detail(scroll);
         let (column, row) = (0..30)
             .flat_map(|row| (0..80).map(move |column| (column, row)))
             .find(|(column, row)| {
@@ -7008,17 +7154,21 @@ mod detail_mode {
             Some((640, 480)),
         )];
         app.widgets.table.select(Some(first));
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
-        app.detail_focus = Some(crate::tui::app::DetailTargetId::Attachment {
-            attachment_id: "FIRSTIMAGE".to_string(),
-        });
+        app.show_detail(0);
+        if app.detail.is_none() {
+            app.show_detail(0);
+        }
+        app.detail.as_mut().unwrap().focused_target =
+            Some(crate::tui::app::DetailTargetId::Attachment {
+                attachment_id: "FIRSTIMAGE".to_string(),
+            });
 
         let previous = app.widgets.table.selected();
         app.select_detail_task(1);
 
         assert_ne!(app.widgets.table.selected(), previous);
-        assert!(app.detail_focus.is_none());
-        assert!(app.detail_focus.is_none());
+        assert!(app.detail.as_mut().unwrap().focused_target.is_none());
+        assert!(app.detail.as_mut().unwrap().focused_target.is_none());
     }
 
     #[tokio::test]
@@ -7031,7 +7181,7 @@ mod detail_mode {
             let attachment =
                 test_attachment("INVALIDATEDIMAGE", "image/png", true, Some((640, 480)));
             app.store.tasks[selected].attachments = vec![attachment];
-            app.overlay = Some(OverlayState::Detail { scroll: 4 });
+            app.show_detail(4);
             app.dispatch_key(key(KeyCode::Tab), (100, 30).into())
                 .await
                 .unwrap();
@@ -7040,7 +7190,10 @@ mod detail_mode {
                 _ => panic!("expected detail overlay"),
             };
             assert_eq!(
-                app.detail_focus
+                app.detail
+                    .as_mut()
+                    .unwrap()
+                    .focused_target
                     .as_ref()
                     .and_then(crate::tui::app::DetailTargetId::attachment_id),
                 Some("INVALIDATEDIMAGE")
@@ -7055,7 +7208,7 @@ mod detail_mode {
                 .await
                 .unwrap();
 
-            assert!(app.detail_focus.is_none());
+            assert!(app.detail.as_mut().unwrap().focused_target.is_none());
             assert!(matches!(
                 app.overlay,
                 Some(OverlayState::Detail { scroll }) if scroll == focused_scroll
@@ -7075,12 +7228,14 @@ mod detail_mode {
             true,
             Some((640, 480)),
         )];
+        app.show_detail(4);
+        app.detail.as_mut().unwrap().focused_target =
+            Some(crate::tui::app::DetailTargetId::Attachment {
+                attachment_id: "ATTACHMENT000001".to_string(),
+            });
         app.overlay = Some(OverlayState::AttachmentPreview {
             attachment_id: "ATTACHMENT000001".to_string(),
             scroll: 4,
-        });
-        app.detail_focus = Some(crate::tui::app::DetailTargetId::Attachment {
-            attachment_id: "ATTACHMENT000001".to_string(),
         });
         assert!(!app.detail_underlay());
 
@@ -7092,7 +7247,10 @@ mod detail_mode {
             Some(OverlayState::Detail { scroll: 4 })
         ));
         assert_eq!(
-            app.detail_focus
+            app.detail
+                .as_mut()
+                .unwrap()
+                .focused_target
                 .as_ref()
                 .and_then(crate::tui::app::DetailTargetId::attachment_id),
             Some("ATTACHMENT000001")
@@ -7112,9 +7270,13 @@ mod detail_mode {
             true,
             Some((640, 480)),
         )];
-        app.detail_focus = Some(crate::tui::app::DetailTargetId::Attachment {
-            attachment_id: "OWNEDIMAGE".to_string(),
-        });
+        if app.detail.is_none() {
+            app.show_detail(0);
+        }
+        app.detail.as_mut().unwrap().focused_target =
+            Some(crate::tui::app::DetailTargetId::Attachment {
+                attachment_id: "OWNEDIMAGE".to_string(),
+            });
         app.overlay = Some(OverlayState::AttachmentPreview {
             attachment_id: "OWNEDIMAGE".to_string(),
             scroll: 6,
@@ -7172,7 +7334,7 @@ mod detail_mode {
             .position(|item| item.task.id == parent_id)
             .unwrap();
         app.widgets.table.select(Some(parent_index));
-        app.overlay = Some(OverlayState::Detail { scroll: 3 });
+        app.show_detail(3);
 
         let parent_item = app
             .store
@@ -7242,8 +7404,11 @@ mod detail_mode {
                 .position(|item| item.task.id == parent_id)
                 .unwrap(),
         ));
-        app.overlay = Some(OverlayState::Detail { scroll: 7 });
-        app.detail_focus = Some(DetailTargetId::Task {
+        app.show_detail(7);
+        if app.detail.is_none() {
+            app.show_detail(0);
+        }
+        app.detail.as_mut().unwrap().focused_target = Some(DetailTargetId::Task {
             section: DetailSection::EpicChildren,
             task_id: child_id.clone(),
         });
@@ -7260,7 +7425,12 @@ mod detail_mode {
             Some(OverlayState::Detail { scroll: 7 })
         ));
         assert_eq!(
-            app.detail_focus.as_ref().and_then(DetailTargetId::task_id),
+            app.detail
+                .as_mut()
+                .unwrap()
+                .focused_target
+                .as_ref()
+                .and_then(DetailTargetId::task_id),
             Some(&child_id)
         );
     }
@@ -7275,7 +7445,7 @@ mod detail_mode {
         app.push_detail_navigation_state(detail_navigation_state(&app, first_id.clone(), 2));
         app.push_detail_navigation_state(detail_navigation_state(&app, second_id.clone(), 4));
         app.widgets.table.select(Some(first));
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
@@ -7309,7 +7479,7 @@ mod detail_mode {
             .await
             .unwrap();
         assert!(app.overlay.is_none());
-        assert!(app.detail_navigation_history.is_empty());
+        assert!(app.detail.is_none());
     }
 
     #[tokio::test]
@@ -7325,8 +7495,11 @@ mod detail_mode {
             Some((640, 480)),
         )];
         app.widgets.table.select(Some(child));
-        app.overlay = Some(OverlayState::Detail { scroll: 5 });
-        app.detail_focus = Some(DetailTargetId::Attachment {
+        app.show_detail(5);
+        if app.detail.is_none() {
+            app.show_detail(0);
+        }
+        app.detail.as_mut().unwrap().focused_target = Some(DetailTargetId::Attachment {
             attachment_id: "FOCUSEDIMAGE".to_string(),
         });
         app.push_detail_navigation_state(detail_navigation_state(&app, parent_id.clone(), 3));
@@ -7334,7 +7507,7 @@ mod detail_mode {
         app.dispatch_key(key(KeyCode::Esc), (100, 30).into())
             .await
             .unwrap();
-        assert!(app.detail_focus.is_none());
+        assert!(app.detail.as_mut().unwrap().focused_target.is_none());
         assert_eq!(
             app.store.tasks[app.widgets.table.selected().unwrap()]
                 .task
@@ -7367,8 +7540,11 @@ mod detail_mode {
             Some((640, 480)),
         )];
         app.widgets.table.select(Some(child));
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
-        app.detail_focus = Some(DetailTargetId::Attachment {
+        app.show_detail(0);
+        if app.detail.is_none() {
+            app.show_detail(0);
+        }
+        app.detail.as_mut().unwrap().focused_target = Some(DetailTargetId::Attachment {
             attachment_id: "FOCUSEDIMAGE".to_string(),
         });
         app.push_detail_navigation_state(detail_navigation_state(&app, parent_id.clone(), 6));
@@ -7404,7 +7580,7 @@ mod detail_mode {
             crate::ids::TaskId::new(),
             4,
         ));
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
@@ -7432,14 +7608,14 @@ mod detail_mode {
             crate::ids::TaskId::new(),
             4,
         ));
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
             .unwrap();
 
         assert!(app.overlay.is_none());
-        assert!(app.detail_navigation_history.is_empty());
+        assert!(app.detail.is_none());
         assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
     }
 
@@ -7450,7 +7626,7 @@ mod detail_mode {
         let root_id = app.store.tasks[root].task.id.clone();
         create_and_select_task(&mut app, test_task_draft("Child")).await;
         app.push_detail_navigation_state(detail_navigation_state(&app, root_id, 3));
-        app.overlay = Some(OverlayState::Detail { scroll: 5 });
+        app.show_detail(5);
 
         app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
             .await
@@ -7461,8 +7637,7 @@ mod detail_mode {
             .await
             .unwrap();
         assert!(app.overlay.is_none());
-        assert!(app.detail_navigation_history.is_empty());
-        assert!(app.detail_focus.is_none());
+        assert!(app.detail.is_none());
     }
 
     #[tokio::test]
@@ -7472,7 +7647,10 @@ mod detail_mode {
         let parent_id = app.store.tasks[parent].task.id.clone();
         create_and_select_task(&mut app, test_task_draft("Child")).await;
         app.push_detail_navigation_state(detail_navigation_state(&app, parent_id.clone(), 9));
-        app.detail_focus = Some(DetailTargetId::Attachment {
+        if app.detail.is_none() {
+            app.show_detail(0);
+        }
+        app.detail.as_mut().unwrap().focused_target = Some(DetailTargetId::Attachment {
             attachment_id: "PREVIEWIMAGE".to_string(),
         });
         app.overlay = Some(OverlayState::AttachmentPreview {
@@ -7489,7 +7667,10 @@ mod detail_mode {
         ));
         assert!(app.detail_has_parent());
 
-        app.detail_focus = None;
+        if app.detail.is_none() {
+            app.show_detail(0);
+        }
+        app.detail.as_mut().unwrap().focused_target = None;
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
             .unwrap();
@@ -7509,7 +7690,7 @@ mod detail_mode {
         let child = create_and_select_task(&mut app, test_task_draft("Child")).await;
         let child_id = app.store.tasks[child].task.id.clone();
         app.push_detail_navigation_state(detail_navigation_state(&app, parent_id.clone(), 5));
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.refresh().await.unwrap();
         assert_eq!(
@@ -7538,14 +7719,14 @@ mod detail_mode {
     async fn detail_back_root_escape_closes_direct_detail() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Root")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
             .unwrap();
 
         assert!(app.overlay.is_none());
-        assert!(app.detail_navigation_history.is_empty());
+        assert!(app.detail.is_none());
     }
 
     #[tokio::test]
@@ -7555,7 +7736,7 @@ mod detail_mode {
         let parent_id = app.store.tasks[parent].task.id.clone();
         create_and_select_task(&mut app, test_task_draft("Child")).await;
         app.push_detail_navigation_state(detail_navigation_state(&app, parent_id, 3));
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Char('q')), (80, 24).into())
             .await
@@ -7566,14 +7747,14 @@ mod detail_mode {
             .unwrap();
 
         assert!(app.overlay.is_none());
-        assert!(app.detail_navigation_history.is_empty());
+        assert!(app.detail.is_none());
     }
 
     #[tokio::test]
     async fn add_note_from_detail_returns_to_detail() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Note target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Char('n')), (80, 24).into())
             .await
@@ -7692,7 +7873,7 @@ mod detail_mode {
         let selected =
             create_and_select_task(&mut app, test_task_draft("Detail availability")).await;
         let task_id = app.store.tasks[selected].task.id.clone();
-        app.overlay = Some(OverlayState::Detail { scroll: 2 });
+        app.show_detail(2);
 
         for value in ["2099-01-01", "2099-02-01"] {
             let expected = crate::time_input::parse_available_at_input(value).unwrap();
@@ -7755,7 +7936,7 @@ mod detail_mode {
         let mut app = test_app().await;
         let selected = create_and_select_task(&mut app, test_task_draft("Leave detail")).await;
         let task_id = app.store.tasks[selected].task.id.clone();
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
             .await
@@ -7806,7 +7987,7 @@ mod detail_mode {
     async fn detail_shortcuts_do_not_leave_detail_before_opening_overlay() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Detail target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
             .await
@@ -7826,7 +8007,7 @@ mod detail_mode {
     async fn edit_title_from_detail_renders_inline_cursor() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Detail title target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 5 });
+        app.show_detail(5);
 
         app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
             .await
@@ -7856,7 +8037,7 @@ mod detail_mode {
     async fn cancel_edit_title_from_detail_returns_to_detail() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Detail title target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
             .await
@@ -7881,7 +8062,7 @@ mod detail_mode {
         let mut app = test_app().await;
         let selected =
             create_and_select_task(&mut app, test_task_draft("Detail title target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
             .await
@@ -7938,7 +8119,7 @@ mod detail_mode {
             (vec![shift_key(KeyCode::Char('N'))], "note"),
             (vec![shift_key(KeyCode::Char('D'))], "delete"),
         ] {
-            app.overlay = Some(OverlayState::Detail { scroll: 4 });
+            app.show_detail(4);
             app.footer_choice = None;
             app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
                 .await
@@ -7981,7 +8162,7 @@ mod detail_mode {
                 FooterChoiceMode::Priority,
             ),
         ] {
-            app.overlay = Some(OverlayState::Detail { scroll: 4 });
+            app.show_detail(4);
             app.footer_choice = None;
             app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
                 .await
@@ -8010,7 +8191,7 @@ mod detail_mode {
         let mut app = test_app().await;
         app.store.create_label("Bug".to_string()).await.unwrap();
         create_and_select_task(&mut app, test_task_draft("Detail target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 3 });
+        app.show_detail(3);
 
         app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
             .await
@@ -8031,7 +8212,7 @@ mod detail_mode {
     async fn invalid_detail_prefix_stays_in_detail() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Detail target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 5 });
+        app.show_detail(5);
 
         app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
             .await
@@ -8055,7 +8236,7 @@ mod detail_mode {
     async fn detail_prefix_hints_render_above_detail_overlay() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Detail target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
             .await
@@ -8071,7 +8252,7 @@ mod detail_mode {
     async fn ignored_keys_stay_in_detail() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Detail target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Char('a')), (80, 24).into())
             .await
@@ -8088,7 +8269,7 @@ mod detail_mode {
     async fn detail_copy_clicks_copy_displayed_values_and_show_toasts() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Copy target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 4 });
+        app.show_detail(4);
         let terminal_size: ratatui::layout::Size = (120, 30).into();
 
         for (column, row) in [(2, 5), (88, 17), (88, 20), (88, 23)] {
@@ -8128,7 +8309,7 @@ mod detail_mode {
     async fn detail_toast_renders_above_detail_overlay() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Toast target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
         app.set_success("set APP-TEST status=done");
 
         let rendered = render_app_text(&mut app, 100, 30);
@@ -8143,7 +8324,7 @@ mod detail_mode {
         let selected = create_and_select_task(&mut app, test_task_draft("Done target")).await;
         let selected_task_id = app.store.tasks[selected].task.id.clone();
         let display_ref = app.store.tasks[selected].display_ref.clone();
-        app.overlay = Some(OverlayState::Detail { scroll: 7 });
+        app.show_detail(7);
 
         app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
             .await
@@ -8240,7 +8421,7 @@ mod detail_mode {
         create_and_select_task(&mut app, test_task_draft("Next target")).await;
         let selected = create_and_select_task(&mut app, test_task_draft("Done target")).await;
         let selected_task_id = app.store.tasks[selected].task.id.clone();
-        app.overlay = Some(OverlayState::Detail { scroll: 4 });
+        app.show_detail(4);
 
         app.dispatch_key(key(KeyCode::Char('s')), (80, 24).into())
             .await
@@ -8263,7 +8444,7 @@ mod detail_mode {
         let mut app = test_app().await;
         let selected =
             create_and_select_task(&mut app, test_task_draft("Status click target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 3 });
+        app.show_detail(3);
 
         app.dispatch_mouse(
             detail_metadata_click(crate::tui::ui::DetailMetadataTarget::Status),
@@ -8294,7 +8475,7 @@ mod detail_mode {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Hidden task")).await;
         let selected = create_and_select_task(&mut app, test_task_draft("Visible task")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_mouse(
             detail_metadata_click(crate::tui::ui::DetailMetadataTarget::Status),
@@ -8324,7 +8505,7 @@ mod detail_mode {
             },
         )
         .await;
-        app.overlay = Some(OverlayState::Detail { scroll: 3 });
+        app.show_detail(3);
 
         app.dispatch_mouse(
             detail_metadata_click(crate::tui::ui::DetailMetadataTarget::Priority),
@@ -8361,7 +8542,7 @@ mod detail_mode {
             .update_title(Some(selected), "After".to_string())
             .await
             .unwrap();
-        app.overlay = Some(OverlayState::Detail { scroll: 5 });
+        app.show_detail(5);
 
         app.dispatch_key(key(KeyCode::Char('u')), (80, 24).into())
             .await
@@ -8381,7 +8562,7 @@ mod detail_mode {
         create_and_select_task(&mut app, test_task_draft("Other task")).await;
         let selected = create_and_select_task(&mut app, test_task_draft("Undo target")).await;
         let task_id = app.store.tasks[selected].task.id.clone();
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_mouse(
             detail_metadata_click(crate::tui::ui::DetailMetadataTarget::Status),
@@ -8418,7 +8599,7 @@ mod detail_mode {
     async fn populated_add_note_from_detail_returns_after_confirmed_discard() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Note target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
             .await
@@ -8434,7 +8615,7 @@ mod detail_mode {
                 if state.mode == MultilineInputMode::ConfirmDiscard
                     && state.lines == ["detail draft"]
         ));
-        assert!(app.detail_context);
+        assert!(app.detail.is_some());
 
         app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
         assert!(matches!(
@@ -8443,7 +8624,7 @@ mod detail_mode {
                 if state.mode == MultilineInputMode::Compose
                     && state.lines == ["detail draft"]
         ));
-        assert!(app.detail_context);
+        assert!(app.detail.is_some());
 
         app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Char('Y')))
@@ -8460,7 +8641,7 @@ mod detail_mode {
     async fn cancel_add_note_from_detail_returns_to_detail() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Note target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
             .await
@@ -8481,7 +8662,7 @@ mod detail_mode {
     async fn add_note_blank_body_from_detail_returns_to_detail() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Note target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
             .await
@@ -8977,7 +9158,7 @@ mod task_editing {
             ('a', "copied task title and description"),
             ('n', "copied task notes"),
         ] {
-            app.overlay = Some(OverlayState::Detail { scroll: 3 });
+            app.show_detail(3);
             app.dispatch_key(key(KeyCode::Char('y')), (80, 24).into())
                 .await
                 .unwrap();
@@ -8998,7 +9179,7 @@ mod task_editing {
     async fn copying_empty_task_description_shows_info() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Title only")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.show_detail(0);
         assert!(!app.view().copy_description_available);
 
         app.dispatch_key(key(KeyCode::Char('y')), (80, 24).into())
@@ -9225,7 +9406,7 @@ mod delete_and_restore {
         let mut app = test_app().await;
         let selected =
             create_and_select_task(&mut app, test_task_draft("Detail delete target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 7 });
+        app.show_detail(7);
 
         app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
             .await

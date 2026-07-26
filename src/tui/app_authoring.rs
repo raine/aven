@@ -200,9 +200,7 @@ impl App {
             self.set_info("no selected task for note");
             return;
         };
-        let return_to_detail =
-            self.detail_context || matches!(self.overlay, Some(OverlayState::Detail { .. }));
-        self.detail_context = return_to_detail;
+        let return_to_detail = self.detail.is_some();
         self.overlay = Some(OverlayState::blank_multiline_input(
             MultilineIntent::AddNote {
                 task_id: item.task.id,
@@ -442,15 +440,17 @@ impl App {
                     .position(|item| item.task.id == context.epic.epic_id)
                     .or(selected),
             );
-            self.detail_focus = Some(crate::tui::app::DetailTargetId::Task {
-                section: crate::tui::app::DetailSection::EpicChildren,
-                task_id,
-            });
-            self.removed_epic_child = None;
+            if let Some(detail) = self.detail.as_mut() {
+                detail.set_focused_target(Some(crate::tui::app::DetailTargetId::Task {
+                    section: crate::tui::app::DetailSection::EpicChildren,
+                    task_id,
+                }));
+                detail.set_removed_epic_child(None);
+                detail.set_scroll(0);
+            }
             self.epic_child_authoring = None;
             self.authoring.clear_add_task();
-            self.overlay = Some(OverlayState::Detail { scroll: 0 });
-            self.detail_context = true;
+            self.show_detail(0);
             self.set_success(message);
             return Ok(());
         }
@@ -523,12 +523,13 @@ impl App {
             let mut search = context.search;
             self.schedule_search_preview(&mut search);
             self.overlay = Some(OverlayState::Search(search));
-            self.detail_context = return_to_detail;
+            if !return_to_detail {
+                self.detail.close();
+            }
             return;
         }
-        let return_to_detail = self.authoring.cancel() || self.detail_context;
+        let return_to_detail = self.authoring.cancel() || self.detail.is_some();
         self.overlay = None;
-        self.detail_context = false;
         self.restore_detail_overlay(return_to_detail);
     }
 }

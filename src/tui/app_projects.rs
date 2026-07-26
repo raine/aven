@@ -56,11 +56,9 @@ impl App {
             self.set_info("no selected task to edit");
             return;
         };
-        let return_to_detail =
-            self.detail_context || matches!(self.overlay, Some(OverlayState::Detail { .. }));
+        let return_to_detail = self.detail.is_some();
         if !self.marked_task_ids_in_view().is_empty() {
             let count = selection.len();
-            self.detail_context = return_to_detail;
             self.overlay = Some(OverlayState::confirm(
                 ConfirmIntent::DeleteTasks {
                     selection,
@@ -75,7 +73,6 @@ impl App {
             self.set_info("no selected task to edit");
             return;
         };
-        self.detail_context = return_to_detail;
         self.overlay = Some(OverlayState::confirm(
             ConfirmIntent::DeleteTasks {
                 selection,
