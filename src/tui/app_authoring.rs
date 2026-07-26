@@ -6,7 +6,7 @@ use crate::operations::TaskDraft;
 use crate::tui::app::{App, Notification};
 use crate::tui::app_intake::{IntakeCompletion, IntakePoll, NaturalRetry};
 use crate::tui::authoring::{
-    ADD_NOTE_TITLE, ADD_TASK_LABELS_TITLE, ADD_TASK_TITLE_PROJECT_TITLE, AddTaskStep,
+    ADD_NOTE_TITLE, ADD_TASK_LABELS_TITLE, ADD_TASK_TITLE_PROJECT_TITLE, AddTaskOrigin, AddTaskStep,
 };
 use crate::tui::natural_add_runtime::task_intake_log_path;
 use crate::tui::overlay::{
@@ -281,6 +281,7 @@ impl App {
             project.as_deref(),
             false,
         )?;
+        self.authoring.clear();
         self.intake.set_message("adding task in background");
         self.should_quit = true;
         Ok(())
@@ -311,7 +312,7 @@ impl App {
         let project = self.add_task_project_context();
         if create_on_success
             && !self.authoring.add_task_has_pending_attachments()
-            && self.epic_child_authoring.is_none()
+            && self.authoring.is_standalone_add_task()
         {
             self.intake.start_detached(
                 raw,
@@ -319,6 +320,7 @@ impl App {
                 project.as_deref(),
                 true,
             )?;
+            self.authoring.clear();
             self.overlay = None;
             self.set_info("adding task in background");
             return Ok(());
@@ -356,7 +358,6 @@ impl App {
         match ready.outcome {
             Ok(draft) if ready.create_on_success => {
                 self.submit_created_task(draft).await?;
-                self.authoring.clear_add_task();
             }
             Ok(draft) => {
                 if self.authoring.apply_add_task_draft(draft) {
@@ -395,96 +396,116 @@ impl App {
     }
 
     pub(super) async fn submit_created_task(&mut self, draft: TaskDraft) -> Result<()> {
-        let attachments = self.authoring.add_task_attachments();
+        let context = self
+            .authoring
+            .submission_context()
+            .expect("task submission requires an active authoring flow");
         let current_selected = self.list.selected_task();
-        if let Some(context) = self.epic_child_authoring.clone() {
-            let result = if attachments.is_empty() {
-                self.store
-                    .create_task_for_epic(draft, current_selected, &context.epic)
-                    .await
-            } else {
-                let db_path = self
-                    .intake
-                    .db_path()
-                    .ok_or_else(|| anyhow::anyhow!("database path is not available"))?;
-                let blob_dir = resolve_blob_dir(db_path, self.intake.config())?;
-                self.store
-                    .create_task_with_attachments_for_epic(
-                        draft,
-                        current_selected,
-                        &blob_dir,
-                        self.intake.config().local.attachment_lifecycle.policy(),
-                        attachments,
-                        &context.epic,
-                    )
-                    .await
-            };
-            let (message, selected, task_id) = match result {
-                Ok(created) => created,
-                Err(error) => {
-                    self.set_error(format!("{error:#}"));
-                    self.begin_add_task_step();
-                    return Ok(());
-                }
-            };
-            self.list.select_task(
-                self.store
+        match context.origin {
+            AddTaskOrigin::EpicChild { epic, .. } => {
+                let result = if context.attachments.is_empty() {
+                    self.store
+                        .create_task_for_epic(draft, current_selected, &epic)
+                        .await
+                } else {
+                    let db_path = self
+                        .intake
+                        .db_path()
+                        .ok_or_else(|| anyhow::anyhow!("database path is not available"))?;
+                    let blob_dir = resolve_blob_dir(db_path, self.intake.config())?;
+                    self.store
+                        .create_task_with_attachments_for_epic(
+                            draft,
+                            current_selected,
+                            &blob_dir,
+                            self.intake.config().local.attachment_lifecycle.policy(),
+                            context.attachments,
+                            &epic,
+                        )
+                        .await
+                };
+                let (message, selected, task_id) = match result {
+                    Ok(created) => created,
+                    Err(error) if crate::tui::store::task_creation_committed(&error) => {
+                        self.authoring.clear();
+                        return Err(error);
+                    }
+                    Err(error) => {
+                        self.set_error(format!("{error:#}"));
+                        self.begin_add_task_step();
+                        return Ok(());
+                    }
+                };
+                let selected_epic = if let Some(index) = self
+                    .store
                     .tasks
                     .iter()
-                    .position(|item| item.task.id == context.epic.epic_id)
-                    .or(selected),
-            );
-            if let Some(detail) = self.detail.state_mut() {
-                detail.set_focused_target(Some(crate::tui::app::DetailTargetId::Task {
-                    section: crate::tui::app::DetailSection::EpicChildren,
-                    task_id,
-                }));
-                detail.set_removed_epic_child(None);
-                detail.set_scroll(0);
-            }
-            self.epic_child_authoring = None;
-            self.authoring.clear_add_task();
-            self.show_detail(0);
-            self.set_success(message);
-            return Ok(());
-        }
-        let result = if attachments.is_empty() {
-            self.store.create_task(draft, current_selected).await
-        } else {
-            let db_path = self
-                .intake
-                .db_path()
-                .ok_or_else(|| anyhow::anyhow!("database path is not available"))?;
-            let blob_dir = resolve_blob_dir(db_path, self.intake.config())?;
-            self.store
-                .create_task_with_attachments(
-                    draft,
-                    current_selected,
-                    &blob_dir,
-                    self.intake.config().local.attachment_lifecycle.policy(),
-                    attachments,
-                )
-                .await
-        };
-        let (message, selected) = match result {
-            Ok(created) => created,
-            Err(error) => {
-                if crate::tui::store::task_creation_committed(&error) {
-                    self.authoring.clear_add_task();
+                    .position(|item| item.task.id == epic.epic_id)
+                {
+                    Some(index)
+                } else {
+                    match self.store.load_task_item(&epic.epic_id).await {
+                        Ok(Some(item)) => {
+                            self.store.show_exact_task(item);
+                            Some(0)
+                        }
+                        _ => selected,
+                    }
+                };
+                self.list.select_task(selected_epic);
+                self.show_detail(0);
+                if let Some(detail) = self.detail.state_mut() {
+                    detail.set_focused_target(Some(crate::tui::app::DetailTargetId::Task {
+                        section: crate::tui::app::DetailSection::EpicChildren,
+                        task_id,
+                    }));
+                    detail.set_removed_epic_child(None);
+                    detail.set_scroll(0);
                 }
-                return Err(error);
+                self.authoring.clear();
+                self.set_success(message);
             }
-        };
-        self.list.select_task(selected);
-        self.preserve_or_restore_sidebar_selection();
-        self.prune_task_marks();
-        if selected.is_none() {
-            self.restore_selection_after_mutation();
-        }
-        self.set_success(message.clone());
-        if self.intake.view().add_task_only {
-            self.intake.set_message(message);
-            self.should_quit = true;
+            AddTaskOrigin::Standalone => {
+                let result = if context.attachments.is_empty() {
+                    self.store.create_task(draft, current_selected).await
+                } else {
+                    let db_path = self
+                        .intake
+                        .db_path()
+                        .ok_or_else(|| anyhow::anyhow!("database path is not available"))?;
+                    let blob_dir = resolve_blob_dir(db_path, self.intake.config())?;
+                    self.store
+                        .create_task_with_attachments(
+                            draft,
+                            current_selected,
+                            &blob_dir,
+                            self.intake.config().local.attachment_lifecycle.policy(),
+                            context.attachments,
+                        )
+                        .await
+                };
+                let (message, selected) = match result {
+                    Ok(created) => created,
+                    Err(error) => {
+                        if crate::tui::store::task_creation_committed(&error) {
+                            self.authoring.clear();
+                        }
+                        return Err(error);
+                    }
+                };
+                self.authoring.clear();
+                self.list.select_task(selected);
+                self.preserve_or_restore_sidebar_selection();
+                self.prune_task_marks();
+                if selected.is_none() {
+                    self.restore_selection_after_mutation();
+                }
+                self.set_success(message.clone());
+                if self.intake.view().add_task_only {
+                    self.intake.set_message(message);
+                    self.should_quit = true;
+                }
+            }
         }
         Ok(())
     }
@@ -508,15 +529,17 @@ impl App {
     pub(super) fn cancel_authoring_overlay(&mut self) {
         self.pending_shortcut.clear();
         self.intake.cancel();
-        if let Some(context) = self.epic_child_authoring.take() {
-            self.authoring.clear_add_task();
-            let mut search = context.search;
-            self.schedule_search_preview(&mut search);
-            self.overlay = Some(OverlayState::Search(search));
-            return;
+        match self.authoring.cancel_add_task() {
+            Some(AddTaskOrigin::EpicChild {
+                mut return_search, ..
+            }) => {
+                self.schedule_search_preview(&mut return_search);
+                self.overlay = Some(OverlayState::Search(*return_search));
+            }
+            Some(AddTaskOrigin::Standalone) | None => {
+                self.overlay = None;
+            }
         }
-        self.authoring.cancel();
-        self.overlay = None;
     }
 }
 

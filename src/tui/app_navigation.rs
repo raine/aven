@@ -243,7 +243,6 @@ impl App {
         self.pending_shortcut.clear();
         self.authoring.clear();
         self.clear_live_search_preview();
-        self.epic_child_authoring = None;
         let had_overlay = self.overlay.take().is_some();
         if !had_overlay && self.detail.is_active() {
             self.detail.close();

@@ -395,9 +395,8 @@ impl App {
     }
 
     pub(super) fn detail_underlay(&self) -> bool {
-        (self.detail.is_active()
-            && !matches!(self.overlay, Some(OverlayState::AttachmentPreview { .. })))
-            || self.authoring.detail_underlay()
+        self.detail.is_active()
+            && !matches!(self.overlay, Some(OverlayState::AttachmentPreview { .. }))
     }
 
     pub(super) async fn refresh(&mut self) -> Result<()> {

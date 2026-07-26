@@ -149,12 +149,6 @@ pub(crate) struct RemovedEpicChild {
     pub(crate) original_position: usize,
 }
 
-#[derive(Debug, Clone)]
-pub(super) struct EpicChildAuthoringContext {
-    pub(super) epic: crate::tui::store::EpicContext,
-    pub(super) search: crate::tui::overlay::SearchState,
-}
-
 pub(crate) struct App {
     pub(crate) store: TuiStore,
     pub(crate) should_quit: bool,
@@ -173,7 +167,6 @@ pub(crate) struct App {
     pub(super) search: crate::tui::app_search::SearchController,
     pub(super) update: crate::tui::app_update::UpdateController,
     pub(super) next_refresh_at: Instant,
-    pub(super) epic_child_authoring: Option<EpicChildAuthoringContext>,
     pub(super) inline_images: InlineImageSurface,
     pub(super) preview_controller: crate::tui::preview_controller::PreviewController,
     pub(super) attachment_controller: crate::tui::attachment_controller::AttachmentController,
@@ -218,7 +211,6 @@ impl App {
             search: crate::tui::app_search::SearchController::new(),
             update: crate::tui::app_update::UpdateController::new(),
             next_refresh_at,
-            epic_child_authoring: None,
             inline_images: InlineImageSurface::new(),
             preview_controller: crate::tui::preview_controller::PreviewController::new(),
             attachment_controller: crate::tui::attachment_controller::AttachmentController::new(),

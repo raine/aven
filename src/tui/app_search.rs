@@ -267,28 +267,14 @@ impl App {
                     project_key,
                 };
                 if result.create_new {
-                    let mut search = SearchState::for_intent(SearchIntent::AddEpicChild {
+                    let mut return_search = SearchState::for_intent(SearchIntent::AddEpicChild {
                         epic_id: epic.epic_id.clone(),
                         display_ref: epic.display_ref.clone(),
                         project_key: epic.project_key.clone(),
                     });
-                    search.input = LineEdit::new(input.clone());
-                    self.epic_child_authoring =
-                        Some(crate::tui::app::EpicChildAuthoringContext { epic, search });
-                    let project_key = self
-                        .epic_child_authoring
-                        .as_ref()
-                        .map(|context| context.epic.project_key.clone())
-                        .unwrap_or_default();
-                    self.begin_add_task().await?;
-                    self.authoring
-                        .apply_add_task_project(vec![project_key.clone()]);
-                    if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
-                        state.title = LineEdit::new(input);
-                        state.project = project_key.clone();
-                        state.selected_project = Some(project_key.clone());
-                        state.initial_project = Some(project_key);
-                    }
+                    return_search.input = LineEdit::new(input.clone());
+                    self.authoring.begin_epic_child(epic, return_search, input);
+                    self.begin_add_task_title();
                     return Ok(());
                 }
                 if let Some(reason) = result.unavailable_reason {

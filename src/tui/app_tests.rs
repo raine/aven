@@ -10,7 +10,7 @@ use crate::tui::app_filters::{SCOPE_PROJECT_TITLE, SWITCH_WORKSPACE_TITLE};
 use crate::tui::app_intake::{IntakeWorkView, NaturalRetry};
 use crate::tui::app_projects::{DELETE_PROJECT_TITLE, DELETE_TASK_TITLE};
 use crate::tui::app_search::SearchControllerView;
-use crate::tui::authoring::{ADD_NOTE_TITLE, AddTaskStep};
+use crate::tui::authoring::{ADD_NOTE_TITLE, AddTaskOrigin, AddTaskStep};
 use crate::tui::config_overlay::{CONFIG_INFO_TITLE, CONFIG_INIT_TITLE, CONFIG_PATHS_TITLE};
 use crate::tui::detail_session::DetailSnapshot;
 use crate::tui::event::Action;
@@ -1919,6 +1919,78 @@ mod attachment_paste {
     }
 
     #[tokio::test]
+    async fn failed_epic_child_attachment_submission_retains_owned_origin_for_retry() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let epic = crate::tui::store::EpicContext {
+            epic_id: app.store.tasks[parent_index].task.id.clone(),
+            display_ref: app.store.tasks[parent_index].display_ref.clone(),
+            project_key: app.store.tasks[parent_index].task.project_key.clone(),
+        };
+        let return_search = SearchState::for_intent(SearchIntent::AddEpicChild {
+            epic_id: epic.epic_id.clone(),
+            display_ref: epic.display_ref.clone(),
+            project_key: epic.project_key.clone(),
+        });
+        app.authoring
+            .begin_epic_child(epic.clone(), return_search, "Retry child".to_string());
+        app.begin_add_task_title();
+        let image = dir.path().join("child-retry.png");
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            "CREATE TRIGGER fail_child_attachment_insert BEFORE INSERT ON task_attachments
+             BEGIN SELECT RAISE(FAIL, 'injected child attachment failure'); END",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        assert!(matches!(app.overlay, Some(OverlayState::AddTask(_))));
+        assert_eq!(app.authoring.add_task_attachments().len(), 1);
+        assert!(matches!(
+            app.authoring
+                .submission_context()
+                .map(|context| context.origin),
+            Some(AddTaskOrigin::EpicChild { .. })
+        ));
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("DROP TRIGGER fail_child_attachment_insert")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        let parent = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == epic.epic_id)
+            .unwrap();
+        assert!(
+            parent
+                .epic_children
+                .iter()
+                .any(|child| child.title == "Retry child")
+        );
+        assert!(app.authoring.is_idle());
+    }
+
+    #[tokio::test]
     async fn rolled_back_attachment_task_is_retained_for_retry() {
         let (dir, pool, mut app) = test_app_with_pool().await;
         app.set_add_task_db_path(dir.path().join("test.db"));
@@ -1994,6 +2066,58 @@ mod attachment_paste {
             attachments[0].attachment.filename.as_deref(),
             Some("natural.webp")
         );
+    }
+
+    #[tokio::test]
+    async fn natural_add_epic_child_uses_authoring_origin() {
+        let (dir, _pool, mut app) = test_app_with_pool().await;
+        configure_task_intake_success(&mut app, dir.path(), "Parsed child", "Model details");
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let epic = crate::tui::store::EpicContext {
+            epic_id: app.store.tasks[parent_index].task.id.clone(),
+            display_ref: app.store.tasks[parent_index].display_ref.clone(),
+            project_key: app.store.tasks[parent_index].task.project_key.clone(),
+        };
+        let return_search = SearchState::for_intent(SearchIntent::AddEpicChild {
+            epic_id: epic.epic_id.clone(),
+            display_ref: epic.display_ref.clone(),
+            project_key: epic.project_key.clone(),
+        });
+        app.authoring
+            .begin_epic_child(epic.clone(), return_search, String::new());
+        app.begin_add_task_title();
+        app.begin_add_task_natural();
+        type_chars(&mut app, "make a child task").await;
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+        for _ in 0..100 {
+            app.poll_pending_task_intake().await.unwrap();
+            if matches!(app.overlay, Some(OverlayState::AddTask(_))) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        let parent = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == epic.epic_id)
+            .unwrap();
+        assert!(
+            parent
+                .epic_children
+                .iter()
+                .any(|child| child.title == "Parsed child")
+        );
+        assert!(app.authoring.is_idle());
     }
 
     fn configure_task_intake_success(
@@ -4827,6 +4951,7 @@ mod authoring {
 
         assert!(!app.intake.work_pending());
         assert!(app.overlay.is_none());
+        assert!(app.authoring.is_idle());
         assert!(
             toast_message(&app).is_some_and(|message| { message == "adding task in background" })
         );
@@ -4844,6 +4969,7 @@ mod authoring {
 
         assert!(!app.intake.work_pending());
         assert!(app.overlay.is_none());
+        assert!(app.authoring.is_idle());
         assert!(
             toast_message(&app).is_some_and(|message| { message == "adding task in background" })
         );
@@ -6309,7 +6435,12 @@ mod detail_mode {
             .await
             .unwrap();
         assert!(matches!(app.overlay, Some(OverlayState::AddTask(_))));
-        assert!(app.epic_child_authoring.is_some());
+        assert!(matches!(
+            app.authoring
+                .submission_context()
+                .map(|context| context.origin),
+            Some(AddTaskOrigin::EpicChild { .. })
+        ));
 
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
@@ -6328,6 +6459,121 @@ mod detail_mode {
                 .map(|item| &item.task.id),
             Some(&parent_id)
         );
+    }
+
+    #[tokio::test]
+    async fn submitting_new_epic_child_uses_owned_origin_and_focuses_child() {
+        let mut app = test_app().await;
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+
+        for code in [KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')] {
+            app.handle_normal_key(code).await.unwrap();
+        }
+        type_chars(&mut app, "Owned child").await;
+        settle_search_preview(&mut app).await;
+        app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(app.overlay.is_none());
+        assert!(app.authoring.is_idle());
+        assert!(app.detail.is_active());
+        let parent = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == parent_id)
+            .unwrap();
+        let child = parent
+            .epic_children
+            .iter()
+            .find(|child| child.title == "Owned child")
+            .unwrap();
+        assert_eq!(
+            app.detail
+                .state()
+                .and_then(|detail| detail.focused_target())
+                .and_then(DetailTargetId::task_id),
+            Some(&child.task_id)
+        );
+    }
+
+    #[tokio::test]
+    async fn submitting_new_epic_child_from_linked_detail_returns_to_epic() {
+        let mut app = test_app().await;
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+        let parent_ref = app.store.tasks[parent_index].display_ref.clone();
+        let project_key = app.store.tasks[parent_index].task.project_key.clone();
+        let child_index = create_and_select_task(&mut app, test_task_draft("Existing child")).await;
+        let child_id = app.store.tasks[child_index].task.id.clone();
+        app.store
+            .add_epic_child(
+                crate::tui::store::EpicContext {
+                    epic_id: parent_id.clone(),
+                    display_ref: parent_ref,
+                    project_key,
+                },
+                child_id.clone(),
+            )
+            .await
+            .unwrap();
+        let parent_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == parent_id)
+            .unwrap();
+        app.list.select_task(Some(parent_index));
+        app.show_detail(0);
+        app.open_detail_task(&child_id, 0).await;
+
+        for code in [KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')] {
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        }
+        type_chars(&mut app, "Linked detail child").await;
+        settle_search_preview(&mut app).await;
+        app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .map(|item| &item.task.id),
+            Some(&parent_id)
+        );
+        assert!(app.detail.is_active());
+        assert!(matches!(
+            app.detail
+                .state()
+                .and_then(|detail| detail.focused_target()),
+            Some(DetailTargetId::Task {
+                section: DetailSection::EpicChildren,
+                ..
+            })
+        ));
     }
 
     #[tokio::test]
@@ -6350,7 +6596,12 @@ mod detail_mode {
             .await
             .unwrap();
         assert!(matches!(app.overlay, Some(OverlayState::AddTask(_))));
-        assert!(app.epic_child_authoring.is_some());
+        assert!(matches!(
+            app.authoring
+                .submission_context()
+                .map(|context| context.origin),
+            Some(AddTaskOrigin::EpicChild { .. })
+        ));
 
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await

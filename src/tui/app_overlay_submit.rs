@@ -94,6 +94,7 @@ impl App {
                 }
             }
         };
+        self.capture_add_task_state(&state);
         let draft = TaskDraft {
             title: title.to_string(),
             description: state.description.lines.join("\n").trim().to_string(),
@@ -111,7 +112,6 @@ impl App {
             }
             return Err(error);
         }
-        self.authoring.clear();
         Ok(())
     }
 

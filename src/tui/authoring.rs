@@ -1,5 +1,7 @@
 use crate::attachments::storage::sha256_hex;
 use crate::operations::{AttachmentAddInput, TaskDraft};
+use crate::tui::overlay::SearchState;
+use crate::tui::store::EpicContext;
 
 pub(crate) const ADD_NOTE_TITLE: &str = "Add note";
 pub(crate) const ADD_TASK_TITLE_PROJECT_TITLE: &str = "Add task: project";
@@ -83,7 +85,17 @@ impl PendingTaskAttachment {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AddTaskOrigin {
+    Standalone,
+    EpicChild {
+        epic: EpicContext,
+        return_search: Box<SearchState>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct AddTaskDraftState {
+    origin: AddTaskOrigin,
     title: String,
     description: String,
     project: Option<String>,
@@ -100,6 +112,7 @@ struct AddTaskDraftState {
 impl Default for AddTaskDraftState {
     fn default() -> Self {
         Self {
+            origin: AddTaskOrigin::Standalone,
             title: String::new(),
             description: String::new(),
             project: None,
@@ -133,6 +146,12 @@ pub(crate) struct AddTaskContext {
     pub(crate) due_on: String,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct AddTaskSubmissionContext {
+    pub(crate) origin: AddTaskOrigin,
+    pub(crate) attachments: Vec<PendingTaskAttachment>,
+}
+
 #[cfg(test)]
 pub(crate) struct AddTaskCreate {
     pub(crate) draft: TaskDraft,
@@ -153,10 +172,43 @@ impl AuthoringState {
         inferred_project: Option<String>,
     ) {
         self.flow = Some(AddTaskDraftState {
+            origin: AddTaskOrigin::Standalone,
             project: active_project,
             inferred_project,
             ..AddTaskDraftState::default()
         });
+    }
+
+    pub(crate) fn begin_epic_child(
+        &mut self,
+        epic: EpicContext,
+        return_search: SearchState,
+        title: String,
+    ) {
+        self.flow = Some(AddTaskDraftState {
+            origin: AddTaskOrigin::EpicChild {
+                epic: epic.clone(),
+                return_search: Box::new(return_search),
+            },
+            title,
+            project: Some(epic.project_key),
+            ..AddTaskDraftState::default()
+        });
+    }
+
+    pub(crate) fn is_standalone_add_task(&self) -> bool {
+        matches!(
+            self.flow.as_ref().map(|flow| &flow.origin),
+            Some(AddTaskOrigin::Standalone)
+        )
+    }
+
+    pub(crate) fn submission_context(&self) -> Option<AddTaskSubmissionContext> {
+        let flow = self.flow.as_ref()?;
+        Some(AddTaskSubmissionContext {
+            origin: flow.origin.clone(),
+            attachments: flow.attachments.clone(),
+        })
     }
 
     pub(crate) fn add_task_context(&self) -> Option<AddTaskContext> {
@@ -213,6 +265,7 @@ impl AuthoringState {
         matches!(self.flow.as_ref(), Some(draft) if !draft.attachments.is_empty())
     }
 
+    #[cfg(test)]
     pub(crate) fn add_task_attachments(&self) -> Vec<PendingTaskAttachment> {
         let Some(draft) = self.flow.as_ref() else {
             return Vec::new();
@@ -252,10 +305,6 @@ impl AuthoringState {
                 .filename
                 .unwrap_or_else(|| "pasted image".to_string()),
         )
-    }
-
-    pub(crate) fn clear_add_task(&mut self) {
-        self.flow = None;
     }
 
     pub(crate) fn capture_add_task_fields(
@@ -370,13 +419,8 @@ impl AuthoringState {
         }))
     }
 
-    pub(crate) fn cancel(&mut self) -> bool {
-        self.flow = None;
-        false
-    }
-
-    pub(crate) fn detail_underlay(&self) -> bool {
-        false
+    pub(crate) fn cancel_add_task(&mut self) -> Option<AddTaskOrigin> {
+        self.flow.take().map(|flow| flow.origin)
     }
 
     pub(crate) fn clear(&mut self) {
@@ -546,6 +590,47 @@ mod tests {
     }
 
     #[test]
+    fn standalone_origin_is_part_of_active_flow() {
+        let mut state = AuthoringState::default();
+        state.begin_add_task(None, None);
+
+        assert!(matches!(
+            state.submission_context().map(|context| context.origin),
+            Some(AddTaskOrigin::Standalone)
+        ));
+    }
+
+    #[test]
+    fn epic_child_origin_owns_epic_and_search_return() {
+        let mut state = AuthoringState::default();
+        let epic = EpicContext {
+            epic_id: crate::ids::TaskId::new(),
+            display_ref: "APP-EPIC".to_string(),
+            project_key: "app".to_string(),
+        };
+        let mut search = SearchState::for_intent(crate::tui::overlay::SearchIntent::AddEpicChild {
+            epic_id: epic.epic_id.clone(),
+            display_ref: epic.display_ref.clone(),
+            project_key: epic.project_key.clone(),
+        });
+        search.input = crate::tui::overlay::LineEdit::new("Child title".to_string());
+
+        state.begin_epic_child(epic.clone(), search.clone(), "Child title".to_string());
+
+        let context = state.submission_context().unwrap();
+        assert!(matches!(
+            context.origin,
+            AddTaskOrigin::EpicChild {
+                epic: owned_epic,
+                return_search,
+            } if owned_epic == epic && *return_search == search
+        ));
+        let origin = state.cancel_add_task().unwrap();
+        assert!(matches!(origin, AddTaskOrigin::EpicChild { .. }));
+        assert!(state.is_idle());
+    }
+
+    #[test]
     fn cancel_discards_pending_attachments() {
         let mut state = AuthoringState::default();
         state.begin_add_task(None, None);
@@ -561,7 +646,7 @@ mod tests {
             },
         );
         assert_eq!(state.add_pending_add_task_attachment(pending), Some(true));
-        state.cancel();
+        state.cancel_add_task();
         state.begin_add_task(None, None);
 
         assert!(!state.add_task_has_pending_attachments());
