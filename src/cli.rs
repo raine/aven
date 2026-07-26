@@ -394,8 +394,16 @@ pub(crate) struct InternalCommand {
 
 #[derive(Subcommand)]
 pub(crate) enum InternalSubcommand {
+    #[command(name = "demo-snapshot", hide = true)]
+    DemoSnapshot(InternalDemoSnapshotArgs),
     #[command(name = "natural-add", hide = true)]
     NaturalAdd(InternalNaturalAddArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct InternalDemoSnapshotArgs {
+    #[arg(long)]
+    pub(crate) output: PathBuf,
 }
 
 #[derive(Args)]

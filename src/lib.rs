@@ -34,9 +34,9 @@ use cli::{BackupSubcommand, Commands, DaemonSubcommand, InternalSubcommand, Skil
 use commands::{
     cmd_add, cmd_attachment, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context,
     cmd_delete_restore, cmd_demo, cmd_dep, cmd_doctor, cmd_edit, cmd_epic, cmd_export, cmd_import,
-    cmd_internal_natural_add, cmd_label, cmd_list, cmd_note, cmd_note_delete, cmd_prime,
-    cmd_project, cmd_search, cmd_self_update, cmd_show, cmd_skill, cmd_skill_install, cmd_text,
-    cmd_workspace,
+    cmd_internal_demo_snapshot, cmd_internal_natural_add, cmd_label, cmd_list, cmd_note,
+    cmd_note_delete, cmd_prime, cmd_project, cmd_search, cmd_self_update, cmd_show, cmd_skill,
+    cmd_skill_install, cmd_text, cmd_workspace,
 };
 use sync::{run_server, sync_client};
 use workspaces::resolve_active_workspace_with_database;
@@ -177,16 +177,17 @@ async fn dispatch_standalone(
         StandaloneCommand::Config(args) => cmd_config(args).await,
         StandaloneCommand::Demo => cmd_demo(db, workspace).await,
         StandaloneCommand::Update(args) => cmd_self_update(args).await,
-        StandaloneCommand::Internal(args) => {
-            let config = config::AppConfig::load()?;
-            let db_path = config::resolve_db_path(db, &config)?;
-            let database = db::Database::open(&db_path).await?;
-            match args.command {
-                InternalSubcommand::NaturalAdd(args) => {
-                    cmd_internal_natural_add(&database, &config, args).await
-                }
+        StandaloneCommand::Internal(args) => match args.command {
+            InternalSubcommand::DemoSnapshot(args) => {
+                cmd_internal_demo_snapshot(db, workspace, args).await
             }
-        }
+            InternalSubcommand::NaturalAdd(args) => {
+                let config = config::AppConfig::load()?;
+                let db_path = config::resolve_db_path(db, &config)?;
+                let database = db::Database::open(&db_path).await?;
+                cmd_internal_natural_add(&database, &config, args).await
+            }
+        },
         StandaloneCommand::Daemon(args) => {
             let config = config::AppConfig::load()?;
             let db_path = config::resolve_db_path(db, &config)?;

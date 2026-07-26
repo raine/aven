@@ -8,6 +8,7 @@ use aven_core::ids::TaskId;
 use aven_core::operations::TaskDraft;
 use chrono::{DateTime, Local, NaiveDate, SecondsFormat, TimeDelta, Utc};
 
+use crate::cli::InternalDemoSnapshotArgs;
 use crate::config::AppConfig;
 use crate::tui;
 use crate::workspaces::Workspace;
@@ -41,18 +42,39 @@ struct DemoSummary {
 }
 
 pub(crate) async fn cmd_demo(db: Option<PathBuf>, workspace: Option<String>) -> Result<()> {
-    if db.is_some() {
-        bail!("error demo-isolated option=--db");
-    }
-    if workspace.is_some() {
-        bail!("error demo-isolated option=--workspace");
-    }
+    ensure_demo_isolated(db, workspace)?;
 
     run_demo_session(|database, workspace, db_path, config| async move {
         let launch = tui::resolve_launch(&database, &workspace, Default::default()).await?;
         tui::run_demo(database, workspace, launch, db_path, config).await
     })
     .await
+}
+
+pub(crate) async fn cmd_internal_demo_snapshot(
+    db: Option<PathBuf>,
+    workspace: Option<String>,
+    args: InternalDemoSnapshotArgs,
+) -> Result<()> {
+    ensure_demo_isolated(db, workspace)?;
+    if args.output.exists() {
+        bail!("error demo-snapshot-exists path={}", args.output.display());
+    }
+
+    let database = Database::open(&args.output).await?;
+    seed_demo(&database, &Workspace::default(), DemoClock::now()).await?;
+    println!("Created demo snapshot at {}", args.output.display());
+    Ok(())
+}
+
+fn ensure_demo_isolated(db: Option<PathBuf>, workspace: Option<String>) -> Result<()> {
+    if db.is_some() {
+        bail!("error demo-isolated option=--db");
+    }
+    if workspace.is_some() {
+        bail!("error demo-isolated option=--workspace");
+    }
+    Ok(())
 }
 
 async fn run_demo_session<R, F, Fut>(runner: F) -> Result<R>
@@ -227,7 +249,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn seed_demo_creates_the_marketing_dataset() {
+    async fn seed_demo_creates_the_curated_dataset() {
         let temp = tempfile::tempdir().unwrap();
         let database = Database::open(&temp.path().join("demo.sqlite"))
             .await

@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 default_session="${CUA_SANDBOX_SESSION:-}"
-default_db="${AVEN_SANDBOX_DB:-$HOME/.local/state/aven/marketing-screenshot.sqlite}"
+default_db="${AVEN_SANDBOX_DB:-}"
 global_sandbox="${CUA_SANDBOX_COMMAND:-$(command -v cua-sandbox || true)}"
 
 usage() {
@@ -12,7 +12,7 @@ Usage: scripts/cua-sandbox <command> [arguments]
 
 Aven command:
   db-bootstrap <session> [source] [--force]
-                           Snapshot a host aven database into a session
+                           Install demo data or snapshot a host aven database
 
 Global commands:
   setup                    Install the CLI and build the persistent image
@@ -26,7 +26,7 @@ Global commands:
 Environment:
   CUA_SANDBOX_COMMAND    Global command override
   CUA_SANDBOX_SESSION    Session fallback when an argument is omitted
-  AVEN_SANDBOX_DB        Database source for db-bootstrap
+  AVEN_SANDBOX_DB        Host database source instead of demo data
 USAGE
 }
 
@@ -67,10 +67,12 @@ bootstrap_database() (
   local binary="/home/user/aven-run/aven"
 
   require_command docker
-  require_command sqlite3
-  if [[ ! -f "$source" ]]; then
-    echo "database source does not exist: $source" >&2
-    exit 1
+  if [[ -n "$source" ]]; then
+    require_command sqlite3
+    if [[ ! -f "$source" ]]; then
+      echo "database source does not exist: $source" >&2
+      exit 1
+    fi
   fi
   if [[ "$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || true)" != "running" ]]; then
     echo "sandbox container is not running: $container" >&2
@@ -93,45 +95,57 @@ bootstrap_database() (
     exit 0
   fi
 
-  local temp_dir snapshot remote
-  temp_dir="$(mktemp -d)"
-  trap 'rm -rf "$temp_dir"' EXIT
-  snapshot="$temp_dir/aven.sqlite"
-  remote="/home/user/aven-run/.aven-bootstrap-$session-$$.sqlite"
-
-  sqlite3 "$source" ".backup '$snapshot'"
-
-  local version migration
+  local source_description
   local -a normalized=()
-  while IFS= read -r version; do
-    if [[ ! "$version" =~ ^[0-9]+$ ]]; then
-      echo "database contains an invalid migration version: $version" >&2
+  docker exec -u user "$container" \
+    rm -f "$destination.bootstrap" "$destination.bootstrap-wal" "$destination.bootstrap-shm"
+
+  if [[ -z "$source" ]]; then
+    docker exec -u user "$container" "$binary" internal demo-snapshot \
+      --output "$destination.bootstrap"
+    source_description="branch demo dataset"
+  else
+    local temp_dir snapshot remote
+    temp_dir="$(mktemp -d)"
+    trap 'rm -rf "$temp_dir"' EXIT
+    snapshot="$temp_dir/aven.sqlite"
+    remote="/home/user/aven-run/.aven-bootstrap-$session-$$.sqlite"
+
+    sqlite3 "$source" ".backup '$snapshot'"
+
+    local version migration
+    while IFS= read -r version; do
+      if [[ ! "$version" =~ ^[0-9]+$ ]]; then
+        echo "database contains an invalid migration version: $version" >&2
+        exit 1
+      fi
+      migration="$(compgen -G "$repo_root/crates/aven-core/migrations/${version}_*.sql" || true)"
+      if [[ -z "$migration" ]]; then
+        sqlite3 "$snapshot" "DELETE FROM _sqlx_migrations WHERE version = $version;"
+        normalized+=("$version")
+      fi
+    done < <(sqlite3 "$snapshot" 'SELECT version FROM _sqlx_migrations ORDER BY version;')
+
+    if [[ "$(sqlite3 "$snapshot" 'PRAGMA quick_check;')" != "ok" ]]; then
+      echo "database snapshot failed its integrity check" >&2
       exit 1
     fi
-    migration="$(compgen -G "$repo_root/crates/aven-core/migrations/${version}_*.sql" || true)"
-    if [[ -z "$migration" ]]; then
-      sqlite3 "$snapshot" "DELETE FROM _sqlx_migrations WHERE version = $version;"
-      normalized+=("$version")
-    fi
-  done < <(sqlite3 "$snapshot" 'SELECT version FROM _sqlx_migrations ORDER BY version;')
-
-  if [[ "$(sqlite3 "$snapshot" 'PRAGMA quick_check;')" != "ok" ]]; then
-    echo "database snapshot failed its integrity check" >&2
-    exit 1
+    chmod 0644 "$snapshot"
+    docker exec -u user "$container" mkdir -p /home/user/aven-run
+    docker cp "$snapshot" "$container:$remote"
+    docker exec -u user "$container" sh -lc "
+      set -eu
+      cp '$remote' '$destination.bootstrap'
+    "
+    docker exec "$container" rm -f "$remote"
+    source_description="$source"
   fi
-  chmod 0644 "$snapshot"
-  docker exec -u user "$container" mkdir -p /home/user/aven-run
-  docker cp "$snapshot" "$container:$remote"
-  docker exec -u user "$container" sh -lc "
-    set -eu
-    cp '$remote' '$destination.bootstrap'
-  "
-  docker exec "$container" rm -f "$remote"
 
   if ! docker exec -u user -e AVEN_DB="$destination.bootstrap" \
     "$container" "$binary" list --all --limit 1 >/dev/null
   then
-    docker exec -u user "$container" rm -f "$destination.bootstrap"
+    docker exec -u user "$container" \
+      rm -f "$destination.bootstrap" "$destination.bootstrap-wal" "$destination.bootstrap-shm"
     echo "sandbox aven could not open the database snapshot" >&2
     exit 1
   fi
@@ -140,7 +154,7 @@ bootstrap_database() (
   docker exec -u user "$container" mv "$destination.bootstrap" "$destination"
 
   echo "Bootstrapped $destination"
-  echo "Source: $source"
+  echo "Source: $source_description"
   echo "Session: $session"
   if [[ "${#normalized[@]}" -gt 0 ]]; then
     printf 'Ignored source-only migrations:'

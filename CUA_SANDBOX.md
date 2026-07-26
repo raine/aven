@@ -178,25 +178,17 @@ docker exec -u user "$container" sh -lc '
 
 ## Bootstrap representative data
 
-Populate a session from the marketing screenshot database after deploying the
+Populate a session from the branch's curated demo dataset after deploying the
 branch's aven binary and before launching the TUI:
 
 ```sh
 just cua-sandbox-db aven-auto-update-a1
 ```
 
-The default source is:
-
-```text
-~/.local/state/aven/marketing-screenshot.sqlite
-```
-
-The bootstrap command uses SQLite's online backup operation to create a
-consistent host snapshot and runs `PRAGMA quick_check`. Migration records that
-do not exist in the branch are omitted from the disposable snapshot. The
-branch binary must successfully open the result before it is atomically
-installed as `/home/user/aven-run/aven.db`. The source database remains
-unchanged.
+The bootstrap command asks the deployed branch binary to materialize the same
+curated dataset as `aven demo`. The branch binary must successfully open the
+result before it is atomically installed as `/home/user/aven-run/aven.db`.
+Each session receives its own disposable database.
 
 An existing sandbox database is preserved by default. Replace it explicitly
 when a fresh snapshot is required:
@@ -205,7 +197,10 @@ when a fresh snapshot is required:
 scripts/cua-sandbox db-bootstrap aven-auto-update-a1 --force
 ```
 
-Use another source path when needed:
+Use another source path when needed. Host database sources use SQLite's online
+backup operation, run `PRAGMA quick_check`, and omit migration records that do
+not exist in the branch from the disposable snapshot. The source database
+remains unchanged.
 
 ```sh
 scripts/cua-sandbox db-bootstrap aven-auto-update-a1 \

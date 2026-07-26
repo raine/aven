@@ -18,6 +18,27 @@ fn demo_rejects_global_database_and_workspace_options() {
 }
 
 #[test]
+fn internal_demo_snapshot_materializes_current_demo_data() {
+    let env = TestEnv::new();
+    let snapshot = env.db("demo-snapshot.sqlite");
+
+    let output = ok(env.aven_config([
+        "internal",
+        "demo-snapshot",
+        "--output",
+        snapshot.to_str().expect("utf8 database path"),
+    ]));
+    assert!(output.contains("Created demo snapshot"));
+    assert!(snapshot.exists());
+
+    let tasks = ok(env.aven(&snapshot, ["list", "--all", "--limit", "100"]));
+    assert!(tasks.contains("Add due dates and scheduling"));
+
+    let upcoming = ok(env.aven(&snapshot, ["search", "Parse natural-language dates"]));
+    assert!(upcoming.contains("Parse natural-language dates when adding tasks"));
+}
+
+#[test]
 fn demo_help_is_discoverable() {
     let env = TestEnv::new();
     let help = ok(env.aven_config(["--help"]));

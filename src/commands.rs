@@ -25,7 +25,7 @@ pub(crate) use self::config::cmd_config;
 pub(crate) use self::conflicts::cmd_conflict;
 pub(crate) use self::context::cmd_context;
 pub(crate) use self::data_safety::{cmd_backup, cmd_backup_restore, cmd_export, cmd_import};
-pub(crate) use self::demo::cmd_demo;
+pub(crate) use self::demo::{cmd_demo, cmd_internal_demo_snapshot};
 pub(crate) use self::doctor::cmd_doctor;
 pub(crate) use self::labels::cmd_label;
 pub(crate) use self::notes::{cmd_note, cmd_note_delete};
