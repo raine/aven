@@ -1256,43 +1256,89 @@ mod task_creation_and_updates {
     }
 
     #[tokio::test]
-    async fn update_deleted_for_tasks_deletes_each_marked_task() {
+    async fn batch_delete_hides_rows_and_restores_a_clamped_anchor() {
         let mut store = test_store().await;
         let (first_id, _) = create_selected_task(&mut store, "First").await;
         let (second_id, _) = create_selected_task(&mut store, "Second").await;
+        create_selected_task(&mut store, "Third").await;
         let task_ids = vec![first_id, second_id];
+        let anchor = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_ids[1])
+            .unwrap();
 
         let outcome = store
-            .update_deleted_for_tasks(None, &task_ids, true)
+            .update_deleted_for_tasks(Some(anchor), &task_ids, true)
             .await
             .unwrap()
             .unwrap();
 
         assert_eq!(outcome.message, "deleted 2 tasks");
-        assert!(store.tasks.is_empty());
+        assert_eq!(store.tasks.len(), 1);
+        assert!(
+            store
+                .tasks
+                .iter()
+                .all(|item| !task_ids.contains(&item.task.id))
+        );
+        assert_eq!(outcome.selected, Some(0));
+        assert_eq!(store.counts.inbox, 1);
+        let inbox = store
+            .sidebar_entries
+            .iter()
+            .find(|entry| entry.label == "Inbox")
+            .unwrap();
+        assert_eq!(inbox.count, 1);
+
+        let undone = store.undo_last(outcome.selected).await.unwrap().unwrap();
+        assert_eq!(store.tasks.len(), 3);
+        assert_eq!(store.counts.inbox, 3);
+        assert!(task_ids.iter().all(|task_id| {
+            store
+                .tasks
+                .iter()
+                .any(|item| &item.task.id == task_id && !item.task.deleted)
+        }));
+        assert!(undone.selected.is_some());
     }
 
     #[tokio::test]
-    async fn single_delete_refreshes_counts_and_clamps_stale_anchor() {
+    async fn single_delete_preserves_row_index_counts_and_undo() {
         let mut store = test_store().await;
-        let (_first_id, _) = create_selected_task(&mut store, "First").await;
-        let (second_id, second) = create_selected_task(&mut store, "Second").await;
-        let selection = crate::tui::task_selection::TaskSelection::from_ids(
-            &store.tasks,
-            std::slice::from_ref(&second_id),
-            Some(second),
-        )
-        .unwrap();
-        store.tasks.remove(0);
-
-        let outcome = store
-            .mutate_deleted_selection(&selection, true, false)
-            .await
+        create_selected_task(&mut store, "First").await;
+        let (second_id, _) = create_selected_task(&mut store, "Second").await;
+        create_selected_task(&mut store, "Third").await;
+        let selected = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == second_id)
             .unwrap();
 
-        assert_eq!(store.counts.inbox, 1);
-        assert_eq!(store.tasks.len(), 1);
-        assert_eq!(outcome.selected, Some(0));
+        let outcome = store
+            .update_deleted(Some(selected), true)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(outcome.selected, Some(selected));
+        assert_eq!(store.tasks.len(), 3);
+        assert_eq!(store.tasks[selected].task.id, second_id);
+        assert!(store.tasks[selected].task.deleted);
+        assert_eq!(store.counts.inbox, 2);
+        let inbox = store
+            .sidebar_entries
+            .iter()
+            .find(|entry| entry.label == "Inbox")
+            .unwrap();
+        assert_eq!(inbox.count, 2);
+
+        let undone = store.undo_last(outcome.selected).await.unwrap().unwrap();
+        assert_eq!(undone.selected, Some(selected));
+        assert_eq!(store.tasks.len(), 3);
+        assert_eq!(store.tasks[selected].task.id, second_id);
+        assert!(!store.tasks[selected].task.deleted);
+        assert_eq!(store.counts.inbox, 3);
     }
 
     #[tokio::test]

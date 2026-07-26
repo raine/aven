@@ -9365,8 +9365,10 @@ mod delete_and_restore {
             .await
             .unwrap();
 
-        assert!(app.list.selected_task().is_none());
-        assert!(app.store.tasks.is_empty());
+        assert_eq!(app.list.selected_task(), Some(selected));
+        assert_eq!(app.store.tasks.len(), 1);
+        assert_eq!(app.store.tasks[selected].task.id, task_id);
+        assert!(app.store.tasks[selected].task.deleted);
         assert!(
             app.store
                 .load_task_item(&task_id)

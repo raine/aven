@@ -427,7 +427,10 @@ impl TuiStore {
                 (false, _) => format!("restored {changed} tasks"),
             }
         };
-        self.refresh_task_selection(selection, report, message, preserve_task, false)
+        let direct_single = selection.single_id() == Some(selection.anchor_id());
+        let preserve_task = direct_single && (preserve_task || deleted);
+        let restore_by_index = deleted && !direct_single;
+        self.refresh_task_selection(selection, report, message, preserve_task, restore_by_index)
             .await
     }
 
