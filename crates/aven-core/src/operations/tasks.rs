@@ -314,6 +314,11 @@ impl Database {
         for (_, update) in &updates {
             validate_task_update(update)?;
         }
+        if updates.is_empty() {
+            return Ok(TaskMutationReport {
+                outcomes: Vec::new(),
+            });
+        }
 
         let mut conn = self.acquire().await?;
         let mut tx = begin_immediate(&mut conn).await?;
@@ -360,7 +365,16 @@ impl Database {
         deleted: bool,
     ) -> Result<TaskOutcome> {
         let mut conn = self.acquire().await?;
-        set_task_deleted(&mut conn, workspace, task_id, deleted).await
+        let mut tx = begin_immediate(&mut conn).await?;
+        let outcome = match set_task_deleted(&mut tx, workspace, task_id, deleted).await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                tx.rollback().await?;
+                return Err(error);
+            }
+        };
+        tx.commit().await?;
+        Ok(outcome)
     }
 
     pub async fn add_note(
@@ -1102,7 +1116,7 @@ pub async fn update_task_labels_in_workspace(
     Ok(changed)
 }
 
-pub async fn set_task_deleted(
+pub(crate) async fn set_task_deleted(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     task_id: &crate::ids::TaskId,
@@ -1116,7 +1130,7 @@ pub async fn set_task_deleted(
         if deleted { "1" } else { "0" },
     )
     .await?;
-    crate::attachments::lifecycle::reconcile_liveness(
+    crate::attachments::lifecycle::reconcile_liveness_in_transaction(
         conn,
         &crate::attachments::lifecycle::SystemClock,
     )

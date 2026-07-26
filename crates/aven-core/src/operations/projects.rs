@@ -45,7 +45,16 @@ pub struct ProjectRenameOutcome {
 impl Database {
     pub async fn create_label(&self, workspace: &Workspace, name: &str) -> Result<LabelOutcome> {
         let mut conn = self.acquire().await?;
-        create_label_operation(&mut conn, workspace, name).await
+        let mut tx = begin_immediate(&mut conn).await?;
+        let outcome = match create_label_operation(&mut tx, workspace, name).await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                tx.rollback().await?;
+                return Err(error);
+            }
+        };
+        tx.commit().await?;
+        Ok(outcome)
     }
 
     pub async fn create_label_with_tui_undo(
@@ -89,7 +98,16 @@ impl Database {
         name: &str,
     ) -> Result<ProjectOutcome> {
         let mut conn = self.acquire().await?;
-        create_project_operation(&mut conn, workspace, name).await
+        let mut tx = begin_immediate(&mut conn).await?;
+        let outcome = match create_project_operation(&mut tx, workspace, name).await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                tx.rollback().await?;
+                return Err(error);
+            }
+        };
+        tx.commit().await?;
+        Ok(outcome)
     }
 
     pub async fn create_project_with_tui_undo(
@@ -193,7 +211,7 @@ pub struct ProjectMetadata<'a> {
     pub prefix: &'a str,
 }
 
-pub async fn create_label_operation(
+pub(crate) async fn create_label_operation(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     name: &str,
@@ -289,7 +307,7 @@ pub async fn delete_label_operation(
     Ok(LabelDeleteOutcome { name, changed })
 }
 
-pub async fn create_project_operation(
+pub(crate) async fn create_project_operation(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     name: &str,

@@ -171,6 +171,197 @@ async fn tui_task_mutation_uses_one_transaction_for_change_and_undo() {
 }
 
 #[tokio::test]
+async fn label_and_project_creation_roll_back_when_change_logging_fails() {
+    for (entity, create) in [("label", "Atomic Label"), ("project", "Atomic Project")] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("aven.sqlite");
+        let database = Database::open(&path).await.unwrap();
+        let workspace = database.list_workspaces().await.unwrap().remove(0);
+        let mut conn = SqliteConnection::connect_with(
+            &SqliteConnectOptions::from_str(&path.display().to_string()).unwrap(),
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER reject_change_insert BEFORE INSERT ON changes
+             BEGIN SELECT RAISE(FAIL, 'injected change failure'); END",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        let error = if entity == "label" {
+            database
+                .create_label(&workspace, create)
+                .await
+                .err()
+                .expect("label creation must fail")
+        } else {
+            database
+                .create_project(&workspace, create)
+                .await
+                .err()
+                .expect("project creation must fail")
+        };
+        assert!(error.to_string().contains("injected change failure"));
+
+        let mut conn = SqliteConnection::connect_with(
+            &SqliteConnectOptions::from_str(&path.display().to_string()).unwrap(),
+        )
+        .await
+        .unwrap();
+        let count: i64 = if entity == "label" {
+            sqlx::query_scalar("SELECT count(*) FROM labels WHERE workspace_id = ? AND name = ?")
+                .bind(&workspace.id)
+                .bind("atomic-label")
+                .fetch_one(&mut conn)
+                .await
+                .unwrap()
+        } else {
+            sqlx::query_scalar("SELECT count(*) FROM projects WHERE workspace_id = ? AND key = ?")
+                .bind(&workspace.id)
+                .bind("atomic-project")
+                .fetch_one(&mut conn)
+                .await
+                .unwrap()
+        };
+        assert_eq!(count, 0, "{entity} row must roll back");
+    }
+}
+
+#[tokio::test]
+async fn database_task_field_rolls_back_when_change_logging_fails() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("aven.sqlite");
+    let database = Database::open(&path).await.unwrap();
+    let workspace = database.list_workspaces().await.unwrap().remove(0);
+    let project = database
+        .create_project(&workspace, "Atomic")
+        .await
+        .unwrap()
+        .project;
+    let created = database
+        .create_task(
+            &workspace,
+            TaskDraft {
+                title: "before".to_string(),
+                description: String::new(),
+                project: Some(project.key),
+                status: "inbox".to_string(),
+                priority: "none".to_string(),
+                labels: Vec::new(),
+                available_at: None,
+                due_on: None,
+                is_epic: false,
+            },
+        )
+        .await
+        .unwrap();
+    let mut conn = SqliteConnection::connect_with(
+        &SqliteConnectOptions::from_str(&path.display().to_string()).unwrap(),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER reject_change_insert BEFORE INSERT ON changes
+         BEGIN SELECT RAISE(FAIL, 'injected change failure'); END",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    drop(conn);
+
+    let error = database
+        .set_task_field(&workspace, &created.task.id, "title", "after")
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("injected change failure"));
+    let persisted = database
+        .task_field_value(&workspace.id, &created.task.id, "title")
+        .await
+        .unwrap();
+    assert_eq!(persisted, "before");
+}
+
+#[tokio::test]
+async fn task_delete_and_restore_roll_back_when_change_logging_fails() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("aven.sqlite");
+    let database = Database::open(&path).await.unwrap();
+    let workspace = database.list_workspaces().await.unwrap().remove(0);
+    let project = database
+        .create_project(&workspace, "Atomic")
+        .await
+        .unwrap()
+        .project;
+    let created = database
+        .create_task(
+            &workspace,
+            TaskDraft {
+                title: "atomic deletion".to_string(),
+                description: String::new(),
+                project: Some(project.key),
+                status: "inbox".to_string(),
+                priority: "none".to_string(),
+                labels: Vec::new(),
+                available_at: None,
+                due_on: None,
+                is_epic: false,
+            },
+        )
+        .await
+        .unwrap();
+
+    for (deleted, expected) in [(true, 0_i64), (false, 1_i64)] {
+        let mut conn = SqliteConnection::connect_with(
+            &SqliteConnectOptions::from_str(&path.display().to_string()).unwrap(),
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER reject_change_insert BEFORE INSERT ON changes
+             BEGIN SELECT RAISE(FAIL, 'injected change failure'); END",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        let error = database
+            .set_task_deleted(&workspace, &created.task.id, deleted)
+            .await
+            .err()
+            .expect("task deletion state change must fail");
+        assert!(error.to_string().contains("injected change failure"));
+
+        let mut conn = SqliteConnection::connect_with(
+            &SqliteConnectOptions::from_str(&path.display().to_string()).unwrap(),
+        )
+        .await
+        .unwrap();
+        let persisted: i64 = sqlx::query_scalar("SELECT deleted FROM tasks WHERE id = ?")
+            .bind(&created.task.id)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(persisted, expected);
+        sqlx::query("DROP TRIGGER reject_change_insert")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        drop(conn);
+
+        if deleted {
+            database
+                .set_task_deleted(&workspace, &created.task.id, true)
+                .await
+                .unwrap();
+        }
+    }
+}
+
+#[tokio::test]
 async fn invalid_sync_initialization_records_attempt_and_error() {
     let directory = tempfile::tempdir().unwrap();
     let database = Database::open(&directory.path().join("aven.sqlite"))

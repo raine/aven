@@ -42,7 +42,10 @@ impl Database {
         status: &str,
     ) -> Result<Task> {
         let mut conn = self.acquire().await?;
-        set_status(&mut conn, workspace, task, status).await
+        let mut tx = begin_immediate(&mut conn).await?;
+        let task = set_status(&mut tx, workspace, task, status).await?;
+        tx.commit().await?;
+        Ok(task)
     }
 
     pub async fn set_task_priority(
@@ -52,7 +55,10 @@ impl Database {
         priority: &str,
     ) -> Result<Task> {
         let mut conn = self.acquire().await?;
-        set_priority(&mut conn, workspace, task, priority).await
+        let mut tx = begin_immediate(&mut conn).await?;
+        let task = set_priority(&mut tx, workspace, task, priority).await?;
+        tx.commit().await?;
+        Ok(task)
     }
 
     pub async fn cycle_task_priority(
@@ -62,7 +68,11 @@ impl Database {
         reverse: bool,
     ) -> Result<Task> {
         let mut conn = self.acquire().await?;
-        cycle_priority(&mut conn, workspace, task, reverse).await
+        let mut tx = begin_immediate(&mut conn).await?;
+        let current = get_task_in_workspace(&mut tx, workspace, &task.id).await?;
+        let task = cycle_priority(&mut tx, workspace, &current, reverse).await?;
+        tx.commit().await?;
+        Ok(task)
     }
 
     pub async fn set_task_deleted_state(
@@ -72,7 +82,10 @@ impl Database {
         deleted: bool,
     ) -> Result<Task> {
         let mut conn = self.acquire().await?;
-        set_deleted(&mut conn, workspace, task, deleted).await
+        let mut tx = begin_immediate(&mut conn).await?;
+        let task = set_deleted(&mut tx, workspace, task, deleted).await?;
+        tx.commit().await?;
+        Ok(task)
     }
 
     pub async fn set_task_field(
@@ -83,7 +96,10 @@ impl Database {
         value: &str,
     ) -> Result<bool> {
         let mut conn = self.acquire().await?;
-        set_task_field(&mut conn, workspace, task_id, field, value).await
+        let mut tx = begin_immediate(&mut conn).await?;
+        let changed = set_task_field(&mut tx, workspace, task_id, field, value).await?;
+        tx.commit().await?;
+        Ok(changed)
     }
 
     pub async fn set_task_project(
@@ -93,7 +109,10 @@ impl Database {
         project: &Project,
     ) -> Result<bool> {
         let mut conn = self.acquire().await?;
-        set_task_project(&mut conn, workspace, task_id, project).await
+        let mut tx = begin_immediate(&mut conn).await?;
+        let changed = set_task_project(&mut tx, workspace, task_id, project).await?;
+        tx.commit().await?;
+        Ok(changed)
     }
 
     pub async fn set_task_fields(
@@ -128,7 +147,7 @@ impl Database {
     }
 }
 
-pub async fn set_status(
+pub(crate) async fn set_status(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     task: &Task,
@@ -138,7 +157,7 @@ pub async fn set_status(
     get_task_in_workspace(conn, workspace, &task.id).await
 }
 
-pub async fn set_priority(
+pub(crate) async fn set_priority(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     task: &Task,
@@ -148,7 +167,7 @@ pub async fn set_priority(
     get_task_in_workspace(conn, workspace, &task.id).await
 }
 
-pub async fn cycle_priority(
+pub(crate) async fn cycle_priority(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     task: &Task,
@@ -166,7 +185,7 @@ pub async fn cycle_priority(
     set_priority(conn, workspace, task, TaskPriority::ALL[next].as_str()).await
 }
 
-pub async fn set_deleted(
+pub(crate) async fn set_deleted(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     task: &Task,
@@ -183,7 +202,7 @@ pub async fn set_deleted(
     get_task_in_workspace(conn, workspace, &task.id).await
 }
 
-pub async fn set_task_field(
+pub(crate) async fn set_task_field(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     task_id: &crate::ids::TaskId,
@@ -199,7 +218,7 @@ pub async fn set_task_field(
     }
 }
 
-pub async fn set_task_project(
+pub(crate) async fn set_task_project(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     task_id: &crate::ids::TaskId,
