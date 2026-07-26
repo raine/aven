@@ -67,8 +67,7 @@ impl App {
                     .map(|attachment_id| DetailTargetId::Attachment { attachment_id }),
             );
         }
-        self.external_image_exports
-            .retain(|(retained_id, _)| retained_id != &attachment_id);
+        self.inline_images.remove_exports_for(&attachment_id);
         self.refresh().await?;
         self.set_success("removed image");
         self.restore_detail_overlay(return_to_detail);

@@ -6510,10 +6510,11 @@ mod detail_mode {
         let (_dir, _pool, mut app) = test_app_with_pool().await;
         let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
         let suppressed = test_attachment("SUPPRESSED", "image/png", true, Some((640, 480)));
-        app.inline_image_context_override = Some(crate::tui::ui::DetailInlineImageContext {
-            unavailable_hashes: [suppressed.sha256.clone()].into_iter().collect(),
-            ..crate::tui::ui::DetailInlineImageContext::default()
-        });
+        app.inline_images
+            .set_context_override(crate::tui::ui::DetailInlineImageContext {
+                unavailable_hashes: [suppressed.sha256.clone()].into_iter().collect(),
+                ..crate::tui::ui::DetailInlineImageContext::default()
+            });
         let mut unavailable = test_attachment("UNAVAILABLE", "image/png", true, Some((640, 480)));
         unavailable.bytes_state = crate::attachments::AttachmentBytesState::Unavailable;
         app.store.tasks[selected].attachments = vec![
@@ -6550,7 +6551,7 @@ mod detail_mode {
             Some(OverlayState::Detail { scroll }) => scroll,
             _ => panic!("expected detail"),
         };
-        let context = app.inline_image_context_override.as_ref().unwrap().clone();
+        let context = app.inline_images.context_override().unwrap().clone();
         assert_eq!(
             detail_attachment_hit_id(
                 &app.store.tasks[selected],
@@ -6592,8 +6593,8 @@ mod detail_mode {
     #[tokio::test]
     async fn external_viewer_notification_keeps_inline_previews_enabled() {
         let (_dir, _pool, mut app) = test_app_with_pool().await;
-        app.inline_image_context_override =
-            Some(crate::tui::ui::DetailInlineImageContext::default());
+        app.inline_images
+            .set_context_override(crate::tui::ui::DetailInlineImageContext::default());
         create_and_select_task(&mut app, test_task_draft("Image task")).await;
         app.show_detail(0);
 
@@ -6611,10 +6612,11 @@ mod detail_mode {
         let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
         let attachment_id =
             add_real_attachment(&mut app, &pool, &dir.path().join("test.db"), selected).await;
-        app.inline_image_context_override = Some(crate::tui::ui::DetailInlineImageContext {
-            previews_enabled: false,
-            ..crate::tui::ui::DetailInlineImageContext::default()
-        });
+        app.inline_images
+            .set_context_override(crate::tui::ui::DetailInlineImageContext {
+                previews_enabled: false,
+                ..crate::tui::ui::DetailInlineImageContext::default()
+            });
         app.show_detail(0);
 
         app.dispatch_key(key(KeyCode::Tab), (100, 30).into())
@@ -6634,7 +6636,7 @@ mod detail_mode {
             .unwrap();
 
         assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
-        assert_eq!(app.external_image_exports.len(), 1);
+        assert_eq!(app.inline_images.export_count(), 1);
         assert_eq!(
             toast_message(&app).as_deref(),
             Some("opened attachment in default image viewer")
@@ -6651,7 +6653,7 @@ mod detail_mode {
             previews_enabled: false,
             ..crate::tui::ui::DetailInlineImageContext::default()
         };
-        app.inline_image_context_override = Some(context.clone());
+        app.inline_images.set_context_override(context.clone());
         app.show_detail(0);
         app.dispatch_key(key(KeyCode::Tab), (100, 30).into())
             .await
@@ -6659,7 +6661,7 @@ mod detail_mode {
         app.dispatch_key(key(KeyCode::Enter), (100, 30).into())
             .await
             .unwrap();
-        assert_eq!(app.external_image_exports.len(), 1);
+        assert_eq!(app.inline_images.export_count(), 1);
         assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
 
         let item = app
@@ -6678,7 +6680,7 @@ mod detail_mode {
         app.dispatch_mouse(left_click(column, row), (100, 30).into())
             .await
             .unwrap();
-        assert_eq!(app.external_image_exports.len(), 1);
+        assert_eq!(app.inline_images.export_count(), 1);
         assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
     }
 
@@ -6688,8 +6690,8 @@ mod detail_mode {
         let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
         let attachment_id =
             add_real_attachment(&mut app, &pool, &dir.path().join("test.db"), selected).await;
-        app.inline_image_context_override =
-            Some(crate::tui::ui::DetailInlineImageContext::default());
+        app.inline_images
+            .set_context_override(crate::tui::ui::DetailInlineImageContext::default());
         app.overlay = Some(OverlayState::AttachmentPreview {
             attachment_id: attachment_id.clone(),
             scroll: 3,
@@ -6699,7 +6701,7 @@ mod detail_mode {
             .await
             .unwrap();
 
-        assert_eq!(app.external_image_exports.len(), 1);
+        assert_eq!(app.inline_images.export_count(), 1);
         assert!(matches!(
             app.overlay,
             Some(OverlayState::AttachmentPreview {
@@ -6727,7 +6729,7 @@ mod detail_mode {
             toast_message(&app).as_deref(),
             Some("attachment bytes are unavailable")
         );
-        assert!(app.external_image_exports.is_empty());
+        assert!(app.inline_images.export_count() == 0);
 
         let mut conn = pool.acquire().await.unwrap();
         sqlx::query("UPDATE blob_inventory SET available = 1")
@@ -6735,13 +6737,14 @@ mod detail_mode {
             .await
             .unwrap();
         drop(conn);
-        app.image_viewer_launcher = fail_image_viewer;
+        app.inline_images
+            .set_image_viewer_launcher(fail_image_viewer);
         app.open_attachment_externally(&attachment_id).await;
         assert_eq!(
             toast_message(&app).as_deref(),
             Some("could not start the default image viewer")
         );
-        assert!(app.external_image_exports.is_empty());
+        assert!(app.inline_images.export_count() == 0);
         let lease_count: i64 = sqlx::query_scalar("SELECT count(*) FROM blob_leases")
             .fetch_one(&pool)
             .await
@@ -6770,14 +6773,14 @@ mod detail_mode {
 
         app.open_attachment_externally(&attachment_id).await;
 
-        let export_dir = app.external_image_exports[0].1.path().to_path_buf();
+        let export_dir = app.inline_images.export_directory(0).to_path_buf();
         assert!(export_dir.join("attachment.png").is_file());
         let lease_count: i64 = sqlx::query_scalar("SELECT count(*) FROM blob_leases")
             .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(lease_count, 0);
-        app.external_image_exports.clear();
+        app.inline_images.clear_exports();
         assert!(!export_dir.exists());
     }
 
@@ -6817,7 +6820,7 @@ mod detail_mode {
     async fn detail_keyboard_scroll_includes_framed_preview_rows() {
         let (_dir, _pool, mut app) = test_app_with_pool().await;
         let context = crate::tui::ui::DetailInlineImageContext::default();
-        app.inline_image_context_override = Some(context.clone());
+        app.inline_images.set_context_override(context.clone());
         let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
         app.store.tasks[selected].attachments = vec![test_attachment(
             "OVERFLOWIMAGE",
@@ -6848,8 +6851,8 @@ mod detail_mode {
     #[tokio::test]
     async fn detail_child_focus_order_includes_images_and_enter_opens_preview() {
         let (_dir, pool, mut app) = test_app_with_pool().await;
-        app.inline_image_context_override =
-            Some(crate::tui::ui::DetailInlineImageContext::default());
+        app.inline_images
+            .set_context_override(crate::tui::ui::DetailInlineImageContext::default());
         let parent_index = create_and_select_task(
             &mut app,
             TaskDraft {
@@ -6921,7 +6924,7 @@ mod detail_mode {
                 100,
                 30,
                 image_scroll,
-                app.inline_image_context_override.as_ref().unwrap(),
+                app.inline_images.context_override().unwrap(),
             )
             .as_deref(),
             Some("FOCUSIMAGE")
@@ -6967,10 +6970,11 @@ mod detail_mode {
             suppressed,
             test_attachment("SECONDIMAGE", "image/jpeg", true, Some((800, 600))),
         ];
-        app.inline_image_context_override = Some(crate::tui::ui::DetailInlineImageContext {
-            unavailable_hashes: [suppressed_hash].into_iter().collect(),
-            ..crate::tui::ui::DetailInlineImageContext::default()
-        });
+        app.inline_images
+            .set_context_override(crate::tui::ui::DetailInlineImageContext {
+                unavailable_hashes: [suppressed_hash].into_iter().collect(),
+                ..crate::tui::ui::DetailInlineImageContext::default()
+            });
         if app.detail.is_none() {
             app.show_detail(0);
         }
@@ -7029,8 +7033,8 @@ mod detail_mode {
     #[tokio::test]
     async fn detail_image_click_opens_preview_while_payload_is_loading() {
         let (_dir, _pool, mut app) = test_app_with_pool().await;
-        app.inline_image_context_override =
-            Some(crate::tui::ui::DetailInlineImageContext::default());
+        app.inline_images
+            .set_context_override(crate::tui::ui::DetailInlineImageContext::default());
         let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
         let attachment = test_attachment("CLICKIMAGE", "image/png", true, Some((640, 480)));
         let source_hash = attachment.sha256.clone();
@@ -7073,7 +7077,7 @@ mod detail_mode {
     async fn duplicate_hash_click_requires_the_visible_attachment_identity() {
         let (_dir, _pool, mut app) = test_app_with_pool().await;
         let context = crate::tui::ui::DetailInlineImageContext::default();
-        app.inline_image_context_override = Some(context.clone());
+        app.inline_images.set_context_override(context.clone());
         let selected = create_and_select_task(&mut app, test_task_draft("Duplicate images")).await;
         let first = test_attachment("FIRSTDUPLICATE", "image/png", true, Some((640, 480)));
         let mut second = test_attachment("SECONDDUPLICATE", "image/png", true, Some((640, 480)));
@@ -7175,8 +7179,8 @@ mod detail_mode {
     async fn invalidated_image_focus_is_cleared_without_closing_detail() {
         for key_code in [KeyCode::Enter, KeyCode::Esc] {
             let (_dir, _pool, mut app) = test_app_with_pool().await;
-            app.inline_image_context_override =
-                Some(crate::tui::ui::DetailInlineImageContext::default());
+            app.inline_images
+                .set_context_override(crate::tui::ui::DetailInlineImageContext::default());
             let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
             let attachment =
                 test_attachment("INVALIDATEDIMAGE", "image/png", true, Some((640, 480)));
@@ -7219,8 +7223,8 @@ mod detail_mode {
     #[tokio::test]
     async fn detail_image_escape_returns_and_preserves_focus() {
         let (_dir, _pool, mut app) = test_app_with_pool().await;
-        app.inline_image_context_override =
-            Some(crate::tui::ui::DetailInlineImageContext::default());
+        app.inline_images
+            .set_context_override(crate::tui::ui::DetailInlineImageContext::default());
         let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
         app.store.tasks[selected].attachments = vec![test_attachment(
             "ATTACHMENT000001",
@@ -7260,8 +7264,8 @@ mod detail_mode {
     #[tokio::test]
     async fn attachment_preview_refresh_preserves_owning_task_across_query_change() {
         let (_dir, _pool, mut app) = test_app_with_pool().await;
-        app.inline_image_context_override =
-            Some(crate::tui::ui::DetailInlineImageContext::default());
+        app.inline_images
+            .set_context_override(crate::tui::ui::DetailInlineImageContext::default());
         let selected = create_and_select_task(&mut app, test_task_draft("Preview owner")).await;
         let task_id = app.store.tasks[selected].task.id.clone();
         app.store.tasks[selected].attachments = vec![test_attachment(

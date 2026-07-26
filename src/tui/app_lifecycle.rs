@@ -2,137 +2,26 @@ use std::time::{Duration, Instant};
 
 pub(super) const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(120);
 pub(super) const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
-const INLINE_IMAGE_EMISSION_DELAY: Duration = Duration::from_millis(50);
 const TOAST_TTL: Duration = Duration::from_secs(4);
 
 use anyhow::Result;
-use crossterm::cursor::MoveTo;
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
     Event,
 };
-use crossterm::style::Print;
-use crossterm::{execute, queue};
+use crossterm::execute;
 use ratatui::DefaultTerminal;
 use std::io::Write;
 
 use crate::config::{AppConfig, resolve_blob_dir};
 use crate::tui::app::App;
-use crate::tui::inline_images::{
-    InlineImageBackend, active_backend_from_env, inline_image_delete_escape, inline_image_escape,
-    kitty_image_identifiers,
-};
+use crate::tui::inline_image_surface::InlineImageSurface;
+use crate::tui::inline_images::{InlineImageBackend, active_backend_from_env};
 use crate::tui::overlay::OverlayView::AddTask;
 use crate::tui::overlay::{OverlayState, OverlayView};
 use crate::tui::preview_controller::PreviewKey;
 use crate::tui::store::TaskView;
 use crate::tui::ui::{self, ViewState, ViewSurface};
-
-fn write_inline_image(
-    writer: &mut impl Write,
-    placement: &ui::DetailInlineImagePlacement,
-    encoded_png: &str,
-    byte_len: usize,
-    backend: InlineImageBackend,
-) -> std::io::Result<()> {
-    queue!(writer, MoveTo(placement.x, placement.y))?;
-    let kitty_ids = kitty_image_identifiers(
-        &placement.source_hash,
-        placement.x,
-        placement.y,
-        placement.width,
-        placement.height,
-    );
-    let escape = inline_image_escape(
-        encoded_png,
-        byte_len,
-        placement.width,
-        placement.height,
-        backend,
-        kitty_ids,
-    );
-    write!(writer, "{escape}")
-}
-
-fn unique_inline_image_placements(
-    placements: Vec<ui::DetailInlineImagePlacement>,
-) -> Vec<ui::DetailInlineImagePlacement> {
-    placements
-        .into_iter()
-        .fold(Vec::new(), |mut unique, placement| {
-            if !unique.contains(&placement) {
-                unique.push(placement);
-            }
-            unique
-        })
-}
-
-fn inline_image_emissions_after_draw(
-    placements: &[ui::DetailInlineImagePlacement],
-    previous: &[ui::DetailInlineImagePlacement],
-) -> Vec<ui::DetailInlineImagePlacement> {
-    placements
-        .iter()
-        .filter(|placement| !previous.contains(placement))
-        .cloned()
-        .collect()
-}
-
-fn inline_image_emission_is_deferred(
-    current: &[ui::DetailInlineImagePlacement],
-    deferred: &mut Vec<ui::DetailInlineImagePlacement>,
-    emission_at: &mut Option<Instant>,
-    now: Instant,
-) -> bool {
-    if current.is_empty() {
-        deferred.clear();
-        *emission_at = None;
-        return false;
-    }
-    if current != deferred {
-        current.clone_into(deferred);
-        *emission_at = Some(now + INLINE_IMAGE_EMISSION_DELAY);
-        return true;
-    }
-    if emission_at.is_some_and(|deadline| now < deadline) {
-        return true;
-    }
-    deferred.clear();
-    *emission_at = None;
-    false
-}
-
-fn write_inline_image_cleanup(
-    writer: &mut impl Write,
-    placements: &[ui::DetailInlineImagePlacement],
-    backend: InlineImageBackend,
-) -> Result<bool> {
-    let mut repaint = false;
-    for placement in placements {
-        let kitty_ids = kitty_image_identifiers(
-            &placement.source_hash,
-            placement.x,
-            placement.y,
-            placement.width,
-            placement.height,
-        );
-        if let Some(escape) = inline_image_delete_escape(kitty_ids, backend) {
-            write!(writer, "{escape}")?;
-            continue;
-        }
-        repaint = true;
-        let blank = " ".repeat(placement.width as usize);
-        for row in 0..placement.height {
-            queue!(
-                writer,
-                MoveTo(placement.x, placement.y.saturating_add(row)),
-                Print(&blank)
-            )?;
-        }
-    }
-    writer.flush()?;
-    Ok(repaint)
-}
 
 impl App {
     pub(crate) async fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
@@ -265,7 +154,7 @@ impl App {
             .db_path()
             .map(|db_path| resolve_blob_dir(db_path, self.intake.config()))
             .transpose()?;
-        let current = unique_inline_image_placements(
+        let current = InlineImageSurface::unique_placements(
             if backend == InlineImageBackend::None || blob_dir.is_none() {
                 Vec::new()
             } else {
@@ -289,25 +178,10 @@ impl App {
             .collect::<Vec<_>>();
         self.preview_controller.set_desired(keys);
 
-        let backend_changed = self.previous_inline_image_backend != backend;
-        let stale = if backend_changed {
-            self.previous_inline_image_placements.clone()
-        } else {
-            self.previous_inline_image_placements
-                .iter()
-                .filter(|placement| !current.contains(placement))
-                .cloned()
-                .collect::<Vec<_>>()
-        };
-        let repaint =
-            self.erase_inline_image_placements(&stale, self.previous_inline_image_backend)?;
-        if backend_changed {
-            self.previous_inline_image_placements.clear();
-        } else {
-            self.previous_inline_image_placements
-                .retain(|placement| current.contains(placement));
-        }
-        self.previous_inline_image_backend = backend;
+        let previous_backend = self.inline_images.displayed_backend();
+        let stale = self.inline_images.stale_placements(&current, backend);
+        let repaint = self.erase_inline_image_placements(&stale, previous_backend)?;
+        self.inline_images.reconcile_displayed(&current, backend);
 
         if repaint {
             let view = self.view();
@@ -320,21 +194,17 @@ impl App {
             return Ok(());
         };
 
-        let pending_emissions =
-            inline_image_emissions_after_draw(&current, &self.previous_inline_image_placements);
+        let pending_emissions = self.inline_images.pending_emissions(&current);
         if pending_emissions.is_empty() {
             if current.is_empty() {
-                self.deferred_inline_image_placements.clear();
-                self.inline_image_emission_at = None;
+                self.inline_images.cancel_deferred_emission();
             }
             return Ok(());
         }
-        if inline_image_emission_is_deferred(
-            &current,
-            &mut self.deferred_inline_image_placements,
-            &mut self.inline_image_emission_at,
-            Instant::now(),
-        ) {
+        if self
+            .inline_images
+            .emission_is_deferred(&current, Instant::now())
+        {
             return Ok(());
         }
         let mut stdout = std::io::stdout();
@@ -343,12 +213,9 @@ impl App {
             let Some(lease) = self.preview_controller.lease(&key) else {
                 continue;
             };
-            if !self.previous_inline_image_placements.contains(&placement) {
-                self.previous_inline_image_placements
-                    .push(placement.clone());
-            }
+            self.inline_images.record_emitted(placement.clone());
             let payload = lease.payload();
-            if let Err(error) = write_inline_image(
+            if let Err(error) = InlineImageSurface::write_placement(
                 &mut stdout,
                 &placement,
                 payload.encoded_png(),
@@ -377,16 +244,14 @@ impl App {
     }
 
     fn erase_previous_inline_images(&mut self) -> Result<bool> {
-        self.deferred_inline_image_placements.clear();
-        self.inline_image_emission_at = None;
-        if self.previous_inline_image_placements.is_empty() {
+        let placements = self.inline_images.displayed_placements().to_vec();
+        if placements.is_empty() {
+            self.inline_images.clear_displayed();
             return Ok(false);
         }
-        let placements = self.previous_inline_image_placements.clone();
-        let repaint =
-            self.erase_inline_image_placements(&placements, self.previous_inline_image_backend)?;
-        self.previous_inline_image_placements.clear();
-        self.previous_inline_image_backend = InlineImageBackend::None;
+        let repaint = self
+            .erase_inline_image_placements(&placements, self.inline_images.displayed_backend())?;
+        self.inline_images.clear_displayed();
         Ok(repaint)
     }
 
@@ -399,7 +264,7 @@ impl App {
             return Ok(false);
         }
         let mut stdout = std::io::stdout();
-        write_inline_image_cleanup(&mut stdout, placements, backend)
+        InlineImageSurface::write_cleanup(&mut stdout, placements, backend)
     }
 
     fn record_detail_document_frame(&mut self, terminal_size: ratatui::layout::Size) {
@@ -503,7 +368,7 @@ impl App {
             });
         }
         #[cfg(test)]
-        if let Some(context) = &self.inline_image_context_override {
+        if let Some(context) = self.inline_images.context_override() {
             return Some(context.clone());
         }
         let backend = active_backend_from_env(self.intake.config().local.inline_images);
@@ -713,7 +578,8 @@ impl App {
             || self.refresh_is_due()
             || self.onboarding_intro.is_some()
             || self
-                .inline_image_emission_at
+                .inline_images
+                .emission_at()
                 .is_some_and(|deadline| Instant::now() >= deadline)
     }
 
@@ -738,7 +604,7 @@ impl App {
             timeout = timeout.min(intro_timeout);
         }
 
-        if let Some(emission_at) = self.inline_image_emission_at {
+        if let Some(emission_at) = self.inline_images.emission_at() {
             timeout = timeout.min(
                 emission_at
                     .checked_duration_since(Instant::now())
@@ -780,215 +646,5 @@ impl App {
 
     pub(super) fn schedule_next_refresh(&mut self) {
         self.next_refresh_at = Instant::now() + REFRESH_INTERVAL;
-    }
-}
-
-#[cfg(test)]
-mod inline_image_lifecycle_tests {
-    use std::io::{self, Write};
-
-    use super::*;
-
-    struct FailingWriter {
-        fail_write: bool,
-        fail_flush: bool,
-        bytes: Vec<u8>,
-    }
-
-    impl Write for FailingWriter {
-        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            if self.fail_write {
-                return Err(io::Error::other("injected write failure"));
-            }
-            self.bytes.extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            if self.fail_flush {
-                return Err(io::Error::other("injected flush failure"));
-            }
-            Ok(())
-        }
-    }
-
-    fn placement() -> ui::DetailInlineImagePlacement {
-        ui::DetailInlineImagePlacement {
-            attachment_id: "ATTACHMENT000001".to_string(),
-            source_hash: "0".repeat(64),
-            x: 4,
-            y: 7,
-            width: 20,
-            height: 6,
-        }
-    }
-
-    #[test]
-    fn changed_inline_image_placements_wait_for_scroll_to_settle() {
-        let first = placement();
-        let mut second = first.clone();
-        second.y += 1;
-        let start = Instant::now();
-        let mut deferred = Vec::new();
-        let mut emission_at = None;
-
-        assert!(inline_image_emission_is_deferred(
-            std::slice::from_ref(&first),
-            &mut deferred,
-            &mut emission_at,
-            start,
-        ));
-        assert!(inline_image_emission_is_deferred(
-            std::slice::from_ref(&first),
-            &mut deferred,
-            &mut emission_at,
-            start + INLINE_IMAGE_EMISSION_DELAY / 2,
-        ));
-        assert!(inline_image_emission_is_deferred(
-            std::slice::from_ref(&second),
-            &mut deferred,
-            &mut emission_at,
-            start + INLINE_IMAGE_EMISSION_DELAY,
-        ));
-        assert!(inline_image_emission_is_deferred(
-            std::slice::from_ref(&second),
-            &mut deferred,
-            &mut emission_at,
-            start + INLINE_IMAGE_EMISSION_DELAY * 3 / 2,
-        ));
-        assert!(!inline_image_emission_is_deferred(
-            std::slice::from_ref(&second),
-            &mut deferred,
-            &mut emission_at,
-            start + INLINE_IMAGE_EMISSION_DELAY * 2,
-        ));
-        assert!(deferred.is_empty());
-        assert!(emission_at.is_none());
-    }
-
-    #[test]
-    fn empty_inline_image_view_cancels_deferred_emission() {
-        let start = Instant::now();
-        let mut deferred = vec![placement()];
-        let mut emission_at = Some(start + INLINE_IMAGE_EMISSION_DELAY);
-
-        assert!(!inline_image_emission_is_deferred(
-            &[],
-            &mut deferred,
-            &mut emission_at,
-            start,
-        ));
-        assert!(deferred.is_empty());
-        assert!(emission_at.is_none());
-    }
-
-    #[test]
-    fn duplicate_placements_are_emitted_once() {
-        let placement = placement();
-
-        assert_eq!(
-            unique_inline_image_placements(vec![placement.clone(), placement.clone()]),
-            vec![placement]
-        );
-    }
-
-    #[test]
-    fn new_placements_are_emitted_after_frame_draw() {
-        let placement = placement();
-
-        assert_eq!(
-            inline_image_emissions_after_draw(std::slice::from_ref(&placement), &[]),
-            vec![placement]
-        );
-    }
-
-    #[test]
-    fn unchanged_placements_are_not_retransmitted_after_frame_draw() {
-        let placement = placement();
-
-        assert!(
-            inline_image_emissions_after_draw(
-                std::slice::from_ref(&placement),
-                std::slice::from_ref(&placement),
-            )
-            .is_empty()
-        );
-    }
-
-    #[test]
-    fn inline_image_write_failure_is_returned_to_lifecycle_owner() {
-        let mut writer = FailingWriter {
-            fail_write: true,
-            fail_flush: false,
-            bytes: Vec::new(),
-        };
-
-        assert!(
-            write_inline_image(
-                &mut writer,
-                &placement(),
-                "cG5n",
-                3,
-                InlineImageBackend::Kitty,
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn inline_image_flush_failure_is_returned_to_lifecycle_owner() {
-        let mut writer = FailingWriter {
-            fail_write: false,
-            fail_flush: true,
-            bytes: Vec::new(),
-        };
-
-        assert!(
-            write_inline_image_cleanup(&mut writer, &[placement()], InlineImageBackend::Kitty)
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn kitty_cleanup_deletes_owned_placement_without_repaint() {
-        let mut writer = FailingWriter {
-            fail_write: false,
-            fail_flush: false,
-            bytes: Vec::new(),
-        };
-
-        let repaint =
-            write_inline_image_cleanup(&mut writer, &[placement()], InlineImageBackend::Kitty)
-                .unwrap();
-
-        assert!(!repaint);
-        let placement = placement();
-        let (image_number, placement_id) = kitty_image_identifiers(
-            &placement.source_hash,
-            placement.x,
-            placement.y,
-            placement.width,
-            placement.height,
-        );
-        assert_eq!(
-            String::from_utf8(writer.bytes).unwrap(),
-            format!("\x1b_Ga=d,d=N,q=2,I={image_number},p={placement_id}\x1b\\")
-        );
-    }
-
-    #[test]
-    fn iterm_cleanup_repaints_reserved_cells() {
-        let mut writer = FailingWriter {
-            fail_write: false,
-            fail_flush: false,
-            bytes: Vec::new(),
-        };
-
-        let repaint =
-            write_inline_image_cleanup(&mut writer, &[placement()], InlineImageBackend::Iterm2)
-                .unwrap();
-
-        assert!(repaint);
-        assert!(!writer.bytes.is_empty());
     }
 }

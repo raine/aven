@@ -4,9 +4,7 @@ use ratatui::layout::{Rect, Size};
 
 use std::time::Instant;
 
-use crate::tui::app::{
-    App, DetailSection, DetailTargetId, Focus, FooterChoiceMode, MAX_EXTERNAL_IMAGE_EXPORTS,
-};
+use crate::tui::app::{App, DetailSection, DetailTargetId, Focus, FooterChoiceMode};
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::detail_session::{
     DetailNavigationState, DetailTargetActivation, TASK_ROW_DOUBLE_CLICK, TaskRowClick,
@@ -852,19 +850,14 @@ impl App {
                 return;
             }
         };
-        let launch_result = (self.image_viewer_launcher)(export.path());
+        let launch_result = self.inline_images.launch_external_viewer(export.path());
         let release_result = self.store.release_image_export(&mut export).await;
         if let Err(_error) = launch_result {
             self.set_error("could not start the default image viewer");
             return;
         }
-        self.external_image_exports
-            .retain(|(retained_id, _)| retained_id != attachment_id);
-        if self.external_image_exports.len() >= MAX_EXTERNAL_IMAGE_EXPORTS {
-            self.external_image_exports.remove(0);
-        }
-        self.external_image_exports
-            .push((attachment_id.to_string(), export.into_directory()));
+        self.inline_images
+            .retain_export(attachment_id.to_string(), export.into_directory());
         if release_result.is_err() {
             self.set_warning("image opened; attachment read protection expires automatically");
         } else {
