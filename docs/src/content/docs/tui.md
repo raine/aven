@@ -15,6 +15,10 @@ aven tui
 
 Use `?` for commands available in the current mode. Use `:` to search the complete command catalog by name or description.
 
+![aven TUI command palette filtering view commands](/command-palette.webp)
+
+<p class="media-caption">The command palette searches the same catalog used by prefix hints and contextual help.</p>
+
 ## Find work
 
 Queue is the default view. It groups open work by what needs attention across the active scope. See [Concepts](/concepts/) for queue groups, statuses, priorities, availability, due dates, dependencies, and epics.
@@ -260,7 +264,11 @@ bind t display-popup -E -d '#{pane_current_path}' -w 120 -h 30 'aven tui --add-t
 
 ![aven TUI running in a tmux popup over terminal panes](/tui-tmux-popup.webp)
 
-<p class="media-caption">A popup keeps aven available over the terminal session in the current pane.</p>
+<p class="media-caption">A large popup keeps the full queue and detail workflow available over the current pane.</p>
+
+![aven task composer running in a tmux popup](/tmux-popup.webp)
+
+<p class="media-caption">A compact popup opens the composer for quick capture.</p>
 
 See [Tips](/tips/#use-ctrl-enter-in-alacritty-and-tmux) for modified-key and tmux configuration.
 
