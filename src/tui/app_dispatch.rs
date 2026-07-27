@@ -328,8 +328,13 @@ impl App {
                 crate::tui::ui::add_task_field_at(
                     Rect::new(0, 0, terminal_size.width, terminal_size.height),
                     self.intake.view().add_task_only,
-                    !state.attachments.is_empty(),
-                    crate::tui::ui::AddTaskScheduleLayout,
+                    crate::tui::ui::AddTaskLayout {
+                        description: &state.description.lines,
+                        mode: &state.mode,
+                        has_attachments: !state.attachments.is_empty(),
+                        show_schedule_error: state.schedule_error.is_some()
+                            && state.schedule_validation_requested,
+                    },
                     mouse.column,
                     mouse.row,
                 )
