@@ -6885,27 +6885,30 @@ mod authoring {
     #[tokio::test]
     async fn add_task_mouse_opens_metadata_and_focuses_text_fields() {
         for (column, row, expected) in [
-            (3, 3, AddTaskStep::Project),
-            (29, 3, AddTaskStep::Status),
-            (55, 3, AddTaskStep::Priority),
-            (3, 4, AddTaskStep::Labels),
+            (3, 6, AddTaskStep::Project),
+            (29, 6, AddTaskStep::Status),
+            (55, 6, AddTaskStep::Priority),
+            (3, 7, AddTaskStep::Labels),
         ] {
             let mut app = test_app().await;
             app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
             app.dispatch_mouse(task_row_click(column, row), (80, 24).into())
                 .await
                 .unwrap();
-            assert!(matches!(
-                &app.overlay,
-                Some(OverlayState::AddTask(state))
-                    if state.focus == expected
-                        && !matches!(state.mode, crate::tui::overlay::AddTaskMode::Compose)
-            ));
+            assert!(
+                matches!(
+                    &app.overlay,
+                    Some(OverlayState::AddTask(state))
+                        if state.focus == expected
+                            && !matches!(state.mode, crate::tui::overlay::AddTaskMode::Compose)
+                ),
+                "click at ({column}, {row}) should open {expected:?}"
+            );
         }
 
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-        app.dispatch_mouse(task_row_click(29, 4), (80, 24).into())
+        app.dispatch_mouse(task_row_click(29, 7), (80, 24).into())
             .await
             .unwrap();
         assert!(matches!(

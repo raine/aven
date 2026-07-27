@@ -679,6 +679,50 @@ mod text_input {
 mod add_task_overlay {
     use super::*;
 
+    fn dialog_height(state: AddTaskView) -> u16 {
+        let buffer = overlay_buffer(OverlayView::AddTask(state));
+        let top = (0..buffer.area.height)
+            .find(|row| buffer_row(&buffer, *row).contains("╭─ Add task "))
+            .expect("add task top border");
+        let bottom = (top..buffer.area.height)
+            .find(|row| buffer_row(&buffer, *row).contains('╰'))
+            .expect("add task bottom border");
+        bottom - top + 1
+    }
+
+    #[test]
+    fn add_task_overlay_starts_compact() {
+        assert_eq!(dialog_height(add_task_view()), 14);
+    }
+
+    #[test]
+    fn add_task_overlay_grows_for_wrapped_description() {
+        let compact_height = dialog_height(add_task_view());
+        let expanded_height = dialog_height(AddTaskView {
+            description: vec!["description ".repeat(40)],
+            ..add_task_view()
+        });
+
+        assert!(expanded_height > compact_height);
+    }
+
+    #[test]
+    fn add_task_overlay_keeps_space_above_shortcuts() {
+        let buffer = overlay_buffer(OverlayView::AddTask(AddTaskView {
+            description: vec!["last description line".to_string()],
+            focus: AddTaskStep::Description,
+            ..add_task_view()
+        }));
+        let description_row = (0..buffer.area.height)
+            .find(|row| buffer_row(&buffer, *row).contains("last description line"))
+            .expect("description row");
+        let footer_row = (description_row..buffer.area.height)
+            .find(|row| buffer_row(&buffer, *row).contains("Ctrl-Enter"))
+            .expect("footer row");
+
+        assert!(footer_row >= description_row + 2);
+    }
+
     #[test]
     fn add_task_overlay_renders_metadata_fields_and_footer() {
         let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
@@ -761,9 +805,23 @@ mod add_task_overlay {
     #[test]
     fn schedule_hit_testing_uses_the_summary_row() {
         let terminal = ratatui::layout::Rect::new(0, 0, 120, 30);
+        let state = add_task_view();
+        let outer = crate::tui::overlay::dialog_area(terminal, 100, 14);
+        let schedule_row = outer.y + 2;
         for column in [70, 100] {
             assert_eq!(
-                add_task_field_at(terminal, false, false, AddTaskScheduleLayout, column, 4,),
+                add_task_field_at(
+                    terminal,
+                    false,
+                    AddTaskLayout {
+                        description: &state.description,
+                        mode: &state.mode,
+                        has_attachments: false,
+                        show_schedule_error: false,
+                    },
+                    column,
+                    schedule_row,
+                ),
                 Some(AddTaskStep::Schedule)
             );
         }

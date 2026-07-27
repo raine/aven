@@ -28,22 +28,26 @@ use crate::tui::theme::{self, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, SELECTED};
 use crate::tui::widgets::{priority_short, status_span};
 
 #[derive(Clone, Copy)]
-pub(crate) struct AddTaskScheduleLayout;
+pub(crate) struct AddTaskLayout<'a> {
+    pub(crate) description: &'a [String],
+    pub(crate) mode: &'a AddTaskMode,
+    pub(crate) has_attachments: bool,
+    pub(crate) show_schedule_error: bool,
+}
 
 pub(crate) fn add_task_field_at(
     terminal: Rect,
     full_frame: bool,
-    has_attachments: bool,
-    _schedule: AddTaskScheduleLayout,
+    layout: AddTaskLayout<'_>,
     column: u16,
     row: u16,
 ) -> Option<AddTaskStep> {
     let outer = if full_frame {
         terminal
     } else {
-        let height = terminal.height.saturating_sub(4).clamp(16, 26);
-        crate::tui::overlay::dialog_area(terminal, 100, height)
+        crate::tui::overlay::dialog_area(terminal, 100, add_task_dialog_height(terminal, layout))
     };
+    let has_attachments = layout.has_attachments;
     let content = Rect {
         x: outer.x.saturating_add(2),
         y: outer.y.saturating_add(1),
@@ -109,8 +113,62 @@ pub(crate) fn add_task_field_at(
     None
 }
 
+const ADD_TASK_MAX_HEIGHT: u16 = 26;
+const ADD_TASK_DEFAULT_DESCRIPTION_ROWS: usize = 3;
+
+fn add_task_dialog_height(terminal: Rect, layout: AddTaskLayout<'_>) -> u16 {
+    let available_height = terminal
+        .height
+        .saturating_sub(4)
+        .clamp(1, ADD_TASK_MAX_HEIGHT);
+    if layout.mode != &AddTaskMode::Compose {
+        return available_height;
+    }
+
+    let outer = crate::tui::overlay::dialog_area(terminal, 100, available_height);
+    let content_width = outer.width.saturating_sub(4) as usize;
+    let metadata_rows = if content_width >= 80 {
+        2
+    } else {
+        metadata_steps()
+            .len()
+            .div_ceil(metadata_columns(content_width as u16))
+    };
+    let schedule_error_rows = usize::from(layout.show_schedule_error);
+    let attachment_rows = if layout.has_attachments { 2 } else { 1 };
+    let description_rows = layout
+        .description
+        .iter()
+        .enumerate()
+        .map(|(row, line)| {
+            add_task_description_visual_lines(
+                line,
+                None,
+                layout.description.len() == 1 && line.is_empty() && row == 0,
+                content_width,
+            )
+            .len()
+        })
+        .sum::<usize>()
+        .max(ADD_TASK_DEFAULT_DESCRIPTION_ROWS);
+    let fixed_content_rows = metadata_rows + schedule_error_rows + attachment_rows + 6;
+    let desired_height = fixed_content_rows
+        .saturating_add(description_rows)
+        .saturating_add(2);
+    desired_height.min(available_height as usize) as u16
+}
+
 pub(in crate::tui::ui) fn render_add_task(frame: &mut Frame, state: &AddTaskView) {
-    let height = frame.area().height.saturating_sub(4).clamp(16, 26);
+    let height = add_task_dialog_height(
+        frame.area(),
+        AddTaskLayout {
+            description: &state.description,
+            mode: &state.mode,
+            has_attachments: !state.attachments.items.is_empty(),
+            show_schedule_error: state.schedule_error.is_some()
+                && state.schedule_validation_requested,
+        },
+    );
     let title = if state.editing_template {
         "Edit recurring template"
     } else {
@@ -210,16 +268,17 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
         "Description",
         state.focus == AddTaskStep::Description,
     ));
-    let reserved = lines.len().saturating_add(1);
+    let reserved = lines.len().saturating_add(2);
     let description_rows = (content.height as usize).saturating_sub(reserved).max(1);
     lines.extend(add_task_description_lines(
         state,
         description_rows,
         content.width as usize,
     ));
-    while lines.len() + 1 < content.height as usize {
+    while lines.len() + 2 < content.height as usize {
         lines.push(Line::from(""));
     }
+    lines.push(Line::from(""));
     lines.push(add_task_hint_line(
         state.focus,
         state.status_prefix_active,

@@ -13,7 +13,7 @@ mod text_input;
 mod text_panel;
 mod update;
 
-pub(crate) use add_task::{AddTaskScheduleLayout, add_task_field_at, composer_help_scroll_cap};
+pub(crate) use add_task::{AddTaskLayout, add_task_field_at, composer_help_scroll_cap};
 pub(super) use add_task::{render_add_task, render_add_task_full_frame};
 pub(super) use confirm::render_confirm;
 pub(crate) use database_stats::database_stats_scroll_cap;
