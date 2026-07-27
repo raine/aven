@@ -24,6 +24,7 @@ use crate::db::Database;
 use crate::ids::{new_id, now};
 
 const GZIP_THRESHOLD: usize = 256;
+const MAX_HTTP_ERROR_DETAIL_BYTES: usize = 1024;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct SyncRequestContext {
@@ -426,10 +427,7 @@ impl SyncSession {
             validate_context(&outstanding.prepared.context, context)?;
         }
         if !(200..300).contains(&response.status) {
-            if response.status == 507 {
-                bail!("error attachment-quota-exceeded");
-            }
-            bail!("sync HTTP status {}", response.status);
+            bail!("{}", sync_http_error(&response));
         }
         let outstanding = self
             .outstanding
@@ -723,6 +721,41 @@ fn header_value<'a>(headers: &'a [SyncHttpHeader], name: &str) -> Option<&'a str
         .iter()
         .find(|header| header.name.eq_ignore_ascii_case(name))
         .map(|header| header.value.as_str())
+}
+
+fn sync_http_error(response: &SyncHttpResponse) -> String {
+    let detail = header_value(&response.headers, "content-type")
+        .filter(|content_type| {
+            content_type
+                .split(';')
+                .next()
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case("text/plain"))
+        })
+        .and_then(|_| std::str::from_utf8(&response.body).ok())
+        .map(str::trim)
+        .filter(|detail| {
+            detail.starts_with("error ")
+                && detail.len() <= MAX_HTTP_ERROR_DETAIL_BYTES
+                && detail.is_ascii()
+                && !detail.chars().any(char::is_control)
+        });
+
+    let detail = detail.unwrap_or(match response.status {
+        400 => {
+            "server rejected the sync request; check server logs and verify client/server version compatibility"
+        }
+        401 => "authentication failed; check sync.auth_token",
+        403 => "server denied the sync request; check server access settings",
+        404 => "sync endpoint not found; check sync.server_url",
+        429 => "server rate limit exceeded; retry later",
+        507 => "error attachment-quota-exceeded",
+        500..=599 => "sync server failed; check server logs",
+        _ => "server returned no readable error details",
+    });
+    format!(
+        "sync request failed with HTTP status {}: {detail}",
+        response.status
+    )
 }
 
 fn gzip_encode(body: &[u8]) -> Result<Vec<u8>> {

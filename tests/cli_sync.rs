@@ -546,7 +546,13 @@ impl Drop for FakeSyncServer {
     }
 }
 
-fn start_fake_sync_server_sequence(responses: Vec<Value>) -> FakeSyncServer {
+struct FakeSyncHttpResponse {
+    status_line: &'static str,
+    content_type: &'static str,
+    body: Vec<u8>,
+}
+
+fn start_fake_sync_http_server_sequence(responses: Vec<FakeSyncHttpResponse>) -> FakeSyncServer {
     use std::io::{BufRead as _, BufReader, Write as _};
     use std::net::TcpListener;
     use std::thread;
@@ -584,19 +590,21 @@ fn start_fake_sync_server_sequence(responses: Vec<Value>) -> FakeSyncServer {
                     break;
                 }
             }
-            let body = response.to_string();
             write!(
                 stream,
-                "HTTP/1.1 200 OK\r\n\
-                 content-type: application/json\r\n\
+                "HTTP/1.1 {}\r\n\
+                 content-type: {}\r\n\
                  content-length: {}\r\n\
                  connection: close\r\n\
-                 \r\n\
-                 {}",
-                body.len(),
-                body
+                 \r\n",
+                response.status_line,
+                response.content_type,
+                response.body.len(),
             )
-            .expect("write fake response");
+            .expect("write fake response headers");
+            stream
+                .write_all(&response.body)
+                .expect("write fake response body");
         }
     });
     FakeSyncServer {
@@ -604,6 +612,19 @@ fn start_fake_sync_server_sequence(responses: Vec<Value>) -> FakeSyncServer {
         stop,
         thread: Some(thread),
     }
+}
+
+fn start_fake_sync_server_sequence(responses: Vec<Value>) -> FakeSyncServer {
+    start_fake_sync_http_server_sequence(
+        responses
+            .into_iter()
+            .map(|response| FakeSyncHttpResponse {
+                status_line: "200 OK",
+                content_type: "application/json",
+                body: response.to_string().into_bytes(),
+            })
+            .collect(),
+    )
 }
 
 fn start_fake_sync_server(response: Value) -> FakeSyncServer {
@@ -731,6 +752,53 @@ fn offline_creates_converge() {
         &list_b,
         &[&a_ref, &b_ref, "offline from a", "offline from b"],
     );
+}
+
+#[test]
+fn sync_http_error_includes_server_rejection_detail() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let db = env.db("invalid-change.sqlite");
+    ok(env.aven(&db, ["add", "invalid push", "--project", "app"]));
+    exec_sql(&db, "UPDATE changes SET op_type = 'invalid_test_op'");
+
+    let error = fail(env.aven(&db, ["sync", "--server", &server.url]));
+
+    contains_all(
+        &error,
+        &[
+            "sync request failed with HTTP status 400",
+            "error invalid-sync-change op_type=invalid_test_op",
+        ],
+    );
+}
+
+#[test]
+fn sync_http_error_uses_safe_fallback_for_undecodable_body() {
+    let env = TestEnv::new();
+    let db = env.db("undecodable-http-error.sqlite");
+    ok(env.aven(&db, ["add", "local task", "--project", "app"]));
+    let mut body = vec![0xff];
+    body.extend_from_slice(b"error upstream-secret=do-not-print");
+    let server = start_fake_sync_http_server_sequence(vec![FakeSyncHttpResponse {
+        status_line: "400 Bad Request",
+        content_type: "text/plain; charset=utf-8",
+        body,
+    }]);
+
+    let error = fail(env.aven(&db, ["sync", "--server", server.url()]));
+
+    contains_all(
+        &error,
+        &[
+            "sync request failed with HTTP status 400",
+            "server rejected the sync request",
+            "check server logs",
+            "verify client/server version compatibility",
+        ],
+    );
+    contains_none(&error, &["upstream-secret", "do-not-print"]);
+    server.finish();
 }
 
 #[test]
