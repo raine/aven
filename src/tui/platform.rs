@@ -1,5 +1,7 @@
 use std::fs;
 use std::io::{self, Write};
+#[cfg(target_os = "linux")]
+use std::io::{Read, Seek};
 use std::path::Path;
 use std::process::Command as ProcessCommand;
 #[cfg(any(target_os = "linux", test))]
@@ -390,6 +392,20 @@ fn clipboard_read_command(
 }
 
 #[cfg(any(target_os = "linux", test))]
+fn clipboard_write_command(backend: LinuxClipboardBackend) -> ClipboardCommand {
+    match backend {
+        LinuxClipboardBackend::Wayland => ClipboardCommand {
+            program: "wl-copy",
+            args: Vec::new(),
+        },
+        LinuxClipboardBackend::X11 => ClipboardCommand {
+            program: "xclip",
+            args: vec!["-selection".into(), "clipboard".into(), "-in".into()],
+        },
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
 fn advertised_clipboard_image_format(output: &[u8]) -> Option<ClipboardImageFormat> {
     let advertised = String::from_utf8_lossy(output);
     CLIPBOARD_IMAGE_FORMATS.iter().copied().find(|format| {
@@ -517,6 +533,59 @@ fn read_linux_clipboard_image_with(
     anyhow::bail!("Linux clipboard image paste requires wl-paste or xclip")
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn copy_linux_clipboard_with(
+    backends: [LinuxClipboardBackend; 2],
+    value: &str,
+    mut run: impl FnMut(&ClipboardCommand, &[u8]) -> io::Result<ClipboardCommandOutput>,
+) -> Result<()> {
+    let mut failures = Vec::new();
+    for backend in backends {
+        let command = clipboard_write_command(backend);
+        match run(&command, value.as_bytes()) {
+            Ok(output) if output.success => return Ok(()),
+            Ok(output) => failures.push(clipboard_command_failure(&command, &output)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => failures.push(format!("could not run {}: {error}", command.program)),
+        }
+    }
+    if failures.is_empty() {
+        anyhow::bail!("Linux clipboard copy requires wl-copy or xclip");
+    }
+    anyhow::bail!(failures.join("; "))
+}
+
+#[cfg(target_os = "linux")]
+fn run_clipboard_write_command(
+    command: &ClipboardCommand,
+    value: &[u8],
+) -> io::Result<ClipboardCommandOutput> {
+    let mut stderr = tempfile::tempfile()?;
+    let mut child = ProcessCommand::new(command.program)
+        .args(&command.args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(stderr.try_clone()?)
+        .spawn()?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| io::Error::other("clipboard command standard input is unavailable"))?;
+    let write_result = stdin.write_all(value);
+    drop(stdin);
+    let status = child.wait()?;
+    write_result?;
+    stderr.rewind()?;
+    let mut stderr_output = Vec::new();
+    stderr.read_to_end(&mut stderr_output)?;
+    Ok(ClipboardCommandOutput {
+        success: status.success(),
+        status: status.to_string(),
+        stdout: Vec::new(),
+        stderr: stderr_output,
+    })
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn read_clipboard_image() -> Result<Option<ClipboardImage>> {
     let temp = tempfile::Builder::new()
@@ -599,13 +668,12 @@ pub(crate) fn read_clipboard_text() -> Result<Option<String>> {
     Ok(None)
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), target_os = "macos"))]
 pub(crate) fn copy_to_clipboard(value: &str) -> Result<()> {
     let mut child = ProcessCommand::new("pbcopy")
         .stdin(std::process::Stdio::piped())
         .spawn()?;
     if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
         stdin.write_all(value.as_bytes())?;
     }
     let status = child.wait()?;
@@ -613,6 +681,20 @@ pub(crate) fn copy_to_clipboard(value: &str) -> Result<()> {
         anyhow::bail!("pbcopy exited with {status}");
     }
     Ok(())
+}
+
+#[cfg(all(not(test), target_os = "linux"))]
+pub(crate) fn copy_to_clipboard(value: &str) -> Result<()> {
+    let backends = linux_clipboard_backend_order(
+        std::env::var_os("WAYLAND_DISPLAY").as_deref(),
+        std::env::var_os("XDG_SESSION_TYPE").as_deref(),
+    );
+    copy_linux_clipboard_with(backends, value, run_clipboard_write_command)
+}
+
+#[cfg(all(not(test), not(any(target_os = "macos", target_os = "linux"))))]
+pub(crate) fn copy_to_clipboard(_value: &str) -> Result<()> {
+    anyhow::bail!("clipboard copy is unsupported on this platform")
 }
 
 #[cfg(test)]
@@ -685,7 +767,7 @@ mod tests {
     }
 
     #[test]
-    fn selects_preferred_advertised_mime_and_backend_commands() {
+    fn selects_linux_clipboard_read_and_write_commands() {
         let format =
             advertised_clipboard_image_format(b"image/webp\nimage/gif\nimage/jpeg\nimage/png\n")
                 .unwrap();
@@ -710,6 +792,20 @@ mod tests {
                     "image/png".into(),
                     "-o".into(),
                 ],
+            }
+        );
+        assert_eq!(
+            clipboard_write_command(LinuxClipboardBackend::Wayland),
+            ClipboardCommand {
+                program: "wl-copy",
+                args: Vec::new(),
+            }
+        );
+        assert_eq!(
+            clipboard_write_command(LinuxClipboardBackend::X11),
+            ClipboardCommand {
+                program: "xclip",
+                args: vec!["-selection".into(), "clipboard".into(), "-in".into()],
             }
         );
     }
@@ -819,6 +915,80 @@ mod tests {
         assert_eq!(
             failed.to_string(),
             "xclip exited with exit status: 1: cannot open display"
+        );
+    }
+
+    #[test]
+    fn writes_linux_clipboard_payload_with_backend_fallback() {
+        use std::collections::VecDeque;
+
+        let mut responses = VecDeque::from([
+            Ok(clipboard_test_output(
+                false,
+                b"",
+                b"cannot connect to wayland display",
+            )),
+            Ok(clipboard_test_output(true, b"", b"")),
+        ]);
+        let mut commands = Vec::new();
+        let mut payloads = Vec::new();
+
+        let value = "task title\nsecond line";
+        copy_linux_clipboard_with(
+            [LinuxClipboardBackend::Wayland, LinuxClipboardBackend::X11],
+            value,
+            |command, payload| {
+                commands.push(command.clone());
+                payloads.push(payload.to_vec());
+                responses.pop_front().unwrap()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(commands[0].program, "wl-copy");
+        assert_eq!(commands[1].program, "xclip");
+        assert_eq!(payloads, vec![value.as_bytes().to_vec(); 2]);
+    }
+
+    #[test]
+    fn reports_missing_linux_clipboard_tools() {
+        let error = copy_linux_clipboard_with(
+            [LinuxClipboardBackend::X11, LinuxClipboardBackend::Wayland],
+            "task title",
+            |_, _| Err(io::Error::new(io::ErrorKind::NotFound, "missing")),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Linux clipboard copy requires wl-copy or xclip"
+        );
+    }
+
+    #[test]
+    fn reports_linux_clipboard_command_failures() {
+        use std::collections::VecDeque;
+
+        let mut responses = VecDeque::from([
+            Ok(clipboard_test_output(
+                false,
+                b"",
+                b"cannot connect to wayland display",
+            )),
+            Ok(clipboard_test_output(false, b"", b"cannot open display")),
+        ]);
+
+        let error = copy_linux_clipboard_with(
+            [LinuxClipboardBackend::Wayland, LinuxClipboardBackend::X11],
+            "task title",
+            |_, _| responses.pop_front().unwrap(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "wl-copy exited with exit status: 1: cannot connect to wayland display; \
+             xclip exited with exit status: 1: cannot open display"
         );
     }
 
