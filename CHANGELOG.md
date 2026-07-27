@@ -3,6 +3,17 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.18 (2026-07-27)
+
+- Copy task text from the Linux TUI on Wayland or X11 with `wl-copy` or `xclip`.
+- Sync failures include useful server details and specific guidance for
+  authentication, configuration, rate limits, and server errors. Protocol
+  mismatches identify whether the client or server needs an upgrade.
+- Task changes and their undo history are saved together, preventing partial
+  updates when a write fails.
+- The TUI keeps task lists, detail views, selections, and edit targets
+  consistent when an update fails or needs to be retried.
+
 ## v0.1.17 (2026-07-25)
 
 - Manage epic children from the TUI by adding existing tasks, creating new
