@@ -276,7 +276,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
-    let mut command = Command::new(common::bin());
+    let mut command = command();
     command
         .env("XDG_STATE_HOME", env.state_dir())
         .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
