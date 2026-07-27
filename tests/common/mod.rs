@@ -48,6 +48,7 @@ impl TestEnv {
         command
             .env("XDG_STATE_HOME", self.state_dir())
             .env("AVEN_CONFIG_DIR", self.config_dir().join("aven"))
+            .env_remove("AVEN_DEV_DB")
             .env_remove("AVEN_DB")
             .env_remove("AVEN_SYNC_SERVER");
     }
@@ -114,6 +115,7 @@ sync:
         self.configure_command(&mut command);
         command
             .env("AVEN_CONFIG_DIR", self.config_dir().join("aven"))
+            .env_remove("AVEN_DEV_DB")
             .env_remove("AVEN_DB")
             .env_remove("AVEN_SYNC_SERVER");
         command.args(args).output().expect("run aven with config")
@@ -221,7 +223,9 @@ pub fn bin() -> PathBuf {
 }
 
 pub fn command() -> Command {
-    Command::new(bin())
+    let mut command = Command::new(bin());
+    command.env_remove("AVEN_DEV_DB");
+    command
 }
 
 pub fn command_with_db(db: &Path) -> Command {

@@ -1,9 +1,8 @@
 mod common;
 
-use std::process::Command;
-
 use common::{
-    TestEnv, TestServer, contains_all, contains_none, extract_ref, fail, meta_value, ok, scalar_i64,
+    TestEnv, TestServer, command, contains_all, contains_none, extract_ref, fail, meta_value, ok,
+    scalar_i64,
 };
 
 fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) -> String {
@@ -99,7 +98,7 @@ sync:
     );
 
     let env_db = env.db("env.sqlite");
-    let env_output = Command::new(common::bin())
+    let env_output = command()
         .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
         .env("AVEN_DB", &env_db)
         .env("AVEN_SYNC_SERVER", &server_env.url)

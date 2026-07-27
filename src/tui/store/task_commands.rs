@@ -39,6 +39,22 @@ impl TuiStore {
         status: TaskStatus,
         preserve_task: bool,
     ) -> Result<MutationMessage> {
+        let selected_task_id = selection.single_id().cloned();
+        let epic_fallback = (self.view_state.view == super::TaskView::Epics
+            && selection.is_single()
+            && selection.targets()[0].task.is_epic)
+            .then(|| {
+                let selected_task_id = selected_task_id.as_ref().expect("single selection");
+                self.tasks
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, candidate)| {
+                        &candidate.task.id != selected_task_id && candidate.epic_parent.is_none()
+                    })
+                    .min_by_key(|(index, _)| index.abs_diff(selection.anchor_index()))
+                    .map(|(_, candidate)| candidate.task.id.clone())
+            })
+            .flatten();
         let updates = selection
             .ids()
             .cloned()
@@ -77,8 +93,21 @@ impl TuiStore {
         } else {
             format!("set status on {changed} {}", task_noun(changed))
         };
-        self.refresh_task_selection(selection, report, message, preserve_task, true)
-            .await
+        let mut result = self
+            .refresh_task_selection(selection, report, message, preserve_task, true)
+            .await?;
+        if selected_task_id.is_some_and(|selected_task_id| {
+            self.tasks
+                .iter()
+                .all(|candidate| candidate.task.id != selected_task_id)
+        }) && let Some(fallback) = epic_fallback
+        {
+            result.selected = self
+                .tasks
+                .iter()
+                .position(|candidate| candidate.task.id == fallback);
+        }
+        Ok(result)
     }
 
     pub(crate) async fn mutate_status_changes(

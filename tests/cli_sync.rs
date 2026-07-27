@@ -2620,7 +2620,7 @@ fn missing_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=0 server=10",
+        &format!("error sync-protocol-unsupported client=0 server={SYNC_PROTOCOL_VERSION}"),
     );
 }
 
@@ -2640,7 +2640,7 @@ fn old_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=9 server=10",
+        &format!("error sync-protocol-unsupported client=9 server={SYNC_PROTOCOL_VERSION}"),
     );
 }
 
@@ -2649,7 +2649,7 @@ fn newer_request_protocol_version_is_rejected_before_changes_are_stored() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let body = serde_json::json!({
-        "protocol_version": 11,
+        "protocol_version": SYNC_PROTOCOL_VERSION + 1,
         "client_id": "new-client",
         "after": 0,
         "changes": [project_change_json("new-version-change", "new-version")]
@@ -2660,7 +2660,10 @@ fn newer_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=11 server=10",
+        &format!(
+            "error sync-protocol-unsupported client={} server={SYNC_PROTOCOL_VERSION}",
+            SYNC_PROTOCOL_VERSION + 1
+        ),
     );
 }
 
@@ -2682,7 +2685,9 @@ fn wrong_response_protocol_version_is_rejected() {
     let error = fail(env.aven(&db, ["sync", "--server", server.url()]));
     contains_all(
         &error,
-        &["error sync-protocol-unsupported client=10 server=0"],
+        &[&format!(
+            "error sync-protocol-unsupported client={SYNC_PROTOCOL_VERSION} server=0"
+        )],
     );
     assert_eq!(
         scalar_i64(&db, "SELECT count(*) FROM changes"),
