@@ -774,6 +774,47 @@ fn sync_http_error_includes_server_rejection_detail() {
 }
 
 #[test]
+fn sync_http_error_explains_protocol_upgrade_direction() {
+    let env = TestEnv::new();
+    let db = env.db("protocol-mismatch.sqlite");
+    ok(env.aven(&db, ["add", "local task", "--project", "app"]));
+    let server = start_fake_sync_http_server_sequence(
+        [
+            "error sync-protocol-unsupported client=9 server=5",
+            "error sync-protocol-unsupported client=5 server=9",
+        ]
+        .into_iter()
+        .map(|body| FakeSyncHttpResponse {
+            status_line: "400 Bad Request",
+            content_type: "text/plain; charset=utf-8",
+            body: body.as_bytes().to_vec(),
+        })
+        .collect(),
+    );
+
+    let server_error = fail(env.aven(&db, ["sync", "--server", server.url()]));
+    contains_all(
+        &server_error,
+        &[
+            "client and server use incompatible sync protocol versions (client 9, server 5)",
+            "upgrade the sync server",
+        ],
+    );
+    contains_none(&server_error, &["sync-protocol-unsupported"]);
+
+    let client_error = fail(env.aven(&db, ["sync", "--server", server.url()]));
+    contains_all(
+        &client_error,
+        &[
+            "client and server use incompatible sync protocol versions (client 5, server 9)",
+            "upgrade the sync client",
+        ],
+    );
+    contains_none(&client_error, &["sync-protocol-unsupported"]);
+    server.finish();
+}
+
+#[test]
 fn sync_http_error_uses_safe_fallback_for_undecodable_body() {
     let env = TestEnv::new();
     let db = env.db("undecodable-http-error.sqlite");

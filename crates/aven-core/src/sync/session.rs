@@ -740,22 +740,52 @@ fn sync_http_error(response: &SyncHttpResponse) -> String {
                 && !detail.chars().any(char::is_control)
         });
 
-    let detail = detail.unwrap_or(match response.status {
-        400 => {
-            "server rejected the sync request; check server logs and verify client/server version compatibility"
+    let detail = match detail {
+        Some(detail) => actionable_sync_http_error_detail(detail).unwrap_or_else(|| detail.to_string()),
+        None => match response.status {
+            400 => {
+                "server rejected the sync request; check server logs and verify client/server version compatibility"
+            }
+            401 => "authentication failed; check sync.auth_token",
+            403 => "server denied the sync request; check server access settings",
+            404 => "sync endpoint not found; check sync.server_url",
+            429 => "server rate limit exceeded; retry later",
+            507 => "error attachment-quota-exceeded",
+            500..=599 => "sync server failed; check server logs",
+            _ => "server returned no readable error details",
         }
-        401 => "authentication failed; check sync.auth_token",
-        403 => "server denied the sync request; check server access settings",
-        404 => "sync endpoint not found; check sync.server_url",
-        429 => "server rate limit exceeded; retry later",
-        507 => "error attachment-quota-exceeded",
-        500..=599 => "sync server failed; check server logs",
-        _ => "server returned no readable error details",
-    });
+        .to_string(),
+    };
     format!(
         "sync request failed with HTTP status {}: {detail}",
         response.status
     )
+}
+
+fn actionable_sync_http_error_detail(detail: &str) -> Option<String> {
+    let fields = detail.strip_prefix("error sync-protocol-unsupported ")?;
+    let mut fields = fields.split_whitespace();
+    let client = fields
+        .next()?
+        .strip_prefix("client=")?
+        .parse::<u32>()
+        .ok()?;
+    let server = fields
+        .next()?
+        .strip_prefix("server=")?
+        .parse::<u32>()
+        .ok()?;
+    if fields.next().is_some() || client == server {
+        return None;
+    }
+    let action = if client > server {
+        "upgrade the sync server"
+    } else {
+        "upgrade the sync client"
+    };
+    Some(format!(
+        "client and server use incompatible sync protocol versions (client {client}, server {server}); {action}"
+    ))
 }
 
 fn gzip_encode(body: &[u8]) -> Result<Vec<u8>> {
