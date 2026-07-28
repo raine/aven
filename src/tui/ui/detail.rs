@@ -185,7 +185,7 @@ struct SelectableLine {
 #[derive(Debug, Clone)]
 struct DetailSelectableDocument {
     text: String,
-    title: SelectableLine,
+    title: Vec<SelectableLine>,
     description: Vec<SelectableLine>,
 }
 
@@ -244,7 +244,12 @@ impl DetailDocument {
             context.pending_attachments,
         );
         let width = layout.content_area.width as usize;
-        let selectable = detail_selectable_document(item, width, inline_images.as_ref());
+        let selectable = detail_selectable_document_with_title_wrap(
+            item,
+            width,
+            inline_images.as_ref(),
+            context.inline_title_editor.is_none(),
+        );
         Self {
             task_id: item.task.id.clone(),
             layout,
@@ -493,8 +498,9 @@ impl DetailDocument {
         {
             return None;
         }
-        let selectable = if row == self.layout.content_area.y {
-            &self.selectable.title
+        let title_row = row.saturating_sub(self.layout.content_area.y) as usize;
+        let selectable = if let Some(title) = self.selectable.title.get(title_row) {
+            title
         } else {
             let body_y = self
                 .layout
@@ -1128,10 +1134,30 @@ fn detail_selectable_document(
     width: usize,
     inline_images: Option<&DetailInlineImageContext>,
 ) -> DetailSelectableDocument {
-    let title = SelectableLine {
-        text: item.task.title.clone(),
-        document_start: 0,
-        body_index: None,
+    detail_selectable_document_with_title_wrap(item, width, inline_images, true)
+}
+
+fn detail_selectable_document_with_title_wrap(
+    item: &TaskListItem,
+    width: usize,
+    inline_images: Option<&DetailInlineImageContext>,
+    wrap_title: bool,
+) -> DetailSelectableDocument {
+    let title = if wrap_title {
+        title_line_ranges(&item.task.title, width)
+            .into_iter()
+            .map(|range| SelectableLine {
+                text: item.task.title[range.clone()].to_string(),
+                document_start: range.start,
+                body_index: None,
+            })
+            .collect()
+    } else {
+        vec![SelectableLine {
+            text: item.task.title.clone(),
+            document_start: 0,
+            body_index: None,
+        }]
     };
     let mut text = item.task.title.clone();
     let mut description = Vec::new();
@@ -1196,8 +1222,8 @@ fn apply_detail_selection_from_document(
     body_start: usize,
 ) {
     let range = selection.range();
-    if let Some(line) = sticky_lines.first_mut() {
-        highlight_selectable_line(line, &document.title, &range, 0);
+    for (line, selectable) in sticky_lines.iter_mut().zip(&document.title) {
+        highlight_selectable_line(line, selectable, &range, 0);
     }
     for selectable in &document.description {
         if let Some(line) = selectable
@@ -1867,20 +1893,20 @@ fn detail_header_options(
             theme::priority_style(item.task.priority.as_str()).add_modifier(Modifier::BOLD),
         ),
     ]);
-    let mut lines = vec![
-        detail_title_line(item, width, inline_title_editor),
+    let mut lines = detail_title_lines(item, width, inline_title_editor);
+    lines.extend([
         Line::from(Span::styled("─".repeat(width), Style::new().fg(BORDER))),
         Line::from(summary_spans),
-    ];
-    lines.push(Line::from(""));
+        Line::from(""),
+    ]);
     lines
 }
 
-fn detail_title_line(
+fn detail_title_lines(
     item: &TaskListItem,
     width: usize,
     inline_title_editor: Option<&TextInputView>,
-) -> Line<'static> {
+) -> Vec<Line<'static>> {
     if let Some(editor) = inline_title_editor {
         let mut line = clipped_input_line(&editor.input, editor.cursor, width);
         for span in &mut line.spans {
@@ -1889,13 +1915,77 @@ fn detail_title_line(
                 .add_modifier(Modifier::BOLD)
                 .patch(span.style);
         }
-        return line;
+        return vec![line];
     }
 
-    Line::from(vec![Span::styled(
-        item.task.title.clone(),
-        Style::new().fg(FG).add_modifier(Modifier::BOLD),
-    )])
+    title_line_ranges(&item.task.title, width)
+        .into_iter()
+        .map(|range| {
+            Line::from(Span::styled(
+                item.task.title[range].to_string(),
+                Style::new().fg(FG).add_modifier(Modifier::BOLD),
+            ))
+        })
+        .collect()
+}
+
+fn title_line_ranges(title: &str, width: usize) -> Vec<std::ops::Range<usize>> {
+    let width = width.max(1);
+    let mut words = Vec::new();
+    let mut word_start = None;
+    for (index, character) in title.char_indices() {
+        if character.is_whitespace() {
+            if let Some(start) = word_start.take() {
+                words.push(start..index);
+            }
+        } else if word_start.is_none() {
+            word_start = Some(index);
+        }
+    }
+    if let Some(start) = word_start {
+        words.push(start..title.len());
+    }
+    if words.is_empty() {
+        return std::iter::once(0..title.len()).collect();
+    }
+
+    let mut lines = Vec::new();
+    let mut current: Option<std::ops::Range<usize>> = None;
+    for word in words {
+        if let Some(line) = &mut current {
+            let candidate = line.start..word.end;
+            if title[candidate.clone()].width() <= width {
+                line.end = word.end;
+                continue;
+            }
+            lines.push(line.clone());
+            current = None;
+        }
+
+        let mut chunk_start = word.start;
+        for (offset, character) in title[word.clone()].char_indices() {
+            let index = word.start + offset;
+            let end = index + character.len_utf8();
+            if title[chunk_start..end].width() <= width {
+                continue;
+            }
+            if chunk_start < index {
+                lines.push(chunk_start..index);
+                chunk_start = index;
+            }
+            if title[chunk_start..end].width() > width {
+                lines.push(chunk_start..end);
+                chunk_start = end;
+            }
+        }
+        if chunk_start < word.end {
+            current = Some(chunk_start..word.end);
+        }
+    }
+    if let Some(line) = current {
+        lines.push(line);
+    }
+    lines
 }
 
 fn quoted_block_lines(body: &str, width: usize, style: Style) -> Vec<Line<'static>> {
@@ -2758,6 +2848,55 @@ mod tests {
     }
 
     #[test]
+    fn detail_header_wraps_the_complete_title_before_metadata() {
+        let mut item = detail_test_item();
+        item.task.title = "Implement wrapped task titles in the detail pane".to_string();
+
+        let lines = detail_header_options(&item, 18, None);
+        let rendered = lines.iter().map(Line::to_string).collect::<Vec<_>>();
+
+        assert_eq!(
+            &rendered[..3],
+            &["Implement wrapped", "task titles in the", "detail pane"]
+        );
+        assert_eq!(rendered[3], "─".repeat(18));
+        assert!(rendered[4].contains(&item.display_ref));
+        assert!(!rendered.join("\n").contains('…'));
+    }
+
+    #[test]
+    fn detail_header_breaks_words_that_exceed_narrow_widths() {
+        let mut item = detail_test_item();
+        item.task.title = "abcdefghij".to_string();
+
+        let lines = detail_title_lines(&item, 4, None);
+        let rendered = lines.iter().map(Line::to_string).collect::<Vec<_>>();
+
+        assert_eq!(rendered, ["abcd", "efgh", "ij"]);
+        assert_eq!(rendered.concat(), item.task.title);
+        assert!(lines.iter().all(|line| line.width() <= 4));
+    }
+
+    #[test]
+    fn detail_header_wraps_by_unicode_display_width() {
+        let mut item = detail_test_item();
+        item.task.title = "ab界cd 界界界".to_string();
+
+        let lines = detail_title_lines(&item, 4, None);
+        let rendered = lines.iter().map(Line::to_string).collect::<Vec<_>>();
+
+        assert_eq!(rendered, ["ab界", "cd", "界界", "界"]);
+        assert!(lines.iter().all(|line| line.width() <= 4));
+
+        item.task.title = "👩‍💻x".to_string();
+        let emoji = detail_title_lines(&item, 2, None)
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(emoji, ["👩‍💻", "x"]);
+    }
+
+    #[test]
     fn detail_header_marks_epics_with_star() {
         let mut item = detail_test_item();
         item.task.is_epic = true;
@@ -3046,6 +3185,67 @@ mod tests {
 
         assert!(!rendered.contains("WHY BLOCKED"));
         assert!(!rendered.contains("WHAT THIS UNLOCKS"));
+    }
+
+    #[test]
+    fn detail_selection_maps_and_highlights_across_wrapped_title_lines() {
+        let mut item = detail_test_item();
+        item.task.title = "first wrapped second line".to_string();
+        let expanded_sections = BTreeSet::new();
+        let context = detail_query_context(20, 24, 0, &expanded_sections, None);
+        let document = DetailDocument::build(&item, &context);
+        let layout = detail_content_layout(context.terminal_area);
+        let first = document
+            .text_cell_at_position(layout.content_area.x, layout.content_area.y)
+            .unwrap();
+        let focus = document
+            .text_cell_at_position(
+                layout.content_area.x + "second line".width() as u16 - 1,
+                layout.content_area.y + 1,
+            )
+            .unwrap();
+        let mut selection = DetailTextSelection::new(item.task.id.clone(), 20, first);
+        selection.focus = focus;
+
+        assert_eq!(document.sticky_height(), 5);
+        assert_eq!(
+            document.selected_text(&selection).as_deref(),
+            Some(item.task.title.as_str())
+        );
+
+        let model = build_detail_content_model(
+            &item,
+            layout.content_area,
+            0,
+            None,
+            None,
+            &expanded_sections,
+            Some(&selection),
+            None,
+        );
+        for line in &model.sticky_lines[..2] {
+            assert!(line.spans.iter().any(|span| span.style.bg == Some(ACCENT)));
+        }
+    }
+
+    #[test]
+    fn inline_title_editing_stays_on_one_clipped_line() {
+        let mut item = detail_test_item();
+        item.task.title = "a committed title long enough to wrap".to_string();
+        let editor = TextInputView {
+            kind: crate::tui::overlay::TextInputKind::EditTitle,
+            title: "Edit title".to_string(),
+            prompt: String::new(),
+            input: "an edited title that remains horizontal".to_string(),
+            cursor: 30,
+        };
+
+        let lines = detail_header_options(&item, 10, Some(&editor));
+
+        assert_eq!(lines.len(), 4);
+        assert!(lines[0].width() <= 10);
+        assert_eq!(lines[1].to_string(), "─".repeat(10));
+        assert_ne!(lines[0].to_string(), editor.input);
     }
 
     #[test]
