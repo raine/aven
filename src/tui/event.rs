@@ -244,8 +244,11 @@ mod tests {
     }
 
     #[test]
-    fn command_cycle_options_limits_exact_match_to_exact_commands() {
-        assert_eq!(command_cycle_options("todo"), vec!["status-todo"]);
+    fn command_cycle_options_keeps_visible_matches_after_exact_match() {
+        assert_eq!(
+            command_cycle_options("delete"),
+            vec!["delete", "delete-project", "filter-deleted"]
+        );
     }
 
     #[test]

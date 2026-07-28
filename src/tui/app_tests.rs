@@ -2210,6 +2210,56 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
+    async fn command_overlay_tab_selects_first_partial_command_match() {
+        let mut app = test_app().await;
+
+        app.begin_command();
+        type_chars(&mut app, ":delet").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Command { state })
+                if state.input.text == "delete"
+                    && state.input.cursor == "delete".len()
+                    && state.highlighted.as_deref() == Some("delete")
+        ));
+    }
+
+    #[tokio::test]
+    async fn command_overlay_tab_cycles_from_exact_command_match() {
+        let mut app = test_app().await;
+
+        app.begin_command();
+        type_chars(&mut app, ":delete").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Command { state })
+                if state.input.text == "delete"
+                    && state.input.cursor == "delete".len()
+                    && state.highlighted.as_deref() == Some("delete")
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Command { state })
+                if state.input.text == "delete-project"
+                    && state.highlighted.as_deref() == Some("delete-project")
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Command { state })
+                if state.input.text == "filter-deleted"
+                    && state.highlighted.as_deref() == Some("filter-deleted")
+        ));
+    }
+
+    #[tokio::test]
     async fn command_overlay_tab_cycles_ambiguous_matches() {
         let mut app = test_app().await;
 

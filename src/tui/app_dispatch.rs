@@ -1532,7 +1532,15 @@ impl App {
                 "no command matches: {}",
                 state.input.as_str().trim()
             )),
-            CommandCompletion::Unchanged => self.set_info("no further completion"),
+            CommandCompletion::Unchanged => {
+                if let Some(completion) = options.first() {
+                    state.input.text = (*completion).to_string();
+                    state.input.cursor = state.input.text.len();
+                    state.highlighted = Some(state.input.text.clone());
+                } else {
+                    self.set_info("no further completion");
+                }
+            }
         }
     }
 

@@ -176,19 +176,10 @@ pub(crate) fn command_cycle_options(input: &str) -> Vec<&'static str> {
     if input.is_empty() {
         return Vec::new();
     }
-    let matches = ranked_matches(input);
-    let Some(best_rank) = matches.iter().map(|(rank, _)| *rank).min() else {
-        return Vec::new();
-    };
-    if best_rank == 0 {
-        matches
-            .iter()
-            .filter(|(rank, _)| *rank == best_rank)
-            .map(|(_, command)| command.name)
-            .collect()
-    } else {
-        matches.iter().map(|(_, command)| command.name).collect()
-    }
+    ranked_matches(input)
+        .into_iter()
+        .map(|(_, command)| command.name)
+        .collect()
 }
 
 fn best_match_names(input: &str) -> Vec<&'static str> {
