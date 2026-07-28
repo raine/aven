@@ -119,6 +119,7 @@ async fn created_sort_respects_direction() {
     for (id, title, created_at) in [
         ("0000000000000201", "first", "001"),
         ("0000000000000202", "second", "002"),
+        ("0000000000000203", "third", "002"),
     ] {
         insert_test_task(&mut conn, id, title, "todo", "none", created_at).await;
     }
@@ -133,7 +134,7 @@ async fn created_sort_respects_direction() {
     )
     .await
     .unwrap();
-    assert_eq!(items[0].task.title, "second");
+    assert_eq!(listed_titles(&items), ["third", "second", "first"]);
 
     let items = list_task_items_in_workspace(
         &mut conn,
@@ -145,7 +146,7 @@ async fn created_sort_respects_direction() {
     )
     .await
     .unwrap();
-    assert_eq!(items[0].task.title, "first");
+    assert_eq!(listed_titles(&items), ["first", "second", "third"]);
 }
 
 #[tokio::test]

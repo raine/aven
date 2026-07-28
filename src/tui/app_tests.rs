@@ -1196,6 +1196,20 @@ mod attachment_paste {
         panic!("attachment work did not finish");
     }
 
+    async fn finish_task_intake_draft(app: &mut App) {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                app.poll_pending_task_intake().await.unwrap();
+                if matches!(app.overlay, Some(OverlayState::AddTask(_))) {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("task intake should produce an add-task draft");
+    }
+
     fn compressible_png_bytes() -> Vec<u8> {
         let width = 16u32;
         let height = 16u32;
@@ -2040,13 +2054,7 @@ mod attachment_paste {
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
         type_chars(&mut app, "make a task from this").await;
         app.handle_overlay_key(ctrl_s()).await.unwrap();
-        for _ in 0..100 {
-            app.poll_pending_task_intake().await.unwrap();
-            if matches!(app.overlay, Some(OverlayState::AddTask(_))) {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
+        finish_task_intake_draft(&mut app).await;
         app.handle_overlay_key(ctrl_s()).await.unwrap();
 
         let selected = app.list.selected_task().unwrap();
@@ -2097,13 +2105,7 @@ mod attachment_paste {
         app.begin_add_task_natural();
         type_chars(&mut app, "make a child task").await;
         app.handle_overlay_key(ctrl_s()).await.unwrap();
-        for _ in 0..100 {
-            app.poll_pending_task_intake().await.unwrap();
-            if matches!(app.overlay, Some(OverlayState::AddTask(_))) {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
+        finish_task_intake_draft(&mut app).await;
         app.handle_overlay_key(ctrl_s()).await.unwrap();
 
         let parent = app
