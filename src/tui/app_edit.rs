@@ -83,22 +83,31 @@ impl App {
             .map(|row| row.saturating_sub(self.list.task_offset()))
     }
 
+    fn record_changed_task_result(
+        &mut self,
+        result: &mut crate::tui::store::MutationMessage,
+        changed_task_id: Option<crate::ids::TaskId>,
+    ) {
+        let Some(task_id) = changed_task_id else {
+            return;
+        };
+        let selection_changed = result
+            .selected
+            .and_then(|index| self.store.tasks.get(index))
+            .is_none_or(|item| item.task.id != task_id);
+        self.list.record_changed_task(task_id);
+        if selection_changed {
+            result.message.push_str(" · g . return");
+        }
+    }
+
     fn apply_status_mutation_result(
         &mut self,
         mut result: crate::tui::store::MutationMessage,
         changed_task_id: Option<crate::ids::TaskId>,
         viewport_row: Option<usize>,
     ) {
-        if let Some(task_id) = changed_task_id {
-            let selection_changed = result
-                .selected
-                .and_then(|index| self.store.tasks.get(index))
-                .is_none_or(|item| item.task.id != task_id);
-            self.list.record_changed_task(task_id);
-            if selection_changed {
-                result.message.push_str(" · g . return");
-            }
-        }
+        self.record_changed_task_result(&mut result, changed_task_id);
         self.apply_mutation_result(result);
         if let (Some(viewport_row), Some(selected)) = (viewport_row, self.list.selected_task())
             && let Some(visual_row) = crate::tui::ui::task_visual_row(&self.store, selected)
@@ -446,8 +455,22 @@ impl App {
     ) where
         F: FnOnce(&mut Self),
     {
+        self.apply_changed_edit_mutation(result, None, on_error);
+    }
+
+    fn apply_changed_edit_mutation<F>(
+        &mut self,
+        result: Result<Option<crate::tui::store::MutationMessage>>,
+        changed_task_id: Option<crate::ids::TaskId>,
+        on_error: F,
+    ) where
+        F: FnOnce(&mut Self),
+    {
         match result {
-            Ok(Some(result)) => self.apply_mutation_result(result),
+            Ok(Some(mut result)) => {
+                self.record_changed_task_result(&mut result, changed_task_id);
+                self.apply_mutation_result(result);
+            }
             Ok(None) => self.set_info("no selected task to edit"),
             Err(error) => {
                 let committed = crate::tui::store::mutation_committed(&error);
@@ -802,6 +825,23 @@ impl App {
         Ok(())
     }
 
+    fn changed_project_target(
+        selection: &TaskSelection,
+        project: &str,
+    ) -> Option<crate::ids::TaskId> {
+        let changed = selection.targets().iter().find(|item| {
+            item.task.id == *selection.anchor_id() && item.task.project_key != project
+        });
+        changed
+            .or_else(|| {
+                selection
+                    .targets()
+                    .iter()
+                    .find(|item| item.task.project_key != project)
+            })
+            .map(|item| item.task.id.clone())
+    }
+
     pub(super) async fn submit_edit_project(
         &mut self,
         selection: TaskSelection,
@@ -812,12 +852,15 @@ impl App {
             self.set_info(format!("project unchanged on {} tasks", selection.len()));
             return Ok(());
         }
+        let changed_task_id = Self::changed_project_target(&selection, &project);
         let result = self
             .store
             .mutate_project_selection(&selection, project)
             .await
             .map(Some);
-        self.apply_edit_mutation(result, |app| app.open_edit_project_picker(selection));
+        self.apply_changed_edit_mutation(result, changed_task_id, |app| {
+            app.open_edit_project_picker(selection)
+        });
         Ok(())
     }
 

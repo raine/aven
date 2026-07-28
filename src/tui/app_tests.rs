@@ -2905,6 +2905,43 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
+    async fn project_edit_records_moved_task_for_detail_recall() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        let selected = create_and_select_task(&mut app, test_task_draft("moved task")).await;
+        let changed_id = app.store.tasks[selected].task.id.clone();
+        let original_project = app.store.tasks[selected].task.project_key.clone();
+        app.show_scope(TaskScopeTarget::Project(original_project))
+            .await
+            .unwrap();
+        app.list.select_task(Some(0));
+        app.show_detail(0);
+        app.begin_edit_project();
+        let (selection, mixed) = match &app.overlay {
+            Some(OverlayState::Picker(PickerState {
+                intent: PickerIntent::EditProject { selection, mixed },
+                ..
+            })) => (selection.clone(), *mixed),
+            overlay => panic!("expected project edit intent, got {overlay:?}"),
+        };
+
+        app.submit_edit_project(selection, mixed, "mobile-app".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(app.list.last_changed_task_id(), Some(&changed_id));
+        assert!(toast_message(&app).unwrap().contains("g . return"));
+        app.execute(Action::ReturnToLastChange).await.unwrap();
+        assert!(app.detail.is_active());
+        assert_eq!(app.store.view_state.view, TaskView::Search);
+        assert_eq!(app.store.tasks.len(), 1);
+        assert_eq!(app.store.tasks[0].task.id, changed_id);
+    }
+
+    #[tokio::test]
     async fn project_edit_keeps_captured_targets_and_anchor_across_refresh() {
         let mut app = test_app().await;
         app.store
