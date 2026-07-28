@@ -43,6 +43,12 @@ url = "2.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+mac-notification-sys = "0.6"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+notify-rust = "4"
+
 [dev-dependencies]
 aven-core = { path = "crates/aven-core", version = "=0.1.16", features = ["test-support"] }
 oxipng = { version = "10.1", default-features = false }

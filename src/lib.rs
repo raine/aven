@@ -13,6 +13,7 @@ mod daemon;
 mod due;
 mod input;
 mod logging;
+mod notification;
 mod operations;
 mod projects;
 mod render;

@@ -158,13 +158,20 @@ pub(crate) async fn cmd_internal_natural_add(
         }
     };
     let task = outcome.task;
+    let display_refs = database.display_ref_context(&workspace.id).await?;
+    if let Some(tui_pid) = args.tui_pid {
+        crate::notification::notify_intake_task_added_if_tui_exited(
+            tui_pid.get(),
+            &display_refs.display_ref(&task),
+            &task.title,
+        );
+    }
     tracing::info!(
         workspace_id = %args.workspace_id,
         task_id = %task.id,
         project = %task.project_key,
         "created task from internal natural-add"
     );
-    let display_refs = database.display_ref_context(&workspace.id).await?;
     print_created_task(&task, &workspace, &display_refs);
     crate::daemon::wake_if_enabled(config);
     Ok(())

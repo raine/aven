@@ -416,6 +416,8 @@ pub(crate) struct InternalNaturalAddArgs {
     pub(crate) input: String,
     #[arg(long, hide = true)]
     pub(crate) tui_undo: bool,
+    #[arg(long, hide = true)]
+    pub(crate) tui_pid: Option<std::num::NonZeroU32>,
 }
 
 #[derive(Args)]

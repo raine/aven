@@ -36,6 +36,7 @@ pub(crate) fn spawn_add_task_only_natural(
     if tui_undo {
         command.arg("--tui-undo");
     }
+    add_tui_pid_arg(&mut command, std::process::id());
     command
         .current_dir(cwd)
         .stdin(std::process::Stdio::null())
@@ -73,6 +74,10 @@ pub(crate) fn spawn_add_task_only_natural(
     _tui_undo: bool,
 ) -> Result<()> {
     Ok(())
+}
+
+fn add_tui_pid_arg(command: &mut std::process::Command, pid: u32) {
+    command.arg("--tui-pid").arg(pid.to_string());
 }
 
 #[cfg(not(test))]
@@ -120,6 +125,19 @@ fn default_log_path_display_from_env(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detached_intake_receives_originating_tui_pid() {
+        let mut command = std::process::Command::new("aven");
+
+        add_tui_pid_arg(&mut command, 42);
+
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(args, ["--tui-pid", "42"]);
+    }
 
     #[test]
     fn task_intake_log_path_prefers_aven_log_file() {
