@@ -22,7 +22,7 @@ use crate::tui::markdown::render_markdown_preview;
 use crate::tui::overlay::TextInputView;
 use crate::tui::store::{TaskListRenderMode, TaskView, TuiStore};
 use crate::tui::theme::{
-    self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, FG_MUTED, INVERSE_FG, RED, SELECTED,
+    self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, FG_MUTED, INVERSE_FG, RED, RELATED, SELECTED,
     SELECTED_INACTIVE, YELLOW,
 };
 use crate::tui::widgets::{
@@ -65,6 +65,29 @@ struct TaskTimeContext {
     now_seconds: i64,
     render_mode: TaskListRenderMode,
     due_order: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct EpicSelectionContext<'a> {
+    selected_epic_id: Option<&'a str>,
+    selected_parent_id: Option<&'a str>,
+}
+
+impl<'a> EpicSelectionContext<'a> {
+    fn from_selected(item: Option<&'a TaskListItem>) -> Self {
+        Self {
+            selected_epic_id: item
+                .filter(|item| item.task.is_epic)
+                .map(|item| item.task.id.as_str()),
+            selected_parent_id: item
+                .and_then(|item| item.epic_parent.as_ref())
+                .map(|parent| parent.task_id.as_str()),
+        }
+    }
+
+    fn highlights_parent(self, item: &TaskListItem) -> bool {
+        self.selected_parent_id == Some(item.task.id.as_str())
+    }
 }
 
 #[derive(Debug)]
@@ -152,17 +175,13 @@ fn task_list_status_area(
 ) -> Rect {
     let visible_rows = projection.visible_rows();
     let visible_tasks = visible_task_items(store, &visible_rows);
-    let selected_epic_id = projection
-        .selected_task
-        .and_then(|index| store.tasks.get(index))
-        .filter(|item| item.task.is_epic)
-        .map(|item| item.task.id.as_str());
-    let columns = task_list_columns_for_tasks(
-        store,
-        table_area.width < 90,
-        &visible_tasks,
-        selected_epic_id,
+    let epic_selection = EpicSelectionContext::from_selected(
+        projection
+            .selected_task
+            .and_then(|index| store.tasks.get(index)),
     );
+    let columns =
+        task_list_columns_for_tasks(store, table_area.width < 90, &visible_tasks, epic_selection);
     let row_area = Rect::new(
         table_area.x,
         table_area.y.saturating_add(1).saturating_add(visual_row),
@@ -493,14 +512,12 @@ fn build_task_list_render_model(
     let projection = TaskListProjection::from_table_state(store, table_state, viewport_rows);
     projection.commit_scroll(table_state);
     let selected_task = projection.selected_task;
-    let selected_epic_id = selected_task
-        .and_then(|index| store.tasks.get(index))
-        .filter(|item| item.task.is_epic)
-        .map(|item| item.task.id.as_str());
+    let epic_selection =
+        EpicSelectionContext::from_selected(selected_task.and_then(|index| store.tasks.get(index)));
     let visible_rows = projection.visible_rows();
     let visible_tasks = visible_task_items(store, &visible_rows);
     let columns =
-        task_list_columns_for_tasks(store, area.width < 90, &visible_tasks, selected_epic_id);
+        task_list_columns_for_tasks(store, area.width < 90, &visible_tasks, epic_selection);
 
     let now = now_seconds();
     let due_order = store.view_state.sort() == TaskSort::DueOn;
@@ -517,14 +534,15 @@ fn build_task_list_render_model(
             TaskListRow::Task { task_index } => {
                 let Some(item) = store.tasks.get(*task_index) else {
                     rows.push(TaskListRenderRow::Task(TaskListTaskRow {
-                        style: row_style(false, focus == Focus::Tasks, false),
+                        style: row_style(false, focus == Focus::Tasks, false, false),
                         cells: blank_task_row_cells(),
                     }));
                     continue;
                 };
                 let selected = selected_task == Some(*task_index);
                 let marked = marked_task_ids.contains(&item.task.id);
-                let style = row_style(selected, focus == Focus::Tasks, marked);
+                let related = epic_selection.highlights_parent(item);
+                let style = row_style(selected, focus == Focus::Tasks, marked, related);
                 let cells = if projection.view.render_mode == TaskListRenderMode::Epics
                     && item.task.is_epic
                 {
@@ -535,7 +553,7 @@ fn build_task_list_render_model(
                         inline_title_editor.filter(|_| selected),
                         &column_widths,
                         marked,
-                        selected_epic_id,
+                        epic_selection,
                     )
                 } else {
                     build_task_row_cells(
@@ -548,7 +566,7 @@ fn build_task_list_render_model(
                         inline_title_editor.filter(|_| selected),
                         &column_widths,
                         marked,
-                        selected_epic_id,
+                        epic_selection,
                     )
                 };
                 rows.push(TaskListRenderRow::Task(TaskListTaskRow { style, cells }));
@@ -560,7 +578,7 @@ fn build_task_list_render_model(
             } => {
                 let Some(item) = store.tasks.get(*task_index) else {
                     rows.push(TaskListRenderRow::Task(TaskListTaskRow {
-                        style: row_style(false, focus == Focus::Tasks, false),
+                        style: row_style(false, focus == Focus::Tasks, false, false),
                         cells: blank_task_row_cells(),
                     }));
                     continue;
@@ -568,14 +586,14 @@ fn build_task_list_render_model(
                 let selected = selected_task == Some(*task_index);
                 let marked = marked_task_ids.contains(&item.task.id);
                 rows.push(TaskListRenderRow::Task(TaskListTaskRow {
-                    style: row_style(selected, focus == Focus::Tasks, marked),
+                    style: row_style(selected, focus == Focus::Tasks, marked, false),
                     cells: build_epic_child_row_cells(
                         item,
                         *last,
                         now,
                         &column_widths,
                         marked,
-                        selected_epic_id,
+                        epic_selection,
                     ),
                 }));
             }
@@ -597,20 +615,25 @@ fn build_task_list_render_model(
 }
 
 fn task_list_columns(store: &TuiStore, narrow: bool) -> [Constraint; 8] {
-    task_list_columns_for_tasks(store, narrow, &store.tasks.iter().collect::<Vec<_>>(), None)
+    task_list_columns_for_tasks(
+        store,
+        narrow,
+        &store.tasks.iter().collect::<Vec<_>>(),
+        EpicSelectionContext::default(),
+    )
 }
 
 fn task_list_columns_for_tasks(
     store: &TuiStore,
     narrow: bool,
     label_tasks: &[&TaskListItem],
-    selected_epic_id: Option<&str>,
+    epic_selection: EpicSelectionContext<'_>,
 ) -> [Constraint; 8] {
     let project_width = project_column_width(store, narrow);
     let label_width = label_column_width_from_task_refs(label_tasks, narrow);
     let metadata_width = metadata_column_width_from_task_refs(
         label_tasks,
-        selected_epic_id,
+        epic_selection,
         store.view_state.render_mode() == TaskListRenderMode::Flat,
     );
     let priority_width = priority_column_width(store);
@@ -743,12 +766,12 @@ fn label_column_width_from_task_refs(tasks: &[&TaskListItem], narrow: bool) -> u
 #[cfg(test)]
 fn metadata_column_width_from_tasks(tasks: &[TaskListItem]) -> u16 {
     let tasks = tasks.iter().collect::<Vec<_>>();
-    metadata_column_width_from_task_refs(&tasks, None, false)
+    metadata_column_width_from_task_refs(&tasks, EpicSelectionContext::default(), false)
 }
 
 fn metadata_column_width_from_task_refs(
     tasks: &[&TaskListItem],
-    selected_epic_id: Option<&str>,
+    epic_selection: EpicSelectionContext<'_>,
     mark_deferred: bool,
 ) -> u16 {
     let now = now_seconds();
@@ -757,7 +780,7 @@ fn metadata_column_width_from_task_refs(
         .map(|item| {
             metadata_cell(
                 item,
-                selected_epic_id,
+                epic_selection,
                 mark_deferred && is_deferred(item, now),
             )
             .to_string()
@@ -854,9 +877,11 @@ fn render_group_row(frame: &mut Frame, label: &str, count: usize, area: Rect) {
     );
 }
 
-fn row_style(selected: bool, focused: bool, marked: bool) -> Style {
+fn row_style(selected: bool, focused: bool, marked: bool, related: bool) -> Style {
     if selected {
         if focused { SELECTED } else { SELECTED_INACTIVE }
+    } else if related {
+        RELATED
     } else if marked {
         Style::new().bg(BG_ALT)
     } else {
@@ -893,7 +918,7 @@ fn build_task_row_cells(
     inline_title_editor: Option<&TextInputView>,
     column_widths: &[usize; 8],
     marked: bool,
-    selected_epic_id: Option<&str>,
+    epic_selection: EpicSelectionContext<'_>,
 ) -> Vec<Line<'static>> {
     let time = task_time_cell(
         item,
@@ -911,7 +936,7 @@ fn build_task_row_cells(
         labels,
         metadata_cell(
             item,
-            selected_epic_id,
+            epic_selection,
             time_context.render_mode == TaskListRenderMode::Flat
                 && is_deferred(item, time_context.now_seconds),
         ),
@@ -1010,7 +1035,7 @@ fn build_epic_parent_row_cells(
     inline_title_editor: Option<&TextInputView>,
     column_widths: &[usize; 8],
     marked: bool,
-    selected_epic_id: Option<&str>,
+    epic_selection: EpicSelectionContext<'_>,
 ) -> Vec<Line<'static>> {
     let age_seconds = task_seconds_since(&item.task.created_at, now_seconds);
     let title = inline_title_editor
@@ -1039,7 +1064,7 @@ fn build_epic_parent_row_cells(
         Line::from(ref_spans),
         title,
         label_cell(&item.labels, column_widths[2]),
-        metadata_cell(item, selected_epic_id, false),
+        metadata_cell(item, epic_selection, false),
         project_cell(item, column_widths[4]),
         status_chip(item.task.status.as_str()),
         Line::from(Span::styled(
@@ -1059,7 +1084,7 @@ fn build_epic_child_row_cells(
     now_seconds: i64,
     column_widths: &[usize; 8],
     marked: bool,
-    selected_epic_id: Option<&str>,
+    epic_selection: EpicSelectionContext<'_>,
 ) -> Vec<Line<'static>> {
     let age_seconds = task_seconds_since(&item.task.created_at, now_seconds);
     let branch = if last { "└─" } else { "├─" };
@@ -1077,7 +1102,7 @@ fn build_epic_child_row_cells(
         ref_line,
         title_cell(item, column_widths[1]),
         label_cell(&item.labels, column_widths[2]),
-        metadata_cell(item, selected_epic_id, false),
+        metadata_cell(item, epic_selection, false),
         project_cell(item, column_widths[4]),
         status_chip(item.task.status.as_str()),
         Line::from(Span::styled(
@@ -1106,7 +1131,7 @@ fn blank_task_row_cells() -> Vec<Line<'static>> {
 
 fn metadata_cell(
     item: &TaskListItem,
-    selected_epic_id: Option<&str>,
+    epic_selection: EpicSelectionContext<'_>,
     show_deferred: bool,
 ) -> Line<'static> {
     let mut spans = Vec::new();
@@ -1131,15 +1156,16 @@ fn metadata_cell(
     let is_selected_epic_child = item
         .epic_parent
         .as_ref()
-        .is_some_and(|parent| Some(parent.task_id.as_str()) == selected_epic_id);
+        .is_some_and(|parent| Some(parent.task_id.as_str()) == epic_selection.selected_epic_id);
     if item.task.is_epic {
         if !spans.is_empty() {
             spans.push(Span::raw(" "));
         }
-        spans.push(Span::styled(
-            EPIC_MARKER,
-            Style::new().fg(YELLOW).remove_modifier(Modifier::BOLD),
-        ));
+        let highlighted = epic_selection.highlights_parent(item);
+        let style = Style::new()
+            .fg(if highlighted { ACCENT } else { YELLOW })
+            .remove_modifier(Modifier::BOLD);
+        spans.push(Span::styled(EPIC_MARKER, style));
     } else if is_selected_epic_child {
         if !spans.is_empty() {
             spans.push(Span::raw(" "));
@@ -1501,7 +1527,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 let column_widths = task_list_column_widths(&columns, frame.area().width);
-                let style = row_style(true, true, false);
+                let style = row_style(true, true, false, false);
                 let cells = build_task_row_cells(
                     item,
                     TaskTimeContext {
@@ -1512,7 +1538,7 @@ mod tests {
                     inline_title_editor,
                     &column_widths,
                     false,
-                    None,
+                    EpicSelectionContext::default(),
                 );
                 render_task_row_cells(frame, frame.area(), style, &columns, &cells);
             })
@@ -1732,7 +1758,7 @@ mod tests {
             None,
             &[12, 40, 12, 6, 9, 10, 3, 5],
             false,
-            None,
+            EpicSelectionContext::default(),
         );
 
         assert_eq!(cells[7].to_string(), "1d");
@@ -1753,7 +1779,7 @@ mod tests {
             None,
             &[12, 40, 12, 6, 9, 10, 3, 5],
             false,
-            None,
+            EpicSelectionContext::default(),
         );
 
         assert_eq!(cells[3].to_string(), DEFERRED_MARKER);
@@ -1879,11 +1905,19 @@ mod tests {
         let all_tasks = vec![&plain, &documented];
 
         assert_eq!(
-            metadata_column_width_from_task_refs(&visible_tasks, None, false),
+            metadata_column_width_from_task_refs(
+                &visible_tasks,
+                EpicSelectionContext::default(),
+                false
+            ),
             0
         );
         assert_eq!(
-            metadata_column_width_from_task_refs(&all_tasks, None, false),
+            metadata_column_width_from_task_refs(
+                &all_tasks,
+                EpicSelectionContext::default(),
+                false
+            ),
             3
         );
     }
@@ -1894,11 +1928,11 @@ mod tests {
         task.task.available_at = Some("2999-01-01T00:00:00Z".to_string());
 
         assert_eq!(
-            metadata_column_width_from_task_refs(&[&task], None, true),
+            metadata_column_width_from_task_refs(&[&task], EpicSelectionContext::default(), true),
             3
         );
         assert_eq!(
-            metadata_column_width_from_task_refs(&[&task], None, false),
+            metadata_column_width_from_task_refs(&[&task], EpicSelectionContext::default(), false),
             0
         );
     }
@@ -2094,7 +2128,7 @@ mod tests {
             None,
             &[12, 40, 12, 6, 9, 10, 3, 5],
             false,
-            None,
+            EpicSelectionContext::default(),
         );
 
         assert!(rendered.contains("original title"));
@@ -2138,7 +2172,10 @@ mod tests {
             },
         ];
 
-        assert_eq!(metadata_cell(&item, None, false).to_string(), "✎");
+        assert_eq!(
+            metadata_cell(&item, EpicSelectionContext::default(), false).to_string(),
+            "✎"
+        );
     }
 
     #[test]
@@ -2146,10 +2183,37 @@ mod tests {
         let mut item = task_list_item("epic");
         item.task.is_epic = true;
 
-        let line = metadata_cell(&item, None, false);
+        let line = metadata_cell(&item, EpicSelectionContext::default(), false);
 
         assert_eq!(line.to_string(), EPIC_MARKER);
         assert_eq!(line.spans[0].style.fg, Some(YELLOW));
+    }
+
+    #[test]
+    fn metadata_cell_highlights_parent_epic_of_selected_child() {
+        let parent_id = crate::test_support::task_id("epic-1");
+        let mut parent = task_list_item("epic");
+        parent.task.id = parent_id.clone();
+        parent.task.is_epic = true;
+        let mut child = task_list_item("child");
+        child.epic_parent = Some(crate::query::TaskDependencyLink {
+            task_id: parent_id,
+            display_ref: "APP-EPIC".to_string(),
+            title: "Parent epic".to_string(),
+            status: "todo".to_string(),
+            priority: "none".to_string(),
+            unresolved: true,
+        });
+
+        let epic_selection = EpicSelectionContext::from_selected(Some(&child));
+        let line = metadata_cell(&parent, epic_selection, false);
+
+        assert!(epic_selection.highlights_parent(&parent));
+        assert_eq!(line.to_string(), EPIC_MARKER);
+        assert_eq!(line.spans[0].style.fg, Some(ACCENT));
+        assert!(line.spans[0].style.sub_modifier.contains(Modifier::BOLD));
+        assert_eq!(row_style(false, true, false, true), RELATED);
+        assert_eq!(row_style(true, true, false, true), SELECTED);
     }
 
     #[test]
@@ -2165,16 +2229,28 @@ mod tests {
         });
 
         let selected_epic = crate::test_support::task_id("epic-1");
-        let line = metadata_cell(&item, Some(selected_epic.as_str()), false);
+        let epic_selection = EpicSelectionContext {
+            selected_epic_id: Some(selected_epic.as_str()),
+            ..EpicSelectionContext::default()
+        };
+        let line = metadata_cell(&item, epic_selection, false);
 
         assert_eq!(line.to_string(), EPIC_CHILD_MARKER);
         assert_eq!(line.spans[0].style.fg, Some(ACCENT));
         assert_eq!(
-            metadata_cell(&item, Some("other-epic"), false).to_string(),
+            metadata_cell(
+                &item,
+                EpicSelectionContext {
+                    selected_epic_id: Some("other-epic"),
+                    ..EpicSelectionContext::default()
+                },
+                false,
+            )
+            .to_string(),
             ""
         );
         assert_eq!(
-            metadata_column_width_from_task_refs(&[&item], Some(selected_epic.as_str()), false,),
+            metadata_column_width_from_task_refs(&[&item], epic_selection, false),
             3
         );
     }
@@ -2185,7 +2261,10 @@ mod tests {
         item.unresolved_blocker_count = 2;
         item.dependent_count = 1;
 
-        assert_eq!(metadata_cell(&item, None, false).to_string(), "←2 →1");
+        assert_eq!(
+            metadata_cell(&item, EpicSelectionContext::default(), false).to_string(),
+            "←2 →1"
+        );
     }
 
     #[test]
@@ -2193,7 +2272,10 @@ mod tests {
         let mut item = task_list_item("plain");
         item.task.description = "details".to_string();
 
-        assert_eq!(metadata_cell(&item, None, false).to_string(), "");
+        assert_eq!(
+            metadata_cell(&item, EpicSelectionContext::default(), false).to_string(),
+            ""
+        );
     }
 
     #[test]
@@ -2247,7 +2329,7 @@ mod tests {
             None,
             &[12, 40, 12, 6, 9, 10, 3, 5],
             false,
-            None,
+            EpicSelectionContext::default(),
         );
 
         assert_eq!(cells.len(), 8);
@@ -2265,7 +2347,7 @@ mod tests {
             None,
             &[12, 40, 12, 6, 9, 10, 3, 5],
             false,
-            None,
+            EpicSelectionContext::default(),
         );
         assert_eq!(cells[3].to_string(), "× ←1 →1 ✎");
     }
@@ -2291,7 +2373,7 @@ mod tests {
             Some(&editor),
             &[12, 40, 12, 6, 9, 10, 3, 5],
             false,
-            None,
+            EpicSelectionContext::default(),
         );
 
         assert!(cells[1].to_string().contains("edited title"));
@@ -2301,8 +2383,14 @@ mod tests {
     fn epic_child_ref_prefix_aligns_tree_with_parent_marker() {
         let item = task_list_item("child");
 
-        let cells =
-            build_epic_child_row_cells(&item, false, 0, &[14, 40, 12, 6, 9, 10, 3, 5], false, None);
+        let cells = build_epic_child_row_cells(
+            &item,
+            false,
+            0,
+            &[14, 40, 12, 6, 9, 10, 3, 5],
+            false,
+            EpicSelectionContext::default(),
+        );
 
         assert_eq!(cells[0].to_string(), " ├─ APP-1 ");
     }

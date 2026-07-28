@@ -40,6 +40,7 @@ pub(crate) const SELECTED: Style = Style::new()
     .fg(FG)
     .bg(SELECTED_BG)
     .add_modifier(Modifier::BOLD);
+pub(crate) const RELATED: Style = Style::new().fg(FG).bg(BG_LANE_ACTIVE);
 pub(crate) const SELECTED_INACTIVE: Style = Style::new().fg(FG_MUTED).bg(BG_PANEL);
 
 pub(crate) const BG: Color = Color::Reset;
