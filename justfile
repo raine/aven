@@ -115,13 +115,8 @@ uniffi-swift:
     fi
     target_dir="$root/target/aven-uniffi/build"
     output="$root/target/aven-uniffi/swift"
-    package_generated="$root/experiments/aven-swift-cli/Generated"
-    rm -rf "$output" "$package_generated"
-    mkdir -p \
-      "$output" \
-      "$package_generated/lib" \
-      "$package_generated/Sources/AvenUniFFI" \
-      "$package_generated/Sources/aven_uniffiFFI"
+    rm -rf "$output"
+    mkdir -p "$output"
     CARGO_TARGET_DIR="$target_dir" MACOSX_DEPLOYMENT_TARGET=13.0 \
       cargo build --release --locked -p aven-uniffi --target "$host"
     CARGO_TARGET_DIR="$target_dir" MACOSX_DEPLOYMENT_TARGET=13.0 \
@@ -130,22 +125,6 @@ uniffi-swift:
       --library "$target_dir/$host/release/libaven_uniffi.dylib" \
       --language swift \
       --out-dir "$output"
-    cp "$target_dir/$host/release/libaven_uniffi.a" \
-      "$package_generated/lib/libaven_uniffi.a"
-    cp "$output/aven_uniffi.swift" \
-      "$package_generated/Sources/AvenUniFFI/aven_uniffi.swift"
-    cp "$output/aven_uniffiFFI.h" \
-      "$package_generated/Sources/aven_uniffiFFI/aven_uniffiFFI.h"
-    cp "$output/aven_uniffiFFI.modulemap" \
-      "$package_generated/Sources/aven_uniffiFFI/module.modulemap"
-
-# Build, test, and run the macOS Swift local and sync proofs
-swift-local-proof: uniffi-swift
-    cargo build --locked --bin aven
-    swift build --package-path experiments/aven-swift-cli
-    swift test --package-path experiments/aven-swift-cli
-    swift run --package-path experiments/aven-swift-cli aven-local-proof local
-    swift run --package-path experiments/aven-swift-cli aven-local-proof sync "$(pwd)/target/debug/aven"
 
 # Type-check all targets without producing final artifacts
 check-types:
