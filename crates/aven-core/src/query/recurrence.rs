@@ -8,7 +8,8 @@ use crate::db::{recurrence_occurrence_from_row, recurrence_series_from_row};
 use crate::ids::{TaskId, WorkspaceId};
 use crate::recurrence::{
     RecurrenceOutcome, RecurrenceProjectionState, RecurrenceSchedule, RecurrenceSeriesId,
-    RecurrenceSeriesState, live_slot_on, recurrence_series_display_ref, slot_values,
+    RecurrenceSeriesState, live_slot_on, projection_slot_at, recurrence_series_display_ref,
+    slot_values,
 };
 use crate::refs::DisplayRefContext;
 use crate::types::{RecurrenceOccurrence, RecurrencePauseInterval, RecurrenceSeries};
@@ -31,21 +32,58 @@ mod tests;
 pub(crate) async fn recurrence_reconciliation_candidates(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
+    at: DateTime<Utc>,
 ) -> Result<(Vec<RecurrenceSeriesId>, bool)> {
-    let ids = sqlx::query_scalar::<_, RecurrenceSeriesId>(
-        "SELECT id FROM recurrence_series
+    let rows = sqlx::query(
+        "SELECT workspace_id, id, title, description, project_id, priority, initial_status,
+                frequency, interval, weekdays, timezone, start_on, available_local_time,
+                due_policy, state, stopped_at, created_at, updated_at, deleted
+         FROM recurrence_series
          WHERE workspace_id = ? AND deleted = 0 AND state = 'active'
-         ORDER BY id LIMIT ?",
+         ORDER BY id",
     )
     .bind(workspace_id)
-    .bind((REPORT_RECONCILE_LIMIT + 1) as i64)
     .fetch_all(&mut *conn)
     .await?;
-    let incomplete = ids.len() > REPORT_RECONCILE_LIMIT;
-    Ok((
-        ids.into_iter().take(REPORT_RECONCILE_LIMIT).collect(),
-        incomplete,
-    ))
+    let series = rows
+        .iter()
+        .map(recurrence_series_from_row)
+        .collect::<Result<Vec<_>>>()?;
+    let series_ids = series
+        .iter()
+        .map(|series| series.id.clone())
+        .collect::<Vec<_>>();
+    let projected = load_projected_occurrences(conn, workspace_id, &series_ids).await?;
+    let blocked = sqlx::query_scalar::<_, RecurrenceSeriesId>(
+        "SELECT DISTINCT entity_id FROM conflicts
+         WHERE workspace_id = ? AND entity_type = 'recurrence_series'
+           AND field IN ('state', 'stopped_at') AND resolved = 0",
+    )
+    .bind(workspace_id)
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .collect::<HashSet<_>>();
+    let mut candidates = Vec::new();
+    let mut blocked_candidates = Vec::new();
+    for series in series {
+        let target = projection_slot_at(&series.schedule(), at)?;
+        if projected
+            .get(&series.id)
+            .is_some_and(|occurrence| occurrence.slot_on >= target)
+        {
+            continue;
+        }
+        if blocked.contains(&series.id) {
+            blocked_candidates.push(series.id);
+        } else {
+            candidates.push(series.id);
+        }
+    }
+    candidates.extend(blocked_candidates);
+    let incomplete = candidates.len() > REPORT_RECONCILE_LIMIT;
+    candidates.truncate(REPORT_RECONCILE_LIMIT);
+    Ok((candidates, incomplete))
 }
 
 pub(crate) async fn group_search_task_items(

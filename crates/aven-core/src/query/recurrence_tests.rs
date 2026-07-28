@@ -281,6 +281,30 @@ async fn recurring_series_list_statement_shapes_stay_bounded_with_history() {
 }
 
 #[tokio::test]
+async fn bounded_reconciliation_progresses_past_current_series() {
+    let (_temp, database, workspace) = setup().await;
+    for index in 0..=REPORT_RECONCILE_LIMIT {
+        create(&database, &workspace, &format!("daily report {index}"), 20).await;
+    }
+
+    let first = database
+        .reconcile_recurrence_reports_at(&workspace.id, at(24, 12))
+        .await
+        .unwrap();
+    let second = database
+        .reconcile_recurrence_reports_at(&workspace.id, at(24, 12))
+        .await
+        .unwrap();
+
+    assert_eq!(first.examined, REPORT_RECONCILE_LIMIT);
+    assert_eq!(first.changed, REPORT_RECONCILE_LIMIT);
+    assert!(first.incomplete);
+    assert_eq!(second.examined, 1);
+    assert_eq!(second.changed, 1);
+    assert!(!second.incomplete);
+}
+
+#[tokio::test]
 async fn reconciliation_keeps_one_active_row_and_hydrates_in_batch() {
     let (_temp, database, workspace) = setup().await;
     let created = create(&database, &workspace, "daily report", 20).await;

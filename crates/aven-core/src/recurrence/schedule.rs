@@ -38,6 +38,19 @@ pub fn live_slot_on(
     None
 }
 
+pub fn projection_slot_at(
+    schedule: &RecurrenceSchedule,
+    at: DateTime<Utc>,
+) -> Result<NaiveDate, RecurrenceScheduleError> {
+    if let Some(slot) = live_slot_on(&schedule.rule, schedule.start_on, at, &schedule.timezone) {
+        return Ok(slot);
+    }
+    schedule
+        .slots_on_or_after(schedule.start_on)
+        .next()
+        .ok_or(RecurrenceScheduleError::DateOverflow)
+}
+
 pub fn slot_cutoff(
     schedule: &RecurrenceSchedule,
     slot_on: NaiveDate,

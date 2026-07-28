@@ -589,6 +589,37 @@ async fn pause_resume_omits_suspended_and_pause_boundary_slots() {
 }
 
 #[tokio::test]
+async fn stop_paused_series_advances_equal_lifecycle_timestamp() {
+    let (_temp, mut conn, workspace) = setup().await;
+    let created = create_daily(&mut conn, &workspace).await;
+    let timestamp = "2026-07-20T12:00:00Z";
+    pause_recurrence_series(&mut conn, &workspace, &created.series.id, timestamp)
+        .await
+        .unwrap();
+
+    let stopped =
+        stop_recurrence_series(&mut conn, &workspace, &created.series.id, false, timestamp)
+            .await
+            .unwrap();
+
+    assert_eq!(stopped.series.state, RecurrenceSeriesState::Stopped);
+    assert_eq!(
+        stopped.series.stopped_at.as_deref(),
+        Some("2026-07-20T12:00:01Z")
+    );
+    let resumed_at: String = sqlx::query_scalar(
+        "SELECT resumed_at FROM recurrence_pause_intervals
+         WHERE workspace_id = ? AND series_id = ?",
+    )
+    .bind(&workspace.id)
+    .bind(&created.series.id)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+    assert_eq!(resumed_at, "2026-07-20T12:00:01Z");
+}
+
+#[tokio::test]
 async fn stopped_series_keeps_final_task_and_skip_current_creates_no_successor() {
     let (_temp, mut conn, workspace) = setup().await;
     let created = create_daily(&mut conn, &workspace).await;

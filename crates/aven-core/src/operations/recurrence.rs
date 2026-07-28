@@ -18,8 +18,8 @@ use crate::mutation::apply_field_value_in_workspace;
 use crate::projects::resolve_or_create_project_in_workspace;
 use crate::recurrence::{
     RecurrenceDuePolicy, RecurrenceOutcome, RecurrenceProjectionState, RecurrenceSchedule,
-    RecurrenceSeriesId, RecurrenceSeriesState, derive_occurrence_identity, live_slot_on,
-    next_slot_after, recurrence_series_display_ref, slot_cutoff, slot_values,
+    RecurrenceSeriesId, RecurrenceSeriesState, derive_occurrence_identity, next_slot_after,
+    projection_slot_at, recurrence_series_display_ref, slot_cutoff, slot_values,
 };
 use crate::refs::get_task_in_workspace;
 use crate::task_fields::TaskField;
@@ -1017,9 +1017,7 @@ pub async fn stop_recurrence_series(
     skip_current: bool,
     stopped_at: &str,
 ) -> Result<RecurrenceStateOutcome> {
-    let stopped_at_utc = DateTime::parse_from_rfc3339(stopped_at)
-        .context("invalid recurrence stop time")?
-        .with_timezone(&Utc);
+    let mut stopped_at = stopped_at.to_string();
     let mut tx = begin_immediate(conn).await?;
     let series = load_series(&mut tx, &workspace.id, series_id).await?;
     ensure!(
@@ -1027,26 +1025,49 @@ pub async fn stop_recurrence_series(
         "error recurrence-already-stopped"
     );
     ensure_no_series_conflict(&mut tx, &workspace.id, series_id, "state").await?;
+    let open_pause = if matches!(series.state, RecurrenceSeriesState::Paused) {
+        let interval = sqlx::query(
+            "SELECT id, paused_at FROM recurrence_pause_intervals
+             WHERE workspace_id = ? AND series_id = ? AND resumed_at = ''",
+        )
+        .bind(&workspace.id)
+        .bind(series_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .context("error recurrence-open-pause-missing")?;
+        let interval_id: String = interval.get("id");
+        let paused_at: String = interval.get("paused_at");
+        stopped_at = timestamp_strictly_after(&paused_at, &stopped_at)?;
+        Some((interval_id, paused_at))
+    } else {
+        None
+    };
+    let stopped_at_utc = DateTime::parse_from_rfc3339(&stopped_at)
+        .context("invalid recurrence stop time")?
+        .with_timezone(&Utc);
     reconcile_recurrence_series_in_transaction(&mut tx, workspace, series_id, stopped_at_utc)
         .await?;
-    if matches!(series.state, RecurrenceSeriesState::Paused) {
+    if let Some((interval_id, paused_at)) = open_pause {
         let close_change_id = append_change(
             &mut tx,
             ChangeEntity::RecurrenceSeries,
             series_id.as_str(),
             Some("pause"),
             op_type::CLOSE_RECURRENCE_PAUSE,
-            ChangePayload::workspace(workspace).set("resumed_at", stopped_at),
+            ChangePayload::workspace(workspace)
+                .set("interval_id", &interval_id)
+                .set("paused_at", &paused_at)
+                .set("resumed_at", &stopped_at),
         )
         .await?;
         sqlx::query(
             "UPDATE recurrence_pause_intervals SET resumed_at = ?, resolved_by_change_id = ?
-             WHERE workspace_id = ? AND series_id = ? AND resumed_at = ''",
+             WHERE workspace_id = ? AND id = ? AND resumed_at = ''",
         )
-        .bind(stopped_at)
+        .bind(&stopped_at)
         .bind(&close_change_id)
         .bind(&workspace.id)
-        .bind(series_id)
+        .bind(&interval_id)
         .execute(&mut *tx)
         .await?;
     }
@@ -1055,8 +1076,8 @@ pub async fn stop_recurrence_series(
         workspace,
         series_id,
         RecurrenceSeriesState::Stopped,
-        Some(stopped_at),
-        stopped_at,
+        Some(&stopped_at),
+        &stopped_at,
         op_type::STOP_RECURRENCE_SERIES,
     )
     .await?;
@@ -1073,7 +1094,7 @@ pub async fn stop_recurrence_series(
                 workspace,
                 task_id,
                 RecurrenceOutcome::Skipped,
-                stopped_at,
+                &stopped_at,
             )
             .await?
             .resolved,
@@ -1775,16 +1796,6 @@ async fn load_occurrence_for_task(
     .fetch_optional(&mut *conn)
     .await?;
     row.as_ref().map(recurrence_occurrence_from_row).transpose()
-}
-
-fn projection_slot_at(schedule: &RecurrenceSchedule, at: DateTime<Utc>) -> Result<NaiveDate> {
-    if let Some(slot) = live_slot_on(&schedule.rule, schedule.start_on, at, &schedule.timezone) {
-        return Ok(slot);
-    }
-    schedule
-        .slots_on_or_after(schedule.start_on)
-        .next()
-        .context("recurrence schedule has no representable projection")
 }
 
 async fn lifecycle_conflict_exists(
