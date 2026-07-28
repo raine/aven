@@ -204,7 +204,7 @@ impl TuiStore {
 
     pub(crate) async fn refresh_preserving_visible_deleted(
         &mut self,
-        selected_id: Option<&crate::ids::TaskId>,
+        selected: Option<&MainRowSelection>,
     ) -> Result<ScopeRefreshResult> {
         let visible_deleted = self
             .tasks
@@ -213,7 +213,7 @@ impl TuiStore {
             .filter(|(_, item)| item.task.deleted)
             .map(|(index, item)| (index, item.clone()))
             .collect::<Vec<_>>();
-        let mut result = self.refresh_with_scope_fallback(selected_id).await?;
+        let mut result = self.refresh_with_scope_fallback(selected).await?;
         for (index, item) in visible_deleted {
             if self
                 .tasks
@@ -223,9 +223,13 @@ impl TuiStore {
                 self.tasks.insert(index.min(self.tasks.len()), item);
             }
         }
-        result.selected = selected_id
-            .and_then(|task_id| self.tasks.iter().position(|item| &item.task.id == task_id))
-            .or(result.selected);
+        if let Some(MainRowSelection::Task(task_id)) = selected {
+            result.selected = self
+                .tasks
+                .iter()
+                .position(|item| &item.task.id == task_id)
+                .or(result.selected);
+        }
         Ok(result)
     }
 
