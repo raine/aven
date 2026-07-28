@@ -3,6 +3,23 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.19 (2026-07-28)
+
+- Long task titles wrap in the detail pane and remain fully selectable and
+  copyable.
+- Natural-language task intake respects an explicitly selected project, keeps
+  directory-based project inference available, and closes the composer after
+  creating a task with an image.
+- Press `g .` to return to a task after moving it out of the active project.
+- Epics show accurate project-scoped counts, support viewing closed items with
+  `f d`, and expand or collapse with `l` or Right.
+- Selecting an epic child highlights its visible parent for clearer context.
+- Exact command palette matches are selected immediately, and repeated `Tab`
+  presses cycle through the other matches.
+- Deleted tasks remain visible during background refreshes so they can be
+  reviewed or restored until the view is explicitly refreshed.
+- Note discard confirmations render cleanly without overlapping the editor.
+
 ## v0.1.18 (2026-07-27)
 
 - Copy task text from the Linux TUI on Wayland or X11 with `wl-copy` or `xclip`.
