@@ -124,6 +124,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 
 - Status values are `inbox`, `backlog`, `todo`, `active`, `done`, and `canceled`.
 - Priority values are `none`, `low`, `medium`, `high`, and `urgent`.
+- Task source values are `cli`, `tui`, `api`, and `unknown`. Creation paths assign source explicitly, compatibility boundaries default an absent source to `unknown`, and source remains immutable outside scalar field versioning, conflicts, and undo field mutations.
 - New entity IDs come from typed constructors in `aven_core::ids`, which return 16 Crockford Base32 characters from 80 random bits.
 - Timestamps come from `aven_core::ids::now()` and are UTC strings.
 - Workspace identity uses `WorkspaceId` from `crates/aven-core/src/ids.rs` throughout domain records, queries, and mutations. CLI, config, sync payload, and export conversions validate the 16-character Crockford Base32 representation, while core persistence binds and decodes the type as SQLite text.

@@ -94,7 +94,7 @@ async fn get_task_scoped(
 ) -> Result<Task> {
     let row = sqlx::query(
         "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
-         p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at,
+         p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.source, t.created_at, t.updated_at,
          t.queue_activity_at, t.available_at, t.due_on, t.deleted, t.is_epic
          FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
          WHERE t.workspace_id = ? AND t.id = ?",
@@ -127,7 +127,7 @@ async fn resolve_task_ref_scoped(
     let suffix = suffix.to_ascii_uppercase();
     let rows = sqlx::query(
         "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
-         p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at,
+         p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.source, t.created_at, t.updated_at,
          t.queue_activity_at, t.available_at, t.due_on, t.deleted, t.is_epic
          FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
          WHERE t.workspace_id = ? AND t.id LIKE ? || '%'

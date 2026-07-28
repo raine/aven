@@ -1,3 +1,4 @@
+use aven_core::choices::TaskSource;
 use aven_core::db::Database;
 use aven_core::operations::{TaskDraft, TaskUpdate};
 use aven_core::sync::SyncSession;
@@ -31,6 +32,7 @@ async fn opens_migrates_and_mutates_through_owned_api() {
                 project: Some(project.key),
                 status: "inbox".to_string(),
                 priority: "none".to_string(),
+                source: TaskSource::Unknown,
                 labels: Vec::new(),
                 available_at: None,
                 due_on: None,
@@ -51,6 +53,7 @@ async fn opens_migrates_and_mutates_through_owned_api() {
         .await
         .unwrap();
     assert!(updated.changed);
+    assert_eq!(created.task.source, TaskSource::Unknown);
 
     let export = database
         .export_data("2026-07-18T00:00:00Z".to_string())
@@ -107,6 +110,7 @@ async fn tui_task_mutation_uses_one_transaction_for_change_and_undo() {
                 project: Some(project.key),
                 status: "inbox".to_string(),
                 priority: "none".to_string(),
+                source: TaskSource::Unknown,
                 labels: Vec::new(),
                 available_at: None,
                 due_on: None,
@@ -344,6 +348,7 @@ async fn database_task_field_rolls_back_when_change_logging_fails() {
                 project: Some(project.key),
                 status: "inbox".to_string(),
                 priority: "none".to_string(),
+                source: TaskSource::Unknown,
                 labels: Vec::new(),
                 available_at: None,
                 due_on: None,
@@ -398,6 +403,7 @@ async fn task_delete_and_restore_roll_back_when_change_logging_fails() {
                 project: Some(project.key),
                 status: "inbox".to_string(),
                 priority: "none".to_string(),
+                source: TaskSource::Unknown,
                 labels: Vec::new(),
                 available_at: None,
                 due_on: None,

@@ -1573,6 +1573,7 @@ mod tests {
                 project: None,
                 status: item.task.status.as_str().to_string(),
                 priority: item.task.priority.as_str().to_string(),
+                source: crate::choices::TaskSource::Unknown,
                 labels: item.labels,
                 available_at: item.task.available_at,
                 due_on: None,

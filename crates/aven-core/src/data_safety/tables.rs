@@ -100,8 +100,9 @@ pub(super) async fn import_labels(
 
 pub(super) async fn import_tasks(tx: &mut SqliteConnection, rows: &[super::TaskRow]) -> Result<()> {
     for row in rows {
+        let source = crate::choices::TaskSource::parse(&row.source)?;
         sqlx::query(
-            "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, available_at, due_on, deleted, is_epic) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, source, created_at, updated_at, queue_activity_at, available_at, due_on, deleted, is_epic) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&row.workspace_id)
         .bind(&row.id)
@@ -110,6 +111,7 @@ pub(super) async fn import_tasks(tx: &mut SqliteConnection, rows: &[super::TaskR
         .bind(&row.project_id)
         .bind(&row.status)
         .bind(&row.priority)
+        .bind(source.as_str())
         .bind(&row.created_at)
         .bind(&row.updated_at)
         .bind(&row.queue_activity_at)

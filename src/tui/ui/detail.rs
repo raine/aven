@@ -4412,6 +4412,7 @@ mod tests {
                 project_prefix: "APP".to_string(),
                 status: TaskStatus::Active,
                 priority: TaskPriority::Urgent,
+                source: crate::choices::TaskSource::Unknown,
                 created_at: "2026-06-19T12:00:00Z".to_string(),
                 updated_at: "2026-06-20T12:00:00Z".to_string(),
                 queue_activity_at: "2026-06-20T12:00:00Z".to_string(),

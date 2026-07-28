@@ -40,6 +40,13 @@ fn local_task_flow_uses_typed_values_and_validates_ids() {
     assert_eq!(task.priority, TaskPriority::High);
     assert_eq!(task.available_at, None);
     assert_eq!(task.due_on, None);
+    let output = std::process::Command::new("sqlite3")
+        .arg(&database)
+        .arg(format!("SELECT source FROM tasks WHERE id = '{}'", task.id))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "api");
 
     let updated = client
         .update_task(

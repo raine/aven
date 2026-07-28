@@ -7,7 +7,7 @@ use sqlx::SqliteConnection;
 use tracing::{info, warn};
 
 use crate::change_log::{ChangeEntity, ChangePayload, append_change, op_type};
-use crate::choices::{TaskPriority, TaskStatus};
+use crate::choices::{TaskPriority, TaskSource, TaskStatus};
 use crate::db::{Database, begin_immediate, set_field_version};
 use crate::ids::{TaskId, new_id, now};
 use crate::labels::resolve_labels_in_workspace;
@@ -27,6 +27,7 @@ pub struct TaskDraft {
     pub project: Option<String>,
     pub status: String,
     pub priority: String,
+    pub source: TaskSource,
     pub labels: Vec<String>,
     pub available_at: Option<String>,
     pub due_on: Option<String>,
@@ -785,8 +786,8 @@ async fn insert_task(
     let project = resolve_or_create_project_in_workspace(conn, &workspace.id, project).await?;
     let labels = resolve_labels_in_workspace(conn, &workspace.id, &draft.labels).await?;
     sqlx::query(
-        "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, available_at, due_on, is_epic)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, source, created_at, updated_at, queue_activity_at, available_at, due_on, is_epic)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&workspace.id)
     .bind(&id)
@@ -795,6 +796,7 @@ async fn insert_task(
     .bind(&project.id)
     .bind(status.as_str())
     .bind(priority.as_str())
+    .bind(draft.source.as_str())
     .bind(&ts)
     .bind(&ts)
     .bind(&ts)
@@ -828,6 +830,7 @@ async fn insert_task(
             .set("project_prefix", project.prefix.clone())
             .set("status", status.as_str())
             .set("priority", priority.as_str())
+            .set("source", draft.source.as_str())
             .set("available_at", available_at)
             .set("due_on", due_on)
             .set("is_epic", if draft.is_epic { "1" } else { "0" })

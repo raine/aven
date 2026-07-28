@@ -1,3 +1,4 @@
+use crate::choices::TaskSource;
 use crate::ids::{ProjectId, TaskId, WorkspaceId};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -100,6 +101,10 @@ pub struct LabelRow {
     pub created_at: String,
 }
 
+fn default_task_source() -> String {
+    TaskSource::Unknown.as_str().to_string()
+}
+
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct TaskRow {
     pub workspace_id: WorkspaceId,
@@ -109,6 +114,8 @@ pub struct TaskRow {
     pub project_id: ProjectId,
     pub status: String,
     pub priority: String,
+    #[serde(default = "default_task_source")]
+    pub source: String,
     pub created_at: String,
     pub updated_at: String,
     pub queue_activity_at: String,
@@ -383,7 +390,7 @@ async fn scan_labels(conn: &mut SqliteConnection) -> Result<Vec<LabelRow>> {
 }
 
 async fn scan_tasks(conn: &mut SqliteConnection) -> Result<Vec<TaskRow>> {
-    tables::scan_rows(conn, "SELECT workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, available_at, due_on, deleted, is_epic FROM tasks").await
+    tables::scan_rows(conn, "SELECT workspace_id, id, title, description, project_id, status, priority, source, created_at, updated_at, queue_activity_at, available_at, due_on, deleted, is_epic FROM tasks").await
 }
 
 async fn scan_task_labels(conn: &mut SqliteConnection) -> Result<Vec<TaskLabelRow>> {
@@ -519,6 +526,7 @@ fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
 
     let mut task_ids: HashMap<WorkspaceId, HashSet<TaskId>> = HashMap::new();
     for task in &export.tables.tasks {
+        TaskSource::parse(&task.source)?;
         if let Err(error) = crate::time_validation::validate_due_on_value(&task.due_on) {
             bail!(
                 "error invalid-export-snapshot task.due_on={} is invalid: {error}",

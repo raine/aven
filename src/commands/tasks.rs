@@ -1,4 +1,5 @@
 use anyhow::{Result, bail};
+use aven_core::choices::TaskSource;
 use aven_core::db::Database;
 use serde::Serialize;
 
@@ -57,8 +58,13 @@ pub(crate) async fn cmd_add(
             &args.title,
         )
         .await?;
-        crate::task_intake::parsed_output_to_draft_with_database(database, &context, &output)
-            .await?
+        crate::task_intake::parsed_output_to_draft_with_database(
+            database,
+            &context,
+            &output,
+            TaskSource::Cli,
+        )
+        .await?
     } else {
         TaskDraft {
             title: args.title,
@@ -66,6 +72,7 @@ pub(crate) async fn cmd_add(
             project: args.project,
             status: "inbox".to_string(),
             priority: args.priority,
+            source: TaskSource::Cli,
             labels: args.label,
             available_at: args
                 .available_at
@@ -120,9 +127,13 @@ pub(crate) async fn cmd_internal_natural_add(
             &args.input,
         )
         .await?;
-        let draft =
-            crate::task_intake::parsed_output_to_draft_with_database(database, &context, &output)
-                .await?;
+        let draft = crate::task_intake::parsed_output_to_draft_with_database(
+            database,
+            &context,
+            &output,
+            TaskSource::Tui,
+        )
+        .await?;
         let undo = if args.tui_undo {
             aven_core::operations::TaskCreationUndo::TuiTask
         } else {

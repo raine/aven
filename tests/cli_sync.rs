@@ -989,6 +989,13 @@ fn same_key_remote_project_writes_alias() {
         1
     );
     assert_eq!(
+        query_sql_scalar(
+            &db,
+            "SELECT source FROM tasks WHERE id = 'CCCCCCCCCCCCCCCC'",
+        ),
+        "unknown"
+    );
+    assert_eq!(
         scalar_i64(
             &db,
             "SELECT count(*) FROM projects WHERE id = 'BBBBBBBBBBBBBBBB'",
@@ -1672,6 +1679,12 @@ async fn sync_server_rejects_invalid_status_priority_and_deleted_values() {
         create_task_payload("bad status", "app", json!({ "status": "blocked" })),
     );
     rejected_sync(&server, bad_create_status, "invalid-status").await;
+
+    let bad_source = task_change(
+        "create_task",
+        create_task_payload("bad source", "app", json!({ "source": "agent" })),
+    );
+    rejected_sync(&server, bad_source, "invalid-task-source").await;
 
     let mut bad_deleted = task_change("set_field", json!({ "value": "true" }));
     bad_deleted

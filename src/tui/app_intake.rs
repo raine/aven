@@ -253,6 +253,7 @@ mod tests {
             project: None,
             status: "inbox".to_string(),
             priority: "none".to_string(),
+            source: crate::choices::TaskSource::Tui,
             labels: Vec::new(),
             available_at: None,
             due_on: None,

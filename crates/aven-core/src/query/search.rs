@@ -381,7 +381,7 @@ async fn load_attachment_text_search_documents(
     let mut query = QueryBuilder::<Sqlite>::new(
         "SELECT DISTINCT t.id, t.workspace_id, t.title, t.description, t.project_id,
          p.key AS project_key, p.name AS project_name, p.prefix AS project_prefix,
-         t.status, t.priority, t.created_at, t.updated_at, t.queue_activity_at, t.deleted, t.is_epic,
+         t.status, t.priority, t.source, t.created_at, t.updated_at, t.queue_activity_at, t.available_at, t.due_on, t.deleted, t.is_epic,
          '' AS fts_labels, '' AS fts_notes
          FROM task_attachments ta
          JOIN tasks t ON t.workspace_id = ta.workspace_id AND t.id = ta.task_id
@@ -453,7 +453,7 @@ async fn load_ref_search_documents(
     let rows = sqlx::query(
         "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
          p.key AS project_key, p.name AS project_name, p.prefix AS project_prefix,
-         t.status, t.priority, t.created_at, t.updated_at, t.queue_activity_at, t.available_at, t.due_on, t.deleted, t.is_epic,
+         t.status, t.priority, t.source, t.created_at, t.updated_at, t.queue_activity_at, t.available_at, t.due_on, t.deleted, t.is_epic,
          '' AS fts_labels, '' AS fts_notes
          FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
          WHERE t.workspace_id = ? AND (? OR t.deleted = 0) AND t.id LIKE ? || '%'
@@ -489,7 +489,7 @@ async fn load_fts_search_documents(
     let rows = sqlx::query(
         "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
          p.key AS project_key, p.name AS project_name, p.prefix AS project_prefix,
-         t.status, t.priority, t.created_at, t.updated_at, t.queue_activity_at, t.available_at, t.due_on, t.deleted, t.is_epic,
+         t.status, t.priority, t.source, t.created_at, t.updated_at, t.queue_activity_at, t.available_at, t.due_on, t.deleted, t.is_epic,
          d.labels AS fts_labels, d.notes AS fts_notes
          FROM task_search_fts f
          JOIN task_search_documents d ON d.doc_id = f.rowid

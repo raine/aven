@@ -286,6 +286,7 @@ mod tests {
             project_prefix: "APP".to_string(),
             status: TaskStatus::parse(status).expect("valid status"),
             priority: TaskPriority::parse(priority).expect("valid priority"),
+            source: crate::choices::TaskSource::Unknown,
             created_at: queue_activity_at.to_string(),
             updated_at: queue_activity_at.to_string(),
             queue_activity_at: queue_activity_at.to_string(),

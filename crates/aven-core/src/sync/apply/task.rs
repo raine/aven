@@ -48,8 +48,8 @@ pub(super) async fn create_task(conn: &mut SqliteConnection, change: &ChangeWire
     };
     let created_at = p.created_at.unwrap_or_else(|| change.created_at.clone());
     sqlx::query(
-        "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, available_at, due_on, is_epic)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, source, created_at, updated_at, queue_activity_at, available_at, due_on, is_epic)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&workspace_id)
     .bind(&task_id)
@@ -58,6 +58,7 @@ pub(super) async fn create_task(conn: &mut SqliteConnection, change: &ChangeWire
     .bind(&project_id)
     .bind(status.as_str())
     .bind(priority.as_str())
+    .bind(p.source.as_str())
     .bind(&created_at)
     .bind(&change.created_at)
     .bind(&change.created_at)

@@ -10,6 +10,23 @@ use aven_core::sync::wire::{
     MAX_PULL_BATCH, MAX_PUSH_BATCH, SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse,
 };
 use aven_core::sync::{ApplySyncPage, ServerSyncPage};
+use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::{Connection, SqliteConnection};
+
+async fn task_source(path: &Path, task_id: &TaskId) -> String {
+    let mut connection = SqliteConnection::connect_with(
+        &SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(false),
+    )
+    .await
+    .unwrap();
+    sqlx::query_scalar("SELECT source FROM tasks WHERE id = ?")
+        .bind(task_id)
+        .fetch_one(&mut connection)
+        .await
+        .unwrap()
+}
 
 async fn exchange(client_path: &Path, server: &Database) {
     let client = Database::open(client_path).await.unwrap();
@@ -55,6 +72,39 @@ async fn exchange(client_path: &Path, server: &Database) {
         })
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn consumer_api_creation_and_sync_preserve_api_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let first_path = directory.path().join("source-first.sqlite");
+    let second_path = directory.path().join("source-second.sqlite");
+    let server = Database::open(&directory.path().join("source-server.sqlite"))
+        .await
+        .unwrap();
+    let first = Store::open(&first_path).await.unwrap();
+    let workspace = first.resolve_workspace("default").await.unwrap();
+    let created = first
+        .create_task(
+            &workspace.id,
+            CreateTask {
+                title: "consumer source".to_string(),
+                description: String::new(),
+                project: "Core".to_string(),
+                status: TaskStatus::Inbox,
+                priority: TaskPriority::None,
+                available_at: None,
+                due_on: None,
+            },
+        )
+        .await
+        .unwrap();
+    drop(first);
+
+    assert_eq!(task_source(&first_path, &created.id).await, "api");
+    exchange(&first_path, &server).await;
+    exchange(&second_path, &server).await;
+    assert_eq!(task_source(&second_path, &created.id).await, "api");
 }
 
 #[tokio::test]

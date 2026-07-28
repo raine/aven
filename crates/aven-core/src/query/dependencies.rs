@@ -58,7 +58,7 @@ async fn query_dependency_items(
     let rows = if blocks_only {
         sqlx::query(
             "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
-         p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at,
+         p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.source, t.created_at, t.updated_at,
          t.queue_activity_at, t.available_at, t.due_on, t.deleted, t.is_epic, d.created_at AS dependency_created_at
          FROM task_dependencies d
          JOIN tasks t ON t.workspace_id = d.workspace_id AND t.id = d.task_id
@@ -72,7 +72,7 @@ async fn query_dependency_items(
     } else {
         sqlx::query(
             "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
-         p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at,
+         p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.source, t.created_at, t.updated_at,
          t.queue_activity_at, t.available_at, t.due_on, t.deleted, t.is_epic, d.created_at AS dependency_created_at
          FROM task_dependencies d
          JOIN tasks t ON t.workspace_id = d.workspace_id AND t.id = d.depends_on_task_id

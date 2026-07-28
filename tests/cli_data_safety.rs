@@ -48,6 +48,10 @@ fn backup_archive_round_trips_attachment_blobs() {
         ["backup", "restore", backup_path.to_str().unwrap(), "--yes"],
     ));
     contains_all(&output, &["restored-backup path=", "safety_backup="]);
+    assert_eq!(
+        query_string(&db, "SELECT source FROM tasks WHERE title = 'with image'"),
+        "cli"
+    );
     let object_path = blob_dir.join("objects").join("sha256").join(&sha);
     assert_eq!(fs::read(object_path).unwrap(), image_bytes);
     let listed = ok(env.aven(&db, ["attachment", "list", &task_ref, "--json"]));
@@ -406,6 +410,43 @@ fn import_defaults_due_on_for_older_snapshots() {
     let shown: Value =
         serde_json::from_str(&ok(env.aven(&db, ["show", &task_ref, "--json"]))).unwrap();
     assert_eq!(shown["due_on"], "");
+}
+
+#[test]
+fn export_and_import_preserve_and_validate_task_source() {
+    let env = TestEnv::new();
+    let db = env.db("task-source-portability.sqlite");
+    ok(env.aven(&db, ["add", "portable source", "--project", "app"]));
+    let output_path = env.path("task-source-portability.json");
+    ok(env.aven(&db, ["export", "--output", output_path.to_str().unwrap()]));
+
+    let mut snapshot: Value =
+        serde_json::from_str(&fs::read_to_string(&output_path).unwrap()).unwrap();
+    assert_eq!(snapshot["tables"]["tasks"][0]["source"], "cli");
+    snapshot["tables"]["tasks"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("source");
+    fs::write(&output_path, serde_json::to_string(&snapshot).unwrap()).unwrap();
+
+    ok(env.aven(&db, ["import", "--yes", output_path.to_str().unwrap()]));
+    assert_eq!(
+        query_string(
+            &db,
+            "SELECT source FROM tasks WHERE title = 'portable source'"
+        ),
+        "unknown"
+    );
+
+    fs::remove_file(&output_path).unwrap();
+    ok(env.aven(&db, ["export", "--output", output_path.to_str().unwrap()]));
+    let mut snapshot: Value =
+        serde_json::from_str(&fs::read_to_string(&output_path).unwrap()).unwrap();
+    snapshot["tables"]["tasks"][0]["source"] = Value::String("agent".to_string());
+    fs::write(&output_path, serde_json::to_string(&snapshot).unwrap()).unwrap();
+
+    let output = fail(env.aven(&db, ["import", "--yes", output_path.to_str().unwrap()]));
+    contains_all(&output, &["invalid-task-source", "input=agent"]);
 }
 
 #[test]

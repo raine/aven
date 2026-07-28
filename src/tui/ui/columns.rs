@@ -551,6 +551,7 @@ mod tests {
                 project_prefix: "APP".into(),
                 status: TaskStatus::Todo,
                 priority: TaskPriority::None,
+                source: crate::choices::TaskSource::Unknown,
                 created_at: String::new(),
                 updated_at: String::new(),
                 queue_activity_at: String::new(),

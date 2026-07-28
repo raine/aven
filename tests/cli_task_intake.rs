@@ -5,6 +5,19 @@ use std::fs;
 use common::{TestEnv, contains_all, extract_ref, ok};
 
 #[test]
+fn add_assigns_cli_source() {
+    let env = TestEnv::new();
+    let db = env.db("cli-source.sqlite");
+
+    ok(env.aven(&db, ["add", "CLI source", "--project", "app"]));
+
+    assert_eq!(
+        sqlite_scalar(&db, "SELECT source FROM tasks WHERE title = 'CLI source'"),
+        "cli"
+    );
+}
+
+#[test]
 fn natural_add_uses_configured_task_intake_command() {
     let env = TestEnv::new();
     let db = env.db("natural.sqlite");
@@ -63,6 +76,13 @@ agent:
     let due_on = shown_json["due_on"].as_str().unwrap();
     assert_eq!(due_on.len(), 10);
     assert!(due_on > &available_at[..10]);
+    assert_eq!(
+        sqlite_scalar(
+            &db,
+            "SELECT source FROM tasks WHERE title = 'fix slack dispatch'",
+        ),
+        "cli"
+    );
     let prompt = fs::read_to_string(prompt).unwrap();
     assert_eq!(prompt, "custom task shaping");
 }
@@ -191,6 +211,13 @@ agent:
     let prompt = fs::read_to_string(prompt).unwrap();
     assert!(prompt.contains("Project=app Selected=app"));
     assert_eq!(pending_undo_count(&db, &client_workspace_id), 0);
+    assert_eq!(
+        sqlite_scalar(
+            &db,
+            "SELECT source FROM tasks WHERE title = 'fix slack sync'",
+        ),
+        "tui"
+    );
 }
 
 #[test]

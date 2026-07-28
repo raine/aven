@@ -9,6 +9,7 @@ use crate::attachments::validation::{
     validate_media_type,
 };
 use crate::change_log::op_type;
+use crate::choices::TaskSource;
 use crate::ids::{BASE32, ProjectId, WorkspaceId};
 use crate::task_fields::TaskField;
 
@@ -368,6 +369,10 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             }
             if let Some(priority) = optional_string_payload("priority", &change.payload)? {
                 validate_sync_task_field_value(TaskField::Priority, &priority)?;
+            }
+            if let Some(source) = optional_string_payload("source", &change.payload)? {
+                TaskSource::parse(&source)
+                    .context("error invalid-sync-change invalid-task-source")?;
             }
             if let Some(available_at) = optional_string_payload("available_at", &change.payload)? {
                 validate_sync_task_field_value(TaskField::AvailableAt, &available_at)?;

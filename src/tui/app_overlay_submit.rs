@@ -101,6 +101,7 @@ impl App {
             project: state.selected_project.clone(),
             status: state.status.clone(),
             priority: state.priority.clone(),
+            source: crate::choices::TaskSource::Tui,
             labels: state.labels.clone(),
             available_at,
             due_on,

@@ -3,7 +3,7 @@
 use super::*;
 use crate::ids::{TaskId, WorkspaceId};
 
-use crate::choices::{PRIORITIES, TaskPriority, TaskStatus};
+use crate::choices::{PRIORITIES, TaskPriority, TaskSource, TaskStatus};
 use crate::operations::{TaskDraft, TaskUpdate};
 use crate::query::SortDirection;
 use aven_core::test_support::list_labels_in_workspace;
@@ -48,6 +48,7 @@ async fn create_selected_task(store: &mut TuiStore, title: &str) -> (TaskId, usi
                 project: None,
                 status: "inbox".to_string(),
                 priority: "none".to_string(),
+                source: TaskSource::Unknown,
                 labels: Vec::new(),
                 available_at: None,
                 due_on: None,
@@ -120,6 +121,7 @@ fn task_draft(title: &str) -> TaskDraft {
         project: None,
         status: "inbox".to_string(),
         priority: "none".to_string(),
+        source: TaskSource::Unknown,
         labels: Vec::new(),
         available_at: None,
         due_on: None,
@@ -557,6 +559,23 @@ mod task_creation_and_updates {
         assert_eq!(task.task.title, "Write docs");
         assert_eq!(task.task.priority, TaskPriority::High);
         assert!(task.labels.iter().any(|label| label == "needs-review"));
+    }
+
+    #[tokio::test]
+    async fn create_task_assigns_tui_source() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (_, selected) = store
+            .create_task(task_draft("TUI source"), None)
+            .await
+            .unwrap();
+        let task_id = &store.tasks[selected.unwrap()].task.id;
+        let source: String = sqlx::query_scalar("SELECT source FROM tasks WHERE id = ?")
+            .bind(task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(source, "tui");
     }
 
     #[tokio::test]

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Error as InternalError;
 
-use crate::choices::{TaskPriority, TaskStatus};
+use crate::choices::{TaskPriority, TaskSource, TaskStatus};
 use crate::db::Database;
 use crate::ids::{ProjectId, TaskId, WorkspaceId};
 use crate::operations::{TaskDraft, TaskUpdate as InternalTaskUpdate};
@@ -101,6 +101,7 @@ impl Store {
                     project: Some(input.project),
                     status: input.status.as_str().to_string(),
                     priority: input.priority.as_str().to_string(),
+                    source: TaskSource::Api,
                     labels: Vec::new(),
                     available_at: input.available_at,
                     due_on: input.due_on,

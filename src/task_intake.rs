@@ -9,7 +9,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use crate::choices::{PRIORITIES, TaskPriority};
+use crate::choices::{PRIORITIES, TaskPriority, TaskSource};
 use crate::config::TaskIntakeConfig;
 use crate::operations::TaskDraft;
 use crate::query::ProjectListItem;
@@ -211,6 +211,7 @@ pub(crate) async fn parsed_output_to_draft_with_database(
     database: &Database,
     context: &TaskIntakeContext,
     output: &str,
+    source: TaskSource,
 ) -> Result<TaskDraft> {
     let json = extract_json(output).context("error task-intake-json-missing")?;
     let parsed: ParsedTaskPayload =
@@ -262,6 +263,7 @@ pub(crate) async fn parsed_output_to_draft_with_database(
         project,
         status: "inbox".to_string(),
         priority,
+        source,
         labels,
         available_at,
         due_on,

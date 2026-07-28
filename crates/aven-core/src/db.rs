@@ -10,7 +10,7 @@ use serde_json::Value;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
 use sqlx::{Connection as _, Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
 
-use crate::choices::{TaskPriority, TaskStatus};
+use crate::choices::{TaskPriority, TaskSource, TaskStatus};
 use crate::ids::{new_id, now};
 use crate::types::Task;
 use crate::workspaces::ensure_default_workspace;
@@ -384,6 +384,7 @@ pub(crate) fn task_from_row(row: &SqliteRow) -> Result<Task> {
         project_prefix: row.try_get("project_prefix")?,
         status: TaskStatus::parse(row.try_get::<String, _>("status")?.as_str())?,
         priority: TaskPriority::parse(row.try_get::<String, _>("priority")?.as_str())?,
+        source: TaskSource::parse(row.try_get::<String, _>("source")?.as_str())?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
         queue_activity_at: row.try_get("queue_activity_at")?,
@@ -464,6 +465,7 @@ mod tests {
                     'APP' AS project_prefix,
                     'todo' AS status,
                     'none' AS priority,
+                    'unknown' AS source,
                     't' AS created_at,
                     't' AS updated_at,
                     't' AS queue_activity_at,
@@ -509,6 +511,7 @@ mod tests {
                     'APP' AS project_prefix,
                     'blocked' AS status,
                     'none' AS priority,
+                    'unknown' AS source,
                     't' AS created_at,
                     't' AS updated_at,
                     't' AS queue_activity_at,

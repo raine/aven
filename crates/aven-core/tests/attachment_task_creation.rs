@@ -2,6 +2,7 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use aven_core::attachments::{ImageOptimizationPolicy, LifecyclePolicy};
+use aven_core::choices::TaskSource;
 use aven_core::db::Database;
 use aven_core::operations::{AttachmentAddInput, TaskAttachmentAddInput, TaskDraft, TaskUpdate};
 use aven_core::query::{SortDirection, TaskFilters, TaskQueryMode, TaskSort};
@@ -40,6 +41,7 @@ fn draft(title: &str) -> TaskDraft {
         project: Some("default".to_string()),
         status: "todo".to_string(),
         priority: "none".to_string(),
+        source: TaskSource::Unknown,
         labels: Vec::new(),
         available_at: None,
         due_on: None,

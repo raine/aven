@@ -92,7 +92,12 @@ async fn old_schema_database_can_be_opened_and_read() {
     .fetch_one(&pool)
     .await
     .unwrap();
+    let source: String = sqlx::query_scalar("SELECT source FROM tasks WHERE title = 'old task'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(task_count, 2);
+    assert_eq!(source, "unknown");
     assert_eq!(orphan_project_count, 1);
     assert_eq!(orphan_path_count, 0);
     assert_eq!(app_project_id.len(), 16);

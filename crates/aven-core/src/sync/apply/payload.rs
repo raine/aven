@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
 
+use crate::choices::TaskSource;
 use crate::ids::ProjectId;
 use crate::sync::wire::ChangeWire;
 
@@ -65,6 +66,7 @@ pub struct CreateTaskPayload {
     pub project_id: ProjectId,
     pub status: Option<String>,
     pub priority: Option<String>,
+    pub source: TaskSource,
     pub available_at: Option<String>,
     pub due_on: Option<String>,
     pub is_epic: Option<String>,
@@ -80,6 +82,10 @@ impl CreateTaskPayload {
             project_id: str_payload(payload, "project_id")?.parse()?,
             status: optional_str_payload(payload, "status"),
             priority: optional_str_payload(payload, "priority"),
+            source: optional_str_payload(payload, "source")
+                .map(|value| TaskSource::parse(&value))
+                .transpose()?
+                .unwrap_or_default(),
             available_at: optional_str_payload(payload, "available_at"),
             due_on: optional_str_payload(payload, "due_on"),
             is_epic: optional_str_payload(payload, "is_epic"),

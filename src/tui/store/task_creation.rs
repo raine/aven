@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use anyhow::Result;
+use aven_core::choices::TaskSource;
 use tokio::task::JoinHandle;
 
 use crate::config::TaskIntakeConfig;
@@ -63,8 +64,13 @@ impl TuiStore {
             .await?;
             let output =
                 crate::task_intake::run_task_intake_command(&config, &context, &input).await?;
-            crate::task_intake::parsed_output_to_draft_with_database(&database, &context, &output)
-                .await
+            crate::task_intake::parsed_output_to_draft_with_database(
+                &database,
+                &context,
+                &output,
+                TaskSource::Tui,
+            )
+            .await
         })
     }
 
@@ -73,6 +79,7 @@ impl TuiStore {
         mut draft: TaskDraft,
         current_selected_index: Option<usize>,
     ) -> Result<(String, Option<usize>)> {
+        draft.source = TaskSource::Tui;
         if draft.project.is_none() {
             draft.project = self.inferred_add_project().await?;
         }
@@ -93,6 +100,7 @@ impl TuiStore {
         current_selected_index: Option<usize>,
         epic: &super::EpicContext,
     ) -> Result<(String, Option<usize>, crate::ids::TaskId)> {
+        draft.source = TaskSource::Tui;
         draft.project = Some(epic.project_key.clone());
         let outcome = self
             .database
@@ -133,6 +141,7 @@ impl TuiStore {
         lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
         attachments: Vec<PendingTaskAttachment>,
     ) -> Result<(String, Option<usize>)> {
+        draft.source = TaskSource::Tui;
         if draft.project.is_none() {
             draft.project = self.inferred_add_project().await?;
         }
@@ -174,6 +183,7 @@ impl TuiStore {
         attachments: Vec<PendingTaskAttachment>,
         epic: &super::EpicContext,
     ) -> Result<(String, Option<usize>, crate::ids::TaskId)> {
+        draft.source = TaskSource::Tui;
         draft.project = Some(epic.project_key.clone());
         let attachment_ids = attachments
             .iter()

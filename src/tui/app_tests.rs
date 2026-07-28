@@ -1,5 +1,5 @@
 use super::*;
-use crate::choices::{TaskPriority, TaskStatus};
+use crate::choices::{TaskPriority, TaskSource, TaskStatus};
 use crate::operations::TaskDraft;
 use crate::tui::app_conflicts::CONFLICT_CONFIRM_LOCAL_TITLE;
 use crate::tui::app_edit::{
@@ -102,6 +102,7 @@ fn test_task_draft(title: &str) -> TaskDraft {
         project: None,
         status: "inbox".to_string(),
         priority: "none".to_string(),
+        source: TaskSource::Unknown,
         labels: Vec::new(),
         available_at: None,
         due_on: None,
@@ -2688,6 +2689,7 @@ mod command_and_config_overlays {
                 project: None,
                 status: "inbox".to_string(),
                 priority: "urgent".to_string(),
+                source: TaskSource::Unknown,
                 labels: Vec::new(),
                 available_at: None,
                 due_on: None,
@@ -3421,6 +3423,7 @@ mod filters_and_workspaces {
                         project: Some(project.to_string()),
                         status: "inbox".to_string(),
                         priority: "none".to_string(),
+                        source: TaskSource::Unknown,
                         labels: Vec::new(),
                         available_at: None,
                         due_on: None,
@@ -3464,6 +3467,7 @@ mod filters_and_workspaces {
                 project: None,
                 status: "inbox".to_string(),
                 priority: "urgent".to_string(),
+                source: TaskSource::Unknown,
                 labels: vec!["backend".to_string()],
                 available_at: None,
                 due_on: None,
@@ -8453,6 +8457,7 @@ mod detail_mode {
                 project: None,
                 status: "inbox".to_string(),
                 priority: "none".to_string(),
+                source: TaskSource::Unknown,
                 labels: vec!["bug".to_string()],
                 available_at: None,
                 due_on: None,

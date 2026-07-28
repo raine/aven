@@ -32,6 +32,73 @@ impl fmt::Display for InvalidTaskPriority {
 
 impl std::error::Error for InvalidTaskPriority {}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidTaskSource(String);
+
+impl fmt::Display for InvalidTaskSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "error invalid-task-source input={} choices={}",
+            self.0,
+            TASK_SOURCES.join(",")
+        )
+    }
+}
+
+impl std::error::Error for InvalidTaskSource {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum TaskSource {
+    Cli,
+    Tui,
+    Api,
+    #[default]
+    Unknown,
+}
+
+impl TaskSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cli => "cli",
+            Self::Tui => "tui",
+            Self::Api => "api",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, InvalidTaskSource> {
+        match value {
+            "cli" => Ok(Self::Cli),
+            "tui" => Ok(Self::Tui),
+            "api" => Ok(Self::Api),
+            "unknown" => Ok(Self::Unknown),
+            _ => Err(InvalidTaskSource(value.to_string())),
+        }
+    }
+}
+
+impl fmt::Display for TaskSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl TryFrom<&str> for TaskSource {
+    type Error = InvalidTaskSource;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::parse(value)
+    }
+}
+
+pub const TASK_SOURCES: &[&str] = &[
+    TaskSource::Cli.as_str(),
+    TaskSource::Tui.as_str(),
+    TaskSource::Api.as_str(),
+    TaskSource::Unknown.as_str(),
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TaskStatus {
     Inbox,
@@ -175,6 +242,14 @@ mod tests {
 
     #[test]
     fn status_and_priority_parse_display_and_reject_invalid_values() {
+        assert_eq!(TaskSource::parse("tui").unwrap(), TaskSource::Tui);
+        assert_eq!(TaskSource::Api.as_str(), "api");
+        assert_eq!(TaskSource::Unknown.to_string(), "unknown");
+        assert_eq!(
+            TaskSource::parse("agent").unwrap_err().to_string(),
+            "error invalid-task-source input=agent choices=cli,tui,api,unknown"
+        );
+
         assert_eq!(TaskStatus::parse("active").unwrap(), TaskStatus::Active);
         assert_eq!(TaskStatus::Active.as_str(), "active");
         assert_eq!(TaskStatus::Active.to_string(), "active");

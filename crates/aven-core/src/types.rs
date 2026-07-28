@@ -1,6 +1,6 @@
 use crate::ids::{ProjectId, TaskId, WorkspaceId};
 
-use crate::choices::{TaskPriority, TaskStatus};
+use crate::choices::{TaskPriority, TaskSource, TaskStatus};
 
 #[derive(Debug, Clone)]
 pub struct Task {
@@ -13,6 +13,7 @@ pub struct Task {
     pub project_prefix: String,
     pub status: TaskStatus,
     pub priority: TaskPriority,
+    pub source: TaskSource,
     pub created_at: String,
     pub updated_at: String,
     pub queue_activity_at: String,

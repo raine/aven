@@ -14,6 +14,7 @@ pub(crate) fn task_list_item(title: &str) -> TaskListItem {
             project_prefix: "APP".to_string(),
             status: TaskStatus::Todo,
             priority: TaskPriority::None,
+            source: crate::choices::TaskSource::Unknown,
             created_at: "2026-06-20T00:00:00Z".to_string(),
             updated_at: "2026-06-20T00:00:00Z".to_string(),
             queue_activity_at: "2026-06-20T00:00:00Z".to_string(),

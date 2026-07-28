@@ -3,6 +3,7 @@ use std::future::Future;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
+use aven_core::choices::TaskSource;
 use aven_core::db::Database;
 use aven_core::ids::TaskId;
 use aven_core::operations::TaskDraft;
@@ -121,6 +122,7 @@ async fn seed_demo(
                     project: Some(task.project.to_string()),
                     status: task.status.as_str().to_string(),
                     priority: task.priority.as_str().to_string(),
+                    source: TaskSource::Unknown,
                     labels: task
                         .labels
                         .iter()
@@ -426,6 +428,7 @@ mod tests {
                         project: Some("cli".to_string()),
                         status: "inbox".to_string(),
                         priority: "none".to_string(),
+                        source: TaskSource::Unknown,
                         labels: Vec::new(),
                         available_at: None,
                         due_on: None,
