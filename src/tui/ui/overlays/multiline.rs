@@ -219,10 +219,6 @@ pub(in crate::tui::ui) fn add_task_natural_hint_line() -> Line<'static> {
 }
 
 pub(in crate::tui::ui) fn render_add_note_input(frame: &mut Frame, state: &MultilineInputView) {
-    let show_placeholder = state.lines.len() == 1 && state.lines[0].is_empty();
-    render_tail_viewport_multiline(frame, state, 60, multiline_hint_line(), |line, cursor| {
-        add_note_input_line(line, cursor, show_placeholder)
-    });
     if state.mode == MultilineInputMode::ConfirmDiscard {
         render_confirm_with_hints(
             frame,
@@ -236,7 +232,13 @@ pub(in crate::tui::ui) fn render_add_note_input(frame: &mut Frame, state: &Multi
                 ("Esc", "keep editing"),
             ],
         );
+        return;
     }
+
+    let show_placeholder = state.lines.len() == 1 && state.lines[0].is_empty();
+    render_tail_viewport_multiline(frame, state, 60, multiline_hint_line(), |line, cursor| {
+        add_note_input_line(line, cursor, show_placeholder)
+    });
 }
 
 fn render_tail_viewport_multiline(

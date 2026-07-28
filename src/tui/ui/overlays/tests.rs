@@ -1479,7 +1479,7 @@ mod multiline_overlays {
     }
 
     #[test]
-    fn add_note_discard_confirmation_renders_explicit_controls() {
+    fn add_note_discard_confirmation_replaces_editor_with_explicit_controls() {
         let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
             kind: MultilineInputKind::AddNote,
             title: "Add note".to_string(),
@@ -1495,6 +1495,9 @@ mod multiline_overlays {
         assert!(rendered.contains("y discard"));
         assert!(rendered.contains("n keep editing"));
         assert!(rendered.contains("Esc keep editing"));
+        assert!(!rendered.contains("Add note"));
+        assert!(!rendered.contains("draft note text"));
+        assert!(!rendered.contains("Ctrl-Enter / ^S submit"));
     }
 
     #[test]
