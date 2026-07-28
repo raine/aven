@@ -77,8 +77,11 @@ impl App {
                     self.list.select_task(next);
                 } else if self.store.view_state.view == crate::tui::store::TaskView::Epics {
                     let row_count = crate::tui::ui::task_visual_row_count(&self.store);
-                    let row = Some(if last { row_count.saturating_sub(1) } else { 0 })
-                        .filter(|_| row_count > 0);
+                    let row = if row_count > 0 {
+                        Some(if last { row_count - 1 } else { 0 })
+                    } else {
+                        None
+                    };
                     self.list.select_task(row.and_then(|row| {
                         crate::tui::ui::task_index_at_visual_row(&self.store, row)
                     }));
@@ -235,7 +238,7 @@ impl App {
         self.restore_sidebar_selection();
         self.prune_task_marks();
         self.list
-            .select_task(Some(0).filter(|_| self.store.main_row_count() > 0));
+            .select_task((self.store.main_row_count() > 0).then_some(0));
         Ok(())
     }
 

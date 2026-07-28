@@ -1,6 +1,7 @@
+#[cfg(any(not(test), target_os = "macos"))]
 use std::fs;
 use std::io::{self, Write};
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(test)))]
 use std::io::{Read, Seek};
 use std::path::Path;
 use std::process::Command as ProcessCommand;
@@ -555,7 +556,7 @@ fn copy_linux_clipboard_with(
     anyhow::bail!(failures.join("; "))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(test)))]
 fn run_clipboard_write_command(
     command: &ClipboardCommand,
     value: &[u8],
