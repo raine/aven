@@ -148,7 +148,20 @@ impl App {
         self.overlay = None;
     }
 
-    pub(super) fn move_right(&mut self) {
+    pub(super) async fn move_right(&mut self) -> Result<()> {
+        let selected = self.list.selected_task();
+        let epic_selected = self.list.focus() == Focus::Tasks
+            && self.store.view_state.view == TaskView::Epics
+            && selected
+                .and_then(|index| self.store.tasks.get(index))
+                .is_some_and(|item| item.task.is_epic);
+        if epic_selected {
+            if let Some(message) = self.store.toggle_selected_epic(selected).await? {
+                self.set_info(message.message);
+                self.list.select_task(message.selected);
+            }
+            return Ok(());
+        }
         if self.list.focus() == Focus::Tasks
             && self.store.view_state.view == crate::tui::store::TaskView::Columns
         {
@@ -158,7 +171,7 @@ impl App {
             if next.is_some() {
                 self.list.select_task(next);
             }
-            return;
+            return Ok(());
         }
         self.list.focus_tasks();
         if self.store.view_state.view == crate::tui::store::TaskView::Columns
@@ -170,6 +183,7 @@ impl App {
             );
         }
         self.overlay = None;
+        Ok(())
     }
 
     pub(super) fn previous_item(&mut self) {

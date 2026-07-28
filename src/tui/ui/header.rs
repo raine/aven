@@ -461,6 +461,15 @@ fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
     if let Some(priority) = &modifiers.priority {
         parts.push(vec![filter_part(format!("priority={priority}"))]);
     }
+    match modifiers.closed {
+        crate::tui::store::ClosedTaskVisibility::Default => {}
+        crate::tui::store::ClosedTaskVisibility::Included => {
+            parts.push(vec![filter_part("include_closed")]);
+        }
+        crate::tui::store::ClosedTaskVisibility::Only => {
+            parts.push(vec![filter_part("closed_only")]);
+        }
+    }
     if modifiers.deleted_only {
         parts.push(vec![filter_part("deleted_only")]);
     } else if modifiers.include_deleted {
@@ -580,6 +589,7 @@ mod tests {
             filter_modifiers: TaskFilterModifiers {
                 label: Some("backend".to_string()),
                 priority: Some("urgent".to_string()),
+                closed: crate::tui::store::ClosedTaskVisibility::Included,
                 include_deleted: true,
                 deleted_only: false,
                 search: Some("needle".to_string()),
@@ -602,15 +612,17 @@ mod tests {
         assert!(spans_text(header_metrics(&store, false)).contains("conflicts 1"));
         assert_eq!(
             spans_text(active_filter_spans(&store)),
-            " │ filter label=backend priority=urgent include_deleted matches=2"
+            " │ filter label=backend priority=urgent include_closed include_deleted matches=2"
         );
 
         store.view_state.filter_modifiers.deleted_only = true;
         assert_eq!(
             spans_text(active_filter_spans(&store)),
-            " │ filter label=backend priority=urgent deleted_only matches=2"
+            " │ filter label=backend priority=urgent include_closed deleted_only matches=2"
         );
         store.view_state.filter_modifiers.deleted_only = false;
+        store.view_state.filter_modifiers.closed = crate::tui::store::ClosedTaskVisibility::Only;
+        assert!(spans_text(active_filter_spans(&store)).contains("closed_only"));
         assert_eq!(
             spans_text(active_order_spans(&store)),
             " │ order priority desc"

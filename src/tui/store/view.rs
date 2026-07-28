@@ -6,8 +6,8 @@ use tokio::task::JoinHandle;
 use crate::query::{self, SortDirection, TaskSearchQuery};
 
 use super::{
-    SidebarEntryTarget, TaskFilterModifiers, TaskOrder, TaskScope, TaskScopeTarget, TaskView,
-    TuiStore,
+    ClosedTaskVisibility, SidebarEntryTarget, TaskFilterModifiers, TaskOrder, TaskScope,
+    TaskScopeTarget, TaskView, TuiStore,
 };
 
 async fn search_preview_with_database(
@@ -60,6 +60,9 @@ impl TuiStore {
     pub(crate) async fn show_view(&mut self, view: TaskView) -> Result<Option<usize>> {
         let mut view_state = self.view_state.clone();
         view_state.view = view;
+        if !view.supports_closed_filter() {
+            view_state.filter_modifiers.closed = ClosedTaskVisibility::Default;
+        }
         if view == TaskView::Upcoming {
             view_state.direction = SortDirection::Asc;
         }
@@ -113,6 +116,19 @@ impl TuiStore {
     pub(crate) async fn filter_priority(&mut self, priority: String) -> Result<Option<usize>> {
         let mut view_state = self.view_state.clone();
         view_state.filter_modifiers.priority = Some(priority);
+        Ok(self
+            .refresh_with_view_state(view_state, None)
+            .await?
+            .selected)
+    }
+
+    pub(crate) async fn toggle_closed_filter(&mut self) -> Result<Option<usize>> {
+        let mut view_state = self.view_state.clone();
+        view_state.filter_modifiers.closed = match view_state.filter_modifiers.closed {
+            ClosedTaskVisibility::Default => ClosedTaskVisibility::Included,
+            ClosedTaskVisibility::Included => ClosedTaskVisibility::Only,
+            ClosedTaskVisibility::Only => ClosedTaskVisibility::Default,
+        };
         Ok(self
             .refresh_with_view_state(view_state, None)
             .await?

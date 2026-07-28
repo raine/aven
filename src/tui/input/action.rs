@@ -12,7 +12,7 @@ impl App {
             Action::MoveDown => self.move_selection(1).await?,
             Action::MoveUp => self.move_selection(-1).await?,
             Action::MoveLeft => self.move_left(),
-            Action::MoveRight => self.move_right(),
+            Action::MoveRight => self.move_right().await?,
             Action::MoveColumnLeft => self.move_tasks_by_column(-1).await?,
             Action::MoveColumnRight => self.move_tasks_by_column(1).await?,
             Action::BeginMoveToColumn => self.begin_move_to_column(),
@@ -67,6 +67,7 @@ impl App {
             Action::BeginScopeProject => self.begin_scope_project(),
             Action::BeginSwitchWorkspace => self.begin_switch_workspace().await?,
             Action::ClearFilters => self.clear_filters().await?,
+            Action::ToggleClosedFilter => self.toggle_closed_filter().await?,
             Action::ToggleDeletedFilter => self.toggle_deleted_filter().await?,
             Action::ShowView(view) => self.show_view(view).await?,
             Action::ShowWorkspaceScope => {

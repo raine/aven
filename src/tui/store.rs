@@ -34,9 +34,9 @@ pub(crate) use pickers::deleted_picker_items;
 pub(crate) use task_commands::{PriorityMutation, TaskDateField, TaskTextField};
 pub(crate) use task_creation::task_creation_committed;
 pub(crate) use types::{
-    ConflictTarget, MutationMessage, SidebarEntry, SidebarEntryTarget, SyncStatusCheck,
-    TaskFilterModifiers, TaskListRenderMode, TaskOrder, TaskScope, TaskScopeTarget, TaskView,
-    TaskViewState, TuiDatabaseStats, TuiSyncStatus, mutation_committed,
+    ClosedTaskVisibility, ConflictTarget, MutationMessage, SidebarEntry, SidebarEntryTarget,
+    SyncStatusCheck, TaskFilterModifiers, TaskListRenderMode, TaskOrder, TaskScope,
+    TaskScopeTarget, TaskView, TaskViewState, TuiDatabaseStats, TuiSyncStatus, mutation_committed,
 };
 #[cfg(test)]
 pub(crate) use types::{DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts};

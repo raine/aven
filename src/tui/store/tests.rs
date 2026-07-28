@@ -2586,6 +2586,35 @@ mod views_filters_and_sort {
     }
 
     #[tokio::test]
+    async fn closed_filter_reuses_visibility_cycle_for_tasks() {
+        let mut store = test_store().await;
+        store
+            .create_task(task_draft("Open task"), None)
+            .await
+            .unwrap();
+        let (_, selected) = store
+            .create_task(task_draft("Finished task"), None)
+            .await
+            .unwrap();
+        store.update_status(selected, "done").await.unwrap();
+        store.show_view(TaskView::Queue).await.unwrap();
+
+        assert_eq!(store.tasks.len(), 1);
+        assert_eq!(store.tasks[0].task.title, "Open task");
+
+        store.toggle_closed_filter().await.unwrap();
+        assert_eq!(store.tasks.len(), 2);
+
+        store.toggle_closed_filter().await.unwrap();
+        assert_eq!(store.tasks.len(), 1);
+        assert_eq!(store.tasks[0].task.title, "Finished task");
+
+        store.toggle_closed_filter().await.unwrap();
+        assert_eq!(store.tasks.len(), 1);
+        assert_eq!(store.tasks[0].task.title, "Open task");
+    }
+
+    #[tokio::test]
     async fn toggle_deleted_filter_switches_include_deleted() {
         let mut store = test_store().await;
 
@@ -3878,6 +3907,63 @@ mod epics {
         assert!(store.view_state.expanded_epic_ids.contains(&parent_id));
         assert!(store.tasks.iter().any(|task| task.task.id == child_id));
         (parent_id, child_id, parent_index)
+    }
+
+    #[tokio::test]
+    async fn epics_view_closed_filter_includes_and_isolates_closed_epics() {
+        let mut store = test_store().await;
+        let (_, open_selected) = store
+            .create_task(
+                TaskDraft {
+                    is_epic: true,
+                    ..task_draft("Open epic")
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let (_, closed_selected) = store
+            .create_task(
+                TaskDraft {
+                    is_epic: true,
+                    ..task_draft("Finished epic")
+                },
+                open_selected,
+            )
+            .await
+            .unwrap();
+        store.update_status(closed_selected, "done").await.unwrap();
+
+        store.show_view(TaskView::Epics).await.unwrap();
+
+        assert_eq!(store.counts.epics, 1);
+        assert_eq!(
+            store
+                .tasks
+                .iter()
+                .map(|item| item.task.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Open epic"]
+        );
+
+        store.toggle_closed_filter().await.unwrap();
+        assert_eq!(
+            store
+                .tasks
+                .iter()
+                .map(|item| item.task.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Open epic", "Finished epic"]
+        );
+
+        store.toggle_closed_filter().await.unwrap();
+        assert_eq!(store.tasks.len(), 1);
+        assert_eq!(store.tasks[0].task.title, "Finished epic");
+        assert_eq!(store.tasks[0].task.status, TaskStatus::Done);
+
+        store.toggle_closed_filter().await.unwrap();
+        assert_eq!(store.tasks.len(), 1);
+        assert_eq!(store.tasks[0].task.title, "Open epic");
     }
 
     #[tokio::test]

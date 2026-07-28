@@ -854,7 +854,17 @@ async fn sidebar_counts_include_epics_count() {
     )
     .await;
 
-    sqlx::query("UPDATE tasks SET is_epic = 1 WHERE id = 'EPCS00000000001'")
+    insert_test_task(
+        &mut conn,
+        "EPCS00000000004",
+        "closed epic",
+        "done",
+        "none",
+        "004",
+    )
+    .await;
+
+    sqlx::query("UPDATE tasks SET is_epic = 1 WHERE id IN ('EPCS00000000001', 'EPCS00000000004')")
         .execute(conn.as_mut())
         .await
         .unwrap();
@@ -869,4 +879,44 @@ async fn sidebar_counts_include_epics_count() {
 
     assert_eq!(counts.open, 3);
     assert_eq!(counts.epics, 1);
+}
+
+#[tokio::test]
+async fn project_scoped_sidebar_epics_count_excludes_other_projects() {
+    let (_temp, mut conn) = test_conn().await;
+    seed_default_project(&mut conn).await;
+    let workspace_id = crate::workspaces::default_workspace_id();
+    seed_workspace_project(&mut conn, &workspace_id, "mobile", "Mobile", "MOB").await;
+
+    insert_test_task(
+        &mut conn,
+        "EPCS00000000011",
+        "ordinary app task",
+        "todo",
+        "none",
+        "001",
+    )
+    .await;
+    seed_workspace_task(
+        &mut conn,
+        &workspace_id,
+        "EPCS00000000012",
+        "mobile epic",
+        "mobile",
+        "todo",
+        "none",
+        "002",
+    )
+    .await;
+    sqlx::query("UPDATE tasks SET is_epic = 1 WHERE id = 'EPCS00000000012'")
+        .execute(conn.as_mut())
+        .await
+        .unwrap();
+
+    let counts = sidebar_counts_for_scope_in_workspace(&mut conn, &workspace_id, Some("app"))
+        .await
+        .unwrap();
+
+    assert_eq!(counts.open, 1);
+    assert_eq!(counts.epics, 0);
 }

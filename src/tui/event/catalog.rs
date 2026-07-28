@@ -262,7 +262,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     ),
     CommandSpec::implemented(
         "move-right",
-        "move focus right",
+        "move focus right or toggle selected epic",
         "Navigation",
         &[
             KeySequence {
@@ -566,7 +566,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     ),
     CommandSpec::implemented(
         "view-epics",
-        "show epics view",
+        "show open epics",
         "Views",
         &[KeySequence {
             codes: &[KeyCode::Char('v'), KeyCode::Char('e')],
@@ -1114,6 +1114,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             label: "f c",
         }],
         Action::ClearFilters,
+    ),
+    CommandSpec::implemented(
+        "filter-closed",
+        "cycle closed task visibility",
+        "Filters",
+        &[KeySequence {
+            codes: &[KeyCode::Char('f'), KeyCode::Char('d')],
+            label: "f d",
+        }],
+        Action::ToggleClosedFilter,
     ),
     CommandSpec::implemented(
         "filter-deleted",

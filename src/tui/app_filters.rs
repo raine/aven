@@ -5,7 +5,7 @@ use crate::tui::overlay::{
     HeaderMenuAction, HeaderMenuItem, HeaderMenuKind, HeaderMenuState, OrderMenuState,
     OverlayState, PickerIntent,
 };
-use crate::tui::store::{TaskOrder, TaskScope, TaskScopeTarget, TaskView};
+use crate::tui::store::{ClosedTaskVisibility, TaskOrder, TaskScope, TaskScopeTarget, TaskView};
 
 pub(crate) const FILTER_LABEL_TITLE: &str = "Filter: label";
 pub(crate) const FILTER_PRIORITY_TITLE: &str = "Filter: priority";
@@ -251,6 +251,24 @@ impl App {
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
         self.set_success("filters cleared");
+        Ok(())
+    }
+
+    pub(super) async fn toggle_closed_filter(&mut self) -> Result<()> {
+        if !self.store.view_state.view.supports_closed_filter() {
+            self.set_warning("Closed visibility is available in Queue, Open, and Epics views");
+            return Ok(());
+        }
+        let previous = self.store.view_state.clone();
+        let selected = self.store.toggle_closed_filter().await?;
+        self.push_navigation_state(previous);
+        self.apply_filter_selection(selected);
+        let message = match self.store.view_state.filter_modifiers.closed {
+            ClosedTaskVisibility::Default => "hiding closed tasks",
+            ClosedTaskVisibility::Included => "showing closed tasks",
+            ClosedTaskVisibility::Only => "showing closed tasks only",
+        };
+        self.set_info(message);
         Ok(())
     }
 

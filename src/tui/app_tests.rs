@@ -6846,6 +6846,53 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn right_navigation_toggles_selected_epic() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+        let child_index = create_and_select_task(&mut app, test_task_draft("Child task")).await;
+        let child_id = app.store.tasks[child_index].task.id.clone();
+        let mut conn = pool.acquire().await.unwrap();
+        crate::operations::add_task_to_epic(
+            &mut conn,
+            &app.store.active_workspace,
+            &child_id,
+            &parent_id,
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        app.store.show_view(TaskView::Epics).await.unwrap();
+
+        for code in [KeyCode::Char('l'), KeyCode::Right] {
+            let parent_index = app
+                .store
+                .tasks
+                .iter()
+                .position(|item| item.task.id == parent_id)
+                .unwrap();
+            app.list.select_task(Some(parent_index));
+
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+
+            assert!(app.store.view_state.collapsed_epic_ids.contains(&parent_id));
+            assert!(!app.store.tasks.iter().any(|item| item.task.id == child_id));
+
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+
+            assert!(app.store.view_state.expanded_epic_ids.contains(&parent_id));
+            assert!(app.store.tasks.iter().any(|item| item.task.id == child_id));
+        }
+    }
+
+    #[tokio::test]
     async fn focused_detail_child_removes_and_undo_restores_relationship() {
         let (_dir, pool, mut app) = test_app_with_pool().await;
         let parent_index = create_and_select_task(
@@ -10782,7 +10829,7 @@ mod typed_overlay_submissions {
         );
         app.move_left();
         assert_eq!(app.list.selected_task(), Some(todo));
-        app.move_right();
+        app.move_right().await.unwrap();
         assert_eq!(
             app.store
                 .selected_task(app.list.selected_task())

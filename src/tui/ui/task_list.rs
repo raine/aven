@@ -20,7 +20,7 @@ use crate::tui::app::Focus;
 use crate::tui::list_surface::ListSurface;
 use crate::tui::markdown::render_markdown_preview;
 use crate::tui::overlay::TextInputView;
-use crate::tui::store::{TaskListRenderMode, TaskView, TuiStore};
+use crate::tui::store::{ClosedTaskVisibility, TaskListRenderMode, TaskView, TuiStore};
 use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, FG_MUTED, INVERSE_FG, RED, RELATED, SELECTED,
     SELECTED_INACTIVE, YELLOW,
@@ -386,12 +386,33 @@ fn empty_task_prompt(store: &TuiStore) -> EmptyTaskPrompt {
     }
 
     let modifiers = &store.view_state.filter_modifiers;
-    if modifiers.label.is_some()
+    let has_other_filters = modifiers.label.is_some()
         || modifiers.priority.is_some()
         || modifiers.include_deleted
         || modifiers.deleted_only
-        || modifiers.search.is_some()
-    {
+        || modifiers.search.is_some();
+    if store.view_state.view == TaskView::Epics && !has_other_filters {
+        match modifiers.closed {
+            ClosedTaskVisibility::Included => {
+                return EmptyTaskPrompt {
+                    title: "No epics",
+                    detail: "There are no open or closed epics in this scope.",
+                    key: "f c",
+                    action: "Reset filters",
+                };
+            }
+            ClosedTaskVisibility::Only => {
+                return EmptyTaskPrompt {
+                    title: "No closed epics",
+                    detail: "Finished and canceled epics will collect here.",
+                    key: "f d",
+                    action: "Show open epics",
+                };
+            }
+            ClosedTaskVisibility::Default => {}
+        }
+    }
+    if has_other_filters || modifiers.closed != ClosedTaskVisibility::Default {
         return EmptyTaskPrompt {
             title: "No matching tasks",
             detail: "This view is narrowed by filters.",
@@ -470,9 +491,9 @@ fn empty_task_prompt(store: &TuiStore) -> EmptyTaskPrompt {
         },
         TaskView::Epics => EmptyTaskPrompt {
             title: "No open epics",
-            detail: "Open epics will collect here.",
-            key: "v q",
-            action: "View queue",
+            detail: "Closed epics are available with the closed filter.",
+            key: "f d",
+            action: "Include closed epics",
         },
         TaskView::Columns | TaskView::RecentActions | TaskView::Search => EmptyTaskPrompt {
             title: "No tasks here",
@@ -1646,6 +1667,24 @@ mod tests {
         assert!(rendered.contains("f c"));
         assert!(rendered.contains("Clear filters"));
         assert!(!rendered.contains("Ready for your first task"));
+    }
+
+    #[tokio::test]
+    async fn empty_epics_view_teaches_closed_filter() {
+        let mut store = test_store_with_tasks(Vec::new()).await;
+        store.view_state.view = TaskView::Epics;
+
+        let prompt = empty_task_prompt(&store);
+
+        assert_eq!(prompt.title, "No open epics");
+        assert_eq!(prompt.key, "f d");
+        assert_eq!(prompt.action, "Include closed epics");
+
+        store.view_state.filter_modifiers.closed = ClosedTaskVisibility::Only;
+        let prompt = empty_task_prompt(&store);
+        assert_eq!(prompt.title, "No closed epics");
+        assert_eq!(prompt.key, "f d");
+        assert_eq!(prompt.action, "Show open epics");
     }
 
     #[tokio::test]

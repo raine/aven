@@ -76,6 +76,7 @@ pub(crate) enum Action {
     BeginScopeProject,
     BeginSwitchWorkspace,
     ClearFilters,
+    ToggleClosedFilter,
     ToggleDeletedFilter,
     ShowView(TaskView),
     ShowWorkspaceScope,

@@ -33,6 +33,11 @@ fn sidebar_counts_sql(project_scoped: bool) -> String {
     } else {
         ""
     };
+    let epic_project = if project_scoped {
+        " AND ep.project_id = ?"
+    } else {
+        ""
+    };
     format!(
         "SELECT {},
          (SELECT COUNT(DISTINCT c.task_id)
@@ -41,7 +46,7 @@ fn sidebar_counts_sql(project_scoped: bool) -> String {
           WHERE c.workspace_id = ? AND c.resolved = 0 AND ct.deleted = 0{conflict_project}) AS conflicts_count,
          (SELECT COUNT(*)
           FROM tasks ep
-          WHERE ep.workspace_id = ?{task_project}
+          WHERE ep.workspace_id = ?{epic_project}
             AND ep.deleted = 0 AND ep.status NOT IN ('done', 'canceled') AND ep.is_epic = 1
             AND (ep.available_at = '' OR ep.available_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))) AS epics_count
          FROM tasks t

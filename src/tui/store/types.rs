@@ -82,10 +82,25 @@ pub(crate) enum TaskView {
     RecentActions,
 }
 
+impl TaskView {
+    pub(crate) fn supports_closed_filter(self) -> bool {
+        matches!(self, Self::Queue | Self::Open | Self::Epics)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum ClosedTaskVisibility {
+    #[default]
+    Default,
+    Included,
+    Only,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct TaskFilterModifiers {
     pub(crate) label: Option<String>,
     pub(crate) priority: Option<String>,
+    pub(crate) closed: ClosedTaskVisibility,
     pub(crate) include_deleted: bool,
     pub(crate) deleted_only: bool,
     pub(crate) search: Option<String>,
@@ -199,6 +214,16 @@ impl TaskViewState {
                 filters.include_deleted = true;
             }
             TaskView::RecentActions => {}
+        }
+        if self.view.supports_closed_filter() {
+            match self.filter_modifiers.closed {
+                ClosedTaskVisibility::Default => {}
+                ClosedTaskVisibility::Included => filters.hide_done = false,
+                ClosedTaskVisibility::Only => {
+                    filters.hide_done = false;
+                    filters.statuses = vec!["done".to_string(), "canceled".to_string()];
+                }
+            }
         }
         filters
     }
