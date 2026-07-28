@@ -13,7 +13,7 @@ jobs:
     name: Full checks
     runs-on: ubuntu-latest
     env:
-      AVEN_DEV_DB: ${{ runner.temp }}/aven-dev.sqlite
+      AVEN_DEV_DB: /tmp/aven-dev.sqlite
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
