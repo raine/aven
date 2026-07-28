@@ -3384,7 +3384,7 @@ mod command_and_config_overlays {
     async fn command_overlay_tab_selects_first_partial_command_match() {
         let mut app = test_app().await;
 
-        app.begin_command();
+        app.begin_command().await;
         type_chars(&mut app, ":delet").await;
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
 
@@ -3401,7 +3401,7 @@ mod command_and_config_overlays {
     async fn command_overlay_tab_cycles_from_exact_command_match() {
         let mut app = test_app().await;
 
-        app.begin_command();
+        app.begin_command().await;
         type_chars(&mut app, ":delete").await;
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
 
