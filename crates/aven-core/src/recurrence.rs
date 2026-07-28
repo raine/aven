@@ -24,7 +24,7 @@ pub use identity::{
 pub use rule::{RecurrenceFrequency, RecurrenceRule, WeekdaySet};
 pub use schedule::{
     RecurrenceScheduleError, RecurrenceSlotIter, is_slot, live_slot_on, next_slot_after,
-    slot_cutoff, slot_values,
+    projection_slot_at, slot_cutoff, slot_values,
 };
 
 #[cfg(test)]

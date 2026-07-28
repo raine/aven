@@ -71,7 +71,8 @@ impl Database {
             let mut conn = self.acquire().await?;
             let workspace = crate::workspaces::workspace_for_id(&mut conn, workspace_id).await?;
             let (candidates, incomplete) =
-                recurrence::recurrence_reconciliation_candidates(&mut conn, workspace_id).await?;
+                recurrence::recurrence_reconciliation_candidates(&mut conn, workspace_id, at)
+                    .await?;
             (workspace, candidates, incomplete)
         };
         let mut report = RecurrenceReconciliation {
