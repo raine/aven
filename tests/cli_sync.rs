@@ -1,6 +1,6 @@
 mod common;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use common::{
     TestEnv, TestProcess, TestServer, contains_all, contains_none, extract_ref, fail, meta_value,
@@ -48,13 +48,29 @@ fn exec_sql(db: &std::path::Path, sql: &str) {
 }
 
 fn query_sql_scalar(db: &std::path::Path, sql: &str) -> String {
-    let output = std::process::Command::new("sqlite3")
-        .arg(db)
-        .arg(sql)
-        .output()
-        .expect("run sqlite");
-    assert!(output.status.success(), "sqlite failed");
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let output = std::process::Command::new("sqlite3")
+            .arg(db)
+            .arg(sql)
+            .output()
+            .expect("run sqlite");
+        if output.status.success() {
+            return String::from_utf8_lossy(&output.stdout).trim().to_string();
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let busy =
+            stderr.contains("database is locked") || stderr.contains("database table is locked");
+        if !busy || Instant::now() >= deadline {
+            panic!(
+                "sqlite failed\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                stderr
+            );
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
 }
 
 fn wire_change(op_type: &str, entity_type: &str, entity_id: &str, payload: Value) -> Value {
