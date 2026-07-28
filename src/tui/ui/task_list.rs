@@ -2569,7 +2569,7 @@ mod tests {
 
     #[test]
     fn recurring_rows_and_preview_show_series_context() {
-        let mut item = task_item("daily review");
+        let mut item = task_list_item("daily review");
         let series_id: aven_core::recurrence::RecurrenceSeriesId =
             "7KQ9A1X4MV2P8D6R".parse().unwrap();
         item.recurrence = Some(crate::query::TaskRecurrenceSummary {

@@ -446,7 +446,9 @@ impl App {
                 });
                 if is_double_click {
                     self.last_series_click = None;
-                    self.store.load_recurrence_series_detail(&hit.series_id).await?;
+                    self.store
+                        .load_recurrence_series_detail(&hit.series_id)
+                        .await?;
                     self.detail = crate::tui::detail_session::DetailSession::open(0);
                 } else {
                     self.last_series_click = Some(crate::tui::app::SeriesRowClick {

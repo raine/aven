@@ -1771,7 +1771,6 @@ mod tests {
                 scroll: 0,
                 multi: false,
                 mode: PickerMode::Navigate,
-                target: None,
             }),
             OverlayState::Confirm(ConfirmState {
                 intent: config_intent(),
@@ -1899,7 +1898,6 @@ mod tests {
                 scroll: 0,
                 multi: false,
                 mode: PickerMode::Navigate,
-                target: None,
             }),
         );
         assert!(matches!(

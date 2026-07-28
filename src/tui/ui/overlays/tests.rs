@@ -86,6 +86,10 @@ fn render_overlay_view(overlay: OverlayView) -> String {
     render_overlay_view_at(overlay, 100, 30)
 }
 
+fn add_task_overlay(view: AddTaskView) -> OverlayView {
+    OverlayView::AddTask(Box::new(view))
+}
+
 fn overlay_buffer(overlay: OverlayView) -> ratatui::buffer::Buffer {
     let backend = TestBackend::new(100, 30);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -680,7 +684,7 @@ mod add_task_overlay {
     use super::*;
 
     fn dialog_height(state: AddTaskView) -> u16 {
-        let buffer = overlay_buffer(OverlayView::AddTask(state));
+        let buffer = overlay_buffer(add_task_overlay(state));
         let top = (0..buffer.area.height)
             .find(|row| buffer_row(&buffer, *row).contains("╭─ Add task "))
             .expect("add task top border");
@@ -708,7 +712,7 @@ mod add_task_overlay {
 
     #[test]
     fn add_task_overlay_keeps_space_above_shortcuts() {
-        let buffer = overlay_buffer(OverlayView::AddTask(AddTaskView {
+        let buffer = overlay_buffer(add_task_overlay(AddTaskView {
             description: vec!["last description line".to_string()],
             focus: AddTaskStep::Description,
             ..add_task_view()
@@ -725,7 +729,7 @@ mod add_task_overlay {
 
     #[test]
     fn add_task_overlay_renders_metadata_fields_and_footer() {
-        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+        let rendered = render_overlay_view(add_task_overlay(AddTaskView {
             title: "ship dialogs".to_string(),
             title_cursor: 12,
             priority: "high".to_string(),
@@ -749,7 +753,7 @@ mod add_task_overlay {
 
     #[test]
     fn schedule_fields_align_with_the_metadata_grid() {
-        let buffer = overlay_buffer(OverlayView::AddTask(AddTaskView {
+        let buffer = overlay_buffer(add_task_overlay(AddTaskView {
             available_at: "tomorrow".to_string(),
             ..add_task_view()
         }));
@@ -774,8 +778,8 @@ mod add_task_overlay {
 
     #[test]
     fn schedule_editor_keeps_the_composer_compact() {
-        let default = overlay_buffer(OverlayView::AddTask(add_task_view()));
-        let configured = overlay_buffer(OverlayView::AddTask(AddTaskView {
+        let default = overlay_buffer(add_task_overlay(add_task_view()));
+        let configured = overlay_buffer(add_task_overlay(AddTaskView {
             schedule_input: "every Friday at 09:00, due same day".to_string(),
             repeat_rule: "every Friday".to_string(),
             repeat_at: "09:00".to_string(),
@@ -792,7 +796,7 @@ mod add_task_overlay {
 
     #[test]
     fn schedule_field_renders_natural_language_settings() {
-        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+        let rendered = render_overlay_view(add_task_overlay(AddTaskView {
             schedule_input: "available tomorrow, due next Friday".to_string(),
             available_at: "tomorrow".to_string(),
             due_on: "next Friday".to_string(),
@@ -829,7 +833,7 @@ mod add_task_overlay {
 
     #[test]
     fn schedule_focus_footer_explains_direct_input_and_details() {
-        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+        let rendered = render_overlay_view(add_task_overlay(AddTaskView {
             focus: AddTaskStep::Schedule,
             ..add_task_view()
         }));
@@ -842,7 +846,7 @@ mod add_task_overlay {
 
     #[test]
     fn focused_schedule_field_teaches_natural_input() {
-        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+        let rendered = render_overlay_view(add_task_overlay(AddTaskView {
             focus: AddTaskStep::Schedule,
             ..add_task_view()
         }));
@@ -859,8 +863,8 @@ mod add_task_overlay {
             schedule_error: Some("invalid schedule".to_string()),
             ..add_task_view()
         };
-        let editing = render_overlay_view(OverlayView::AddTask(draft.clone()));
-        let blurred = render_overlay_view(OverlayView::AddTask(AddTaskView {
+        let editing = render_overlay_view(add_task_overlay(draft.clone()));
+        let blurred = render_overlay_view(add_task_overlay(AddTaskView {
             schedule_validation_requested: true,
             ..draft
         }));
@@ -908,7 +912,7 @@ mod add_task_overlay {
     fn add_task_wide_medium_and_narrow_layouts_keep_every_field() {
         for (width, height) in [(120, 30), (80, 24), (42, 24), (50, 12)] {
             let rendered = render_overlay_view_at(
-                OverlayView::AddTask(AddTaskView {
+                add_task_overlay(AddTaskView {
                     focus: AddTaskStep::Labels,
                     ..add_task_view()
                 }),
@@ -946,8 +950,10 @@ mod add_task_overlay {
     fn structured_schedule_dialog_stays_coherent_across_responsive_layouts() {
         for (width, height) in [(120, 30), (80, 24), (42, 30)] {
             let rendered = render_overlay_view_at(
-                OverlayView::AddTask(AddTaskView {
-                    mode: AddTaskMode::Schedule(schedule_editor(ScheduleEditorMode::Repeat)),
+                add_task_overlay(AddTaskView {
+                    mode: Box::new(AddTaskMode::Schedule(schedule_editor(
+                        ScheduleEditorMode::Repeat,
+                    ))),
                     ..add_task_view()
                 }),
                 width,
@@ -973,7 +979,7 @@ mod add_task_overlay {
     #[test]
     fn add_task_wide_layout_bounds_long_metadata_values() {
         let rendered = render_overlay_view_at(
-            OverlayView::AddTask(AddTaskView {
+            add_task_overlay(AddTaskView {
                 project: "telegram-tori-bot-with-a-long-name".to_string(),
                 status: "canceled".to_string(),
                 labels: vec!["feature".to_string(), "urgent".to_string()],
@@ -995,13 +1001,13 @@ mod add_task_overlay {
 
     #[test]
     fn add_task_validation_and_help_are_visible() {
-        let validation = render_overlay_view(OverlayView::AddTask(AddTaskView {
+        let validation = render_overlay_view(add_task_overlay(AddTaskView {
             title_error: true,
             ..add_task_view()
         }));
         assert!(validation.contains("Title is required"));
 
-        let help = render_overlay_view(OverlayView::AddTask(AddTaskView {
+        let help = render_overlay_view(add_task_overlay(AddTaskView {
             mode: Box::new(crate::tui::overlay::AddTaskMode::Help { scroll: 0 }),
             ..add_task_view()
         }));
@@ -1038,7 +1044,7 @@ mod add_task_overlay {
     #[test]
     fn composer_help_scrolls_with_a_stable_dialog_and_scrollbar() {
         let top = render_overlay_view_at(
-            OverlayView::AddTask(AddTaskView {
+            add_task_overlay(AddTaskView {
                 mode: Box::new(AddTaskMode::Help { scroll: 0 }),
                 ..add_task_view()
             }),
@@ -1046,7 +1052,7 @@ mod add_task_overlay {
             20,
         );
         let bottom = render_overlay_view_at(
-            OverlayView::AddTask(AddTaskView {
+            add_task_overlay(AddTaskView {
                 mode: Box::new(AddTaskMode::Help {
                     scroll: composer_help_scroll_cap(20, false, false),
                 }),
@@ -1121,7 +1127,7 @@ mod add_task_overlay {
         );
         picker.filter.text = "hi".to_string();
         picker.filter.cursor = 2;
-        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+        let rendered = render_overlay_view(add_task_overlay(AddTaskView {
             mode: Box::new(AddTaskMode::Picker {
                 field: AddTaskStep::Priority,
                 state: picker,
@@ -1141,7 +1147,7 @@ mod add_task_overlay {
         ) else {
             panic!("expected labels control");
         };
-        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+        let rendered = render_overlay_view(add_task_overlay(AddTaskView {
             mode: Box::new(AddTaskMode::Labels(labels)),
             ..add_task_view()
         }));
@@ -1149,7 +1155,7 @@ mod add_task_overlay {
         assert!(rendered.contains("feature"));
         assert!(rendered.contains("Enter add/save"));
 
-        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+        let rendered = render_overlay_view(add_task_overlay(AddTaskView {
             mode: Box::new(AddTaskMode::ConfirmDiscard),
             ..add_task_view()
         }));
@@ -1163,10 +1169,10 @@ mod add_task_overlay {
 
     #[test]
     fn add_task_overlay_shows_pending_images() {
-        let empty = render_overlay_view(OverlayView::AddTask(add_task_view()));
+        let empty = render_overlay_view(add_task_overlay(add_task_view()));
         assert!(!empty.contains("Images ("));
 
-        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+        let rendered = render_overlay_view(add_task_overlay(AddTaskView {
             attachments: Box::new(AddTaskAttachmentsView {
                 items: vec![
                     pending_attachment("diagram.png", 2048, Some((800, 600))),
@@ -1180,7 +1186,7 @@ mod add_task_overlay {
         assert!(rendered.contains("Images (2)  1/2 diagram.png · 800×600 · 2.0 KiB"));
         assert!(!rendered.contains("D remove"));
 
-        let focused = render_overlay_view(OverlayView::AddTask(AddTaskView {
+        let focused = render_overlay_view(add_task_overlay(AddTaskView {
             attachments: Box::new(AddTaskAttachmentsView {
                 items: vec![
                     pending_attachment("diagram.png", 2048, Some((800, 600))),
@@ -1195,7 +1201,7 @@ mod add_task_overlay {
         assert!(focused.contains("▶ Images (2)  ◀ 2/2 screenshot.png · 1440×900 · 1.5 KiB ▶"));
         assert!(focused.contains("D remove"));
 
-        let buffer = overlay_buffer(OverlayView::AddTask(AddTaskView {
+        let buffer = overlay_buffer(add_task_overlay(AddTaskView {
             attachments: Box::new(AddTaskAttachmentsView {
                 items: vec![pending_attachment("diagram.png", 2048, Some((800, 600)))]
                     .into_boxed_slice(),
@@ -1217,7 +1223,7 @@ mod add_task_overlay {
 
     #[test]
     fn add_task_overlay_pins_footer_to_bottom() {
-        let buffer = overlay_buffer(OverlayView::AddTask(AddTaskView {
+        let buffer = overlay_buffer(add_task_overlay(AddTaskView {
             focus: AddTaskStep::Description,
             ..add_task_view()
         }));
@@ -1233,13 +1239,13 @@ mod add_task_overlay {
 
     #[test]
     fn add_task_overlay_does_not_truncate_title_hints() {
-        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView { ..add_task_view() }));
+        let rendered = render_overlay_view(add_task_overlay(AddTaskView { ..add_task_view() }));
         assert!(rendered.contains("Esc cancel"));
     }
 
     #[test]
     fn add_task_overlay_does_not_truncate_description_hints() {
-        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+        let rendered = render_overlay_view(add_task_overlay(AddTaskView {
             focus: AddTaskStep::Description,
             ..add_task_view()
         }));
@@ -1248,7 +1254,7 @@ mod add_task_overlay {
 
     #[test]
     fn add_task_overlay_replaces_footer_when_status_prefix_is_active() {
-        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+        let rendered = render_overlay_view(add_task_overlay(AddTaskView {
             status_prefix_active: true,
             ..add_task_view()
         }));
@@ -1261,7 +1267,7 @@ mod add_task_overlay {
 
     #[test]
     fn add_task_overlay_replaces_footer_when_priority_prefix_is_active() {
-        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+        let rendered = render_overlay_view(add_task_overlay(AddTaskView {
             priority_prefix_active: true,
             ..add_task_view()
         }));
@@ -1274,7 +1280,7 @@ mod add_task_overlay {
 
     #[test]
     fn add_task_overlay_omits_title_placeholder_cursor_when_description_focused() {
-        let buffer = overlay_buffer(OverlayView::AddTask(AddTaskView {
+        let buffer = overlay_buffer(add_task_overlay(AddTaskView {
             description: vec!["details".to_string()],
             description_column: 7,
             focus: AddTaskStep::Description,
@@ -1480,8 +1486,10 @@ mod add_task_overlay {
     #[test]
     fn recurring_schedule_dialog_renders_fields_and_preview() {
         let rendered = render_overlay_view_at(
-            OverlayView::AddTask(AddTaskView {
-                mode: AddTaskMode::Schedule(schedule_editor(ScheduleEditorMode::Repeat)),
+            add_task_overlay(AddTaskView {
+                mode: Box::new(AddTaskMode::Schedule(schedule_editor(
+                    ScheduleEditorMode::Repeat,
+                ))),
                 ..add_task_view()
             }),
             120,
@@ -1505,8 +1513,8 @@ mod add_task_overlay {
         editor.repeat_rule = LineEdit::new("sometimes".to_string());
         editor.error = Some(crate::recurrence_input::rule_guidance().to_string());
         let rendered = render_overlay_view_at(
-            OverlayView::AddTask(AddTaskView {
-                mode: AddTaskMode::Schedule(editor),
+            add_task_overlay(AddTaskView {
+                mode: Box::new(AddTaskMode::Schedule(editor)),
                 ..add_task_view()
             }),
             100,
@@ -1523,8 +1531,8 @@ mod add_task_overlay {
         let mut editor = schedule_editor(ScheduleEditorMode::Once);
         editor.focus = ScheduleEditorField::Available;
         let rendered = render_overlay_view_at(
-            OverlayView::AddTask(AddTaskView {
-                mode: AddTaskMode::Schedule(editor),
+            add_task_overlay(AddTaskView {
+                mode: Box::new(AddTaskMode::Schedule(editor)),
                 ..add_task_view()
             }),
             100,
@@ -1538,8 +1546,10 @@ mod add_task_overlay {
 
     #[test]
     fn once_schedule_dialog_aligns_type_and_field_values() {
-        let buffer = overlay_buffer(OverlayView::AddTask(AddTaskView {
-            mode: AddTaskMode::Schedule(schedule_editor(ScheduleEditorMode::Once)),
+        let buffer = overlay_buffer(add_task_overlay(AddTaskView {
+            mode: Box::new(AddTaskMode::Schedule(schedule_editor(
+                ScheduleEditorMode::Once,
+            ))),
             ..add_task_view()
         }));
         let rows = (0..buffer.area.height)
@@ -1574,8 +1584,10 @@ mod add_task_overlay {
 
     #[test]
     fn repeating_schedule_dialog_aligns_field_values() {
-        let buffer = overlay_buffer(OverlayView::AddTask(AddTaskView {
-            mode: AddTaskMode::Schedule(schedule_editor(ScheduleEditorMode::Repeat)),
+        let buffer = overlay_buffer(add_task_overlay(AddTaskView {
+            mode: Box::new(AddTaskMode::Schedule(schedule_editor(
+                ScheduleEditorMode::Repeat,
+            ))),
             ..add_task_view()
         }));
         let rows = (0..buffer.area.height)
@@ -1607,8 +1619,8 @@ mod add_task_overlay {
         let mut editor = schedule_editor(ScheduleEditorMode::Repeat);
         editor.repeat_rule = LineEdit::blank();
         editor.refresh();
-        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
-            mode: AddTaskMode::Schedule(editor),
+        let rendered = render_overlay_view(add_task_overlay(AddTaskView {
+            mode: Box::new(AddTaskMode::Schedule(editor)),
             ..add_task_view()
         }));
 
@@ -1618,7 +1630,7 @@ mod add_task_overlay {
     #[test]
     fn composer_shows_configured_natural_schedule_without_detail_fields() {
         let rendered = render_overlay_view_at(
-            OverlayView::AddTask(AddTaskView {
+            add_task_overlay(AddTaskView {
                 schedule_input: "daily at 09:00, no due, starting 2026-08-03".to_string(),
                 repeat_rule: "daily".to_string(),
                 repeat_at: "09:00".to_string(),
@@ -1637,7 +1649,7 @@ mod add_task_overlay {
     #[test]
     fn add_task_template_shows_natural_schedule_summary() {
         let rendered = render_overlay_view_at(
-            OverlayView::AddTask(AddTaskView {
+            add_task_overlay(AddTaskView {
                 editing_template: true,
                 schedule_input:
                     "Every 4 weeks on Monday and Thursday, due same day, starting 2026-07-20"
@@ -2310,7 +2322,7 @@ mod presentation_kind_rendering {
                 no_matches_cached: false,
                 intent: SearchKind::Navigate,
             },
-            OverlayView::AddTask(AddTaskView {
+            add_task_overlay(AddTaskView {
                 title: "ship dialogs".to_string(),
                 title_cursor: 12,
                 priority: "high".to_string(),

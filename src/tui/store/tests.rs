@@ -2063,6 +2063,7 @@ mod conflicts {
             .resolve_conflict_value(
                 ConflictTarget {
                     task_id: task_id.clone(),
+                    recurrence_series_id: None,
                     display_ref,
                     field: "title".to_string(),
                     variant_a: "a".to_string(),

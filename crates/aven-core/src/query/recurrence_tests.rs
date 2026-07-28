@@ -501,6 +501,7 @@ async fn history_combines_task_outcomes_archived_and_derived_rows() {
         .reconcile_recurrence_series(&workspace, &created.series.id, at(24, 12))
         .await
         .unwrap();
+    stop_at(&database, &workspace, &created.series.id, at(24, 12)).await;
     let history = database
         .recurrence_history_at(&workspace.id, &created.series.id, at(24, 12), 0, 20)
         .await

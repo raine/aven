@@ -34,6 +34,8 @@ pub(crate) fn task_list_item(title: &str) -> TaskListItem {
         blocks: Vec::new(),
         epic_children: Vec::new(),
         epic_parent: None,
+        recurrence: None,
+        recurrence_group: None,
         queue: Default::default(),
     }
 }

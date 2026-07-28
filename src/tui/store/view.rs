@@ -80,7 +80,8 @@ impl TuiStore {
         view_state: super::TaskViewState,
         selected: Option<&MainRowSelection>,
     ) -> Result<super::ScopeRefreshResult> {
-        self.refresh_replacement(selected, Some(view_state), None).await
+        self.refresh_replacement(selected, Some(view_state), None)
+            .await
     }
 
     pub(crate) async fn show_scope(&mut self, target: TaskScopeTarget) -> Result<Option<usize>> {
@@ -226,8 +227,7 @@ impl TuiStore {
         selected_id: Option<&aven_core::recurrence::RecurrenceSeriesId>,
     ) -> Result<Option<usize>> {
         let mut view_state = self.view_state.clone();
-        view_state.recurring.search =
-            (!input.trim().is_empty()).then(|| input.trim().to_string());
+        view_state.recurring.search = (!input.trim().is_empty()).then(|| input.trim().to_string());
         let selected = selected_id.cloned().map(MainRowSelection::RecurrenceSeries);
         Ok(self
             .refresh_replacement(selected.as_ref(), Some(view_state), None)
