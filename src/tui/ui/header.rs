@@ -640,6 +640,7 @@ mod tests {
     async fn sync_indicator_keeps_space_after_selected_status_label() {
         let mut store = test_store().await;
         store.view_state.view = TaskView::Todo;
+        store.sync_status.enabled = true;
         let width = 89;
         let backend = TestBackend::new(width, 2);
         let mut terminal = Terminal::new(backend).unwrap();
