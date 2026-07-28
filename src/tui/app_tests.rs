@@ -4930,6 +4930,34 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn automatic_refresh_preserves_visible_deleted_task_until_user_refresh() {
+        let mut app = test_app().await;
+        let (_, selected) = app
+            .store
+            .create_task(test_task_draft("Deleted task stays visible"), None)
+            .await
+            .unwrap();
+        app.list.select_task(selected);
+
+        app.update_deleted(true).await.unwrap();
+        let deleted_id = app.store.tasks[0].task.id.clone();
+        assert!(app.store.tasks[0].task.deleted);
+
+        app.next_refresh_at = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        assert!(app.refresh_if_due().await.unwrap());
+
+        assert_eq!(app.store.tasks.len(), 1);
+        assert_eq!(app.store.tasks[0].task.id, deleted_id);
+        assert!(app.store.tasks[0].task.deleted);
+        assert_eq!(app.list.selected_task(), Some(0));
+
+        app.refresh().await.unwrap();
+
+        assert!(app.store.tasks.is_empty());
+        assert_eq!(app.list.selected_task(), None);
+    }
+
+    #[tokio::test]
     async fn refresh_attempt_schedules_next_deadline() {
         let mut app = test_app().await;
         app.next_refresh_at = std::time::Instant::now() - std::time::Duration::from_secs(1);

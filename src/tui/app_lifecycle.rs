@@ -4,6 +4,12 @@ pub(super) const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(120);
 pub(super) const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const TOAST_TTL: Duration = Duration::from_secs(4);
 
+#[derive(Clone, Copy)]
+enum RefreshKind {
+    User,
+    Background,
+}
+
 use anyhow::Result;
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -400,6 +406,10 @@ impl App {
     }
 
     pub(super) async fn refresh(&mut self) -> Result<()> {
+        self.refresh_view(RefreshKind::User).await
+    }
+
+    async fn refresh_view(&mut self, kind: RefreshKind) -> Result<()> {
         let selected = self.list.selected_task();
         let recent_action_selection =
             (self.store.view_state.view == TaskView::RecentActions).then(|| {
@@ -425,10 +435,18 @@ impl App {
             .as_ref()
             .map(|_| self.detail_focus_targets(ratatui::layout::Size::new(80, 24)))
             .unwrap_or_default();
-        let result = self
-            .store
-            .refresh_with_scope_fallback(selected_id.as_ref())
-            .await?;
+        let result = match kind {
+            RefreshKind::User => {
+                self.store
+                    .refresh_with_scope_fallback(selected_id.as_ref())
+                    .await?
+            }
+            RefreshKind::Background => {
+                self.store
+                    .refresh_preserving_visible_deleted(selected_id.as_ref())
+                    .await?
+            }
+        };
         let selected = recent_action_selection
             .map(|(selected, change_id)| {
                 self.restored_recent_action_selection(selected, change_id.as_deref())
@@ -616,7 +634,7 @@ impl App {
         if !self.refresh_is_due() {
             return Ok(false);
         }
-        let result = self.refresh().await;
+        let result = self.refresh_view(RefreshKind::Background).await;
         self.schedule_next_refresh();
         result?;
         Ok(true)

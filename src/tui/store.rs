@@ -185,6 +185,33 @@ impl TuiStore {
         self.refresh_replacement(selected_id, None, None).await
     }
 
+    pub(crate) async fn refresh_preserving_visible_deleted(
+        &mut self,
+        selected_id: Option<&crate::ids::TaskId>,
+    ) -> Result<ScopeRefreshResult> {
+        let visible_deleted = self
+            .tasks
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.task.deleted)
+            .map(|(index, item)| (index, item.clone()))
+            .collect::<Vec<_>>();
+        let mut result = self.refresh_with_scope_fallback(selected_id).await?;
+        for (index, item) in visible_deleted {
+            if self
+                .tasks
+                .iter()
+                .all(|candidate| candidate.task.id != item.task.id)
+            {
+                self.tasks.insert(index.min(self.tasks.len()), item);
+            }
+        }
+        result.selected = selected_id
+            .and_then(|task_id| self.tasks.iter().position(|item| &item.task.id == task_id))
+            .or(result.selected);
+        Ok(result)
+    }
+
     pub(super) async fn refresh_with_view_state(
         &mut self,
         view_state: TaskViewState,
