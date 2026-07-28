@@ -201,6 +201,7 @@ sync:
     let output = std::process::Command::new(common::bin())
         .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
         .env("AVEN_SYNC_SERVER", "http://127.0.0.1:3000")
+        .env_remove("AVEN_DEV_DB")
         .env_remove("AVEN_DB")
         .arg("doctor")
         .output()
