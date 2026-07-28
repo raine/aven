@@ -202,7 +202,7 @@ The first status in each lane is its movement destination. For example, moving a
 
 ## Agent task intake
 
-Natural-language task intake can call an external agent command. The configured command receives a prompt through the `{prompt}` argument placeholder.
+Natural-language task intake can call an external agent command. The configured command receives a prompt through the `{prompt}` argument placeholder. Custom system prompts can use `{input}`, `{priorities}`, `{selected_project}`, `{inferred_project}`, `{projects}`, and `{labels}`. A non-empty selected project is authoritative, while the inferred project comes from current-directory routing.
 
 ```yaml
 agent:

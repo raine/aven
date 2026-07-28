@@ -34,6 +34,7 @@ struct ParsedTaskPayload {
 
 pub(crate) struct TaskIntakeContext {
     pub(crate) workspace_id: WorkspaceId,
+    pub(crate) fixed_project: Option<String>,
     pub(crate) inferred_project: Option<String>,
     pub(crate) projects: Vec<ProjectListItem>,
     pub(crate) labels: Vec<String>,
@@ -45,22 +46,25 @@ impl TaskIntakeContext {
         workspace: &Workspace,
         project: Option<&str>,
     ) -> Result<Self> {
-        let inferred_project = match project {
-            Some(project) => Some(
-                database
+        let (fixed_project, inferred_project) = match project {
+            Some(project) => {
+                let project = database
                     .resolve_existing_project(&workspace.id, project)
                     .await?
-                    .key,
-            ),
-            None => {
-                crate::projects::inferred_project_key_for_add_with_database(database, workspace)
-                    .await?
+                    .key;
+                (Some(project.clone()), Some(project))
             }
+            None => (
+                None,
+                crate::projects::inferred_project_key_for_add_with_database(database, workspace)
+                    .await?,
+            ),
         };
         let projects = database.list_project_items(&workspace.id).await?;
         let labels = database.list_labels(&workspace.id, None).await?;
         Ok(Self {
             workspace_id: workspace.id.clone(),
+            fixed_project,
             inferred_project,
             projects,
             labels,
@@ -151,12 +155,14 @@ Rules:\n\
 - Include enough context to distinguish the task from nearby work.\n\
 - Keep meaningful casing for names, acronyms, file names, flags, and code identifiers.\n\
 - Use project only when the text clearly names one of the available projects.\n\
+- When Selected project is not none, use that project regardless of the raw text.\n\
 - Use only existing labels.\n\
 - Set available_at only when the task should not be worked before a stated time. Preserve relative expressions such as tomorrow for Aven to resolve.\n\
 - Set due_on only for a deadline or a day by which work should be complete. Use date expressions without times.\n\
 - Keep available_at and due_on independent when the input states both.\n\
 - Put durable context in description when helpful.\n\n\
 Use only these priorities: {priorities}.\n\n\
+Selected project: {selected_project}\n\n\
 Inferred project: {inferred_project}\n\n\
 Available projects:\n{projects}\n\n\
 Available labels:\n{labels}\n\n\
@@ -166,6 +172,10 @@ Raw intake text:\n{input}\n"
 fn expand_task_intake_prompt(template: &str, context: &TaskIntakeContext, input: &str) -> String {
     template
         .replace("{priorities}", &PRIORITIES.join(", "))
+        .replace(
+            "{selected_project}",
+            context.fixed_project.as_deref().unwrap_or("none"),
+        )
         .replace(
             "{inferred_project}",
             context.inferred_project.as_deref().unwrap_or("none"),
@@ -211,7 +221,9 @@ pub(crate) async fn parsed_output_to_draft_with_database(
     }
     let priority = parsed.priority.unwrap_or_else(|| "none".to_string());
     TaskPriority::parse(&priority)?;
-    let project = if let Some(project) = parsed
+    let project = if let Some(project) = &context.fixed_project {
+        Some(project.clone())
+    } else if let Some(project) = parsed
         .project
         .as_deref()
         .map(str::trim)
@@ -310,6 +322,7 @@ mod tests {
         };
         let context = TaskIntakeContext {
             workspace_id: Workspace::default().id,
+            fixed_project: None,
             inferred_project: None,
             projects: Vec::new(),
             labels: Vec::new(),

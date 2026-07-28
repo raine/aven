@@ -137,7 +137,7 @@ fn internal_natural_add_uses_explicit_workspace_id_and_project_context() {
     fs::write(
         &command,
         format!(
-            "#!/bin/sh\ncat >'{}'\nprintf '%s\\n' '{{\"title\":\"fix slack sync\",\"description\":\"from model\",\"project\":null,\"priority\":\"none\",\"labels\":[]}}'\n",
+            "#!/bin/sh\ncat >'{}'\nprintf '%s\\n' '{{\"title\":\"fix slack sync\",\"description\":\"from model\",\"project\":\"other\",\"priority\":\"none\",\"labels\":[]}}'\n",
             prompt.display()
         ),
     )
@@ -153,7 +153,7 @@ agent:
     command: "{}"
     args: []
     timeout_seconds: 5
-    system_prompt: "Project={{inferred_project}}"
+    system_prompt: "Project={{inferred_project}} Selected={{selected_project}}"
 "#,
         db.display(),
         command.display()
@@ -162,6 +162,7 @@ agent:
     ok(env.aven_config(["workspace", "create", "client"]));
     let client_workspace_id = workspace_id(&db, "client");
     ok(env.aven_config(["--workspace", "client", "project", "create", "app"]));
+    ok(env.aven_config(["--workspace", "client", "project", "create", "other"]));
 
     let out = ok(env.aven_config([
         "internal",
@@ -188,7 +189,7 @@ agent:
     assert!(!default_list.contains("fix slack sync"));
 
     let prompt = fs::read_to_string(prompt).unwrap();
-    assert!(prompt.contains("Project=app"));
+    assert!(prompt.contains("Project=app Selected=app"));
     assert_eq!(pending_undo_count(&db, &client_workspace_id), 0);
 }
 

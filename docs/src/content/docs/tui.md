@@ -92,7 +92,7 @@ bind C-a display-popup -E -d '#{pane_current_path}' -w 80% -h 80% 'aven tui'
 
 ## Capture tasks
 
-Press `a` to open the task composer. Project, status, priority, labels, availability, due date, title, and description stay visible as one form. The active field has a `▶` marker, so focus remains clear without relying on color.
+Press `a` to open the task composer. Project, status, priority, labels, availability, due date, title, and description stay visible as one form. The active field has a `▶` marker, so focus remains clear without relying on color. The project picker's **Infer** option uses the project mapped to the current directory. Choose a named project when the task belongs elsewhere.
 
 ![aven TUI add task popup with title and description fields](/add-task.webp)
 

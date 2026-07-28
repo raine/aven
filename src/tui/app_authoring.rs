@@ -507,6 +507,7 @@ impl App {
                 }
             }
         }
+        self.overlay = None;
         Ok(())
     }
 

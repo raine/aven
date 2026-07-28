@@ -4943,6 +4943,47 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn finished_attachment_task_intake_closes_composer() {
+        let (dir, _pool, mut app) = test_app_with_pool().await;
+        let db_path = dir.path().join("test.db");
+        app.set_add_task_db_path(db_path);
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "task with image").await;
+        let image_path = dir.path().join("intake.png");
+        std::fs::write(&image_path, png_bytes(2, 1)).unwrap();
+        assert!(
+            app.paste_add_task_image_from_text(image_path.to_str().unwrap())
+                .unwrap()
+        );
+        assert!(app.authoring.add_task_has_pending_attachments());
+        app.intake.start_handle(
+            tokio::spawn(async { Ok(test_task_draft("created with image")) }),
+            NaturalRetry::AddTask,
+            "task with image".to_string(),
+            true,
+        );
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while app.intake.work_pending() {
+                app.poll_pending_task_intake().await.unwrap();
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("task intake should finish");
+
+        assert!(app.overlay.is_none());
+        assert!(app.authoring.is_idle());
+        let created = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.title == "created with image")
+            .unwrap();
+        assert_eq!(created.attachments.len(), 1);
+    }
+
+    #[tokio::test]
     async fn add_task_ctrl_n_creates_task_in_background_in_full_tui() {
         let mut app = test_app().await;
 
