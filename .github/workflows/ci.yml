@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Full checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Install tools
+        run: |
+          cargo install checkle cargo-deny cargo-machete cargo-nextest just sqlx-cli --locked
+      - name: Run full checks
+        run: just check-ci
