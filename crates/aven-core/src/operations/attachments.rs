@@ -496,14 +496,8 @@ pub async fn delete_task_attachment(
     let deleted_at = now();
 
     let mut tx = begin_immediate(conn).await?;
-    crate::operations::route_recurrence_task_field(
-        &mut tx,
-        workspace,
-        &task_id,
-        "attachments",
-        "",
-    )
-    .await?;
+    crate::operations::route_recurrence_task_field(&mut tx, workspace, &task_id, "attachments", "")
+        .await?;
 
     let change_id = append_change(
         &mut tx,

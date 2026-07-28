@@ -286,7 +286,7 @@ impl AuthoringState {
         let series = &detail.series;
         let repeat_rule = crate::recurrence_input::natural_rule_label(series.rule);
         let template_schedule = aven_core::recurrence::RecurrenceSchedule::new(
-            series.rule.clone(),
+            series.rule,
             series.timezone.clone(),
             series.start_on,
             series.available_local_time,
@@ -893,6 +893,7 @@ mod tests {
                     available_at: None,
                     due_on: None,
                     is_epic: false,
+                    source: crate::choices::TaskSource::Tui,
                 },
                 recurrence: Some(schedule),
             })

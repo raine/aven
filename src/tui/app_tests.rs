@@ -17,8 +17,9 @@ use crate::tui::detail_session::DetailSnapshot;
 use crate::tui::event::Action;
 use crate::tui::overlay::{
     CommandState, ConfirmIntent, ConfirmState, LineEdit, MultilineInputMode, MultilineInputState,
-    MultilineIntent, OverlayState, OverlayView, PickerIntent, PickerItem, PickerMode, PickerState,
-    SearchIntent, SearchState, TagComboboxIntent, TextInputState, TextIntent, TextPanelState,
+    MultilineIntent, OverlayState, OverlayTarget, OverlayView, PickerIntent, PickerItem,
+    PickerMode, PickerState, SearchIntent, SearchState, TagComboboxIntent, TextInputState,
+    TextIntent, TextPanelState,
 };
 use crate::tui::store::{
     SidebarEntryTarget, TaskOrder, TaskScope, TaskScopeTarget, TaskView, TaskViewState,
@@ -349,7 +350,8 @@ async fn recurrence_history_enter_opens_the_linked_archived_task() {
 
     assert_eq!(app.store.view_state.view, TaskView::Search);
     assert_eq!(app.store.tasks[0].task.id, archived_task_id);
-    assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+    assert!(app.detail.is_active());
+    assert!(app.overlay.is_none());
 }
 
 #[tokio::test]
@@ -371,35 +373,37 @@ async fn recurring_series_detail_opens_hidden_occurrence_and_returns() {
         app.store.recurrence_detail.as_ref().unwrap().series.id,
         series_id
     );
-    assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+    assert!(app.detail.is_active());
+    assert!(app.overlay.is_none());
 
     app.dispatch_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), terminal)
         .await
         .unwrap();
     assert_eq!(app.store.view_state.view, TaskView::Search);
     assert_eq!(app.store.tasks[0].task.id, task_id);
-    assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+    assert!(app.detail.is_active());
+    assert!(app.overlay.is_none());
 
     app.go_back().await.unwrap();
     assert_eq!(app.store.view_state.view, TaskView::Recurring);
     assert_eq!(
         app.store
-            .selected_recurrence_series(app.widgets.table.selected())
+            .selected_recurrence_series(app.list.selected_task())
             .unwrap()
             .series
             .id,
         series_id
     );
-    assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+    assert!(app.detail.is_active());
+    assert!(app.overlay.is_none());
 }
 
 #[tokio::test]
 async fn recurring_series_list_and_detail_use_compact_natural_language() {
     let mut app = test_app().await;
     add_recurring_series(&mut app, "Natural recurring detail").await;
-    app.widgets
-        .table
-        .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+    app.list
+        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
 
     let list = render_app_text(&mut app, 120, 30);
     assert!(list.contains("Every day"));
@@ -501,7 +505,7 @@ async fn recurrence_template_update_restores_series_identity_after_reordering() 
         .iter()
         .position(|item| item.series.id == edited_series_id)
         .unwrap();
-    app.widgets.table.select(Some(edited_index));
+    app.list.select_task(Some(edited_index));
     app.store
         .load_recurrence_series_detail(&edited_series_id)
         .await
@@ -519,11 +523,11 @@ async fn recurrence_template_update_restores_series_identity_after_reordering() 
         )
         .await
         .unwrap();
-    app.widgets.table.select(message.selected);
+    app.list.select_task(message.selected);
 
     assert_eq!(
         app.store
-            .selected_recurrence_series(app.widgets.table.selected())
+            .selected_recurrence_series(app.list.selected_task())
             .unwrap()
             .series
             .id,
@@ -539,23 +543,22 @@ async fn recurrence_template_update_restores_series_identity_after_reordering() 
 async fn recurrence_creation_in_recurring_view_selects_created_series() {
     let mut app = test_app().await;
     add_recurring_series(&mut app, "Anchor series").await;
-    app.widgets
-        .table
-        .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+    app.list
+        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
 
     let (message, selected) = app
         .store
         .create_recurrence_series(
             recurrence_test_draft("Created series"),
-            app.widgets.table.selected(),
+            app.list.selected_task(),
         )
         .await
         .unwrap();
-    app.widgets.table.select(selected);
+    app.list.select_task(selected);
 
     let selected = app
         .store
-        .selected_recurrence_series(app.widgets.table.selected())
+        .selected_recurrence_series(app.list.selected_task())
         .unwrap();
     assert_eq!(selected.series.title, "Created series");
     assert!(!message.contains("hidden by current filters"));
@@ -566,35 +569,34 @@ async fn recurrence_creation_in_recurring_view_reports_filtered_series_and_prese
     let mut app = test_app().await;
     add_recurring_series(&mut app, "Keep Alpha").await;
     let (_, selected_series_id) = add_recurring_series(&mut app, "Keep Zulu").await;
-    app.widgets
-        .table
-        .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+    app.list
+        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
     app.store.view_state.recurring.search = Some("Keep".to_string());
     let selected = app.store.refresh(None).await.unwrap();
-    app.widgets.table.select(selected);
+    app.list.select_task(selected);
     let selected_index = app
         .store
         .recurrence_series
         .iter()
         .position(|item| item.series.id == selected_series_id)
         .unwrap();
-    app.widgets.table.select(Some(selected_index));
+    app.list.select_task(Some(selected_index));
 
     let (message, selected) = app
         .store
         .create_recurrence_series(
             recurrence_test_draft("Filtered series"),
-            app.widgets.table.selected(),
+            app.list.selected_task(),
         )
         .await
         .unwrap();
-    app.widgets.table.select(selected);
+    app.list.select_task(selected);
 
     assert!(message.starts_with("Created recurring task RCR-"));
     assert!(!message.contains("hidden"));
     assert_eq!(
         app.store
-            .selected_recurrence_series(app.widgets.table.selected())
+            .selected_recurrence_series(app.list.selected_task())
             .unwrap()
             .series
             .id,
@@ -625,6 +627,7 @@ async fn recurrence_palette_skip_uses_live_projection_after_historical_navigatio
         .unwrap()
         .task_id
         .unwrap();
+    app.detail.close();
     app.overlay = None;
     app.dispatch_key(
         KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE),
@@ -675,6 +678,7 @@ async fn recurrence_palette_disables_skip_for_historical_task_without_live_proje
             .is_none()
     );
 
+    app.detail.close();
     app.overlay = None;
     app.dispatch_key(
         KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE),
@@ -734,7 +738,8 @@ async fn recurrence_series_detail_restores_after_lifecycle_history_and_stop_roun
         &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('p')],
     )
     .await;
-    assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+    assert!(app.detail.is_active());
+    assert!(app.overlay.is_none());
     assert_eq!(
         app.store.recurrence_detail.as_ref().unwrap().series.state,
         aven_core::recurrence::RecurrenceSeriesState::Paused
@@ -753,7 +758,8 @@ async fn recurrence_series_detail_restores_after_lifecycle_history_and_stop_roun
     app.dispatch_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), terminal)
         .await
         .unwrap();
-    assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+    assert!(app.detail.is_active());
+    assert!(app.overlay.is_none());
 
     dispatch_keys(
         &mut app,
@@ -765,7 +771,8 @@ async fn recurrence_series_detail_restores_after_lifecycle_history_and_stop_roun
     app.dispatch_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), terminal)
         .await
         .unwrap();
-    assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+    assert!(app.detail.is_active());
+    assert!(app.overlay.is_none());
     assert_eq!(
         app.store.recurrence_detail.as_ref().unwrap().series.id,
         series_id
@@ -779,7 +786,7 @@ async fn recurrence_series_detail_return_survives_intermediate_back_navigation()
     app.list
         .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
     app.activate_or_toggle_detail().await.unwrap();
-    app.overlay = Some(OverlayState::Detail { scroll: 5 });
+    app.detail = crate::tui::detail_session::DetailSession::open(5);
     app.open_recurrence_occurrence().await.unwrap();
     app.show_view(TaskView::Open).await.unwrap();
 
@@ -791,16 +798,15 @@ async fn recurrence_series_detail_return_survives_intermediate_back_navigation()
     assert_eq!(app.store.view_state.view, TaskView::Recurring);
     assert_eq!(
         app.store
-            .selected_recurrence_series(app.widgets.table.selected())
+            .selected_recurrence_series(app.list.selected_task())
             .unwrap()
             .series
             .id,
         series_id
     );
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 5 })
-    ));
+    assert!(app.detail.is_active());
+    assert!(app.overlay.is_none());
+    assert_eq!(app.detail.state().map(|detail| detail.scroll()), Some(5));
     assert!(app.series_detail_return.is_none());
 }
 
@@ -865,7 +871,7 @@ async fn recurrence_pause_resume_journey_preserves_selection_and_occurrence() {
     );
     assert_eq!(
         app.store
-            .selected_recurrence_series(app.widgets.table.selected())
+            .selected_recurrence_series(app.list.selected_task())
             .unwrap()
             .series
             .id,
@@ -882,7 +888,10 @@ async fn recurrence_pause_resume_journey_preserves_selection_and_occurrence() {
     app.dispatch_mouse(click, size).await.unwrap();
     let resume_row = match app.overlay.as_ref() {
         Some(OverlayState::Picker(picker)) => {
-            assert_eq!(picker.route, OverlayRoute::RecurrenceActions);
+            assert!(matches!(
+                picker.intent,
+                PickerIntent::RecurrenceActions { .. }
+            ));
             picker
                 .items
                 .iter()
@@ -908,7 +917,7 @@ async fn recurrence_pause_resume_journey_preserves_selection_and_occurrence() {
     assert!(!resumed.pause_intervals[0].resumed_at.is_empty());
     assert_eq!(
         app.store
-            .selected_recurrence_series(app.widgets.table.selected())
+            .selected_recurrence_series(app.list.selected_task())
             .unwrap()
             .series
             .id,
@@ -946,7 +955,7 @@ async fn recurrence_stop_journey_persists_keep_skip_and_cancel() {
         let Some(OverlayState::Picker(picker)) = app.overlay.as_ref() else {
             panic!("stop journey: keyboard Stop did not open a picker for {choice}");
         };
-        assert_eq!(picker.route, OverlayRoute::StopRecurrence);
+        assert!(matches!(picker.intent, PickerIntent::StopRecurrence { .. }));
         assert_eq!(
             picker
                 .items
@@ -1023,7 +1032,7 @@ async fn recurrence_stop_journey_persists_keep_skip_and_cancel() {
         );
         assert_eq!(
             app.store
-                .selected_recurrence_series(app.widgets.table.selected())
+                .selected_recurrence_series(app.list.selected_task())
                 .unwrap()
                 .series
                 .id,
@@ -1091,11 +1100,11 @@ async fn recurrence_overlay_retains_series_identity_across_selection_change() {
         .iter()
         .position(|item| item.series.id == second_id)
         .unwrap();
-    app.widgets.table.select(Some(first_index));
+    app.list.select_task(Some(first_index));
     app.execute_selected_recurrence_action(Action::StopRecurrence)
         .await
         .unwrap();
-    app.widgets.table.select(Some(second_index));
+    app.list.select_task(Some(second_index));
 
     app.handle_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .await
@@ -1427,7 +1436,7 @@ fn recurrence_right_click_event(app: &App, size: (u16, u16), series_index: usize
         for column in task_area.x..task_area.x.saturating_add(task_area.width) {
             if crate::tui::ui::recurrence_series_at_position(
                 &app.store,
-                &app.widgets.table,
+                app.list.table_state(),
                 task_area,
                 column,
                 row,
@@ -1539,9 +1548,9 @@ async fn sidebar_click_selects_project_scope_in_wide_layout() {
     .expect("wide sidebar layout");
     assert!(project_index >= usize::from(layout.content.height));
 
-    app.widgets.sidebar.select(Some(project_index));
+    app.list.select_sidebar(Some(project_index));
     let _ = render_app_buffer(&mut app, terminal_size.width, terminal_size.height);
-    let offset = app.widgets.sidebar.offset();
+    let offset = app.list.sidebar_state().offset();
     assert!(offset > 0, "render must scroll the project into view");
     let visible_index = project_index
         .checked_sub(offset)
@@ -5067,7 +5076,6 @@ mod filters_and_workspaces {
             scroll: 0,
             multi: false,
             mode: PickerMode::Navigate,
-            target: None,
         }));
 
         app.dispatch_mouse(header_click(2), (140, 24).into())
@@ -5302,9 +5310,8 @@ mod task_row_mouse {
     async fn recurrence_context_menu_matches_lifecycle() {
         let mut app = test_app().await;
         let (task_id, series_id) = add_recurring_series(&mut app, "Context series").await;
-        app.widgets
-            .table
-            .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+        app.list
+            .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
         let size = (140, 24);
 
         let click = recurrence_right_click_event(&app, size, 0);
@@ -5312,7 +5319,10 @@ mod task_row_mouse {
         let Some(OverlayState::Picker(picker)) = app.overlay.as_ref() else {
             panic!("expected recurrence context menu");
         };
-        assert_eq!(picker.route, OverlayRoute::RecurrenceActions);
+        assert!(matches!(
+            picker.intent,
+            PickerIntent::RecurrenceActions { .. }
+        ));
         let values = picker
             .items
             .iter()
@@ -5344,9 +5354,8 @@ mod task_row_mouse {
         app.cancel_overlay();
         let mut app = test_app().await;
         add_recurring_series(&mut app, "Stopped context").await;
-        app.widgets
-            .table
-            .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+        app.list
+            .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
         app.execute_selected_recurrence_action(Action::StopRecurrence)
             .await
             .unwrap();
@@ -6546,7 +6555,12 @@ mod authoring {
         );
         assert!(app.authoring.add_task_has_pending_attachments());
         app.intake.start_handle(
-            tokio::spawn(async { Ok(test_task_draft("created with image")) }),
+            tokio::spawn(async {
+                Ok(crate::task_intake::TaskIntakeResult {
+                    task: test_task_draft("created with image"),
+                    recurrence: None,
+                })
+            }),
             NaturalRetry::AddTask,
             "task with image".to_string(),
             true,

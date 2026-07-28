@@ -432,7 +432,7 @@ impl App {
                 .map(|item| MainRowSelection::Task(item.task.id.clone())),
         };
         let recurrence_detail_id = (self.store.view_state.view == TaskView::Recurring
-            && matches!(self.overlay, Some(OverlayState::Detail { .. })))
+            && self.detail.is_active())
         .then(|| {
             self.store
                 .recurrence_detail

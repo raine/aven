@@ -282,7 +282,9 @@ impl App {
                 .zip(self.store.recurrence_detail.as_ref())
                 .is_some_and(|(selected, detail)| selected.series.id == detail.series.id)
         } else {
-            self.store.selected_task(self.list.selected_task()).is_some()
+            self.store
+                .selected_task(self.list.selected_task())
+                .is_some()
         };
         if detail_is_available {
             self.detail = crate::tui::detail_session::DetailSession::open(scroll);

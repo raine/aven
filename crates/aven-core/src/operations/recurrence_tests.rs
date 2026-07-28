@@ -710,11 +710,12 @@ async fn task_mutation_routing_rejects_delete_reopen_and_archived_edits() {
     .unwrap_err();
     assert!(archived_error.to_string().contains("occurrence-archived"));
 
-    let note_error = crate::operations::tasks::add_note(
+    let note_error = crate::operations::tasks::add_note_operation(
         &mut conn,
         &workspace,
         &successor.id,
         "should fail".to_string(),
+        false,
     )
     .await
     .err()

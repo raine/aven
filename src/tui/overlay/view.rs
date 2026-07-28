@@ -97,7 +97,7 @@ pub(crate) enum OverlayView {
         highlighted: Option<String>,
         unavailable: Vec<super::state::CommandAvailabilityOverride>,
     },
-    AddTask(AddTaskView),
+    AddTask(Box<AddTaskView>),
     TextInput(TextInputView),
     MultilineInput(MultilineInputView),
     Picker(PickerView),
@@ -390,7 +390,7 @@ impl From<&OverlayState> for OverlayView {
                 highlighted: state.highlighted.clone(),
                 unavailable: state.unavailable.clone(),
             },
-            AddTask(state) => Self::AddTask(AddTaskView {
+            AddTask(state) => Self::AddTask(Box::new(AddTaskView {
                 title: state.title.text.clone(),
                 title_cursor: state.title.cursor,
                 description: state.description.lines.clone(),
@@ -430,7 +430,7 @@ impl From<&OverlayState> for OverlayView {
                 title_error: state.title_error,
                 status_prefix_active: false,
                 priority_prefix_active: false,
-            }),
+            })),
             TextInput(state) => Self::TextInput(TextInputView {
                 kind: (&state.intent).into(),
                 title: state.title.clone(),

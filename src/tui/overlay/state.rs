@@ -1,8 +1,6 @@
 use crate::ids::WorkspaceId;
 use crate::query::SearchMatchedField;
-use crate::tui::authoring::{
-    AddTaskStep, InitialStatusOrigin, PendingTaskAttachmentSummary,
-};
+use crate::tui::authoring::{AddTaskStep, InitialStatusOrigin, PendingTaskAttachmentSummary};
 use crate::tui::conflict_flow::ConflictResolutionChoice;
 use crate::tui::event::Action;
 use crate::tui::overlay::text_input::LineEdit;
@@ -1554,7 +1552,6 @@ mod tests {
         );
         assert_eq!(state.selected_index(), Some(0));
     }
-
 
     fn history_entry(slot_on: &str) -> RecurrenceHistoryEntry {
         RecurrenceHistoryEntry {

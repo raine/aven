@@ -199,14 +199,8 @@ pub(crate) async fn add_task_to_epic_in_transaction(
         "",
     )
     .await?;
-    crate::operations::route_recurrence_task_field(
-        conn,
-        workspace,
-        epic_id,
-        "epic_membership",
-        "",
-    )
-    .await?;
+    crate::operations::route_recurrence_task_field(conn, workspace, epic_id, "epic_membership", "")
+        .await?;
     let pair = load_epic_pair(conn, workspace, child_id, epic_id).await?;
     if pair.child.project_id != pair.epic.project_id {
         bail!("error epic-cross-project child_task_id={child_id} epic_task_id={epic_id}");
@@ -323,14 +317,8 @@ pub(crate) async fn remove_task_from_epic_in_transaction(
         "",
     )
     .await?;
-    crate::operations::route_recurrence_task_field(
-        conn,
-        workspace,
-        epic_id,
-        "epic_membership",
-        "",
-    )
-    .await?;
+    crate::operations::route_recurrence_task_field(conn, workspace, epic_id, "epic_membership", "")
+        .await?;
     let pair = load_epic_pair(conn, workspace, child_id, epic_id).await?;
     let changed = sqlx::query(
         "DELETE FROM task_epic_links

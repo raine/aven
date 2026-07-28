@@ -160,13 +160,8 @@ impl Database {
         task_id: &TaskId,
         outcome: RecurrenceOutcome,
     ) -> Result<RecurrenceResolveOutcome> {
-        self.resolve_recurrence_occurrence_with_undo(
-            workspace,
-            task_id,
-            outcome,
-            UndoContext::None,
-        )
-        .await
+        self.resolve_recurrence_occurrence_with_undo(workspace, task_id, outcome, UndoContext::None)
+            .await
     }
 
     pub async fn resolve_recurrence_occurrence_with_undo(

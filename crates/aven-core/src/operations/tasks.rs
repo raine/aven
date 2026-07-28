@@ -1189,7 +1189,7 @@ pub async fn update_task_labels_in_workspace(
     Ok(changed)
 }
 
-async fn add_note_operation(
+pub(super) async fn add_note_operation(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     task_id: &crate::ids::TaskId,
