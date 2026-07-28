@@ -21,7 +21,7 @@ impl TuiStore {
     }
 
     pub(crate) fn config_path_lines(&self) -> Result<Vec<String>> {
-        Ok(show_config_paths_operation()?.lines)
+        Ok(show_config_paths_operation(Some(self.database.path()))?.lines)
     }
 
     pub(crate) fn init_config(&self, path: std::path::PathBuf) -> Result<String> {

@@ -23,20 +23,25 @@ pub fn show_config() -> Result<ConfigShowOutcome> {
     Ok(ConfigShowOutcome { path, text })
 }
 
-pub fn show_config_paths() -> Result<ConfigPathsOutcome> {
+pub fn show_config_paths(active_db: Option<&std::path::Path>) -> Result<ConfigPathsOutcome> {
     let config = app_config::AppConfig::load()?;
     let config_dir = app_config::config_dir_path()?;
     let config_file = app_config::config_file_path()?;
     let default_db = app_config::default_db_path()?;
-    let effective_db = app_config::resolve_db_path(None, &config)?;
-    let db_source = if app_config::debug_db_path_from_env().is_some() {
-        "AVEN_DEV_DB"
-    } else if std::env::var_os("AVEN_DB").is_some() {
-        "AVEN_DB"
-    } else if config.local.db_path.is_some() {
-        "config local.db_path"
+    let (effective_db, db_source) = if let Some(path) = active_db {
+        (path.to_path_buf(), "active database")
     } else {
-        "default"
+        let path = app_config::resolve_db_path(None, &config)?;
+        let source = if app_config::debug_db_path_from_env().is_some() {
+            "AVEN_DEV_DB"
+        } else if std::env::var_os("AVEN_DB").is_some() {
+            "AVEN_DB"
+        } else if config.local.db_path.is_some() {
+            "config local.db_path"
+        } else {
+            "default"
+        };
+        (path, source)
     };
     Ok(ConfigPathsOutcome {
         lines: vec![

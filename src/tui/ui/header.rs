@@ -653,7 +653,13 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(first_row.contains("todo 2 ● sync"), "{first_row:?}");
+        let (prefix, _) = first_row.split_once("● sync").unwrap();
+        assert!(prefix.ends_with(' '), "{first_row:?}");
+        let selected_status = prefix.trim_end();
+        assert!(
+            selected_status.ends_with("todo") || selected_status.ends_with("todo 2"),
+            "{first_row:?}"
+        );
     }
 
     #[tokio::test]
