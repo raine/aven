@@ -2287,19 +2287,25 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
-    async fn command_overlay_single_completion_keeps_highlight_on_next_tab() {
+    async fn command_overlay_tab_cycles_from_exact_alias_match() {
         let mut app = test_app().await;
 
         app.begin_command();
         type_chars(&mut app, ":todo").await;
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
-        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
-
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::Command { state })
                 if state.input.text == "status-todo"
                     && state.highlighted.as_deref() == Some("status-todo")
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Command { state })
+                if state.input.text == "view-todo"
+                    && state.highlighted.as_deref() == Some("view-todo")
         ));
     }
 
