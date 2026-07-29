@@ -148,6 +148,7 @@ pub struct RecurrenceOccurrenceLink {
 pub struct RecurrenceSeriesListItem {
     pub series: RecurrenceSeries,
     pub series_ref: String,
+    pub project_key: String,
     pub rule_label: String,
     pub current_occurrence: Option<RecurrenceOccurrenceLink>,
 }

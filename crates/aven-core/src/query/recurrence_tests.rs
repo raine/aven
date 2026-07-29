@@ -233,7 +233,7 @@ async fn recurring_series_list_respects_project_scope() {
             &workspace.id,
             at(24, 12),
             crate::query::RecurrenceSeriesListQuery {
-                project: Some(mobile.key),
+                project: Some(mobile.key.clone()),
                 ..crate::query::RecurrenceSeriesListQuery::default()
             },
         )
@@ -242,6 +242,7 @@ async fn recurring_series_list_respects_project_scope() {
 
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].series.id, mobile_series.series.id);
+    assert_eq!(items[0].project_key, mobile.key);
     assert_ne!(items[0].series.id, default.series.id);
 }
 
