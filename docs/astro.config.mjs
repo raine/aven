@@ -5,6 +5,9 @@ import starlightLlmsTxt from 'starlight-llms-txt';
 
 export default defineConfig({
   site: 'https://aven.raine.dev',
+  redirects: {
+    '/workflows': '/getting-started/#next-steps',
+  },
   integrations: [
     starlight({
       title: 'aven',
@@ -47,18 +50,20 @@ export default defineConfig({
             { label: 'What is aven?', link: '/' },
             { label: 'Getting started', slug: 'getting-started' },
             { label: 'Concepts', slug: 'concepts' },
-            { label: 'Taskwarrior comparison', slug: 'taskwarrior' },
+            { label: 'Coming from Taskwarrior', slug: 'taskwarrior' },
           ],
         },
         {
-          label: 'Using aven',
+          label: 'Guides',
           items: [
-            { label: 'TUI', slug: 'tui' },
+            { label: 'Use the TUI', slug: 'tui' },
+            { label: 'Organize tasks', slug: 'organize-tasks' },
+            { label: 'Schedule tasks', slug: 'schedule-tasks' },
             { label: 'Recurring tasks', slug: 'recurring-tasks' },
-            { label: 'Agents', slug: 'agents' },
-            { label: 'Workflows', slug: 'workflows' },
-            { label: 'Sync and backups', slug: 'sync' },
-            { label: 'Tips', slug: 'tips' },
+            { label: 'Work with agents', slug: 'agents' },
+            { label: 'Sync across devices', slug: 'sync' },
+            { label: 'Back up and restore', slug: 'backups' },
+            { label: 'Terminal setup and troubleshooting', slug: 'tips' },
           ],
         },
         {

@@ -1,13 +1,15 @@
 ---
-title: Sync and backups
-description: Sync across devices, resolve conflicts, and back up your data.
+title: Sync across devices
+description: Synchronize Aven data, resolve conflicts, and diagnose sync state.
 ---
 
 Sync keeps the same aven tasks available across laptops, agents, and other devices. Each client writes to its own local SQLite database first, so task capture and updates stay fast and offline-friendly.
 
 When you run `aven sync`, local changes are pushed to a self-hosted server and changes from other clients are pulled back down. The server stores the shared operation log; each local database applies that log to its own task store.
 
-Use [Configuration](/configuration/) for `sync.*` and `daemon.*` settings.
+Use [Configuration](/configuration/) for `sync.*` and `daemon.*` settings. See
+[Back up and restore](/backups/) when you need to preserve, move, or recover
+local data.
 
 ## Start a server
 
@@ -106,7 +108,8 @@ The cross-device flow is:
 5. Images are addressed by their content, so identical image bytes share storage and transfer identity instead of creating independent copies.
 6. Deleting an attachment syncs that change. Image bytes with no remaining references become eligible for cleanup after the configured grace period rather than disappearing immediately.
 
-This separation also affects data portability. The [backup and export comparison](#back-up-and-move-data) explains the available options. A backup archive includes every attachment image available on the device that creates it, while a JSON export includes attachment records but omits image files.
+This separation also affects data portability. [Back up and restore](/backups/)
+compares complete backup archives with portable JSON exports.
 
 Sync output reports image upload and download counts, transferred sizes, remaining work, and completion state. Run `aven sync` again when it reports `complete=false`. Interactive sync continues automatically while it can make progress. A configured, running daemon resumes remaining work in the background.
 
@@ -146,36 +149,8 @@ The repair command succeeds without changes when the LaunchAgent is absent.
 
 ## Back up and move data
 
-Choose the command that matches what you need to preserve:
-
-| Goal | Commands | Image files included? |
-| --- | --- | --- |
-| Preserve or move all local Aven data | `aven backup` and `aven backup restore` | Yes, for images available on this device when the backup is created |
-| Move task data through JSON | `aven export` and `aven import` | No |
-
-```sh
-aven backup --output backup.aven-backup.tar.zst
-aven backup restore backup.aven-backup.tar.zst --yes
-```
-
-A backup archive contains the complete SQLite database and every attachment image available on the device. Recurring schedules, future-task settings, completed, skipped, and missed history, pauses, conflicts, and task-specific fields, notes, and attachments remain intact. Images that have not downloaded cannot be included, so run `aven sync` first when the sync server may have files this device lacks. Restore checks the archive and images before replacing local data.
-
-```sh
-aven export --output tasks.json
-aven import tasks.json --yes
-```
-
-A JSON export includes tasks, recurring schedules, future-task settings, history, pauses, conflicts, and attachment information. It sets `blobs_included: false` and leaves out image files. Import validates recurring schedules, generated tasks, history, and lifecycle state before replacement. Older task-only exports import every task as nonrecurring data. After import, attachment labels remain visible while the TUI shows unavailable-image placeholders. Run sync or restore a backup archive to supply the files. Until then, [`attachment get --output`](/command-reference/#aven-attachment) cannot save them.
-
-:::caution[Local data replacement]
-Restore and import replace local data and require confirmation with `--yes`. Aven creates safety backups first. Archive restore also preserves the previous attachment directory.
-:::
-
-Import keeps this installation's client identity and clears server-specific sync state.
-
-### UniFFI consumers
-
-Swift and other UniFFI hosts choose the durable SQLite path and run synchronous facade calls on one serial Rust worker. Rust owns database migrations, recurring-task storage, sync payload validation, and conflict behavior. Hosts pass prepared sync bodies and responses as opaque bytes and do not serialize recurring-task data themselves. Portable JSON and archive backup workflows remain core and CLI data-safety surfaces. A host-provided backup must coordinate with the Rust worker and use a consistent SQLite backup instead of copying an open database file.
+Backup, restore, export, and import guidance lives in
+[Back up and restore](/backups/).
 
 ## Resolve conflicts
 

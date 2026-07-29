@@ -1,9 +1,12 @@
 ---
-title: Agents
-description: Make aven available inside AI coding agent sessions.
+title: Work with agents
+description: Connect coding, chat, and other AI agents to Aven.
 ---
 
-aven gives AI coding agents access to the same local task system you use in the TUI. The TUI is the human surface. The CLI is the agent surface.
+Aven gives AI agents access to the same local task system you use in the TUI.
+Coding agents can load project context and leave durable handoff notes. Chat or
+voice agents can capture tasks through the CLI and synchronize them to your
+other devices.
 
 ## Install the aven skill
 
@@ -53,7 +56,7 @@ aven infers the active workspace and project from the current directory. Start a
 
 Use [Configuration](/configuration/) when directory names, workspace routes, or project path mappings need to be explicit. Use `aven doctor` from the same directory to inspect the active database, workspace, project, and routing decisions.
 
-## Work with agents
+## Work on tasks with coding agents
 
 A typical workflow looks like this:
 
@@ -72,6 +75,30 @@ Work on APP-7KQ9. Use aven for status and handoff notes.
 ```txt
 Pick a ready docs task and complete it.
 ```
+
+## Connect chat or voice agents
+
+A chat or voice agent can capture project-scoped tasks without access to a
+repository checkout. Run `aven skill` to print Aven's reusable Markdown guidance
+and include it in the integration's system prompt or tool instructions. Then let
+the integration invoke the CLI with an explicit project and workspace.
+
+A synchronized integration typically:
+
+1. Runs `aven sync` to receive recent project and task data.
+2. Converts the message or transcript into a title and useful description.
+3. Creates the task with `aven add`, capturing the returned reference.
+4. Runs `aven sync` again so the task reaches other devices.
+5. Returns the reference to the person who requested the task.
+
+For example, a private Telegram agent on a small home server can transcribe a
+voice message, map the spoken project name to an Aven project, and pass the
+result to a wrapper implementing that sequence. Use explicit allowlists for
+workspaces and projects, and keep authentication tokens and other secrets out of
+task content.
+
+See [Sync across devices](/sync/) for server and client setup. Use `aven doctor`
+to verify the integration's database, workspace, and project routing.
 
 ## Durable handoff
 

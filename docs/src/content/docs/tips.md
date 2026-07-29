@@ -1,6 +1,6 @@
 ---
-title: Tips
-description: Configure terminal workflows and compatibility details.
+title: Terminal setup and troubleshooting
+description: Configure terminal input and troubleshoot image previews.
 ---
 
 ## Use Ctrl-Enter in Alacritty and tmux
@@ -83,7 +83,7 @@ aven attachment list APP-7KQ9 --json
 aven attachment get 7KQ9A1X4MV2P8D6R --json
 ```
 
-`has_blob: false` means the image file is absent from this device. Sync from a server that has it, or restore a [backup that includes images](/sync/#back-up-and-move-data). JSON exports do not include image files.
+`has_blob: false` means the image file is absent from this device. Sync from a server that has it, or restore a [backup that includes images](/backups/). JSON exports do not include image files.
 
 ### The terminal shows labels instead of previews
 
@@ -114,4 +114,4 @@ aven attachment get <attachment-id> --output ./attachment-check.png
 
 If that succeeds, restart Aven to retry preview generation. The stored image is unaffected, and missing cached previews regenerate when needed.
 
-A text label remains visible above a successful preview. This is intentional and indicates that an attachment is present. See [View image attachments](/tui/#view-image-attachments) for preview controls.
+A text label remains visible above a successful preview. This is intentional and indicates that an attachment is present. See [Image attachments](/tui/#image-attachments) for preview controls.

@@ -100,7 +100,7 @@ All image attachment settings are optional. The defaults support normal use with
 
 Aven uses the iTerm2 inline-image protocol in iTerm2 and the Kitty graphics protocol in Kitty, WezTerm, and Ghostty. Setting `on` helps these protocols pass through tmux, but cannot add image support to another terminal. Sixel-only terminals show text labels.
 
-Detection uses terminal markers such as `TERM_PROGRAM`, `TERM`, `KITTY_WINDOW_ID`, `WEZTERM_PANE`, and `GHOSTTY_RESOURCES_DIR`. See [View image attachments](/tui/#view-image-attachments) for controls and [Troubleshoot image previews](/tips/#troubleshoot-image-previews) for setup help.
+Detection uses terminal markers such as `TERM_PROGRAM`, `TERM`, `KITTY_WINDOW_ID`, `WEZTERM_PANE`, and `GHOSTTY_RESOURCES_DIR`. See [Image attachments](/tui/#image-attachments) for controls and [Troubleshoot image previews](/tips/#troubleshoot-image-previews) for setup help.
 
 ### PNG optimization
 

@@ -56,13 +56,19 @@ aven skill install
 
 For repositories where agents should start with live task context, configure automatic priming so the agent session receives `aven prime` output at startup.
 
-See [Agents](/agents/) for automatic priming, Claude Code hook setup, example prompts, and handoff notes.
+See [Work with agents](/agents/) for automatic priming, Claude Code hook setup,
+chat integrations, example prompts, and handoff notes.
 
 ## Next steps
 
 - Read [Concepts](/concepts/) to learn the task model.
-- Read [Configuration](/configuration/) when you want workspace routes, project path mappings, sync defaults, or a specific database path.
-- Read [TUI](/tui/) for navigation, views, filters, and shortcuts.
+- Read [Use the TUI](/tui/) for navigation, views, filters, and shortcuts.
+- Read [Organize tasks](/organize-tasks/) to choose among projects, labels, epics,
+  dependencies, and workspaces.
+- Read [Schedule tasks](/schedule-tasks/) to defer work or set deadlines.
 - Read [Recurring tasks](/recurring-tasks/) to set up work that returns on a schedule.
-- Read [Workflows](/workflows/) for capture, chat, sync, and agent workflows.
-- Read [Agents](/agents/) for CLI and coding-agent workflows.
+- Read [Work with agents](/agents/) for coding, chat, and voice-agent workflows.
+- Read [Sync across devices](/sync/) and [Back up and restore](/backups/) when
+  using Aven on several devices.
+- Read [Configuration](/configuration/) for workspace routes, project path
+  mappings, sync defaults, or a specific database path.

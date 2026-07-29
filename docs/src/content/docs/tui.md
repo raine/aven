@@ -1,5 +1,5 @@
 ---
-title: TUI
+title: Use the TUI
 description: Find, capture, and manage work in the terminal interface.
 ---
 
@@ -82,7 +82,7 @@ Press `a` to open the task composer. Project, status, priority, labels, availabi
 
 `Enter` opens the focused metadata control, creates from the title, and inserts a newline in the description. `Ctrl-Enter` creates from any field in terminals that report modified Enter keys. `Ctrl-s` is the portable create shortcut.
 
-### Schedule tasks
+### Set a schedule
 
 Type a schedule directly in the Schedule field:
 
@@ -107,7 +107,7 @@ Press `Ctrl-n` when the visible title and description contain rough notes, paste
 
 Copy a PNG, JPEG, GIF, or WebP image and press `Ctrl-v`, or paste a local image path or `file://` URL. Images remain attached to the draft when validation fails.
 
-If clipboard image paste is unavailable, save the image and paste its path. See [Tips](/tips/) for terminal-specific clipboard and preview setup, [Configuration](/configuration/#png-optimization) for image optimization, and [`aven attachment`](/command-reference/#aven-attachment) for limits and command-line management.
+If clipboard image paste is unavailable, save the image and paste its path. See [Terminal setup and troubleshooting](/tips/) for terminal-specific preview setup, [Configuration](/configuration/#png-optimization) for image optimization, and [`aven attachment`](/command-reference/#aven-attachment) for limits and command-line management.
 
 ## Triage and edit tasks
 
@@ -220,15 +220,21 @@ and whether the recurring task is active, paused, or stopped. Use `f r` to cycle
 those states. The `RCR-` reference identifies the whole recurring task, while
 each dated task has its own regular task reference.
 
-Actions work from a selected recurring task or one of its dated tasks:
+Press `Enter` on a recurring task to open its detail. The footer shows the
+actions available for its state: `Enter` opens the current dated task when one
+exists, `e` edits the template, `p` pauses or resumes, `h` shows history, and
+`s` stops an active or paused recurring task.
+
+The `t r` shortcuts also work from a selected recurring task or one of its dated
+tasks:
 
 | Key | Action |
 | --- | --- |
 | `t r k` | Skip the current task |
-| `t r e` | Change future tasks |
+| `t r e` | Edit template |
 | `t r p` | Pause the schedule |
 | `t r r` | Resume the schedule |
-| `t r s` | Stop repeating after the current task |
+| `t r s` | Stop permanently |
 | `t r h` | View history |
 
 See [Recurring tasks](/recurring-tasks/) for schedule behavior, missed dates,
@@ -254,7 +260,8 @@ Epic actions live under `t c`: `t c a` adds a child, `t c r` removes a child, an
 
 The header shows synchronization state. Press `v c` to open tasks with unresolved field conflicts, then use the `c` family to inspect and resolve them.
 
-See [Sync and backups](/sync/) for setup, transport, conflict semantics, and recovery.
+See [Sync across devices](/sync/) for setup, transport, and conflict handling.
+See [Back up and restore](/backups/) for recovery workflows.
 
 ## Run aven from tmux
 
@@ -273,7 +280,7 @@ bind t display-popup -E -d '#{pane_current_path}' -w 120 -h 30 'aven tui --add-t
 
 <p class="media-caption">A compact popup opens the composer for quick capture.</p>
 
-See [Tips](/tips/#use-ctrl-enter-in-alacritty-and-tmux) for modified-key and tmux configuration.
+See [Terminal setup and troubleshooting](/tips/#use-ctrl-enter-in-alacritty-and-tmux) for modified-key and tmux configuration.
 
 ## Mouse support
 
@@ -311,7 +318,11 @@ The in-app command catalog is the authoritative shortcut reference:
 
 - [Getting started](/getting-started/) covers installation and first-run usage.
 - [Concepts](/concepts/) explains the task model behind the TUI.
+- [Organize tasks](/organize-tasks/) explains workspaces, projects, labels,
+  epics, and dependencies.
+- [Schedule tasks](/schedule-tasks/) covers availability and due dates.
+- [Recurring tasks](/recurring-tasks/) covers repeating schedules and history.
 - [Command reference](/command-reference/) documents CLI equivalents and accepted input grammar.
 - [Configuration](/configuration/) covers workspace routes, project mappings, sync defaults, and task-intake configuration.
-- [Tips](/tips/) covers terminal, tmux, clipboard, and image-preview setup.
-- [Workflows](/workflows/) covers capture, chat, sync, and agent workflows.
+- [Terminal setup and troubleshooting](/tips/) covers terminal input, tmux, and
+  image previews.
