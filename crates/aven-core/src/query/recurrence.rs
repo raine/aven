@@ -256,12 +256,10 @@ pub(crate) async fn list_recurrence_series_view(
         "SELECT s.workspace_id, s.id, s.title, s.description, s.project_id, s.priority,
                 s.initial_status, s.frequency, s.interval, s.weekdays, s.timezone, s.start_on,
                 s.available_local_time, s.due_policy, s.state, s.stopped_at, s.created_at,
-                s.updated_at, s.deleted
-         FROM recurrence_series s",
+                s.updated_at, s.deleted, p.key AS project_key
+         FROM recurrence_series s
+         JOIN projects p ON p.workspace_id = s.workspace_id AND p.id = s.project_id",
     );
-    if query.project.is_some() {
-        sql.push(" JOIN projects p ON p.workspace_id = s.workspace_id AND p.id = s.project_id");
-    }
     sql.push(" WHERE s.workspace_id = ");
     sql.push_bind(workspace_id);
     sql.push(" AND s.deleted = 0");
@@ -290,11 +288,16 @@ pub(crate) async fn list_recurrence_series_view(
         .fetch_all(&mut *conn)
         .await?
         .iter()
-        .map(recurrence_series_from_row)
+        .map(|row| {
+            Ok((
+                recurrence_series_from_row(row)?,
+                row.get::<String, _>("project_key"),
+            ))
+        })
         .collect::<Result<Vec<_>>>()?;
     let ids = series
         .iter()
-        .map(|item| item.id.clone())
+        .map(|(item, _)| item.id.clone())
         .collect::<Vec<_>>();
     let refs = SeriesRefContext::load(conn, workspace_id).await?;
     let current = load_projected_occurrences(conn, workspace_id, &ids).await?;
@@ -327,7 +330,7 @@ pub(crate) async fn list_recurrence_series_view(
 
     Ok(series
         .into_iter()
-        .filter_map(|series| {
+        .filter_map(|(series, project_key)| {
             let series_ref = refs.display_ref(&series.id);
             if search.as_deref().is_some_and(|needle| {
                 !series.title.to_lowercase().contains(needle)
@@ -351,6 +354,7 @@ pub(crate) async fn list_recurrence_series_view(
                 ),
                 series,
                 series_ref,
+                project_key,
                 current_occurrence,
             })
         })
