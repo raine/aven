@@ -1,6 +1,6 @@
 ---
-title: Taskwarrior comparison
-description: How aven differs from Taskwarrior.
+title: Coming from Taskwarrior
+description: Compare Aven with Taskwarrior and plan a safe migration.
 ---
 
 [Taskwarrior](https://taskwarrior.org/) is a great task manager and a major inspiration for aven. aven exists because I wanted a similar power-user, local-first tool with different defaults for coding-agent workflows, task identity, context, workspaces, and the human interface.

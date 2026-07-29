@@ -19,7 +19,7 @@ aven is a local-first task manager for power users and agents. It gives you one 
 
 ## Design principles
 
-aven makes a few opinionated choices. Taskwarrior is a major inspiration, and aven makes its own choices around agents, IDs, Markdown context, workspaces, and the TUI. See [Taskwarrior comparison](/taskwarrior/) for the comparison.
+aven makes a few opinionated choices. Taskwarrior is a major inspiration, and aven makes its own choices around agents, IDs, Markdown context, workspaces, and the TUI. See [Coming from Taskwarrior](/taskwarrior/) for a comparison and migration workflow.
 
 - **The local database is the working copy.** The TUI and CLI work against SQLite directly. Sync is an optional layer for using the same tasks across laptops, servers, and other devices.
 - **Tasks live outside repositories.** A task should survive branch switches, worktrees, repo clones, and dirty git states. Repos provide project context, but they do not own the task data. This design keeps room for entrypoints such as an iOS app or Telegram agent to manage tasks through the synced task store without cloning every repo.

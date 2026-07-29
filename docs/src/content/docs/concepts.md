@@ -19,6 +19,9 @@ A task is a unit of work inside a workspace and, usually, a project. It has a ti
 
 Labels are cross-cutting tags such as `bug`, `docs`, or `ux`. Label names are normalized before storage: uppercase letters become lowercase, and punctuation or spaces become dashes. Create a label explicitly, then assign it to tasks.
 
+See [Organize tasks](/organize-tasks/) for guidance on choosing among workspaces,
+projects, labels, epics, and dependencies.
+
 ## Status and priority
 
 Statuses describe lifecycle:
@@ -46,9 +49,9 @@ Notes are append-style entries attached to a task. Use notes for decisions, bloc
 
 Add screenshots, diagrams, and other images to a task when they help explain the work. Aven supports PNG, JPEG, GIF, and WebP images. Task detail shows attachments in a dedicated section beneath the description.
 
-You can attach images in the TUI while creating or viewing a task. From the command line, create the task first, then use [`aven attachment`](/command-reference/#aven-attachment). Supported terminals show image previews in task detail, while other terminals show a text placeholder. Locally available images can also open in the operating system viewer from either display. See [View image attachments](/tui/#view-image-attachments) for preview and viewer controls.
+You can attach images in the TUI while creating or viewing a task. From the command line, create the task first, then use [`aven attachment`](/command-reference/#aven-attachment). Supported terminals show image previews in task detail, while other terminals show a text placeholder. Locally available images can also open in the operating system viewer from either display. See [Image attachments](/tui/#image-attachments) for preview and viewer controls.
 
-[Sync can copy attachment images between devices](/sync/#image-attachments-during-sync). To move all local data yourself, including the image files stored on that device, use a [backup archive](/sync/#back-up-and-move-data). JSON export keeps the attachment records but leaves out the image files.
+[Sync can copy attachment images between devices](/sync/#image-attachments-during-sync). To move all local data yourself, including the image files stored on that device, use a [backup archive](/backups/). JSON export keeps the attachment records but leaves out the image files.
 
 ## Refs
 
@@ -83,6 +86,9 @@ Availability and due dates describe independent parts of a task's timeline:
 A task may use either field or both. A future due date does not defer work. A passed due date does not reveal a deferred task. Combine Upcoming and Overdue when you need to inspect deferred work whose deadline passed.
 
 Availability is a timestamp because it can represent a local time of day or an exact UTC instant. Due dates are date-only values because the deadline applies to the local calendar day. Neither field creates reminders, notifications, recurrence, or automatic status changes.
+
+See [Schedule tasks](/schedule-tasks/) for one-time planning workflows and date
+input examples.
 
 ## Recurring tasks
 

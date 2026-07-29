@@ -421,7 +421,7 @@ aven attachment get 7KQ9A1X4MV2P8D6R
 aven attachment get 7KQ9A1X4MV2P8D6R --output ./diagram.png
 ```
 
-Saving the file requires the image to be available on this device. In JSON output, `has_blob: true` means it is available. If it is not, run sync or restore a [backup that includes images](/sync/#back-up-and-move-data).
+Saving the file requires the image to be available on this device. In JSON output, `has_blob: true` means it is available. If it is not, run sync or restore a [backup that includes images](/backups/).
 
 #### Delete an attachment
 

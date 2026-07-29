@@ -103,7 +103,7 @@ description: Release notes for aven.
 
 ## v0.1.8 (2026-07-15)
 
-- [Task detail views](/tui/#select-and-copy-text) support dragging across
+- [Task detail views](/tui/#copy-task-information) support dragging across
   rendered titles and descriptions and copying the selected text with `y`.
 - [`Ctrl-Enter`](/tips/#use-ctrl-enter-in-alacritty-and-tmux) submits task
   composers and multiline editors, with `Ctrl-s` as a portable fallback.
@@ -115,9 +115,9 @@ description: Release notes for aven.
 ## v0.1.7 (2026-07-15)
 
 - Move selected or marked tasks directly between
-  [Columns lanes](/tui/#columns-view) with keyboard or mouse controls, with
+  [Columns lanes](/tui/#columns) with keyboard or mouse controls, with
   batch moves grouped into one undo step.
-- Improved the default [Columns workflow](/tui/#columns-view) with
+- Improved the default [Columns workflow](/tui/#columns) with
   lifecycle-based lanes, ordering tailored to each lane, and a toggle for the
   selected-task preview.
 - Task previews render Markdown formatting and clearly indicate truncated text.
@@ -126,14 +126,14 @@ description: Release notes for aven.
 
 ## v0.1.6 (2026-07-14)
 
-- Added a configurable [Columns view](/tui/#columns-view) for navigating tasks
+- Added a configurable [Columns view](/tui/#columns) for navigating tasks
   in named status lanes.
 - Redesigned the [task composer](/tui/#capture-tasks) so project, status,
   priority, labels, title, and description stay visible and are accessible by
   keyboard or mouse.
 - Added task copy shortcuts for refs, titles, descriptions, notes, and combined
   task text.
-- Improved [task detail navigation](/tui/#open-detail) with a shortcut that
+- Improved [task detail navigation](/tui/#task-detail) with a shortcut that
   jumps directly to notes.
 - Added a guided
   [Taskwarrior migration workflow](/taskwarrior/#migrate-from-taskwarrior) to
@@ -153,20 +153,20 @@ description: Release notes for aven.
   actions, and database stats.
 - [Database diagnostics](/sync/#diagnose-sync-state) show sync history size,
   synced and pending change counts, server sequence range, and payload bytes.
-- [Task list](/tui/#screen-tour) selection stays visible when queue group
+- [Task list](/tui/#find-work) selection stays visible when queue group
   headers remain pinned.
 - Back navigation from an
-  [epic child detail](/tui/#projects-labels-dependencies-and-epics) returns to
+  [epic child detail](/tui/#projects-and-relationships) returns to
   the parent detail view and scroll position.
 
 ## v0.1.3 (2026-07-07)
 
-- [Epic detail views](/tui/#projects-labels-dependencies-and-epics) list child
+- [Epic detail views](/tui/#projects-and-relationships) list child
   tasks inline, with mouse hover and click targets for jumping to visible child
   tasks.
 - The [queue](/concepts/#queue) keeps blocked tasks below actionable groups and
   gives more weight to tasks that unblock other work.
-- The [TUI sidebar](/tui/#screen-tour) preserves selection more consistently
+- The [TUI sidebar](/tui/#find-work) preserves selection more consistently
   when switching focus, toggling the sidebar, or applying task changes.
 - Crashes are written to the aven log file with panic details for easier
   troubleshooting.
@@ -184,10 +184,10 @@ description: Release notes for aven.
 - Added [batch editing](/tui/#triage-and-edit-tasks) in the TUI: mark multiple
   tasks, then apply one status change or add and remove labels across the
   selected tasks in a single action.
-- Improved [TUI navigation and controls](/tui/#keyboard-reference) with back
+- Improved [TUI navigation and controls](/tui/#discover-commands) with back
   navigation, footer status hotkeys, mouse-scrolled help overlays, and clearer
   terminal startup errors.
-- Improved [task detail and preview panels](/tui/#open-detail) with epic
+- Improved [task detail and preview panels](/tui/#task-detail) with epic
   metadata and parent markers.
 
 ## v0.1.1 (2026-07-03)
