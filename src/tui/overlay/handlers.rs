@@ -1395,6 +1395,21 @@ mod tests {
     }
 
     #[test]
+    fn cancelling_schedule_editor_restores_content_sized_composer() {
+        let mut state = add_task_state(AddTaskStep::Schedule);
+        state.mode = AddTaskMode::Schedule(state.schedule_editor(ScheduleEditorField::Mode));
+
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle(key(KeyCode::Esc), OverlayState::AddTask(state))
+        else {
+            panic!("expected composer");
+        };
+
+        assert_eq!(state.mode, AddTaskMode::Compose);
+        assert!(!state.mode.expands_composer());
+    }
+
+    #[test]
     fn add_task_schedule_editor_applies_natural_summary() {
         let mut state = add_task_state(AddTaskStep::Schedule);
         let mut editor = state.schedule_editor(ScheduleEditorField::Repeat);

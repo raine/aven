@@ -778,6 +778,17 @@ mod add_task_overlay {
     }
 
     #[test]
+    fn composer_help_expands_the_parent_dialog() {
+        let compact_height = dialog_height(add_task_view());
+        let help_height = dialog_height(AddTaskView {
+            mode: Box::new(AddTaskMode::Help { scroll: 0 }),
+            ..add_task_view()
+        });
+
+        assert!(help_height > compact_height);
+    }
+
+    #[test]
     fn structured_schedule_editor_preserves_composer_height() {
         let compact_height = dialog_height(add_task_view());
         let structured_height = dialog_height(AddTaskView {

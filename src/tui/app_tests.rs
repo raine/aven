@@ -6790,6 +6790,44 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn cancelling_schedule_editor_restores_compact_composer_height() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        let dialog_height = |app: &mut App| {
+            let buffer = render_app_buffer(app, 120, 30);
+            let row = |row: u16| {
+                (0..buffer.area.width)
+                    .map(|column| buffer[(column, row)].symbol())
+                    .collect::<String>()
+            };
+            let top = (0..buffer.area.height)
+                .find(|row_index| row(*row_index).contains("╭─ Add task "))
+                .expect("add task top border");
+            let bottom = (top..buffer.area.height)
+                .rev()
+                .find(|row_index| row(*row_index).contains('╰'))
+                .expect("add task bottom border");
+            bottom - top + 1
+        };
+        let compact_height = dialog_height(&mut app);
+
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+            panic!("expected composer");
+        };
+        state.focus = AddTaskStep::Schedule;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if state.mode == crate::tui::overlay::AddTaskMode::Compose
+                    && !state.mode.expands_composer()
+        ));
+        assert_eq!(dialog_height(&mut app), compact_height);
+    }
+
+    #[tokio::test]
     async fn recurrence_due_control_cycles_each_policy() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();

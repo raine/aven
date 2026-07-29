@@ -121,7 +121,7 @@ fn add_task_dialog_height(terminal: Rect, layout: AddTaskLayout<'_>) -> u16 {
         .height
         .saturating_sub(4)
         .clamp(1, ADD_TASK_MAX_HEIGHT);
-    if !matches!(layout.mode, AddTaskMode::Compose | AddTaskMode::Schedule(_)) {
+    if layout.mode.expands_composer() {
         return available_height;
     }
 
