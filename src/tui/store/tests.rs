@@ -3909,8 +3909,6 @@ mod epics {
             .iter()
             .position(|t| t.task.id == parent_id)
             .unwrap();
-        assert!(store.view_state.expanded_epic_ids.contains(&parent_id));
-        assert!(store.tasks.iter().any(|task| task.task.id == child_id));
         (parent_id, child_id, parent_index)
     }
 
@@ -3972,21 +3970,44 @@ mod epics {
     }
 
     #[tokio::test]
-    async fn epics_view_expands_parent_by_default() {
+    async fn epics_view_starts_with_parents_collapsed() {
         let mut store = test_store().await;
         let (parent_id, child_id, _) = create_epic_child_pair(&mut store).await;
 
-        assert!(store.view_state.expanded_epic_ids.contains(&parent_id));
-        assert!(store.tasks.iter().any(|task| task.task.id == child_id));
+        assert!(!store.view_state.expanded_epic_ids.contains(&parent_id));
+        assert!(!store.tasks.iter().any(|task| task.task.id == child_id));
     }
 
     #[tokio::test]
-    async fn toggle_epic_collapses_and_expands_parent() {
+    async fn toggle_epic_expands_and_collapses_parent() {
         let mut store = test_store().await;
         let (parent_task_id, child_id, parent_index) = create_epic_child_pair(&mut store).await;
 
-        assert!(store.view_state.expanded_epic_ids.contains(&parent_task_id));
+        assert!(!store.view_state.expanded_epic_ids.contains(&parent_task_id));
 
+        store
+            .toggle_selected_epic(Some(parent_index))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(store.view_state.expanded_epic_ids.contains(&parent_task_id));
+        assert!(
+            !store
+                .view_state
+                .collapsed_epic_ids
+                .contains(&parent_task_id)
+        );
+        assert!(store.tasks.iter().any(|task| task.task.id == child_id));
+
+        store.refresh(Some(&parent_task_id)).await.unwrap();
+        assert!(store.view_state.expanded_epic_ids.contains(&parent_task_id));
+        assert!(store.tasks.iter().any(|task| task.task.id == child_id));
+
+        let parent_index = store
+            .tasks
+            .iter()
+            .position(|task| task.task.id == parent_task_id)
+            .unwrap();
         store
             .toggle_selected_epic(Some(parent_index))
             .await
@@ -4001,24 +4022,9 @@ mod epics {
         );
         assert!(!store.tasks.iter().any(|task| task.task.id == child_id));
 
-        let parent_index = store
-            .tasks
-            .iter()
-            .position(|task| task.task.id == parent_task_id)
-            .unwrap();
-        store
-            .toggle_selected_epic(Some(parent_index))
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(store.view_state.expanded_epic_ids.contains(&parent_task_id));
-        assert!(
-            !store
-                .view_state
-                .collapsed_epic_ids
-                .contains(&parent_task_id)
-        );
-        assert!(store.tasks.iter().any(|task| task.task.id == child_id));
+        store.refresh(Some(&parent_task_id)).await.unwrap();
+        assert!(!store.view_state.expanded_epic_ids.contains(&parent_task_id));
+        assert!(!store.tasks.iter().any(|task| task.task.id == child_id));
     }
 
     #[tokio::test]
@@ -4027,16 +4033,6 @@ mod epics {
         let (first_parent_id, _, _) = create_epic_child_pair(&mut store).await;
         store.show_view(TaskView::Queue).await.unwrap();
         let (second_parent_id, _, _) = create_epic_child_pair(&mut store).await;
-        let first_parent = store
-            .tasks
-            .iter()
-            .position(|task| task.task.id == first_parent_id)
-            .unwrap();
-        store
-            .toggle_selected_epic(Some(first_parent))
-            .await
-            .unwrap()
-            .unwrap();
         let first_parent = store
             .tasks
             .iter()
@@ -4082,7 +4078,12 @@ mod epics {
     #[tokio::test]
     async fn remove_epic_child_uses_resolved_ids_and_records_undo() {
         let mut store = test_store().await;
-        let (parent_id, child_id, _parent_index) = create_epic_child_pair(&mut store).await;
+        let (parent_id, child_id, parent_index) = create_epic_child_pair(&mut store).await;
+        store
+            .toggle_selected_epic(Some(parent_index))
+            .await
+            .unwrap()
+            .unwrap();
         let child_index = store
             .tasks
             .iter()
@@ -4227,7 +4228,12 @@ mod epics {
     #[tokio::test]
     async fn remove_completed_epic_child() {
         let mut store = test_store().await;
-        let (_parent_id, child_id, _parent_index) = create_epic_child_pair(&mut store).await;
+        let (_parent_id, child_id, parent_index) = create_epic_child_pair(&mut store).await;
+        store
+            .toggle_selected_epic(Some(parent_index))
+            .await
+            .unwrap()
+            .unwrap();
         let child_index = store
             .tasks
             .iter()
