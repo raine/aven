@@ -3,6 +3,13 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## Unreleased
+
+- [Create and manage recurring tasks](/command-reference/#aven-recur) from the
+  CLI or TUI with daily, weekday, weekly, fortnightly, multi-week, and monthly
+  schedules. Aven projects the current occurrence, preserves history, and syncs
+  series across devices.
+
 ## v0.1.19 (2026-07-28)
 
 - Long task titles wrap in the detail pane and remain fully selectable and
