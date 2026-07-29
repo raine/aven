@@ -117,12 +117,9 @@ The recurring-task detail footer shows the actions available for its state:
 | `h` | Show history |
 | `s` | Stop an active or paused recurring task permanently |
 
-:::note[Screenshot placeholder: recurring-task detail]
-Capture Recurring Tasks with an active weekly task selected and its detail open.
-Keep active and paused recurring tasks visible behind the dialog. Show the
-schedule, next date, current task, state, and detail footer actions. Suggested
-filename: `recurring-task-detail.webp`.
-:::
+![Aven recurring-task detail showing an active weekly schedule and its current occurrence](/recurring-task-detail.webp)
+
+<p class="media-caption">Recurring-task detail brings the schedule, current occurrence, reusable description, lifecycle state, and available actions together.</p>
 
 Pausing hides the current task and suppresses scheduled dates until you resume.
 Resuming continues the schedule without creating tasks for the paused period. If
