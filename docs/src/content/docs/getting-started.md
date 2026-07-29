@@ -63,5 +63,6 @@ See [Agents](/agents/) for automatic priming, Claude Code hook setup, example pr
 - Read [Concepts](/concepts/) to learn the task model.
 - Read [Configuration](/configuration/) when you want workspace routes, project path mappings, sync defaults, or a specific database path.
 - Read [TUI](/tui/) for navigation, views, filters, and shortcuts.
+- Read [Recurring tasks](/recurring-tasks/) to set up work that returns on a schedule.
 - Read [Workflows](/workflows/) for capture, chat, sync, and agent workflows.
 - Read [Agents](/agents/) for CLI and coding-agent workflows.

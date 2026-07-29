@@ -95,7 +95,7 @@ Type a schedule directly in the Schedule field:
 
 Press `Enter` on Schedule when a structured editor is easier. **One-off** exposes optional Available and Due values. **Repeating** exposes the recurrence rule, the local availability time, due policy, and start date.
 
-Availability controls when a task becomes actionable. Due records a date when completion is expected. For repeating schedules, an empty availability time means the occurrence becomes available at the start of its day.
+Availability controls when a task becomes actionable. Due records a date when completion is expected. For repeating schedules, an empty availability time makes each task available at the start of its scheduled day.
 
 See [Availability input](/command-reference/#availability-input), [Due date input](/command-reference/#due-date-input), and [`aven add`](/command-reference/#aven-add) for the accepted grammar.
 
@@ -215,22 +215,25 @@ Open the preview to move between attachments, open one in the system viewer, or 
 
 ## Recurring tasks
 
-A repeating schedule creates a series and one current occurrence task. The series has a stable `RCR-` ref. Each occurrence is an ordinary task linked to that series.
+Press `v u` to open Recurring Tasks. Each row shows the schedule, next date,
+and whether the recurring task is active, paused, or stopped. Use `f r` to cycle
+those states. The `RCR-` reference identifies the whole recurring task, while
+each dated task has its own regular task reference.
 
-Press `v u` to open Recurring Tasks. The view shows each series's rule, next occurrence, and lifecycle state. Use `f r` to cycle active, paused, and stopped series.
-
-Series actions work from a selected series or linked occurrence:
+Actions work from a selected recurring task or one of its dated tasks:
 
 | Key | Action |
 | --- | --- |
-| `t r k` | Skip the current occurrence |
-| `t r e` | Edit the template for future occurrences |
-| `t r p` | Pause the series |
-| `t r r` | Resume a paused series |
-| `t r s` | Stop future occurrences after the current task |
-| `t r h` | Show occurrence history |
+| `t r k` | Skip the current task |
+| `t r e` | Change future tasks |
+| `t r p` | Pause the schedule |
+| `t r r` | Resume the schedule |
+| `t r s` | Stop repeating after the current task |
+| `t r h` | View history |
 
-See [`aven recur`](/command-reference/#aven-recur) for command-line management and recurrence behavior.
+See [Recurring tasks](/recurring-tasks/) for schedule behavior, missed dates,
+and lifecycle guidance. See [`aven recur`](/command-reference/#aven-recur) for
+CLI management.
 
 ## Projects and relationships
 

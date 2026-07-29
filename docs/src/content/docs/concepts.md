@@ -84,6 +84,23 @@ A task may use either field or both. A future due date does not defer work. A pa
 
 Availability is a timestamp because it can represent a local time of day or an exact UTC instant. Due dates are date-only values because the deadline applies to the local calendar day. Neither field creates reminders, notifications, recurrence, or automatic status changes.
 
+## Recurring tasks
+
+Some work comes back: a weekly review, monthly invoices, or a daily journal. A
+recurring task keeps the schedule and details to reuse, while Aven gives you one
+unfinished task for the relevant date instead of filling your queue with
+copies.
+
+Finish that task and the next one returns on its scheduled date. Skip or cancel
+it and Aven records that date as skipped before continuing. Leave it unfinished
+past its scheduled date and it becomes missed, so recurring work does not pile
+up.
+
+Each dated task is a normal task with its own notes, attachments, and edits.
+Schedules can be paused while you are away, resumed later, or stopped for good.
+See [Recurring tasks](/recurring-tasks/) to create schedules and understand
+availability, history, and future tasks.
+
 ## Queue
 
 The queue is the default attention view in the TUI. It answers: what should I look at next?
