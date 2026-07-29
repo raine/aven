@@ -36,12 +36,9 @@ Press `Enter` on **Schedule** when a structured editor is easier. Choose
 **Repeating**, then set the repetition pattern, availability time, due setting,
 and start date. The schedule uses your device's time zone.
 
-:::note[Screenshot placeholder: repeating schedule editor]
-Capture the task composer for a realistic weekly task with the structured
-**Repeating** editor open. Show the repetition pattern, availability time,
-same-day due setting, start date, and previewed dates. Suggested filename:
-`recurring-schedule-editor.webp`.
-:::
+![Aven task composer with a weekly repeating schedule and preview dates](/recurring-schedule-editor.webp)
+
+<p class="media-caption">Repeating mode combines the weekly pattern, availability time, due policy, start date, and upcoming occurrences.</p>
 
 ## Choose a schedule
 
