@@ -195,6 +195,10 @@ install:
     env SQLX_OFFLINE=true cargo install --offline --path . --locked
     if [[ "$("$HOME/.cargo/bin/aven" config get sync.enabled)" == "true" ]]; then "$HOME/.cargo/bin/aven" daemon install; fi
 
+# Install release binary globally from GitHub Actions
+install-ci:
+    scripts/install-ci
+
 # Install release binary globally from GitHub releases
 install-release:
     #!/usr/bin/env bash
