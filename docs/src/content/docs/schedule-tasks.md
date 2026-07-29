@@ -68,12 +68,9 @@ A deferred task remains under Upcoming even when its deadline has passed. Use
 [`aven list --upcoming --overdue`](/command-reference/#aven-list) to find those
 tasks.
 
-:::note[Screenshot placeholder: Upcoming view]
-Capture Upcoming with three deferred tasks on different dates. Select a task
-that has both availability and a due date, and keep its preview visible so the
-two values can be compared. Include the sidebar and availability ordering.
-Suggested filename: `schedule-upcoming.webp`.
-:::
+![Aven Upcoming view with deferred tasks grouped and ordered by availability](/schedule-upcoming.webp)
+
+<p class="media-caption">Upcoming groups deferred work by availability date while the selected-task preview preserves its project and planning context.</p>
 
 ## Remove a date
 
