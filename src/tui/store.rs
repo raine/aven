@@ -326,7 +326,6 @@ impl TuiStore {
                 self.append_recurrence_conflict_tasks().await?;
             }
         }
-        self.expand_visible_epics_by_default();
         self.load_epic_child_tasks(&workspace_id).await?;
         self.prune_expanded_epic_ids();
         self.sync_status = self.load_sync_status().await?;
@@ -411,19 +410,6 @@ impl TuiStore {
             .await?;
         self.tasks.extend(children);
         Ok(())
-    }
-
-    fn expand_visible_epics_by_default(&mut self) {
-        if self.view_state.view != TaskView::Epics {
-            return;
-        }
-        for item in &self.tasks {
-            if item.task.is_epic && !self.view_state.collapsed_epic_ids.contains(&item.task.id) {
-                self.view_state
-                    .expanded_epic_ids
-                    .insert(item.task.id.clone());
-            }
-        }
     }
 
     fn prune_expanded_epic_ids(&mut self) {

@@ -8439,13 +8439,13 @@ mod detail_mode {
 
             app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
 
-            assert!(app.store.view_state.collapsed_epic_ids.contains(&parent_id));
-            assert!(!app.store.tasks.iter().any(|item| item.task.id == child_id));
+            assert!(app.store.view_state.expanded_epic_ids.contains(&parent_id));
+            assert!(app.store.tasks.iter().any(|item| item.task.id == child_id));
 
             app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
 
-            assert!(app.store.view_state.expanded_epic_ids.contains(&parent_id));
-            assert!(app.store.tasks.iter().any(|item| item.task.id == child_id));
+            assert!(app.store.view_state.collapsed_epic_ids.contains(&parent_id));
+            assert!(!app.store.tasks.iter().any(|item| item.task.id == child_id));
         }
     }
 
@@ -8480,6 +8480,11 @@ mod detail_mode {
             .tasks
             .iter()
             .position(|item| item.task.id == parent_id)
+            .unwrap();
+        app.store
+            .toggle_selected_epic(Some(parent_index))
+            .await
+            .unwrap()
             .unwrap();
         app.list.select_task(Some(parent_index));
         app.move_selection(1).await.unwrap();
