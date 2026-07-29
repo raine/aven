@@ -51,13 +51,9 @@ selected task to another project.
 Use `g p` to scope the current view to one project. Press `g a` to return to all
 projects in the workspace.
 
-:::note[Screenshot placeholder: project scope and labels]
-Capture the Queue at workspace scope after pressing `g a`, with tasks from two
-or more projects visible. Apply the same label across projects and filter with
-`f l`. Keep the header, sidebar, project groups, and selected-task preview
-visible so the image distinguishes project ownership from cross-project labels.
-Suggested filename: `organize-project-scope.webp`.
-:::
+![Aven Queue at workspace scope filtered to capture tasks across the mobile-app and cli projects](/organize-project-scope.webp)
+
+<p class="media-caption">Workspace scope keeps project ownership visible while a label filter finds related work across projects.</p>
 
 Use projects for durable ownership, not temporary categories. Moving a task
 changes its displayed project prefix while preserving its identity.
