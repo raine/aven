@@ -689,6 +689,7 @@ mod add_task_overlay {
             .find(|row| buffer_row(&buffer, *row).contains("╭─ Add task "))
             .expect("add task top border");
         let bottom = (top..buffer.area.height)
+            .rev()
             .find(|row| buffer_row(&buffer, *row).contains('╰'))
             .expect("add task bottom border");
         bottom - top + 1
@@ -774,6 +775,19 @@ mod add_task_overlay {
             cell_position(&status_row, "Status:"),
             cell_position(&schedule_row, "Schedule:")
         );
+    }
+
+    #[test]
+    fn structured_schedule_editor_preserves_composer_height() {
+        let compact_height = dialog_height(add_task_view());
+        let structured_height = dialog_height(AddTaskView {
+            mode: Box::new(AddTaskMode::Schedule(schedule_editor(
+                ScheduleEditorMode::Once,
+            ))),
+            ..add_task_view()
+        });
+
+        assert_eq!(structured_height, compact_height);
     }
 
     #[test]
