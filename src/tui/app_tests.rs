@@ -4958,7 +4958,21 @@ mod filters_and_workspaces {
     async fn header_metric_click_still_selects_view_directly() {
         let mut app = test_app().await;
 
-        app.dispatch_mouse(header_click(65), (140, 24).into())
+        let queue_column = (0..140)
+            .find(|column| {
+                matches!(
+                    crate::tui::ui::header_target_at(
+                        &app.store,
+                        None,
+                        ratatui::layout::Rect::new(0, 0, 140, 2),
+                        *column,
+                        0,
+                    ),
+                    Some(crate::tui::ui::HeaderTarget::MetricView(TaskView::Queue))
+                )
+            })
+            .unwrap();
+        app.dispatch_mouse(header_click(queue_column), (140, 24).into())
             .await
             .unwrap();
         assert_eq!(app.store.view_state.view, TaskView::Queue);
@@ -5003,19 +5017,37 @@ mod filters_and_workspaces {
     async fn header_click_opens_order_menu_and_selects_order() {
         let mut app = test_app().await;
 
-        app.dispatch_mouse(header_click(127), (140, 24).into())
+        let (order_column, menu_column) = (0..140)
+            .find_map(|column| {
+                match crate::tui::ui::header_target_at(
+                    &app.store,
+                    None,
+                    ratatui::layout::Rect::new(0, 0, 140, 2),
+                    column,
+                    0,
+                ) {
+                    Some(crate::tui::ui::HeaderTarget::Order {
+                        column: menu_column,
+                    }) => Some((column, menu_column)),
+                    _ => None,
+                }
+            })
+            .unwrap();
+        app.dispatch_mouse(header_click(order_column), (140, 24).into())
             .await
             .unwrap();
         assert!(matches!(
             app.overlay,
             Some(OverlayState::OrderMenu(state))
-                if state.column == 114 && state.row == 0 && state.selected == TaskOrder::Created
+                if state.column == menu_column
+                    && state.row == 0
+                    && state.selected == TaskOrder::Created
         ));
 
         app.dispatch_mouse(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
-                column: 130,
+                column: order_column,
                 row: 6,
                 modifiers: KeyModifiers::NONE,
             },
