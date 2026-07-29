@@ -123,45 +123,7 @@ fn header_spans(
     update: Option<&crate::tui::app_update::UpdateBadgeView>,
     width: u16,
 ) -> Vec<Span<'static>> {
-    let compact = width < 120;
-    let mut spans = vec![Span::styled(
-        " aven",
-        Style::new().fg(FG).add_modifier(Modifier::BOLD),
-    )];
-    if let Some(update) = update {
-        spans.push(separator());
-        spans.extend(update_badge(update));
-    }
-    spans.extend([
-        separator(),
-        Span::styled(
-            if compact { "ws " } else { "workspace " },
-            Style::new().fg(FG_DIM),
-        ),
-        Span::styled(
-            store.active_workspace.key.clone(),
-            Style::new().fg(FG).add_modifier(Modifier::BOLD),
-        ),
-        separator(),
-        Span::styled("scope ", Style::new().fg(FG_DIM)),
-    ]);
-    spans.extend(scope_badge(store));
-    spans.extend([separator(), Span::styled("view ", Style::new().fg(FG_DIM))]);
-    spans.extend(view_badge(store));
-    spans.push(separator());
-    spans.extend(header_metrics(store, compact));
-    spans.extend(active_filter_spans(store));
-    let order_spans = active_order_spans(store);
-    if (!compact || width >= 84)
-        && header_segment_fits(
-            spans_width(spans.clone()),
-            spans_width(order_spans.clone()),
-            width,
-        )
-    {
-        spans.extend(order_spans);
-    }
-    spans
+    header_layout(store, update, width).spans
 }
 
 fn header_hitboxes(
@@ -169,99 +131,121 @@ fn header_hitboxes(
     update: Option<&crate::tui::app_update::UpdateBadgeView>,
     width: u16,
 ) -> Vec<HeaderHitbox> {
-    let compact = width < 120;
-    let mut hitboxes = Vec::new();
-    let mut x = 0;
-    push_target(
-        &mut hitboxes,
-        &mut x,
-        " aven".width() as u16,
-        HeaderTarget::Home,
-    );
-    push_text(&mut x, separator_text());
-    if let Some(update) = update {
-        push_target(
-            &mut hitboxes,
-            &mut x,
-            spans_width(update_badge(update)),
-            HeaderTarget::Update,
-        );
-        push_text(&mut x, separator_text());
+    header_layout(store, update, width).hitboxes
+}
+
+struct HeaderLayout {
+    spans: Vec<Span<'static>>,
+    hitboxes: Vec<HeaderHitbox>,
+    width: u16,
+}
+
+impl HeaderLayout {
+    fn new() -> Self {
+        Self {
+            spans: Vec::new(),
+            hitboxes: Vec::new(),
+            width: 0,
+        }
     }
-    let workspace_start = x;
-    push_text(&mut x, if compact { "ws " } else { "workspace " });
-    push_text(&mut x, &store.active_workspace.key);
-    push_hitbox(
-        &mut hitboxes,
-        workspace_start,
-        x,
-        HeaderTarget::Workspace { column: 0 },
+
+    fn push(&mut self, spans: Vec<Span<'static>>, target: Option<HeaderTarget>) {
+        let start = self.width;
+        self.width = self.width.saturating_add(spans_width(spans.clone()));
+        self.spans.extend(spans);
+        if let Some(target) = target
+            && start < self.width
+        {
+            self.hitboxes.push(HeaderHitbox {
+                start,
+                end: self.width,
+                target,
+            });
+        }
+    }
+
+    fn push_text(&mut self, span: Span<'static>, target: Option<HeaderTarget>) {
+        self.push(vec![span], target);
+    }
+
+    fn segment_fits(&self, segment: &[Span<'static>], available_width: u16) -> bool {
+        header_segment_fits(self.width, spans_width(segment.to_vec()), available_width)
+    }
+
+    fn finish(mut self, available_width: u16) -> Self {
+        self.hitboxes
+            .retain(|hitbox| hitbox.start < available_width);
+        for hitbox in &mut self.hitboxes {
+            hitbox.end = hitbox.end.min(available_width);
+        }
+        self
+    }
+}
+
+fn header_layout(
+    store: &TuiStore,
+    update: Option<&crate::tui::app_update::UpdateBadgeView>,
+    width: u16,
+) -> HeaderLayout {
+    let compact = width < 120;
+    let mut layout = HeaderLayout::new();
+    layout.push_text(
+        Span::styled(" aven", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Some(HeaderTarget::Home),
     );
-    push_text(&mut x, separator_text());
-    let scope_start = x;
-    push_text(&mut x, "scope ");
-    push_text(&mut x, &spans_text(scope_badge(store)));
-    push_hitbox(
-        &mut hitboxes,
-        scope_start,
-        x,
-        HeaderTarget::Scope { column: 0 },
+    if let Some(update) = update {
+        layout.push_text(separator(), None);
+        layout.push(update_badge(update), Some(HeaderTarget::Update));
+    }
+    layout.push_text(separator(), None);
+    layout.push(
+        vec![
+            Span::styled(
+                if compact { "ws " } else { "workspace " },
+                Style::new().fg(FG_DIM),
+            ),
+            Span::styled(
+                store.active_workspace.key.clone(),
+                Style::new().fg(FG).add_modifier(Modifier::BOLD),
+            ),
+        ],
+        Some(HeaderTarget::Workspace { column: 0 }),
     );
-    push_text(&mut x, separator_text());
-    let view_start = x;
-    push_text(&mut x, "view ");
-    push_text(&mut x, &spans_text(view_badge(store)));
-    push_hitbox(
-        &mut hitboxes,
-        view_start,
-        x,
-        HeaderTarget::View { column: 0 },
-    );
-    push_text(&mut x, separator_text());
-    for (index, (text, target)) in header_metric_targets(store, compact)
+    layout.push_text(separator(), None);
+    let mut scope = vec![Span::styled("scope ", Style::new().fg(FG_DIM))];
+    scope.extend(scope_badge(store));
+    layout.push(scope, Some(HeaderTarget::Scope { column: 0 }));
+    layout.push_text(separator(), None);
+    let mut view = vec![Span::styled("view ", Style::new().fg(FG_DIM))];
+    view.extend(view_badge(store));
+    layout.push(view, Some(HeaderTarget::View { column: 0 }));
+    layout.push(active_filter_spans(store), None);
+
+    let order = active_order_spans(store);
+    if (!compact || width >= 84) && layout.segment_fits(&order, width) {
+        layout.push(order, Some(HeaderTarget::Order { column: 0 }));
+    }
+
+    for (index, (label, count, color, active, target)) in header_metric_entries(store, compact)
         .into_iter()
         .enumerate()
     {
-        if index > 0 {
-            push_text(&mut x, " ");
+        let prefix = if index == 0 {
+            vec![separator()]
+        } else {
+            vec![Span::raw(" ")]
+        };
+        let badge = metric(label, count, color, active);
+        let mut segment = prefix.clone();
+        segment.extend(badge.clone());
+        if !layout.segment_fits(&segment, width) {
+            break;
         }
-        push_target(&mut hitboxes, &mut x, text.width() as u16, target);
+        layout.push(prefix, None);
+        layout.push(badge, Some(HeaderTarget::MetricView(target)));
     }
-    let filter_width = spans_width(active_filter_spans(store));
-    push_text(&mut x, &" ".repeat(filter_width as usize));
-    let order_width = spans_width(active_order_spans(store));
-    if (!compact || width >= 84) && header_segment_fits(x, order_width, width) {
-        push_target(
-            &mut hitboxes,
-            &mut x,
-            order_width,
-            HeaderTarget::Order { column: 0 },
-        );
-    }
-    hitboxes
-        .into_iter()
-        .filter(|hitbox| hitbox.start < width && hitbox.end > 0)
-        .map(|mut hitbox| {
-            hitbox.end = hitbox.end.min(width);
-            hitbox
-        })
-        .collect()
-}
 
-fn push_text(x: &mut u16, text: &str) {
-    *x = x.saturating_add(text.width() as u16);
-}
-
-fn push_target(hitboxes: &mut Vec<HeaderHitbox>, x: &mut u16, width: u16, target: HeaderTarget) {
-    let start = *x;
-    *x = x.saturating_add(width);
-    push_hitbox(hitboxes, start, *x, target);
-}
-
-fn push_hitbox(hitboxes: &mut Vec<HeaderHitbox>, start: u16, end: u16, target: HeaderTarget) {
-    if start < end {
-        hitboxes.push(HeaderHitbox { start, end, target });
-    }
+    layout.finish(width)
 }
 
 fn spans_width(spans: Vec<Span<'static>>) -> u16 {
@@ -283,6 +267,7 @@ fn separator_text() -> &'static str {
     " │ "
 }
 
+#[cfg(test)]
 fn header_metrics(store: &TuiStore, compact: bool) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     for (label, count, color, active, _) in header_metric_entries(store, compact) {
@@ -292,18 +277,6 @@ fn header_metrics(store: &TuiStore, compact: bool) -> Vec<Span<'static>> {
         spans.extend(metric(label, count, color, active));
     }
     spans
-}
-
-fn header_metric_targets(store: &TuiStore, compact: bool) -> Vec<(String, HeaderTarget)> {
-    header_metric_entries(store, compact)
-        .into_iter()
-        .map(|(label, count, _, _, target)| {
-            (
-                format!("{label} {count}"),
-                HeaderTarget::MetricView(target),
-            )
-        })
-        .collect()
 }
 
 fn header_metric_entries(
@@ -662,6 +635,31 @@ mod tests {
         assert!(!rendered.contains("order"));
     }
 
+    #[tokio::test]
+    async fn constrained_header_keeps_complete_filter_ahead_of_metrics() {
+        let mut store = test_store().await;
+        store.view_state.filter_modifiers.label = Some("capture".to_string());
+
+        let rendered = spans_text(header_spans(&store, None, 78));
+
+        assert!(rendered.contains("filter label=capture"), "{rendered:?}");
+        assert!(!rendered.contains("queue 3"), "{rendered:?}");
+        assert!(rendered.ends_with("label=capture"), "{rendered:?}");
+    }
+
+    #[tokio::test]
+    async fn constrained_header_adds_only_complete_priority_metrics() {
+        let mut store = test_store().await;
+        store.view_state.filter_modifiers.label = Some("capture".to_string());
+
+        let rendered = spans_text(header_spans(&store, None, 90));
+
+        assert!(rendered.contains("filter label=capture"), "{rendered:?}");
+        assert!(rendered.contains("queue 3"), "{rendered:?}");
+        assert!(!rendered.contains("open 3"), "{rendered:?}");
+        assert!(rendered.ends_with(''), "{rendered:?}");
+    }
+
     #[test]
     fn header_segment_fit_requires_gap() {
         assert!(!header_segment_fits(10, 5, 15));
@@ -670,7 +668,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sync_indicator_keeps_space_after_selected_status_label() {
+    async fn sync_indicator_keeps_space_after_complete_left_segment() {
         let mut store = test_store().await;
         store.view_state.view = TaskView::Todo;
         store.sync_status.enabled = true;
@@ -688,11 +686,7 @@ mod tests {
             .collect::<String>();
         let (prefix, _) = first_row.split_once("● sync").unwrap();
         assert!(prefix.ends_with(' '), "{first_row:?}");
-        let selected_status = prefix.trim_end();
-        assert!(
-            selected_status.ends_with("todo") || selected_status.ends_with("todo 2"),
-            "{first_row:?}"
-        );
+        assert!(prefix.trim_end().ends_with(''), "{first_row:?}");
     }
 
     #[tokio::test]
@@ -728,43 +722,69 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn header_metric_clicks_map_to_scope_and_views() {
+    async fn header_click_targets_follow_rendered_segments() {
         let mut store = test_store().await;
         store.view_state.scope = TaskScope::Project("mobile-app".to_string());
-        let area = Rect::new(0, 0, 150, 2);
+        store.view_state.filter_modifiers.label = Some("capture".to_string());
+        let area = Rect::new(7, 4, 157, 2);
+        let content_width = area.width.saturating_sub(1);
+        let line_width = content_width.saturating_sub(header_status_width(&store));
+        let rendered = spans_text(header_spans(&store, None, line_width));
+        let column_for = |text: &str| {
+            let byte = rendered.find(text).unwrap();
+            area.x
+                .saturating_add(rendered[..byte].width().try_into().unwrap())
+        };
 
         assert_eq!(
-            header_target_at(&store, None, area, 2, 0),
+            header_target_at(&store, None, area, column_for("aven") + 1, area.y),
             Some(HeaderTarget::Home)
         );
         assert_eq!(
-            header_target_at(&store, None, area, 10, 0),
-            Some(HeaderTarget::Workspace { column: 8 })
+            header_target_at(&store, None, area, column_for("workspace default"), area.y),
+            Some(HeaderTarget::Workspace {
+                column: column_for("workspace default")
+            })
         );
         assert_eq!(
-            header_target_at(&store, None, area, 36, 0),
-            Some(HeaderTarget::Scope { column: 28 })
+            header_target_at(&store, None, area, column_for("scope "), area.y),
+            Some(HeaderTarget::Scope {
+                column: column_for("scope ")
+            })
         );
         assert_eq!(
-            header_target_at(&store, None, area, 58, 0),
-            Some(HeaderTarget::View { column: 57 })
+            header_target_at(&store, None, area, column_for("view "), area.y),
+            Some(HeaderTarget::View {
+                column: column_for("view ")
+            })
         );
         assert_eq!(
-            header_target_at(&store, None, area, 75, 0),
+            header_target_at(&store, None, area, column_for("label=capture"), area.y),
+            None
+        );
+        assert_eq!(
+            header_target_at(&store, None, area, column_for("order "), area.y),
+            Some(HeaderTarget::Order {
+                column: column_for(" │ order ")
+            })
+        );
+        assert_eq!(
+            header_target_at(&store, None, area, column_for("queue 3"), area.y),
             Some(HeaderTarget::MetricView(TaskView::Queue))
         );
         assert_eq!(
-            header_target_at(&store, None, area, 104, 0),
-            Some(HeaderTarget::MetricView(TaskView::Inbox))
-        );
-        assert_eq!(
-            header_target_at(&store, None, area, 128, 0),
-            Some(HeaderTarget::Order { column: 123 })
-        );
-        assert_eq!(
-            header_target_at(&store, None, area, 145, 0),
+            header_target_at(
+                &store,
+                None,
+                area,
+                area.x.saturating_add(line_width),
+                area.y
+            ),
             Some(HeaderTarget::SyncStatus)
         );
-        assert_eq!(header_target_at(&store, None, area, 36, 1), None);
+        assert_eq!(
+            header_target_at(&store, None, area, column_for("queue 3"), area.y + 1),
+            None
+        );
     }
 }
