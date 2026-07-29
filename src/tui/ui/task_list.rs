@@ -1373,6 +1373,44 @@ fn availability_preview_line(
     ]))
 }
 
+fn due_preview_line(item: &TaskListItem, now_seconds: i64, width: usize) -> Option<Line<'static>> {
+    let due_on = item.task.due_on.as_deref().unwrap_or("");
+    let [relative, date] = crate::tui::time::due_summary_lines(due_on, now_seconds)?;
+    let relative = relative.strip_prefix("due ").unwrap_or(&relative);
+    let fixed_width = "due ".len() + relative.len() + " · ".len();
+    let date = truncate_chars(&date, width.saturating_sub(fixed_width));
+    let color = if !item.task.status.is_open() {
+        FG_MUTED
+    } else {
+        match crate::tui::time::due_state_at(due_on, now_seconds) {
+            crate::due::DueState::Overdue(_) => RED,
+            crate::due::DueState::Today => YELLOW,
+            crate::due::DueState::Future(_) => ACCENT,
+            crate::due::DueState::None => FG_MUTED,
+        }
+    };
+
+    Some(Line::from(vec![
+        Span::styled("due ", Style::new().fg(FG_DIM)),
+        Span::styled(
+            relative.to_string(),
+            Style::new().fg(color).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" · ", Style::new().fg(FG_DIM)),
+        Span::styled(date, Style::new().fg(FG_MUTED)),
+    ]))
+}
+
+fn timing_preview_lines(item: &TaskListItem, now_seconds: i64, width: usize) -> Vec<Line<'static>> {
+    [
+        availability_preview_line(item, now_seconds, width),
+        due_preview_line(item, now_seconds, width),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
 fn dependency_preview_lines(item: &TaskListItem) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     if !item.depends_on.is_empty() {
@@ -1434,9 +1472,7 @@ pub(super) fn render_task_preview(
 fn task_preview_lines(item: &TaskListItem, width: usize, height: usize) -> Vec<Line<'static>> {
     let labels = labels_display(&item.labels, ", ");
     let mut lines = vec![task_heading_line(item), task_preview_fields_line(item)];
-    if let Some(availability) = availability_preview_line(item, now_seconds(), width) {
-        lines.push(availability);
-    }
+    lines.extend(timing_preview_lines(item, now_seconds(), width));
     if let Some(recurrence) = item.recurrence.as_ref() {
         lines.push(Line::from(vec![
             Span::styled("↻ ", Style::new().fg(ACCENT)),
@@ -1547,6 +1583,7 @@ mod tests {
     use crate::operations::TaskDraft;
     use crate::tui::overlay::TextInputKind;
     use crate::tui::test_support::task_list_item;
+    use chrono::TimeZone;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -2374,6 +2411,63 @@ mod tests {
         item.task.available_at = Some("100".to_string());
 
         assert!(availability_preview_line(&item, 200, 80).is_none());
+    }
+
+    #[test]
+    fn task_preview_shows_availability_and_due_date_responsively() {
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 7, 16, 12, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp();
+        let mut item = task_list_item("preview");
+        item.task.available_at = Some((now + 3_600).to_string());
+        item.task.due_on = Some("2026-07-17".to_string());
+
+        let lines = timing_preview_lines(&item, now, 24);
+
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].to_string().starts_with("available in 1h · "));
+        assert!(lines[1].to_string().starts_with("due tomorrow · "));
+        assert!(lines.iter().all(|line| line.width() <= 24));
+        assert_eq!(lines[1].spans[0].style.fg, Some(FG_DIM));
+        assert_eq!(lines[1].spans[1].style.fg, Some(ACCENT));
+        assert!(
+            lines[1].spans[1]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+        assert_eq!(lines[1].spans[3].style.fg, Some(FG_MUTED));
+    }
+
+    #[test]
+    fn task_preview_timing_lines_preserve_absent_values() {
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 7, 16, 12, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp();
+        let mut item = task_list_item("preview");
+
+        assert!(timing_preview_lines(&item, now, 80).is_empty());
+
+        item.task.available_at = Some((now + 3_600).to_string());
+        assert_eq!(timing_preview_lines(&item, now, 80).len(), 1);
+        assert!(
+            timing_preview_lines(&item, now, 80)[0]
+                .to_string()
+                .starts_with("available ")
+        );
+
+        item.task.available_at = None;
+        item.task.due_on = Some("2026-07-17".to_string());
+        assert_eq!(timing_preview_lines(&item, now, 80).len(), 1);
+        assert!(
+            timing_preview_lines(&item, now, 80)[0]
+                .to_string()
+                .starts_with("due ")
+        );
     }
 
     #[test]
