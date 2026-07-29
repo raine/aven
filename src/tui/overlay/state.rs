@@ -766,6 +766,17 @@ pub(crate) enum AddTaskMode {
     ConfirmDiscard,
 }
 
+impl AddTaskMode {
+    pub(crate) fn expands_composer(&self) -> bool {
+        match self {
+            Self::Compose | Self::Schedule(_) => false,
+            Self::Picker { .. } | Self::Labels(_) | Self::Help { .. } | Self::ConfirmDiscard => {
+                true
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AddTaskState {
     pub(crate) title: LineEdit,
