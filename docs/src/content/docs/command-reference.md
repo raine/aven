@@ -49,7 +49,7 @@ EOF
 
 ### Structured output
 
-The `--json` option is available on `context`, `show`, `list`, `search`, `attachment add`, `attachment list`, `attachment get`, `attachment delete`, `attachment prune`, `dep list`, `epic list`, `prime`, `label list`, `project list`, `conflict list`, `conflict show`, and `doctor`. JSON task objects expose temporal fields through `available_at` and `due_on`, and epic membership separately from dependency ordering through `is_epic`, `epic_parent`, and `epic_children`. `context --json` and `show --full --json` also expose attachment metadata without bytes. An empty `available_at` means immediate availability. An empty `due_on` means no deadline.
+The `--json` option is available on `context`, `show`, `list`, `search`, `recur list`, `recur show`, `recur history`, `attachment add`, `attachment list`, `attachment get`, `attachment delete`, `attachment prune`, `dep list`, `epic list`, `prime`, `label list`, `project list`, `conflict list`, `conflict show`, and `doctor`. JSON task objects expose temporal fields through `available_at` and `due_on`, and epic membership separately from dependency ordering through `is_epic`, `epic_parent`, and `epic_children`. `context --json` and `show --full --json` also expose attachment metadata without bytes. An empty `available_at` means immediate availability. An empty `due_on` means no deadline.
 
 ## Temporal input
 
@@ -98,6 +98,33 @@ aven edit APP-7KQ9 --clear-due
 aven list --overdue
 ```
 
+### Recurrence input
+
+`aven add --repeat` accepts these exact forms:
+
+| Value | Schedule |
+| --- | --- |
+| `daily` | Every day. |
+| `weekdays` | Monday through Friday. |
+| `weekly` | Every week on the start date's weekday. |
+| `fortnightly` | Every two weeks on the start date's weekday. |
+| `monthly` | The start date's day number every month. |
+| `weekly on mon,wed,fri` | The selected weekdays every week. |
+| `every N weeks` | Every N weeks on the start date's weekday. |
+| `every N weeks on mon,thu` | The selected weekdays every N weeks. |
+
+Explicit weekdays use the canonical abbreviations `mon`, `tue`, `wed`, `thu`,
+`fri`, `sat`, and `sun`, listed in Monday-to-Sunday order. `N` must be a
+positive whole number. Weeks begin on Monday.
+
+Monthly schedules use the final day of shorter months. A schedule starting on
+January 31 runs on February 28 or 29, then March 31.
+
+The TUI schedule field also accepts friendly forms such as `every day`, `every
+Friday`, `Fridays`, `every month`, and `every 3 weeks on Monday and Thursday`.
+See [Recurring tasks](/recurring-tasks/) for creation workflows and schedule
+behavior.
+
 ## Task commands
 
 ### `aven add`
@@ -118,16 +145,25 @@ aven add <title> [options]
 | `--priority <priority>` | Set the priority. Defaults to `none`. |
 | `--available-at <when>` | Defer the task until a calendar expression or timestamp. See [Availability input](#availability-input). |
 | `--due <when>` | Set a date-only deadline. See [Due date input](#due-date-input). |
-| `--repeat <rule>` | Create a recurring series with the fixed grammar documented below. |
-| `--repeat-at <HH:MM>` | Make each occurrence available at this local time in the series time zone. |
-| `--repeat-due <same-day\|none>` | Set the occurrence due policy. Defaults to `same-day`. |
-| `--time-zone <IANA-zone>` | Own slot dates and local times in this IANA time zone. Defaults to the device zone. |
-| `--repeat-start-on <YYYY-MM-DD>` | Set the first eligible calendar date. Defaults to the creation date in the series zone. |
+| `--repeat <rule>` | Create a recurring task using a value from [Recurrence input](#recurrence-input). |
+| `--repeat-at <HH:MM>` | Make each dated task available at this local time in the recurring task's time zone. |
+| `--repeat-due <same-day\|none>` | Make each dated task due on its scheduled date or leave it without a due date. Defaults to `same-day`. |
+| `--time-zone <IANA-zone>` | Interpret scheduled dates and local times in this IANA time zone. Defaults to the device zone. |
+| `--repeat-start-on <YYYY-MM-DD>` | Set the first eligible scheduled date. Defaults to the creation date in the recurring task's time zone. |
 | `--label <label>` | Add a label. Repeat for multiple labels. Labels must already exist. |
 | `--epic` | Create an epic container. |
 | `--natural` | Parse the title as natural-language task intake using the configured agent command. |
 
-A plain task starts with status `inbox`. A recurring task starts with status `todo` and prints both its stable series ref and first occurrence task ref. Recurrence rules are exactly `daily`, `weekdays`, `weekly`, `fortnightly`, `monthly`, `weekly on mon,wed,fri`, `every N weeks`, and `every N weeks on mon,thu`, with canonical Monday-to-Sunday weekday abbreviations where weekdays are explicit. Weekly shorthands use the weekday of the start date, and weeks begin on Monday. Monthly rules use the start date's day number. Shorter months clamp to their final day without changing the anchor, so January 31 is followed by February 28 or 29 and then March 31. `--available-at` and `--due` cannot be combined with `--repeat`; use `--repeat-at` and `--repeat-due` instead. `--natural` cannot be combined with a description source, `--project`, a non-default priority, `--label`, scheduling flags, or `--due`. Natural intake can infer a title, description, project, status, priority, labels, availability, due date, and epic state from the request.
+A plain task starts with status `inbox`. A recurring task starts with status
+`todo` and prints both its stable `RCR-` reference and first task reference. See
+[Recurrence input](#recurrence-input) for the accepted `--repeat` values.
+`--available-at` and `--due` cannot be combined with `--repeat`; use
+`--repeat-at` and `--repeat-due` instead.
+
+`--natural` cannot be combined with a description source, `--project`, a
+non-default priority, `--label`, scheduling flags, or `--due`. Natural intake
+can infer a title, description, project, status, priority, labels, availability,
+due date, and epic state from the request.
 
 The command prints the created task's qualified reference and bare suffix.
 
@@ -163,7 +199,7 @@ aven list [options]
 | `--epics` | Show epic containers only. |
 | `--upcoming` | Show open, live tasks with a future availability time, ordered by availability time from earliest to latest. |
 | `--overdue` | Show open, live tasks with a due date before today, ordered by due date from oldest to newest. |
-| `--expand-recurring` | Show individual recurring occurrence rows instead of grouped terminal series rows. |
+| `--expand-recurring` | Show each dated recurring task as a separate row instead of grouping past tasks by recurring task. |
 | `--limit <number>` | Return at most this many tasks after sorting and filtering. |
 | `--json` | Print a JSON array. |
 
@@ -199,7 +235,7 @@ aven search <query>... [--limit <number>] [--all] [--json]
 | `<query>...` | One or more search terms. Multiple shell arguments are joined with spaces. |
 | `--limit <number>` | Maximum result count. Defaults to `50`. |
 | `--all` | Include deleted tasks. |
-| `--expand-recurring` | Return individual recurring occurrence matches instead of one grouped series result. |
+| `--expand-recurring` | Return each matching dated task instead of grouping past matches by recurring task. |
 | `--json` | Print ranked results as JSON, including score, matched field, and optional snippet. |
 
 Text output identifies the matched field and score and prints a snippet when available. Ref-shaped input can resolve a deleted task when `--all` is present.
@@ -218,7 +254,7 @@ Print a complete context snapshot for one task.
 aven context <task-ref> [--json]
 ```
 
-The snapshot includes stable identity, display reference, task fields, description, project and workspace metadata, labels, notes, dependencies, dependents, epic membership, recurrence series metadata, deletion state, and unresolved conflicts. It also derives whether the task is blocked, has conflicts, or blocks open work.
+The snapshot includes stable identity, display reference, task fields, description, project and workspace metadata, labels, notes, dependencies, dependents, epic membership, recurring-task metadata, deletion state, and unresolved conflicts. It also derives whether the task is blocked, has conflicts, or blocks open work.
 
 ```sh
 aven context APP-7KQ9
@@ -248,28 +284,99 @@ aven show APP-7KQ9 --full --json
 
 ### `aven recur`
 
-Inspect and mutate recurring series. Series commands accept a stable `RCR-7KP2` series ref or any linked occurrence task ref.
+Inspect and manage recurring tasks. See [Recurring tasks](/recurring-tasks/) for
+creation workflows, schedule behavior, and lifecycle guidance. Every command
+that takes a reference accepts the recurring task's `RCR-7KP2` reference or any
+linked task reference.
+
+#### `recur list`
 
 ```sh
 aven recur list [--json]
-aven recur show <series-or-task-ref> [--json]
-aven recur history <series-or-task-ref> [--offset <number>] [--limit <number>] [--json]
-aven recur edit <series-or-task-ref> [template options]
-aven recur skip <series-or-task-ref>
-aven recur pause <series-or-task-ref>
-aven recur resume <series-or-task-ref>
-aven recur stop <series-or-task-ref> [--skip-current]
 ```
 
-`list` prints one row per series with its lifecycle, fixed rule, time zone, current occurrence ref, and historical counts. `show` adds the future-occurrence template, current projection, and unresolved lifecycle conflicts. `history` combines task-backed completed and skipped outcomes, derived misses, archived projected misses with task refs, and pause intervals. A past slot without an occurrence task stays visible as a derived miss and has no completion or skip mutation. Series list, show, and history JSON are versioned reports with `version: 1` and a typed `kind`.
+Print one row per recurring task with its active, paused, or stopped state,
+schedule, time zone, next task reference, and history counts.
 
-`edit` accepts `--title`, description input flags, `--project`, `--status`, `--priority`, repeated `--label`, `--repeat-at <HH:MM|none>`, and `--repeat-due <same-day|none>`. Template edits affect future occurrences. The fixed rule, start date, and time zone stay immutable for the series.
+#### `recur show`
 
-`skip` resolves the current occurrence as skipped through the same aggregate transition as setting its ordinary task status to `canceled`. `pause` hides the preserved current occurrence from ordinary active views. `resume` omits slots inside the pause interval. `stop` keeps the current occurrence as the final ordinary task; `--skip-current` resolves it immediately.
+```sh
+aven recur show <recurring-or-task-ref> [--json]
+```
 
-Done lists and search group recurrence-linked history by series. Pass `--expand-recurring` to `list` or `search` for occurrence-level task rows. Task JSON includes a nullable `recurrence` object and a nullable `recurrence_group` object.
+Show the schedule, settings used for future tasks, next task, history summary,
+and unresolved state conflicts.
 
-List-like reports reconcile a bounded recurrence candidate set before reading current state. When a slot boundary has passed, a report can append one bounded projection operation per changed series, archiving one superseded projection and materializing one current projection.
+#### `recur history`
+
+```sh
+aven recur history <recurring-or-task-ref> \
+  [--offset <number>] [--limit <number>] [--json]
+```
+
+History includes completed, skipped, and missed dates plus pause periods. A
+missed date may include a task reference when Aven created a task for that date.
+`--offset` defaults to `0`, and `--limit` defaults to `100`.
+
+The JSON output from `recur list`, `recur show`, and `recur history` uses
+`version: 1` and a command-specific `kind` value.
+
+#### `recur edit`
+
+```sh
+aven recur edit <recurring-or-task-ref> [options]
+```
+
+| Option | Description |
+| --- | --- |
+| `--title <title>` | Change the title used by future tasks. |
+| `--description <text>` | Change the future description inline. |
+| `--description-file <path>` | Read the future description from a UTF-8 file. |
+| `--description-stdin` | Read the future description from standard input. |
+| `--project <project>` | Change the project used by future tasks. |
+| `--status <status>` | Change the starting status used by future tasks. |
+| `--priority <priority>` | Change the priority used by future tasks. |
+| `--label <label>` | Replace future labels. Repeat for multiple labels. |
+| `--repeat-at <HH:MM\|none>` | Change or clear the future availability time. |
+| `--repeat-due <same-day\|none>` | Change the future due setting. |
+
+These options affect tasks created later. They do not rewrite the current task
+or history. The repetition pattern, start date, and time zone cannot be edited.
+
+#### `recur skip`
+
+```sh
+aven recur skip <recurring-or-task-ref>
+```
+
+Mark the current task canceled, record its scheduled date as skipped, and
+create the next task. Setting the current task's ordinary status to `canceled`
+has the same result.
+
+#### `recur pause` and `recur resume`
+
+```sh
+aven recur pause <recurring-or-task-ref>
+aven recur resume <recurring-or-task-ref>
+```
+
+Pause hides the current task from normal active views and suppresses scheduled
+dates until resume. Resume continues without creating tasks for the paused
+period.
+
+#### `recur stop`
+
+```sh
+aven recur stop <recurring-or-task-ref> [--skip-current]
+```
+
+Stop ends future scheduling and leaves the current task available as the last
+one. `--skip-current` also marks that task canceled and records its date as
+skipped.
+
+Done lists and search results group past tasks by recurring task. Pass
+`--expand-recurring` to `aven list` or `aven search` for one row per dated task.
+Task JSON includes nullable `recurrence` and `recurrence_group` objects.
 
 ### `aven attachment`
 
@@ -858,7 +965,7 @@ aven doctor [--integrity] [--json]
 
 The report includes config and database paths and their sources, current directory, workspace and project routing, database and workspace counts, client and sequence metadata, sync configuration and recent sync state, unresolved conflict count, daemon wake settings, and macOS service status. Attachment checks report image storage, cleanup eligibility, quotas, operations in progress, and inconsistencies.
 
-Normal doctor checks attachment records and local image availability. `--integrity` also runs SQLite and relationship checks across the database, verifies recurrence schedule, identity, deterministic materialization, outcome, pause, lifecycle, and projection invariants, verifies stored image hashes and sizes, decodes the images, and confirms their formats and dimensions. A missing recurrence projection is a repairable warning with guidance to run `aven recur list`. Recurrence identity, outcome, pause, and lifecycle failures include guidance to preserve the database and recover from a known-good backup. `--json` preserves each result as a labeled row with `ok`, `warning`, `error`, or `info` status.
+Normal doctor checks attachment records and local image availability. `--integrity` also runs SQLite and relationship checks across the database, verifies recurring schedules, generated tasks, history, pauses, and active, paused, or stopped state, verifies stored image hashes and sizes, decodes the images, and confirms their formats and dimensions. A missing current recurring task is a repairable warning with guidance to run `aven recur list`. Other recurring-task integrity failures include guidance to preserve the database and recover from a known-good backup. `--json` preserves each result as a labeled row with `ok`, `warning`, `error`, or `info` status.
 
 ```sh
 aven doctor
@@ -892,7 +999,7 @@ aven backup [--output <path>]
 aven backup restore <path> --yes
 ```
 
-Without `--output`, backup creates a timestamped `.aven-backup.tar.zst` archive beside the active database. The archive contains a consistent database backup and every attachment image available on this device. The database preserves recurrence series, template labels, sparse occurrences, pause intervals, generalized conflicts and field versions, archived occurrence tasks, and occurrence-local notes and attachments. Attachment records for missing images remain in the database, but the missing files cannot be included. Cached previews and incomplete files are excluded. Aven validates every included image while creating the archive.
+Without `--output`, backup creates a timestamped `.aven-backup.tar.zst` archive beside the active database. The archive contains a consistent database backup and every attachment image available on this device. The database preserves recurring schedules, future-task settings, completed, skipped, and missed history, pauses, conflicts, and task-specific notes and attachments. Attachment records for missing images remain in the database, but the missing files cannot be included. Cached previews and incomplete files are excluded. Aven validates every included image while creating the archive.
 
 `backup restore` requires `--yes`. Restore checks the archive, database, attachment information, and image files before replacing local data. It creates safety copies of the existing database and attachment directory first. Plain SQLite backup files remain accepted for database-only recovery.
 
@@ -910,7 +1017,7 @@ Export portable user and sync metadata as JSON.
 aven export --output <path>
 ```
 
-The export includes recurrence series, template labels, sparse occurrences, pause intervals, generalized conflicts, field versions, and the existing portable task data. Archived occurrence tasks remain ordinary task rows. Image files are excluded and `blobs_included` is `false`. Parent directories are created as needed. The command reports workspace and task counts and output size.
+The export includes tasks, recurring schedules, future-task settings, history, pauses, conflicts, and attachment information. Past dated tasks remain ordinary task rows. Image files are excluded and `blobs_included` is `false`. Parent directories are created as needed. The command reports workspace and task counts and output size.
 
 ```sh
 aven export --output ~/backups/aven.json
@@ -924,7 +1031,7 @@ Replace local data from an aven JSON export.
 aven import <path> --yes
 ```
 
-Import requires explicit confirmation with `--yes`. Aven validates the export, relationships, attachment information, fixed recurrence rules, IANA zones, stable series and task identities, lattice membership, deterministic task, change, timestamp, link, and field-version identities, outcome and status agreement, pause intervals, lifecycle boundaries, and projection uniqueness before replacing local data. It creates a safety backup, preserves this installation's client identity, clears server-specific sync state, and runs integrity checks. Archived tasks and occurrence-local fields, notes, and attachment metadata remain intact. Because JSON contains no image files, imported attachments are marked unavailable until sync or a backup restore supplies them.
+Import requires explicit confirmation with `--yes`. Aven validates the export, relationships, attachment information, recurring schedules, generated tasks, history, pauses, and active, paused, or stopped state before replacing local data. It creates a safety backup, preserves this installation's client identity, clears server-specific sync state, and runs integrity checks. Past dated tasks keep their own fields, notes, and attachment metadata. Because JSON contains no image files, imported attachments are marked unavailable until sync or a backup restore supplies them.
 
 Exports without recurrence sections import every task as nonrecurring data.
 
