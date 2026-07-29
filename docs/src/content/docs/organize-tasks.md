@@ -100,13 +100,9 @@ Queue keeps tasks with unresolved dependencies in its **Blocked** group. Use a
 dependency when order matters, and use an epic when tasks belong to the same
 larger result. A task can participate in both relationships.
 
-:::note[Screenshot placeholder: epic children and dependencies]
-Capture the Epics view with one epic expanded, several children visible, and one
-child selected. Give the selected child an unresolved blocker so its preview or
-detail shows both the epic relationship and dependency. Keep the footer visible
-with the relevant child actions. Suggested filename:
-`organize-epic-dependencies.webp`.
-:::
+![Aven Epics view with an expanded scheduling epic and a selected child blocked by another child](/organize-epic-dependencies.webp)
+
+<p class="media-caption">An expanded epic shows its child tasks, while the selected-task preview connects epic membership with an unresolved dependency.</p>
 
 ## Related pages
 
