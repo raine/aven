@@ -11,6 +11,10 @@ one independently or combine them.
 | Availability | Keep the task out of normal work views until a date or time. |
 | Due date | Record the deadline and surface the task as it approaches or becomes overdue. |
 
+This guide assumes basic TUI navigation and task editing. See
+[Use the TUI](/tui/) for the composer, selection, marking tasks, and command
+discovery. Shortcuts such as `e a` are keys pressed in sequence.
+
 ## Set a schedule while creating a task
 
 Press `a` to open the task composer. Type a friendly expression in
@@ -77,8 +81,8 @@ Suggested filename: `schedule-upcoming.webp`.
 ## Remove a date
 
 Press `e a` or `e u` and submit an empty value to clear the field. Availability
-also accepts `now`, and due date accepts `none`. With several tasks marked,
-press `Ctrl-d` in the editor to clear the field on all of them.
+also accepts `now`, and due date accepts `none`. Press `Space` to mark several
+tasks, then press `Ctrl-d` in the editor to clear the field on all of them.
 
 ## Enter dates and times
 
@@ -88,10 +92,18 @@ ambiguous. Availability can include a local time, while due dates are
 calendar-only.
 
 See [Temporal input](/command-reference/#temporal-input) for every accepted
-format. When work follows a repeating pattern, use
-[Recurring tasks](/recurring-tasks/).
+format.
 
-## Command reference
+## Related pages
+
+- [Use the TUI](/tui/) covers the composer, task editing, views, and command
+  discovery.
+- [Concepts](/concepts/#availability-and-due-dates) defines availability and due
+  dates in the task model.
+- When work follows a repeating pattern, continue to
+  [Recurring tasks](/recurring-tasks/).
+
+## Reference
 
 See [`aven add`](/command-reference/#aven-add),
 [`aven edit`](/command-reference/#aven-edit), and the

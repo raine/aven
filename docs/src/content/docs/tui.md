@@ -9,6 +9,11 @@ The TUI is aven's keyboard-driven interface for local task management.
 aven tui
 ```
 
+This page covers the interface: views, navigation, capture, editing, task detail,
+and command discovery. Continue to [Organize tasks](/organize-tasks/) when
+choosing task structure, [Schedule tasks](/schedule-tasks/) for availability and
+deadlines, and [Recurring tasks](/recurring-tasks/) for repeating work.
+
 ![aven TUI showing the queue view across workspace projects](/tui.webp)
 
 <p class="media-caption">The queue brings workspace scope, project groups, task metadata, and selected-task context into one screen.</p>
@@ -84,20 +89,12 @@ Press `a` to open the task composer. Project, status, priority, labels, availabi
 
 ### Set a schedule
 
-Type a schedule directly in the Schedule field:
+The **Schedule** field accepts natural expressions such as `tomorrow`,
+`due next Friday`, or `every Friday at 09:00`. Press `Enter` on the field for a
+structured editor with **One-off** and **Repeating** modes.
 
-- `tomorrow`
-- `available tomorrow at 9am`
-- `due next Friday`
-- `daily`
-- `every Friday at 09:00`
-- `every 3 weeks, no due`
-
-Press `Enter` on Schedule when a structured editor is easier. **One-off** exposes optional Available and Due values. **Repeating** exposes the recurrence rule, the local availability time, due policy, and start date.
-
-Availability controls when a task becomes actionable. Due records a date when completion is expected. For repeating schedules, an empty availability time makes each task available at the start of its scheduled day.
-
-See [Availability input](/command-reference/#availability-input), [Due date input](/command-reference/#due-date-input), and [`aven add`](/command-reference/#aven-add) for the accepted grammar.
+See [Schedule tasks](/schedule-tasks/) for availability and deadlines, and
+[Recurring tasks](/recurring-tasks/) for repeating schedules.
 
 ### Create with AI
 
@@ -213,48 +210,24 @@ Attachments appear below the description. iTerm2, Kitty, WezTerm, and Ghostty ca
 
 Open the preview to move between attachments, open one in the system viewer, or delete one. To save an image as a regular file, use [`aven attachment get`](/command-reference/#aven-attachment).
 
-## Recurring tasks
-
-Press `v u` to open Recurring Tasks. Each row shows the schedule, next date,
-and whether the recurring task is active, paused, or stopped. Use `f r` to cycle
-those states. The `RCR-` reference identifies the whole recurring task, while
-each dated task has its own regular task reference.
-
-Press `Enter` on a recurring task to open its detail. The footer shows the
-actions available for its state: `Enter` opens the current dated task when one
-exists, `e` edits the template, `p` pauses or resumes, `h` shows history, and
-`s` stops an active or paused recurring task.
-
-The `t r` shortcuts also work from a selected recurring task or one of its dated
-tasks:
-
-| Key | Action |
-| --- | --- |
-| `t r k` | Skip the current task |
-| `t r e` | Edit template |
-| `t r p` | Pause the schedule |
-| `t r r` | Resume the schedule |
-| `t r s` | Stop permanently |
-| `t r h` | View history |
-
-See [Recurring tasks](/recurring-tasks/) for schedule behavior, missed dates,
-and lifecycle guidance. See [`aven recur`](/command-reference/#aven-recur) for
-CLI management.
-
 ## Projects and relationships
 
-Use `p` for project administration and `L` for label administration. Common commands include `p a` to add a project and `L n` to add a label.
+Press `p` to administer projects and `L` to administer labels. The `t B` and
+`t U` actions add and remove blockers. Epic membership actions live under
+`t c`, and `v e` opens the Epics view.
 
-Dependencies express blocking relationships:
+See [Organize tasks](/organize-tasks/) for choosing among workspaces, projects,
+labels, epics, and dependencies.
 
-| Key | Action |
-| --- | --- |
-| `t B` | Add a blocker to the selected task |
-| `t U` | Remove a blocker |
+## Recurring tasks
 
-Task detail shows what blocks a task and what it unlocks.
+Press `v u` to open Recurring Tasks. Each row shows its schedule, next date, and
+state. Press `Enter` on a recurring task to open its detail; the footer shows the
+actions available for that state. The `t r` family also works from a selected
+recurring task or one of its dated tasks.
 
-Epic actions live under `t c`: `t c a` adds a child, `t c r` removes a child, and `t c t` expands or collapses an epic in supported views. Press `v e` to open Epics.
+See [Recurring tasks](/recurring-tasks/) for schedules, lifecycle actions, and
+history. See [`aven recur`](/command-reference/#aven-recur) for CLI management.
 
 ## Conflicts and sync
 
@@ -314,15 +287,21 @@ The in-app command catalog is the authoritative shortcut reference:
 | `c` | Conflict resolution |
 | `C` | Configuration |
 
-## Related pages
+## Continue by goal
 
-- [Getting started](/getting-started/) covers installation and first-run usage.
-- [Concepts](/concepts/) explains the task model behind the TUI.
-- [Organize tasks](/organize-tasks/) explains workspaces, projects, labels,
-  epics, and dependencies.
-- [Schedule tasks](/schedule-tasks/) covers availability and due dates.
-- [Recurring tasks](/recurring-tasks/) covers repeating schedules and history.
-- [Command reference](/command-reference/) documents CLI equivalents and accepted input grammar.
-- [Configuration](/configuration/) covers workspace routes, project mappings, sync defaults, and task-intake configuration.
+- [Organize tasks](/organize-tasks/) explains when to use workspaces, projects,
+  labels, epics, and dependencies.
+- [Schedule tasks](/schedule-tasks/) explains availability and due dates.
+- [Recurring tasks](/recurring-tasks/) covers repeating schedules, lifecycle,
+  and history.
+- [Work with agents](/agents/) connects Aven to coding, chat, and voice agents.
+
+## Reference
+
+- [Concepts](/concepts/) defines the task model behind the interface.
+- [Command reference](/command-reference/) documents CLI equivalents and input
+  grammar.
+- [Configuration](/configuration/) covers workspace routes, project mappings,
+  sync defaults, and task-intake configuration.
 - [Terminal setup and troubleshooting](/tips/) covers terminal input, tmux, and
   image previews.
