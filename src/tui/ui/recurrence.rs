@@ -14,6 +14,7 @@ use crate::tui::theme::{
 };
 
 use super::dialog::{Dialog, dialog_hint_line};
+use super::scroll::render_vertical_scrollbar;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RecurrenceSeriesHit {
@@ -506,12 +507,21 @@ fn recurrence_detail_lines(detail: &RecurrenceSeriesDetail) -> Vec<Line<'static>
             ])
         }));
     }
-    lines.push(Line::from(""));
-    lines.push(dialog_hint_line(&recurrence_detail_actions(
-        detail,
-        current.is_some(),
-    )));
     lines
+}
+
+fn recurrence_detail_content_height(lines: &[Line<'_>], dialog_width: u16) -> usize {
+    let content_width = dialog_width.saturating_sub(4).max(1) as usize;
+    lines
+        .iter()
+        .map(|line| line.width().max(1).div_ceil(content_width))
+        .sum()
+}
+
+fn recurrence_detail_height(lines: &[Line<'_>], dialog_width: u16, max_height: u16) -> u16 {
+    (recurrence_detail_content_height(lines, dialog_width) as u16)
+        .saturating_add(3)
+        .min(max_height)
 }
 
 pub(super) fn render_recurrence_detail(
@@ -522,14 +532,31 @@ pub(super) fn render_recurrence_detail(
     let lines = recurrence_detail_lines(detail);
     let area = frame.area();
     let width = area.width.saturating_sub(4).min(76);
-    let height = (lines.len() as u16 + 2).min(area.height.saturating_sub(2));
+    let height = recurrence_detail_height(&lines, width, area.height.saturating_sub(2));
+    let content_height = recurrence_detail_content_height(&lines, width);
     let content = Dialog::new("Recurring task", width, height).render_block(frame);
+    let [body, footer] =
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(content);
     frame.render_widget(
         Paragraph::new(Text::from(lines))
             .style(Style::new().fg(FG).bg(BG_ALT))
             .scroll((scroll, 0))
             .wrap(Wrap { trim: false }),
-        content,
+        body,
+    );
+    render_vertical_scrollbar(frame, body, content_height, scroll);
+    let has_current = detail
+        .current_occurrence
+        .as_ref()
+        .and_then(|occurrence| occurrence.task_id.as_ref())
+        .is_some();
+    frame.render_widget(
+        Paragraph::new(dialog_hint_line(&recurrence_detail_actions(
+            detail,
+            has_current,
+        )))
+        .style(Style::new().fg(FG).bg(BG_ALT)),
+        footer,
     );
 }
 
@@ -665,7 +692,6 @@ mod tests {
         assert!(text.contains("CURRENT OCCURRENCE"));
         assert!(text.contains("2026-07-31  DCS-F5ZB"));
         assert!(text.contains("DESCRIPTION"));
-        assert!(text.contains("Enter open task  e edit  p pause  h history  s stop  Esc close"));
 
         let state = lines[1]
             .spans
@@ -673,7 +699,12 @@ mod tests {
             .find(|span| span.content == "active")
             .unwrap();
         assert_eq!(state.style.fg, Some(GREEN));
-        let hint = lines.last().unwrap();
+        let detail = detail();
+        let hint = dialog_hint_line(&recurrence_detail_actions(&detail, true));
+        assert_eq!(
+            line_text(&hint),
+            "Enter open task  e edit  p pause  h history  s stop  Esc close"
+        );
         for key in ["Enter", "e", "p", "h", "s", "Esc"] {
             let span = hint.spans.iter().find(|span| span.content == key).unwrap();
             assert_eq!(span.style.fg, Some(FG));
@@ -701,5 +732,32 @@ mod tests {
         assert!(rendered.contains("╭─ Recurring task"));
         assert!(rendered.contains("SCHEDULE"));
         assert!(rendered.contains("CURRENT OCCURRENCE"));
+    }
+
+    #[test]
+    fn recurring_detail_keeps_hints_visible_with_scrollable_content() {
+        let mut detail = detail();
+        detail.series.description = (1..=12)
+            .map(|line| format!("Description line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let backend = ratatui::backend::TestBackend::new(100, 16);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_recurrence_detail(frame, &detail, 0))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let rendered = (0..buffer.area.height)
+            .map(|row| {
+                (0..buffer.area.width)
+                    .map(|column| buffer[(column, row)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Enter open task"));
+        assert!(rendered.contains("Esc close"));
+        assert!(rendered.contains("▲"));
     }
 }
