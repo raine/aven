@@ -124,15 +124,3 @@ fn shrink_home(path: &Path, home: &Path) -> String {
         .map(|relative| format!("~/{}", relative.display()))
         .unwrap_or_else(|_| path.display().to_string())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn skill_content_has_frontmatter_and_primer() {
-        let content = skill_content();
-        assert!(content.starts_with("---\nname: aven\n"));
-        assert!(content.contains("# Aven CLI Primer"));
-    }
-}

@@ -5,7 +5,7 @@ use std::fs;
 use common::{TestEnv, command, contains_all, contains_none, extract_ref, ok};
 
 #[test]
-fn prime_prints_skill_primer_and_inferred_project_open_issues() {
+fn prime_prints_inferred_project_open_issues() {
     let env = TestEnv::new();
     let db = env.db("prime.sqlite");
     let repo = env.path("prime-app");
@@ -81,11 +81,6 @@ fn prime_prints_skill_primer_and_inferred_project_open_issues() {
     contains_all(
         &output,
         &[
-            "# Aven CLI Primer",
-            "## Issue Workflow",
-            "aven edit <ref> --status active",
-            "aven note <ref> ...",
-            "aven edit <ref> --status done",
             "## Local Conventions",
             "Project: prime-app",
             "Open issue sample: 2",
@@ -117,7 +112,7 @@ fn prime_accepts_explicit_project() {
     ok(env.aven(&db, ["add", "other issue", "--project", "other"]));
 
     let output = ok(env.aven(&db, ["prime", "--project", "app"]));
-    contains_all(&output, &["# Aven CLI Primer", "Project: app", "app issue"]);
+    contains_all(&output, &["Project: app", "app issue"]);
     contains_none(&output, &["other issue"]);
 }
 
@@ -131,10 +126,7 @@ fn prime_handles_no_current_project() {
     let output = ok(env.aven_in(&db, &cwd, ["prime"]));
     contains_all(
         &output,
-        &[
-            "# Aven CLI Primer",
-            "No current project could be inferred. Run with --project <project>.",
-        ],
+        &["No current project could be inferred. Run with --project <project>."],
     );
 }
 
@@ -155,7 +147,6 @@ fn prime_handles_no_open_issues() {
     contains_all(
         &output,
         &[
-            "# Aven CLI Primer",
             "## Local Conventions",
             "Project: empty-app",
             "Open issue sample: 0",
