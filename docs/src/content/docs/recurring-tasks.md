@@ -157,12 +157,9 @@ and create another one when those properties need to change.
 History shows completed, skipped, and missed dates along with pause periods.
 Open a recurring task and choose **Show history**, or press `t r h`.
 
-:::note[Screenshot placeholder: recurring history]
-Capture the history dialog for a recurring task with at least one completed,
-skipped, and missed date plus a pause period. Keep enough of the recurring-task
-detail visible behind it to preserve context. Suggested filename:
-`recurring-history.webp`.
-:::
+![Aven recurrence history showing completed, skipped, and missed dates plus a pause period](/recurring-history.webp)
+
+<p class="media-caption">History keeps each scheduled outcome and pause period together without filling the active task list with past occurrences.</p>
 
 Done lists and search results group past dated tasks by recurring task. See the
 [`aven list`](/command-reference/#aven-list) and
