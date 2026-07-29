@@ -12,6 +12,14 @@ Each dated task behaves like any other Aven task. You can edit it, add notes or
 attachments, mark it done, or skip it. Changes to that task stay with that date.
 Use **Edit template** when later tasks should use different details.
 
+This guide builds on availability and due dates. Read
+[Schedule tasks](/schedule-tasks/) first if those settings are unfamiliar. See
+[Use the TUI](/tui/) for navigation, selection, and command discovery. Shortcuts
+such as `t r p` are keys pressed in sequence.
+
+The `RCR-` reference identifies the whole recurring task. Each dated task has
+its own ordinary task reference.
+
 ## Create a recurring task
 
 Press `a` to open the task composer, then type a repeating expression in
@@ -69,6 +77,14 @@ Recurring tasks use one of two due settings:
 See [Schedule tasks](/schedule-tasks/) for the underlying availability and
 due-date model.
 
+## Find recurring tasks
+
+Open **Recurring Tasks** from the sidebar or press `v u`. Active and paused
+recurring tasks appear together by default. Press `f r` to cycle lifecycle
+filters for active, paused, stopped, or all recurring tasks. Press `Enter` on a
+recurring task to inspect its schedule, current task, next date, and available
+actions.
+
 ## Finish, skip, or miss a task
 
 When you finish the current task, Aven creates the next one immediately and
@@ -88,15 +104,13 @@ scheduled dates have passed, opening a task list or Recurring Tasks catches up
 and shows the task for the relevant date.
 
 The current task cannot be deleted, and a finished or skipped task cannot be
-reopened later. Use Undo immediately after an accidental change. Otherwise,
+reopened later. Press `u` immediately after an accidental change. Otherwise,
 manage the recurring task with Skip, Pause, or Stop so its history remains
 meaningful.
 
 ## Pause, resume, or stop
 
-Open **Recurring Tasks** from the sidebar or press `v u`. Press `Enter` on a
-recurring task to open its detail. The footer shows the actions available for
-its state:
+The recurring-task detail footer shows the actions available for its state:
 
 | Key | Action |
 | --- | --- |
@@ -176,9 +190,15 @@ additional tasks until resolved.
 
 See [Resolve conflicts](/sync/#resolve-conflicts) for the review workflow.
 
-## Command reference
+## Related pages
+
+- [Schedule tasks](/schedule-tasks/) explains the availability and due-date model
+  used by each dated task.
+- [Use the TUI](/tui/) covers navigation, selection, and command discovery.
+- [Sync across devices](/sync/) covers synchronization and conflict handling.
+
+## Reference
 
 See [`aven add`](/command-reference/#aven-add) for command-line creation,
 [`aven recur`](/command-reference/#aven-recur) for management, and
-[`aven list`](/command-reference/#aven-list) for grouped output. See
-[Use the TUI](/tui/#recurring-tasks) for the compact shortcut reference.
+[`aven list`](/command-reference/#aven-list) for grouped output.

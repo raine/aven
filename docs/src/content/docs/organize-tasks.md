@@ -17,6 +17,10 @@ question:
 Start with projects. Add the other structures only when they make work easier to
 find, prioritize, or hand off.
 
+This guide assumes basic TUI navigation. See [Use the TUI](/tui/) for views,
+selection, and command discovery. Shortcuts such as `t c a` are keys pressed in
+sequence.
+
 ## Separate work with workspaces
 
 A workspace is an isolated collection of projects, tasks, labels, and recurring
@@ -39,10 +43,10 @@ task view changes to that workspace. Renaming workspaces is covered by the
 Every task belongs to one project. Projects provide the main scope for task
 lists, queue views, references, and agent context.
 
-Press `p` to administer projects. In the task composer, choose **Project** to
-place new work explicitly or leave **Infer** selected to use the project mapped
-to the current directory. Press `e j` to move the selected task to another
-project.
+Press `p` to administer projects and `p a` to add one. In the task composer,
+choose **Project** to place new work explicitly or leave **Infer** selected to
+use the project mapped to the current directory. Press `e j` to move the
+selected task to another project.
 
 Use `g p` to scope the current view to one project. Press `g a` to return to all
 projects in the workspace.
@@ -63,9 +67,9 @@ changes its displayed project prefix while preserving its identity.
 Labels describe concerns that can cross project boundaries, such as `security`,
 `documentation`, or `waiting-on-review`. A task can have several labels.
 
-Press `L` to administer labels. Choose labels in the task composer, or press
-`e l` to change them on an existing task. Press `f l` to filter the current view
-by label.
+Press `L` to administer labels and `L n` to add one. Choose labels in the task
+composer, or press `e l` to change them on an existing task. Press `f l` to
+filter the current view by label.
 
 Prefer a project when every task should have exactly one owner. Prefer labels
 when a category can apply in several projects.
@@ -108,7 +112,14 @@ with the relevant child actions. Suggested filename:
 `organize-epic-dependencies.webp`.
 :::
 
-## Command reference
+## Related pages
+
+- [Use the TUI](/tui/) covers navigation, selection, and command discovery.
+- [Concepts](/concepts/) defines these structures in the task model.
+- [Schedule tasks](/schedule-tasks/) explains when organized work should appear
+  or become due.
+
+## Reference
 
 The command reference documents [workspaces, projects, and labels](/command-reference/#workspace-commands),
 [`aven epic`](/command-reference/#aven-epic), and
