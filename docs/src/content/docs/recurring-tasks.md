@@ -28,6 +28,13 @@ Press `Enter` on **Schedule** when a structured editor is easier. Choose
 **Repeating**, then set the repetition pattern, availability time, due setting,
 and start date. The schedule uses your device's time zone.
 
+:::note[Screenshot placeholder: repeating schedule editor]
+Capture the task composer for a realistic weekly task with the structured
+**Repeating** editor open. Show the repetition pattern, availability time,
+same-day due setting, start date, and previewed dates. Suggested filename:
+`recurring-schedule-editor.webp`.
+:::
+
 ## Choose a schedule
 
 | Schedule | Example |
@@ -99,6 +106,13 @@ its state:
 | `h` | Show history |
 | `s` | Stop an active or paused recurring task permanently |
 
+:::note[Screenshot placeholder: recurring-task detail]
+Capture Recurring Tasks with an active weekly task selected and its detail open.
+Keep active and paused recurring tasks visible behind the dialog. Show the
+schedule, next date, current task, state, and detail footer actions. Suggested
+filename: `recurring-task-detail.webp`.
+:::
+
 Pausing hides the current task and suppresses scheduled dates until you resume.
 Resuming continues the schedule without creating tasks for the paused period. If
 the preserved task's scheduled date is still relevant, it returns. If that date
@@ -134,6 +148,13 @@ and create another one when those properties need to change.
 
 History shows completed, skipped, and missed dates along with pause periods.
 Open a recurring task and choose **Show history**, or press `t r h`.
+
+:::note[Screenshot placeholder: recurring history]
+Capture the history dialog for a recurring task with at least one completed,
+skipped, and missed date plus a pause period. Keep enough of the recurring-task
+detail visible behind it to preserve context. Suggested filename:
+`recurring-history.webp`.
+:::
 
 Done lists and search results group past dated tasks by recurring task. See the
 [`aven list`](/command-reference/#aven-list) and

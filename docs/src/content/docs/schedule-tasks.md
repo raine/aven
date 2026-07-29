@@ -24,6 +24,13 @@ Press `a` to open the task composer. Type a friendly expression in
 Press `Enter` on **Schedule** when a structured editor is easier. Choose
 **One-off**, then set an availability value, a due date, or both.
 
+:::note[Screenshot placeholder: one-off schedule editor]
+Capture the task composer with a realistic title and the structured **One-off**
+schedule editor open. Set availability to a weekday morning and the due date a
+few days later. Keep the field labels, parsed values, and editor controls
+visible. Suggested filename: `schedule-one-off-editor.webp`.
+:::
+
 ## Defer work until later
 
 Set availability when a task should exist but should not compete for attention
@@ -59,6 +66,13 @@ Open **Upcoming** from the sidebar to review deferred tasks. Queue's
 A deferred task remains under Upcoming even when its deadline has passed. Use
 [`aven list --upcoming --overdue`](/command-reference/#aven-list) to find those
 tasks.
+
+:::note[Screenshot placeholder: Upcoming view]
+Capture Upcoming with three deferred tasks on different dates. Select a task
+that has both availability and a due date, and keep its preview visible so the
+two values can be compared. Include the sidebar and availability ordering.
+Suggested filename: `schedule-upcoming.webp`.
+:::
 
 ## Remove a date
 
