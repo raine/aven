@@ -419,14 +419,14 @@ async fn recurring_series_list_and_detail_use_compact_natural_language() {
     let detail = render_app_text(&mut app, 120, 30);
     for expected in [
         "Every day",
-        "Available    Start of day",
-        "Due          Same day",
-        "Enter Open task",
-        "e Edit",
-        "p Pause",
-        "h History",
-        "s Stop",
-        "Esc Close",
+        "Available    start of day",
+        "Due          same day",
+        "Enter open task",
+        "e edit",
+        "p pause",
+        "h history",
+        "s stop",
+        "Esc close",
     ] {
         assert!(detail.contains(expected), "missing detail text: {expected}");
     }
