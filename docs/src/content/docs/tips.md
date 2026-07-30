@@ -1,5 +1,5 @@
 ---
-title: Terminal setup and troubleshooting
+title: Tips
 description: Configure terminal input and troubleshoot image previews.
 ---
 
