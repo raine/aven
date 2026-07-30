@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
 
 use crate::db::Database;
@@ -38,6 +38,27 @@ pub(crate) use recurrence::task_recurrence_summaries;
 pub use search::{
     SearchMatchedField, TaskSearchPreviewResultSet, TaskSearchQuery, TaskSearchResult,
 };
+
+pub const MAX_RECURRENCE_HISTORY_LIMIT: usize = 500;
+
+fn validate_search_limit(limit: usize) -> Result<()> {
+    if limit == 0 {
+        bail!("error search-limit-invalid limit=0 min=1 hint=\"pass a limit of 1 or greater\"");
+    }
+    Ok(())
+}
+
+fn validate_recurrence_history_limit(limit: usize) -> Result<()> {
+    if !(1..=MAX_RECURRENCE_HISTORY_LIMIT).contains(&limit) {
+        bail!(
+            "error recurrence-history-limit-invalid limit={} min=1 max={} hint=\"pass a limit between 1 and {}\"",
+            limit,
+            MAX_RECURRENCE_HISTORY_LIMIT,
+            MAX_RECURRENCE_HISTORY_LIMIT
+        );
+    }
+    Ok(())
+}
 pub(crate) use search::{
     search_task_items_in_workspace, search_task_occurrence_items_in_workspace,
     search_task_preview_set_in_workspace,
@@ -156,6 +177,7 @@ impl Database {
         offset: usize,
         limit: usize,
     ) -> Result<RecurrenceHistoryPage> {
+        validate_recurrence_history_limit(limit)?;
         self.reconcile_recurrence_reports_at(workspace_id, at)
             .await?;
         let mut conn = self.acquire().await?;
@@ -287,6 +309,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         query: TaskSearchQuery,
     ) -> Result<Vec<TaskSearchResult>> {
+        validate_search_limit(query.limit)?;
         self.reconcile_recurrence_reports(workspace_id).await?;
         let mut conn = self.acquire().await?;
         search_task_items_in_workspace(&mut conn, workspace_id, query).await
@@ -297,6 +320,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         query: TaskSearchQuery,
     ) -> Result<Vec<TaskSearchResult>> {
+        validate_search_limit(query.limit)?;
         self.reconcile_recurrence_reports(workspace_id).await?;
         let mut conn = self.acquire().await?;
         search_task_occurrence_items_in_workspace(&mut conn, workspace_id, query).await
@@ -307,6 +331,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         query: TaskSearchQuery,
     ) -> Result<TaskSearchPreviewResultSet> {
+        validate_search_limit(query.limit)?;
         self.reconcile_recurrence_reports(workspace_id).await?;
         let mut conn = self.acquire().await?;
         search_task_preview_set_in_workspace(&mut conn, workspace_id, query).await

@@ -497,6 +497,25 @@ async fn recurrence_history_pages_preserve_metadata_and_boundaries() {
         .await
         .unwrap();
 
+    let boundary = database
+        .recurrence_history_at(&workspace.id, &created.series.id, at(24, 12), 0, 500)
+        .await
+        .unwrap();
+
+    assert_eq!(boundary.limit, 500);
+    for limit in [0, 501, 900] {
+        let error = database
+            .recurrence_history_at(&workspace.id, &created.series.id, at(24, 12), 0, limit)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "error recurrence-history-limit-invalid limit={limit} min=1 max=500 hint=\"pass a limit between 1 and 500\""
+            )
+        );
+    }
+
     assert_eq!(first.items.len(), 2);
     assert_eq!(first.offset, 0);
     assert_eq!(first.limit, 2);

@@ -11,14 +11,13 @@ use crate::refs::DisplayRefContext;
 use crate::task_enrichment::{epic_parents_for_tasks, labels_for_tasks};
 use crate::types::Task;
 
-use super::TaskListItem;
 use super::hydration::{TaskHydration, build_task_list_items};
+use super::{TaskListItem, validate_search_limit};
 
 mod parser;
 
 const SQLITE_BIND_CHUNK_SIZE: usize = 900;
 
-const DEFAULT_LIMIT: usize = 50;
 const REF_WEIGHT: i64 = 1_000;
 const TITLE_WEIGHT: i64 = 420;
 const LABEL_WEIGHT: i64 = 240;
@@ -140,6 +139,7 @@ pub async fn search_task_items_in_workspace(
     workspace_id: &WorkspaceId,
     query: TaskSearchQuery,
 ) -> Result<Vec<TaskSearchResult>> {
+    validate_search_limit(query.limit)?;
     Ok(
         search_task_item_set_with_presentation(conn, workspace_id, query, true)
             .await?
@@ -152,6 +152,7 @@ pub async fn search_task_occurrence_items_in_workspace(
     workspace_id: &WorkspaceId,
     query: TaskSearchQuery,
 ) -> Result<Vec<TaskSearchResult>> {
+    validate_search_limit(query.limit)?;
     Ok(
         search_task_item_set_with_presentation(conn, workspace_id, query, false)
             .await?
@@ -246,11 +247,8 @@ async fn scored_search_documents(
     query: &TaskSearchQuery,
     display_refs: &DisplayRefContext,
 ) -> Result<ScoredSearchResults> {
-    let limit = if query.limit == 0 {
-        DEFAULT_LIMIT
-    } else {
-        query.limit
-    };
+    validate_search_limit(query.limit)?;
+    let limit = query.limit;
     let parsed = parser::parse_task_search_query(&query.text);
     if parsed.trimmed.is_empty() {
         return Ok(ScoredSearchResults { items: Vec::new() });
@@ -306,6 +304,7 @@ pub async fn search_task_preview_set_in_workspace(
     workspace_id: &WorkspaceId,
     query: TaskSearchQuery,
 ) -> Result<TaskSearchPreviewResultSet> {
+    validate_search_limit(query.limit)?;
     let display_refs = DisplayRefContext::for_workspace(conn, workspace_id).await?;
     let mut scored = scored_search_documents(conn, workspace_id, &query, &display_refs).await?;
     let task_ids = scored

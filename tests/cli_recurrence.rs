@@ -384,9 +384,27 @@ fn history_combines_archived_and_derived_misses() {
     let history = ok(env.aven(&db, ["recur", "history", &series_ref]));
     contains_all(
         &history,
-        &["missed", "archived_projection=yes", "openable=no"],
+        &[
+            "limit=100",
+            "missed",
+            "archived_projection=yes",
+            "openable=no",
+        ],
     );
     assert!(history.matches("missed slot=").count() >= 5, "{history}");
+
+    let boundary = ok(env.aven(&db, ["recur", "history", &series_ref, "--limit", "500"]));
+    assert!(boundary.contains("limit=500"), "{boundary}");
+
+    for limit in ["0", "501", "900"] {
+        let output = env.aven(&db, ["recur", "history", &series_ref, "--limit", limit]);
+        assert_eq!(output.status.code(), Some(2));
+        let error = fail(output);
+        contains_all(
+            &error,
+            &["invalid value", limit, "--limit <LIMIT>", "1..=500"],
+        );
+    }
 
     let history_json: serde_json::Value = serde_json::from_str(&ok(
         env.aven(&db, ["recur", "history", &series_ref, "--json"])

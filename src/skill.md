@@ -294,7 +294,9 @@ aven search "daily journal" --expand-recurring
   `available_at` means the task is immediately available. An empty `due_on`
   means the task has no deadline.
 - Use `--limit <n>` with list-style reads such as `list`, `project list`,
-  `label list`, `conflict list`, and `prime` to bound response size.
+  `label list`, `conflict list`, and `prime` to bound response size. Explicit
+  limits must be positive. `recur history --limit` accepts values from `1` to
+  `500`.
 
 ## Sync behavior
 

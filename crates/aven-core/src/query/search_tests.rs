@@ -4,6 +4,32 @@ use crate::query::test_support::*;
 use sqlx::SqliteConnection;
 
 #[tokio::test]
+async fn task_search_rejects_zero_limit() {
+    let temp = tempfile::tempdir().unwrap();
+    let database = crate::db::Database::open(&temp.path().join("search.sqlite"))
+        .await
+        .unwrap();
+    let workspace = database.resolve_workspace("default").await.unwrap();
+    let error = database
+        .search_task_items(
+            &workspace.id,
+            TaskSearchQuery {
+                text: "task".to_string(),
+                project: None,
+                include_deleted: false,
+                limit: 0,
+            },
+        )
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "error search-limit-invalid limit=0 min=1 hint=\"pass a limit of 1 or greater\""
+    );
+}
+
+#[tokio::test]
 async fn task_search_preview_includes_epic_parent_display_ref() {
     let (_temp, mut conn) = test_conn().await;
     seed_default_project(&mut conn).await;
