@@ -1,12 +1,12 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 
 use super::truncate::truncate_chars;
 use crate::tui::overlay::dialog_area;
-use crate::tui::theme::{ACCENT, BG_ALT, FG, FG_MUTED};
+use crate::tui::theme::{ACCENT, BG_ALT, DEFAULT_BG, FG, FG_MUTED};
 
 pub(super) struct Dialog<'a> {
     title: &'a str,
@@ -98,7 +98,27 @@ fn right_edge_title(title: Option<Line<'_>>) -> Line<'_> {
 pub(super) fn dim_rendered_background(frame: &mut Frame) {
     for cell in &mut frame.buffer_mut().content {
         cell.modifier.insert(Modifier::DIM);
+        cell.bg = dim_background_color(cell.bg);
     }
+}
+
+fn dim_background_color(color: Color) -> Color {
+    let Color::Rgb(red, green, blue) = (match color {
+        Color::Reset => DEFAULT_BG,
+        color => color,
+    }) else {
+        return color;
+    };
+
+    Color::Rgb(
+        dim_color_channel(red),
+        dim_color_channel(green),
+        dim_color_channel(blue),
+    )
+}
+
+fn dim_color_channel(value: u8) -> u8 {
+    (u16::from(value) * 3 / 5) as u8
 }
 
 pub(super) fn dialog_hint_line(items: &[(&str, &str)]) -> Line<'static> {
@@ -120,6 +140,15 @@ pub(super) fn dialog_hint_line(items: &[(&str, &str)]) -> Line<'static> {
 mod tests {
     use super::*;
     use crate::tui::theme::FG;
+
+    #[test]
+    fn dimming_darkens_rgb_and_default_backgrounds() {
+        assert_eq!(
+            dim_background_color(Color::Rgb(150, 100, 50)),
+            Color::Rgb(90, 60, 30)
+        );
+        assert_eq!(dim_background_color(Color::Reset), Color::Rgb(10, 11, 10));
+    }
 
     #[test]
     fn dialog_hint_line_styles_keys() {

@@ -1,6 +1,6 @@
 use ratatui::style::{Color, Modifier, Style};
 
-const DEFAULT_BG: Color = Color::Rgb(18, 19, 18);
+pub(crate) const DEFAULT_BG: Color = Color::Rgb(18, 19, 18);
 pub(crate) const INVERSE_FG: Color = DEFAULT_BG;
 pub(crate) const BG_ALT: Color = Color::Rgb(34, 35, 33);
 pub(crate) const BG_PANEL: Color = Color::Rgb(39, 40, 38);
