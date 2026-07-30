@@ -64,6 +64,7 @@ fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
         OverlayView::TagCombobox(state) => render_tag_combobox(frame, state),
         OverlayView::Confirm(state) => render_confirm(frame, state),
         OverlayView::TextPanel(state) => render_text_panel(frame, state),
+        OverlayView::Changelog { markdown, scroll } => render_changelog(frame, markdown, *scroll),
         OverlayView::SyncStatus(state) => render_sync_status(frame, state),
         OverlayView::DatabaseStats { stats, scroll } => {
             render_database_stats(frame, stats, *scroll)
@@ -326,6 +327,32 @@ mod text_panel_and_search {
         assert!(rendered.contains("Conflict details"));
         assert!(rendered.contains("field=title"));
         assert!(rendered.contains("Enter/Esc close"));
+    }
+
+    #[test]
+    fn changelog_renders_markdown_and_reader_controls() {
+        let rendered = render_overlay_view(OverlayView::Changelog {
+            markdown: "## v1.2.3\n\n- Added **reader** support.".to_string(),
+            scroll: 0,
+        });
+
+        assert!(rendered.contains("Changelog"));
+        assert!(rendered.contains("v1.2.3"));
+        assert!(rendered.contains("Added reader support."));
+        assert!(rendered.contains("j/k line"));
+        assert!(rendered.contains("d/u half"));
+        assert!(rendered.contains("PgUp/PgDn page"));
+    }
+
+    #[test]
+    fn changelog_draws_shared_scrollbar_when_content_overflows() {
+        let rendered = render_overlay_view(OverlayView::Changelog {
+            markdown: format!("## Unreleased\n\n{}", "- release note\n".repeat(40)),
+            scroll: 0,
+        });
+
+        assert!(rendered.contains("▲"));
+        assert!(rendered.contains("▼"));
     }
 
     #[test]

@@ -492,6 +492,7 @@ pub(crate) fn handle_generic_overlay_key(
                 ScrollKeyOutcome::Ignored => OverlayOutcome::None(OverlayState::TextPanel(state)),
             }
         }
+        OverlayState::Changelog(state) => OverlayOutcome::None(OverlayState::Changelog(state)),
         OverlayState::RecurrenceHistory(state) => {
             OverlayOutcome::None(OverlayState::RecurrenceHistory(state))
         }

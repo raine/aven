@@ -1914,6 +1914,84 @@ mod onboarding {
             CommandLookup::Found(Action::ShowWelcome)
         );
     }
+
+    #[tokio::test]
+    async fn changelog_command_starts_loading_release_notes_from_github() {
+        let mut app = test_app().await;
+
+        app.execute(Action::ShowChangelog).await.unwrap();
+
+        let Some(OverlayState::Changelog(state)) = app.overlay else {
+            panic!("expected changelog overlay");
+        };
+        assert_eq!(state.markdown, "## Loading changelog…");
+        assert!(app.changelog.work_pending());
+    }
+
+    #[tokio::test]
+    async fn changelog_link_click_opens_documentation_in_browser() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::Changelog(
+            crate::tui::overlay::ChangelogState {
+                markdown: "## Unreleased\n\n- [Read the guide](/guide/) for details.".to_string(),
+                scroll: 0,
+            },
+        ));
+
+        app.dispatch_mouse(click_at(10, 6), (100, 30).into())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            crate::tui::platform::browser_url_for_test().as_deref(),
+            Some("https://aven.raine.dev/guide/")
+        );
+        assert!(matches!(app.overlay, Some(OverlayState::Changelog(_))));
+    }
+
+    #[tokio::test]
+    async fn changelog_reader_supports_less_style_paging_and_close() {
+        let mut app = test_app().await;
+        app.execute(Action::ShowChangelog).await.unwrap();
+        app.overlay = Some(OverlayState::Changelog(
+            crate::tui::overlay::ChangelogState {
+                markdown: format!(
+                    "## Release notes\n\n{}",
+                    "- A changelog entry with enough content for paging.\n".repeat(40)
+                ),
+                scroll: 0,
+            },
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Char('d')))
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Changelog(ref state)) if state.scroll == 9
+        ));
+        app.handle_overlay_key(key(KeyCode::Char('u')))
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Changelog(ref state)) if state.scroll == 0
+        ));
+        app.handle_overlay_key(key(KeyCode::PageDown))
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Changelog(ref state)) if state.scroll == 17
+        ));
+        app.handle_overlay_key(key(KeyCode::PageUp)).await.unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Changelog(ref state)) if state.scroll == 0
+        ));
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(app.overlay.is_none());
+    }
 }
 
 mod theme_background {
@@ -4855,13 +4933,29 @@ mod filters_and_workspaces {
             .unwrap();
         app.apply_filter_selection(selected);
 
-        app.dispatch_mouse(header_click(36), (140, 24).into())
+        let (scope_column, menu_column) = (0..140)
+            .find_map(|column| {
+                match crate::tui::ui::header_target_at(
+                    &app.store,
+                    None,
+                    ratatui::layout::Rect::new(0, 0, 140, 2),
+                    column,
+                    0,
+                ) {
+                    Some(crate::tui::ui::HeaderTarget::Scope {
+                        column: menu_column,
+                    }) => Some((column, menu_column)),
+                    _ => None,
+                }
+            })
+            .unwrap();
+        app.dispatch_mouse(header_click(scope_column), (140, 24).into())
             .await
             .unwrap();
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::HeaderMenu(state))
-                if state.column == 28
+                if state.column == menu_column
                     && state.row == 0
                     && state.items.iter().any(|item| item.label == "workspace")
                     && state.items.iter().any(|item| item.label.contains("Mobile App"))
@@ -4870,7 +4964,7 @@ mod filters_and_workspaces {
         app.dispatch_mouse(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
-                column: 30,
+                column: menu_column.saturating_add(2),
                 row: 2,
                 modifiers: KeyModifiers::NONE,
             },
@@ -4886,13 +4980,29 @@ mod filters_and_workspaces {
     async fn header_click_opens_view_menu_and_selects_view() {
         let mut app = test_app().await;
 
-        app.dispatch_mouse(header_click(58), (140, 24).into())
+        let (view_column, menu_column) = (0..140)
+            .find_map(|column| {
+                match crate::tui::ui::header_target_at(
+                    &app.store,
+                    None,
+                    ratatui::layout::Rect::new(0, 0, 140, 2),
+                    column,
+                    0,
+                ) {
+                    Some(crate::tui::ui::HeaderTarget::View {
+                        column: menu_column,
+                    }) => Some((column, menu_column)),
+                    _ => None,
+                }
+            })
+            .unwrap();
+        app.dispatch_mouse(header_click(view_column), (140, 24).into())
             .await
             .unwrap();
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::HeaderMenu(state))
-                if state.column == 48
+                if state.column == menu_column
                     && state.row == 0
                     && state.items.iter().any(|item| item.label == "inbox")
         ));
@@ -4900,7 +5010,7 @@ mod filters_and_workspaces {
         app.dispatch_mouse(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
-                column: 50,
+                column: menu_column.saturating_add(2),
                 row: 5,
                 modifiers: KeyModifiers::NONE,
             },
@@ -4922,13 +5032,29 @@ mod filters_and_workspaces {
             .unwrap();
         drop(conn);
 
-        app.dispatch_mouse(header_click(10), (140, 24).into())
+        let (workspace_column, menu_column) = (0..140)
+            .find_map(|column| {
+                match crate::tui::ui::header_target_at(
+                    &app.store,
+                    None,
+                    ratatui::layout::Rect::new(0, 0, 140, 2),
+                    column,
+                    0,
+                ) {
+                    Some(crate::tui::ui::HeaderTarget::Workspace {
+                        column: menu_column,
+                    }) => Some((column, menu_column)),
+                    _ => None,
+                }
+            })
+            .unwrap();
+        app.dispatch_mouse(header_click(workspace_column), (140, 24).into())
             .await
             .unwrap();
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::HeaderMenu(state))
-                if state.column == 8
+                if state.column == menu_column
                     && state.row == 0
                     && state.items.iter().any(|item| item.label.contains("Client Work"))
         ));
@@ -4936,7 +5062,7 @@ mod filters_and_workspaces {
         app.dispatch_mouse(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
-                column: 10,
+                column: menu_column.saturating_add(2),
                 row: 3,
                 modifiers: KeyModifiers::NONE,
             },

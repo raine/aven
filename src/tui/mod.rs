@@ -23,6 +23,7 @@ mod app_update;
 mod attachment_controller;
 mod authoring;
 mod bounded_history;
+mod changelog;
 mod columns;
 mod config_overlay;
 mod conflict_flow;

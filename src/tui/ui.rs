@@ -57,8 +57,8 @@ pub(crate) use self::detail::{
     detail_scroll_cap, detail_section_scroll_target,
 };
 pub(crate) use self::overlays::{
-    AddTaskLayout, add_task_field_at, composer_help_scroll_cap, database_stats_scroll_cap,
-    text_panel_scroll_cap,
+    AddTaskLayout, add_task_field_at, changelog_link_at, composer_help_scroll_cap,
+    database_stats_scroll_cap, text_panel_scroll_cap,
 };
 pub(crate) use self::recent_actions::recent_action_at_position;
 pub(crate) use self::recurrence::recurrence_series_at_position;
@@ -727,6 +727,9 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
         OverlayView::OrderMenu(state) => render_order_menu(frame, state),
         OverlayView::Confirm(state) => render_confirm(frame, state),
         OverlayView::TextPanel(state) => render_text_panel(frame, state),
+        OverlayView::Changelog { markdown, scroll } => {
+            self::overlays::render_changelog(frame, markdown, *scroll)
+        }
         OverlayView::RecurrenceHistory(state) => render_recurrence_history(frame, state),
         OverlayView::SyncStatus(state) => render_sync_status(frame, state),
         OverlayView::DatabaseStats { stats, scroll } => {
