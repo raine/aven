@@ -463,6 +463,7 @@ pub(crate) async fn cmd_search(
     }
     let query = TaskSearchQuery {
         text,
+        project: args.project,
         include_deleted: args.all,
         limit: args.limit,
     };

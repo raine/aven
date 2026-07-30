@@ -231,15 +231,16 @@ aven list --deleted --json
 
 ### `aven search`
 
-Search task references, titles, descriptions, projects, labels, notes, statuses, priorities, and current attachment filenames and alternative text across the active workspace. Done and canceled tasks participate in normal search. Deleted tasks require `--all`.
+Search task references, titles, descriptions, projects, labels, notes, statuses, priorities, and current attachment filenames and alternative text across the active workspace. Pass `--project` to restrict every candidate source to one project before ranking and limiting. Done and canceled tasks participate in normal search. Deleted tasks require `--all`.
 
 ```sh
-aven search <query>... [--limit <number>] [--all] [--json]
+aven search <query>... [--project <project>] [--limit <number>] [--all] [--expand-recurring] [--json]
 ```
 
 | Argument or option | Description |
 | --- | --- |
 | `<query>...` | One or more search terms. Multiple shell arguments are joined with spaces. |
+| `--project <project>` | Search only the selected project, resolved by key or name in the active workspace. |
 | `--limit <number>` | Maximum result count. Defaults to `50`. |
 | `--all` | Include deleted tasks. |
 | `--expand-recurring` | Return each matching dated task instead of grouping past matches by recurring task. |
@@ -249,6 +250,7 @@ Text output identifies the matched field and score and prints a snippet when ava
 
 ```sh
 aven search "auth bug"
+aven search --project app "auth bug"
 aven search APP-7KQ9
 aven search recovery --all --json
 ```

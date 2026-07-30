@@ -43,6 +43,7 @@ async fn task_search_preview_includes_epic_parent_display_ref() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "Child task".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -133,6 +134,7 @@ async fn task_search_finds_done_labels_and_notes() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "release cleanup".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -147,6 +149,7 @@ async fn task_search_finds_done_labels_and_notes() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "security".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -161,6 +164,7 @@ async fn task_search_finds_done_labels_and_notes() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "ios auth".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -178,6 +182,7 @@ async fn task_search_finds_done_labels_and_notes() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "pager rotation".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -204,6 +209,7 @@ async fn task_search_finds_done_labels_and_notes() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "\"pager rotation\"".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -230,6 +236,7 @@ async fn task_search_finds_done_labels_and_notes() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "\"pager rotation handoff\"".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -346,6 +353,7 @@ async fn task_search_requires_contiguous_text_matches() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "testing".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -392,6 +400,7 @@ async fn task_search_ranks_refs_and_controls_deleted_results() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "7KQ9".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -406,6 +415,7 @@ async fn task_search_ranks_refs_and_controls_deleted_results() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "/APP-7KQ9".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -421,6 +431,7 @@ async fn task_search_ranks_refs_and_controls_deleted_results() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "deleted needle".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -434,6 +445,7 @@ async fn task_search_ranks_refs_and_controls_deleted_results() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "deleted needle".to_string(),
+            project: None,
             include_deleted: true,
             limit: 10,
         },
@@ -448,6 +460,7 @@ async fn task_search_ranks_refs_and_controls_deleted_results() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "needle".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -469,6 +482,7 @@ async fn task_search_ranks_refs_and_controls_deleted_results() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "9KQ9".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -516,6 +530,7 @@ async fn task_search_accepts_unsafe_query_parser_input() {
             &crate::workspaces::default_workspace_id(),
             TaskSearchQuery {
                 text: input.to_string(),
+                project: None,
                 include_deleted: false,
                 limit: 5,
             },
@@ -544,6 +559,7 @@ async fn task_search_finds_rows_backfilled_into_fts_index() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "backfilled".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -578,6 +594,7 @@ async fn task_search_uses_fts_candidates_for_common_text() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "visible in".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -605,6 +622,7 @@ async fn task_search_uses_fts_candidates_for_common_text() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "visible in".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -641,6 +659,7 @@ async fn task_search_fts_updates_when_search_text_changes() {
                 &crate::workspaces::default_workspace_id(),
                 TaskSearchQuery {
                     text: "orchard".to_string(),
+                    project: None,
                     include_deleted: false,
                     limit: 10,
                 },
@@ -657,6 +676,7 @@ async fn task_search_fts_updates_when_search_text_changes() {
                 &crate::workspaces::default_workspace_id(),
                 TaskSearchQuery {
                     text: "lagoon".to_string(),
+                    project: None,
                     include_deleted: false,
                     limit: 10,
                 },
@@ -675,6 +695,7 @@ async fn task_search_fts_updates_when_search_text_changes() {
                 &crate::workspaces::default_workspace_id(),
                 TaskSearchQuery {
                     text: "garden".to_string(),
+                    project: None,
                     include_deleted: false,
                     limit: 10,
                 },
@@ -694,6 +715,7 @@ async fn task_search_fts_updates_when_search_text_changes() {
             &crate::workspaces::default_workspace_id(),
             TaskSearchQuery {
                 text: "garden".to_string(),
+                project: None,
                 include_deleted: false,
                 limit: 10,
             },
@@ -716,6 +738,7 @@ async fn task_search_fts_updates_when_search_text_changes() {
                 &crate::workspaces::default_workspace_id(),
                 TaskSearchQuery {
                     text: "harbor".to_string(),
+                    project: None,
                     include_deleted: false,
                     limit: 10,
                 },
@@ -735,6 +758,7 @@ async fn task_search_fts_updates_when_search_text_changes() {
             &crate::workspaces::default_workspace_id(),
             TaskSearchQuery {
                 text: "harbor".to_string(),
+                project: None,
                 include_deleted: false,
                 limit: 10,
             },
@@ -750,6 +774,7 @@ async fn task_search_fts_updates_when_search_text_changes() {
                 &crate::workspaces::default_workspace_id(),
                 TaskSearchQuery {
                     text: "summit".to_string(),
+                    project: None,
                     include_deleted: false,
                     limit: 10,
                 },
@@ -771,6 +796,7 @@ async fn task_search_fts_updates_when_search_text_changes() {
                 &crate::workspaces::default_workspace_id(),
                 TaskSearchQuery {
                     text: "beacon".to_string(),
+                    project: None,
                     include_deleted: false,
                     limit: 10,
                 },
@@ -801,6 +827,7 @@ async fn task_search_ref_lane_keeps_glyph_normalization_out_of_text_lanes() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "100king".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -842,6 +869,7 @@ async fn task_search_ref_lane_handles_durable_ids_and_punctuation() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "7KQ9A1X4MV2P8D6R".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -856,6 +884,7 @@ async fn task_search_ref_lane_handles_durable_ids_and_punctuation() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "/APP.7KQ9".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -870,6 +899,7 @@ async fn task_search_ref_lane_handles_durable_ids_and_punctuation() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "APP 7KQ9".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -884,6 +914,7 @@ async fn task_search_ref_lane_handles_durable_ids_and_punctuation() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "/WRONG-7KQ9".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -897,6 +928,7 @@ async fn task_search_ref_lane_handles_durable_ids_and_punctuation() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "9KQ".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -910,6 +942,7 @@ async fn task_search_ref_lane_handles_durable_ids_and_punctuation() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "needle".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -988,6 +1021,7 @@ async fn task_search_reranks_title_ref_label_note_and_metadata_evidence() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "orchard".to_string(),
+            project: None,
             include_deleted: true,
             limit: 10,
         },
@@ -1019,6 +1053,7 @@ async fn task_search_reranks_title_ref_label_note_and_metadata_evidence() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "7KQ9".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -1075,6 +1110,7 @@ async fn task_search_reranks_multi_token_proximity_and_field_count() {
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
             text: "auth flow".to_string(),
+            project: None,
             include_deleted: false,
             limit: 10,
         },
@@ -1089,4 +1125,133 @@ async fn task_search_reranks_multi_token_proximity_and_field_count() {
     assert_eq!(items[0].matched_field, SearchMatchedField::Title);
     assert_eq!(items[1].matched_field, SearchMatchedField::Label);
     assert_eq!(items[2].matched_field, SearchMatchedField::Note);
+}
+
+#[tokio::test]
+async fn task_search_applies_project_scope_to_every_candidate_lane_before_limiting() {
+    let (_temp, mut conn) = test_conn().await;
+    seed_default_project(&mut conn).await;
+    sqlx::query(
+        "INSERT INTO projects(id, key, name, prefix, created_at, updated_at)
+         VALUES ('0000000000000002', 'ops', 'Operations', 'OPS', 't', 't')",
+    )
+    .execute(conn.as_mut())
+    .await
+    .unwrap();
+
+    insert_test_task(
+        &mut conn,
+        "7KQ9A1X4MV2P8D6R",
+        "Selected project result",
+        "todo",
+        "none",
+        "001",
+    )
+    .await;
+    insert_test_task(
+        &mut conn,
+        "8KQ9A1X4MV2P8D6R",
+        "needle",
+        "todo",
+        "urgent",
+        "999",
+    )
+    .await;
+    sqlx::query(
+        "UPDATE tasks SET description = 'needle in selected description'
+         WHERE id = '7KQ9A1X4MV2P8D6R'",
+    )
+    .execute(conn.as_mut())
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE tasks SET project_id = '0000000000000002'
+         WHERE id = '8KQ9A1X4MV2P8D6R'",
+    )
+    .execute(conn.as_mut())
+    .await
+    .unwrap();
+
+    let unscoped = search_task_items_in_workspace(
+        &mut conn,
+        &crate::workspaces::default_workspace_id(),
+        TaskSearchQuery {
+            text: "needle".to_string(),
+            project: None,
+            include_deleted: false,
+            limit: 1,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(listed_titles_from_search(&unscoped), ["needle"]);
+
+    let scoped = search_task_items_in_workspace(
+        &mut conn,
+        &crate::workspaces::default_workspace_id(),
+        TaskSearchQuery {
+            text: "needle".to_string(),
+            project: Some("app".to_string()),
+            include_deleted: false,
+            limit: 1,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        listed_titles_from_search(&scoped),
+        ["Selected project result"]
+    );
+    assert_eq!(scoped[0].matched_field, SearchMatchedField::Description);
+
+    let other_ref = search_task_items_in_workspace(
+        &mut conn,
+        &crate::workspaces::default_workspace_id(),
+        TaskSearchQuery {
+            text: "8KQ9".to_string(),
+            project: Some("app".to_string()),
+            include_deleted: false,
+            limit: 10,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(other_ref.is_empty());
+
+    for (attachment_id, task_id, filename) in [
+        ("0000000000000003", "7KQ9A1X4MV2P8D6R", "scoped-diagram.png"),
+        ("0000000000000004", "8KQ9A1X4MV2P8D6R", "scoped-runbook.png"),
+    ] {
+        sqlx::query(
+            "INSERT INTO task_attachments(
+                attachment_id, task_id, sha256, byte_size, media_type, filename, width, height,
+                created_at
+             ) VALUES (?, ?, ?, 1, 'image/png', ?, 1, 1, 't')",
+        )
+        .bind(attachment_id)
+        .bind(task_id)
+        .bind("0".repeat(64))
+        .bind(filename)
+        .execute(conn.as_mut())
+        .await
+        .unwrap();
+    }
+
+    let attachments = search_task_items_in_workspace(
+        &mut conn,
+        &crate::workspaces::default_workspace_id(),
+        TaskSearchQuery {
+            text: "scoped".to_string(),
+            project: Some("app".to_string()),
+            include_deleted: false,
+            limit: 10,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        listed_titles_from_search(&attachments),
+        ["Selected project result"]
+    );
+    assert_eq!(attachments[0].matched_field, SearchMatchedField::Attachment);
 }

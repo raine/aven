@@ -232,7 +232,7 @@ pub(crate) enum Commands {
     Show(ShowArgs),
     /// List tasks
     List(ListArgs),
-    /// Search all tasks in the active workspace
+    /// Search tasks in the active workspace
     Search(TaskSearchArgs),
     /// Apply field updates across many tasks
     BulkUpdate(BulkUpdateArgs),
@@ -534,6 +534,8 @@ pub(crate) struct ListArgs {
 #[derive(Args)]
 pub(crate) struct TaskSearchArgs {
     pub(crate) query: Vec<String>,
+    #[arg(long, help = "Restrict matches to a project by key or name")]
+    pub(crate) project: Option<String>,
     #[arg(long, default_value_t = 50)]
     pub(crate) limit: usize,
     #[arg(long, help = "Include deleted tasks")]
