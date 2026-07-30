@@ -55,6 +55,16 @@ fn same_field_edit_creates_conflict() {
     contains_all(&conflicts, &[&task_ref, "conflict field=title"]);
     let listed = ok(env.aven(&a, ["list", "--all"]));
     contains_all(&listed, &[&task_ref, "conflicts=yes"]);
+
+    let searched: serde_json::Value = serde_json::from_str(&ok(
+        env.aven(&a, ["search", &task_ref, "--limit", "1", "--json"])
+    ))
+    .unwrap();
+    assert_eq!(searched[0]["ref"], task_ref);
+    assert_eq!(searched[0]["has_conflict"], true);
+    assert_eq!(searched[0]["matched_field"], "ref");
+    assert!(searched[0]["score"].as_i64().is_some());
+    assert!(searched[0].get("snippet").is_some());
 }
 
 #[test]

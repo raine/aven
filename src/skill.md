@@ -287,12 +287,12 @@ aven search "daily journal" --expand-recurring
   `attachment prune`, `dep list`,
   `epic list`, `project list`, `label list`, `conflict list`, `conflict show`,
   `prime`, and `doctor`.
-- JSON task objects include `available_at`, `due_on`, `is_epic`, `epic_parent`,
-  `epic_children`, a nullable `recurrence` object, and a nullable
-  `recurrence_group` object. Recurrence series list, detail, and history reports
-  carry `version: 1` and a typed `kind`. An empty `available_at` means the task is immediately
-  available. An empty `due_on` means the task has no deadline. Use the epic
-  fields to distinguish epic membership from dependency ordering.
+- `list`, `show`, and `search` JSON use the same flat task object. Search adds
+  `score`, `matched_field`, and `snippet`. Task objects include scheduling, epic,
+  dependency, conflict, timestamp, and recurrence state. Recurrence series list,
+  detail, and history reports carry `version: 1` and a typed `kind`. An empty
+  `available_at` means the task is immediately available. An empty `due_on`
+  means the task has no deadline.
 - Use `--limit <n>` with list-style reads such as `list`, `project list`,
   `label list`, `conflict list`, and `prime` to bound response size.
 
