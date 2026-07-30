@@ -516,6 +516,127 @@ fn list_json_supports_limit() {
 }
 
 #[test]
+fn list_open_filters_available_nonterminal_tasks_and_composes() {
+    let env = TestEnv::new();
+    let db = env.db("list-open.sqlite");
+    ok(env.aven(&db, ["label", "create", "bug"]));
+    ok(env.aven(&db, ["project", "create", "app"]));
+    ok(env.aven(&db, ["project", "create", "ops"]));
+
+    let app_open = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "available app work",
+            "--project",
+            "app",
+            "--status",
+            "todo",
+            "--priority",
+            "high",
+            "--label",
+            "bug",
+        ],
+    )));
+    let ops_open = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "available ops work",
+            "--project",
+            "ops",
+            "--status",
+            "active",
+        ],
+    )));
+    let done = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "completed work",
+            "--project",
+            "app",
+            "--status",
+            "done",
+        ],
+    )));
+    let canceled = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "canceled work",
+            "--project",
+            "app",
+            "--status",
+            "canceled",
+        ],
+    )));
+    let future = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "future work",
+            "--project",
+            "app",
+            "--status",
+            "todo",
+            "--available-at",
+            "2099-01-01T00:00:00Z",
+        ],
+    )));
+    let deleted = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "deleted work",
+            "--project",
+            "app",
+            "--status",
+            "todo",
+        ],
+    )));
+    ok(env.aven(&db, ["delete", &deleted]));
+
+    let open = ok(env.aven(&db, ["list", "--open"]));
+    contains_all(&open, &[&app_open, &ops_open]);
+    contains_none(&open, &[&done, &canceled, &future, &deleted]);
+
+    let composed = ok(env.aven(
+        &db,
+        [
+            "list",
+            "--open",
+            "--project",
+            "app",
+            "--priority",
+            "high",
+            "--label",
+            "bug",
+        ],
+    ));
+    contains_all(&composed, &[&app_open, "available app work"]);
+    contains_none(&composed, &[&ops_open, &done, &canceled, &future, &deleted]);
+}
+
+#[test]
+fn list_open_rejects_incompatible_selectors() {
+    let env = TestEnv::new();
+    let db = env.db("list-open-conflicts.sqlite");
+
+    for args in [
+        ["list", "--open", "--status", "todo"].as_slice(),
+        ["list", "--open", "--all"].as_slice(),
+        ["list", "--open", "--deleted"].as_slice(),
+        ["list", "--open", "--upcoming"].as_slice(),
+    ] {
+        contains_all(
+            &fail(env.aven(&db, args.iter().copied())),
+            &["--open", "cannot be used with"],
+        );
+    }
+}
+
+#[test]
 fn availability_preserves_attention_filters_and_explicit_discovery() {
     let env = TestEnv::new();
     let db = env.db("availability.sqlite");

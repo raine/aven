@@ -437,10 +437,30 @@ pub(crate) struct AddArgs {
     #[arg(long, default_value = "none")]
     pub(crate) priority: String,
     #[arg(long)]
+    pub(crate) status: Option<String>,
+    #[arg(long)]
     pub(crate) label: Vec<String>,
     #[arg(long, help = "Create the task as an epic container")]
     pub(crate) epic: bool,
-    #[arg(long)]
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "description",
+            "description_file",
+            "description_stdin",
+            "priority",
+            "status",
+            "label",
+            "epic",
+            "available_at",
+            "due",
+            "repeat",
+            "repeat_at",
+            "repeat_due",
+            "time_zone",
+            "repeat_start_on"
+        ]
+    )]
     pub(crate) natural: bool,
     #[arg(long, value_name = "WHEN")]
     pub(crate) available_at: Option<String>,
@@ -484,6 +504,11 @@ pub(crate) struct ListArgs {
     pub(crate) priority: Option<String>,
     #[arg(long)]
     pub(crate) label: Option<String>,
+    #[arg(
+        long,
+        conflicts_with_all = ["status", "all", "deleted", "upcoming"]
+    )]
+    pub(crate) open: bool,
     #[arg(long)]
     pub(crate) all: bool,
     #[arg(long)]

@@ -31,6 +31,7 @@ pub(crate) async fn cmd_add(
     args: AddArgs,
 ) -> Result<()> {
     validate_priority(&args.priority)?;
+    validate_optional_status(args.status.as_deref())?;
     let description = read_optional_text(
         args.description,
         args.description_file.as_deref(),
@@ -80,7 +81,7 @@ pub(crate) async fn cmd_add(
                     description,
                     project,
                     priority: args.priority,
-                    initial_status: "todo".to_string(),
+                    initial_status: args.status.unwrap_or_else(|| "todo".to_string()),
                     labels: args.label,
                     schedule,
                 },
@@ -100,7 +101,7 @@ pub(crate) async fn cmd_add(
     }
     let mut draft = if args.natural {
         if !description.is_empty()
-            || args.project.is_some()
+            || args.status.is_some()
             || args.priority != "none"
             || !args.label.is_empty()
             || args.available_at.is_some()
@@ -110,9 +111,12 @@ pub(crate) async fn cmd_add(
                 "error natural-add-exclusive hint=\"use plain add flags or --natural, not both\""
             );
         }
-        let context =
-            crate::task_intake::TaskIntakeContext::load_with_database(database, workspace, None)
-                .await?;
+        let context = crate::task_intake::TaskIntakeContext::load_with_database(
+            database,
+            workspace,
+            args.project.as_deref(),
+        )
+        .await?;
         let output = crate::task_intake::run_task_intake_command(
             &config.agent.task_intake,
             &context,
@@ -154,7 +158,7 @@ pub(crate) async fn cmd_add(
             title: args.title,
             description,
             project: args.project,
-            status: "inbox".to_string(),
+            status: args.status.unwrap_or_else(|| "inbox".to_string()),
             priority: args.priority,
             source: TaskSource::Cli,
             labels: args.label,
@@ -574,6 +578,7 @@ fn list_task_filters(args: &ListArgs) -> TaskFilters {
         exclude_epics: args.ready,
         overdue_only: args.overdue,
         expand_recurring: args.expand_recurring,
+        hide_done: args.open,
         availability,
         label: args.label.clone(),
         ..TaskFilters::default()

@@ -139,6 +139,49 @@ fn add_parses_fixed_rules_and_rejects_ambiguous_scheduling() {
 }
 
 #[test]
+fn add_recurring_accepts_open_initial_status_and_rejects_terminal_status() {
+    let env = TestEnv::new();
+    let db = env.db("recurrence-status.sqlite");
+    let today = Utc::now().date_naive().to_string();
+
+    let active = ok(env.aven(
+        &db,
+        [
+            "add",
+            "Active series",
+            "--repeat",
+            "daily",
+            "--status",
+            "active",
+            "--time-zone",
+            "UTC",
+            "--repeat-start-on",
+            &today,
+        ],
+    ));
+    contains_all(&active, &["created RCR-", "status=active"]);
+
+    contains_all(
+        &fail(env.aven(
+            &db,
+            [
+                "add",
+                "Done series",
+                "--repeat",
+                "daily",
+                "--status",
+                "done",
+                "--time-zone",
+                "UTC",
+                "--repeat-start-on",
+                &today,
+            ],
+        )),
+        &["error recurrence-initial-status-terminal", "status=done"],
+    );
+}
+
+#[test]
 fn completion_groups_list_and_search_while_expansion_keeps_occurrence_refs() {
     let env = TestEnv::new();
     let db = env.db("recurrence-grouping.sqlite");
