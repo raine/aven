@@ -305,8 +305,28 @@ fn recurrence_history_entry_key(entry: &RecurrenceHistoryEntry) -> RecurrenceHis
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum UpdateNotesState {
+    Loading,
+    Ready(String),
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UpdateActionFocus {
+    Later,
+    Primary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum UpdateOverlayState {
     Checking,
+    Available {
+        plan: crate::update::InstallPlan,
+        notes: UpdateNotesState,
+        scroll: u16,
+        focus: UpdateActionFocus,
+        cached: bool,
+    },
     Progress {
         version: String,
         phase: crate::update::UpdatePhase,
@@ -314,11 +334,6 @@ pub(crate) enum UpdateOverlayState {
     },
     Current {
         version: String,
-        cached: bool,
-    },
-    Guidance {
-        version: String,
-        lines: Vec<String>,
         cached: bool,
     },
     Success {
@@ -594,9 +609,6 @@ pub(crate) enum ConfirmIntent {
     },
     ClearDue {
         selection: TaskSelection,
-    },
-    InstallUpdate {
-        plan: crate::update::InstallPlan,
     },
 }
 

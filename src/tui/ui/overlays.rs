@@ -37,6 +37,9 @@ pub(super) use text_input::render_text_input;
 pub(super) use text_panel::render_text_panel;
 pub(crate) use text_panel::text_panel_scroll_cap;
 pub(super) use update::render_update;
+pub(crate) use update::{
+    update_action_at, update_dialog_size, update_link_at, update_notes_scroll_cap,
+};
 
 #[cfg(test)]
 pub(super) use add_task::{

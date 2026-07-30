@@ -5,12 +5,13 @@ use std::sync::{
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::layout::Size;
 use semver::Version;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use crate::tui::app::App;
-use crate::tui::overlay::{ConfirmIntent, OverlayState, UpdateOverlayState};
+use crate::tui::overlay::{OverlayState, UpdateActionFocus, UpdateNotesState, UpdateOverlayState};
 use crate::update::{self, CheckOutcome, InstallPlan, InstallSuccess, Release, UpdateProgress};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,7 +23,7 @@ pub(crate) struct UpdateBadgeView {
 #[derive(Debug)]
 enum UpdateAvailability {
     Unknown,
-    Available(Release),
+    Available { release: Release, cached: bool },
     Restart(Version),
 }
 
@@ -33,18 +34,32 @@ pub(super) struct UpdateController {
     install: Option<JoinHandle<Result<InstallSuccess>>>,
     progress: Option<watch::Receiver<UpdateProgress>>,
     cancelled: Option<Arc<AtomicBool>>,
+    dismissal: Option<update::UpdateDismissal>,
 }
 
 #[cfg(not(test))]
 fn initial_availability() -> UpdateAvailability {
     update::cached_update()
-        .map(UpdateAvailability::Available)
+        .map(|release| UpdateAvailability::Available {
+            release,
+            cached: true,
+        })
         .unwrap_or(UpdateAvailability::Unknown)
 }
 
 #[cfg(test)]
 fn initial_availability() -> UpdateAvailability {
     UpdateAvailability::Unknown
+}
+
+#[cfg(not(test))]
+fn initial_dismissal() -> Option<update::UpdateDismissal> {
+    update::cached_dismissal()
+}
+
+#[cfg(test)]
+fn initial_dismissal() -> Option<update::UpdateDismissal> {
+    None
 }
 
 impl UpdateController {
@@ -56,16 +71,25 @@ impl UpdateController {
             install: None,
             progress: None,
             cancelled: None,
+            dismissal: initial_dismissal(),
         }
     }
 
     pub(super) fn badge(&self) -> Option<UpdateBadgeView> {
         match &self.availability {
             UpdateAvailability::Unknown => None,
-            UpdateAvailability::Available(release) => Some(UpdateBadgeView {
-                label: format!("update available v{}", release.version),
-                restart: false,
-            }),
+            UpdateAvailability::Available { release, .. }
+                if !self
+                    .dismissal
+                    .as_ref()
+                    .is_some_and(|dismissal| dismissal.applies_to(&release.version)) =>
+            {
+                Some(UpdateBadgeView {
+                    label: format!("update available v{}", release.version),
+                    restart: false,
+                })
+            }
+            UpdateAvailability::Available { .. } => None,
             UpdateAvailability::Restart(version) => Some(UpdateBadgeView {
                 label: format!("restart for v{version}"),
                 restart: true,
@@ -75,7 +99,7 @@ impl UpdateController {
 
     pub(super) fn changelog_ref(&self) -> String {
         match &self.availability {
-            UpdateAvailability::Available(release) => release.tag.clone(),
+            UpdateAvailability::Available { release, .. } => release.tag.clone(),
             UpdateAvailability::Restart(version) => format!("v{version}"),
             UpdateAvailability::Unknown => format!("v{}", update::CURRENT_VERSION),
         }
@@ -84,6 +108,16 @@ impl UpdateController {
     pub(super) fn work_pending(&self) -> bool {
         self.check.is_some() || self.install.is_some()
     }
+}
+
+fn update_guidance_copy(plan: &InstallPlan) -> Option<String> {
+    let lines = plan.guidance()?;
+    Some(
+        lines
+            .iter()
+            .find_map(|line| line.strip_prefix("Run: ").map(str::to_string))
+            .unwrap_or_else(|| lines.join("\n")),
+    )
 }
 
 impl App {
@@ -99,6 +133,10 @@ impl App {
             self.overlay = Some(OverlayState::Update(UpdateOverlayState::Success {
                 version: version.to_string(),
             }));
+            return;
+        }
+        if let UpdateAvailability::Available { release, cached } = &self.update.availability {
+            self.show_update_release(release.clone(), *cached);
             return;
         }
         self.overlay = Some(OverlayState::Update(UpdateOverlayState::Checking));
@@ -152,9 +190,12 @@ impl App {
             let result = self.update.check.take().expect("checked above").await;
             match result {
                 Ok(Ok(CheckOutcome::Available { release, cached })) => {
-                    self.update.availability = UpdateAvailability::Available(release.clone());
+                    self.update.availability = UpdateAvailability::Available {
+                        release: release.clone(),
+                        cached,
+                    };
                     if explicit {
-                        self.present_update_release(release, cached);
+                        self.show_update_release(release, cached);
                     }
                 }
                 Ok(Ok(CheckOutcome::Current { version, cached })) => {
@@ -168,8 +209,11 @@ impl App {
                 }
                 Ok(Err(error)) if explicit => {
                     if let Some(release) = update::cached_update() {
-                        self.update.availability = UpdateAvailability::Available(release.clone());
-                        self.present_update_release(release, true);
+                        self.update.availability = UpdateAvailability::Available {
+                            release: release.clone(),
+                            cached: true,
+                        };
+                        self.show_update_release(release, true);
                     } else {
                         self.overlay = Some(OverlayState::Update(UpdateOverlayState::Failed {
                             message: format!("Could not check for updates: {error:#}"),
@@ -224,37 +268,6 @@ impl App {
         changed
     }
 
-    fn present_update_release(&mut self, release: Release, cached: bool) {
-        let plan = update::install_plan(release.clone());
-        if let Some(lines) = plan.guidance() {
-            self.overlay = Some(OverlayState::Update(UpdateOverlayState::Guidance {
-                version: release.version.to_string(),
-                lines,
-                cached,
-            }));
-            return;
-        }
-        let target = plan
-            .direct_target()
-            .expect("direct plan must have target")
-            .display()
-            .to_string();
-        let cached_note = if cached {
-            " Release information is cached because GitHub is unavailable."
-        } else {
-            ""
-        };
-        self.overlay = Some(OverlayState::confirm(
-            ConfirmIntent::InstallUpdate { plan },
-            "Update aven",
-            format!(
-                "Install aven v{} over v{} at {target}?{cached_note}",
-                release.version,
-                update::CURRENT_VERSION
-            ),
-        ));
-    }
-
     pub(super) fn confirm_update(&mut self, plan: InstallPlan) -> Result<()> {
         let version = plan.release.version.to_string();
         let (progress_tx, progress_rx) = update::progress_channel();
@@ -278,7 +291,99 @@ impl App {
         &mut self,
         state: UpdateOverlayState,
         key: KeyEvent,
+        terminal_size: Size,
     ) {
+        if let UpdateOverlayState::Available {
+            plan,
+            notes,
+            mut scroll,
+            mut focus,
+            cached,
+        } = state
+        {
+            match key.code {
+                KeyCode::Esc => {
+                    self.update.dismissal = Some(update::dismiss_update(plan.release.version));
+                }
+                KeyCode::Tab | KeyCode::BackTab | KeyCode::Left | KeyCode::Right => {
+                    focus = match focus {
+                        UpdateActionFocus::Later => UpdateActionFocus::Primary,
+                        UpdateActionFocus::Primary => UpdateActionFocus::Later,
+                    };
+                    self.overlay = Some(OverlayState::Update(UpdateOverlayState::Available {
+                        plan,
+                        notes,
+                        scroll,
+                        focus,
+                        cached,
+                    }));
+                }
+                KeyCode::Enter | KeyCode::Char(' ') => match focus {
+                    UpdateActionFocus::Later => {
+                        self.update.dismissal = Some(update::dismiss_update(plan.release.version));
+                    }
+                    UpdateActionFocus::Primary => {
+                        if let Some(command) = update_guidance_copy(&plan) {
+                            match crate::tui::platform::copy_to_clipboard(&command) {
+                                Ok(()) => self.set_info("update command copied"),
+                                Err(error) => self.set_warning(format!(
+                                    "could not copy update command: {error:#}"
+                                )),
+                            }
+                            self.overlay =
+                                Some(OverlayState::Update(UpdateOverlayState::Available {
+                                    plan,
+                                    notes,
+                                    scroll,
+                                    focus,
+                                    cached,
+                                }));
+                        } else if let Err(error) = self.confirm_update(plan) {
+                            self.set_error(format!("could not start update: {error:#}"));
+                        }
+                    }
+                },
+                KeyCode::Char('r') if matches!(notes, UpdateNotesState::Failed) => {
+                    self.show_update_release(plan.release.clone(), cached);
+                }
+                code => {
+                    let page_rows = crate::tui::ui::update_dialog_size(terminal_size)
+                        .1
+                        .saturating_sub(7);
+                    let half_page = page_rows.saturating_add(1) / 2;
+                    let delta = match code {
+                        KeyCode::Char('j') | KeyCode::Down => Some(1),
+                        KeyCode::Char('k') | KeyCode::Up => Some(-1),
+                        KeyCode::Char('d') => Some(half_page as isize),
+                        KeyCode::Char('u') => Some(-(half_page as isize)),
+                        KeyCode::PageDown => Some(page_rows as isize),
+                        KeyCode::PageUp => Some(-(page_rows as isize)),
+                        KeyCode::Home | KeyCode::Char('g') => {
+                            scroll = 0;
+                            None
+                        }
+                        KeyCode::End | KeyCode::Char('G') => {
+                            scroll = crate::tui::ui::update_notes_scroll_cap(&notes, terminal_size);
+                            None
+                        }
+                        _ => None,
+                    };
+                    if let Some(delta) = delta {
+                        let cap = crate::tui::ui::update_notes_scroll_cap(&notes, terminal_size);
+                        scroll = crate::tui::navigation::scroll_with_delta(scroll, delta, cap);
+                    }
+                    self.overlay = Some(OverlayState::Update(UpdateOverlayState::Available {
+                        plan,
+                        notes,
+                        scroll,
+                        focus,
+                        cached,
+                    }));
+                }
+            }
+            return;
+        }
+
         match key.code {
             KeyCode::Esc => {
                 if self.update.check.is_some() {
@@ -324,5 +429,42 @@ impl App {
             }
             _ => self.overlay = Some(OverlayState::Update(state)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn release(version: u64) -> Release {
+        Release {
+            version: Version::new(version, 0, 0),
+            tag: format!("v{version}.0.0"),
+            archive_name: "aven-test.tar.gz".to_string(),
+            archive_url: "https://example.com/aven-test.tar.gz".to_string(),
+            checksum_url: "https://example.com/aven-test.sha256".to_string(),
+        }
+    }
+
+    #[test]
+    fn later_hides_only_the_dismissed_update_badge() {
+        let mut controller = UpdateController::new();
+        controller.availability = UpdateAvailability::Available {
+            release: release(2),
+            cached: false,
+        };
+        assert!(controller.badge().is_some());
+
+        controller.dismissal = Some(update::UpdateDismissal::for_test(
+            Version::new(2, 0, 0),
+            u64::MAX,
+        ));
+        assert!(controller.badge().is_none());
+
+        controller.availability = UpdateAvailability::Available {
+            release: release(3),
+            cached: false,
+        };
+        assert!(controller.badge().is_some());
     }
 }

@@ -75,6 +75,18 @@ pub(crate) fn changelog_link_at(
     );
     let body = changelog_body_area(content);
     let text_area = changelog_text_area(body);
+    changelog_link_at_in_area(markdown, scroll, width, body, text_area, column, row)
+}
+
+pub(in crate::tui::ui) fn changelog_link_at_in_area(
+    markdown: &str,
+    scroll: u16,
+    render_width: u16,
+    body: Rect,
+    text_area: Rect,
+    column: u16,
+    row: u16,
+) -> Option<String> {
     if column < text_area.x
         || column >= text_area.x.saturating_add(text_area.width)
         || row < text_area.y
@@ -83,7 +95,7 @@ pub(crate) fn changelog_link_at(
         return None;
     }
 
-    let lines = changelog_lines(markdown, width);
+    let lines = changelog_lines(markdown, render_width);
     let start = clamp_scroll_start(scroll, lines.len(), body.height as usize);
     let target_line = start.saturating_add(row.saturating_sub(body.y) as usize);
     let links = changelog_links(markdown);
@@ -113,7 +125,10 @@ pub(crate) fn changelog_link_at(
     None
 }
 
-fn changelog_lines(markdown: &str, width: u16) -> Vec<ratatui::text::Line<'static>> {
+pub(in crate::tui::ui) fn changelog_lines(
+    markdown: &str,
+    width: u16,
+) -> Vec<ratatui::text::Line<'static>> {
     let mut rendered =
         render_markdown_without_link_urls(markdown, width.saturating_sub(6).max(1) as usize);
     for line in &mut rendered {

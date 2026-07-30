@@ -2627,6 +2627,41 @@ mod confirm_overlays {
     }
 
     #[test]
+    fn available_update_combines_release_notes_and_actions() {
+        let rendered = render_overlay_view(OverlayView::Update(
+            crate::tui::overlay::UpdateOverlayState::Available {
+                plan: crate::update::InstallPlan {
+                    release: crate::update::Release {
+                        version: semver::Version::new(1, 2, 3),
+                        tag: "v1.2.3".to_string(),
+                        archive_name: "aven-test.tar.gz".to_string(),
+                        archive_url: "https://example.com/aven-test.tar.gz".to_string(),
+                        checksum_url: "https://example.com/aven-test.sha256".to_string(),
+                    },
+                    method: crate::update::InstallMethod::Direct {
+                        target: "/usr/local/bin/aven".into(),
+                    },
+                },
+                notes: crate::tui::overlay::UpdateNotesState::Ready(
+                    "## v1.2.3\n\n- Faster updates\n\n## v1.1.0\n\n- Earlier changes".to_string(),
+                ),
+                scroll: 0,
+                focus: crate::tui::overlay::UpdateActionFocus::Primary,
+                cached: false,
+            },
+        ));
+
+        assert!(rendered.contains("Software Update"));
+        assert!(rendered.contains("Aven v1.2.3 is available"));
+        assert!(rendered.contains("You have v"));
+        assert!(rendered.contains("Changelog"));
+        assert!(rendered.contains("Faster updates"));
+        assert!(rendered.contains("Earlier changes"));
+        assert!(rendered.contains("Later"));
+        assert!(rendered.contains("Update"));
+    }
+
+    #[test]
     fn update_overlay_explains_restart_and_cancellation() {
         let success = render_overlay_view(OverlayView::Update(
             crate::tui::overlay::UpdateOverlayState::Success {

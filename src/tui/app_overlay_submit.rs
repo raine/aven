@@ -451,7 +451,6 @@ impl App {
             ConfirmIntent::ClearDue { selection } => {
                 self.submit_clear_due(selection).await?;
             }
-            ConfirmIntent::InstallUpdate { plan } => self.confirm_update(plan)?,
         }
         Ok(())
     }

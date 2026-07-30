@@ -10,6 +10,7 @@ use super::{CheckOutcome, Release, current_version};
 
 const CACHE_SCHEMA: u32 = 1;
 const SUCCESS_INTERVAL: u64 = 24 * 60 * 60;
+const DISMISS_INTERVAL: u64 = 7 * 24 * 60 * 60;
 const FAILURE_BACKOFF: [u64; 4] = [15 * 60, 60 * 60, 6 * 60 * 60, 24 * 60 * 60];
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -23,6 +24,31 @@ struct UpdateCache {
     next_attempt_after: Option<u64>,
     #[serde(default)]
     failure_count: u32,
+    #[serde(default)]
+    dismissed_version: Option<semver::Version>,
+    #[serde(default)]
+    dismissed_until: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UpdateDismissal {
+    version: semver::Version,
+    until: u64,
+}
+
+impl UpdateDismissal {
+    pub(crate) fn applies_to(&self, version: &semver::Version) -> bool {
+        self.applies_to_at(version, now_secs())
+    }
+
+    fn applies_to_at(&self, version: &semver::Version, now: u64) -> bool {
+        self.version == *version && self.until > now
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(version: semver::Version, until: u64) -> Self {
+        Self { version, until }
+    }
 }
 
 pub(crate) fn background_check_due() -> bool {
@@ -35,6 +61,32 @@ pub(crate) fn cached_update() -> Option<Release> {
     cache
         .release
         .filter(|release| release.version > current_version())
+}
+
+#[cfg(not(test))]
+pub(crate) fn cached_dismissal() -> Option<UpdateDismissal> {
+    let cache = load_cache();
+    let dismissal = UpdateDismissal {
+        version: cache.dismissed_version?,
+        until: cache.dismissed_until?,
+    };
+    (dismissal.until > now_secs()).then_some(dismissal)
+}
+
+pub(crate) fn dismiss_update(version: semver::Version) -> UpdateDismissal {
+    let mut cache = load_cache();
+    let dismissal = dismissal_at(version, now_secs());
+    cache.dismissed_version = Some(dismissal.version.clone());
+    cache.dismissed_until = Some(dismissal.until);
+    save_cache(&cache);
+    dismissal
+}
+
+fn dismissal_at(version: semver::Version, now: u64) -> UpdateDismissal {
+    UpdateDismissal {
+        version,
+        until: now.saturating_add(DISMISS_INTERVAL),
+    }
 }
 
 pub(crate) async fn check_for_update(
@@ -210,6 +262,16 @@ mod tests {
             1_000
         ));
         assert!(check_due_at(&UpdateCache::default(), 1_000));
+    }
+
+    #[test]
+    fn later_hides_one_version_for_seven_days() {
+        let version = Version::new(2, 0, 0);
+        let dismissal = dismissal_at(version.clone(), 1_000);
+
+        assert!(dismissal.applies_to_at(&version, 1_000 + DISMISS_INTERVAL - 1));
+        assert!(!dismissal.applies_to_at(&version, 1_000 + DISMISS_INTERVAL));
+        assert!(!dismissal.applies_to_at(&Version::new(3, 0, 0), 1_001));
     }
 
     #[test]

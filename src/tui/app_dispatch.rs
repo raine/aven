@@ -23,7 +23,7 @@ use crate::tui::navigation::{
 };
 use crate::tui::overlay::{
     AddTaskMode, CommandState, MultilineIntent, OverlayOutcome, OverlayState, PickerIntent,
-    ScheduleEditorField, ScheduleEditorMode, TagComboboxIntent,
+    ScheduleEditorField, ScheduleEditorMode, TagComboboxIntent, UpdateOverlayState,
 };
 use crate::tui::platform::{copy_to_clipboard, is_editor_prefix_key, open_url_in_default_browser};
 use crate::tui::shortcut_buffer::DetailShortcutResolution;
@@ -291,6 +291,47 @@ impl App {
         }
 
         self.list.expire_task_click(Instant::now());
+
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            && let Some(OverlayState::Update(state)) = self.overlay.as_ref()
+            && let Some(url) =
+                crate::tui::ui::update_link_at(state, terminal_size, mouse.column, mouse.row)
+        {
+            if let Err(error) = open_url_in_default_browser(&url) {
+                self.set_warning(format!("could not open release-note link: {error:#}"));
+            }
+            return Ok(());
+        }
+
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            && let Some(OverlayState::Update(state)) = self.overlay.as_ref()
+            && let Some(action) =
+                crate::tui::ui::update_action_at(state, terminal_size, mouse.column, mouse.row)
+        {
+            let Some(OverlayState::Update(UpdateOverlayState::Available {
+                plan,
+                notes,
+                scroll,
+                cached,
+                ..
+            })) = self.overlay.take()
+            else {
+                return Ok(());
+            };
+            self.handle_update_overlay_key(
+                UpdateOverlayState::Available {
+                    plan,
+                    notes,
+                    scroll,
+                    focus: action,
+                    cached,
+                },
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                terminal_size,
+            )
+            .await;
+            return Ok(());
+        }
 
         if mouse.kind == MouseEventKind::Down(MouseButton::Left)
             && let Some(OverlayState::Changelog(state)) = self.overlay.as_ref()
@@ -921,6 +962,11 @@ impl App {
                 state.scroll = scroll_with_delta(state.scroll, delta, cap);
                 true
             }
+            Some(OverlayState::Update(UpdateOverlayState::Available { notes, scroll, .. })) => {
+                let cap = crate::tui::ui::update_notes_scroll_cap(notes, terminal_size);
+                *scroll = scroll_with_delta(*scroll, delta, cap);
+                true
+            }
             Some(OverlayState::Changelog(state)) => {
                 let cap =
                     crate::tui::changelog::changelog_scroll_cap(&state.markdown, terminal_size);
@@ -982,7 +1028,10 @@ impl App {
             OverlayState::RecurrenceHistory(state) => {
                 self.handle_recurrence_history_key(*state, key).await?
             }
-            OverlayState::Update(state) => self.handle_update_overlay_key(state, key).await,
+            OverlayState::Update(state) => {
+                self.handle_update_overlay_key(state, key, terminal_size)
+                    .await
+            }
             OverlayState::Changelog(state) => self.handle_changelog_key(state, key, terminal_size),
             OverlayState::Command { mut state } => match key.code {
                 KeyCode::Esc => {}
