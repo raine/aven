@@ -71,7 +71,7 @@ Recurring tasks use one of two due settings:
 - **Same day** makes the scheduled date the due date.
 - **No due date** leaves each task without a deadline.
 
-See [Schedule tasks](/schedule-tasks/) for the underlying availability and
+See [Scheduling tasks](/schedule-tasks/) for the underlying availability and
 due-date model.
 
 ## Find recurring tasks
@@ -183,7 +183,7 @@ See [Resolve conflicts](/sync/#resolve-conflicts) for the review workflow.
 
 ## Related pages
 
-- [Schedule tasks](/schedule-tasks/) explains the availability and due-date model
+- [Scheduling tasks](/schedule-tasks/) explains the availability and due-date model
   used by each dated task.
 - [Using the TUI](/tui/) covers navigation, selection, and command discovery.
 - [Sync across devices](/sync/) covers synchronization and conflict handling.

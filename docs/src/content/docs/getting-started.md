@@ -63,9 +63,9 @@ chat integrations, example prompts, and handoff notes.
 
 - Read [Concepts](/concepts/) to learn the task model.
 - Read [Using the TUI](/tui/) for navigation, views, filters, and shortcuts.
-- Read [Organize tasks](/organize-tasks/) to choose among projects, labels, epics,
+- Read [Organizing tasks](/organize-tasks/) to choose among projects, labels, epics,
   dependencies, and workspaces.
-- Read [Schedule tasks](/schedule-tasks/) to defer work or set deadlines.
+- Read [Scheduling tasks](/schedule-tasks/) to defer work or set deadlines.
 - Read [Recurring tasks](/recurring-tasks/) to set up work that returns on a schedule.
 - Read [Work with agents](/agents/) for coding, chat, and voice-agent workflows.
 - Read [Sync across devices](/sync/) and [Back up and restore](/backups/) when

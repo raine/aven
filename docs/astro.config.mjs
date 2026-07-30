@@ -57,8 +57,8 @@ export default defineConfig({
           label: 'Guides',
           items: [
             { label: 'Using the TUI', slug: 'tui' },
-            { label: 'Organize tasks', slug: 'organize-tasks' },
-            { label: 'Schedule tasks', slug: 'schedule-tasks' },
+            { label: 'Organizing tasks', slug: 'organize-tasks' },
+            { label: 'Scheduling tasks', slug: 'schedule-tasks' },
             { label: 'Recurring tasks', slug: 'recurring-tasks' },
             { label: 'Work with agents', slug: 'agents' },
             { label: 'Sync across devices', slug: 'sync' },

@@ -19,7 +19,7 @@ A task is a unit of work inside a workspace and, usually, a project. It has a ti
 
 Labels are cross-cutting tags such as `bug`, `docs`, or `ux`. Label names are normalized before storage: uppercase letters become lowercase, and punctuation or spaces become dashes. Create a label explicitly, then assign it to tasks.
 
-See [Organize tasks](/organize-tasks/) for guidance on choosing among workspaces,
+See [Organizing tasks](/organize-tasks/) for guidance on choosing among workspaces,
 projects, labels, epics, and dependencies.
 
 ## Status and priority
@@ -87,7 +87,7 @@ A task may use either field or both. A future due date does not defer work. A pa
 
 Availability is a timestamp because it can represent a local time of day or an exact UTC instant. Due dates are date-only values because the deadline applies to the local calendar day. Neither field creates reminders, notifications, recurrence, or automatic status changes.
 
-See [Schedule tasks](/schedule-tasks/) for one-time planning workflows and date
+See [Scheduling tasks](/schedule-tasks/) for one-time planning workflows and date
 input examples.
 
 ## Recurring tasks
