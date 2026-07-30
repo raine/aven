@@ -1,5 +1,5 @@
 ---
-title: Use the TUI
+title: Using the TUI
 description: Find, capture, and manage work in the terminal interface.
 ---
 

@@ -62,7 +62,7 @@ chat integrations, example prompts, and handoff notes.
 ## Next steps
 
 - Read [Concepts](/concepts/) to learn the task model.
-- Read [Use the TUI](/tui/) for navigation, views, filters, and shortcuts.
+- Read [Using the TUI](/tui/) for navigation, views, filters, and shortcuts.
 - Read [Organize tasks](/organize-tasks/) to choose among projects, labels, epics,
   dependencies, and workspaces.
 - Read [Schedule tasks](/schedule-tasks/) to defer work or set deadlines.

@@ -56,7 +56,7 @@ export default defineConfig({
         {
           label: 'Guides',
           items: [
-            { label: 'Use the TUI', slug: 'tui' },
+            { label: 'Using the TUI', slug: 'tui' },
             { label: 'Organize tasks', slug: 'organize-tasks' },
             { label: 'Schedule tasks', slug: 'schedule-tasks' },
             { label: 'Recurring tasks', slug: 'recurring-tasks' },

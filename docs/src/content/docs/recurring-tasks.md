@@ -185,7 +185,7 @@ See [Resolve conflicts](/sync/#resolve-conflicts) for the review workflow.
 
 - [Schedule tasks](/schedule-tasks/) explains the availability and due-date model
   used by each dated task.
-- [Use the TUI](/tui/) covers navigation, selection, and command discovery.
+- [Using the TUI](/tui/) covers navigation, selection, and command discovery.
 - [Sync across devices](/sync/) covers synchronization and conflict handling.
 
 ## Reference

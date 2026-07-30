@@ -12,7 +12,7 @@ records its deadline. You can use either setting on its own or combine them.
 | Due date | Record the deadline and surface the task as it approaches or becomes overdue. |
 
 If the composer, task selection, marking, or command discovery are unfamiliar,
-start with [Use the TUI](/tui/). Shortcuts such as `e a` are keys pressed in
+start with [Using the TUI](/tui/). Shortcuts such as `e a` are keys pressed in
 sequence.
 
 ## Set a schedule while creating a task
@@ -90,7 +90,7 @@ format.
 
 ## Related pages
 
-- [Use the TUI](/tui/) covers the composer, task editing, views, and command
+- [Using the TUI](/tui/) covers the composer, task editing, views, and command
   discovery.
 - [Concepts](/concepts/#availability-and-due-dates) defines availability and due
   dates in the task model.

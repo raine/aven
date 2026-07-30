@@ -105,7 +105,7 @@ larger result. A task can participate in both relationships.
 
 ## Related pages
 
-- [Use the TUI](/tui/) covers navigation, selection, and command discovery.
+- [Using the TUI](/tui/) covers navigation, selection, and command discovery.
 - [Concepts](/concepts/) defines these structures in the task model.
 - [Schedule tasks](/schedule-tasks/) explains when organized work should appear
   or become due.
