@@ -63,7 +63,7 @@ export default defineConfig({
             { label: 'Work with agents', slug: 'agents' },
             { label: 'Sync across devices', slug: 'sync' },
             { label: 'Back up and restore', slug: 'backups' },
-            { label: 'Terminal setup and troubleshooting', slug: 'tips' },
+            { label: 'Tips', slug: 'tips' },
           ],
         },
         {

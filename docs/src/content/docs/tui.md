@@ -104,7 +104,7 @@ Press `Ctrl-n` when the visible title and description contain rough notes, paste
 
 Copy a PNG, JPEG, GIF, or WebP image and press `Ctrl-v`, or paste a local image path or `file://` URL. Images remain attached to the draft when validation fails.
 
-If clipboard image paste is unavailable, save the image and paste its path. See [Terminal setup and troubleshooting](/tips/) for terminal-specific preview setup, [Configuration](/configuration/#png-optimization) for image optimization, and [`aven attachment`](/command-reference/#aven-attachment) for limits and command-line management.
+If clipboard image paste is unavailable, save the image and paste its path. See [terminal tips](/tips/) for terminal-specific preview setup, [Configuration](/configuration/#png-optimization) for image optimization, and [`aven attachment`](/command-reference/#aven-attachment) for limits and command-line management.
 
 ## Triage and edit tasks
 
@@ -253,7 +253,7 @@ bind t display-popup -E -d '#{pane_current_path}' -w 120 -h 30 'aven tui --add-t
 
 <p class="media-caption">A smaller tmux popup opens directly into the task composer.</p>
 
-See [Terminal setup and troubleshooting](/tips/#use-ctrl-enter-in-alacritty-and-tmux) for modified-key and tmux configuration.
+See [terminal tips](/tips/#use-ctrl-enter-in-alacritty-and-tmux) for modified-key and tmux configuration.
 
 ## Mouse support
 
@@ -295,5 +295,5 @@ The in-app command catalog is the authoritative shortcut reference:
   grammar.
 - [Configuration](/configuration/) covers workspace routes, project mappings,
   sync defaults, and task-intake configuration.
-- [Terminal setup and troubleshooting](/tips/) covers terminal input, tmux, and
+- [Terminal tips](/tips/) covers terminal input, tmux, and
   image previews.
