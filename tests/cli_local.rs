@@ -1418,6 +1418,91 @@ fn bulk_update_sets_status_by_project_and_status() {
 }
 
 #[test]
+fn bulk_update_selectors_include_future_tasks() {
+    let env = TestEnv::new();
+    let db = env.db("bulk-update-future.sqlite");
+    let open = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "future open",
+            "--project",
+            "app",
+            "--available-at",
+            "2099-01-01T00:00:00Z",
+        ],
+    )));
+    let terminal = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "future terminal",
+            "--project",
+            "app",
+            "--available-at",
+            "2099-01-02T00:00:00Z",
+        ],
+    )));
+    ok(env.aven(&db, ["edit", &terminal, "--status", "done"]));
+    let deleted = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "future deleted",
+            "--project",
+            "app",
+            "--available-at",
+            "2099-01-03T00:00:00Z",
+        ],
+    )));
+    ok(env.aven(&db, ["delete", &deleted]));
+
+    let all = ok(env.aven(&db, ["bulk-update", "--all", "--set-priority", "high"]));
+    contains_all(
+        &all,
+        &["bulk-update-summary matched=2 changed=2 would_change=2 unchanged=0 dry_run=no"],
+    );
+    contains_all(&ok(env.aven(&db, ["show", &open])), &["priority=high"]);
+    contains_all(&ok(env.aven(&db, ["show", &terminal])), &["priority=high"]);
+    contains_all(&ok(env.aven(&db, ["show", &deleted])), &["priority=none"]);
+
+    let terminal_only = ok(env.aven(
+        &db,
+        [
+            "bulk-update",
+            "--status",
+            "done",
+            "--set-priority",
+            "urgent",
+        ],
+    ));
+    contains_all(
+        &terminal_only,
+        &["bulk-update-summary matched=1 changed=1 would_change=1 unchanged=0 dry_run=no"],
+    );
+    contains_all(
+        &ok(env.aven(&db, ["show", &terminal])),
+        &["priority=urgent"],
+    );
+
+    let including_deleted = ok(env.aven(
+        &db,
+        [
+            "bulk-update",
+            "--all",
+            "--include-deleted",
+            "--set-priority",
+            "medium",
+        ],
+    ));
+    contains_all(
+        &including_deleted,
+        &["bulk-update-summary matched=3 changed=3 would_change=3 unchanged=0 dry_run=no"],
+    );
+    contains_all(&ok(env.aven(&db, ["show", &deleted])), &["priority=medium"]);
+}
+
+#[test]
 fn bulk_update_requires_selector_and_mutation() {
     let env = TestEnv::new();
     let db = env.db("bulk-update-guards.sqlite");

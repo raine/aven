@@ -159,7 +159,7 @@ async fn resolve_bulk_project_mutation(
 fn bulk_update_filters(args: &BulkUpdateArgs) -> TaskFilters {
     TaskFilters {
         label: args.filter_label.clone(),
-        availability: TaskAvailabilityFilter::Available,
+        availability: TaskAvailabilityFilter::All,
         ..TaskFilters::default()
             .with_project(args.project.clone())
             .with_status(args.status.clone())
