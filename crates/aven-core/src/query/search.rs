@@ -1,4 +1,4 @@
-use crate::ids::{TaskId, WorkspaceId};
+use crate::ids::{ProjectId, TaskId, WorkspaceId};
 use anyhow::Result;
 use chrono::Local;
 use serde::Serialize;
@@ -6,6 +6,7 @@ use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 use std::collections::HashMap;
 
 use crate::db::task_from_row;
+use crate::projects::resolve_existing_project_in_workspace;
 use crate::refs::DisplayRefContext;
 use crate::task_enrichment::{epic_parents_for_tasks, labels_for_tasks};
 use crate::types::Task;
@@ -36,6 +37,7 @@ const RECENCY_BOOST_CAP: i64 = 12_000;
 #[derive(Debug, Clone)]
 pub struct TaskSearchQuery {
     pub text: String,
+    pub project: Option<String>,
     pub include_deleted: bool,
     pub limit: usize,
 }
@@ -253,9 +255,20 @@ async fn scored_search_documents(
         return Ok(ScoredSearchResults { items: Vec::new() });
     }
     let load_deleted = query.include_deleted || parsed.ref_query.is_some();
-    let documents =
-        load_candidate_search_documents(conn, workspace_id, load_deleted, &parsed, display_refs)
-            .await?;
+    let project = if let Some(project) = query.project.as_deref() {
+        Some(resolve_existing_project_in_workspace(conn, workspace_id, project).await?)
+    } else {
+        None
+    };
+    let documents = load_candidate_search_documents(
+        conn,
+        workspace_id,
+        project.as_ref().map(|project| &project.id),
+        load_deleted,
+        &parsed,
+        display_refs,
+    )
+    .await?;
 
     let now_seconds = crate::queue::now_seconds();
     let mut scored = documents
@@ -421,6 +434,7 @@ fn attachment_query_terms(parsed: &parser::ParsedTaskSearchQuery) -> Vec<String>
 async fn load_attachment_text_search_documents(
     conn: &mut SqliteConnection,
     workspace_id: &str,
+    project_id: Option<&ProjectId>,
     include_deleted: bool,
     parsed: &parser::ParsedTaskSearchQuery,
     display_refs: &DisplayRefContext,
@@ -440,7 +454,12 @@ async fn load_attachment_text_search_documents(
          WHERE ta.workspace_id = ",
     );
     query.push_bind(workspace_id);
-    query.push(" AND ta.deleted = 0 AND (");
+    query.push(" AND ta.deleted = 0");
+    if let Some(project_id) = project_id {
+        query.push(" AND t.project_id = ");
+        query.push_bind(project_id);
+    }
+    query.push(" AND (");
     let mut first = true;
     for term in terms {
         if !first {
@@ -467,25 +486,40 @@ async fn load_attachment_text_search_documents(
 async fn load_candidate_search_documents(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
+    project_id: Option<&ProjectId>,
     include_deleted: bool,
     parsed: &parser::ParsedTaskSearchQuery,
     display_refs: &DisplayRefContext,
 ) -> Result<Vec<SearchDocument>> {
     let mut documents = if let Some(fts_match) = parsed.fts_match.as_deref() {
-        load_fts_search_documents(conn, workspace_id, include_deleted, fts_match, display_refs)
-            .await?
+        load_fts_search_documents(
+            conn,
+            workspace_id,
+            project_id,
+            include_deleted,
+            fts_match,
+            display_refs,
+        )
+        .await?
     } else {
         Vec::new()
     };
     if let Some(ref_query) = &parsed.ref_query {
-        let ref_documents =
-            load_ref_search_documents(conn, workspace_id, include_deleted, ref_query, display_refs)
-                .await?;
+        let ref_documents = load_ref_search_documents(
+            conn,
+            workspace_id,
+            project_id,
+            include_deleted,
+            ref_query,
+            display_refs,
+        )
+        .await?;
         merge_search_documents(&mut documents, ref_documents);
     }
     let attachment_documents = load_attachment_text_search_documents(
         conn,
         workspace_id.as_str(),
+        project_id,
         include_deleted,
         parsed,
         display_refs,
@@ -499,6 +533,7 @@ async fn load_candidate_search_documents(
 async fn load_ref_search_documents(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
+    project_id: Option<&ProjectId>,
     include_deleted: bool,
     ref_query: &parser::ParsedRefSearchQuery,
     display_refs: &DisplayRefContext,
@@ -509,7 +544,8 @@ async fn load_ref_search_documents(
          t.status, t.priority, t.source, t.created_at, t.updated_at, t.queue_activity_at, t.available_at, t.due_on, t.deleted, t.is_epic,
          '' AS fts_labels, '' AS fts_notes
          FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
-         WHERE t.workspace_id = ? AND (? OR t.deleted = 0) AND NOT EXISTS (
+         WHERE t.workspace_id = ? AND (? OR t.deleted = 0)
+           AND (? OR t.project_id = ?) AND NOT EXISTS (
              SELECT 1 FROM recurrence_occurrences ro
              JOIN recurrence_series rs ON rs.workspace_id = ro.workspace_id AND rs.id = ro.series_id
              WHERE ro.workspace_id = t.workspace_id AND ro.task_id = t.id
@@ -520,6 +556,8 @@ async fn load_ref_search_documents(
     )
     .bind(workspace_id)
     .bind(include_deleted)
+    .bind(project_id.is_none())
+    .bind(project_id)
     .bind(&ref_query.normalized_suffix)
     .fetch_all(&mut *conn)
     .await?;
@@ -540,6 +578,7 @@ fn merge_search_documents(documents: &mut Vec<SearchDocument>, incoming: Vec<Sea
 async fn load_fts_search_documents(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
+    project_id: Option<&ProjectId>,
     include_deleted: bool,
     raw_fts_match: &str,
     display_refs: &DisplayRefContext,
@@ -555,6 +594,7 @@ async fn load_fts_search_documents(
          JOIN tasks t ON t.workspace_id = d.workspace_id AND t.id = d.task_id
          JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
          WHERE task_search_fts MATCH ? AND d.workspace_id = ? AND (? OR t.deleted = 0)
+           AND (? OR t.project_id = ?)
            AND NOT EXISTS (
              SELECT 1 FROM recurrence_occurrences ro
              JOIN recurrence_series rs ON rs.workspace_id = ro.workspace_id AND rs.id = ro.series_id
@@ -567,6 +607,8 @@ async fn load_fts_search_documents(
     .bind(&fts_match)
     .bind(workspace_id)
     .bind(include_deleted)
+    .bind(project_id.is_none())
+    .bind(project_id)
     .fetch_all(&mut *conn)
     .await?;
     search_documents_from_rows(rows, display_refs)

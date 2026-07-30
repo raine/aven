@@ -1406,6 +1406,55 @@ fn delete_restore_and_filters_work() {
 }
 
 #[test]
+fn search_project_scope_filters_before_ranking_and_limit() {
+    let env = TestEnv::new();
+    let db = env.db("search-project.sqlite");
+    ok(env.aven(&db, ["project", "create", "Operations"]));
+    let selected = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "Selected project result",
+            "--project",
+            "app",
+            "--description",
+            "needle in selected description",
+        ],
+    )));
+    let unrelated = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "needle",
+            "--project",
+            "Operations",
+            "--priority",
+            "urgent",
+        ],
+    )));
+
+    let unscoped = ok(env.aven(&db, ["search", "needle", "--limit", "1"]));
+    contains_all(&unscoped, &[&unrelated, "needle"]);
+    contains_none(&unscoped, &[&selected, "Selected project result"]);
+
+    let scoped = ok(env.aven(
+        &db,
+        ["search", "--project", "app", "needle", "--limit", "1"],
+    ));
+    contains_all(
+        &scoped,
+        &[&selected, "Selected project result", "match=description"],
+    );
+    contains_none(&scoped, &[&unrelated]);
+
+    let all = ok(env.aven(&db, ["search", "needle"]));
+    contains_all(&all, &[&selected, &unrelated]);
+
+    let missing = fail(env.aven(&db, ["search", "--project", "missing", "needle"]));
+    contains_all(&missing, &["error unknown-project input=missing"]);
+}
+
+#[test]
 fn search_controls_deleted_visibility() {
     let env = TestEnv::new();
     let db = env.db("search-deleted.sqlite");

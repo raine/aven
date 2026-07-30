@@ -30,6 +30,47 @@ fn explicit_unknown_workspace_preserves_structured_error_source() {
 }
 
 #[test]
+fn search_project_resolution_uses_selected_workspace() {
+    let env = TestEnv::new();
+    let db = env.db("search-workspace-project.sqlite");
+    ok(env.aven(&db, ["workspace", "create", "Client"]));
+    ok(env.aven(
+        &db,
+        ["--workspace", "client", "project", "create", "Client Docs"],
+    ));
+    let client_task = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "--workspace",
+            "client",
+            "add",
+            "workspace search needle",
+            "--project",
+            "Client Docs",
+        ],
+    )));
+
+    let scoped = ok(env.aven(
+        &db,
+        [
+            "--workspace",
+            "client",
+            "search",
+            "--project",
+            "Client Docs",
+            "needle",
+        ],
+    ));
+    contains_all(&scoped, &[&client_task, "workspace search needle"]);
+
+    let wrong_workspace = fail(env.aven(&db, ["search", "--project", "Client Docs", "needle"]));
+    contains_all(
+        &wrong_workspace,
+        &["error unknown-project input=Client Docs"],
+    );
+}
+
+#[test]
 fn workspace_commands_manage_names_and_ambiguity() {
     let env = TestEnv::new();
     let db = env.db("workspaces.sqlite");

@@ -395,6 +395,7 @@ async fn paused_and_archived_tasks_leave_all_open_paths_but_stopped_final_stays_
         &workspace.id,
         TaskSearchQuery {
             text: "paused fixture".to_string(),
+            project: None,
             include_deleted: false,
             limit: 20,
         },
@@ -599,6 +600,7 @@ async fn history_combines_task_outcomes_archived_and_derived_rows() {
         &workspace.id,
         TaskSearchQuery {
             text: "history fixture".to_string(),
+            project: None,
             include_deleted: false,
             limit: 20,
         },
@@ -612,6 +614,7 @@ async fn history_combines_task_outcomes_archived_and_derived_rows() {
         &workspace.id,
         TaskSearchQuery {
             text: "history fixture".to_string(),
+            project: None,
             include_deleted: false,
             limit: 20,
         },

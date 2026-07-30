@@ -28,6 +28,7 @@ async fn search_preview_with_database(
             &workspace_id,
             TaskSearchQuery {
                 text,
+                project: None,
                 include_deleted: false,
                 limit,
             },
@@ -200,6 +201,7 @@ impl TuiStore {
                 &self.active_workspace.id,
                 TaskSearchQuery {
                     text: text.to_string(),
+                    project: None,
                     include_deleted: false,
                     limit: 100,
                 },

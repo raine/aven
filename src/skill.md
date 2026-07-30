@@ -43,6 +43,7 @@ aven list --blocked
 aven list --upcoming
 aven list --overdue
 aven search "auth bug"
+aven search --project app "auth bug"
 aven context APP-7KQ9
 aven show APP-7KQ9 --full
 aven add "Fix conflict display" --status todo --priority high --label bug
