@@ -11,11 +11,20 @@ use crate::queue::{now_seconds, queue_order};
 use crate::refs::DisplayRefContext;
 
 use super::fragments;
-use super::hydration::build_task_list_items;
+use super::hydration::{TaskHydration, build_task_list_items};
 use super::sorting::push_sort;
 use super::{
     SortDirection, TaskAvailabilityFilter, TaskFilters, TaskListItem, TaskQueryMode, TaskSort,
 };
+
+struct TaskListRead {
+    filters: TaskFilters,
+    mode: TaskQueryMode,
+    sort: TaskSort,
+    direction: SortDirection,
+    limit: Option<usize>,
+    hydration: TaskHydration,
+}
 
 pub async fn list_task_items_in_workspace(
     conn: &mut SqliteConnection,
@@ -47,14 +56,86 @@ pub async fn list_task_items_with_display_refs(
     direction: SortDirection,
     display_refs: &DisplayRefContext,
 ) -> Result<Vec<TaskListItem>> {
+    query_task_items(
+        conn,
+        workspace_id,
+        display_refs,
+        TaskListRead {
+            filters,
+            mode,
+            sort,
+            direction,
+            limit: None,
+            hydration: TaskHydration::Detail,
+        },
+    )
+    .await
+}
+
+pub async fn list_task_summary_items_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    filters: TaskFilters,
+    mode: TaskQueryMode,
+    sort: TaskSort,
+    direction: SortDirection,
+    limit: Option<usize>,
+) -> Result<Vec<TaskListItem>> {
+    let display_refs = DisplayRefContext::for_workspace(conn, workspace_id).await?;
+    query_task_items(
+        conn,
+        workspace_id,
+        &display_refs,
+        TaskListRead {
+            filters,
+            mode,
+            sort,
+            direction,
+            limit,
+            hydration: TaskHydration::List,
+        },
+    )
+    .await
+}
+
+async fn query_task_items(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    display_refs: &DisplayRefContext,
+    read: TaskListRead,
+) -> Result<Vec<TaskListItem>> {
+    let TaskListRead {
+        filters,
+        mode,
+        sort,
+        direction,
+        limit,
+        hydration,
+    } = read;
     let expand_recurring = filters.expand_recurring;
-    if let Some(status) = filters.status.as_deref() {
-        TaskStatus::parse(status)?;
-    }
-    for status in &filters.statuses {
-        TaskStatus::parse(status)?;
-    }
+    let status_filter = filters
+        .status
+        .as_deref()
+        .map(TaskStatus::parse)
+        .transpose()?;
+    let status_filters = filters
+        .statuses
+        .iter()
+        .map(|status| TaskStatus::parse(status).map_err(anyhow::Error::from))
+        .collect::<Result<Vec<_>>>()?;
     let hide_done = filters.hide_done && filters.status.is_none() && filters.statuses.is_empty();
+    let terminal_tasks_excluded = hide_done
+        || filters.ready_only
+        || filters.blocked_only
+        || filters.overdue_only
+        || filters.availability == TaskAvailabilityFilter::Upcoming
+        || status_filter.is_some_and(|status| !status.is_terminal())
+        || (!status_filters.is_empty()
+            && status_filters.iter().all(|status| !status.is_terminal()));
+    let limit_in_sql = limit.is_some()
+        && mode == TaskQueryMode::Flat
+        && filters.task_ids.is_empty()
+        && (expand_recurring || terminal_tasks_excluded);
     if let Some(priority) = filters.priority.as_deref() {
         TaskPriority::parse(priority)?;
     }
@@ -191,6 +272,10 @@ pub async fn list_task_items_with_display_refs(
     if mode == TaskQueryMode::Flat {
         push_sort(&mut query, sort, direction);
     }
+    if limit_in_sql {
+        query.push(" LIMIT ");
+        query.push_bind(i64::try_from(limit.unwrap_or(usize::MAX)).unwrap_or(i64::MAX));
+    }
 
     let rows = query.build().fetch_all(&mut *conn).await?;
     let tasks = rows
@@ -206,6 +291,7 @@ pub async fn list_task_items_with_display_refs(
         now_seconds,
         local_today,
         display_refs,
+        hydration,
     )
     .await?;
     if !expand_recurring {
@@ -224,6 +310,9 @@ pub async fn list_task_items_with_display_refs(
                 .position(|task_id| task_id == &item.task.id)
                 .unwrap_or(order.len())
         });
+    }
+    if let Some(limit) = limit.filter(|_| !limit_in_sql) {
+        items.truncate(limit);
     }
     Ok(items)
 }

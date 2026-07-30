@@ -314,6 +314,168 @@ async fn list_items_include_description_and_note_metadata() {
 }
 
 #[tokio::test]
+async fn ranked_list_applies_limit_after_queue_ordering() {
+    let (_temp, mut conn) = test_conn().await;
+    let workspace_id = crate::workspaces::default_workspace_id();
+    seed_default_project(&mut conn).await;
+
+    for (id, title, status, priority, created_at) in [
+        ("1000000000000001", "old inbox", "inbox", "none", "001"),
+        ("1000000000000002", "urgent todo", "todo", "urgent", "002"),
+        ("1000000000000003", "active", "active", "none", "003"),
+        ("1000000000000004", "new inbox", "inbox", "none", "004"),
+        ("1000000000000005", "high todo", "todo", "high", "005"),
+        ("1000000000000006", "medium todo", "todo", "medium", "006"),
+    ] {
+        insert_test_task(&mut conn, id, title, status, priority, created_at).await;
+    }
+
+    let all_items = list_task_items_in_workspace(
+        &mut conn,
+        &workspace_id,
+        TaskFilters {
+            hide_done: true,
+            ..TaskFilters::default()
+        },
+        TaskQueryMode::RankedQueue,
+        TaskSort::Created,
+        SortDirection::Asc,
+    )
+    .await
+    .unwrap();
+    let expected = listed_titles(&all_items)[..3].to_vec();
+
+    let bounded = list_task_summary_items_in_workspace(
+        &mut conn,
+        &workspace_id,
+        TaskFilters {
+            hide_done: true,
+            ..TaskFilters::default()
+        },
+        TaskQueryMode::RankedQueue,
+        TaskSort::Created,
+        SortDirection::Asc,
+        Some(3),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(listed_titles(&bounded), expected);
+}
+
+#[tokio::test]
+async fn bounded_list_hydrates_only_selected_summary_rows() {
+    let (_temp, mut conn) = test_conn().await;
+    let workspace_id = crate::workspaces::default_workspace_id();
+    seed_default_project(&mut conn).await;
+
+    for index in 0..40 {
+        let task_id = format!("{index:016}");
+        let created_at = format!("{index:03}");
+        insert_test_task(
+            &mut conn,
+            &task_id,
+            &format!("task {index:02}"),
+            "todo",
+            "none",
+            &created_at,
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO notes(workspace_id, id, task_id, body, created_at, change_id)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&workspace_id)
+        .bind(format!("note-{index:011}"))
+        .bind(&task_id)
+        .bind(format!("note body {index}"))
+        .bind(&created_at)
+        .bind(format!("note-change-{index:04}"))
+        .execute(conn.as_mut())
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO task_attachments(
+                 workspace_id, attachment_id, task_id, sha256, byte_size, media_type,
+                 filename, width, height, created_at
+             ) VALUES (?, ?, ?, ?, 1, 'image/png', ?, 1, 1, ?)",
+        )
+        .bind(&workspace_id)
+        .bind(format!("{index:016X}"))
+        .bind(&task_id)
+        .bind(format!("{index:064x}"))
+        .bind(format!("image-{index}.png"))
+        .bind(&created_at)
+        .execute(conn.as_mut())
+        .await
+        .unwrap();
+    }
+
+    let all_items = list_task_items_in_workspace(
+        &mut conn,
+        &workspace_id,
+        TaskFilters {
+            hide_done: true,
+            ..TaskFilters::default()
+        },
+        TaskQueryMode::Flat,
+        TaskSort::Created,
+        SortDirection::Asc,
+    )
+    .await
+    .unwrap();
+    let expected_ids = all_items
+        .iter()
+        .take(5)
+        .map(|item| item.task.id.clone())
+        .collect::<Vec<_>>();
+    assert!(all_items.iter().all(|item| item.notes.len() == 1));
+    assert!(all_items.iter().all(|item| item.attachments.len() == 1));
+
+    sqlx::query("PRAGMA ignore_check_constraints = ON")
+        .execute(conn.as_mut())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE tasks SET status = 'invalid' WHERE id = '0000000000000005'")
+        .execute(conn.as_mut())
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE notes RENAME TO detail_notes")
+        .execute(conn.as_mut())
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE task_attachments RENAME TO detail_task_attachments")
+        .execute(conn.as_mut())
+        .await
+        .unwrap();
+
+    let bounded = list_task_summary_items_in_workspace(
+        &mut conn,
+        &workspace_id,
+        TaskFilters {
+            hide_done: true,
+            ..TaskFilters::default()
+        },
+        TaskQueryMode::Flat,
+        TaskSort::Created,
+        SortDirection::Asc,
+        Some(5),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        bounded
+            .iter()
+            .map(|item| item.task.id.clone())
+            .collect::<Vec<_>>(),
+        expected_ids
+    );
+    assert!(bounded.iter().all(|item| item.notes.is_empty()));
+    assert!(bounded.iter().all(|item| item.attachments.is_empty()));
+}
+
+#[tokio::test]
 async fn list_items_preserve_display_refs_with_hidden_collisions() {
     let (_temp, mut conn) = test_conn().await;
     seed_default_project(&mut conn).await;
