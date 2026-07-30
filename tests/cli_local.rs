@@ -1487,6 +1487,97 @@ fn search_controls_deleted_visibility() {
 }
 
 #[test]
+fn search_json_includes_complete_task_shape_and_search_metadata() {
+    let env = TestEnv::new();
+    let db = env.db("search-json-shape.sqlite");
+    let epic = extract_ref(&ok(env.aven(
+        &db,
+        ["add", "complete json epic", "--project", "app", "--epic"],
+    )));
+    let blocker = extract_ref(&ok(
+        env.aven(&db, ["add", "complete json blocker", "--project", "app"])
+    ));
+    let task = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "complete json target",
+            "--project",
+            "app",
+            "--priority",
+            "high",
+            "--available-at",
+            "2030-01-02T03:04:05Z",
+            "--due",
+            "2030-01-03",
+        ],
+    )));
+    ok(env.aven(&db, ["epic", "add", &task, &epic]));
+    ok(env.aven(&db, ["dep", "add", &task, &blocker]));
+
+    let listed_task: serde_json::Value =
+        serde_json::from_str(&ok(env.aven(&db, ["show", &task, "--json"]))).unwrap();
+    let searched: serde_json::Value = serde_json::from_str(&ok(env.aven(
+        &db,
+        ["search", "complete json target", "--limit", "1", "--json"],
+    )))
+    .unwrap();
+    let searched_task = &searched[0];
+
+    for field in [
+        "ref",
+        "id",
+        "title",
+        "project",
+        "status",
+        "priority",
+        "labels",
+        "deleted",
+        "is_epic",
+        "epic_parent",
+        "epic_children",
+        "has_conflict",
+        "blocked_by",
+        "blocks",
+        "available_at",
+        "due_on",
+        "recurrence",
+        "recurrence_group",
+        "created_at",
+        "updated_at",
+    ] {
+        assert_eq!(searched_task[field], listed_task[field], "field {field}");
+    }
+    assert_eq!(searched_task["available_at"], "2030-01-02T03:04:05Z");
+    assert_eq!(searched_task["due_on"], "2030-01-03");
+    assert_eq!(searched_task["epic_parent"]["ref"], epic);
+    assert_eq!(searched_task["blocked_by"], 1);
+    assert_eq!(searched_task["blocks"], 0);
+    assert!(
+        searched_task["created_at"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    assert!(
+        searched_task["updated_at"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    assert!(searched_task["score"].as_i64().is_some());
+    assert_eq!(searched_task["matched_field"], "title");
+    assert!(searched_task.get("snippet").is_some());
+    assert_eq!(searched.as_array().unwrap().len(), 1);
+
+    let epic_search: serde_json::Value = serde_json::from_str(&ok(
+        env.aven(&db, ["search", &epic, "--limit", "1", "--json"])
+    ))
+    .unwrap();
+    assert_eq!(epic_search[0]["is_epic"], true);
+    assert_eq!(epic_search[0]["epic_children"][0]["ref"], task);
+    assert_eq!(epic_search[0]["matched_field"], "ref");
+}
+
+#[test]
 fn invalid_filter_values_fail() {
     let env = TestEnv::new();
     let db = env.db("bad-filter.sqlite");

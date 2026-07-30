@@ -49,7 +49,7 @@ EOF
 
 ### Structured output
 
-The `--json` option is available on `context`, `show`, `list`, `search`, `recur list`, `recur show`, `recur history`, `attachment add`, `attachment list`, `attachment get`, `attachment delete`, `attachment prune`, `dep list`, `epic list`, `prime`, `label list`, `project list`, `conflict list`, `conflict show`, and `doctor`. JSON task objects expose temporal fields through `available_at` and `due_on`, and epic membership separately from dependency ordering through `is_epic`, `epic_parent`, and `epic_children`. `context --json` and `show --full --json` also expose attachment metadata without bytes, including deleted attachment tombstones. Consumers must inspect each attachment's `deleted` field. An empty `available_at` means immediate availability. An empty `due_on` means no deadline.
+The `--json` option is available on `context`, `show`, `list`, `search`, `recur list`, `recur show`, `recur history`, `attachment add`, `attachment list`, `attachment get`, `attachment delete`, `attachment prune`, `dep list`, `epic list`, `prime`, `label list`, `project list`, `conflict list`, `conflict show`, and `doctor`. JSON task objects from `list`, `show`, and `search` include scheduling in `available_at` and `due_on`, epic membership in `is_epic`, `epic_parent`, and `epic_children`, dependency counts in `blocked_by` and `blocks`, conflict state in `has_conflict`, and `created_at` and `updated_at` timestamps. Search results add `score`, `matched_field`, and `snippet` to this task shape. `context --json` and `show --full --json` also expose attachment metadata without bytes, including deleted attachment tombstones. Consumers must inspect each attachment's `deleted` field. An empty `available_at` means immediate availability. An empty `due_on` means no deadline.
 
 ## Temporal input
 
@@ -244,9 +244,9 @@ aven search <query>... [--project <project>] [--limit <number>] [--all] [--expan
 | `--limit <number>` | Maximum result count. Defaults to `50`. |
 | `--all` | Include deleted tasks. |
 | `--expand-recurring` | Return each matching dated task instead of grouping past matches by recurring task. |
-| `--json` | Print ranked results as JSON, including score, matched field, and optional snippet. |
+| `--json` | Print ranked results as JSON. Each result uses the list task shape and adds score, matched field, and optional snippet. |
 
-Text output identifies the matched field and score and prints a snippet when available. Ref-shaped input can resolve a deleted task when `--all` is present.
+Text output identifies the matched field and score and prints a snippet when available. Search JSON preserves the flat task fields used by list JSON, including recurrence metadata and recurrence grouping, then adds `score`, `matched_field`, and `snippet`. Ref-shaped input can resolve a deleted task when `--all` is present.
 
 ```sh
 aven search "auth bug"

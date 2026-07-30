@@ -17,9 +17,8 @@ use crate::query::{
 use crate::refs::DisplayRefContext;
 use crate::render::{KvLine, changed_text, print_json_pretty, quote};
 use crate::task_render::{
-    TaskConflictReport, TaskFullReport, TaskRecurrenceGroupJson, TaskRecurrenceJson,
-    attachment_metadata_json, print_full_task_report, print_task_line_item, task_full_json,
-    task_line_json_item, task_recurrence_group_json, task_recurrence_json,
+    TaskConflictReport, TaskFullReport, TaskLineJson, attachment_metadata_json,
+    print_full_task_report, print_task_line_item, task_full_json, task_line_json_item,
 };
 use crate::types::Task;
 use crate::workspaces::Workspace;
@@ -437,19 +436,11 @@ pub(crate) async fn cmd_list(
 
 #[derive(Serialize)]
 struct SearchJsonItem {
-    r#ref: String,
-    id: String,
-    title: String,
-    project: String,
-    status: String,
-    priority: String,
-    labels: Vec<String>,
-    deleted: bool,
+    #[serde(flatten)]
+    task: TaskLineJson,
     score: i64,
     matched_field: query::SearchMatchedField,
     snippet: Option<String>,
-    recurrence: Option<TaskRecurrenceJson>,
-    recurrence_group: Option<TaskRecurrenceGroupJson>,
 }
 
 pub(crate) async fn cmd_search(
@@ -533,33 +524,10 @@ fn print_search_result(result: &TaskSearchResult) {
 
 fn search_json_item(result: &TaskSearchResult) -> SearchJsonItem {
     SearchJsonItem {
-        r#ref: result
-            .item
-            .recurrence_group
-            .as_ref()
-            .map(|group| group.series_ref.clone())
-            .unwrap_or_else(|| result.item.display_ref.clone()),
-        id: result
-            .item
-            .recurrence_group
-            .as_ref()
-            .map(|group| group.series_id.to_string())
-            .unwrap_or_else(|| result.item.task.id.to_string()),
-        title: result.item.task.title.clone(),
-        project: result.item.task.project_key.clone(),
-        status: result.item.task.status.as_str().to_string(),
-        priority: result.item.task.priority.as_str().to_string(),
-        labels: result.item.labels.clone(),
-        deleted: result.item.task.deleted,
+        task: task_line_json_item(&result.item),
         score: result.score,
         matched_field: result.matched_field,
         snippet: result.snippet.clone(),
-        recurrence: result.item.recurrence.as_ref().map(task_recurrence_json),
-        recurrence_group: result
-            .item
-            .recurrence_group
-            .as_ref()
-            .map(task_recurrence_group_json),
     }
 }
 

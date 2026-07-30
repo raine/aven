@@ -224,6 +224,20 @@ fn completion_groups_list_and_search_while_expansion_keeps_occurrence_refs() {
     assert_eq!(list_json[0]["ref"], series_ref);
     assert_eq!(list_json[0]["recurrence_group"]["series_ref"], series_ref);
     assert_eq!(list_json[0]["recurrence_group"]["completed"], 1);
+
+    let search_json: serde_json::Value = serde_json::from_str(&ok(
+        env.aven(&db, ["search", "Daily journal", "--limit", "1", "--json"])
+    ))
+    .unwrap();
+    assert_eq!(search_json[0]["ref"], list_json[0]["ref"]);
+    assert_eq!(search_json[0]["recurrence"]["series_ref"], series_ref);
+    assert_eq!(
+        search_json[0]["recurrence_group"],
+        list_json[0]["recurrence_group"]
+    );
+    assert_eq!(search_json[0]["matched_field"], "title");
+    assert!(search_json[0]["score"].as_i64().is_some());
+    assert!(search_json[0].get("snippet").is_some());
 }
 
 #[test]

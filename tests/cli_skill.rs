@@ -24,6 +24,17 @@ fn skill_install_targets_explicit_agent() {
     let installed = fs::read_to_string(skill_path).unwrap();
     let printed = ok(skill_command(&home, ["skill"]));
     assert!(installed.ends_with(&printed));
+    contains_all(
+        &installed,
+        &[
+            "`list`, `show`, and `search` JSON use the same flat task object",
+            "Search adds",
+            "`score`",
+            "`matched_field`",
+            "`snippet`",
+            "dependency, conflict, timestamp, and recurrence state",
+        ],
+    );
     assert!(!home.join(".codex/skills/aven/SKILL.md").exists());
 }
 
