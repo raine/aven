@@ -49,7 +49,7 @@ EOF
 
 ### Structured output
 
-The `--json` option is available on `context`, `show`, `list`, `search`, `recur list`, `recur show`, `recur history`, `attachment add`, `attachment list`, `attachment get`, `attachment delete`, `attachment prune`, `dep list`, `epic list`, `prime`, `label list`, `project list`, `conflict list`, `conflict show`, and `doctor`. JSON task objects expose temporal fields through `available_at` and `due_on`, and epic membership separately from dependency ordering through `is_epic`, `epic_parent`, and `epic_children`. `context --json` and `show --full --json` also expose attachment metadata without bytes. An empty `available_at` means immediate availability. An empty `due_on` means no deadline.
+The `--json` option is available on `context`, `show`, `list`, `search`, `recur list`, `recur show`, `recur history`, `attachment add`, `attachment list`, `attachment get`, `attachment delete`, `attachment prune`, `dep list`, `epic list`, `prime`, `label list`, `project list`, `conflict list`, `conflict show`, and `doctor`. JSON task objects expose temporal fields through `available_at` and `due_on`, and epic membership separately from dependency ordering through `is_epic`, `epic_parent`, and `epic_children`. `context --json` and `show --full --json` also expose attachment metadata without bytes, including deleted attachment tombstones. Consumers must inspect each attachment's `deleted` field. An empty `available_at` means immediate availability. An empty `due_on` means no deadline.
 
 ## Temporal input
 
@@ -399,7 +399,7 @@ aven attachment delete <attachment-id> [--json]
 aven attachment prune [--dry-run | --apply] [--json]
 ```
 
-Attachment metadata determines identity, display order, and search matches. Attachment IDs are exact, workspace-scoped 16-character uppercase Crockford Base32 identifiers. Task-ref suffix and normalization rules do not apply. Live attachments appear in `(created_at, attachment_id)` order. Attachment `list` and `get` require `--all` to include tombstoned metadata. Human task sections, `aven context --json`, and `aven show --full --json` expose live attachments only. Compact `aven show --json` has no attachment array.
+Attachment metadata determines identity, display order, and search matches. Attachment IDs are exact, workspace-scoped 16-character uppercase Crockford Base32 identifiers. Task-ref suffix and normalization rules do not apply. Live attachments appear in `(created_at, attachment_id)` order. Attachment `list` and `get` require `--all` to include tombstoned metadata. Human-readable task attachment sections expose live attachments only. `aven context --json` and `aven show --full --json` preserve live attachments and deleted tombstones for synchronization-aware consumers. Inspect each attachment's `deleted` field rather than treating every array entry as current. Compact `aven show --json` has no attachment array.
 
 #### Add an image
 
@@ -440,15 +440,7 @@ Saving the file requires the image to be available on this device. In JSON outpu
 aven attachment delete 7KQ9A1X4MV2P8D6R
 ```
 
-The image file can remain during the configured grace period. While it remains available, retrieve it and add it again as a new attachment:
-
-```sh
-aven attachment list APP-7KQ9 --all
-aven attachment get 7KQ9A1X4MV2P8D6R --all --output ./recovered.png
-aven attachment add APP-7KQ9 ./recovered.png
-```
-
-Pruning can remove an unused image after the grace period. Normal sync downloads images for current attachments and does not restore a deleted attachment, so use a backup when the local file is unavailable.
+A tombstone records deletion independently of local blob retention. `attachment get <id> --all` inspects tombstoned metadata, but tombstone metadata does not guarantee that image bytes remain retrievable. `--output` succeeds only while the blob is available on this device. Normal sync does not download deleted attachment blobs, and pruning may remove an unused blob after the grace period. Use a backup when deleted image bytes must be retained.
 
 #### Supported images and optimization
 
@@ -470,7 +462,7 @@ Aven checks the complete image, including every animation frame, before attachin
 
 JSON output from `add`, `list`, `get`, and `delete` contains `attachment_id`, `task_id`, `sha256`, `byte_size`, `media_type`, `filename`, `alt_text`, `width`, `height`, `created_at`, `deleted`, `deleted_at`, and `has_blob`. Add output also contains `optimized`.
 
-`context --json` and `show --full --json` include current attachment information except `sha256`. Deleted attachments are excluded; use `attachment list --all` or `attachment get --all` to inspect them. Compact `show --json` has no attachment array. Search matches current attachment filenames and alternative text, not image contents or hashes.
+`context --json` and `show --full --json` include live attachment metadata and deleted tombstones except `sha256`. Consumers must inspect `deleted`; `deleted_at` records when a tombstone was created. Human-readable task attachment sections and search use live attachments only. `attachment list --all` and `attachment get --all` expose tombstoned metadata directly. Compact `show --json` has no attachment array. Search matches live attachment filenames and alternative text, not image contents or hashes.
 
 #### Clean up unused images
 

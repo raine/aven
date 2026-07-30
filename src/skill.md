@@ -156,8 +156,9 @@ aven search "daily journal" --expand-recurring
   it.
 - Attachment commands keep bytes outside text and JSON output. Use
   `attachment add <ref> <path>` to store image bytes, `attachment list <ref>
-  --json` to inspect complete metadata, and `attachment get <attachment-id>
-  --output <path>` to write bytes to a file. Attachment IDs are exact
+  --json` to inspect current metadata, `attachment list <ref> --all --json` to
+  include tombstones, and `attachment get <attachment-id> --output <path>` to
+  write live attachment bytes to a file. Attachment IDs are exact
   workspace-scoped identifiers. File output requires a local available blob and
   refuses to overwrite an existing output path. `attachment add` accepts
   `--media-type`, `--filename`, and `--alt`. PNG, JPEG, GIF, and WebP formats are
@@ -171,10 +172,15 @@ aven search "daily journal" --expand-recurring
 - Attachment JSON from `add`, `list`, `get`, and `delete` contains
   `attachment_id`, `task_id`, `sha256`, `byte_size`, `media_type`, `filename`,
   `alt_text`, `width`, `height`, `created_at`, `deleted`, `deleted_at`, and
-  `has_blob`. Add output also contains `optimized`. Live attachment objects in
-  `context --json` and `show --full --json` omit `sha256` and contain the other
-  metadata fields. Attachment deletion is an idempotent tombstone operation.
-  There is no attachment restore command.
+  `has_blob`. Add output also contains `optimized`. `context --json` and
+  `show --full --json` preserve live attachments and deleted tombstones, omit
+  `sha256`, and contain the other metadata fields. Structured consumers must
+  inspect `deleted` rather than treating every array entry as a current
+  attachment. Human-readable task attachment sections contain live attachments
+  only. Attachment deletion is an idempotent tombstone operation. There is no
+  attachment restore command. Tombstone metadata does not guarantee that image
+  bytes remain available: sync does not download deleted attachment blobs, and
+  pruning may remove a local blob.
 - `attachment prune` reports one privacy-safe batch of eligible counts and bytes,
   capped by `local.attachment_lifecycle.maintenance_limit`. JSON output contains
   `mode`, `eligible_count`, `eligible_bytes`, `pruned_count`, and `pruned_bytes`.
