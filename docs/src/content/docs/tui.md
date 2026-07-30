@@ -3,26 +3,26 @@ title: Use the TUI
 description: Find, capture, and manage work in the terminal interface.
 ---
 
-The TUI is aven's keyboard-driven interface for local task management.
+The TUI is aven's keyboard-driven interface for managing tasks locally.
 
 ```sh
 aven tui
 ```
 
-This page covers the interface: views, navigation, capture, editing, task detail,
-and command discovery. Continue to [Organize tasks](/organize-tasks/) when
-choosing task structure, [Schedule tasks](/schedule-tasks/) for availability and
-deadlines, and [Recurring tasks](/recurring-tasks/) for repeating work.
+Use it to find work, capture tasks, edit them, and inspect their details. See
+[Organize tasks](/organize-tasks/) for task structure, [Schedule
+tasks](/schedule-tasks/) for availability and deadlines, and [Recurring
+tasks](/recurring-tasks/) for repeating work.
 
 ![aven TUI showing the queue view across workspace projects](/tui.webp)
 
-<p class="media-caption">The queue brings workspace scope, project groups, task metadata, and selected-task context into one screen.</p>
+<p class="media-caption">Queue groups open work across the active workspace. The preview below the list shows details for the selected task.</p>
 
 Use `?` for commands available in the current mode. Use `:` to search the complete command catalog by name or description.
 
 ![aven TUI command palette filtering view commands](/command-palette.webp)
 
-<p class="media-caption">The command palette searches the same catalog used by prefix hints and contextual help.</p>
+<p class="media-caption">The command palette searches the catalog used by contextual help and prefix hints.</p>
 
 ## Find work
 
@@ -83,7 +83,7 @@ Press `a` to open the task composer. Project, status, priority, labels, availabi
 
 ![aven TUI add task popup with title and description fields](/add-task.webp)
 
-<p class="media-caption">The composer keeps task metadata, schedule, title, and description in one keyboard workflow.</p>
+<p class="media-caption">Set task metadata, scheduling, title, and description in the same form.</p>
 
 `Enter` opens the focused metadata control, creates from the title, and inserts a newline in the description. `Ctrl-Enter` creates from any field in terminals that report modified Enter keys. `Ctrl-s` is the portable create shortcut.
 
@@ -156,7 +156,7 @@ Columns arranges tasks into configurable lifecycle lanes.
 
 ![aven TUI showing tasks organized across lifecycle columns](/columns.webp)
 
-<p class="media-caption">Columns keeps the task lifecycle visible while preserving metadata and selected-task context.</p>
+<p class="media-caption">Columns arranges tasks into lifecycle lanes and shows details for the selected task.</p>
 
 Use `v l` to open Columns. Up and down move within a lane. Left and right switch lanes. Press `<` or `>` to move the selected or marked tasks one lane, or `m` to choose a destination.
 
@@ -170,7 +170,7 @@ Press `Enter` on a task to open detail.
 
 ![aven TUI task detail view with Markdown description and task metadata](/task-detail.webp)
 
-<p class="media-caption">Detail keeps Markdown context, notes, relationships, attachments, and editable metadata together.</p>
+<p class="media-caption">Task detail shows Markdown descriptions, notes, relationships, attachments, and editable metadata.</p>
 
 Use `[` and `]` to switch tasks without returning to the list.
 
@@ -247,11 +247,11 @@ bind t display-popup -E -d '#{pane_current_path}' -w 120 -h 30 'aven tui --add-t
 
 ![aven TUI running in a tmux popup over terminal panes](/tui-tmux-popup.webp)
 
-<p class="media-caption">A large popup keeps the full queue and detail workflow available over the current pane.</p>
+<p class="media-caption">The full TUI opens over the current tmux pane.</p>
 
 ![aven task composer running in a tmux popup](/tmux-popup.webp)
 
-<p class="media-caption">A compact popup opens the composer for quick capture.</p>
+<p class="media-caption">A smaller tmux popup opens directly into the task composer.</p>
 
 See [Terminal setup and troubleshooting](/tips/#use-ctrl-enter-in-alacritty-and-tmux) for modified-key and tmux configuration.
 
@@ -287,18 +287,10 @@ The in-app command catalog is the authoritative shortcut reference:
 | `c` | Conflict resolution |
 | `C` | Configuration |
 
-## Continue by goal
-
-- [Organize tasks](/organize-tasks/) explains when to use workspaces, projects,
-  labels, epics, and dependencies.
-- [Schedule tasks](/schedule-tasks/) explains availability and due dates.
-- [Recurring tasks](/recurring-tasks/) covers repeating schedules, lifecycle,
-  and history.
-- [Work with agents](/agents/) connects Aven to coding, chat, and voice agents.
-
 ## Reference
 
 - [Concepts](/concepts/) defines the task model behind the interface.
+- [Work with agents](/agents/) connects Aven to coding, chat, and voice agents.
 - [Command reference](/command-reference/) documents CLI equivalents and input
   grammar.
 - [Configuration](/configuration/) covers workspace routes, project mappings,

@@ -3,7 +3,7 @@ title: Organize tasks
 description: Choose how workspaces, projects, labels, epics, and dependencies structure your work.
 ---
 
-Aven provides several ways to organize work. Each one answers a different
+Aven has several ways to organize work, each meant for a different kind of
 question:
 
 | Tool | Question it answers |
@@ -17,9 +17,8 @@ question:
 Start with projects. Add the other structures only when they make work easier to
 find, prioritize, or hand off.
 
-This guide assumes basic TUI navigation. See [Use the TUI](/tui/) for views,
-selection, and command discovery. Shortcuts such as `t c a` are keys pressed in
-sequence.
+If views, selection, or command discovery are unfamiliar, start with [Use the
+TUI](/tui/). Shortcuts such as `t c a` are keys pressed in sequence.
 
 ## Separate work with workspaces
 
@@ -28,9 +27,9 @@ tasks. Task references and relationships stay within a workspace. Every
 workspace in one database shares that database's configuration and synchronizes
 through the same server.
 
-Most people need only one workspace. Create another when separate task scopes
-are useful, such as keeping personal and organizational work apart. Use separate
-databases when configuration or synchronization must be independent.
+Most people need only one workspace. Create another to keep separate areas of
+work apart, such as personal and work tasks. Use separate databases when they
+need independent configuration or synchronization.
 
 The TUI switches between existing workspaces but does not create them. Create an
 extra workspace once with `aven workspace create personal`, then press `g w` to
@@ -53,7 +52,7 @@ projects in the workspace.
 
 ![Aven Queue at workspace scope filtered to capture tasks across the mobile-app and cli projects](/organize-project-scope.webp)
 
-<p class="media-caption">Workspace scope keeps project ownership visible while a label filter finds related work across projects.</p>
+<p class="media-caption">Workspace scope shows project ownership while a label filter finds related work across projects.</p>
 
 Use projects for durable ownership, not temporary categories. Moving a task
 changes its displayed project prefix while preserving its identity.
@@ -102,7 +101,7 @@ larger result. A task can participate in both relationships.
 
 ![Aven Epics view with an expanded scheduling epic and a selected child blocked by another child](/organize-epic-dependencies.webp)
 
-<p class="media-caption">An expanded epic shows its child tasks, while the selected-task preview connects epic membership with an unresolved dependency.</p>
+<p class="media-caption">The selected task belongs to the scheduling epic and is blocked by another child task.</p>
 
 ## Related pages
 
