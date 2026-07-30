@@ -18,6 +18,45 @@ fn add_assigns_cli_source() {
 }
 
 #[test]
+fn add_accepts_validated_initial_status_and_preserves_inbox_default() {
+    let env = TestEnv::new();
+    let db = env.db("cli-status.sqlite");
+
+    let active = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "Triaged task",
+            "--project",
+            "app",
+            "--status",
+            "active",
+        ],
+    )));
+    let inbox = extract_ref(&ok(env.aven(&db, ["add", "Inbox task", "--project", "app"])));
+
+    contains_all(&ok(env.aven(&db, ["show", &active])), &["status=active"]);
+    contains_all(&ok(env.aven(&db, ["show", &inbox])), &["status=inbox"]);
+    contains_all(
+        &fail(env.aven(
+            &db,
+            [
+                "add",
+                "Invalid task",
+                "--project",
+                "app",
+                "--status",
+                "blocked",
+            ],
+        )),
+        &[
+            "error invalid-status",
+            "choices=inbox,backlog,todo,active,done,canceled",
+        ],
+    );
+}
+
+#[test]
 fn natural_add_uses_configured_task_intake_command() {
     let env = TestEnv::new();
     let db = env.db("natural.sqlite");
@@ -85,6 +124,76 @@ agent:
     );
     let prompt = fs::read_to_string(prompt).unwrap();
     assert_eq!(prompt, "custom task shaping");
+}
+
+#[test]
+fn natural_add_treats_explicit_project_as_fixed_context() {
+    let env = TestEnv::new();
+    let db = env.db("natural-project.sqlite");
+    let command = env.path("task-intake-project.sh");
+    let prompt = env.path("project-prompt.txt");
+    fs::write(
+        &command,
+        format!(
+            "#!/bin/sh\ncat >'{}'\nprintf '%s\\n' '{{\"title\":\"Fix scoped task\",\"description\":\"\",\"project\":\"other\",\"priority\":\"none\",\"labels\":[]}}'\n",
+            prompt.display()
+        ),
+    )
+    .unwrap();
+    set_executable(&command);
+    env.write_config(&format!(
+        r#"
+local:
+  db_path: "{}"
+
+agent:
+  task_intake:
+    command: "{}"
+    args: []
+    timeout_seconds: 5
+"#,
+        db.display(),
+        command.display()
+    ));
+    ok(env.aven_config(["project", "create", "app"]));
+    ok(env.aven_config(["project", "create", "other"]));
+
+    let task_ref = extract_ref(&ok(env.aven_config([
+        "add",
+        "Fix this in another project",
+        "--natural",
+        "--project",
+        "app",
+    ])));
+
+    contains_all(
+        &ok(env.aven_config(["show", &task_ref, "--full"])),
+        &["project=app", "title=\"Fix scoped task\""],
+    );
+    contains_all(
+        &fs::read_to_string(prompt).unwrap(),
+        &["Selected project: app", "Inferred project: app"],
+    );
+}
+
+#[test]
+fn natural_add_rejects_structured_status() {
+    let env = TestEnv::new();
+    let db = env.db("natural-status-conflict.sqlite");
+
+    contains_all(
+        &fail(env.aven(
+            &db,
+            [
+                "add",
+                "Triaged natural task",
+                "--natural",
+                "--status",
+                "todo",
+            ],
+        )),
+        &["--natural", "--status", "cannot be used with"],
+    );
 }
 
 #[test]

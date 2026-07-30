@@ -143,6 +143,7 @@ aven add <title> [options]
 | `--description-file <path>` | Read the description from a UTF-8 file. |
 | `--description-stdin` | Read the description from standard input. |
 | `--priority <priority>` | Set the priority. Defaults to `none`. |
+| `--status <status>` | Set the initial status. Plain tasks default to `inbox`; recurring tasks default to `todo` and require an open status. |
 | `--available-at <when>` | Defer the task until a calendar expression or timestamp. See [Availability input](#availability-input). |
 | `--due <when>` | Set a date-only deadline. See [Due date input](#due-date-input). |
 | `--repeat <rule>` | Create a recurring task using a value from [Recurrence input](#recurrence-input). |
@@ -160,15 +161,18 @@ A plain task starts with status `inbox`. A recurring task starts with status
 `--available-at` and `--due` cannot be combined with `--repeat`; use
 `--repeat-at` and `--repeat-due` instead.
 
-`--natural` cannot be combined with a description source, `--project`, a
-non-default priority, `--label`, scheduling flags, or `--due`. Natural intake
-can infer a title, description, project, status, priority, labels, availability,
-due date, and epic state from the request.
+`--natural` can be combined with `--project`, which fixes the project context and
+wins over any project returned by the configured intake command. It cannot be
+combined with a description source, `--status`, `--priority`, `--label`, `--epic`,
+or scheduling flags. Natural intake can infer a title, description, project,
+priority, labels, availability, due date, and recurrence schedule. Ordinary
+natural intake uses status `inbox` and creates a non-epic task. Recurring natural
+intake uses status `todo`.
 
 The command prints the created task's qualified reference and bare suffix.
 
 ```sh
-aven add "Fix conflict display" --project aven --priority high --label bug
+aven add "Fix conflict display" --project aven --status todo --priority high --label bug
 aven add "Review launch notes" --available-at "next monday at 9am"
 aven add "Submit expense report" --due "next fri"
 aven add "Add release automation" --epic
@@ -176,6 +180,7 @@ aven add "Daily journal" --repeat daily --repeat-at 09:00 --time-zone Europe/Sto
 aven add "Review invoices" --repeat monthly --repeat-start-on 2026-01-31
 aven add "Plan next sprint" --repeat fortnightly --repeat-start-on 2026-07-27
 aven add --natural "high priority docs task for the aven project"
+aven add --natural "draft release notes" --project aven
 ```
 
 ### `aven list`
@@ -192,6 +197,7 @@ aven list [options]
 | `--status <status>` | Match one status. |
 | `--priority <priority>` | Match one priority. |
 | `--label <label>` | Match one label. |
+| `--open` | Show available, live tasks whose status is not `done` or `canceled`. |
 | `--all` | Include deleted tasks alongside live tasks. |
 | `--deleted` | Show deleted tasks only. Normal filters still apply. |
 | `--ready` | Show open, non-epic tasks with no unresolved blocker. |
@@ -203,7 +209,7 @@ aven list [options]
 | `--limit <number>` | Return at most this many tasks after sorting and filtering. |
 | `--json` | Print a JSON array. |
 
-Normal lists hide open tasks whose availability time is in the future. They include tasks with empty or elapsed availability. Explicit `--status done` and `--status canceled` lists include matching tasks regardless of availability, and `--deleted` includes matching deleted tasks regardless of availability.
+Normal lists hide open tasks whose availability time is in the future. They include tasks with empty or elapsed availability. `--open` also excludes `done` and `canceled` tasks and composes with project, priority, label, dependency, epic, overdue, recurrence-expansion, and limit filters. It cannot be combined with `--status`, `--all`, `--deleted`, or `--upcoming`. Explicit `--status done` and `--status canceled` lists include matching tasks regardless of availability, and `--deleted` includes matching deleted tasks regardless of availability.
 
 `--upcoming` finds only live tasks with an open status and a future availability time. It can be combined with `--project`, `--status`, `--priority`, `--label`, `--all`, `--overdue`, and `--limit`. `--all` does not add deleted tasks to Upcoming. `--upcoming` cannot be combined with `--ready`, `--blocked`, `--epics`, or `--deleted`.
 
@@ -213,7 +219,8 @@ Normal lists hide open tasks whose availability time is in the future. They incl
 
 ```sh
 aven list --status active
-aven list --project aven --label bug --limit 20
+aven list --open
+aven list --open --project aven --label bug --limit 20
 aven list --ready
 aven list --upcoming
 aven list --upcoming --project aven --limit 10

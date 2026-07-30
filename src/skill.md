@@ -33,6 +33,8 @@ inspect tasks, update status, and leave durable handoff context.
 
 ```sh
 aven list --project app
+aven list --open
+aven list --open --project app --label bug
 aven list --status todo
 aven list --all
 aven list --deleted
@@ -43,10 +45,11 @@ aven list --overdue
 aven search "auth bug"
 aven context APP-7KQ9
 aven show APP-7KQ9 --full
-aven add "Fix conflict display" --priority high --label bug
+aven add "Fix conflict display" --status todo --priority high --label bug
 aven add "Test rollout" --available-at tomorrow
 aven add "Submit report" --due "next monday"
 aven add "Add due dates" --epic
+aven add "Draft release notes" --natural --project app
 aven epic add APP-7KQ9 APP-7KQ0
 aven epic remove APP-7KQ9 APP-7KQ0
 aven epic list APP-7KQ0
@@ -121,6 +124,18 @@ aven search "daily journal" --expand-recurring
   After a scheduled slot boundary, one report can append one bounded projection
   operation per changed series, including archiving one superseded projection
   and materializing one current projection.
+
+- `aven list --open` returns available, live tasks with `inbox`, `backlog`,
+  `todo`, or `active` status. Combine it with project, priority, label, readiness,
+  blocker, epic, overdue, recurrence-expansion, and limit filters. Use explicit
+  status, all, deleted, or upcoming selectors separately.
+- `aven add --status <status>` creates already-triaged work atomically. Plain
+  tasks default to `inbox`. Recurring tasks default to `todo` and accept only an
+  open initial status.
+- `aven add --natural --project <project>` fixes the project used by natural
+  intake. Natural intake determines title, description, project, priority,
+  labels, availability, due date, and recurrence. Ordinary results use `inbox`
+  and remain non-epic, while recurring results use `todo`.
 
 - Use `aven <command> --help` to find maintenance commands for renaming,
   deletion, backup, export, import, and integrity checks.
