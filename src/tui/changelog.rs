@@ -9,7 +9,9 @@ use tokio::task::JoinHandle;
 use crate::tui::app::App;
 use crate::tui::markdown::render_markdown_without_link_urls;
 use crate::tui::navigation::scroll_with_delta;
-use crate::tui::overlay::{ChangelogState, OverlayState};
+use crate::tui::overlay::{
+    ChangelogState, OverlayState, UpdateActionFocus, UpdateNotesState, UpdateOverlayState,
+};
 
 const LOADING_MESSAGE: &str = "## Loading changelog…";
 const UNAVAILABLE_MESSAGE: &str =
@@ -55,20 +57,10 @@ impl App {
     pub(super) fn show_changelog(&mut self) {
         let git_ref = self.update.changelog_ref();
         self.changelog.visible_ref = Some(git_ref.clone());
-        if cache_enabled()
-            && self.changelog.cached.is_none()
-            && let Some(cache) = load_cache().filter(|cache| cache.git_ref == git_ref)
-        {
-            self.changelog.cached = Some((cache.git_ref, cache.markdown));
-        }
-        if let Some((_, markdown)) = self
-            .changelog
-            .cached
-            .as_ref()
-            .filter(|(cached_ref, _)| cached_ref == &git_ref)
-        {
+        self.load_changelog_cache(&git_ref);
+        if let Some(markdown) = self.cached_changelog(&git_ref) {
             self.overlay = Some(OverlayState::Changelog(ChangelogState {
-                markdown: markdown.clone(),
+                markdown,
                 scroll: 0,
             }));
             return;
@@ -78,18 +70,61 @@ impl App {
             markdown: LOADING_MESSAGE.to_string(),
             scroll: 0,
         }));
-        if self.changelog.fetch_ref.as_deref() != Some(&git_ref) {
-            if let Some(fetch) = self.changelog.fetch.take() {
-                fetch.abort();
-            }
-            self.changelog.fetch_ref = Some(git_ref.clone());
-            self.changelog.fetch = Some(tokio::spawn(async move {
-                let markdown = fetch_changelog(&git_ref)
-                    .await
-                    .map(|body| mark_installed_release(&body, crate::update::CURRENT_VERSION))?;
-                Ok(FetchedChangelog { git_ref, markdown })
-            }));
+        self.start_changelog_fetch(git_ref);
+    }
+
+    pub(super) fn show_update_release(&mut self, release: crate::update::Release, cached: bool) {
+        let git_ref = release.tag.clone();
+        self.changelog.visible_ref = Some(git_ref.clone());
+        self.load_changelog_cache(&git_ref);
+        let notes = self
+            .cached_changelog(&git_ref)
+            .map(UpdateNotesState::Ready)
+            .unwrap_or(UpdateNotesState::Loading);
+        let needs_fetch = matches!(notes, UpdateNotesState::Loading);
+        self.overlay = Some(OverlayState::Update(UpdateOverlayState::Available {
+            plan: crate::update::install_plan(release),
+            notes,
+            scroll: 0,
+            focus: UpdateActionFocus::Primary,
+            cached,
+        }));
+        if needs_fetch {
+            self.start_changelog_fetch(git_ref);
         }
+    }
+
+    fn load_changelog_cache(&mut self, git_ref: &str) {
+        if cache_enabled()
+            && self.changelog.cached.is_none()
+            && let Some(cache) = load_cache().filter(|cache| cache.git_ref == git_ref)
+        {
+            self.changelog.cached = Some((cache.git_ref, cache.markdown));
+        }
+    }
+
+    fn cached_changelog(&self, git_ref: &str) -> Option<String> {
+        self.changelog
+            .cached
+            .as_ref()
+            .filter(|(cached_ref, _)| cached_ref == git_ref)
+            .map(|(_, markdown)| markdown.clone())
+    }
+
+    fn start_changelog_fetch(&mut self, git_ref: String) {
+        if self.changelog.fetch_ref.as_deref() == Some(&git_ref) {
+            return;
+        }
+        if let Some(fetch) = self.changelog.fetch.take() {
+            fetch.abort();
+        }
+        self.changelog.fetch_ref = Some(git_ref.clone());
+        self.changelog.fetch = Some(tokio::spawn(async move {
+            let markdown = fetch_changelog(&git_ref)
+                .await
+                .map(|body| mark_installed_release(&body, crate::update::CURRENT_VERSION))?;
+            Ok(FetchedChangelog { git_ref, markdown })
+        }));
     }
 
     pub(super) async fn poll_changelog(&mut self) -> bool {
@@ -121,12 +156,28 @@ impl App {
                     markdown: markdown.clone(),
                 });
             }
-            self.changelog.cached = Some((git_ref, markdown.clone()));
+            self.changelog.cached = Some((git_ref.clone(), markdown.clone()));
         }
-        if visible && let Some(OverlayState::Changelog(state)) = self.overlay.as_mut() {
-            state.markdown = markdown;
-            state.scroll = 0;
-            return true;
+        if visible {
+            match self.overlay.as_mut() {
+                Some(OverlayState::Changelog(state)) => {
+                    state.markdown = markdown;
+                    state.scroll = 0;
+                    return true;
+                }
+                Some(OverlayState::Update(UpdateOverlayState::Available {
+                    notes, scroll, ..
+                })) => {
+                    *notes = if git_ref.is_empty() {
+                        UpdateNotesState::Failed
+                    } else {
+                        UpdateNotesState::Ready(markdown)
+                    };
+                    *scroll = 0;
+                    return true;
+                }
+                _ => {}
+            }
         }
         false
     }

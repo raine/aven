@@ -27,7 +27,7 @@ pub(crate) use state::{
     RECURRENCE_HISTORY_PAGE_SIZE, RecurrenceHistoryAction, RecurrenceHistoryEntryKey,
     RecurrenceHistoryState, ScheduleEditorField, ScheduleEditorMode, ScheduleEditorState,
     SearchIntent, SearchResultItem, SearchState, TagComboboxIntent, TextIntent, TextPanelState,
-    UpdateOverlayState,
+    UpdateActionFocus, UpdateNotesState, UpdateOverlayState,
 };
 #[cfg(test)]
 pub(crate) use state::{ConfirmState, TextInputState};

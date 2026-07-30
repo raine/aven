@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+state_dir="${AVEN_UPDATE_DEMO_DIR:-${TMPDIR:-/tmp}/aven-update-dialog-demo}"
+cache_dir="$state_dir/cache/aven"
+binary="$state_dir/aven"
+
+usage() {
+  cat <<'USAGE'
+Usage: scripts/update-dialog-demo <setup|run|clean>
+
+Commands:
+  setup  Build aven and create disposable update fixtures
+  run    Open the demo TUI with the mocked update available
+  clean  Remove the disposable binary and fixtures
+
+Environment:
+  AVEN_UPDATE_DEMO_DIR  Override the fixture directory
+USAGE
+}
+
+setup_demo() {
+  mkdir -p "$cache_dir"
+
+  cargo build --manifest-path "$repo_root/Cargo.toml"
+  cp "$repo_root/target/debug/aven" "$binary"
+  chmod 755 "$binary"
+
+  cat >"$cache_dir/update.json" <<'JSON'
+{
+  "schema": 1,
+  "etag": null,
+  "release": {
+    "version": "99.0.0",
+    "tag": "v99.0.0",
+    "archive_name": "aven-update-dialog-demo.tar.gz",
+    "archive_url": "https://github.com/raine/aven/releases/download/v99.0.0/aven-update-dialog-demo.tar.gz",
+    "checksum_url": "https://github.com/raine/aven/releases/download/v99.0.0/aven-update-dialog-demo.sha256"
+  },
+  "last_success_at": null,
+  "last_attempt_at": null,
+  "next_attempt_after": 4102444800,
+  "failure_count": 0
+}
+JSON
+
+  cat >"$cache_dir/changelog.json" <<'JSON'
+{
+  "schema": 1,
+  "git_ref": "v99.0.0",
+  "markdown": "## v99.0.0 (2026-07-31)\n\n### Added\n\n- A unified Software Update dialog.\n- Release notes before installation.\n- Keyboard and mouse action buttons.\n- Clickable links such as the [update guide](/getting-started/).\n\n## v98.0.0 (2026-07-30)\n\n### Improved\n\n- Fixed dialog geometry throughout the update flow.\n- Graceful loading and offline release-note states.\n\n## v50.0.0 (2026-07-29)\n\n### Added\n\n- Clear installed and available version context.\n\n## v0.1.19 (2026-07-28)  `installed`\n\n- The version installed before this mocked update."
+}
+JSON
+
+  printf 'Update dialog demo is ready in %s\n' "$state_dir"
+  printf 'Next: scripts/update-dialog-demo run\n'
+}
+
+run_demo() {
+  if [[ ! -x "$binary" || ! -f "$cache_dir/update.json" || ! -f "$cache_dir/changelog.json" ]]; then
+    echo "update dialog demo is not set up" >&2
+    echo "Run: scripts/update-dialog-demo setup" >&2
+    exit 1
+  fi
+
+  XDG_CACHE_HOME="$state_dir/cache" \
+    AVEN_NO_UPDATE_CHECK=1 \
+    "$binary" demo
+}
+
+clean_demo() {
+  if [[ -z "$state_dir" || "$state_dir" == "/" ]]; then
+    echo "refusing to remove invalid demo directory: $state_dir" >&2
+    exit 1
+  fi
+  rm -rf "$state_dir"
+  printf 'Removed %s\n' "$state_dir"
+}
+
+case "${1:-}" in
+  setup)
+    setup_demo
+    ;;
+  run)
+    run_demo
+    ;;
+  clean)
+    clean_demo
+    ;;
+  -h | --help | help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

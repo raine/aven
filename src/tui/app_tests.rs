@@ -1916,6 +1916,47 @@ mod onboarding {
     }
 
     #[tokio::test]
+    async fn update_review_supports_action_focus_and_later() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::Update(
+            crate::tui::overlay::UpdateOverlayState::Available {
+                plan: crate::update::InstallPlan {
+                    release: crate::update::Release {
+                        version: semver::Version::new(99, 0, 0),
+                        tag: "v99.0.0".to_string(),
+                        archive_name: "aven-test.tar.gz".to_string(),
+                        archive_url: "https://example.com/aven-test.tar.gz".to_string(),
+                        checksum_url: "https://example.com/aven-test.sha256".to_string(),
+                    },
+                    method: crate::update::InstallMethod::Direct {
+                        target: "/tmp/aven".into(),
+                    },
+                },
+                notes: crate::tui::overlay::UpdateNotesState::Ready(
+                    "## v99.0.0\n\n- release note".to_string(),
+                ),
+                scroll: 0,
+                focus: crate::tui::overlay::UpdateActionFocus::Primary,
+                cached: false,
+            },
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Update(
+                crate::tui::overlay::UpdateOverlayState::Available {
+                    focus: crate::tui::overlay::UpdateActionFocus::Later,
+                    ..
+                }
+            ))
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
     async fn changelog_command_starts_loading_release_notes_from_github() {
         let mut app = test_app().await;
 

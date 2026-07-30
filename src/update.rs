@@ -14,7 +14,11 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
-pub(crate) use cache::{background_check_due, cached_update, check_for_update};
+#[cfg(not(test))]
+pub(crate) use cache::cached_dismissal;
+pub(crate) use cache::{
+    UpdateDismissal, background_check_due, cached_update, check_for_update, dismiss_update,
+};
 pub(crate) use eligibility::install_plan;
 pub(crate) use install::install_direct;
 

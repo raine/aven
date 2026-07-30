@@ -204,13 +204,6 @@ fn header_layout(
     if let Some(update) = update {
         layout.push_text(separator(), None);
         layout.push(update_badge(update), Some(HeaderTarget::Update));
-        layout.push_text(
-            Span::styled(
-                "  what's new",
-                Style::new().fg(BLUE).add_modifier(Modifier::UNDERLINED),
-            ),
-            Some(HeaderTarget::Changelog),
-        );
     }
     layout.push_text(separator(), None);
     layout.push(
@@ -725,11 +718,6 @@ mod tests {
         assert!((0..wide.width).any(|column| {
             header_target_at(&store, Some(&update), wide, column, 0) == Some(HeaderTarget::Update)
         }));
-        assert!((0..wide.width).any(|column| {
-            header_target_at(&store, Some(&update), wide, column, 0)
-                == Some(HeaderTarget::Changelog)
-        }));
-
         let narrow = Rect::new(0, 0, 70, 2);
         assert!((0..narrow.width).any(|column| {
             header_target_at(&store, Some(&update), narrow, column, 0) == Some(HeaderTarget::Update)
