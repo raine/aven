@@ -3,17 +3,17 @@ title: Schedule tasks
 description: Defer work until later, set deadlines, and find tasks when they become relevant.
 ---
 
-Aven separates when a task becomes available from when it is due. Use either
-one independently or combine them.
+Availability controls when a task appears in normal work views. A due date
+records its deadline. You can use either setting on its own or combine them.
 
 | Setting | Meaning |
 | --- | --- |
 | Availability | Keep the task out of normal work views until a date or time. |
 | Due date | Record the deadline and surface the task as it approaches or becomes overdue. |
 
-This guide assumes basic TUI navigation and task editing. See
-[Use the TUI](/tui/) for the composer, selection, marking tasks, and command
-discovery. Shortcuts such as `e a` are keys pressed in sequence.
+If the composer, task selection, marking, or command discovery are unfamiliar,
+start with [Use the TUI](/tui/). Shortcuts such as `e a` are keys pressed in
+sequence.
 
 ## Set a schedule while creating a task
 
@@ -30,7 +30,7 @@ Press `Enter` on **Schedule** when a structured editor is easier. Choose
 
 ![Aven task composer with the structured One-off schedule editor open](/schedule-one-off-editor.webp)
 
-<p class="media-caption">The structured editor sets availability and a later due date while keeping the task composer in context.</p>
+<p class="media-caption">This task becomes available tomorrow and is due the following Friday.</p>
 
 ## Defer work until later
 
@@ -70,7 +70,7 @@ tasks.
 
 ![Aven Upcoming view with deferred tasks grouped and ordered by availability](/schedule-upcoming.webp)
 
-<p class="media-caption">Upcoming groups deferred work by availability date while the selected-task preview preserves its project and planning context.</p>
+<p class="media-caption">Upcoming groups deferred tasks by availability date. The preview shows project and planning details for the selected task.</p>
 
 ## Remove a date
 

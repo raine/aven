@@ -3,19 +3,19 @@ title: Recurring tasks
 description: Set up work that comes back on a schedule and manage it over time.
 ---
 
-Some work comes back: a daily journal, a Friday review, or a monthly invoice
-check. A recurring task remembers the schedule and details to reuse, while Aven
-gives you one unfinished task for the relevant date instead of filling your
-queue with copies.
+Use recurring tasks for work that returns on a schedule, such as a daily journal,
+Friday review, or monthly invoice check. The recurring task stores the schedule
+and details for later dates. Aven keeps one unfinished task for the relevant date
+instead of filling your queue with future copies.
 
 Each dated task behaves like any other Aven task. You can edit it, add notes or
 attachments, mark it done, or skip it. Changes to that task stay with that date.
 Use **Edit template** when later tasks should use different details.
 
-This guide builds on availability and due dates. Read
-[Schedule tasks](/schedule-tasks/) first if those settings are unfamiliar. See
-[Use the TUI](/tui/) for navigation, selection, and command discovery. Shortcuts
-such as `t r p` are keys pressed in sequence.
+Recurring schedules use availability and due dates. Read [Schedule
+tasks](/schedule-tasks/) first if those settings are unfamiliar. [Use the
+TUI](/tui/) covers navigation, selection, and command discovery. Shortcuts such
+as `t r p` are keys pressed in sequence.
 
 The `RCR-` reference identifies the whole recurring task. Each dated task has
 its own ordinary task reference.
@@ -38,7 +38,7 @@ and start date. The schedule uses your device's time zone.
 
 ![Aven task composer with a weekly repeating schedule and preview dates](/recurring-schedule-editor.webp)
 
-<p class="media-caption">Repeating mode combines the weekly pattern, availability time, due policy, start date, and upcoming occurrences.</p>
+<p class="media-caption">The editor shows the weekly pattern, availability time, due setting, start date, and upcoming occurrences.</p>
 
 ## Choose a schedule
 
@@ -119,7 +119,7 @@ The recurring-task detail footer shows the actions available for its state:
 
 ![Aven recurring-task detail showing an active weekly schedule and its current occurrence](/recurring-task-detail.webp)
 
-<p class="media-caption">Recurring-task detail brings the schedule, current occurrence, reusable description, lifecycle state, and available actions together.</p>
+<p class="media-caption">Recurring-task detail shows the schedule, current dated task, template description, lifecycle state, and available actions.</p>
 
 Pausing hides the current task and suppresses scheduled dates until you resume.
 Resuming continues the schedule without creating tasks for the paused period. If
@@ -159,7 +159,7 @@ Open a recurring task and choose **Show history**, or press `t r h`.
 
 ![Aven recurrence history showing completed, skipped, and missed dates plus a pause period](/recurring-history.webp)
 
-<p class="media-caption">History keeps each scheduled outcome and pause period together without filling the active task list with past occurrences.</p>
+<p class="media-caption">History records completed, skipped, and missed dates, along with periods when the schedule was paused.</p>
 
 Done lists and search results group past dated tasks by recurring task. See the
 [`aven list`](/command-reference/#aven-list) and
@@ -168,10 +168,10 @@ dated task as a separate result.
 
 ## Sync across devices
 
-Recurring tasks are safe to use on several synchronized devices. The schedule,
-each dated task, and completed, skipped, or missed history sync with the rest of
-your task data. When two devices create the task for the same scheduled date,
-Aven recognizes it as the same task instead of keeping duplicates.
+Recurring schedules, dated tasks, and history sync with the rest of your Aven
+data. You can use them on several synchronized devices. When two devices create
+the task for the same scheduled date, Aven recognizes it as the same task instead
+of keeping duplicates.
 
 Completing the same dated task on two devices merges without requiring a choice.
 If one device completes it while another skips it, Aven keeps the next task
