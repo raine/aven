@@ -67,7 +67,7 @@ chat integrations, example prompts, and handoff notes.
   dependencies, and workspaces.
 - Read [Scheduling tasks](/schedule-tasks/) to defer work or set deadlines.
 - Read [Recurring tasks](/recurring-tasks/) to set up work that returns on a schedule.
-- Read [Work with agents](/agents/) for coding, chat, and voice-agent workflows.
+- Read [Work with agents](/agents/) for coding agents and chat integrations.
 - Read [Sync across devices](/sync/) and [Back up and restore](/backups/) when
   using Aven on several devices.
 - Read [Configuration](/configuration/) for workspace routes, project path
