@@ -121,9 +121,9 @@ impl App {
 
             let timeout = self.next_poll_timeout();
             if event::poll(timeout)? {
-                needs_redraw = true;
                 match event::read()? {
                     Event::Key(key) => {
+                        needs_redraw = true;
                         if self.skip_onboarding_intro() {
                             continue;
                         }
@@ -139,17 +139,21 @@ impl App {
                         }
                     }
                     Event::Paste(text) => {
+                        needs_redraw = true;
                         if let Err(error) = self.dispatch_paste(&text).await {
                             self.set_error(format!("{error:#}"));
                         }
                     }
                     Event::Mouse(mouse) => {
-                        let result = self.dispatch_mouse(mouse, terminal.size()?).await;
-                        if let Err(error) = result {
-                            self.set_error(format!("{error:#}"));
+                        match self.dispatch_mouse(mouse, terminal.size()?).await {
+                            Ok(changed) => needs_redraw |= changed,
+                            Err(error) => {
+                                self.set_error(format!("{error:#}"));
+                                needs_redraw = true;
+                            }
                         }
                     }
-                    _ => {}
+                    _ => needs_redraw = true,
                 }
             } else if self.has_time_based_redraw() {
                 needs_redraw = true;

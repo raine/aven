@@ -190,7 +190,25 @@ impl App {
         &mut self,
         mouse: MouseEvent,
         terminal_size: Size,
-    ) -> Result<()> {
+    ) -> Result<bool> {
+        if mouse.kind != MouseEventKind::Moved {
+            self.handle_mouse(mouse, terminal_size).await?;
+            return Ok(true);
+        }
+        let previous_hover = self
+            .detail
+            .state()
+            .and_then(|detail| detail.hovered_target())
+            .cloned();
+        self.handle_mouse(mouse, terminal_size).await?;
+        Ok(self
+            .detail
+            .state()
+            .and_then(|detail| detail.hovered_target())
+            != previous_hover.as_ref())
+    }
+
+    async fn handle_mouse(&mut self, mouse: MouseEvent, terminal_size: Size) -> Result<()> {
         if matches!(self.overlay, Some(OverlayState::RecurrenceHistory(_))) {
             let Some(OverlayState::RecurrenceHistory(state)) = self.overlay.take() else {
                 unreachable!("history overlay was matched")
