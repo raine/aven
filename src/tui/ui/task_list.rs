@@ -515,10 +515,9 @@ fn build_task_list_render_model(
     marked_task_ids: &BTreeSet<crate::ids::TaskId>,
 ) -> TaskListRenderModel {
     let row_areas = Layout::vertical(vec![Constraint::Length(1); area.height as usize]).split(area);
-    let columns = task_list_columns(store, area.width < 90);
     if row_areas.is_empty() {
         return TaskListRenderModel {
-            columns,
+            columns: task_list_columns(store, area.width < 90),
             row_areas: row_areas.to_vec(),
             rows: Vec::new(),
             scroll: 0,

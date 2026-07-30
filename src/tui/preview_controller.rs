@@ -102,6 +102,10 @@ impl PreviewController {
         }
     }
 
+    pub(crate) fn has_desired(&self) -> bool {
+        !self.desired.is_empty()
+    }
+
     pub(crate) fn set_desired(&mut self, desired: impl IntoIterator<Item = PreviewKey>) {
         let desired = desired.into_iter().collect::<HashSet<_>>();
         if desired != self.desired {

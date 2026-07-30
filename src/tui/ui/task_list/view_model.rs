@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::query::TaskListItem;
 use crate::tui::store::{TaskListRenderMode, TuiStore};
@@ -137,6 +137,11 @@ pub(super) fn epics_rows(
     expanded_epic_ids: &BTreeSet<crate::ids::TaskId>,
 ) -> Vec<TaskListRow> {
     let mut rows = Vec::new();
+    let task_indices = tasks
+        .iter()
+        .enumerate()
+        .map(|(index, item)| (item.task.id.as_str(), index))
+        .collect::<HashMap<_, _>>();
     for (parent_index, item) in tasks.iter().enumerate() {
         let is_epic_parent = item.task.is_epic;
         if !is_epic_parent {
@@ -149,7 +154,7 @@ pub(super) fn epics_rows(
             let child_task_indices = item
                 .epic_children
                 .iter()
-                .filter_map(|link| tasks.iter().position(|t| t.task.id == link.task_id))
+                .filter_map(|link| task_indices.get(link.task_id.as_str()).copied())
                 .collect::<Vec<_>>();
             let last_child_index = child_task_indices.len().saturating_sub(1);
             for (child_index, task_index) in child_task_indices.into_iter().enumerate() {

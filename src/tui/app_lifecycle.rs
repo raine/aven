@@ -22,7 +22,7 @@ use std::io::Write;
 use crate::config::{AppConfig, resolve_blob_dir};
 use crate::tui::app::App;
 use crate::tui::inline_image_surface::InlineImageSurface;
-use crate::tui::inline_images::{InlineImageBackend, active_backend_from_env};
+use crate::tui::inline_images::InlineImageBackend;
 use crate::tui::overlay::OverlayView::AddTask;
 use crate::tui::overlay::{OverlayState, OverlayView};
 use crate::tui::preview_controller::PreviewKey;
@@ -163,7 +163,14 @@ impl App {
     }
 
     fn render_inline_images_after_draw(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        let backend = active_backend_from_env(self.intake.config().local.inline_images);
+        if self.widgets.inline_image_placements.is_empty()
+            && self.inline_images.displayed_placements().is_empty()
+            && !self.preview_controller.has_desired()
+        {
+            self.inline_images.cancel_deferred_emission();
+            return Ok(());
+        }
+        let backend = self.inline_image_backend;
         let blob_dir = self
             .intake
             .db_path()
@@ -374,7 +381,7 @@ impl App {
         if let Some(context) = self.inline_images.context_override() {
             return Some(context.clone());
         }
-        let backend = active_backend_from_env(self.intake.config().local.inline_images);
+        let backend = self.inline_image_backend;
         if backend == InlineImageBackend::None {
             return Some(ui::DetailInlineImageContext {
                 previews_enabled: false,
