@@ -107,18 +107,16 @@ async fn build_report(
         return Ok(PrimeReport::unavailable(Some(project), "No open issues."));
     }
 
-    let mut items = database
-        .list_task_items(
+    let items = database
+        .list_task_summary_items(
             &workspace.id,
             prime_task_filters(project.clone()),
             TaskQueryMode::Flat,
             TaskSort::Updated,
             SortDirection::Desc,
+            limit,
         )
         .await?;
-    if let Some(limit) = limit {
-        items.truncate(limit);
-    }
 
     Ok(report_from_items(project, &items))
 }

@@ -12,7 +12,7 @@ use crate::task_enrichment::{epic_parents_for_tasks, labels_for_tasks};
 use crate::types::Task;
 
 use super::TaskListItem;
-use super::hydration::build_task_list_items;
+use super::hydration::{TaskHydration, build_task_list_items};
 
 mod parser;
 
@@ -180,6 +180,7 @@ async fn search_task_item_set_with_presentation(
         now_seconds,
         Local::now().date_naive(),
         &display_refs,
+        TaskHydration::Detail,
     )
     .await?;
     let by_id = items

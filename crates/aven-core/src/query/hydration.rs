@@ -5,10 +5,16 @@ use sqlx::SqliteConnection;
 
 use crate::queue::queue_meta_on;
 use crate::refs::DisplayRefContext;
-use crate::task_enrichment::load_task_enrichment;
+use crate::task_enrichment::{load_task_enrichment, load_task_list_enrichment};
 use crate::types::Task;
 
 use super::TaskListItem;
+
+#[derive(Clone, Copy)]
+pub(super) enum TaskHydration {
+    List,
+    Detail,
+}
 
 /// Build a `Vec<TaskListItem>` from tasks by loading enrichment and display refs.
 ///
@@ -21,9 +27,17 @@ pub async fn build_task_list_items(
     now_seconds: i64,
     local_today: NaiveDate,
     display_refs: &DisplayRefContext,
+    hydration: TaskHydration,
 ) -> Result<Vec<TaskListItem>> {
     let task_ids = tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>();
-    let mut enrichment = load_task_enrichment(conn, workspace_id, &task_ids, display_refs).await?;
+    let mut enrichment = match hydration {
+        TaskHydration::List => {
+            load_task_list_enrichment(conn, workspace_id, &task_ids, display_refs).await?
+        }
+        TaskHydration::Detail => {
+            load_task_enrichment(conn, workspace_id, &task_ids, display_refs).await?
+        }
+    };
 
     let mut items = Vec::with_capacity(tasks.len());
     for task in tasks {

@@ -45,7 +45,10 @@ pub(crate) use search::{
 pub(crate) use sidebar::sidebar_counts_for_scope_in_workspace;
 pub use sync_history::SyncHistoryStats;
 pub(crate) use sync_history::sync_history_stats;
-pub(crate) use tasks::{list_task_items_in_workspace, list_task_items_with_display_refs};
+pub(crate) use tasks::{
+    list_task_items_in_workspace, list_task_items_with_display_refs,
+    list_task_summary_items_in_workspace,
+};
 pub use types::RecentActionTarget;
 pub use types::{
     AttachmentMetadata, ProjectListItem, RecentActionItem, RecurrenceCounts,
@@ -209,6 +212,29 @@ impl Database {
         self.reconcile_recurrence_reports(workspace_id).await?;
         let mut conn = self.acquire().await?;
         list_task_items_in_workspace(&mut conn, workspace_id, filters, mode, sort, direction).await
+    }
+
+    pub async fn list_task_summary_items(
+        &self,
+        workspace_id: &WorkspaceId,
+        filters: TaskFilters,
+        mode: TaskQueryMode,
+        sort: TaskSort,
+        direction: SortDirection,
+        limit: Option<usize>,
+    ) -> Result<Vec<TaskListItem>> {
+        self.reconcile_recurrence_reports(workspace_id).await?;
+        let mut conn = self.acquire().await?;
+        list_task_summary_items_in_workspace(
+            &mut conn,
+            workspace_id,
+            filters,
+            mode,
+            sort,
+            direction,
+            limit,
+        )
+        .await
     }
 
     pub async fn list_task_items_with_display_refs(

@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use aven_core::choices::TaskSource;
 use aven_core::db::Database;
 use serde::Serialize;
@@ -371,11 +371,28 @@ pub(crate) async fn cmd_show(
             print_full_task_report(&report);
         }
     } else {
-        let detail = database.task_detail(&task).await?;
+        let item = database
+            .list_task_summary_items(
+                &workspace.id,
+                TaskFilters {
+                    task_ids: vec![task.id.clone()],
+                    include_deleted: true,
+                    expand_recurring: true,
+                    ..TaskFilters::default()
+                },
+                TaskQueryMode::Flat,
+                TaskSort::Updated,
+                SortDirection::Desc,
+                Some(1),
+            )
+            .await?
+            .into_iter()
+            .next()
+            .context("resolved task missing from compact task read")?;
         if args.json {
-            print_json_pretty(&task_line_json_item(&detail.item))?;
+            print_json_pretty(&task_line_json_item(&item))?;
         } else {
-            print_task_line_item(&detail.item);
+            print_task_line_item(&item);
         }
     }
     Ok(())
@@ -417,12 +434,16 @@ pub(crate) async fn cmd_list(
     } else {
         SortDirection::Desc
     };
-    let mut items = database
-        .list_task_items(&workspace.id, filters, TaskQueryMode::Flat, sort, direction)
+    let items = database
+        .list_task_summary_items(
+            &workspace.id,
+            filters,
+            TaskQueryMode::Flat,
+            sort,
+            direction,
+            args.limit,
+        )
         .await?;
-    if let Some(limit) = args.limit {
-        items.truncate(limit);
-    }
     if args.json {
         let items = items.iter().map(task_line_json_item).collect::<Vec<_>>();
         print_json_pretty(&items)?;
