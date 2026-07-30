@@ -245,7 +245,7 @@
 
 .image-zoom-trigger:hover img,
 .image-zoom-trigger:focus-visible img {
-  transform: translateY(-1px);
+  transform: translateY(-4px);
   box-shadow: 0 1rem 2.5rem color-mix(in srgb, var(--sl-color-black) 24%, transparent);
 }
 
