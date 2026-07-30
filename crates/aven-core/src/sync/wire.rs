@@ -1152,18 +1152,7 @@ fn required_timestamp_payload(key: &str, payload: &Value) -> Result<String> {
 }
 
 fn validate_timestamp_value(label: &str, value: &str) -> Result<()> {
-    if value.len() == 20
-        && value.as_bytes()[4] == b'-'
-        && value.as_bytes()[7] == b'-'
-        && value.as_bytes()[10] == b'T'
-        && value.as_bytes()[13] == b':'
-        && value.as_bytes()[16] == b':'
-        && value.as_bytes()[19] == b'Z'
-        && value
-            .bytes()
-            .enumerate()
-            .all(|(idx, byte)| matches!(idx, 4 | 7 | 10 | 13 | 16 | 19) || byte.is_ascii_digit())
-    {
+    if value.ends_with('Z') && chrono::DateTime::parse_from_rfc3339(value).is_ok() {
         Ok(())
     } else {
         bail!("error invalid-sync-change {label} invalid-timestamp");
@@ -1251,6 +1240,20 @@ mod tests {
             base_version: None,
             created_at: "2026-06-01T00:00:00Z".to_string(),
             server_seq: None,
+        }
+    }
+
+    #[test]
+    fn sync_timestamps_accept_fractional_utc_precision() {
+        validate_timestamp_value("created_at", "2026-07-28T06:41:44Z").unwrap();
+        validate_timestamp_value("created_at", "2026-07-28T06:41:44.000000Z").unwrap();
+        validate_timestamp_value("created_at", "2026-07-28T06:41:44.123456789Z").unwrap();
+    }
+
+    #[test]
+    fn sync_timestamps_reject_offsets_and_invalid_calendar_values() {
+        for value in ["2026-07-28T08:41:44+02:00", "2026-13-28T06:41:44Z", "today"] {
+            assert!(validate_timestamp_value("created_at", value).is_err());
         }
     }
 
