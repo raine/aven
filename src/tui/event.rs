@@ -103,6 +103,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::ShowConfigPaths
             | Action::ShowDatabaseStats
             | Action::BeginUpdate
+            | Action::ShowChangelog
             | Action::BeginConfigInit
             | Action::BeginAddDependency
             | Action::BeginRemoveDependency
@@ -405,16 +406,22 @@ mod tests {
     }
 
     #[test]
-    fn resolves_update_command_without_a_global_shortcut() {
+    fn resolves_update_and_changelog_commands_without_global_shortcuts() {
         assert_eq!(
             lookup_command("update"),
             CommandLookup::Found(Action::BeginUpdate)
         );
-        let update = COMMANDS
-            .iter()
-            .find(|command| command.name == "update")
-            .unwrap();
-        assert!(update.keys.is_empty());
+        assert_eq!(
+            lookup_command("changelog"),
+            CommandLookup::Found(Action::ShowChangelog)
+        );
+        for name in ["update", "changelog"] {
+            let command = COMMANDS
+                .iter()
+                .find(|command| command.name == name)
+                .unwrap();
+            assert!(command.keys.is_empty());
+        }
     }
 
     #[test]

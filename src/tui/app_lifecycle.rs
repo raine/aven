@@ -94,6 +94,10 @@ impl App {
                 needs_redraw = true;
             }
 
+            if self.poll_changelog().await {
+                needs_redraw = true;
+            }
+
             match self.refresh_if_due().await {
                 Ok(true) => needs_redraw = true,
                 Ok(false) => {}
@@ -650,6 +654,7 @@ impl App {
             || self.preview_controller.work_pending()
             || self.attachment_controller.work_pending()
             || self.update.work_pending()
+            || self.changelog.work_pending()
         {
             timeout = timeout.min(INPUT_POLL_INTERVAL);
         }

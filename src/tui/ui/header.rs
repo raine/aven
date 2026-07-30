@@ -16,6 +16,7 @@ const HEADER_STATUS_GAP: u16 = 2;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HeaderTarget {
     Home,
+    Changelog,
     Workspace { column: u16 },
     Scope { column: u16 },
     View { column: u16 },
@@ -193,9 +194,23 @@ fn header_layout(
         Span::styled(" aven", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
         Some(HeaderTarget::Home),
     );
+    layout.push_text(
+        Span::styled(
+            format!(" v{}", crate::update::CURRENT_VERSION),
+            Style::new().fg(FG_DIM),
+        ),
+        Some(HeaderTarget::Changelog),
+    );
     if let Some(update) = update {
         layout.push_text(separator(), None);
         layout.push(update_badge(update), Some(HeaderTarget::Update));
+        layout.push_text(
+            Span::styled(
+                "  what's new",
+                Style::new().fg(BLUE).add_modifier(Modifier::UNDERLINED),
+            ),
+            Some(HeaderTarget::Changelog),
+        );
     }
     layout.push_text(separator(), None);
     layout.push(
@@ -652,7 +667,7 @@ mod tests {
         let mut store = test_store().await;
         store.view_state.filter_modifiers.label = Some("capture".to_string());
 
-        let rendered = spans_text(header_spans(&store, None, 90));
+        let rendered = spans_text(header_spans(&store, None, 98));
 
         assert!(rendered.contains("filter label=capture"), "{rendered:?}");
         assert!(rendered.contains("queue 3"), "{rendered:?}");
@@ -710,6 +725,10 @@ mod tests {
         assert!((0..wide.width).any(|column| {
             header_target_at(&store, Some(&update), wide, column, 0) == Some(HeaderTarget::Update)
         }));
+        assert!((0..wide.width).any(|column| {
+            header_target_at(&store, Some(&update), wide, column, 0)
+                == Some(HeaderTarget::Changelog)
+        }));
 
         let narrow = Rect::new(0, 0, 70, 2);
         assert!((0..narrow.width).any(|column| {
@@ -739,6 +758,16 @@ mod tests {
         assert_eq!(
             header_target_at(&store, None, area, column_for("aven") + 1, area.y),
             Some(HeaderTarget::Home)
+        );
+        assert_eq!(
+            header_target_at(
+                &store,
+                None,
+                area,
+                column_for(&format!("v{}", crate::update::CURRENT_VERSION)),
+                area.y,
+            ),
+            Some(HeaderTarget::Changelog)
         );
         assert_eq!(
             header_target_at(&store, None, area, column_for("workspace default"), area.y),

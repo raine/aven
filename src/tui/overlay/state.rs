@@ -42,6 +42,7 @@ pub(crate) enum OverlayState {
     OrderMenu(OrderMenuState),
     Confirm(ConfirmState),
     TextPanel(TextPanelState),
+    Changelog(ChangelogState),
     RecurrenceHistory(Box<RecurrenceHistoryState>),
     SyncStatus(Box<TuiSyncStatus>),
     DatabaseStats {
@@ -198,6 +199,12 @@ impl CommandState {
         self.cycle_index = 0;
         self.highlighted = None;
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ChangelogState {
+    pub(crate) markdown: String,
+    pub(crate) scroll: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

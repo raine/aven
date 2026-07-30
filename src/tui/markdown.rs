@@ -84,12 +84,13 @@ struct MarkdownRenderer {
     in_block_quote: bool,
     heading_level: Option<u8>,
     link_url: Option<String>,
+    show_link_urls: bool,
     ordinary_image: bool,
     table_state: Option<TableState>,
 }
 
 impl MarkdownRenderer {
-    fn new(max_width: usize, _context: MarkdownRenderContext) -> Self {
+    fn new(max_width: usize, _context: MarkdownRenderContext, show_link_urls: bool) -> Self {
         Self {
             max_width,
             blocks: Vec::new(),
@@ -106,6 +107,7 @@ impl MarkdownRenderer {
             in_block_quote: false,
             heading_level: None,
             link_url: None,
+            show_link_urls,
             ordinary_image: false,
             table_state: None,
         }
@@ -457,7 +459,9 @@ impl MarkdownRenderer {
             }
             TagEnd::Link => {
                 self.attrs_stack.pop();
-                if let Some(url) = self.link_url.take() {
+                if let Some(url) = self.link_url.take()
+                    && self.show_link_urls
+                {
                     self.push_wrapped_word(
                         &format!(" ({url})"),
                         Attrs {
@@ -610,17 +614,38 @@ pub(crate) fn render_markdown(input: &str, max_width: usize) -> Vec<Line<'static
     ))
 }
 
+pub(crate) fn render_markdown_without_link_urls(
+    input: &str,
+    max_width: usize,
+) -> Vec<Line<'static>> {
+    flatten_markdown_blocks(render_markdown_internal(
+        input,
+        max_width,
+        MarkdownRenderContext,
+        false,
+    ))
+}
+
 pub(crate) fn render_markdown_with_context(
     input: &str,
     max_width: usize,
     context: MarkdownRenderContext,
+) -> Vec<MarkdownBlock> {
+    render_markdown_internal(input, max_width, context, true)
+}
+
+fn render_markdown_internal(
+    input: &str,
+    max_width: usize,
+    context: MarkdownRenderContext,
+    show_link_urls: bool,
 ) -> Vec<MarkdownBlock> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TABLES);
 
     let parser = Parser::new_ext(input, options);
-    let mut renderer = MarkdownRenderer::new(max_width.max(1), context);
+    let mut renderer = MarkdownRenderer::new(max_width.max(1), context, show_link_urls);
     for event in parser {
         renderer.handle_event(event);
     }

@@ -193,6 +193,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::BeginUpdate,
     ),
     CommandSpec::implemented(
+        "changelog",
+        "read aven release notes",
+        "General",
+        &[],
+        Action::ShowChangelog,
+    ),
+    CommandSpec::implemented(
         "undo",
         "undo last TUI mutation",
         "General",

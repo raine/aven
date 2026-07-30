@@ -73,6 +73,14 @@ impl UpdateController {
         }
     }
 
+    pub(super) fn changelog_ref(&self) -> String {
+        match &self.availability {
+            UpdateAvailability::Available(release) => release.tag.clone(),
+            UpdateAvailability::Restart(version) => format!("v{version}"),
+            UpdateAvailability::Unknown => format!("v{}", update::CURRENT_VERSION),
+        }
+    }
+
     pub(super) fn work_pending(&self) -> bool {
         self.check.is_some() || self.install.is_some()
     }

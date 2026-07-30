@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Rect, Size};
 
 use std::time::{Duration, Instant};
@@ -25,7 +25,7 @@ use crate::tui::overlay::{
     AddTaskMode, CommandState, MultilineIntent, OverlayOutcome, OverlayState, PickerIntent,
     ScheduleEditorField, ScheduleEditorMode, TagComboboxIntent,
 };
-use crate::tui::platform::{copy_to_clipboard, is_editor_prefix_key};
+use crate::tui::platform::{copy_to_clipboard, is_editor_prefix_key, open_url_in_default_browser};
 use crate::tui::shortcut_buffer::DetailShortcutResolution;
 use crate::tui::store::TaskView;
 use crate::tui::ui::{
@@ -274,6 +274,22 @@ impl App {
 
         self.list.expire_task_click(Instant::now());
 
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            && let Some(OverlayState::Changelog(state)) = self.overlay.as_ref()
+            && let Some(url) = crate::tui::ui::changelog_link_at(
+                &state.markdown,
+                state.scroll,
+                terminal_size,
+                mouse.column,
+                mouse.row,
+            )
+        {
+            if let Err(error) = open_url_in_default_browser(&url) {
+                self.set_warning(format!("could not open changelog link: {error:#}"));
+            }
+            return Ok(());
+        }
+
         let header = ratatui::layout::Rect {
             x: 0,
             y: 0,
@@ -382,6 +398,10 @@ impl App {
             self.list.clear_task_click();
             return match target {
                 crate::tui::ui::HeaderTarget::Home => Ok(()),
+                crate::tui::ui::HeaderTarget::Changelog => {
+                    self.show_changelog();
+                    Ok(())
+                }
                 crate::tui::ui::HeaderTarget::Workspace { column } => {
                     self.show_workspace_menu(column, mouse.row).await?;
                     Ok(())
@@ -883,6 +903,12 @@ impl App {
                 state.scroll = scroll_with_delta(state.scroll, delta, cap);
                 true
             }
+            Some(OverlayState::Changelog(state)) => {
+                let cap =
+                    crate::tui::changelog::changelog_scroll_cap(&state.markdown, terminal_size);
+                state.scroll = scroll_with_delta(state.scroll, delta, cap);
+                true
+            }
             _ => false,
         }
     }
@@ -939,6 +965,7 @@ impl App {
                 self.handle_recurrence_history_key(*state, key).await?
             }
             OverlayState::Update(state) => self.handle_update_overlay_key(state, key).await,
+            OverlayState::Changelog(state) => self.handle_changelog_key(state, key, terminal_size),
             OverlayState::Command { mut state } => match key.code {
                 KeyCode::Esc => {}
                 KeyCode::Enter => {
@@ -1439,6 +1466,9 @@ impl App {
             }
             OverlayState::DetailHelp { .. } => detail_help_scroll_cap(terminal_size.height),
             OverlayState::DatabaseStats { .. } => database_stats_scroll_cap(terminal_size.height),
+            OverlayState::Changelog(state) => {
+                crate::tui::changelog::changelog_scroll_cap(&state.markdown, terminal_size)
+            }
             _ => help_scroll_cap(terminal_size.height),
         };
         let was_detail_help = matches!(overlay, OverlayState::DetailHelp { .. });
@@ -1640,11 +1670,6 @@ impl App {
             state.input.text = completion;
             state.input.cursor = state.input.text.len();
             state.highlighted = Some(state.input.text.clone());
-            self.set_info(format!(
-                "command {} of {}",
-                state.cycle_index + 1,
-                options.len()
-            ));
             return;
         }
 

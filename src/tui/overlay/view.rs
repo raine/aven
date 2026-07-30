@@ -106,6 +106,10 @@ pub(crate) enum OverlayView {
     OrderMenu(OrderMenuView),
     Confirm(ConfirmView),
     TextPanel(TextPanelView),
+    Changelog {
+        markdown: String,
+        scroll: u16,
+    },
     RecurrenceHistory(RecurrenceHistoryView),
     SyncStatus(Box<TuiSyncStatus>),
     DatabaseStats {
@@ -490,6 +494,10 @@ impl From<&OverlayState> for OverlayView {
                 lines: state.lines.clone(),
                 scroll: state.scroll,
             }),
+            Changelog(state) => Self::Changelog {
+                markdown: state.markdown.clone(),
+                scroll: state.scroll,
+            },
             RecurrenceHistory(state) => Self::RecurrenceHistory(RecurrenceHistoryView {
                 page: state.page.clone(),
                 selected: state.selected,

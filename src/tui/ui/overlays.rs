@@ -1,4 +1,5 @@
 mod add_task;
+mod changelog;
 mod confirm;
 mod database_stats;
 mod multiline;
@@ -15,6 +16,8 @@ mod update;
 
 pub(crate) use add_task::{AddTaskLayout, add_task_field_at, composer_help_scroll_cap};
 pub(super) use add_task::{render_add_task, render_add_task_full_frame};
+pub(crate) use changelog::changelog_link_at;
+pub(super) use changelog::render_changelog;
 pub(super) use confirm::render_confirm;
 pub(crate) use database_stats::database_stats_scroll_cap;
 pub(super) use database_stats::render_database_stats;
