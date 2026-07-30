@@ -7,6 +7,7 @@ use crate::config::AppConfig;
 use crate::tui::app_intake::IntakeController;
 use crate::tui::authoring::AuthoringState;
 use crate::tui::inline_image_surface::InlineImageSurface;
+use crate::tui::inline_images::{InlineImageBackend, active_backend_from_env};
 use crate::tui::list_surface::ListSurface;
 pub(crate) use crate::tui::list_surface::{Focus, LastChangeReturnState};
 use crate::tui::overlay::OverlayState;
@@ -184,6 +185,7 @@ pub(crate) struct App {
     pub(crate) last_series_click: Option<SeriesRowClick>,
     pub(super) series_detail_return: Option<SeriesDetailReturn>,
     pub(super) inline_images: InlineImageSurface,
+    pub(super) inline_image_backend: InlineImageBackend,
     pub(super) preview_controller: crate::tui::preview_controller::PreviewController,
     pub(super) attachment_controller: crate::tui::attachment_controller::AttachmentController,
 }
@@ -231,6 +233,7 @@ impl App {
             last_series_click: None,
             series_detail_return: None,
             inline_images: InlineImageSurface::new(),
+            inline_image_backend: active_backend_from_env(AppConfig::default().local.inline_images),
             preview_controller: crate::tui::preview_controller::PreviewController::new(),
             attachment_controller: crate::tui::attachment_controller::AttachmentController::new(),
         };
@@ -262,6 +265,7 @@ impl App {
 
     pub(crate) fn set_config(&mut self, config: AppConfig) {
         self.store.task_columns = config.tui.columns.clone();
+        self.inline_image_backend = active_backend_from_env(config.local.inline_images);
         self.intake.set_config(config);
     }
 
