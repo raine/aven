@@ -12,7 +12,7 @@ use crate::operations::{
     TaskUpdate as InternalTaskUpdate,
 };
 use crate::query::{
-    RecurrenceCounts as InternalRecurrenceCounts,
+    MAX_RECURRENCE_HISTORY_LIMIT, RecurrenceCounts as InternalRecurrenceCounts,
     RecurrenceHistoryEntry as InternalRecurrenceHistoryEntry,
     RecurrenceHistoryKind as InternalRecurrenceHistoryKind,
     RecurrenceSeriesDetail as InternalRecurrenceSeriesDetail,
@@ -327,10 +327,12 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> Result<RecurrenceHistoryPage, Error> {
-        if limit == 0 || limit > 500 {
+        if limit == 0 || limit > MAX_RECURRENCE_HISTORY_LIMIT {
             return Err(Error::new(
                 ErrorCode::Validation,
-                "recurrence history limit must be between 1 and 500".to_string(),
+                format!(
+                    "recurrence history limit must be between 1 and {MAX_RECURRENCE_HISTORY_LIMIT}"
+                ),
             ));
         }
         let resolution = self.resolve_recurrence_ref(workspace_id, input).await?;

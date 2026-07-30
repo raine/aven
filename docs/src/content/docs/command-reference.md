@@ -206,7 +206,7 @@ aven list [options]
 | `--upcoming` | Show open, live tasks with a future availability time, ordered by availability time from earliest to latest. |
 | `--overdue` | Show open, live tasks with a due date before today, ordered by due date from oldest to newest. |
 | `--expand-recurring` | Show each dated recurring task as a separate row instead of grouping past tasks by recurring task. |
-| `--limit <number>` | Return at most this many tasks after sorting and filtering. |
+| `--limit <number>` | Return at most this many tasks after sorting and filtering. The value must be at least `1`. |
 | `--json` | Print a JSON array. |
 
 Normal lists hide open tasks whose availability time is in the future. They include tasks with empty or elapsed availability. `--open` also excludes `done` and `canceled` tasks and composes with project, priority, label, dependency, epic, overdue, recurrence-expansion, and limit filters. It cannot be combined with `--status`, `--all`, `--deleted`, or `--upcoming`. Explicit `--status done` and `--status canceled` lists include matching tasks regardless of availability, and `--deleted` includes matching deleted tasks regardless of availability.
@@ -241,7 +241,7 @@ aven search <query>... [--project <project>] [--limit <number>] [--all] [--expan
 | --- | --- |
 | `<query>...` | One or more search terms. Multiple shell arguments are joined with spaces. |
 | `--project <project>` | Search only the selected project, resolved by key or name in the active workspace. |
-| `--limit <number>` | Maximum result count. Defaults to `50`. |
+| `--limit <number>` | Maximum result count. Must be at least `1` and defaults to `50`. |
 | `--all` | Include deleted tasks. |
 | `--expand-recurring` | Return each matching dated task instead of grouping past matches by recurring task. |
 | `--json` | Print ranked results as JSON. Each result uses the list task shape and adds score, matched field, and optional snippet. |
@@ -325,7 +325,8 @@ aven recur history <recurring-or-task-ref> \
 
 History includes completed, skipped, and missed dates plus pause periods. A
 missed date may include a task reference when Aven created a task for that date.
-`--offset` defaults to `0`, and `--limit` defaults to `100`.
+`--offset` defaults to `0`, and `--limit` defaults to `100`. An explicit
+`--limit` must be between `1` and `500`, inclusive.
 
 The JSON output from `recur list`, `recur show`, and `recur history` uses
 `version: 1` and a command-specific `kind` value.
@@ -712,7 +713,7 @@ Deletes a project from normal use and removes its path mappings. Projects refere
 
 #### `project list`
 
-Lists project keys, prefixes, and names. `--search` performs project search, `--limit` truncates results, and `--json` returns objects with `key`, `name`, and `prefix`.
+Lists project keys, prefixes, and names. `--search` performs project search, `--limit` returns at most the requested positive number of results, and `--json` returns objects with `key`, `name`, and `prefix`.
 
 #### `project rename`
 
@@ -740,7 +741,7 @@ aven label delete <name>
 aven label list [--search <text>] [--limit <number>] [--json]
 ```
 
-Label names are normalized. Labels must exist before `add`, `edit`, or `bulk-update` assigns them. Deleting a label removes its task assignments. Repeating deletion is safe and reports whether anything changed.
+Label names are normalized. Labels must exist before `add`, `edit`, or `bulk-update` assigns them. Deleting a label removes its task assignments. Repeating deletion is safe and reports whether anything changed. `label list --limit` accepts positive values.
 
 ```sh
 aven label create bug
@@ -802,7 +803,7 @@ aven conflict resolve <task-ref> <field> (--use <variant> | --value <text> | --v
 
 #### `conflict list`
 
-Lists unresolved conflicts, optionally filtered by project and field. `--limit` truncates results. Output includes variant tokens needed by `conflict resolve --use`.
+Lists unresolved conflicts, optionally filtered by project and field. `--limit` returns at most the requested positive number of results. Output includes variant tokens needed by `conflict resolve --use`.
 
 #### `conflict show`
 
@@ -911,7 +912,7 @@ aven prime [--project <project>] [--limit <number>] [--json]
 
 Without `--project`, aven infers the project from the current directory. Text output includes CLI conventions, an issue workflow, actionable task-title guidance, sampled status and label frequencies, top blockers, and open tasks partitioned into Active, Ready, and Blocked. Epic containers and done or canceled tasks are excluded.
 
-`--json` emits project context, conventions, top blockers, and the same task partitions. `--limit` bounds the task sample in both text and JSON output.
+`--json` emits project context, conventions, top blockers, and the same task partitions. `--limit` bounds the task sample in both text and JSON output and accepts positive values.
 
 ```sh
 aven prime

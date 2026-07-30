@@ -525,7 +525,11 @@ pub(crate) struct ListArgs {
     pub(crate) overdue: bool,
     #[arg(long, help = "Show individual recurring occurrences")]
     pub(crate) expand_recurring: bool,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..),
+        help = "Maximum result count (must be at least 1)"
+    )]
     pub(crate) limit: Option<usize>,
     #[arg(long, help = "Print machine-readable JSON")]
     pub(crate) json: bool,
@@ -536,7 +540,12 @@ pub(crate) struct TaskSearchArgs {
     pub(crate) query: Vec<String>,
     #[arg(long, help = "Restrict matches to a project by key or name")]
     pub(crate) project: Option<String>,
-    #[arg(long, default_value_t = 50)]
+    #[arg(
+        long,
+        default_value_t = 50,
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..),
+        help = "Maximum result count (must be at least 1)"
+    )]
     pub(crate) limit: usize,
     #[arg(long, help = "Include deleted tasks")]
     pub(crate) all: bool,
@@ -590,7 +599,12 @@ pub(crate) struct RecurHistoryArgs {
     pub(crate) series_ref: String,
     #[arg(long, default_value_t = 0)]
     pub(crate) offset: usize,
-    #[arg(long, default_value_t = 100)]
+    #[arg(
+        long,
+        default_value_t = 100,
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=500),
+        help = "Maximum result count (1-500)"
+    )]
     pub(crate) limit: usize,
     #[arg(long, help = "Print machine-readable JSON")]
     pub(crate) json: bool,
@@ -729,7 +743,11 @@ pub(crate) struct BulkUpdateArgs {
 pub(crate) struct PrimeArgs {
     #[arg(long)]
     pub(crate) project: Option<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..),
+        help = "Maximum result count (must be at least 1)"
+    )]
     pub(crate) limit: Option<usize>,
     #[arg(long, help = "Print machine-readable JSON")]
     pub(crate) json: bool,
@@ -794,7 +812,11 @@ pub(crate) struct NoteDeleteArgs {
 pub(crate) struct LabelListArgs {
     #[arg(long)]
     pub(crate) search: Option<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..),
+        help = "Maximum result count (must be at least 1)"
+    )]
     pub(crate) limit: Option<usize>,
     #[arg(long, help = "Print machine-readable JSON")]
     pub(crate) json: bool,
@@ -804,7 +826,11 @@ pub(crate) struct LabelListArgs {
 pub(crate) struct ProjectListArgs {
     #[arg(long)]
     pub(crate) search: Option<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..),
+        help = "Maximum result count (must be at least 1)"
+    )]
     pub(crate) limit: Option<usize>,
     #[arg(long, help = "Print machine-readable JSON")]
     pub(crate) json: bool,
@@ -937,7 +963,11 @@ pub(crate) enum ConflictSubcommand {
         project: Option<String>,
         #[arg(long)]
         field: Option<String>,
-        #[arg(long)]
+        #[arg(
+            long,
+            value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..),
+            help = "Maximum result count (must be at least 1)"
+        )]
         limit: Option<usize>,
         #[arg(long, help = "Print machine-readable JSON")]
         json: bool,
@@ -1235,6 +1265,56 @@ mod tests {
         assert_eq!(project_args.search.as_deref(), Some("agent"));
         assert_eq!(project_args.limit, Some(5));
         assert!(project_args.json);
+    }
+
+    #[test]
+    fn result_limits_preserve_defaults_and_validate_explicit_values() {
+        let search = Cli::try_parse_from(["aven", "search", "task"]).unwrap();
+        let Commands::Search(search_args) = search.command else {
+            panic!("expected search command");
+        };
+        assert_eq!(search_args.limit, 50);
+
+        let history = Cli::try_parse_from(["aven", "recur", "history", "RCR-1234"]).unwrap();
+        let Commands::Recur(RecurCommand {
+            command: RecurSubcommand::History(history_args),
+        }) = history.command
+        else {
+            panic!("expected recurrence history command");
+        };
+        assert_eq!(history_args.limit, 100);
+
+        let list = Cli::try_parse_from(["aven", "list"]).unwrap();
+        let Commands::List(list_args) = list.command else {
+            panic!("expected list command");
+        };
+        assert_eq!(list_args.limit, None);
+
+        for arguments in [
+            vec!["aven", "list", "--limit", "0"],
+            vec!["aven", "search", "task", "--limit", "0"],
+            vec!["aven", "recur", "history", "RCR-1234", "--limit", "0"],
+            vec!["aven", "prime", "--limit", "0"],
+            vec!["aven", "label", "list", "--limit", "0"],
+            vec!["aven", "project", "list", "--limit", "0"],
+            vec!["aven", "conflict", "list", "--limit", "0"],
+        ] {
+            let error = Cli::try_parse_from(arguments).err().unwrap();
+            assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+        }
+
+        assert!(Cli::try_parse_from(["aven", "search", "task", "--limit", "1"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["aven", "recur", "history", "RCR-1234", "--limit", "500",])
+                .is_ok()
+        );
+        for limit in ["501", "900"] {
+            let error =
+                Cli::try_parse_from(["aven", "recur", "history", "RCR-1234", "--limit", limit])
+                    .err()
+                    .unwrap();
+            assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+        }
     }
 
     #[test]

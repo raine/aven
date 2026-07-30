@@ -21,6 +21,7 @@ use super::types::{
     RecurrenceSeriesListQuery, RecurrenceSeriesSummary, RecurrenceTaskGroup, TaskListItem,
     TaskRecurrenceSummary,
 };
+use super::validate_recurrence_history_limit;
 
 const SQLITE_BIND_CHUNK_SIZE: usize = 900;
 pub(crate) const REPORT_RECONCILE_LIMIT: usize = 256;
@@ -454,6 +455,7 @@ pub(crate) async fn recurrence_history(
     offset: usize,
     limit: usize,
 ) -> Result<RecurrenceHistoryPage> {
+    validate_recurrence_history_limit(limit)?;
     let series = load_series_for_ids(conn, workspace_id, std::slice::from_ref(series_id))
         .await?
         .pop()
@@ -482,7 +484,6 @@ pub(crate) async fn recurrence_history(
             .then_with(|| right.kind.order().cmp(&left.kind.order()))
     });
     let total = entries.len();
-    let limit = limit.clamp(1, 500);
     let items = entries.into_iter().skip(offset).take(limit).collect();
     Ok(RecurrenceHistoryPage {
         series_ref,
