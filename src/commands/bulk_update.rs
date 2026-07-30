@@ -63,6 +63,12 @@ pub(crate) async fn cmd_bulk_update(
             .collect();
         database.update_tasks(workspace, updates).await?
     };
+    if !args.dry_run && outcomes.len() != would_change {
+        bail!(
+            "error internal-bulk-update-outcome-mismatch expected={would_change} actual={}",
+            outcomes.len()
+        );
+    }
     let mut outcomes = outcomes.into_iter();
     let mut changed = 0;
     let mut unchanged = 0;
@@ -83,10 +89,6 @@ pub(crate) async fn cmd_bulk_update(
         changed += 1;
         print_changed_bulk_update(&display_refs, &outcome.task);
     }
-    assert!(
-        outcomes.next().is_none(),
-        "batch update returned more outcomes than changing tasks"
-    );
     if args.dry_run {
         unchanged = matched - would_change;
     }
