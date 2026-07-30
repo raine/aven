@@ -640,7 +640,7 @@ Mutations:
 | `--remove-label <label>` | Remove a label. Repeat as needed. |
 | `--dry-run` | Print the planned result without writing. |
 
-At least one selector and one mutation are required. Selector options combine as an intersection. Availability dates do not limit bulk selection, so future tasks are included when they match. The same label cannot appear in both `--label` and `--remove-label`. Before any write, aven validates the entire selected set and rejects updates to fields with unresolved conflicts. Output includes one line per task and a matched, changed, unchanged, and dry-run summary.
+At least one selector and one mutation are required. Selector options combine as an intersection. Availability dates do not limit bulk selection, so future tasks are included when they match. The same label cannot appear in both `--label` and `--remove-label`. Before any write, aven validates the entire selected set and rejects updates to fields with unresolved conflicts. A bulk update commits all selected changes in one transaction, and any task failure rolls back the complete set. Successful output includes one line per task and a matched, changed, unchanged, and dry-run summary.
 
 ```sh
 aven bulk-update --project aven --status todo --set-priority high --dry-run
