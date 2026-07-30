@@ -73,7 +73,10 @@ fn context_json_contains_structured_snapshot() {
             .len()
             >= 3
     );
-    assert!(value["notes"][0]["id"].as_str().unwrap().len() >= 3);
+    let note_id = value["notes"][0]["id"].as_str().unwrap();
+    assert!(note_id.len() >= 3);
+    let text = ok(env.aven(&db, ["context", &middle]));
+    contains_all(&text, &[&format!("note id={note_id} created=")]);
     assert_eq!(value["has_conflicts"], false);
     assert_eq!(value["is_blocked"], true);
     assert_eq!(value["has_open_dependents"], true);

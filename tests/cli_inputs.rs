@@ -67,7 +67,11 @@ fn note_sources_work() {
     let db = env.db("notes.sqlite");
     let task_ref = extract_ref(&ok(env.aven(&db, ["add", "noted task", "--project", "app"])));
 
-    ok(env.aven(&db, ["note", &task_ref, "inline note"]));
+    let noted = ok(env.aven(&db, ["note", &task_ref, "inline note"]));
+    let note_id = noted
+        .split_whitespace()
+        .find_map(|part| part.strip_prefix("note="))
+        .expect("note id in output");
 
     let note_file = env.path("note.txt");
     fs::write(&note_file, "file note\n").unwrap();
@@ -80,7 +84,10 @@ fn note_sources_work() {
 
     let shown = ok(env.aven(&db, ["show", &task_ref, "--full"]));
     contains_all(&shown, &["inline note", "file note", "stdin note"]);
-    contains_all(&shown, &["note created=", "body<<EOF"]);
+    contains_all(
+        &shown,
+        &[&format!("note id={note_id} created="), "body<<EOF"],
+    );
 }
 
 #[test]

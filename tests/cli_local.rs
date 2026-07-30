@@ -837,13 +837,21 @@ fn show_json_full_includes_description_dependencies_notes_conflicts() {
         ],
     )));
 
+    let noted = ok(env.aven(&db, ["note", &task_ref, "full json note"]));
+    let note_id = noted
+        .split_whitespace()
+        .find_map(|part| part.strip_prefix("note="))
+        .expect("note id in output");
+
     let output = ok(env.aven(&db, ["show", &task_ref, "--json", "--full"]));
     let item: serde_json::Value = serde_json::from_str(&output).unwrap();
     assert_eq!(item["task"]["ref"], task_ref);
     assert_eq!(item["description"], "full json description");
     assert!(item["dependencies"]["depends_on"].is_array());
     assert!(item["dependencies"]["blocks"].is_array());
-    assert!(item["notes"].is_array());
+    assert_eq!(item["notes"][0]["id"], note_id);
+    assert_eq!(item["notes"][0]["body"], "full json note");
+    assert!(item["notes"][0]["created_at"].is_string());
     assert!(item["conflicts"].is_array());
 }
 

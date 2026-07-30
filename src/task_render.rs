@@ -106,7 +106,7 @@ pub(crate) fn print_full_task_report(report: &TaskFullReport) {
     print_attachment_section(&report.attachments);
     print_task_dependency_summary(&detail.dependencies);
     for note in &detail.notes {
-        println!("note created={}", note.created_at);
+        println!("note id={} created={}", note.id, note.created_at);
         print_multiline_block("body", &note.body);
     }
     for conflict in &report.conflicts {
@@ -133,6 +133,7 @@ pub(crate) fn task_full_json(report: &TaskFullReport) -> TaskFullJson {
             .notes
             .iter()
             .map(|note| TaskNoteJson {
+                id: note.id.clone(),
                 body: note.body.clone(),
                 created_at: note.created_at.clone(),
             })
@@ -404,6 +405,7 @@ pub(crate) struct TaskFullJson {
 
 #[derive(Serialize)]
 pub(crate) struct TaskNoteJson {
+    pub(crate) id: String,
     pub(crate) body: String,
     pub(crate) created_at: String,
 }

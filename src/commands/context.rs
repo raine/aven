@@ -361,7 +361,7 @@ fn print_task_context(snapshot: &TaskContextSnapshot) {
         );
     }
     for note in &snapshot.notes {
-        println!("note created={}", note.created_at);
+        println!("note id={} created={}", note.id, note.created_at);
         print_multiline_block("body", &note.body);
     }
     for conflict in &snapshot.conflicts {
