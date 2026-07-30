@@ -24,7 +24,7 @@ async fn search_preview_with_database(
         });
     }
     database
-        .search_task_preview_set(
+        .search_task_preview_set_from_current_projection(
             &workspace_id,
             TaskSearchQuery {
                 text,

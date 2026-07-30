@@ -132,6 +132,19 @@ impl Database {
     ) -> Result<Vec<RecurrenceSeriesListItem>> {
         self.reconcile_recurrence_reports_at(workspace_id, at)
             .await?;
+        self.list_recurrence_series_view_from_current_projection(workspace_id, query)
+            .await
+    }
+
+    /// Reads the persisted recurrence projection as-is.
+    ///
+    /// Callers establish projection currency by reconciling the workspace for the report snapshot.
+    #[doc(hidden)]
+    pub async fn list_recurrence_series_view_from_current_projection(
+        &self,
+        workspace_id: &WorkspaceId,
+        query: RecurrenceSeriesListQuery,
+    ) -> Result<Vec<RecurrenceSeriesListItem>> {
         let mut conn = self.acquire().await?;
         recurrence::list_recurrence_series_view(&mut conn, workspace_id, &query).await
     }
@@ -165,6 +178,20 @@ impl Database {
     ) -> Result<RecurrenceSeriesDetail> {
         self.reconcile_recurrence_reports_at(workspace_id, at)
             .await?;
+        self.recurrence_series_detail_at_from_current_projection(workspace_id, series_id, at)
+            .await
+    }
+
+    /// Reads the persisted recurrence projection as-is.
+    ///
+    /// Callers establish projection currency by reconciling the workspace for the report snapshot.
+    #[doc(hidden)]
+    pub async fn recurrence_series_detail_at_from_current_projection(
+        &self,
+        workspace_id: &WorkspaceId,
+        series_id: &RecurrenceSeriesId,
+        at: DateTime<Utc>,
+    ) -> Result<RecurrenceSeriesDetail> {
         let mut conn = self.acquire().await?;
         recurrence::recurrence_series_detail(&mut conn, workspace_id, series_id, at).await
     }
@@ -202,6 +229,20 @@ impl Database {
             .await
     }
 
+    /// Reads the persisted recurrence projection as-is.
+    ///
+    /// Callers establish projection currency by reconciling the workspace for the report snapshot.
+    #[doc(hidden)]
+    pub async fn recurrence_series_detail_from_current_projection(
+        &self,
+        workspace_id: &WorkspaceId,
+        series_id: &RecurrenceSeriesId,
+    ) -> Result<RecurrenceSeriesDetail> {
+        let at = DateTime::parse_from_rfc3339(&crate::ids::now())?.with_timezone(&Utc);
+        self.recurrence_series_detail_at_from_current_projection(workspace_id, series_id, at)
+            .await
+    }
+
     pub async fn recurrence_history(
         &self,
         workspace_id: &WorkspaceId,
@@ -219,6 +260,18 @@ impl Database {
         workspace_id: &WorkspaceId,
     ) -> Result<Vec<ProjectListItem>> {
         self.reconcile_recurrence_reports(workspace_id).await?;
+        self.list_project_items_from_current_projection(workspace_id)
+            .await
+    }
+
+    /// Reads the persisted recurrence projection as-is.
+    ///
+    /// Callers establish projection currency by reconciling the workspace for the report snapshot.
+    #[doc(hidden)]
+    pub async fn list_project_items_from_current_projection(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<Vec<ProjectListItem>> {
         let mut conn = self.acquire().await?;
         list_project_items_in_workspace(&mut conn, workspace_id).await
     }
@@ -232,6 +285,22 @@ impl Database {
         direction: SortDirection,
     ) -> Result<Vec<TaskListItem>> {
         self.reconcile_recurrence_reports(workspace_id).await?;
+        self.list_task_items_from_current_projection(workspace_id, filters, mode, sort, direction)
+            .await
+    }
+
+    /// Reads the persisted recurrence projection as-is.
+    ///
+    /// Callers establish projection currency by reconciling the workspace for the report snapshot.
+    #[doc(hidden)]
+    pub async fn list_task_items_from_current_projection(
+        &self,
+        workspace_id: &WorkspaceId,
+        filters: TaskFilters,
+        mode: TaskQueryMode,
+        sort: TaskSort,
+        direction: SortDirection,
+    ) -> Result<Vec<TaskListItem>> {
         let mut conn = self.acquire().await?;
         list_task_items_in_workspace(&mut conn, workspace_id, filters, mode, sort, direction).await
     }
@@ -290,6 +359,19 @@ impl Database {
         project_key: Option<&str>,
     ) -> Result<SidebarCounts> {
         self.reconcile_recurrence_reports(workspace_id).await?;
+        self.sidebar_counts_for_scope_from_current_projection(workspace_id, project_key)
+            .await
+    }
+
+    /// Reads the persisted recurrence projection as-is.
+    ///
+    /// Callers establish projection currency by reconciling the workspace for the report snapshot.
+    #[doc(hidden)]
+    pub async fn sidebar_counts_for_scope_from_current_projection(
+        &self,
+        workspace_id: &WorkspaceId,
+        project_key: Option<&str>,
+    ) -> Result<SidebarCounts> {
         let mut conn = self.acquire().await?;
         sidebar_counts_for_scope_in_workspace(&mut conn, workspace_id, project_key).await
     }
@@ -300,6 +382,19 @@ impl Database {
         project_scope: Option<&str>,
     ) -> Result<Vec<RecentActionItem>> {
         self.reconcile_recurrence_reports(workspace_id).await?;
+        self.list_recent_actions_from_current_projection(workspace_id, project_scope)
+            .await
+    }
+
+    /// Reads the persisted recurrence projection as-is.
+    ///
+    /// Callers establish projection currency by reconciling the workspace for the report snapshot.
+    #[doc(hidden)]
+    pub async fn list_recent_actions_from_current_projection(
+        &self,
+        workspace_id: &WorkspaceId,
+        project_scope: Option<&str>,
+    ) -> Result<Vec<RecentActionItem>> {
         let mut conn = self.acquire().await?;
         list_recent_actions_in_workspace(&mut conn, workspace_id, project_scope).await
     }
@@ -333,6 +428,20 @@ impl Database {
     ) -> Result<TaskSearchPreviewResultSet> {
         validate_search_limit(query.limit)?;
         self.reconcile_recurrence_reports(workspace_id).await?;
+        self.search_task_preview_set_from_current_projection(workspace_id, query)
+            .await
+    }
+
+    /// Reads the persisted recurrence projection as-is.
+    ///
+    /// Callers establish projection currency by reconciling the workspace for the report snapshot.
+    #[doc(hidden)]
+    pub async fn search_task_preview_set_from_current_projection(
+        &self,
+        workspace_id: &WorkspaceId,
+        query: TaskSearchQuery,
+    ) -> Result<TaskSearchPreviewResultSet> {
+        validate_search_limit(query.limit)?;
         let mut conn = self.acquire().await?;
         search_task_preview_set_in_workspace(&mut conn, workspace_id, query).await
     }

@@ -62,7 +62,10 @@ impl TuiStore {
             let series_id = conflict.task_id.to_string().parse()?;
             let detail = self
                 .database
-                .recurrence_series_detail(&self.active_workspace.id, &series_id)
+                .recurrence_series_detail_from_current_projection(
+                    &self.active_workspace.id,
+                    &series_id,
+                )
                 .await?;
             if let Some(task_id) = detail
                 .current_occurrence
@@ -77,7 +80,7 @@ impl TuiStore {
         }
         let mut items = self
             .database
-            .list_task_items(
+            .list_task_items_from_current_projection(
                 &self.active_workspace.id,
                 crate::query::TaskFilters {
                     task_ids,

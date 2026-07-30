@@ -49,7 +49,6 @@ use crate::query::{
 };
 use crate::workspaces::Workspace;
 
-#[derive(Clone)]
 pub(crate) struct TuiStore {
     database: Database,
     pub(crate) tasks: Vec<TaskListItem>,
@@ -258,13 +257,9 @@ impl TuiStore {
         view_state: Option<TaskViewState>,
         active_workspace: Option<Workspace>,
     ) -> Result<ScopeRefreshResult> {
-        let mut replacement = self.clone();
-        if let Some(active_workspace) = active_workspace {
-            replacement.active_workspace = active_workspace;
-        }
-        if let Some(view_state) = view_state {
-            replacement.view_state = view_state;
-        }
+        let active_workspace = active_workspace.unwrap_or_else(|| self.active_workspace.clone());
+        let view_state = view_state.unwrap_or_else(|| self.view_state.clone());
+        let mut replacement = self.replacement_shell(active_workspace, view_state);
         #[cfg(test)]
         {
             replacement.fail_next_refresh = self.fail_next_refresh.take();
@@ -278,24 +273,57 @@ impl TuiStore {
         Ok(result)
     }
 
+    fn replacement_shell(&self, active_workspace: Workspace, view_state: TaskViewState) -> Self {
+        Self {
+            database: self.database.clone(),
+            tasks: Vec::new(),
+            recurrence_series: Vec::new(),
+            recurrence_detail: self.recurrence_detail.clone(),
+            recent_actions: Vec::new(),
+            projects: Vec::new(),
+            labels: Vec::new(),
+            workspaces: Vec::new(),
+            active_workspace,
+            counts: SidebarCounts::default(),
+            sidebar_entries: Vec::new(),
+            view_state,
+            task_columns: self.task_columns.clone(),
+            columns_preview_visible: self.columns_preview_visible,
+            sync_status: TuiSyncStatus::default(),
+            db_stats: self.db_stats.clone(),
+            last_refresh: self.last_refresh,
+            #[cfg(test)]
+            fail_next_refresh: None,
+        }
+    }
+
     async fn refresh_in_place(
         &mut self,
         selected: Option<&MainRowSelection>,
     ) -> Result<ScopeRefreshResult> {
         let workspace_id = self.active_workspace.id.clone();
         self.workspaces = self.database.list_workspaces().await?;
+        self.database
+            .reconcile_recurrence_reports(&workspace_id)
+            .await?;
         self.inject_refresh_failure(RefreshFailureStage::Projects)?;
-        self.projects = self.database.list_project_items(&workspace_id).await?;
+        self.projects = self
+            .database
+            .list_project_items_from_current_projection(&workspace_id)
+            .await?;
         self.labels = self.database.list_labels(&workspace_id, None).await?;
         let fallback_scope = self.ensure_valid_scope();
         let project_scope = self.scope_project().map(str::to_string);
         self.counts = self
             .database
-            .sidebar_counts_for_scope(&workspace_id, project_scope.as_deref())
+            .sidebar_counts_for_scope_from_current_projection(
+                &workspace_id,
+                project_scope.as_deref(),
+            )
             .await?;
         self.recent_actions = self
             .database
-            .list_recent_actions(&workspace_id, project_scope.as_deref())
+            .list_recent_actions_from_current_projection(&workspace_id, project_scope.as_deref())
             .await?;
         self.inject_refresh_failure(RefreshFailureStage::Tasks)?;
         if self.view_state.view == TaskView::RecentActions {
@@ -306,7 +334,10 @@ impl TuiStore {
             self.tasks.clear();
             self.recurrence_series = self
                 .database
-                .list_recurrence_series_view(&workspace_id, self.view_state.recurrence_query())
+                .list_recurrence_series_view_from_current_projection(
+                    &workspace_id,
+                    self.view_state.recurrence_query(),
+                )
                 .await?;
         } else {
             self.recurrence_series.clear();
@@ -314,7 +345,7 @@ impl TuiStore {
             let filters = self.view_state.filters();
             self.tasks = self
                 .database
-                .list_task_items(
+                .list_task_items_from_current_projection(
                     &workspace_id,
                     filters,
                     self.view_state.query_mode(),
@@ -397,7 +428,7 @@ impl TuiStore {
         }
         let children = self
             .database
-            .list_task_items(
+            .list_task_items_from_current_projection(
                 workspace_id,
                 crate::query::TaskFilters {
                     task_ids: child_ids,

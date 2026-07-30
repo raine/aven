@@ -1578,6 +1578,24 @@ mod task_creation_and_updates {
     }
 
     #[tokio::test]
+    async fn refresh_replacement_preserves_configuration_and_loaded_stats() {
+        let mut store = test_store().await;
+        store.task_columns = vec![crate::config::TaskColumnConfig {
+            name: "Work".to_string(),
+            statuses: vec!["todo".to_string(), "active".to_string()],
+        }];
+        store.columns_preview_visible = false;
+        store.db_stats.total_tasks = 42;
+
+        store.refresh(None).await.unwrap();
+
+        assert_eq!(store.task_columns.len(), 1);
+        assert_eq!(store.task_columns[0].name, "Work");
+        assert!(!store.columns_preview_visible);
+        assert_eq!(store.db_stats.total_tasks, 42);
+    }
+
+    #[tokio::test]
     async fn single_mutation_rolls_back_when_undo_recording_fails() {
         let (_dir, pool, mut store) = test_store_with_pool().await;
         let (task_id, selected) = create_selected_task(&mut store, "Single undo failure").await;
