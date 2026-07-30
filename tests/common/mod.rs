@@ -474,6 +474,17 @@ pub fn meta_value(db: &Path, key: &str) -> Option<String> {
     })
 }
 
+pub fn execute_sql(db: &Path, sql: &'static str) {
+    let runtime = test_runtime();
+    runtime.block_on(async {
+        let mut conn = open_test_db(db).await;
+        sqlx::raw_sql(sql)
+            .execute(&mut conn)
+            .await
+            .expect("execute test sql");
+    });
+}
+
 pub fn scalar_i64(db: &Path, sql: &'static str) -> i64 {
     let runtime = test_runtime();
     runtime.block_on(async {

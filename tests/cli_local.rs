@@ -4,8 +4,8 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use common::{
-    TestEnv, command, command_with_db, contains_all, contains_none, extract_ref, fail, ok,
-    scalar_i64, suffix,
+    TestEnv, command, command_with_db, contains_all, contains_none, execute_sql, extract_ref, fail,
+    ok, scalar_i64, suffix,
 };
 
 fn extract_attachment_id(output: &str) -> String {
@@ -1511,6 +1511,37 @@ fn bulk_update_filters_and_removes_label() {
     contains_none(&ok(env.aven(&db, ["show", &bug_one])), &["labels=bug"]);
     contains_none(&ok(env.aven(&db, ["show", &bug_two])), &["labels=bug"]);
     contains_all(&ok(env.aven(&db, ["show", &docs])), &["labels=docs"]);
+}
+
+#[test]
+fn bulk_update_rolls_back_when_a_later_task_update_fails() {
+    let env = TestEnv::new();
+    let db = env.db("bulk-update-atomic.sqlite");
+    let first = extract_ref(&ok(env.aven(&db, ["add", "first", "--project", "app"])));
+    let second = extract_ref(&ok(env.aven(&db, ["add", "second", "--project", "app"])));
+    let priority_changes_before =
+        scalar_i64(&db, "SELECT count(*) FROM changes WHERE field = 'priority'");
+    execute_sql(
+        &db,
+        "CREATE TRIGGER reject_second_bulk_priority
+         BEFORE UPDATE OF priority ON tasks
+         WHEN NEW.priority = 'high'
+           AND (SELECT count(*) FROM tasks WHERE priority = 'high') > 0
+         BEGIN
+             SELECT RAISE(ABORT, 'forced second bulk update failure');
+         END",
+    );
+
+    let error = fail(env.aven(&db, ["bulk-update", "--all", "--set-priority", "high"]));
+
+    contains_all(&error, &["forced second bulk update failure"]);
+    contains_none(&error, &["bulk-updated", "bulk-update-summary"]);
+    contains_all(&ok(env.aven(&db, ["show", &first])), &["priority=none"]);
+    contains_all(&ok(env.aven(&db, ["show", &second])), &["priority=none"]);
+    assert_eq!(
+        scalar_i64(&db, "SELECT count(*) FROM changes WHERE field = 'priority'",),
+        priority_changes_before
+    );
 }
 
 #[test]

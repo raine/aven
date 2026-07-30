@@ -53,11 +53,21 @@ pub(crate) async fn cmd_bulk_update(
     .await?;
 
     let would_change = planned.iter().filter(|item| item.will_change).count();
+    let outcomes = if args.dry_run {
+        Vec::new()
+    } else {
+        let updates = planned
+            .iter()
+            .filter(|item| item.will_change)
+            .map(|item| (item.item.task.id.clone(), item.update.clone()))
+            .collect();
+        database.update_tasks(workspace, updates).await?
+    };
+    let mut outcomes = outcomes.into_iter();
     let mut changed = 0;
     let mut unchanged = 0;
     for planned in planned {
         let item = planned.item;
-        let update = planned.update;
         if args.dry_run {
             print_dry_run_bulk_update(&item, planned.will_change);
             continue;
@@ -67,12 +77,16 @@ pub(crate) async fn cmd_bulk_update(
             print_unchanged_bulk_update(&item);
             continue;
         }
-        let outcome = database
-            .update_task(workspace, &item.task.id, update)
-            .await?;
+        let outcome = outcomes
+            .next()
+            .expect("batch update returns one outcome per changing task");
         changed += 1;
         print_changed_bulk_update(&display_refs, &outcome.task);
     }
+    assert!(
+        outcomes.next().is_none(),
+        "batch update returned more outcomes than changing tasks"
+    );
     if args.dry_run {
         unchanged = matched - would_change;
     }
