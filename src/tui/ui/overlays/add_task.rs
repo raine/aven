@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Paragraph, Wrap};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::super::dialog::{Dialog, dialog_hint_line};
+use super::super::dialog::{Dialog, dialog_hint_line, dim_rendered_background};
 use super::super::input::{clipped_input_line, cursor_cell};
 use super::super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use super::super::truncate::truncate_chars;
@@ -798,6 +798,11 @@ fn schedule_editor_input_line(
 }
 
 fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) {
+    if matches!(state.mode.as_ref(), AddTaskMode::Compose) {
+        return;
+    }
+    dim_rendered_background(frame);
+
     if matches!(state.mode.as_ref(), AddTaskMode::ConfirmDiscard) {
         render_confirm(
             frame,
@@ -814,7 +819,7 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
     }
 
     let (title, lines, width, background) = match state.mode.as_ref() {
-        AddTaskMode::Compose => return,
+        AddTaskMode::Compose => unreachable!("composer has no child dialog"),
         AddTaskMode::Schedule(editor) => (
             "Schedule".to_string(),
             schedule_editor_lines(editor),

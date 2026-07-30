@@ -95,6 +95,12 @@ fn right_edge_title(title: Option<Line<'_>>) -> Line<'_> {
     title
 }
 
+pub(super) fn dim_rendered_background(frame: &mut Frame) {
+    for cell in &mut frame.buffer_mut().content {
+        cell.modifier.insert(Modifier::DIM);
+    }
+}
+
 pub(super) fn dialog_hint_line(items: &[(&str, &str)]) -> Line<'static> {
     let mut spans = Vec::new();
     for (index, (key, label)) in items.iter().enumerate() {

@@ -18,6 +18,7 @@ use crate::tui::widgets::priority_icon;
 use ratatui::Frame;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::style::Modifier;
 use ratatui::text::Line;
 
 fn buffer_text(backend: &TestBackend) -> String {
@@ -799,6 +800,43 @@ mod add_task_overlay {
         });
 
         assert_eq!(structured_height, compact_height);
+    }
+
+    #[test]
+    fn nested_schedule_editor_dims_only_its_underlay() {
+        let buffer = overlay_buffer(add_task_overlay(AddTaskView {
+            mode: Box::new(AddTaskMode::Schedule(schedule_editor(
+                ScheduleEditorMode::Repeat,
+            ))),
+            ..add_task_view()
+        }));
+        let text_position = |needle: &str| {
+            let chars = needle.chars().collect::<Vec<_>>();
+            (0..buffer.area.height)
+                .find_map(|row| {
+                    (0..buffer.area.width.saturating_sub(chars.len() as u16)).find_map(|column| {
+                        chars
+                            .iter()
+                            .enumerate()
+                            .all(|(offset, ch)| {
+                                buffer[(column + offset as u16, row)].symbol() == ch.to_string()
+                            })
+                            .then_some((column, row))
+                    })
+                })
+                .unwrap_or_else(|| panic!("missing {needle:?}"))
+        };
+
+        assert!(
+            buffer[text_position("Project:")]
+                .modifier
+                .contains(Modifier::DIM)
+        );
+        assert!(
+            !buffer[text_position("Type")]
+                .modifier
+                .contains(Modifier::DIM)
+        );
     }
 
     #[test]
