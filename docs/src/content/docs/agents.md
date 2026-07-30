@@ -1,12 +1,13 @@
 ---
 title: Work with agents
-description: Connect coding, chat, and other AI agents to Aven.
+description: Connect coding agents and other AI integrations to Aven.
 ---
 
 Aven gives AI agents access to the same local task system you use in the TUI.
-Coding agents can load project context and leave durable handoff notes. Chat or
-voice agents can capture tasks through the CLI and synchronize them to your
-other devices.
+Coding agents can inspect project context, find ready or blocked work, create and
+edit tasks, manage status, schedules, and relationships, and leave durable
+handoff notes. Chat integrations can turn messages or transcripts into tasks
+through the CLI and sync them to your other devices.
 
 ## Install the aven skill
 
@@ -76,9 +77,9 @@ Work on APP-7KQ9. Use aven for status and handoff notes.
 Pick a ready docs task and complete it.
 ```
 
-## Connect chat or voice agents
+## Connect chat integrations
 
-A chat or voice agent can capture project-scoped tasks without access to a
+A chat integration can capture project-scoped tasks without access to a
 repository checkout. Run `aven skill` to print Aven's reusable Markdown guidance
 and include it in the integration's system prompt or tool instructions. Then let
 the integration invoke the CLI with an explicit project and workspace.
@@ -91,7 +92,7 @@ A synchronized integration typically:
 4. Runs `aven sync` again so the task reaches other devices.
 5. Returns the reference to the person who requested the task.
 
-For example, a private Telegram agent on a small home server can transcribe a
+For example, a private Telegram bot on a small home server can transcribe a
 voice message, map the spoken project name to an Aven project, and pass the
 result to a wrapper implementing that sequence. Use explicit allowlists for
 workspaces and projects, and keep authentication tokens and other secrets out of

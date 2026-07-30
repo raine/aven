@@ -290,7 +290,8 @@ The in-app command catalog is the authoritative shortcut reference:
 ## Reference
 
 - [Concepts](/concepts/) defines the task model behind the interface.
-- [Work with agents](/agents/) connects Aven to coding, chat, and voice agents.
+- [Work with agents](/agents/) connects coding agents and chat integrations to
+  Aven.
 - [Command reference](/command-reference/) documents CLI equivalents and input
   grammar.
 - [Configuration](/configuration/) covers workspace routes, project mappings,

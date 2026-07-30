@@ -23,7 +23,7 @@ Taskwarrior is a major inspiration, but aven has its own approach to agents, IDs
 
 The local SQLite database is the working copy for both the TUI and CLI. Sync is optional and lets multiple machines use the same tasks.
 
-Tasks live outside repositories, so they survive branch switches, worktrees, repository clones, and dirty git states. Repositories provide project context without owning the task data. The same store can support the laptop TUI, agent CLI, terminal capture flows, sync clients, and other integrations. A Telegram agent, future iOS app, or similar entrypoint can create project-scoped tasks without cloning every repository. You can run the sync server on a Raspberry Pi or home server and connect devices through a VPN or private network.
+Tasks live outside repositories, so they survive branch switches, worktrees, repository clones, and dirty git states. Repositories provide project context without owning the task data. The same store can support the laptop TUI, agent CLI, terminal capture flows, sync clients, and other integrations. A Telegram bot, future iOS app, or similar entrypoint can create project-scoped tasks without cloning every repository. You can run the sync server on a Raspberry Pi or home server and connect devices through a VPN or private network.
 
 The CLI is designed for agents and automation. Its output is compact, token-efficient, stable, and explicit. Agents can capture follow-up work, update status, add notes, and leave handoff context without relying on hidden UI state.
 
