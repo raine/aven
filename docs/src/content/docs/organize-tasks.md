@@ -1,5 +1,5 @@
 ---
-title: Organize tasks
+title: Organizing tasks
 description: Choose how workspaces, projects, labels, epics, and dependencies structure your work.
 ---
 
@@ -107,7 +107,7 @@ larger result. A task can participate in both relationships.
 
 - [Using the TUI](/tui/) covers navigation, selection, and command discovery.
 - [Concepts](/concepts/) defines these structures in the task model.
-- [Schedule tasks](/schedule-tasks/) explains when organized work should appear
+- [Scheduling tasks](/schedule-tasks/) explains when organized work should appear
   or become due.
 
 ## Reference

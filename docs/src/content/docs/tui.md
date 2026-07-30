@@ -10,7 +10,7 @@ aven tui
 ```
 
 Use it to find work, capture tasks, edit them, and inspect their details. See
-[Organize tasks](/organize-tasks/) for task structure, [Schedule
+[Organizing tasks](/organize-tasks/) for task structure, [Schedule
 tasks](/schedule-tasks/) for availability and deadlines, and [Recurring
 tasks](/recurring-tasks/) for repeating work.
 
@@ -93,7 +93,7 @@ The **Schedule** field accepts natural expressions such as `tomorrow`,
 `due next Friday`, or `every Friday at 09:00`. Press `Enter` on the field for a
 structured editor with **One-off** and **Repeating** modes.
 
-See [Schedule tasks](/schedule-tasks/) for availability and deadlines, and
+See [Scheduling tasks](/schedule-tasks/) for availability and deadlines, and
 [Recurring tasks](/recurring-tasks/) for repeating schedules.
 
 ### Create with AI
@@ -216,7 +216,7 @@ Press `p` to administer projects and `L` to administer labels. The `t B` and
 `t U` actions add and remove blockers. Epic membership actions live under
 `t c`, and `v e` opens the Epics view.
 
-See [Organize tasks](/organize-tasks/) for choosing among workspaces, projects,
+See [Organizing tasks](/organize-tasks/) for choosing among workspaces, projects,
 labels, epics, and dependencies.
 
 ## Recurring tasks

@@ -1,5 +1,5 @@
 ---
-title: Schedule tasks
+title: Scheduling tasks
 description: Defer work until later, set deadlines, and find tasks when they become relevant.
 ---
 
