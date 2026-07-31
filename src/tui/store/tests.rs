@@ -1361,6 +1361,45 @@ mod task_creation_and_updates {
     }
 
     #[tokio::test]
+    async fn successive_single_deletes_preserve_every_deleted_row() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (first_id, _) = create_selected_task(&mut store, "First").await;
+        let (second_id, _) = create_selected_task(&mut store, "Second").await;
+
+        let first_index = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == first_id)
+            .unwrap();
+        store
+            .update_deleted(Some(first_index), true)
+            .await
+            .unwrap()
+            .unwrap();
+        let second_index = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == second_id)
+            .unwrap();
+        store
+            .update_deleted(Some(second_index), true)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(store.tasks.len(), 2);
+        assert!(store.tasks.iter().all(|item| item.task.deleted));
+        let persisted: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM tasks WHERE id IN (?, ?) AND deleted = 1")
+                .bind(&first_id)
+                .bind(&second_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(persisted, 2);
+    }
+
+    #[tokio::test]
     async fn update_labels_for_tasks_sets_labels_on_each_marked_task() {
         let mut store = test_store().await;
         store.create_label("bug".to_string()).await.unwrap();

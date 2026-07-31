@@ -474,7 +474,9 @@ impl TuiStore {
         if preserve_task && selection.is_single() && report.changed_count() == 1 {
             let mut item = selection.targets()[0].clone();
             item.task = report.outcomes.into_iter().next().unwrap().task;
-            self.refresh(None).await.map_err(committed_mutation_error)?;
+            self.refresh_preserving_visible_deleted(None)
+                .await
+                .map_err(committed_mutation_error)?;
             let selected = match self
                 .tasks
                 .iter()
