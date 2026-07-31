@@ -116,7 +116,7 @@ latest_version() {
 
     log_info "Fetching latest release..." >&2
     release_json=$(fetch_stdout "$latest_url")
-    printf '%s\n' "$release_json" | sed -n -E 's/.*"tag_name": "([^"]+)".*/\1/p'
+    printf '%s\n' "$release_json" | sed -n -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p'
 }
 
 verify_checksum() {
