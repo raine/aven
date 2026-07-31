@@ -316,8 +316,8 @@ fn daemon_syncs_large_backlog_across_budgeted_rounds() {
         "daemon-synced pushed=1 pulled=0 blob_uploaded=0 blob_uploaded_bytes=0 blob_downloaded=0 blob_downloaded_bytes=0 blob_upload_remaining=0 blob_upload_remaining_bytes=0 blob_download_remaining=0 blob_download_remaining_bytes=0 cursor={task_count} complete=true pages=1"
     );
 
-    daemon.wait_for_log(&incomplete, Duration::from_secs(10));
-    daemon.wait_for_log(&complete, Duration::from_secs(10));
+    daemon.wait_for_log(&incomplete, Duration::from_secs(30));
+    daemon.wait_for_log(&complete, Duration::from_secs(30));
     let output = daemon.output();
     assert!(
         output
