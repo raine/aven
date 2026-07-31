@@ -3,10 +3,35 @@ title: Changelog
 description: Release notes for aven.
 ---
 
-## Unreleased
+## v0.1.20 (2026-07-31)
 
 - [Create and manage recurring tasks](/recurring-tasks/) from the CLI or TUI
-  with daily, weekday, weekly, fortnightly, multi-week, and monthly schedules.
+  with flexible schedules, history and lifecycle controls, cross-device sync,
+  and portable backup and export workflows.
+- Open release notes with `:changelog`, by clicking the version in the header,
+  or inside the update dialog.
+- [Search within one project](/command-reference/#aven-search) with
+  `aven search --project`. JSON results include the same task fields as list
+  output.
+- [Bulk updates](/command-reference/#aven-bulk-update) include matching tasks
+  scheduled for a future date. If any update fails, no selected tasks are
+  changed.
+- Set task status during creation and list open work available now with
+  [`aven add --status`](/command-reference/#aven-add) and
+  [`aven list --open`](/command-reference/#aven-list).
+- Perf: Large task lists, recurring-task refreshes, live searches, and TUI
+  rendering stay more responsive.
+- [Epics](/concepts/#dependencies-and-epics) start collapsed, selected-task
+  previews show due dates, and active filters remain visible in constrained TUI
+  headers.
+- Nested dialogs have clearer visual depth, and task composers stay compact
+  while adapting to longer descriptions and schedule editors.
+- [Detached natural-language task creation](/tui/#create-with-ai) sends a system
+  notification when it finishes after the originating TUI exits.
+- Fix: [Attachment sync](/sync/#image-attachments-during-sync) accepts UTC
+  timestamps with fractional seconds.
+- Out-of-range `--limit` values return clear errors for list, search, and
+  [recurrence history](/command-reference/#recur-history).
 
 ## v0.1.19 (2026-07-28)
 
@@ -114,20 +139,19 @@ description: Release notes for aven.
 
 ## v0.1.7 (2026-07-15)
 
-- Move selected or marked tasks directly between
-  [Columns lanes](/tui/#columns) with keyboard or mouse controls, with
-  batch moves grouped into one undo step.
-- Improved the default [Columns workflow](/tui/#columns) with
-  lifecycle-based lanes, ordering tailored to each lane, and a toggle for the
-  selected-task preview.
+- Move selected or marked tasks directly between [Columns lanes](/tui/#columns)
+  with keyboard or mouse controls, with batch moves grouped into one undo step.
+- Improved the default [Columns workflow](/tui/#columns) with lifecycle-based
+  lanes, ordering tailored to each lane, and a toggle for the selected-task
+  preview.
 - Task previews render Markdown formatting and clearly indicate truncated text.
 - Configured [database, workspace, and project paths](/configuration/) support
   `~` for the home directory.
 
 ## v0.1.6 (2026-07-14)
 
-- Added a configurable [Columns view](/tui/#columns) for navigating tasks
-  in named status lanes.
+- Added a configurable [Columns view](/tui/#columns) for navigating tasks in
+  named status lanes.
 - Redesigned the [task composer](/tui/#capture-tasks) so project, status,
   priority, labels, title, and description stay visible and are accessible by
   keyboard or mouse.
@@ -153,21 +177,19 @@ description: Release notes for aven.
   actions, and database stats.
 - [Database diagnostics](/sync/#diagnose-sync-state) show sync history size,
   synced and pending change counts, server sequence range, and payload bytes.
-- [Task list](/tui/#find-work) selection stays visible when queue group
-  headers remain pinned.
-- Back navigation from an
-  [epic child detail](/tui/#projects-and-relationships) returns to
-  the parent detail view and scroll position.
+- [Task list](/tui/#find-work) selection stays visible when queue group headers
+  remain pinned.
+- Back navigation from an [epic child detail](/tui/#projects-and-relationships)
+  returns to the parent detail view and scroll position.
 
 ## v0.1.3 (2026-07-07)
 
-- [Epic detail views](/tui/#projects-and-relationships) list child
-  tasks inline, with mouse hover and click targets for jumping to visible child
-  tasks.
+- [Epic detail views](/tui/#projects-and-relationships) list child tasks inline,
+  with mouse hover and click targets for jumping to visible child tasks.
 - The [queue](/concepts/#queue) keeps blocked tasks below actionable groups and
   gives more weight to tasks that unblock other work.
-- The [TUI sidebar](/tui/#find-work) preserves selection more consistently
-  when switching focus, toggling the sidebar, or applying task changes.
+- The [TUI sidebar](/tui/#find-work) preserves selection more consistently when
+  switching focus, toggling the sidebar, or applying task changes.
 - Crashes are written to the aven log file with panic details for easier
   troubleshooting.
 
