@@ -24,8 +24,7 @@ Docs: <https://aven.raine.dev>
   updates stay independent from git state, branches, worktrees, and checkouts.
 
 - **Optional self-hosted sync.** Keep the local-first workflow and make the same
-  tasks available across laptops, agents, and other devices through a server you
-  control.
+  tasks available across devices through a server you control.
 
 - **Projects map to repos.** Each repository becomes a project by default,
   created on demand when you add its first task.
