@@ -355,7 +355,9 @@ pub async fn create_recurrence_series_with_options(
         resolve_or_create_project_in_workspace(&mut tx, &workspace.id, draft.project.as_str())
             .await?;
     let labels = if options.create_missing_labels {
-        resolve_or_create_labels_in_workspace(&mut tx, workspace, &draft.labels).await?
+        resolve_or_create_labels_in_workspace(&mut tx, workspace, &draft.labels)
+            .await?
+            .names
     } else {
         resolve_labels_in_workspace(&mut tx, &workspace.id, &draft.labels).await?
     };
@@ -541,7 +543,9 @@ pub async fn update_recurrence_template_with_options(
     let current_labels = load_series_labels(&mut tx, &workspace.id, series_id).await?;
     let target_labels = if let Some(labels) = update.labels {
         if options.create_missing_labels {
-            resolve_or_create_labels_in_workspace(&mut tx, workspace, &labels).await?
+            resolve_or_create_labels_in_workspace(&mut tx, workspace, &labels)
+                .await?
+                .names
         } else {
             resolve_labels_in_workspace(&mut tx, &workspace.id, &labels).await?
         }

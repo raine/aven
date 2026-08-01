@@ -3343,6 +3343,116 @@ mod undo {
     }
 
     #[tokio::test]
+    async fn undo_create_task_removes_created_labels() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let mut draft = task_draft("Temporary labeled task");
+        draft.labels = vec!["undo-created-task-label".to_string()];
+
+        let (_, selected) = store.create_task(draft, None).await.unwrap();
+        let task_id = store.tasks[selected.unwrap()].task.id.clone();
+
+        store.undo_last(None).await.unwrap();
+
+        let task_count: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks WHERE id = ?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let label_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM labels WHERE name = 'undo-created-task-label'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let create_change_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM changes
+             WHERE entity_type = 'label' AND entity_id = 'undo-created-task-label'
+             AND op_type = 'create_label'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((task_count, label_count, create_change_count), (0, 0, 0));
+    }
+
+    #[tokio::test]
+    async fn undo_new_label_assignment_removes_unreferenced_label() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (task_id, selected) = create_selected_task(&mut store, "New label assignment").await;
+        let label = "undo-created-assignment-label";
+
+        store
+            .update_labels_for_tasks(
+                Some(selected),
+                std::slice::from_ref(&task_id),
+                vec![label.to_string()],
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        store.undo_last(None).await.unwrap();
+
+        let task_label_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM task_labels WHERE task_id = ? AND label = ?")
+                .bind(&task_id)
+                .bind(label)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let label_count: i64 = sqlx::query_scalar("SELECT count(*) FROM labels WHERE name = ?")
+            .bind(label)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let create_change_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM changes
+             WHERE entity_type = 'label' AND entity_id = ? AND op_type = 'create_label'",
+        )
+        .bind(label)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            (task_label_count, label_count, create_change_count),
+            (0, 0, 0)
+        );
+    }
+
+    #[tokio::test]
+    async fn undo_batch_new_label_assignment_removes_shared_label() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (first_id, _) = create_selected_task(&mut store, "First shared label").await;
+        let (second_id, _) = create_selected_task(&mut store, "Second shared label").await;
+        let label = "undo-created-batch-label";
+
+        store
+            .update_labels_for_tasks(
+                None,
+                &[first_id.clone(), second_id.clone()],
+                vec![label.to_string()],
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        store.undo_last(None).await.unwrap();
+
+        let task_label_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM task_labels WHERE label = ?")
+                .bind(label)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let label_count: i64 = sqlx::query_scalar("SELECT count(*) FROM labels WHERE name = ?")
+            .bind(label)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!((task_label_count, label_count), (0, 0));
+        assert!(store.tasks.iter().any(|item| item.task.id == first_id));
+        assert!(store.tasks.iter().any(|item| item.task.id == second_id));
+    }
+
+    #[tokio::test]
     async fn undo_atomic_attachment_task_removes_all_database_rows() {
         let (dir, pool, mut store) = test_store_with_pool().await;
         let mut bytes = std::io::Cursor::new(Vec::new());
@@ -3512,6 +3622,35 @@ mod undo {
             .await
             .unwrap();
         assert!(store.labels.iter().any(|label| label == "shared"));
+    }
+
+    #[tokio::test]
+    async fn undo_label_create_fails_when_referenced_by_recurrence() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let label = "recurrence-shared";
+        store.create_label(label.to_string()).await.unwrap();
+
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            "INSERT INTO recurrence_series_labels(workspace_id, series_id, label)
+             VALUES (?, ?, ?)",
+        )
+        .bind(&store.active_workspace.id)
+        .bind(crate::ids::new_id())
+        .bind(label)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        let error = store.undo_last(None).await.unwrap_err();
+        assert!(error.to_string().contains("undo-state-changed"));
+        let label_count: i64 = sqlx::query_scalar("SELECT count(*) FROM labels WHERE name = ?")
+            .bind(label)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(label_count, 1);
     }
 
     #[tokio::test]

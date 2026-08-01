@@ -4,6 +4,7 @@ use sqlx::{Row, SqliteConnection};
 
 use crate::db::Database;
 use crate::matching::is_near;
+use crate::operations::LabelOutcome;
 use crate::projects::normalize_key;
 use crate::workspaces::Workspace;
 
@@ -12,6 +13,18 @@ pub struct LabelUsage {
     pub name: String,
     pub task_count: usize,
     pub series_count: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CreatedLabel {
+    pub(crate) name: String,
+    pub(crate) change_id: String,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct LabelResolution {
+    pub(crate) names: Vec<String>,
+    pub(crate) created: Vec<CreatedLabel>,
 }
 
 impl Database {
@@ -142,11 +155,24 @@ pub(crate) async fn resolve_or_create_labels_in_workspace(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     labels: &[String],
-) -> Result<Vec<String>> {
-    let mut resolved = Vec::with_capacity(labels.len());
+) -> Result<LabelResolution> {
+    let mut resolution = LabelResolution {
+        names: Vec::with_capacity(labels.len()),
+        created: Vec::new(),
+    };
     for label in labels {
-        let outcome = crate::operations::create_label_operation(conn, workspace, label).await?;
-        resolved.push(outcome.name);
+        let outcome: LabelOutcome =
+            crate::operations::create_label_operation(conn, workspace, label).await?;
+        if outcome.created {
+            let change_id = outcome
+                .change_id
+                .ok_or_else(|| anyhow::anyhow!("created label missing change id"))?;
+            resolution.created.push(CreatedLabel {
+                name: outcome.name.clone(),
+                change_id,
+            });
+        }
+        resolution.names.push(outcome.name);
     }
-    Ok(resolved)
+    Ok(resolution)
 }
