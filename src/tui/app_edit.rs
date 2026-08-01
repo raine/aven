@@ -1284,8 +1284,11 @@ impl App {
     pub(super) fn open_description_external_editor(&mut self, state: MultilineInputState) {
         self.needs_terminal_clear = true;
         let intent = state.intent.clone();
+        let baseline = state.baseline_value();
         match edit_text_externally(state.lines.join("\n"), "description.md") {
-            Ok(value) => self.overlay = Some(description_overlay_from_value(intent, value)),
+            Ok(value) => {
+                self.overlay = Some(description_overlay_from_value(intent, value, baseline))
+            }
             Err(error) => {
                 self.set_error(format!("editor failed: {error:#}"));
                 self.overlay = Some(OverlayState::MultilineInput(state));
@@ -1294,6 +1297,37 @@ impl App {
     }
 }
 
-fn description_overlay_from_value(intent: MultilineIntent, value: String) -> OverlayState {
-    OverlayState::multiline_input(intent, EDIT_DESCRIPTION_TITLE, "", value)
+fn description_overlay_from_value(
+    intent: MultilineIntent,
+    value: String,
+    baseline: String,
+) -> OverlayState {
+    OverlayState::multiline_input_with_baseline(intent, EDIT_DESCRIPTION_TITLE, "", value, baseline)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn external_description_value_retains_initial_baseline() {
+        let intent = MultilineIntent::EditDescription {
+            selection: TaskSelection::resolve(
+                &[crate::tui::test_support::task_list_item("Task")],
+                &std::collections::BTreeSet::new(),
+                Some(0),
+            )
+            .unwrap(),
+        };
+        let OverlayState::MultilineInput(state) = description_overlay_from_value(
+            intent,
+            "edited description".to_string(),
+            "initial description".to_string(),
+        ) else {
+            panic!("expected multiline description editor");
+        };
+
+        assert!(state.is_dirty());
+        assert_eq!(state.baseline_value(), "initial description");
+    }
 }

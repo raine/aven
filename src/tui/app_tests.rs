@@ -2379,15 +2379,12 @@ mod keyboard_dispatch {
                 "P",
                 "x".to_string(),
             )),
-            OverlayState::MultilineInput(MultilineInputState {
-                intent: MultilineIntent::AddTaskNatural,
-                title: "M".to_string(),
-                prompt: "P".to_string(),
-                lines: vec!["x".to_string()],
-                row: 0,
-                column: 1,
-                mode: MultilineInputMode::Compose,
-            }),
+            OverlayState::MultilineInput(MultilineInputState::from_value(
+                MultilineIntent::AddTaskNatural,
+                "M",
+                "P",
+                "x".to_string(),
+            )),
             OverlayState::Picker(PickerState {
                 intent: PickerIntent::FilterLabel,
                 title: "Pick".to_string(),
@@ -11465,6 +11462,68 @@ mod task_editing {
     }
 
     #[tokio::test]
+    async fn clean_description_edit_cancels_without_confirmation() {
+        let mut app = test_app().await;
+        create_and_select_task(
+            &mut app,
+            TaskDraft {
+                description: "existing description".to_string(),
+                ..test_task_draft("Description target")
+            },
+        )
+        .await;
+
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert_eq!(
+            app.store.tasks[app.list.selected_task().unwrap()]
+                .task
+                .description,
+            "existing description"
+        );
+    }
+
+    #[tokio::test]
+    async fn changed_description_edit_requires_discard_confirmation() {
+        let mut app = test_app().await;
+        create_and_select_task(
+            &mut app,
+            TaskDraft {
+                description: "existing description".to_string(),
+                ..test_task_draft("Description target")
+            },
+        )
+        .await;
+
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+        type_chars(&mut app, " updated").await;
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::MultilineInput(state))
+                if state.mode == MultilineInputMode::ConfirmDiscard
+                    && state.lines == ["existing description updated"]
+        ));
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+        assert!(app.overlay.is_none());
+        assert_eq!(
+            app.store.tasks[app.list.selected_task().unwrap()]
+                .task
+                .description,
+            "existing description"
+        );
+    }
+
+    #[tokio::test]
     async fn edit_project_picker_uses_existing_projects_only() {
         let mut app = test_app().await;
         app.store
@@ -12346,6 +12405,70 @@ mod conflicts {
 
         assert_eq!(app.store.tasks[selected].task.title, "local title merged");
         assert!(!app.store.tasks[selected].has_conflict);
+    }
+
+    #[tokio::test]
+    async fn clean_manual_description_conflict_merge_cancels_without_confirmation() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        insert_conflict_for_task_id(
+            &pool,
+            &mut app,
+            &task_id,
+            "description",
+            "local description",
+            "remote description",
+        )
+        .await;
+
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::MultilineInput(state))
+                if state.mode == MultilineInputMode::Compose
+                    && state.lines == ["local description"]
+        ));
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert!(app.store.tasks[selected].has_conflict);
+    }
+
+    #[tokio::test]
+    async fn changed_manual_description_conflict_merge_requires_discard_confirmation() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        insert_conflict_for_task_id(
+            &pool,
+            &mut app,
+            &task_id,
+            "description",
+            "local description",
+            "remote description",
+        )
+        .await;
+
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        type_chars(&mut app, " updated").await;
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::MultilineInput(state))
+                if state.mode == MultilineInputMode::ConfirmDiscard
+                    && state.lines == ["local description updated"]
+        ));
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+
+        assert!(app.overlay.is_none());
+        assert!(app.store.tasks[selected].has_conflict);
+        assert!(app.store.tasks[selected].task.description.is_empty());
     }
 
     #[tokio::test]

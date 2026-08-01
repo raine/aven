@@ -446,10 +446,7 @@ pub(crate) fn handle_generic_overlay_key(
                 });
             }
             match key.code {
-                KeyCode::Esc
-                    if matches!(state.intent, super::MultilineIntent::AddNote { .. })
-                        && state.has_meaningful_content() =>
-                {
+                KeyCode::Esc if state.should_confirm_discard() => {
                     state.mode = MultilineInputMode::ConfirmDiscard;
                     OverlayOutcome::None(OverlayState::MultilineInput(state))
                 }
@@ -956,6 +953,27 @@ mod tests {
         MultilineIntent::AddNote {
             task_id: crate::test_support::task_id("task-1"),
             display_ref: "APP-1234".to_string(),
+        }
+    }
+
+    fn description_intent() -> MultilineIntent {
+        MultilineIntent::EditDescription {
+            selection: task_selection(),
+        }
+    }
+
+    fn manual_conflict_description_intent() -> MultilineIntent {
+        MultilineIntent::ResolveConflictManually {
+            target: crate::tui::store::ConflictTarget {
+                task_id: crate::test_support::task_id("task-1"),
+                recurrence_series_id: None,
+                display_ref: "APP-1234".to_string(),
+                field: "description".to_string(),
+                variant_a: "a".to_string(),
+                local_value: "local".to_string(),
+                variant_b: "b".to_string(),
+                remote_value: "remote".to_string(),
+            },
         }
     }
 
@@ -1530,15 +1548,12 @@ mod tests {
 
     #[test]
     fn multiline_ctrl_s_submits() {
-        let state = MultilineInputState {
-            intent: MultilineIntent::AddTaskNatural,
-            title: "Notes".to_string(),
-            prompt: "Body".to_string(),
-            lines: vec!["line".to_string()],
-            row: 0,
-            column: 4,
-            mode: MultilineInputMode::Compose,
-        };
+        let state = MultilineInputState::from_value(
+            MultilineIntent::AddTaskNatural,
+            "Notes",
+            "Body",
+            "line".to_string(),
+        );
         let outcome = handle(
             ctrl(KeyCode::Char('s')),
             OverlayState::MultilineInput(state),
@@ -1551,15 +1566,12 @@ mod tests {
 
     #[test]
     fn multiline_ctrl_enter_submits() {
-        let state = MultilineInputState {
-            intent: add_note_intent(),
-            title: "Add note".to_string(),
-            prompt: "note body:".to_string(),
-            lines: vec!["line".to_string()],
-            row: 0,
-            column: 4,
-            mode: MultilineInputMode::Compose,
-        };
+        let state = MultilineInputState::from_value(
+            add_note_intent(),
+            "Add note",
+            "note body:",
+            "line".to_string(),
+        );
         let outcome = handle(ctrl(KeyCode::Enter), OverlayState::MultilineInput(state));
         assert!(matches!(
             outcome,
@@ -1569,12 +1581,8 @@ mod tests {
 
     #[test]
     fn populated_add_note_requires_discard_confirmation() {
-        let mut state = MultilineInputState::from_value(
-            add_note_intent(),
-            "Add note",
-            "note body:",
-            " first\nsecond ".to_string(),
-        );
+        let mut state = MultilineInputState::blank(add_note_intent(), "Add note", "note body:");
+        state.insert_paste(" first\nsecond ");
         state.row = 0;
         state.column = 3;
 
@@ -1589,19 +1597,25 @@ mod tests {
     }
 
     #[test]
-    fn blank_add_note_cancels_without_confirmation() {
-        for lines in [
-            vec![String::new()],
-            vec!["   ".to_string()],
-            vec!["\t".to_string(), "  ".to_string(), String::new()],
-        ] {
-            let mut state = MultilineInputState::blank(add_note_intent(), "Add note", "");
-            state.lines = lines;
-            assert!(matches!(
-                handle(key(KeyCode::Esc), OverlayState::MultilineInput(state)),
-                OverlayOutcome::Cancelled
-            ));
-        }
+    fn clean_add_note_cancels_without_confirmation() {
+        let state = MultilineInputState::blank(add_note_intent(), "Add note", "");
+        assert!(matches!(
+            handle(key(KeyCode::Esc), OverlayState::MultilineInput(state)),
+            OverlayOutcome::Cancelled
+        ));
+    }
+
+    #[test]
+    fn changed_blank_add_note_requires_discard_confirmation() {
+        let mut state = MultilineInputState::blank(add_note_intent(), "Add note", "");
+        state.lines = vec!["   ".to_string()];
+        assert!(matches!(
+            handle(key(KeyCode::Esc), OverlayState::MultilineInput(state)),
+            OverlayOutcome::None(OverlayState::MultilineInput(MultilineInputState {
+                mode: MultilineInputMode::ConfirmDiscard,
+                ..
+            }))
+        ));
     }
 
     #[test]
@@ -1663,8 +1677,8 @@ mod tests {
 
     #[test]
     fn repeated_esc_never_discards_populated_add_note() {
-        let state =
-            MultilineInputState::from_value(add_note_intent(), "Add note", "", "draft".to_string());
+        let mut state = MultilineInputState::blank(add_note_intent(), "Add note", "");
+        state.insert_paste("draft");
         let OverlayOutcome::None(OverlayState::MultilineInput(state)) =
             handle(key(KeyCode::Esc), OverlayState::MultilineInput(state))
         else {
@@ -1678,6 +1692,70 @@ mod tests {
         };
         assert_eq!(state.mode, MultilineInputMode::Compose);
         assert_eq!(state.lines, vec!["draft"]);
+    }
+
+    #[test]
+    fn clean_initialized_description_edit_cancels_without_confirmation() {
+        let state = MultilineInputState::from_value(
+            description_intent(),
+            "Edit description",
+            "",
+            "existing description".to_string(),
+        );
+        assert!(matches!(
+            handle(key(KeyCode::Esc), OverlayState::MultilineInput(state)),
+            OverlayOutcome::Cancelled
+        ));
+    }
+
+    #[test]
+    fn changed_description_edit_requires_discard_confirmation() {
+        let mut state = MultilineInputState::from_value(
+            description_intent(),
+            "Edit description",
+            "",
+            "existing description".to_string(),
+        );
+        state.insert_paste(" updated");
+        assert!(matches!(
+            handle(key(KeyCode::Esc), OverlayState::MultilineInput(state)),
+            OverlayOutcome::None(OverlayState::MultilineInput(MultilineInputState {
+                mode: MultilineInputMode::ConfirmDiscard,
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn clean_initialized_manual_conflict_merge_cancels_without_confirmation() {
+        let state = MultilineInputState::from_value(
+            manual_conflict_description_intent(),
+            "Resolve conflict: manual",
+            "",
+            "local description".to_string(),
+        );
+        assert!(matches!(
+            handle(key(KeyCode::Esc), OverlayState::MultilineInput(state)),
+            OverlayOutcome::Cancelled
+        ));
+    }
+
+    #[test]
+    fn changed_manual_conflict_merge_requires_discard_confirmation() {
+        let mut state = MultilineInputState::from_value(
+            manual_conflict_description_intent(),
+            "Resolve conflict: manual",
+            "",
+            "local description".to_string(),
+        );
+        state.insert_paste(" updated");
+        assert!(matches!(
+            handle(key(KeyCode::Esc), OverlayState::MultilineInput(state)),
+            OverlayOutcome::None(OverlayState::MultilineInput(MultilineInputState {
+                mode: MultilineInputMode::ConfirmDiscard,
+                ..
+            }))
+        ));
     }
 
     #[test]
@@ -1765,15 +1843,12 @@ mod tests {
                 "Prompt",
                 "value".to_string(),
             )),
-            OverlayState::MultilineInput(MultilineInputState {
-                intent: MultilineIntent::AddTaskNatural,
-                title: "Body".to_string(),
-                prompt: "Prompt".to_string(),
-                lines: vec!["value".to_string()],
-                row: 0,
-                column: 5,
-                mode: MultilineInputMode::Compose,
-            }),
+            OverlayState::MultilineInput(MultilineInputState::from_value(
+                MultilineIntent::AddTaskNatural,
+                "Body",
+                "Prompt",
+                "value".to_string(),
+            )),
             OverlayState::Picker(PickerState {
                 intent: PickerIntent::FilterLabel,
                 title: "Pick".to_string(),
@@ -1881,15 +1956,12 @@ mod tests {
 
         let multiline = handle(
             ctrl(KeyCode::Char('s')),
-            OverlayState::MultilineInput(MultilineInputState {
-                intent: add_note_intent(),
-                title: "Add note".to_string(),
-                prompt: "body:".to_string(),
-                lines: vec!["note".to_string()],
-                row: 0,
-                column: 4,
-                mode: MultilineInputMode::Compose,
-            }),
+            OverlayState::MultilineInput(MultilineInputState::from_value(
+                add_note_intent(),
+                "Add note",
+                "body:",
+                "note".to_string(),
+            )),
         );
         assert!(matches!(
             multiline,
