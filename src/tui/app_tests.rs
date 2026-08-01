@@ -2333,7 +2333,7 @@ mod keyboard_dispatch {
     }
 
     #[tokio::test]
-    async fn implemented_and_planned_commands_report_their_lifecycle() {
+    async fn implemented_commands_execute_their_flows() {
         let mut app = test_app().await;
 
         app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
@@ -2344,13 +2344,13 @@ mod keyboard_dispatch {
         app.begin_command().await;
         type_chars(&mut app, "add-project-path").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-        assert_eq!(
-            toast_message(&app).as_deref(),
-            Some(
-                ":add-project-path is not yet implemented: requires a multi-step project/path picker flow"
-            )
-        );
-        assert!(app.overlay.is_none());
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Picker(PickerState {
+                intent: PickerIntent::AddProjectPath,
+                ..
+            }))
+        ));
     }
 
     #[tokio::test]
@@ -12622,6 +12622,113 @@ mod delete_and_restore {
             panic!("expected project picker");
         };
         assert_eq!(state.items[state.selected].value, "mobile-app");
+    }
+
+    #[tokio::test]
+    async fn project_path_picker_preselects_sidebar_project() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        app.list.focus_sidebar();
+        let project_index = app
+            .store
+            .sidebar_entries
+            .iter()
+            .position(|entry| {
+                entry.target
+                    == Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(
+                        "mobile-app".to_string(),
+                    )))
+            })
+            .unwrap();
+        app.list.select_sidebar(Some(project_index));
+        let scope = app.store.view_state.scope.clone();
+
+        app.execute(Action::BeginAddProjectPath).await.unwrap();
+
+        let Some(OverlayState::Picker(state)) = &app.overlay else {
+            panic!("expected project picker");
+        };
+        assert_eq!(state.intent, PickerIntent::AddProjectPath);
+        assert_eq!(state.title, "Add project path");
+        assert_eq!(state.items[state.selected].value, "mobile-app");
+        assert_eq!(app.store.view_state.scope, scope);
+    }
+
+    #[tokio::test]
+    async fn add_project_path_picker_defaults_to_current_directory() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+
+        app.submit_add_project_path_picker(vec!["mobile-app".to_string()]);
+
+        let Some(OverlayState::TextInput(state)) = &app.overlay else {
+            panic!("expected path input");
+        };
+        assert_eq!(state.title, "Add project path");
+        assert_eq!(state.prompt, "directory path for mobile-app:");
+        assert_eq!(
+            state.intent,
+            TextIntent::AddProjectPath {
+                project: "mobile-app".to_string()
+            }
+        );
+        assert_eq!(
+            state.input.text,
+            std::env::current_dir().unwrap().display().to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_project_path_keeps_input_for_retry() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing").display().to_string();
+
+        app.submit_add_project_path("mobile-app".to_string(), missing.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(toast_severity(&app), Some(ToastSeverity::Error));
+        assert!(toast_message(&app).unwrap().contains("could not resolve"));
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(TextInputState {
+                intent: TextIntent::AddProjectPath { project },
+                input,
+                ..
+            })) if project == "mobile-app" && input.text == missing
+        ));
+    }
+
+    #[tokio::test]
+    async fn remove_project_path_requires_confirmation() {
+        let mut app = test_app().await;
+
+        app.submit_remove_project_path_value(
+            "mobile-app".to_string(),
+            vec!["/work/mobile".to_string()],
+        );
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Confirm(ConfirmState {
+                intent: ConfirmIntent::RemoveProjectPath {
+                    ref project,
+                    ref path,
+                },
+                ..
+            })) if project == "mobile-app" && path == "/work/mobile"
+        ));
     }
 
     #[tokio::test]

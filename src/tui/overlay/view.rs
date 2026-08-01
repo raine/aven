@@ -182,6 +182,7 @@ pub(crate) struct AddTaskView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TextInputKind {
     AddProject,
+    ProjectPath,
     AddLabel,
     RenameProject,
     ConfirmDeleteProject,
@@ -194,6 +195,7 @@ impl From<&TextIntent> for TextInputKind {
     fn from(intent: &TextIntent) -> Self {
         match intent {
             TextIntent::AddProject => Self::AddProject,
+            TextIntent::AddProjectPath { .. } => Self::ProjectPath,
             TextIntent::AddLabel => Self::AddLabel,
             TextIntent::RenameProject { .. } => Self::RenameProject,
             TextIntent::ConfirmDeleteProject { .. } => Self::ConfirmDeleteProject,
@@ -251,6 +253,7 @@ pub(crate) enum PickerKind {
     AddTaskPriority,
     EditProject,
     ScopeProject,
+    ProjectPathProject,
     DeleteProject,
     EditPriority,
     Generic,
@@ -263,6 +266,9 @@ impl From<&PickerIntent> for PickerKind {
             PickerIntent::AddTaskPriority => Self::AddTaskPriority,
             PickerIntent::EditProject { .. } => Self::EditProject,
             PickerIntent::ScopeProject => Self::ScopeProject,
+            PickerIntent::AddProjectPath | PickerIntent::RemoveProjectPath => {
+                Self::ProjectPathProject
+            }
             PickerIntent::DeleteProject => Self::DeleteProject,
             PickerIntent::EditPriority { .. } => Self::EditPriority,
             _ => Self::Generic,

@@ -475,6 +475,9 @@ impl TextPanelState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TextIntent {
     AddProject,
+    AddProjectPath {
+        project: String,
+    },
     AddLabel,
     RenameProject {
         project: String,
@@ -547,6 +550,11 @@ pub(crate) enum PickerIntent {
     ScopeProject,
     RenameProject,
     DeleteProject,
+    AddProjectPath,
+    RemoveProjectPath,
+    RemoveProjectPathValue {
+        project: String,
+    },
     SwitchWorkspace,
     PickConflictVariant {
         choice: ConflictResolutionChoice,
@@ -576,7 +584,10 @@ impl PickerIntent {
             | Self::EditProject { .. }
             | Self::ScopeProject
             | Self::RenameProject
-            | Self::DeleteProject => PickerMode::Filter,
+            | Self::DeleteProject
+            | Self::AddProjectPath
+            | Self::RemoveProjectPath
+            | Self::RemoveProjectPathValue { .. } => PickerMode::Filter,
             _ => PickerMode::Navigate,
         }
     }
@@ -600,6 +611,10 @@ pub(crate) enum ConfirmIntent {
     },
     DeleteProject {
         project: String,
+    },
+    RemoveProjectPath {
+        project: String,
+        path: String,
     },
     DeleteTasks {
         selection: TaskSelection,

@@ -10,11 +10,17 @@ use super::add_task::{
 };
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::{TextInputKind, TextInputView};
+use crate::tui::text::char_boundary_at_or_before;
 use crate::tui::theme::{FG, FG_DIM};
 
 pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInputView) {
     if let Some(placeholder) = text_input_placeholder(state.kind) {
         render_placeholder_text_input(frame, state, placeholder);
+        return;
+    }
+
+    if state.kind == TextInputKind::ProjectPath {
+        render_project_path_input(frame, state);
         return;
     }
 
@@ -104,6 +110,42 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
         6
     };
     Dialog::new(&state.title, dialog_width, height).render_text(frame, Text::from(lines));
+}
+
+fn render_project_path_input(frame: &mut Frame, state: &TextInputView) {
+    let dialog = Dialog::new(&state.title, 74, 6);
+    let content = dialog.render_block(frame);
+    let input = project_path_input_line(&state.input, state.cursor, content.width as usize);
+    let text = Text::from(vec![
+        Line::from(Span::styled(&state.prompt, Style::new().fg(FG_DIM))),
+        input,
+        Line::from(""),
+        dialog_hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
+    ]);
+    frame.render_widget(
+        Paragraph::new(text).style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT)),
+        content,
+    );
+}
+
+pub(in crate::tui::ui) fn project_path_input_line(
+    input: &str,
+    cursor: usize,
+    width: usize,
+) -> Line<'static> {
+    if input.chars().count().saturating_add(1) <= width || width < 2 {
+        return clipped_input_line(input, cursor, width);
+    }
+    let cursor = char_boundary_at_or_before(input, cursor);
+    let cursor_chars = input[..cursor].chars().count();
+    let mut line = clipped_input_line(input, cursor, width.saturating_sub(1));
+    let marker = Span::styled("…", Style::new().fg(FG_DIM));
+    if cursor_chars >= width.saturating_sub(1) {
+        line.spans.insert(0, marker);
+    } else {
+        line.spans.push(marker);
+    }
+    line
 }
 
 pub(in crate::tui::ui) const ADD_PROJECT_NAME_PLACEHOLDER: &str = "Enter project name here...";

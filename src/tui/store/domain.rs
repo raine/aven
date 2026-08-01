@@ -1,6 +1,11 @@
+use std::path::Path;
+
 use anyhow::Result;
 
-use crate::operations::rename_config_project_mapping;
+use crate::operations::{
+    add_project_path_operation, list_project_paths_operation, remove_project_path_operation,
+    rename_config_project_mapping,
+};
 use crate::projects::{inferred_project_key_for_add_with_database, project_has_config_mapping};
 use crate::tui::store::{MutationMessage, TaskScope};
 
@@ -112,5 +117,26 @@ impl TuiStore {
 
     pub(crate) async fn inferred_add_project(&self) -> Result<Option<String>> {
         inferred_project_key_for_add_with_database(&self.database, &self.active_workspace).await
+    }
+
+    pub(crate) async fn project_paths(
+        &self,
+        project: &str,
+    ) -> Result<Vec<crate::operations::ProjectPathOutcome>> {
+        list_project_paths_operation(&self.database, &self.active_workspace, Some(project)).await
+    }
+
+    pub(crate) async fn add_project_path(&self, project: &str, path: &Path) -> Result<String> {
+        let outcome =
+            add_project_path_operation(&self.database, &self.active_workspace, project, path)
+                .await?;
+        Ok(format!("added project path for {}", outcome.project.key))
+    }
+
+    pub(crate) async fn remove_project_path(&self, project: &str, path: &Path) -> Result<String> {
+        let outcome =
+            remove_project_path_operation(&self.database, &self.active_workspace, project, path)
+                .await?;
+        Ok(format!("removed project path for {}", outcome.project.key))
     }
 }

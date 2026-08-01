@@ -164,6 +164,7 @@ fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'
 pub(in crate::tui::ui) fn project_picker_submit_label(kind: PickerKind) -> Option<&'static str> {
     match kind {
         PickerKind::ScopeProject => Some("scope"),
+        PickerKind::ProjectPathProject => Some("select"),
         PickerKind::EditProject | PickerKind::AddTaskProject => Some("submit"),
         PickerKind::DeleteProject => Some("delete"),
         _ => None,

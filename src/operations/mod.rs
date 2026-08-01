@@ -32,7 +32,7 @@ pub async fn create_task(
 pub use config::{init_config, init_config_at, show_config, show_config_paths};
 
 pub use projects::{
-    add_project_path_operation, create_project_operation, delete_project_operation,
-    list_project_paths_operation, remove_project_path_operation, rename_config_project_mapping,
-    rename_project_operation,
+    ProjectPathOutcome, add_project_path_operation, create_project_operation,
+    delete_project_operation, list_project_paths_operation, remove_project_path_operation,
+    rename_config_project_mapping, rename_project_operation,
 };

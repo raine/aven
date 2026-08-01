@@ -104,6 +104,22 @@ fn matching_project_override(
 ) -> Result<Option<String>> {
     let cwd = fs::canonicalize(env::current_dir()?)?;
     let root = git_root(&cwd)?.unwrap_or_else(|| cwd.clone());
+    Ok(matching_project_override_for_paths(
+        config,
+        workspace_id,
+        workspace,
+        &cwd,
+        &root,
+    ))
+}
+
+fn matching_project_override_for_paths(
+    config: &AppConfig,
+    workspace_id: Option<&WorkspaceId>,
+    workspace: Option<&str>,
+    cwd: &Path,
+    root: &Path,
+) -> Option<String> {
     let mut best: Option<(PathMatch, bool, &ProjectOverrideConfig)> = None;
     for project_override in &config.project.overrides {
         let scoped =
@@ -125,7 +141,7 @@ fn matching_project_override(
             }) else {
                 continue;
             };
-            if let Some(path_match) = matching_path(&cwd, &root, &path)
+            if let Some(path_match) = matching_path(cwd, root, &path)
                 && best.as_ref().is_none_or(|(best_match, best_scoped, _)| {
                     path_match.is_better_than(*best_match)
                         || path_match == *best_match && scoped && !*best_scoped
@@ -135,7 +151,7 @@ fn matching_project_override(
             }
         }
     }
-    Ok(best.map(|(_, _, project_override)| project_override.project.clone()))
+    best.map(|(_, _, project_override)| project_override.project.clone())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,4 +229,111 @@ fn common_git_dir(git_dir: &Path) -> Result<Option<PathBuf>> {
     } else {
         git_dir.join(path)
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config_edit::{self, ProjectPathMappingEdit};
+
+    #[test]
+    fn managed_path_mapping_drives_project_inference_and_can_be_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.yaml");
+        let project_root = dir.path().join("mobile");
+        let other_root = dir.path().join("checkle");
+        let cwd = project_root.join("src");
+        fs::create_dir_all(&cwd).unwrap();
+        fs::create_dir_all(&other_root).unwrap();
+        let project_root = fs::canonicalize(project_root).unwrap();
+        let other_root = fs::canonicalize(other_root).unwrap();
+        let cwd = fs::canonicalize(cwd).unwrap();
+        let workspace = crate::workspaces::Workspace::default();
+
+        config_edit::add_project_path(
+            &config_path,
+            ProjectPathMappingEdit {
+                workspace_id: &workspace.id,
+                workspace: &workspace.key,
+                project: "checkle",
+                path: other_root.clone(),
+            },
+        )
+        .unwrap();
+        config_edit::add_project_path(
+            &config_path,
+            ProjectPathMappingEdit {
+                workspace_id: &workspace.id,
+                workspace: &workspace.key,
+                project: "mobile-app",
+                path: project_root.clone(),
+            },
+        )
+        .unwrap();
+        let config_text = fs::read_to_string(&config_path)
+            .unwrap()
+            .replace("    # aven-managed project path mapping\n", "");
+        fs::write(&config_path, config_text).unwrap();
+        let config = AppConfig::load_from_path(&config_path).unwrap();
+
+        assert_eq!(
+            matching_project_override_for_paths(
+                &config,
+                Some(&workspace.id),
+                Some(&workspace.key),
+                &cwd,
+                &project_root,
+            ),
+            Some("mobile-app".to_string())
+        );
+        assert!(
+            config_edit::remove_project_path(
+                &config_path,
+                &workspace.id,
+                "mobile-app",
+                std::slice::from_ref(&project_root),
+            )
+            .unwrap()
+        );
+        assert!(
+            !config_edit::remove_project_path(
+                &config_path,
+                &workspace.id,
+                "mobile-app",
+                &[project_root],
+            )
+            .unwrap()
+        );
+        let config_text = fs::read_to_string(&config_path).unwrap();
+        assert_eq!(
+            config_text
+                .matches("# aven-managed project path mapping")
+                .count(),
+            1
+        );
+        assert!(config_text.contains(
+            "# aven-managed project path mapping\n    - workspace_id: '0000000000000000'\n      workspace: default\n      project: checkle"
+        ));
+        let config = AppConfig::load_from_path(&config_path).unwrap();
+        assert_eq!(
+            matching_project_override_for_paths(
+                &config,
+                Some(&workspace.id),
+                Some(&workspace.key),
+                &other_root,
+                &other_root,
+            ),
+            Some("checkle".to_string())
+        );
+        assert_eq!(
+            matching_project_override_for_paths(
+                &config,
+                Some(&workspace.id),
+                Some(&workspace.key),
+                &cwd,
+                dir.path(),
+            ),
+            None
+        );
+    }
 }

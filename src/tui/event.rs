@@ -3,8 +3,6 @@ mod catalog;
 mod lookup;
 
 pub(crate) use self::action::Action;
-#[cfg(test)]
-pub(crate) use self::catalog::PROJECT_PATH_FLOW_REASON;
 #[allow(unused_imports)]
 pub(crate) use self::catalog::{
     COMMAND_DOMAINS, COMMANDS, CommandContext, CommandDomain, CommandLifecycle, CommandSpec,
@@ -81,6 +79,8 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginAddTask
             | Action::BeginAddNote
             | Action::BeginAddProject
+            | Action::BeginAddProjectPath
+            | Action::BeginRemoveProjectPath
             | Action::BeginAddLabel
             | Action::BeginFilterLabel
             | Action::BeginFilterPriority
@@ -789,6 +789,14 @@ mod tests {
             resolve_shortcut(&[KeyCode::Char('p'), KeyCode::Char('D')]),
             ShortcutLookup::Found(Action::BeginDeleteProject)
         ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('p'), KeyCode::Char('n')]),
+            ShortcutLookup::Found(Action::BeginAddProjectPath)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('p'), KeyCode::Char('x')]),
+            ShortcutLookup::Found(Action::BeginRemoveProjectPath)
+        ));
     }
 
     #[test]
@@ -816,18 +824,13 @@ mod tests {
     }
 
     #[test]
-    fn project_path_commands_remain_planned_with_explicit_reason() {
+    fn project_path_commands_are_implemented() {
         for name in ["add-project-path", "remove-project-path"] {
             let command = COMMANDS
                 .iter()
                 .find(|command| command.name == name)
                 .unwrap_or_else(|| panic!("missing command :{name}"));
-            assert_eq!(
-                command.lifecycle,
-                CommandLifecycle::Planned {
-                    reason: PROJECT_PATH_FLOW_REASON
-                }
-            );
+            assert_eq!(command.lifecycle, CommandLifecycle::Implemented);
         }
     }
 

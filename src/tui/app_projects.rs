@@ -1,14 +1,30 @@
+use std::env;
+use std::path::Path;
+
 use anyhow::Result;
 
 use crate::tui::app::{App, Focus, TaskCopyKind, TaskRefKind};
-use crate::tui::overlay::{ConfirmIntent, OverlayState, PickerIntent, TextIntent};
+use crate::tui::overlay::{ConfirmIntent, OverlayState, PickerIntent, PickerItem, TextIntent};
 use crate::tui::platform::copy_to_clipboard;
 
 pub(crate) const ADD_PROJECT_TITLE: &str = "Add project";
+pub(crate) const ADD_PROJECT_PATH_TITLE: &str = "Add project path";
+pub(crate) const REMOVE_PROJECT_PATH_TITLE: &str = "Remove project path";
 pub(crate) const RENAME_PROJECT_TITLE: &str = "Rename project";
 pub(crate) const DELETE_PROJECT_TITLE: &str = "Delete project";
 pub(crate) const DELETE_TASK_TITLE: &str = "Delete task";
 pub(crate) const ADD_LABEL_TITLE: &str = "Add label";
+
+fn add_project_path_input(project: String, value: String) -> OverlayState {
+    OverlayState::text_input(
+        TextIntent::AddProjectPath {
+            project: project.clone(),
+        },
+        ADD_PROJECT_PATH_TITLE,
+        format!("directory path for {project}:"),
+        value,
+    )
+}
 
 fn task_text_for_copy(title: &str, description: &str, kind: TaskCopyKind) -> String {
     match kind {
@@ -35,6 +51,42 @@ impl App {
             ADD_PROJECT_TITLE,
             "project name:",
         ));
+    }
+
+    pub(super) fn begin_add_project_path(&mut self) {
+        self.pending_shortcut.clear();
+        let selected = if self.list.focus() == Focus::Sidebar {
+            self.selected_sidebar_project()
+        } else {
+            None
+        };
+        let items = self
+            .store
+            .existing_project_picker_items(selected.as_deref().unwrap_or_default());
+        self.open_picker_overlay(
+            PickerIntent::AddProjectPath,
+            ADD_PROJECT_PATH_TITLE,
+            items,
+            false,
+        );
+    }
+
+    pub(super) fn begin_remove_project_path(&mut self) {
+        self.pending_shortcut.clear();
+        let selected = if self.list.focus() == Focus::Sidebar {
+            self.selected_sidebar_project()
+        } else {
+            None
+        };
+        let items = self
+            .store
+            .existing_project_picker_items(selected.as_deref().unwrap_or_default());
+        self.open_picker_overlay(
+            PickerIntent::RemoveProjectPath,
+            REMOVE_PROJECT_PATH_TITLE,
+            items,
+            false,
+        );
     }
 
     pub(super) fn begin_add_label(&mut self) {
@@ -170,6 +222,123 @@ impl App {
             Ok(()) => self.set_success("copied task notes"),
             Err(error) => self.set_error(format!("copy failed: {error}")),
         }
+    }
+
+    pub(super) fn submit_add_project_path_picker(&mut self, values: Vec<String>) {
+        let Some(project) = self.require_picker_value(values, "no matching project") else {
+            self.begin_add_project_path();
+            return;
+        };
+        let path = env::current_dir()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
+        self.overlay = Some(add_project_path_input(project, path));
+    }
+
+    pub(super) async fn submit_add_project_path(
+        &mut self,
+        project: String,
+        value: String,
+    ) -> Result<()> {
+        let path = value.trim();
+        if path.is_empty() {
+            self.set_warning("project path is required");
+            self.overlay = Some(add_project_path_input(project, value));
+            return Ok(());
+        }
+        match self.store.add_project_path(&project, Path::new(path)).await {
+            Ok(message) => self.set_success(message),
+            Err(error) => {
+                self.set_error(format!("{error:#}"));
+                self.overlay = Some(OverlayState::text_input(
+                    TextIntent::AddProjectPath { project },
+                    ADD_PROJECT_PATH_TITLE,
+                    "directory path:",
+                    value,
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) async fn submit_remove_project_path_picker(&mut self, values: Vec<String>) {
+        let Some(project) = self.require_picker_value(values, "no matching project") else {
+            self.begin_remove_project_path();
+            return;
+        };
+        match self.store.project_paths(&project).await {
+            Ok(paths) if paths.is_empty() => {
+                self.set_warning(format!("project {project} has no path mappings"));
+                self.begin_remove_project_path();
+            }
+            Ok(paths) => {
+                let items = paths
+                    .into_iter()
+                    .map(|item| PickerItem {
+                        label: item.path.clone(),
+                        value: item.path,
+                        selected: false,
+                    })
+                    .collect();
+                self.open_picker_overlay(
+                    PickerIntent::RemoveProjectPathValue {
+                        project: project.clone(),
+                    },
+                    format!("{REMOVE_PROJECT_PATH_TITLE}: select path for {project}"),
+                    items,
+                    false,
+                );
+            }
+            Err(error) => {
+                self.set_error(format!("{error:#}"));
+                self.begin_remove_project_path();
+            }
+        }
+    }
+
+    pub(super) fn submit_remove_project_path_value(
+        &mut self,
+        project: String,
+        values: Vec<String>,
+    ) {
+        let Some(path) = self.require_picker_value(values, "no matching project path") else {
+            self.begin_remove_project_path();
+            return;
+        };
+        self.overlay = Some(OverlayState::confirm(
+            ConfirmIntent::RemoveProjectPath {
+                project: project.clone(),
+                path: path.clone(),
+            },
+            REMOVE_PROJECT_PATH_TITLE,
+            format!("Remove path {path} from project {project}?"),
+        ));
+    }
+
+    pub(super) async fn submit_remove_project_path(
+        &mut self,
+        project: String,
+        path: String,
+    ) -> Result<()> {
+        match self
+            .store
+            .remove_project_path(&project, Path::new(&path))
+            .await
+        {
+            Ok(message) => self.set_success(message),
+            Err(error) => {
+                self.set_error(format!("{error:#}"));
+                self.overlay = Some(OverlayState::confirm(
+                    ConfirmIntent::RemoveProjectPath {
+                        project: project.clone(),
+                        path: path.clone(),
+                    },
+                    REMOVE_PROJECT_PATH_TITLE,
+                    format!("Remove path {path} from project {project}?"),
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn submit_rename_project_picker(&mut self, values: Vec<String>) {

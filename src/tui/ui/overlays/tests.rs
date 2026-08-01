@@ -697,6 +697,37 @@ mod text_input {
     }
 
     #[test]
+    fn project_path_input_marks_truncated_side() {
+        let input = "/Users/raine/code/aven/worktree";
+
+        let end = project_path_input_line(input, input.len(), 16);
+        assert_eq!(end.spans.first().unwrap().content.as_ref(), "…");
+        assert!(end.to_string().ends_with("worktree "));
+
+        let start = project_path_input_line(input, 0, 16);
+        assert_eq!(start.spans.last().unwrap().content.as_ref(), "…");
+        assert!(start.to_string().starts_with('/'));
+    }
+
+    #[test]
+    fn project_path_input_uses_wide_labeled_dialog() {
+        let input =
+            "/Users/raine/code/aven__worktrees/fix-item-20-project-paths/nested/project-paths";
+        let rendered = render_overlay_view(OverlayView::TextInput(TextInputView {
+            kind: TextInputKind::ProjectPath,
+            title: "Add project path".to_string(),
+            prompt: "directory path for mobile-app:".to_string(),
+            input: input.to_string(),
+            cursor: input.len(),
+        }));
+
+        assert!(rendered.contains("Add project path"));
+        assert!(rendered.contains("directory path for mobile-app:"));
+        assert!(rendered.contains('…'));
+        assert!(rendered.contains("fix-item-20-project-paths"));
+    }
+
+    #[test]
     fn empty_placeholder_text_input_shows_placeholder() {
         let line = placeholder_text_input_line("", 0, 20, ADD_PROJECT_NAME_PLACEHOLDER);
         assert_eq!(line.spans[0].content.as_ref(), "E");
@@ -2311,6 +2342,22 @@ mod picker_overlays {
             assert!(rendered.contains(title));
         }
     }
+
+    #[test]
+    fn project_path_project_selection_uses_structured_project_picker() {
+        let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+            kind: PickerKind::ProjectPathProject,
+            title: "Add project path".to_string(),
+            ..project_picker_view()
+        }));
+
+        assert!(rendered.contains("Add project path"));
+        assert!(rendered.contains("PREFIX"));
+        assert!(rendered.contains("PROJECT"));
+        assert!(rendered.contains("CC"));
+        assert!(rendered.contains("claude-code"));
+        assert!(rendered.contains("Enter select"));
+    }
 }
 
 mod database_stats_overlay {
@@ -2612,6 +2659,11 @@ mod presentation_kind_rendering {
                 PickerKind::AddTaskProject,
                 "Changed add-task project title",
                 "Enter submit",
+            ),
+            (
+                PickerKind::ProjectPathProject,
+                "Changed project path title",
+                "Enter select",
             ),
             (
                 PickerKind::DeleteProject,
