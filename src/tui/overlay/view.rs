@@ -266,6 +266,7 @@ pub(crate) enum PickerKind {
     EditProject,
     ScopeProject,
     ProjectPathProject,
+    RenameProject,
     DeleteProject,
     EditPriority,
     LabelAdministration,
@@ -282,6 +283,7 @@ impl From<&PickerIntent> for PickerKind {
             PickerIntent::AddProjectPath | PickerIntent::RemoveProjectPath => {
                 Self::ProjectPathProject
             }
+            PickerIntent::RenameProject => Self::RenameProject,
             PickerIntent::DeleteProject => Self::DeleteProject,
             PickerIntent::EditPriority { .. } => Self::EditPriority,
             PickerIntent::BrowseLabels | PickerIntent::RenameLabel | PickerIntent::DeleteLabel => {
@@ -542,27 +544,29 @@ mod tests {
     use crate::tui::overlay::{LineEdit, PickerIntent, PickerState};
 
     #[test]
-    fn overlay_view_projection_keeps_picker_presentation_kind() {
-        let picker = OverlayView::from(&OverlayState::Picker(PickerState {
-            intent: PickerIntent::DeleteProject,
-            title: "Delete project".to_string(),
-            filter: LineEdit::blank(),
-            items: vec![PickerItem {
-                label: "AVN aven".to_string(),
-                value: "aven".to_string(),
-                selected: false,
-            }],
-            selected: 0,
-            scroll: 0,
-            multi: false,
-            mode: PickerMode::Filter,
-        }));
-        assert!(matches!(
-            picker,
-            OverlayView::Picker(PickerView {
-                kind: PickerKind::DeleteProject,
-                ..
-            })
-        ));
+    fn overlay_view_projection_keeps_project_picker_presentation_kinds() {
+        for (intent, expected_kind) in [
+            (PickerIntent::RenameProject, PickerKind::RenameProject),
+            (PickerIntent::DeleteProject, PickerKind::DeleteProject),
+        ] {
+            let picker = OverlayView::from(&OverlayState::Picker(PickerState {
+                intent,
+                title: "Manage project".to_string(),
+                filter: LineEdit::blank(),
+                items: vec![PickerItem {
+                    label: "AVN aven".to_string(),
+                    value: "aven".to_string(),
+                    selected: false,
+                }],
+                selected: 0,
+                scroll: 0,
+                multi: false,
+                mode: PickerMode::Filter,
+            }));
+            assert!(matches!(
+                picker,
+                OverlayView::Picker(PickerView { kind, .. }) if kind == expected_kind
+            ));
+        }
     }
 }

@@ -76,6 +76,7 @@ pub(crate) fn picker_layout(state: &PickerView, terminal_size: Size) -> PickerLa
             | PickerKind::EditProject
             | PickerKind::ScopeProject
             | PickerKind::ProjectPathProject
+            | PickerKind::RenameProject
             | PickerKind::DeleteProject
     ) {
         let height = (PROJECT_PICKER_VIEWPORT_ROWS as u16).saturating_add(6);

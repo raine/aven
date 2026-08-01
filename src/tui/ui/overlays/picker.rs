@@ -243,6 +243,7 @@ pub(in crate::tui::ui) fn project_picker_submit_label(kind: PickerKind) -> Optio
         PickerKind::ScopeProject => Some("scope"),
         PickerKind::ProjectPathProject => Some("select"),
         PickerKind::EditProject | PickerKind::AddTaskProject => Some("submit"),
+        PickerKind::RenameProject => Some("rename"),
         PickerKind::DeleteProject => Some("delete"),
         _ => None,
     }
