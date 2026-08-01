@@ -176,6 +176,12 @@ struct DetailEpicChild {
     state: EpicChildState,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EpicChildCounts {
+    open: usize,
+    total: usize,
+}
+
 #[derive(Debug, Clone)]
 struct DetailBodyDocument {
     lines: Vec<Line<'static>>,
@@ -999,18 +1005,24 @@ fn detail_inline_image_geometry_matches(
     }
 }
 
-fn apply_active_style(model: &mut DetailContentRenderModel, target: &DetailTargetId) {
-    let Some(row) = model
+fn interactive_row_lines_mut<'a>(
+    model: &'a mut DetailContentRenderModel,
+    target: &DetailTargetId,
+) -> Option<&'a mut [Line<'static>]> {
+    let row = model
         .interactive_rows
         .iter()
-        .find(|row| &row.target == target)
-    else {
-        return;
-    };
+        .find(|row| &row.target == target)?;
     let start = row.line_index.saturating_sub(model.body_start);
     let end = start.saturating_add(row.height).min(model.lines.len());
     let lines_len = model.lines.len();
-    let lines = &mut model.lines[start.min(lines_len)..end];
+    Some(&mut model.lines[start.min(lines_len)..end])
+}
+
+fn apply_active_style(model: &mut DetailContentRenderModel, target: &DetailTargetId) {
+    let Some(lines) = interactive_row_lines_mut(model, target) else {
+        return;
+    };
     match target {
         DetailTargetId::Expand { .. } => {
             for line in lines {
@@ -1061,17 +1073,10 @@ fn apply_active_style(model: &mut DetailContentRenderModel, target: &DetailTarge
 }
 
 fn apply_hover_style(model: &mut DetailContentRenderModel, target: &DetailTargetId) {
-    let Some(row) = model
-        .interactive_rows
-        .iter()
-        .find(|row| &row.target == target)
-    else {
+    let Some(lines) = interactive_row_lines_mut(model, target) else {
         return;
     };
-    let start = row.line_index.saturating_sub(model.body_start);
-    let end = start.saturating_add(row.height).min(model.lines.len());
-    let lines_len = model.lines.len();
-    for line in &mut model.lines[start.min(lines_len)..end] {
+    for line in lines {
         for span in &mut line.spans {
             if matches!(target, DetailTargetId::Note { .. }) {
                 span.style = span.style.bg(BG_PANEL);
@@ -1560,24 +1565,40 @@ fn extend_detail_note_section(
     } else {
         for note in &item.notes {
             lines.push(Line::from(""));
-            let line_index = lines.len();
-            lines.push(Line::from(vec![
+            let mut rendered = vec![Line::from(vec![
                 Span::styled(
                     local_timestamp_display(&note.created_at),
                     Style::new().fg(FG_DIM),
                 ),
                 Span::styled("  you", Style::new().fg(ACCENT)),
-            ]));
-            lines.extend(quoted_block_lines(&note.body, width, Style::new().fg(FG)));
-            rows.push(DetailInteractiveRow {
-                target: DetailTargetId::Note {
+            ])];
+            rendered.extend(quoted_block_lines(&note.body, width, Style::new().fg(FG)));
+            push_interactive_lines(
+                lines,
+                rows,
+                DetailTargetId::Note {
                     note_id: note.id.clone(),
                 },
-                line_index,
-                height: lines.len() - line_index,
-            });
+                rendered,
+            );
         }
     }
+}
+
+fn push_interactive_lines(
+    lines: &mut Vec<Line<'static>>,
+    rows: &mut Vec<DetailInteractiveRow>,
+    target: DetailTargetId,
+    rendered: Vec<Line<'static>>,
+) {
+    let line_index = lines.len();
+    let height = rendered.len();
+    lines.extend(rendered);
+    rows.push(DetailInteractiveRow {
+        target,
+        line_index,
+        height,
+    });
 }
 
 fn extend_epic_parent_section(
@@ -1598,16 +1619,22 @@ fn extend_epic_parent_section(
         section: DetailSection::EpicParent,
         task_id: parent.task_id.clone(),
     };
-    let start = lines.len();
     let active = active_target == Some(&target);
     let rendered = epic_child_tree_item_lines(parent, EpicChildState::Live, true, width, active);
-    let height = rendered.len();
-    lines.extend(rendered);
-    rows.push(DetailInteractiveRow {
-        target,
-        line_index: start,
-        height,
-    });
+    push_interactive_lines(lines, rows, target, rendered);
+}
+
+fn epic_child_counts(children: &[DetailEpicChild]) -> EpicChildCounts {
+    EpicChildCounts {
+        open: children
+            .iter()
+            .filter(|child| child.state == EpicChildState::Live && child.link.unresolved)
+            .count(),
+        total: children
+            .iter()
+            .filter(|child| child.state == EpicChildState::Live)
+            .count(),
+    }
 }
 
 fn ordered_epic_children(children: &[DetailEpicChild]) -> Vec<&DetailEpicChild> {
@@ -1633,21 +1660,14 @@ fn extend_epic_children_section(
     if !lines.is_empty() {
         lines.push(Line::from(""));
     }
-    let open = children
-        .iter()
-        .filter(|child| child.state == EpicChildState::Live && child.link.unresolved)
-        .count();
-    let total = children
-        .iter()
-        .filter(|child| child.state == EpicChildState::Live)
-        .count();
+    let counts = epic_child_counts(children);
     lines.push(Line::from(vec![
         Span::styled(
             "CHILD TASKS",
             Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!(" open={open} total={total}"),
+            format!(" open={} total={}", counts.open, counts.total),
             Style::new().fg(FG_DIM),
         ),
     ]));
@@ -1668,7 +1688,6 @@ fn extend_epic_children_section(
             task_id: child.link.task_id.clone(),
         };
         let is_last = index + 1 == visible && !has_disclosure;
-        let start = lines.len();
         let rendered = epic_child_tree_item_lines(
             &child.link,
             child.state,
@@ -1676,13 +1695,7 @@ fn extend_epic_children_section(
             width,
             active_target == Some(&target),
         );
-        let height = rendered.len();
-        lines.extend(rendered);
-        rows.push(DetailInteractiveRow {
-            target,
-            line_index: start,
-            height,
-        });
+        push_interactive_lines(lines, rows, target, rendered);
     }
     if has_disclosure {
         let target = DetailTargetId::Expand {
@@ -1693,14 +1706,19 @@ fn extend_epic_children_section(
         } else {
             format!("Show {} more", links.len() - visible)
         };
-        let start = lines.len();
-        lines.push(disclosure_line(&label, active_target == Some(&target)));
-        rows.push(DetailInteractiveRow {
-            target,
-            line_index: start,
-            height: 1,
-        });
+        push_disclosure_row(lines, rows, target, &label, active_target);
     }
+}
+
+fn push_disclosure_row(
+    lines: &mut Vec<Line<'static>>,
+    rows: &mut Vec<DetailInteractiveRow>,
+    target: DetailTargetId,
+    label: &str,
+    active_target: Option<&DetailTargetId>,
+) {
+    let active = active_target == Some(&target);
+    push_interactive_lines(lines, rows, target, vec![disclosure_line(label, active)]);
 }
 
 fn disclosure_line(label: &str, active: bool) -> Line<'static> {
@@ -1839,7 +1857,6 @@ fn extend_dependency_section(
             section,
             task_id: link.task_id.clone(),
         };
-        let start = lines.len();
         let mut rendered = dependency_tree_item_lines(
             link,
             direction,
@@ -1849,13 +1866,7 @@ fn extend_dependency_section(
         if active_target == Some(&target) {
             apply_link_row_style(&mut rendered);
         }
-        let height = rendered.len();
-        lines.extend(rendered);
-        rows.push(DetailInteractiveRow {
-            target,
-            line_index: start,
-            height,
-        });
+        push_interactive_lines(lines, rows, target, rendered);
     }
     if has_disclosure {
         let target = DetailTargetId::Expand { section };
@@ -1864,13 +1875,7 @@ fn extend_dependency_section(
         } else {
             format!("Show {} more", links.len() - visible)
         };
-        let start = lines.len();
-        lines.push(disclosure_line(&label, active_target == Some(&target)));
-        rows.push(DetailInteractiveRow {
-            target,
-            line_index: start,
-            height: 1,
-        });
+        push_disclosure_row(lines, rows, target, &label, active_target);
     }
 }
 
@@ -2661,19 +2666,12 @@ fn detail_epic_metadata_lines(
         return Vec::new();
     }
 
-    let open = children
-        .iter()
-        .filter(|child| child.state == EpicChildState::Live && child.link.unresolved)
-        .count();
-    let total = children
-        .iter()
-        .filter(|child| child.state == EpicChildState::Live)
-        .count();
+    let counts = epic_child_counts(children);
     let lines = vec![
         Line::from(""),
         metadata_label("CHILDREN"),
         Line::from(Span::styled(
-            format!("open={open} total={total}"),
+            format!("open={} total={}", counts.open, counts.total),
             Style::new().fg(FG_DIM),
         )),
     ];
@@ -2855,6 +2853,15 @@ fn metadata_content_row(metadata_area: Rect, body: Rect, column: u16, row: u16) 
     Some(row.saturating_sub(body.y))
 }
 
+fn render_attachment_preview_message(frame: &mut Frame, area: Rect, message: &'static str) {
+    frame.render_widget(
+        Paragraph::new(message)
+            .alignment(ratatui::layout::Alignment::Center)
+            .style(Style::new().fg(FG_MUTED).bg(BG)),
+        area,
+    );
+}
+
 pub(crate) fn render_attachment_preview(
     frame: &mut Frame,
     item: &TaskListItem,
@@ -2875,12 +2882,7 @@ pub(crate) fn render_attachment_preview(
                 (Some(width), Some(height)) if width > 0 && height > 0
             )
     }) else {
-        frame.render_widget(
-            Paragraph::new("attachment is unavailable")
-                .alignment(ratatui::layout::Alignment::Center)
-                .style(Style::new().fg(FG_MUTED).bg(BG)),
-            area,
-        );
+        render_attachment_preview_message(frame, area, "attachment is unavailable");
         return;
     };
     let title = attachment
@@ -2896,24 +2898,14 @@ pub(crate) fn render_attachment_preview(
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let Some(inline_images) = inline_images else {
-        frame.render_widget(
-            Paragraph::new("preview unavailable")
-                .alignment(ratatui::layout::Alignment::Center)
-                .style(Style::new().fg(FG_MUTED).bg(BG)),
-            inner,
-        );
+        render_attachment_preview_message(frame, inner, "preview unavailable");
         return;
     };
     if inline_images
         .unavailable_hashes
         .contains(&attachment.sha256)
     {
-        frame.render_widget(
-            Paragraph::new("preview unavailable")
-                .alignment(ratatui::layout::Alignment::Center)
-                .style(Style::new().fg(FG_MUTED).bg(BG)),
-            inner,
-        );
+        render_attachment_preview_message(frame, inner, "preview unavailable");
         return;
     }
     let (width, height) = fitted_image_size(attachment, inner.width, inner.height);
@@ -3838,26 +3830,7 @@ mod tests {
 
     #[test]
     fn detail_metadata_marks_epics_and_counts_children() {
-        let mut item = detail_test_item();
-        item.task.is_epic = true;
-        item.epic_children = vec![
-            crate::query::TaskDependencyLink {
-                task_id: crate::test_support::task_id("child-task-id"),
-                display_ref: "APP-CHLD".to_string(),
-                title: "Build the first child task".to_string(),
-                status: "todo".to_string(),
-                priority: "medium".to_string(),
-                unresolved: true,
-            },
-            crate::query::TaskDependencyLink {
-                task_id: crate::test_support::task_id("done-child-task-id"),
-                display_ref: "APP-DONE".to_string(),
-                title: "Finished child task".to_string(),
-                status: "done".to_string(),
-                priority: "none".to_string(),
-                unresolved: false,
-            },
-        ];
+        let item = detail_test_epic_item();
 
         let rendered = detail_metadata_lines(&item, 31)
             .into_iter()
