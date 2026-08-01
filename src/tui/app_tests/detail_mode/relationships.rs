@@ -759,7 +759,7 @@ async fn focused_detail_child_routes_actions_and_preserves_parent_detail() {
 
 #[tokio::test]
 async fn focused_blocker_status_picker_targets_blocker() {
-    let mut app = test_app().await;
+    let (_dir, _pool, mut app) = test_app_with_pool().await;
     let (blocker_id, blocked_id) = create_blocked_pair(&mut app).await;
     app.store.refresh(Some(&blocked_id)).await.unwrap();
     let blocked_index = app
@@ -808,7 +808,7 @@ async fn focused_blocker_status_picker_targets_blocker() {
 
 #[tokio::test]
 async fn focused_blocked_task_unlink_requires_confirmation() {
-    let mut app = test_app().await;
+    let (_dir, _pool, mut app) = test_app_with_pool().await;
     let (blocker_id, blocked_id) = create_blocked_pair(&mut app).await;
     app.store.refresh(Some(&blocker_id)).await.unwrap();
     let blocker_index = app
@@ -872,7 +872,7 @@ async fn focused_blocked_task_unlink_requires_confirmation() {
 
 #[tokio::test]
 async fn focused_relationship_delete_and_unsupported_actions_are_explicit() {
-    let mut app = test_app().await;
+    let (_dir, _pool, mut app) = test_app_with_pool().await;
     let (blocker_id, blocked_id) = create_blocked_pair(&mut app).await;
     app.store.refresh(Some(&blocked_id)).await.unwrap();
     let blocked_index = app

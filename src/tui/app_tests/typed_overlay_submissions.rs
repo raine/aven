@@ -167,7 +167,7 @@ async fn add_dependency_search_tab_keeps_picker_context() {
 
 #[tokio::test]
 async fn remove_shortcut_opens_current_dependency_picker() {
-    let mut app = test_app().await;
+    let (_dir, _pool, mut app) = test_app_with_pool().await;
     let (blocker_id, blocked_id) = create_blocked_pair(&mut app).await;
     let blocked_index = app
         .store
@@ -194,7 +194,7 @@ async fn remove_shortcut_opens_current_dependency_picker() {
 
 #[tokio::test]
 async fn submitting_dependency_removal_removes_dependency() {
-    let mut app = test_app().await;
+    let (_dir, _pool, mut app) = test_app_with_pool().await;
     let (_blocker_id, blocked_id) = create_blocked_pair(&mut app).await;
     let blocked_index = app
         .store

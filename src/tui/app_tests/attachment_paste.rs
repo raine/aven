@@ -127,6 +127,7 @@ async fn detail_paste_image_path_attaches_to_selected_task() {
         .unwrap();
     assert_eq!(attachment_count, 0);
     drop(conn);
+    finish_attachment_work(&mut app).await;
     app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
     finish_attachment_work(&mut app).await;
 
@@ -332,6 +333,7 @@ async fn detail_paste_image_path_obeys_optimization_config() {
     app.show_detail(0);
 
     app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+    finish_attachment_work(&mut app).await;
     app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
     finish_attachment_work(&mut app).await;
 
@@ -532,6 +534,7 @@ async fn detail_paste_image_path_ignores_existing_image() {
     app.show_detail(0);
 
     app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+    finish_attachment_work(&mut app).await;
     app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
     finish_attachment_work(&mut app).await;
 
