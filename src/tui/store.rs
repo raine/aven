@@ -28,7 +28,7 @@ use aven_core::db::Database;
 
 pub(crate) use crate::query::RecentActionItem;
 pub(crate) use attachments::AttachmentWorkerContext;
-pub(crate) use epics::EpicContext;
+pub(crate) use epics::{AddEpicChildContext, EpicContext};
 pub(crate) use launch::{TuiLaunch, TuiStartup};
 pub(crate) use onboarding::OnboardingStatus;
 pub(crate) use pickers::{

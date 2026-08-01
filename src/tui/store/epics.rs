@@ -11,6 +11,12 @@ pub(crate) struct EpicContext {
     pub(crate) project_key: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AddEpicChildContext {
+    Existing(EpicContext),
+    Promote(EpicContext),
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct EpicChildTarget {
     pub(crate) epic: EpicContext,
@@ -60,11 +66,22 @@ impl TuiStore {
         Ok(Some(MutationMessage::new(message, selected)))
     }
 
-    pub(crate) fn resolve_epic_context(
+    pub(crate) fn resolve_add_epic_child_context(
         &self,
         selected: Option<usize>,
-        _detail: bool,
-    ) -> Option<EpicContext> {
+    ) -> Option<AddEpicChildContext> {
+        if let Some(epic) = self.resolve_epic_context(selected) {
+            return Some(AddEpicChildContext::Existing(epic));
+        }
+        let item = self.selected_task(selected)?;
+        Some(AddEpicChildContext::Promote(EpicContext {
+            epic_id: item.task.id.clone(),
+            display_ref: item.display_ref.clone(),
+            project_key: item.task.project_key.clone(),
+        }))
+    }
+
+    fn resolve_epic_context(&self, selected: Option<usize>) -> Option<EpicContext> {
         let item = self.selected_task(selected)?;
         if item.task.is_epic {
             return Some(EpicContext {

@@ -4325,21 +4325,30 @@ mod epics {
     }
 
     #[tokio::test]
-    async fn add_epic_child_and_undo_remove_relationship() {
+    async fn add_epic_child_promotes_parent_and_undo_restores_both() {
         let (_dir, pool, mut store) = test_store_with_pool().await;
-        let (parent_id, parent_index) = create_selected_task(&mut store, "Parent epic").await;
+        let (parent_id, _) = create_selected_task(&mut store, "Ordinary parent").await;
         let (child_id, _) = create_selected_task(&mut store, "Child task").await;
-        let epic = store
-            .resolve_epic_context(Some(parent_index), false)
-            .unwrap_or_else(|| EpicContext {
-                epic_id: parent_id.clone(),
-                display_ref: store.tasks[parent_index].display_ref.clone(),
-                project_key: store.tasks[parent_index].task.project_key.clone(),
-            });
+        let parent_index = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == parent_id)
+            .expect("parent should remain visible");
+        let epic = match store.resolve_add_epic_child_context(Some(parent_index)) {
+            Some(AddEpicChildContext::Promote(epic)) => epic,
+            context => panic!("expected promotion context, got {context:?}"),
+        };
 
         let outcome = store.add_epic_child(epic, child_id.clone()).await.unwrap();
 
         assert!(outcome.changed);
+        assert!(
+            store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == parent_id)
+                .is_some_and(|item| item.task.is_epic)
+        );
         store.undo_last(None).await.unwrap().unwrap();
         let linked: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM task_epic_links WHERE epic_task_id = ? AND child_task_id = ?",
@@ -4350,6 +4359,12 @@ mod epics {
         .await
         .unwrap();
         assert_eq!(linked, 0);
+        let is_epic: i64 = sqlx::query_scalar("SELECT is_epic FROM tasks WHERE id = ?")
+            .bind(&parent_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(is_epic, 0);
     }
 
     #[tokio::test]

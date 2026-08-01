@@ -122,12 +122,30 @@ impl App {
 
     pub(super) fn begin_add_epic_child(&mut self) {
         let selected = self.list.selected_task();
-        let detail = self.detail.is_active();
-        let Some(epic) = self.store.resolve_epic_context(selected, detail) else {
-            self.set_warning("Select an epic to add a child");
+        let Some(context) = self.store.resolve_add_epic_child_context(selected) else {
+            self.set_warning("Select a task to add a child");
             return;
         };
         self.pending_shortcut.clear();
+        match context {
+            crate::tui::store::AddEpicChildContext::Existing(epic) => {
+                self.open_add_epic_child_search(epic);
+            }
+            crate::tui::store::AddEpicChildContext::Promote(epic) => {
+                self.clear_live_search_preview();
+                self.overlay = Some(OverlayState::confirm(
+                    crate::tui::overlay::ConfirmIntent::PromoteTaskForChild { epic: epic.clone() },
+                    "Promote task to epic",
+                    format!(
+                        "Adding a child will promote {} to an epic. Continue?",
+                        epic.display_ref
+                    ),
+                ));
+            }
+        }
+    }
+
+    pub(super) fn open_add_epic_child_search(&mut self, epic: crate::tui::store::EpicContext) {
         self.clear_live_search_preview();
         let mut state = SearchState::for_intent(SearchIntent::AddEpicChild {
             epic_id: epic.epic_id,
