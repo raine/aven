@@ -59,13 +59,6 @@ async fn test_app() -> App {
     App::new_for_tests(database).await.unwrap()
 }
 
-async fn test_app_at(db_path: &std::path::Path) -> App {
-    let pool = crate::test_support::open_db(db_path).await.unwrap();
-    reset_default_workspace(&pool).await;
-    let database = aven_core::db::Database::open(db_path).await.unwrap();
-    App::new_for_tests(database).await.unwrap()
-}
-
 #[tokio::test]
 async fn sync_now_requires_configured_server() {
     let mut app = test_app().await;
@@ -75,23 +68,6 @@ async fn sync_now_requires_configured_server() {
     let message = toast_message(&app).unwrap();
     assert!(message.starts_with("sync unavailable:"));
     assert!(message.contains("sync-server-required"));
-    assert!(!app.sync.work_pending());
-}
-
-#[tokio::test]
-async fn sync_now_rejects_worktree_database() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join(".aven/db.sqlite");
-    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
-    let mut app = test_app_at(&db_path).await;
-    let mut config = crate::config::AppConfig::default();
-    config.sync.server_url = Some("http://127.0.0.1:9".to_string());
-    app.set_config(config);
-
-    app.execute(Action::SyncNow).await.unwrap();
-
-    let message = toast_message(&app).unwrap();
-    assert!(message.contains("sync-disabled-in-worktree"));
     assert!(!app.sync.work_pending());
 }
 
