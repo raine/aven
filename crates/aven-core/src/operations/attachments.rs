@@ -718,7 +718,7 @@ impl Database {
         blob_dir: &Path,
         policy: crate::attachments::lifecycle::LifecyclePolicy,
     ) -> Result<crate::attachments::lifecycle::LifecycleReport> {
-        let mut conn = self.acquire_reader().await?;
+        let mut conn = self.acquire_writer().await?;
         crate::attachments::lifecycle::lifecycle_report(
             &mut conn,
             blob_dir,
@@ -726,5 +726,46 @@ impl Database {
             &crate::attachments::lifecycle::SystemClock,
         )
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn lifecycle_report_waits_for_guarded_writer() {
+        let temp = tempfile::tempdir().unwrap();
+        let database = Database::open(&temp.path().join("lifecycle.sqlite"))
+            .await
+            .unwrap();
+        let writer = database.acquire_writer().await.unwrap();
+
+        let reporting_database = database.clone();
+        let blob_dir = temp.path().join("blobs");
+        let mut report = tokio::spawn(async move {
+            reporting_database
+                .attachment_lifecycle_report(
+                    &blob_dir,
+                    crate::attachments::lifecycle::LifecyclePolicy::default(),
+                )
+                .await
+        });
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut report)
+                .await
+                .is_err(),
+            "lifecycle reporting should wait for the guarded writer"
+        );
+
+        drop(writer);
+        tokio::time::timeout(Duration::from_secs(1), report)
+            .await
+            .expect("lifecycle reporting should proceed after the writer is released")
+            .unwrap()
+            .unwrap();
     }
 }
