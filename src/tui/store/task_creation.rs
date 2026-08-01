@@ -87,6 +87,7 @@ impl TuiStore {
             .database
             .create_task_with_undo(&self.active_workspace, draft, TaskCreationUndo::TuiTask)
             .await?;
+        self.wake_after_mutation();
         let created = self
             .finish_task_creation(outcome, Vec::new(), current_selected_index)
             .await
@@ -114,6 +115,7 @@ impl TuiStore {
                 },
             )
             .await?;
+        self.wake_after_mutation();
         let task_id = outcome.task.id.clone();
         let child_ref = self
             .database
@@ -167,6 +169,7 @@ impl TuiStore {
                 TaskCreationUndo::TuiTask,
             )
             .await?;
+        self.wake_after_mutation();
         let created = self
             .finish_task_creation(outcome, attachment_ids, current_selected_index)
             .await
@@ -213,6 +216,7 @@ impl TuiStore {
                 ),
             )
             .await?;
+        self.wake_after_mutation();
         let task_id = outcome.task.id.clone();
         let child_ref = self
             .database
@@ -319,6 +323,7 @@ impl TuiStore {
             .database
             .add_note_with_tui_undo(&self.active_workspace, task_id, body)
             .await?;
+        self.wake_after_mutation();
         Ok(outcome.note_id)
     }
 }

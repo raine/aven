@@ -50,6 +50,7 @@ impl App {
             Action::BeginSearch => self.begin_search(),
             Action::BeginCommand => self.begin_command().await,
             Action::Refresh => self.refresh().await?,
+            Action::SyncNow => self.begin_sync(),
             Action::SetOrder(order) => self.set_sort(order).await?,
             Action::ReverseSort => self.reverse_sort().await?,
             Action::SetStatus(status) => self.update_status(status).await?,

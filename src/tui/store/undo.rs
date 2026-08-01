@@ -25,6 +25,7 @@ impl TuiStore {
         let Some(outcome) = self.database.apply_latest_tui_undo(&workspace_id).await? else {
             return Ok(None);
         };
+        self.wake_after_mutation();
 
         let mut view_state = self.view_state.clone();
         if let Some(include_deleted) = outcome.include_deleted {

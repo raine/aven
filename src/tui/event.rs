@@ -44,6 +44,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginSearch
             | Action::BeginCommand
             | Action::Refresh
+            | Action::SyncNow
             | Action::SetOrder(_)
             | Action::ReverseSort
             | Action::SetStatus(_)
@@ -188,6 +189,22 @@ mod tests {
     #[test]
     fn lookup_command_finds_exact_name() {
         assert_eq!(lookup_command("quit"), CommandLookup::Found(Action::Quit));
+    }
+
+    #[test]
+    fn lookup_command_finds_sync_action() {
+        assert_eq!(
+            lookup_command("sync"),
+            CommandLookup::Found(Action::SyncNow)
+        );
+    }
+
+    #[test]
+    fn resolves_sync_shortcut() {
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('S')]),
+            ShortcutLookup::Found(Action::SyncNow)
+        );
     }
 
     #[test]

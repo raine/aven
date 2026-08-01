@@ -119,6 +119,7 @@ impl TuiStore {
             self.database
                 .resolve_recurrence_conflict(&self.active_workspace, series_id, &field, &value)
                 .await?;
+            self.wake_after_mutation();
             return self
                 .refresh_task_message(
                     &target.task_id,
@@ -136,6 +137,7 @@ impl TuiStore {
                 &format!("conflict {} {}", target.display_ref, target.field),
             )
             .await?;
+        self.wake_after_mutation();
         let resolved_task_id = resolution.outcome.task.id.clone();
         let resolved_field = resolution.outcome.field.clone();
         self.refresh_task_message(

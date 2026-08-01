@@ -13,6 +13,7 @@ pub(crate) use crate::tui::list_surface::{Focus, LastChangeReturnState};
 use crate::tui::overlay::OverlayState;
 use crate::tui::shortcut_buffer::ShortcutBuffer;
 use crate::tui::store::{TaskOrder, TaskViewState, TuiStore};
+use crate::tui::sync_controller::SyncController;
 use crate::tui::toast::{Toast, ToastSeverity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,6 +186,7 @@ pub(crate) struct App {
     pub(super) needs_terminal_clear: bool,
     pub(super) search: crate::tui::app_search::SearchController,
     pub(super) update: crate::tui::app_update::UpdateController,
+    pub(super) sync: SyncController,
     pub(super) changelog: crate::tui::changelog::ChangelogController,
     pub(super) next_refresh_at: Instant,
     pub(crate) last_series_click: Option<SeriesRowClick>,
@@ -196,12 +198,25 @@ pub(crate) struct App {
 }
 
 impl App {
+    #[cfg(test)]
     pub(crate) async fn new_with_view_state(
         database: Database,
         workspace: crate::workspaces::Workspace,
         view_state: TaskViewState,
     ) -> Result<Self> {
         Self::new_with_store(TuiStore::new_with_view_state(database, workspace, view_state).await?)
+    }
+
+    pub(crate) async fn new_with_view_state_and_config(
+        database: Database,
+        workspace: crate::workspaces::Workspace,
+        view_state: TaskViewState,
+        config: AppConfig,
+    ) -> Result<Self> {
+        Self::new_with_store(
+            TuiStore::new_with_view_state_and_config(database, workspace, view_state, config)
+                .await?,
+        )
     }
 
     #[cfg(test)]
@@ -233,6 +248,7 @@ impl App {
             needs_terminal_clear: false,
             search: crate::tui::app_search::SearchController::new(),
             update: crate::tui::app_update::UpdateController::new(),
+            sync: SyncController::new(),
             changelog: crate::tui::changelog::ChangelogController::new(),
             next_refresh_at,
             last_series_click: None,
@@ -269,6 +285,7 @@ impl App {
     }
 
     pub(crate) fn set_config(&mut self, config: AppConfig) {
+        self.store.set_config(config.clone());
         self.store.task_columns = config.tui.columns.clone();
         self.inline_image_backend = active_backend_from_env(config.local.inline_images);
         self.intake.set_config(config);

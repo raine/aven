@@ -318,6 +318,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::Refresh,
     ),
+    CommandSpec::implemented_global_in_detail(
+        "sync",
+        "sync with the remote server",
+        "General",
+        &[KeySequence {
+            codes: &[KeyCode::Char('S')],
+            label: "S",
+        }],
+        Action::SyncNow,
+    ),
     CommandSpec::implemented(
         "update",
         "check for and install an aven update",

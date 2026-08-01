@@ -51,6 +51,7 @@ impl TuiStore {
             .database
             .create_recurrence_series(&self.active_workspace, draft)
             .await?;
+        self.wake_after_mutation();
         if recurring_view {
             let created_id = outcome.series.id.clone();
             let requested = super::MainRowSelection::RecurrenceSeries(created_id.clone());
@@ -127,6 +128,7 @@ impl TuiStore {
             .database
             .update_recurrence_template(&self.active_workspace, series_id, update)
             .await?;
+        self.wake_after_mutation();
         let selected = self
             .refresh_after_recurrence_mutation(series_id, selected_task_id)
             .await?;
@@ -162,6 +164,7 @@ impl TuiStore {
                 crate::undo::UndoContext::tui(format!("skip {series_ref}")),
             )
             .await?;
+        self.wake_after_mutation();
         let selected = self
             .refresh_after_recurrence_mutation(series_id, Some(task_id))
             .await?;
@@ -202,6 +205,7 @@ impl TuiStore {
         self.database
             .stop_recurrence_series(&self.active_workspace, series_id, skip_current)
             .await?;
+        self.wake_after_mutation();
         if self.view_state.view == super::TaskView::Recurring {
             self.view_state.recurring.lifecycle =
                 aven_core::query::RecurrenceSeriesLifecycleFilter::All;
@@ -242,6 +246,7 @@ impl TuiStore {
                     .await?;
             }
         }
+        self.wake_after_mutation();
         let selected = self
             .refresh_after_recurrence_mutation(series_id, selected_task_id)
             .await?;
