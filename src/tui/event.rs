@@ -8,14 +8,15 @@ pub(crate) use self::catalog::PROJECT_PATH_FLOW_REASON;
 #[allow(unused_imports)]
 pub(crate) use self::catalog::{
     COMMAND_DOMAINS, COMMANDS, CommandContext, CommandDomain, CommandLifecycle, CommandSpec,
-    KeySequence,
+    DetailFocusPolicy, KeySequence,
 };
 #[allow(unused_imports)]
 pub(crate) use self::lookup::{
     CommandCompletion, CommandLookup, CommandSpecLookup, ShortcutLookup, command_cycle_options,
-    complete_command, key_label, lookup_command, lookup_command_spec, matching_commands,
+    command_cycle_options_for, complete_command, complete_command_for, key_label, lookup_command,
+    lookup_command_spec, lookup_command_spec_for, matching_commands, matching_commands_for,
     prefix_hint_commands, resolve_shortcut, resolve_shortcut_for, resolve_shortcut_in,
-    shortcut_label,
+    resolve_shortcut_in_for, shortcut_label,
 };
 
 #[cfg(test)]
@@ -326,6 +327,39 @@ mod tests {
     }
 
     #[test]
+    fn context_uses_its_own_command_bindings() {
+        let commands = [CommandSpec::implemented_with_detail_bindings(
+            "contextual",
+            &[],
+            "contextual command",
+            "Test",
+            &[KeySequence {
+                codes: &[KeyCode::Char('l')],
+                label: "l",
+            }],
+            &[KeySequence {
+                codes: &[KeyCode::Char('d')],
+                label: "d",
+            }],
+            DetailFocusPolicy::ParentTask,
+            Action::Refresh,
+        )];
+
+        assert_eq!(
+            resolve_shortcut_in_for(&commands, CommandContext::Normal, &[KeyCode::Char('l')]),
+            ShortcutLookup::Found(Action::Refresh)
+        );
+        assert_eq!(
+            resolve_shortcut_in_for(&commands, CommandContext::Detail, &[KeyCode::Char('d')]),
+            ShortcutLookup::Found(Action::Refresh)
+        );
+        assert_eq!(
+            resolve_shortcut_in_for(&commands, CommandContext::Detail, &[KeyCode::Char('l')]),
+            ShortcutLookup::Missing
+        );
+    }
+
+    #[test]
     fn resolves_exact_prefix_ambiguity() {
         let commands = [
             CommandSpec::implemented(
@@ -420,7 +454,7 @@ mod tests {
                 .iter()
                 .find(|command| command.name == name)
                 .unwrap();
-            assert!(command.keys.is_empty());
+            assert!(command.keys(CommandContext::Normal).is_empty());
         }
     }
 
@@ -447,7 +481,7 @@ mod tests {
     #[test]
     fn current_single_key_shortcuts_match_catalog() {
         for command in COMMANDS {
-            for key in command.keys {
+            for key in command.keys(CommandContext::Normal) {
                 if key.codes.len() != 1 {
                     continue;
                 }
@@ -531,7 +565,7 @@ mod tests {
         for context in [CommandContext::Normal, CommandContext::Detail] {
             let mut seen: Vec<(&[KeyCode], &str, &str)> = Vec::new();
             for command in context.commands() {
-                for key in command.keys {
+                for key in command.keys(context) {
                     if let Some((_, other_command, other_label)) =
                         seen.iter().find(|(codes, _, _)| *codes == key.codes)
                     {
@@ -1098,7 +1132,7 @@ mod tests {
     fn non_executing_lifecycle_shortcuts_resolve_to_catalog_action() {
         for command in COMMANDS {
             if !matches!(command.lifecycle, CommandLifecycle::Implemented) {
-                for key in command.keys {
+                for key in command.keys(CommandContext::Normal) {
                     assert_eq!(
                         resolve_shortcut(key.codes),
                         ShortcutLookup::Found(command.action),

@@ -11,6 +11,7 @@ pub(super) enum FooterMode {
     Detail,
     DetailDeleted,
     DetailNested,
+    DetailNestedDeleted,
     DetailLinks,
     DetailEpicChild,
     AttachmentPreview,
@@ -152,7 +153,6 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("e p", "priority"),
             ("n", "note"),
             ("d/x", "done/cancel"),
-            ("t R", "restore deleted"),
             ("?", "more"),
             ("Esc", "parent"),
             ("q", "task list"),
@@ -163,13 +163,42 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("e", "edit"),
             ("s/e p", "status/priority"),
             ("d/x", "done/cancel"),
-            ("t R", "restore deleted"),
             ("?", "more"),
             ("Esc", "parent"),
             ("q", "task list"),
         ],
         FooterMode::DetailNested => &[
             ("j/k", "scroll"),
+            ("?", "more"),
+            ("Esc", "parent"),
+            ("q", "list"),
+        ],
+        FooterMode::DetailNestedDeleted if width >= 128 => &[
+            ("j/k Pg", "scroll"),
+            ("[/]", "task"),
+            ("e", "edit"),
+            ("s", "status"),
+            ("e p", "priority"),
+            ("d/x", "done/cancel"),
+            ("t R", "restore deleted"),
+            ("y r", "copy ref"),
+            ("?", "more"),
+            ("Esc", "parent"),
+            ("q", "task list"),
+        ],
+        FooterMode::DetailNestedDeleted if width >= 72 => &[
+            ("j/k Pg", "scroll"),
+            ("[/]", "task"),
+            ("s/e p", "status/priority"),
+            ("d/x", "done/cancel"),
+            ("t R", "restore deleted"),
+            ("?", "more"),
+            ("Esc", "parent"),
+            ("q", "task list"),
+        ],
+        FooterMode::DetailNestedDeleted => &[
+            ("j/k", "scroll"),
+            ("t R", "restore deleted"),
             ("?", "more"),
             ("Esc", "parent"),
             ("q", "list"),
@@ -182,7 +211,7 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("e p", "priority"),
             ("d/x", "done/cancel"),
             ("t R", "restore deleted"),
-            ("t y/Y", "copy"),
+            ("y r", "copy ref"),
             ("?", "more"),
             ("Esc", "task list"),
             ("q", "close"),
@@ -213,7 +242,7 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("e p", "priority"),
             ("n", "note"),
             ("d/x", "done/cancel"),
-            ("t y/Y", "copy"),
+            ("y r", "copy ref"),
             ("?", "more"),
             ("Esc", "task list"),
             ("q", "close"),
@@ -284,6 +313,7 @@ fn cmd(mode: FooterMode, label: &str) -> Span<'static> {
         | FooterMode::Detail
         | FooterMode::DetailDeleted
         | FooterMode::DetailNested
+        | FooterMode::DetailNestedDeleted
         | FooterMode::DetailLinks
         | FooterMode::DetailEpicChild
         | FooterMode::AttachmentPreview
@@ -381,12 +411,52 @@ mod tests {
         );
     }
 
+    fn detail_command_has_key(label: &str) -> bool {
+        crate::tui::event::CommandContext::Detail
+            .commands()
+            .flat_map(|command| {
+                command
+                    .keys(crate::tui::event::CommandContext::Detail)
+                    .iter()
+            })
+            .any(|key| key.label == label)
+    }
+
     #[test]
     fn deleted_detail_footer_advertises_restore() {
         let hints = footer_hints(FooterMode::DetailDeleted, 80);
 
         assert!(hints.contains(&("t R", "restore deleted")));
         assert!(hints.contains(&("d/x", "done/cancel")));
+        assert!(detail_command_has_key("t R"));
+        assert!(detail_command_has_key("d"));
+        assert!(detail_command_has_key("x"));
+    }
+
+    #[test]
+    fn restore_hint_tracks_root_and_nested_deletion_state() {
+        for mode in [FooterMode::Detail, FooterMode::DetailNested] {
+            assert!(
+                !footer_hints(mode, 128)
+                    .iter()
+                    .any(|(_, label)| label.contains("restore"))
+            );
+        }
+        for mode in [FooterMode::DetailDeleted, FooterMode::DetailNestedDeleted] {
+            assert!(footer_hints(mode, 128).contains(&("t R", "restore deleted")));
+        }
+    }
+
+    #[test]
+    fn detail_mutation_hints_use_catalog_bindings() {
+        let hints = footer_hints(FooterMode::Detail, 128);
+        assert!(hints.contains(&("s", "status")));
+        assert!(hints.contains(&("e p", "priority")));
+        assert!(hints.contains(&("d/x", "done/cancel")));
+        assert!(hints.contains(&("y r", "copy ref")));
+        for label in ["s", "e p", "d", "x", "y r"] {
+            assert!(detail_command_has_key(label), "missing catalog key {label}");
+        }
     }
 
     #[test]

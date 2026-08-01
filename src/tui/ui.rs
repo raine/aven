@@ -276,12 +276,16 @@ pub(crate) fn render(
     }
     let footer_mode = match view.footer_mode(footer.width) {
         FooterMode::List if store.view_state.view == TaskView::Columns => FooterMode::Columns,
-        FooterMode::Detail
+        mode @ (FooterMode::Detail | FooterMode::DetailNested)
             if store
                 .selected_task(list.selected_task())
                 .is_some_and(|item| item.task.deleted) =>
         {
-            FooterMode::DetailDeleted
+            if mode == FooterMode::DetailNested {
+                FooterMode::DetailNestedDeleted
+            } else {
+                FooterMode::DetailDeleted
+            }
         }
         mode => mode,
     };
@@ -715,6 +719,7 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
             cursor,
             cycle_input,
             highlighted,
+            context,
             unavailable,
         } => render_command(
             frame,
@@ -723,6 +728,7 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
             cycle_input.as_deref(),
             highlighted.as_deref(),
             unavailable,
+            *context,
         ),
         OverlayView::AddTask(state) => self::overlays::render_add_task(frame, state),
         OverlayView::TextInput(state)

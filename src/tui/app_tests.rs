@@ -3482,6 +3482,71 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
+    async fn detail_command_overlay_limits_lookup_and_completion_to_detail_commands() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Detail command target")).await;
+        app.show_detail(0);
+
+        app.begin_command().await;
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Command { state })
+                if state.context == crate::tui::event::CommandContext::Detail
+        ));
+        type_chars(&mut app, "view-tod").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("no command matches: view-tod")
+        );
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::Command { .. })));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("unknown command: view-tod")
+        );
+        assert!(app.detail.is_active());
+    }
+
+    #[tokio::test]
+    async fn detail_command_overlay_applies_focus_policy() {
+        let mut app = test_app().await;
+        let selected =
+            create_and_select_task(&mut app, test_task_draft("Focused command target")).await;
+        let linked_id = crate::test_support::task_id("palette-linked-task");
+        app.store.tasks[selected].depends_on = vec![crate::query::TaskDependencyLink {
+            task_id: linked_id.clone(),
+            display_ref: "APP-LINK".to_string(),
+            title: "Linked task".to_string(),
+            status: "todo".to_string(),
+            priority: "high".to_string(),
+            unresolved: true,
+        }];
+        app.show_detail(0);
+        app.detail.state_mut().unwrap().focused_target = Some(DetailTargetId::Task {
+            section: DetailSection::DependsOn,
+            task_id: linked_id,
+        });
+
+        app.begin_command().await;
+        type_chars(&mut app, "edit-title").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_active());
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("leave relationship focus before using that command")
+        );
+
+        app.begin_command().await;
+        type_chars(&mut app, "search").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::Search(_))));
+        assert!(app.detail.is_active());
+    }
+
+    #[tokio::test]
     async fn command_overlay_tab_completes_unique_suffix_alias() {
         let mut app = test_app().await;
 
@@ -8233,6 +8298,58 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn detail_focus_policy_covers_task_and_focused_target_categories() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Focus policy target")).await;
+        app.show_detail(0);
+        let linked_id = crate::test_support::task_id("focus-policy-link");
+
+        assert!(app.detail_focus_allows_action(Action::BeginEditTitle));
+
+        app.detail.state_mut().unwrap().focused_target = Some(DetailTargetId::Task {
+            section: DetailSection::EpicChildren,
+            task_id: linked_id.clone(),
+        });
+        assert!(app.detail_focus_allows_action(Action::RemoveEpicChild));
+        assert!(!app.detail_focus_allows_action(Action::BeginEditTitle));
+        assert_eq!(
+            app.detail_focus_warning(),
+            "leave epic child focus before using that command"
+        );
+
+        app.detail.state_mut().unwrap().focused_target = Some(DetailTargetId::Task {
+            section: DetailSection::DependsOn,
+            task_id: linked_id,
+        });
+        assert!(app.detail_focus_allows_action(Action::Refresh));
+        assert!(!app.detail_focus_allows_action(Action::BeginEditTitle));
+        assert_eq!(
+            app.detail_focus_warning(),
+            "leave relationship focus before using that command"
+        );
+
+        app.detail.state_mut().unwrap().focused_target = Some(DetailTargetId::Attachment {
+            attachment_id: "attachment".to_string(),
+        });
+        assert!(app.detail_focus_allows_action(Action::BeginSearch));
+        assert!(!app.detail_focus_allows_action(Action::BeginEditTitle));
+        assert_eq!(
+            app.detail_focus_warning(),
+            "leave attachment focus before using that command"
+        );
+
+        app.detail.state_mut().unwrap().focused_target = Some(DetailTargetId::Expand {
+            section: DetailSection::Blocks,
+        });
+        assert!(app.detail_focus_allows_action(Action::ReturnToLastChange));
+        assert!(!app.detail_focus_allows_action(Action::BeginEditTitle));
+        assert_eq!(
+            app.detail_focus_warning(),
+            "leave relationship disclosure focus before using that command"
+        );
+    }
+
+    #[tokio::test]
     async fn focused_detail_relationship_shortcut_warns_without_mutating_parent() {
         let mut app = test_app().await;
         let selected =
@@ -8262,7 +8379,7 @@ mod detail_mode {
         assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Inbox);
         assert_eq!(
             toast_message(&app).as_deref(),
-            Some("Leave detail focus before using that command")
+            Some("leave relationship focus before using that command")
         );
         assert!(app.overlay.is_none());
         assert!(app.detail.is_active());
@@ -9044,7 +9161,7 @@ mod detail_mode {
         );
         assert_eq!(
             toast_message(&app).as_deref(),
-            Some("Leave child focus before using that command")
+            Some("leave epic child focus before using that command")
         );
     }
 
@@ -11152,6 +11269,61 @@ mod detail_mode {
             ConfirmIntent::ResolveConflict { .. }
         ));
         assert!(app.detail.is_active());
+    }
+
+    #[tokio::test]
+    async fn conflict_navigation_closes_detail_with_non_default_session_state() {
+        for action in [
+            Action::BeginConflictList,
+            Action::NextConflict,
+            Action::PreviousConflict,
+        ] {
+            let (_dir, pool, mut app) = test_app_with_pool().await;
+            let first = create_and_select_task(&mut app, test_task_draft("First conflict")).await;
+            let first_id = app.store.tasks[first].task.id.clone();
+            let second = create_and_select_task(&mut app, test_task_draft("Second conflict")).await;
+            let second_id = app.store.tasks[second].task.id.clone();
+            insert_title_conflict_for_task_id(&pool, &mut app, &first_id, "first", "remote").await;
+            insert_title_conflict_for_task_id(&pool, &mut app, &second_id, "second", "remote")
+                .await;
+            let selected = app
+                .store
+                .tasks
+                .iter()
+                .position(|item| item.task.id == first_id)
+                .unwrap();
+            app.list.select_task(Some(selected));
+            app.show_detail(7);
+            let state = app.detail.state_mut().unwrap();
+            state.focused_target = Some(DetailTargetId::Attachment {
+                attachment_id: "focused".to_string(),
+            });
+            state.hovered_target = Some(DetailTargetId::Expand {
+                section: DetailSection::Blocks,
+            });
+            state.expanded_sections.insert(DetailSection::DependsOn);
+            state.begin_text_selection(
+                first_id.clone(),
+                80,
+                crate::tui::detail_selection::TextCell { start: 0, end: 1 },
+            );
+
+            app.execute(action).await.unwrap();
+
+            assert!(
+                app.detail.is_inactive(),
+                "{action:?} kept stale detail state"
+            );
+            assert!(app.pending_shortcut.is_empty());
+            if action == Action::BeginConflictList {
+                assert_eq!(app.store.view_state.view, TaskView::Conflicts);
+            } else {
+                assert_ne!(
+                    app.store.tasks[app.list.selected_task().unwrap()].task.id,
+                    first_id
+                );
+            }
+        }
     }
 
     #[tokio::test]

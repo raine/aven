@@ -9,7 +9,7 @@ use super::dialog::Dialog;
 use super::input::input_line;
 use super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use crate::tui::event::{
-    CommandContext, CommandLifecycle, CommandSpec, matching_commands, prefix_hint_commands,
+    CommandContext, CommandLifecycle, CommandSpec, matching_commands_for, prefix_hint_commands,
 };
 use crate::tui::theme::{ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, ORANGE, SELECTED_BG};
 
@@ -147,7 +147,6 @@ fn help_columns() -> [Vec<&'static str>; 2] {
 fn help_section_len(section: &str) -> usize {
     CommandContext::Normal
         .commands()
-        .into_iter()
         .filter(|command| command.section == section)
         .count()
         + 1
@@ -207,7 +206,6 @@ fn detail_help_lines() -> Vec<Line<'static>> {
             .collect::<Vec<_>>();
         let commands = CommandContext::Detail
             .commands()
-            .into_iter()
             .filter(|command| command.section == *section)
             .collect::<Vec<_>>();
         if fixed.is_empty() && commands.is_empty() {
@@ -221,7 +219,11 @@ fn detail_help_lines() -> Vec<Line<'static>> {
             Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
         )));
         lines.extend(fixed.into_iter().map(detail_help_line));
-        lines.extend(commands.into_iter().map(help_command_line));
+        lines.extend(
+            commands
+                .into_iter()
+                .map(|command| help_command_line(command, CommandContext::Detail)),
+        );
     }
     lines
 }
@@ -271,10 +273,9 @@ fn help_column_lines(sections: &[&'static str]) -> Vec<Line<'static>> {
         )));
         for command in CommandContext::Normal
             .commands()
-            .into_iter()
             .filter(|command| command.section == *section)
         {
-            lines.push(help_command_line(command));
+            lines.push(help_command_line(command, CommandContext::Normal));
         }
     }
     lines
@@ -347,9 +348,9 @@ fn command_name_width(commands: &[&CommandSpec]) -> usize {
         .saturating_add(2)
 }
 
-fn help_command_line(command: &CommandSpec) -> Line<'static> {
+fn help_command_line(command: &CommandSpec, context: CommandContext) -> Line<'static> {
     let keys = command
-        .keys
+        .keys(context)
         .iter()
         .map(|key| key.label)
         .collect::<Vec<_>>()
@@ -365,13 +366,17 @@ fn help_command_line(command: &CommandSpec) -> Line<'static> {
     Line::from(spans)
 }
 
-fn command_line(command: &CommandSpec) -> Line<'static> {
-    command_line_with_highlight(command, false)
+fn command_line(command: &CommandSpec, context: CommandContext) -> Line<'static> {
+    command_line_with_highlight(command, context, false)
 }
 
-fn command_line_with_highlight(command: &CommandSpec, highlighted: bool) -> Line<'static> {
+fn command_line_with_highlight(
+    command: &CommandSpec,
+    context: CommandContext,
+    highlighted: bool,
+) -> Line<'static> {
     let keys = command
-        .keys
+        .keys(context)
         .iter()
         .map(|key| key.label)
         .collect::<Vec<_>>()
@@ -399,8 +404,9 @@ pub(super) fn render_command(
     cycle_input: Option<&str>,
     highlighted: Option<&str>,
     unavailable: &[crate::tui::overlay::CommandAvailabilityOverride],
+    context: CommandContext,
 ) {
-    let matches = matching_commands(cycle_input.unwrap_or(input));
+    let matches = matching_commands_for(context, cycle_input.unwrap_or(input));
     let height = (matches.len().min(8) as u16).saturating_add(3);
 
     let mut lines = vec![input_line(":", input, cursor)];
@@ -409,20 +415,12 @@ pub(super) fn render_command(
             .iter()
             .find(|override_| override_.action == command.action)
             .map(|override_| override_.reason);
-        let display = unavailable_reason.map(|reason| CommandSpec {
-            description: reason,
-            action: crate::tui::event::Action::Disabled {
-                name: command.name,
-                reason,
-            },
-            lifecycle: CommandLifecycle::Disabled { reason },
-            ..*command
-        });
+        let display = unavailable_reason.map(|reason| command.unavailable(reason));
         let command = display.as_ref().unwrap_or(command);
         let line = if highlighted == Some(command.name) {
-            command_line_with_highlight(command, true)
+            command_line_with_highlight(command, context, true)
         } else {
-            command_line(command)
+            command_line(command, context)
         };
         lines.push(line);
     }
@@ -612,7 +610,17 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_command(frame, input, cursor, None, None, &[]))
+            .draw(|frame| {
+                render_command(
+                    frame,
+                    input,
+                    cursor,
+                    None,
+                    None,
+                    &[],
+                    CommandContext::Normal,
+                )
+            })
             .unwrap();
         buffer_text(terminal.backend())
     }
@@ -626,7 +634,17 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_command(frame, input, cursor, cycle_input, highlighted, &[]))
+            .draw(|frame| {
+                render_command(
+                    frame,
+                    input,
+                    cursor,
+                    cycle_input,
+                    highlighted,
+                    &[],
+                    CommandContext::Normal,
+                )
+            })
             .unwrap();
         terminal.backend().buffer().clone()
     }
@@ -807,7 +825,7 @@ mod tests {
             .iter()
             .find(|command| command.name == "status-active")
             .unwrap();
-        let line = command_line(command);
+        let line = command_line(command, CommandContext::Normal);
         let rendered = line.to_string();
         assert!(rendered.contains("t a"));
     }
@@ -818,7 +836,7 @@ mod tests {
             .iter()
             .find(|command| command.name == "add-project-path")
             .unwrap();
-        let rendered = command_line(command).to_string();
+        let rendered = command_line(command, CommandContext::Normal).to_string();
         assert!(rendered.contains("planned"));
     }
 
@@ -850,22 +868,18 @@ mod tests {
 
     #[test]
     fn command_line_marks_disabled_actions() {
-        let command = CommandSpec {
-            name: "disabled-test",
-            aliases: &[],
-            description: "disabled test command",
-            section: "Test",
-            keys: &[],
-            detail_keys: &[],
-            action: crate::tui::event::Action::Disabled {
-                name: "disabled-test",
-                reason: "test reason",
-            },
-            lifecycle: CommandLifecycle::Disabled {
-                reason: "test reason",
-            },
-        };
-        assert!(command_line(&command).to_string().contains("disabled"));
+        let command = CommandSpec::disabled(
+            "disabled-test",
+            "disabled test command",
+            "Test",
+            &[],
+            "test reason",
+        );
+        assert!(
+            command_line(&command, CommandContext::Normal)
+                .to_string()
+                .contains("disabled")
+        );
     }
 
     #[test]
@@ -961,7 +975,7 @@ mod tests {
 
         for command in CommandContext::Detail.commands() {
             let keys = command
-                .keys
+                .keys(CommandContext::Detail)
                 .iter()
                 .map(|key| key.label)
                 .collect::<Vec<_>>()
@@ -1037,7 +1051,7 @@ mod tests {
     #[test]
     fn command_rows_render_all_lifecycle_badges_from_catalog() {
         for command in COMMANDS {
-            let rendered = command_line(command).to_string();
+            let rendered = command_line(command, CommandContext::Normal).to_string();
             assert!(rendered.contains(command.name));
             match command.lifecycle {
                 CommandLifecycle::Implemented => {
@@ -1067,6 +1081,7 @@ mod tests {
                     None,
                     None,
                     &unavailable,
+                    CommandContext::Normal,
                 )
             })
             .unwrap();
@@ -1113,7 +1128,7 @@ mod tests {
         let mut prefixes: Vec<Vec<String>> = Vec::new();
 
         for command in context.commands() {
-            for key in command.keys {
+            for key in command.keys(context) {
                 for len in 1..key.codes.len() {
                     let prefix = key.codes[..len]
                         .iter()
@@ -1134,7 +1149,7 @@ mod tests {
                 .join("\n");
 
             for command in context.commands() {
-                for key in command.keys {
+                for key in command.keys(context) {
                     let labels = key
                         .codes
                         .iter()

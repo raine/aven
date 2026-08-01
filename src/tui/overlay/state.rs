@@ -2,7 +2,7 @@ use crate::ids::WorkspaceId;
 use crate::query::SearchMatchedField;
 use crate::tui::authoring::{AddTaskStep, InitialStatusOrigin, PendingTaskAttachmentSummary};
 use crate::tui::conflict_flow::ConflictResolutionChoice;
-use crate::tui::event::Action;
+use crate::tui::event::{Action, CommandContext};
 use crate::tui::overlay::text_input::LineEdit;
 use crate::tui::store::{ConflictTarget, TaskOrder, TaskView, TuiDatabaseStats, TuiSyncStatus};
 use crate::tui::task_selection::TaskSelection;
@@ -166,6 +166,7 @@ pub(crate) struct CommandState {
     pub(crate) cycle_input: Option<String>,
     pub(crate) cycle_index: usize,
     pub(crate) highlighted: Option<String>,
+    pub(crate) context: CommandContext,
     pub(crate) target: Option<OverlayTarget>,
     pub(crate) unavailable: Vec<CommandAvailabilityOverride>,
 }
@@ -177,6 +178,7 @@ impl CommandState {
             cycle_input: None,
             cycle_index: 0,
             highlighted: None,
+            context: CommandContext::Normal,
             target: None,
             unavailable: Vec::new(),
         }
@@ -189,6 +191,7 @@ impl CommandState {
             cycle_input: None,
             cycle_index: 0,
             highlighted: None,
+            context: CommandContext::Normal,
             target: None,
             unavailable: Vec::new(),
         }
