@@ -63,7 +63,6 @@ struct AvailableBlobRow {
 
 pub(super) async fn create_backup_archive(
     conn: &mut SqliteConnection,
-    db_path: &Path,
     blob_dir: &Path,
     output: &Path,
 ) -> Result<()> {
@@ -73,7 +72,7 @@ pub(super) async fn create_backup_archive(
     }
     let staging = tempfile::tempdir().context("could not create backup staging directory")?;
     let database_path = staging.path().join(DATABASE_ENTRY);
-    db::backup_database(db_path, &database_path)?;
+    db::backup_database_with_connection(conn, &database_path).await?;
 
     let rows: Vec<AvailableBlobRow> = sqlx::query_as(
         "SELECT sha256, byte_size, media_type FROM blob_inventory WHERE available = 1 ORDER BY sha256",
@@ -159,8 +158,7 @@ pub(super) async fn restore_backup_archive(
     }
     validate_archive_attachment_metadata(&database_path, staging.path(), &manifest).await?;
 
-    let safety = db::default_sqlite_backup_path(db_path, "before-restore")?;
-    db::backup_database(db_path, &safety)?;
+    let safety = db::create_restore_safety_backup(db_path).await?;
     let sidecar_safety = db::default_sqlite_backup_path(db_path, "before-restore-blobs")?;
     if blob_dir.exists() {
         copy_dir(blob_dir, &sidecar_safety.with_extension("blobdir"))?;

@@ -14,7 +14,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         input: &str,
     ) -> Result<Option<Project>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         find_project_in_workspace(&mut conn, workspace_id, input).await
     }
 
@@ -23,7 +23,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         project_id: &ProjectId,
     ) -> Result<Option<Project>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         let row = sqlx::query(
             "SELECT id, workspace_id, key, name, prefix
              FROM projects WHERE workspace_id = ? AND id = ? AND deleted = 0",
@@ -40,7 +40,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         project: &str,
     ) -> Result<Project> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         resolve_existing_project_in_workspace(&mut conn, workspace_id, project).await
     }
 
@@ -49,7 +49,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         search: Option<&str>,
     ) -> Result<Vec<Project>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         list_projects_in_workspace(&mut conn, workspace_id, search).await
     }
 
@@ -60,7 +60,7 @@ impl Database {
         cwd: &Path,
         git_root: Option<&Path>,
     ) -> Result<Option<String>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         if let Some(project) = config_candidate {
             return Ok(Some(normalize_key(project)));
         }
@@ -81,7 +81,7 @@ impl Database {
         cwd: &Path,
         git_root: Option<&Path>,
     ) -> Result<Option<String>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         inferred_existing_project_key_in_workspace(
             &mut conn,
             workspace_id,
@@ -98,7 +98,7 @@ impl Database {
         project_id: &ProjectId,
         path: &Path,
     ) -> Result<()> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         sqlx::query(
             "DELETE FROM project_paths WHERE workspace_id = ? AND project_id = ? AND path = ?",
@@ -117,7 +117,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         project: &str,
     ) -> Result<Project> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let project =
             resolve_or_create_project_in_workspace(&mut tx, workspace_id, project).await?;
@@ -130,7 +130,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         value: &str,
     ) -> Result<Project> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let project = resolve_project_for_stored_value(&mut tx, workspace_id, value).await?;
         tx.commit().await?;

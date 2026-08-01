@@ -22,7 +22,7 @@ impl Database {
         project_key: Option<&str>,
         field: Option<&str>,
     ) -> Result<Vec<ConflictListItem>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         list_conflicts(&mut conn, workspace, project_key, field).await
     }
 
@@ -32,7 +32,7 @@ impl Database {
         task_id: &TaskId,
         field: Option<&str>,
     ) -> Result<Vec<ConflictDetail>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         task_conflicts(&mut conn, workspace, task_id, field).await
     }
 
@@ -43,7 +43,7 @@ impl Database {
         field: &str,
         token: &str,
     ) -> Result<String> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         conflict_variant_value(&mut conn, workspace, task_id, field, token).await
     }
 
@@ -55,7 +55,7 @@ impl Database {
         value: &str,
         summary: &str,
     ) -> Result<ConflictResolutionOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         resolve_conflict_value(
             &mut conn,
             workspace,
@@ -74,7 +74,7 @@ impl Database {
         field: &str,
         value: &str,
     ) -> Result<ConflictOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         resolve_conflict(&mut conn, workspace, task_id, field, value).await
     }
 
@@ -84,7 +84,7 @@ impl Database {
         series_id: &RecurrenceSeriesId,
         field: Option<&str>,
     ) -> Result<Vec<ConflictDetail>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         recurrence_series_conflicts(&mut conn, workspace, series_id, field).await
     }
 
@@ -95,7 +95,7 @@ impl Database {
         field: &str,
         token: &str,
     ) -> Result<String> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         for detail in
             recurrence_series_conflicts(&mut conn, workspace, series_id, Some(field)).await?
         {
@@ -116,7 +116,7 @@ impl Database {
         field: &str,
         value: &str,
     ) -> Result<String> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         resolve_recurrence_conflict(&mut conn, workspace, series_id, field, value).await
     }
 }

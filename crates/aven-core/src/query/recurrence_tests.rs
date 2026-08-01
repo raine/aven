@@ -39,7 +39,7 @@ async fn setup() -> (tempfile::TempDir, crate::db::Database, Workspace) {
         .await
         .unwrap();
     let workspace = {
-        let mut conn = database.acquire().await.unwrap();
+        let mut conn = database.acquire_writer().await.unwrap();
         crate::test_support::ensure_default_workspace(&mut conn)
             .await
             .unwrap()
@@ -69,7 +69,7 @@ async fn resolve_at(
     outcome: RecurrenceOutcome,
     resolved_at: DateTime<Utc>,
 ) -> crate::operations::RecurrenceResolveOutcome {
-    let mut conn = database.acquire().await.unwrap();
+    let mut conn = database.acquire_writer().await.unwrap();
     let mut tx = crate::db::begin_immediate(&mut conn).await.unwrap();
     let result = crate::operations::recurrence::resolve_recurrence_occurrence_in_transaction(
         &mut tx,
@@ -90,7 +90,7 @@ async fn stop_at(
     series_id: &RecurrenceSeriesId,
     stopped_at: DateTime<Utc>,
 ) {
-    let mut conn = database.acquire().await.unwrap();
+    let mut conn = database.acquire_writer().await.unwrap();
     crate::operations::recurrence::stop_recurrence_series(
         &mut conn,
         workspace,
@@ -108,7 +108,7 @@ async fn list(
     filters: TaskFilters,
     mode: TaskQueryMode,
 ) -> Vec<crate::query::TaskListItem> {
-    let mut conn = database.acquire().await.unwrap();
+    let mut conn = database.acquire_writer().await.unwrap();
     super::super::tasks::list_task_items_in_workspace(
         &mut conn,
         &workspace.id,
@@ -257,7 +257,7 @@ async fn recurring_series_list_statement_shapes_stay_bounded_with_history() {
     let (_temp, database, workspace) = setup().await;
     let created = create(&database, &workspace, "Bounded review", 1).await;
     let mut task_id = created.task.id;
-    let mut conn = database.acquire().await.unwrap();
+    let mut conn = database.acquire_writer().await.unwrap();
     for day in 1..=24 {
         let mut tx = crate::db::begin_immediate(&mut conn).await.unwrap();
         let outcome = crate::operations::recurrence::resolve_recurrence_occurrence_in_transaction(
@@ -329,7 +329,7 @@ async fn reconciliation_keeps_one_active_row_and_hydrates_in_batch() {
     assert_eq!(second.changed, 0);
     assert!(!first.incomplete);
 
-    let mut conn = database.acquire().await.unwrap();
+    let mut conn = database.acquire_writer().await.unwrap();
     let projected: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM recurrence_occurrences
          WHERE workspace_id = ? AND series_id = ? AND projection_state = 'projected'",
@@ -395,7 +395,7 @@ async fn paused_and_archived_tasks_leave_all_open_paths_but_stopped_final_stays_
         .await
         .is_empty()
     );
-    let mut conn = database.acquire().await.unwrap();
+    let mut conn = database.acquire_writer().await.unwrap();
     let search = super::super::search::search_task_items_in_workspace(
         &mut conn,
         &workspace.id,
@@ -611,7 +611,7 @@ async fn history_combines_task_outcomes_archived_and_derived_rows() {
     assert_eq!(expanded.len(), 1);
     assert!(expanded[0].recurrence_group.is_none());
 
-    let mut conn = database.acquire().await.unwrap();
+    let mut conn = database.acquire_writer().await.unwrap();
     let sidebar = super::super::sidebar::sidebar_counts_for_scope_in_workspace(
         &mut conn,
         &workspace.id,
@@ -679,7 +679,7 @@ async fn refs_and_recent_actions_resolve_and_group_successor_projection() {
     )
     .await;
     let successor = resolved.successor.unwrap();
-    let mut conn = database.acquire().await.unwrap();
+    let mut conn = database.acquire_writer().await.unwrap();
     let actions = super::super::recent_actions::list_recent_actions_in_workspace(
         &mut conn,
         &workspace.id,
@@ -707,7 +707,7 @@ async fn recurrence_hydration_statement_shapes_stay_bounded() {
     let (_temp, database, workspace) = setup().await;
     let created = create(&database, &workspace, "batch fixture", 1).await;
     let mut task_id = created.task.id;
-    let mut conn = database.acquire().await.unwrap();
+    let mut conn = database.acquire_writer().await.unwrap();
     for day in 1..=24 {
         let mut tx = crate::db::begin_immediate(&mut conn).await.unwrap();
         let outcome = crate::operations::recurrence::resolve_recurrence_occurrence_in_transaction(

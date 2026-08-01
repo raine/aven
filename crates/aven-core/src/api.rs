@@ -201,7 +201,7 @@ impl Store {
         let workspace = self.workspace(workspace_id).await?;
         let mut connection = self
             .database
-            .acquire()
+            .acquire_reader()
             .await
             .map_err(Error::from_internal)?;
         crate::refs::get_task_in_workspace(&mut connection, &workspace, task_id)
@@ -528,7 +528,7 @@ impl Store {
         };
         let mut connection = self
             .database
-            .acquire()
+            .acquire_writer()
             .await
             .map_err(Error::from_internal)?;
         crate::operations::resolve_conflict_choice(

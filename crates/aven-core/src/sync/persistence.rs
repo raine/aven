@@ -57,7 +57,7 @@ pub struct ServerSyncResult {
 
 impl Database {
     pub async fn sync_persistence_status(&self) -> Result<SyncPersistenceStatus> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let pending_changes =
             sqlx::query_scalar("SELECT count(*) FROM changes WHERE server_seq IS NULL")
                 .fetch_one(&mut *conn)
@@ -81,17 +81,17 @@ impl Database {
     }
 
     pub async fn begin_sync_attempt(&self, attempted_at: String) -> Result<()> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         set_meta(&mut conn, "sync_last_attempt_at", &attempted_at).await
     }
 
     pub async fn record_sync_error(&self, error: String) -> Result<()> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         set_meta(&mut conn, "sync_last_error", &error).await
     }
 
     pub(super) async fn pending_sync_change_count(&self) -> Result<i64> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         Ok(
             sqlx::query_scalar("SELECT COUNT(*) FROM changes WHERE server_seq IS NULL")
                 .fetch_one(&mut *conn)
@@ -102,7 +102,7 @@ impl Database {
     pub(super) async fn pending_blob_contracts(
         &self,
     ) -> Result<Vec<super::wire::BlobUploadContract>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         let changes = load_unsynced_changes(&mut conn, i64::MAX as usize).await?;
         super::blob::unique_blob_contracts(&changes)
     }
@@ -113,7 +113,7 @@ impl Database {
         push_limit: usize,
         pull_limit: u32,
     ) -> Result<ClientSyncPage> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         validate_sync_server(&mut conn, &server).await?;
         let client_id = get_meta(&mut conn, "client_id")
             .await?
@@ -147,7 +147,7 @@ impl Database {
             &request_change_ids,
             &page.response,
         )?;
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         apply_sync_response(&mut conn, page).await
     }
 
@@ -173,7 +173,7 @@ impl Database {
         for change in &page.request.changes {
             super::wire::validate_pushed_change(change)?;
         }
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let assign_started = Instant::now();
         let (accepted_count, push_acks) =
             assign_server_sequences(&mut conn, page.request.changes, blob_dir).await?;

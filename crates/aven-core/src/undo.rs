@@ -214,7 +214,7 @@ impl Database {
         task_id: &crate::ids::TaskId,
         field: &str,
     ) -> Result<String> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         task_field_value(&mut conn, workspace_id, task_id, field).await
     }
 
@@ -223,7 +223,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         task_id: &crate::ids::TaskId,
     ) -> Result<Vec<String>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         task_labels(&mut conn, workspace_id, task_id).await
     }
 
@@ -232,7 +232,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         task_id: &crate::ids::TaskId,
     ) -> Result<TaskUndoSnapshot> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         task_snapshot(&mut conn, workspace_id, task_id).await
     }
 
@@ -242,12 +242,12 @@ impl Database {
         task_id: &crate::ids::TaskId,
         field: &str,
     ) -> Result<i64> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         conflict_row_id(&mut conn, workspace_id, task_id, field).await
     }
 
     pub async fn clear_pending_tui_undo_entries(&self) -> Result<()> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         clear_pending_tui_undo_entries(&mut conn).await
     }
 
@@ -255,7 +255,7 @@ impl Database {
         &self,
         workspace_id: &WorkspaceId,
     ) -> Result<Option<UndoOutcome>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         apply_latest_tui_undo(&mut conn, workspace_id).await
     }
 }

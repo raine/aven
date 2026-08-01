@@ -29,7 +29,7 @@ impl Database {
         epic_id: &TaskId,
         undo: UndoContext,
     ) -> Result<EpicLinkOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let outcome =
             add_task_to_epic_in_transaction(&mut tx, workspace, child_id, epic_id).await?;
@@ -71,7 +71,7 @@ impl Database {
         epic_id: &TaskId,
         undo: UndoContext,
     ) -> Result<EpicLinkOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let outcome =
             remove_task_from_epic_in_transaction(&mut tx, workspace, child_id, epic_id).await?;

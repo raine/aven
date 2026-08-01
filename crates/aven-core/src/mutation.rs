@@ -24,7 +24,7 @@ impl Database {
         task: &Task,
         status: &str,
     ) -> Result<Task> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let task = set_status(&mut tx, workspace, task, status).await?;
         tx.commit().await?;
@@ -37,7 +37,7 @@ impl Database {
         task: &Task,
         priority: &str,
     ) -> Result<Task> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let task = set_priority(&mut tx, workspace, task, priority).await?;
         tx.commit().await?;
@@ -50,7 +50,7 @@ impl Database {
         task: &Task,
         reverse: bool,
     ) -> Result<Task> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let current = get_task_in_workspace(&mut tx, workspace, &task.id).await?;
         let task = cycle_priority(&mut tx, workspace, &current, reverse).await?;
@@ -64,7 +64,7 @@ impl Database {
         task: &Task,
         deleted: bool,
     ) -> Result<Task> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let task = set_deleted(&mut tx, workspace, task, deleted).await?;
         tx.commit().await?;
@@ -78,7 +78,7 @@ impl Database {
         field: &str,
         value: &str,
     ) -> Result<bool> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let changed = set_task_field(&mut tx, workspace, task_id, field, value).await?;
         tx.commit().await?;
@@ -91,7 +91,7 @@ impl Database {
         task_id: &crate::ids::TaskId,
         project: &Project,
     ) -> Result<bool> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let changed = set_task_project(&mut tx, workspace, task_id, project).await?;
         tx.commit().await?;
@@ -103,7 +103,7 @@ impl Database {
         workspace: &Workspace,
         updates: &[(crate::ids::TaskId, String, String)],
     ) -> Result<Vec<bool>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let mut outcomes = Vec::with_capacity(updates.len());
         for (task_id, field, value) in updates {
@@ -119,7 +119,7 @@ impl Database {
         tasks: &[Task],
         reverse: bool,
     ) -> Result<Vec<Task>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let mut outcomes = Vec::with_capacity(tasks.len());
         for task in tasks {

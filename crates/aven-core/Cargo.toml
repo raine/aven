@@ -26,7 +26,7 @@ sha2 = "0.11"
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
 tempfile = "3.14"
 tar = "0.4"
-tokio = { version = "1.45", features = ["macros", "rt", "sync"] }
+tokio = { version = "1.45", features = ["macros", "rt", "sync", "time"] }
 tracing = "0.1"
 url = "2.5"
 zstd = "0.13"

@@ -29,7 +29,7 @@ pub(crate) struct LabelResolution {
 
 impl Database {
     pub async fn label_usage(&self, workspace_id: &WorkspaceId) -> Result<Vec<LabelUsage>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         let rows = sqlx::query(
             "SELECT l.name,
                     (SELECT count(*) FROM task_labels tl
@@ -59,7 +59,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         search: Option<&str>,
     ) -> Result<Vec<String>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         list_labels_in_workspace(&mut conn, workspace_id, search).await
     }
 
@@ -68,7 +68,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         labels: &[String],
     ) -> Result<Vec<String>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         resolve_labels_in_workspace(&mut conn, workspace_id, labels).await
     }
 }

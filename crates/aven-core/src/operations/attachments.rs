@@ -588,7 +588,7 @@ impl Database {
         task_id: &TaskId,
         input: AttachmentAddInput,
     ) -> Result<AttachmentAddOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         add_task_attachment(&mut conn, workspace, blob_dir, policy, task_id, input).await
     }
 
@@ -601,7 +601,7 @@ impl Database {
         created_at: String,
         input: TaskAttachmentAddInput,
     ) -> Result<AttachmentAddOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         add_ordered_task_attachment(
             &mut conn, workspace, blob_dir, policy, task_id, created_at, input,
         )
@@ -613,7 +613,7 @@ impl Database {
         workspace: &Workspace,
         attachment_id: &str,
     ) -> Result<AttachmentOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         attachment_by_id(&mut conn, workspace, attachment_id).await
     }
 
@@ -622,7 +622,7 @@ impl Database {
         workspace: &Workspace,
         attachment_id: &str,
     ) -> Result<AttachmentOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         delete_task_attachment(&mut conn, workspace, attachment_id).await
     }
 
@@ -632,7 +632,7 @@ impl Database {
         task_id: &TaskId,
         include_deleted: bool,
     ) -> Result<Vec<AttachmentReadItem>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         attachment_read_items_by_task(
             &mut conn,
             workspace_id.as_str(),
@@ -648,7 +648,7 @@ impl Database {
         policy: crate::attachments::lifecycle::LifecyclePolicy,
         apply: bool,
     ) -> Result<crate::attachments::lifecycle::PruneSummary> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         crate::attachments::lifecycle::prune(
             &mut conn,
             blob_dir,
@@ -660,7 +660,7 @@ impl Database {
     }
 
     pub async fn acquire_attachment_lease(&self, sha256: &str, purpose: &str) -> Result<String> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         crate::attachments::lifecycle::acquire_lease(
             &mut conn,
             sha256,
@@ -675,7 +675,7 @@ impl Database {
         workspace: &Workspace,
         attachment_id: &str,
     ) -> Result<AttachmentReadLease> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let row = sqlx::query(
             "SELECT ta.sha256, ta.media_type, bi.available
              FROM task_attachments ta
@@ -709,7 +709,7 @@ impl Database {
     }
 
     pub async fn release_attachment_lease(&self, lease_id: &str) -> Result<()> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         crate::attachments::lifecycle::release_lease(&mut conn, lease_id).await
     }
 
@@ -718,7 +718,7 @@ impl Database {
         blob_dir: &Path,
         policy: crate::attachments::lifecycle::LifecyclePolicy,
     ) -> Result<crate::attachments::lifecycle::LifecycleReport> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         crate::attachments::lifecycle::lifecycle_report(
             &mut conn,
             blob_dir,

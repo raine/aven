@@ -36,17 +36,17 @@ impl Default for Workspace {
 
 impl Database {
     pub async fn list_workspaces(&self) -> Result<Vec<Workspace>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         list_workspaces(&mut conn).await
     }
 
     pub async fn find_workspace(&self, name_or_key: &str) -> Result<Option<Workspace>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         find_workspace(&mut conn, name_or_key).await
     }
 
     pub async fn workspace_for_id(&self, workspace_id: &WorkspaceId) -> Result<Workspace> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         workspace_for_id(&mut conn, workspace_id).await
     }
 
@@ -60,12 +60,12 @@ impl Database {
         name_or_key: &str,
         source: &str,
     ) -> Result<Workspace> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         resolve_required_workspace(&mut conn, name_or_key, source).await
     }
 
     pub async fn create_workspace(&self, name: &str) -> Result<Workspace> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let workspace = create_workspace(&mut tx, name).await?;
         tx.commit().await?;
@@ -73,7 +73,7 @@ impl Database {
     }
 
     pub async fn rename_workspace(&self, workspace_ref: &str, new_name: &str) -> Result<Workspace> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let workspace = rename_workspace(&mut tx, workspace_ref, new_name).await?;
         tx.commit().await?;

@@ -56,7 +56,7 @@ pub struct ProjectRenameOutcome {
 
 impl Database {
     pub async fn create_label(&self, workspace: &Workspace, name: &str) -> Result<LabelOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let outcome = match create_label_operation(&mut tx, workspace, name).await {
             Ok(outcome) => outcome,
@@ -74,7 +74,7 @@ impl Database {
         workspace: &Workspace,
         name: &str,
     ) -> Result<LabelOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let outcome = create_label_operation(&mut tx, workspace, name).await?;
         if outcome.created {
@@ -100,7 +100,7 @@ impl Database {
         workspace: &Workspace,
         name: &str,
     ) -> Result<LabelDeleteOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         delete_label_operation(&mut conn, workspace, name, false).await
     }
 
@@ -109,7 +109,7 @@ impl Database {
         workspace: &Workspace,
         name: &str,
     ) -> Result<LabelDeleteOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         delete_label_operation(&mut conn, workspace, name, true).await
     }
 
@@ -119,7 +119,7 @@ impl Database {
         name: &str,
         new_name: &str,
     ) -> Result<LabelRenameOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         rename_label_operation(&mut conn, workspace, name, new_name, true).await
     }
 
@@ -128,7 +128,7 @@ impl Database {
         workspace: &Workspace,
         name: &str,
     ) -> Result<ProjectOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let outcome = match create_project_operation(&mut tx, workspace, name).await {
             Ok(outcome) => outcome,
@@ -146,7 +146,7 @@ impl Database {
         workspace: &Workspace,
         name: &str,
     ) -> Result<ProjectOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let outcome = create_project_operation(&mut tx, workspace, name).await?;
         if outcome.created {
@@ -174,7 +174,7 @@ impl Database {
         workspace: &Workspace,
         project: &str,
     ) -> Result<ProjectDeleteOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         delete_project_operation(&mut conn, workspace, project).await
     }
 
@@ -185,7 +185,7 @@ impl Database {
         new_name: &str,
         prefix: Option<&str>,
     ) -> Result<ProjectRenameOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         rename_project_operation(&mut conn, workspace, project, new_name, prefix).await
     }
 
@@ -196,7 +196,7 @@ impl Database {
         new_name: &str,
         prefix: Option<&str>,
     ) -> Result<ProjectRenameOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let (outcome, ()) = rename_project_operation_before_commit(
             &mut conn,
             workspace,
@@ -221,7 +221,7 @@ impl Database {
     where
         F: FnOnce(&ProjectRenameOutcome) -> Result<T>,
     {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         rename_project_operation_before_commit(
             &mut conn,
             workspace,

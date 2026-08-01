@@ -315,7 +315,7 @@ pub struct MetaRow {
 
 impl Database {
     pub async fn export_data(&self, exported_at: String) -> Result<AvenExport> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let schema_version = db::current_schema_version(&mut conn).await?;
         Ok(AvenExport {
             format: EXPORT_FORMAT.to_string(),
@@ -349,13 +349,13 @@ impl Database {
     }
 
     pub async fn validate_import_data(&self, export: &AvenExport) -> Result<()> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         ensure_supported_export(&mut conn, export).await?;
         validate_export_snapshot(export)
     }
 
     pub async fn import_data(&self, export: &AvenExport) -> Result<IntegrityReport> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         ensure_supported_export(&mut conn, export).await?;
         validate_export_snapshot(export)?;
         let target_client_id = db::get_meta(&mut conn, "client_id")
@@ -370,7 +370,7 @@ impl Database {
     }
 
     pub async fn database_integrity_report(&self) -> Result<IntegrityReport> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         database_integrity_report_with_connection(&mut conn).await
     }
 
@@ -379,17 +379,12 @@ impl Database {
         blob_dir: &Path,
         deep: bool,
     ) -> Result<Vec<IntegrityCheck>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         integrity::attachment_integrity_checks(&mut conn, blob_dir, deep).await
     }
 
-    pub async fn create_backup_archive(
-        &self,
-        db_path: &Path,
-        blob_dir: &Path,
-        output: &Path,
-    ) -> Result<()> {
-        let mut conn = self.acquire().await?;
+    pub async fn create_backup_archive(&self, blob_dir: &Path, output: &Path) -> Result<()> {
+        let mut conn = self.acquire_writer().await?;
         let hashes: Vec<String> = sqlx::query_scalar(
             "SELECT sha256 FROM blob_inventory WHERE available = 1 ORDER BY sha256",
         )
@@ -415,8 +410,7 @@ impl Database {
                 }
             }
         }
-        let backup_result =
-            archive::create_backup_archive(&mut conn, db_path, blob_dir, output).await;
+        let backup_result = archive::create_backup_archive(&mut conn, blob_dir, output).await;
         for lease in leases {
             crate::attachments::lifecycle::release_lease(&mut conn, &lease).await?;
         }

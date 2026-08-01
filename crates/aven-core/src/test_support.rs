@@ -26,7 +26,7 @@ pub fn task_id(value: &str) -> TaskId {
 }
 
 pub async fn acquire(database: &Database) -> Result<PoolConnection<Sqlite>> {
-    database.acquire().await
+    database.acquire_reader().await
 }
 
 pub async fn ensure_default_workspace(conn: &mut SqliteConnection) -> Result<Workspace> {
@@ -152,6 +152,6 @@ pub async fn test_conn() -> (tempfile::TempDir, PoolConnection<Sqlite>) {
     let database = Database::open(&temp.path().join("test.sqlite"))
         .await
         .unwrap();
-    let conn = database.acquire().await.unwrap();
+    let conn = database.acquire_reader().await.unwrap();
     (temp, conn)
 }

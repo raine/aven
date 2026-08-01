@@ -92,7 +92,7 @@ impl Database {
         at: DateTime<Utc>,
     ) -> Result<RecurrenceReconciliation> {
         let (workspace, candidates, incomplete) = {
-            let mut conn = self.acquire().await?;
+            let mut conn = self.acquire_reader().await?;
             let workspace = crate::workspaces::workspace_for_id(&mut conn, workspace_id).await?;
             let (candidates, incomplete) =
                 recurrence::recurrence_reconciliation_candidates(&mut conn, workspace_id, at)
@@ -145,7 +145,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         query: RecurrenceSeriesListQuery,
     ) -> Result<Vec<RecurrenceSeriesListItem>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         recurrence::list_recurrence_series_view(&mut conn, workspace_id, &query).await
     }
 
@@ -166,7 +166,7 @@ impl Database {
     ) -> Result<Vec<RecurrenceSeriesSummary>> {
         self.reconcile_recurrence_reports_at(workspace_id, at)
             .await?;
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         recurrence::list_recurrence_series(&mut conn, workspace_id, at).await
     }
 
@@ -192,7 +192,7 @@ impl Database {
         series_id: &RecurrenceSeriesId,
         at: DateTime<Utc>,
     ) -> Result<RecurrenceSeriesDetail> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         recurrence::recurrence_series_detail(&mut conn, workspace_id, series_id, at).await
     }
 
@@ -207,7 +207,7 @@ impl Database {
         validate_recurrence_history_limit(limit)?;
         self.reconcile_recurrence_reports_at(workspace_id, at)
             .await?;
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         recurrence::recurrence_history(&mut conn, workspace_id, series_id, at, offset, limit).await
     }
 
@@ -272,7 +272,7 @@ impl Database {
         &self,
         workspace_id: &WorkspaceId,
     ) -> Result<Vec<ProjectListItem>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         list_project_items_in_workspace(&mut conn, workspace_id).await
     }
 
@@ -301,7 +301,7 @@ impl Database {
         sort: TaskSort,
         direction: SortDirection,
     ) -> Result<Vec<TaskListItem>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         list_task_items_in_workspace(&mut conn, workspace_id, filters, mode, sort, direction).await
     }
 
@@ -315,7 +315,7 @@ impl Database {
         limit: Option<usize>,
     ) -> Result<Vec<TaskListItem>> {
         self.reconcile_recurrence_reports(workspace_id).await?;
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         list_task_summary_items_in_workspace(
             &mut conn,
             workspace_id,
@@ -338,7 +338,7 @@ impl Database {
         _display_refs: &DisplayRefContext,
     ) -> Result<Vec<TaskListItem>> {
         self.reconcile_recurrence_reports(workspace_id).await?;
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         let refreshed_display_refs =
             DisplayRefContext::for_workspace(&mut conn, workspace_id).await?;
         list_task_items_with_display_refs(
@@ -372,7 +372,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         project_key: Option<&str>,
     ) -> Result<SidebarCounts> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         sidebar_counts_for_scope_in_workspace(&mut conn, workspace_id, project_key).await
     }
 
@@ -395,7 +395,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         project_scope: Option<&str>,
     ) -> Result<Vec<RecentActionItem>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         list_recent_actions_in_workspace(&mut conn, workspace_id, project_scope).await
     }
 
@@ -406,7 +406,7 @@ impl Database {
     ) -> Result<Vec<TaskSearchResult>> {
         validate_search_limit(query.limit)?;
         self.reconcile_recurrence_reports(workspace_id).await?;
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         search_task_items_in_workspace(&mut conn, workspace_id, query).await
     }
 
@@ -417,7 +417,7 @@ impl Database {
     ) -> Result<Vec<TaskSearchResult>> {
         validate_search_limit(query.limit)?;
         self.reconcile_recurrence_reports(workspace_id).await?;
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         search_task_occurrence_items_in_workspace(&mut conn, workspace_id, query).await
     }
 
@@ -442,14 +442,14 @@ impl Database {
         query: TaskSearchQuery,
     ) -> Result<TaskSearchPreviewResultSet> {
         validate_search_limit(query.limit)?;
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         search_task_preview_set_in_workspace(&mut conn, workspace_id, query).await
     }
 
     pub async fn task_detail(&self, task: &Task) -> Result<TaskDetail> {
         self.reconcile_recurrence_reports(&task.workspace_id)
             .await?;
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         task_detail(&mut conn, task).await
     }
 
@@ -460,7 +460,7 @@ impl Database {
     ) -> Result<TaskDetail> {
         self.reconcile_recurrence_reports(&task.workspace_id)
             .await?;
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         task_detail_with_display_refs(&mut conn, task, display_refs).await
     }
 
@@ -470,7 +470,7 @@ impl Database {
         field: &str,
         value: &str,
     ) -> Result<String> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         conflict_display_value(&mut conn, workspace_id, field, value).await
     }
 
@@ -479,7 +479,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         task_id: &TaskId,
     ) -> Result<TaskDependencySummary> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         task_dependency_summary(&mut conn, workspace_id, task_id).await
     }
 
@@ -487,17 +487,17 @@ impl Database {
         &self,
         workspace_id: &WorkspaceId,
     ) -> Result<WorkspaceTaskCounts> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         workspace_task_counts(&mut conn, workspace_id).await
     }
 
     pub async fn unresolved_conflict_count(&self) -> Result<i64> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         unresolved_conflict_count(&mut conn).await
     }
 
     pub async fn sync_history_stats(&self) -> Result<SyncHistoryStats> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         sync_history_stats(&mut conn).await
     }
 
@@ -505,7 +505,7 @@ impl Database {
         &self,
         workspace: &crate::workspaces::Workspace,
     ) -> Result<DatabaseStats> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         database_stats::database_stats(&mut conn, workspace).await
     }
 }

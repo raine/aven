@@ -29,7 +29,7 @@ impl Database {
         depends_on_id: &TaskId,
         undo: UndoContext,
     ) -> Result<DependencyOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let outcome =
             add_task_dependency_in_transaction(&mut tx, workspace, task_id, depends_on_id).await?;
@@ -70,7 +70,7 @@ impl Database {
         depends_on_id: &TaskId,
         undo: UndoContext,
     ) -> Result<DependencyOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let outcome =
             remove_task_dependency_in_transaction(&mut tx, workspace, task_id, depends_on_id)

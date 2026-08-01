@@ -22,9 +22,7 @@ pub(crate) async fn cmd_backup(
         None => db::default_backup_path(db_path, "manual")?,
     };
     let blob_dir = app_config::resolve_blob_dir(db_path, config)?;
-    database
-        .create_backup_archive(db_path, &blob_dir, &output)
-        .await?;
+    database.create_backup_archive(&blob_dir, &output).await?;
     let bytes = fs::metadata(&output)
         .with_context(|| format!("could not stat {}", output.display()))?
         .len();
@@ -97,7 +95,7 @@ pub(crate) async fn cmd_import(
         bail!("error import-blobs-included-unsupported");
     }
     let safety = db::default_sqlite_backup_path(db_path, "before-import")?;
-    db::backup_database(db_path, &safety)?;
+    db::backup_database(db_path, &safety).await?;
     database.import_data(&export).await?;
     println!(
         "imported path={} safety_backup={} workspaces={} tasks={}",

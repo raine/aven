@@ -1,8 +1,9 @@
 use crate::ids::WorkspaceId;
 use std::fs;
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
@@ -10,6 +11,7 @@ use chrono::{NaiveDate, NaiveTime};
 use serde_json::Value;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
 use sqlx::{Connection as _, Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
+use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::choices::{TaskPriority, TaskSource, TaskStatus};
 use crate::error::CoreError;
@@ -26,17 +28,39 @@ use crate::workspaces::ensure_default_workspace;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 const MIGRATION_BACKUP_KEEP: usize = 20;
+const FILE_DATABASE_CONNECTIONS: u32 = 5;
 
 #[derive(Clone)]
 pub struct Database {
     pool: SqlitePool,
+    writer: Arc<Mutex<()>>,
     path: PathBuf,
+}
+
+pub(crate) struct WriterConnection {
+    connection: sqlx::pool::PoolConnection<Sqlite>,
+    _guard: OwnedMutexGuard<()>,
+}
+
+impl Deref for WriterConnection {
+    type Target = SqliteConnection;
+
+    fn deref(&self) -> &Self::Target {
+        &self.connection
+    }
+}
+
+impl DerefMut for WriterConnection {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.connection
+    }
 }
 
 impl Database {
     pub async fn open(path: &Path) -> Result<Self> {
         Ok(Self {
             pool: open_db(path).await?,
+            writer: Arc::new(Mutex::new(())),
             path: path.to_path_buf(),
         })
     }
@@ -50,7 +74,7 @@ impl Database {
     }
 
     pub async fn meta(&self, key: &str) -> Result<Option<String>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         get_meta(&mut conn, key).await
     }
 
@@ -60,12 +84,21 @@ impl Database {
         task_id: &crate::ids::TaskId,
         field: &str,
     ) -> Result<bool> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         conflict_exists(&mut conn, workspace_id, task_id, field).await
     }
 
-    pub(crate) async fn acquire(&self) -> Result<sqlx::pool::PoolConnection<Sqlite>> {
+    pub(crate) async fn acquire_reader(&self) -> Result<sqlx::pool::PoolConnection<Sqlite>> {
         Ok(self.pool.acquire().await?)
+    }
+
+    pub(crate) async fn acquire_writer(&self) -> Result<WriterConnection> {
+        let guard = self.writer.clone().lock_owned().await;
+        let connection = self.pool.acquire().await?;
+        Ok(WriterConnection {
+            connection,
+            _guard: guard,
+        })
     }
 }
 
@@ -81,7 +114,7 @@ pub(crate) async fn open_db(path: &Path) -> Result<SqlitePool> {
         .journal_mode(SqliteJournalMode::Wal)
         .busy_timeout(Duration::from_secs(5));
     let pool = SqlitePoolOptions::new()
-        .max_connections(1)
+        .max_connections(database_connection_limit(path))
         .connect_with(options)
         .await
         .with_context(|| format!("could not open {}", path.display()))?;
@@ -91,6 +124,15 @@ pub(crate) async fn open_db(path: &Path) -> Result<SqlitePool> {
     let mut conn = pool.acquire().await?;
     ensure_default_workspace(&mut conn).await?;
     Ok(pool)
+}
+
+fn database_connection_limit(path: &Path) -> u32 {
+    let path = path.to_string_lossy();
+    if path == ":memory:" || path.starts_with("file::memory:") || path.contains("mode=memory") {
+        1
+    } else {
+        FILE_DATABASE_CONNECTIONS
+    }
 }
 
 async fn backup_before_pending_migrations(
@@ -103,7 +145,8 @@ async fn backup_before_pending_migrations(
         return Ok(());
     }
     let backup_path = migration_backup_path(path)?;
-    run_sqlite_backup(path, &backup_path)?;
+    let mut conn = pool.acquire().await?;
+    backup_database_with_connection(&mut conn, &backup_path).await?;
     prune_migration_backups(path)?;
     Ok(())
 }
@@ -162,12 +205,24 @@ fn backup_path_with_extension(path: &Path, reason: &str, extension: &str) -> Res
     )))
 }
 
-pub fn backup_database(source: &Path, backup: &Path) -> Result<()> {
+pub async fn backup_database(source: &Path, backup: &Path) -> Result<()> {
+    if !source.is_file() {
+        bail!("could not open source {}", source.display());
+    }
     if let Some(parent) = backup.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("could not create {}", parent.display()))?;
     }
-    run_sqlite_backup(source, backup)
+    let mut conn = SqliteConnection::connect_with(
+        &SqliteConnectOptions::new()
+            .filename(source)
+            .read_only(true)
+            .foreign_keys(true)
+            .busy_timeout(Duration::from_secs(5)),
+    )
+    .await
+    .with_context(|| format!("could not open source {}", source.display()))?;
+    backup_database_with_connection(&mut conn, backup).await
 }
 
 pub fn wal_path(path: &Path) -> PathBuf {
@@ -180,8 +235,7 @@ pub fn shm_path(path: &Path) -> PathBuf {
 
 pub async fn restore_database_file(target: &Path, source: &Path) -> Result<PathBuf> {
     validate_sqlite_source(source).await?;
-    let safety = default_sqlite_backup_path(target, "before-restore")?;
-    backup_database(target, &safety)?;
+    let safety = create_restore_safety_backup(target).await?;
     let staging = target.with_extension("restore-staging");
     if staging.exists() {
         fs::remove_file(&staging)
@@ -202,6 +256,24 @@ pub async fn restore_database_file(target: &Path, source: &Path) -> Result<PathB
     }
     fs::rename(&staging, target)
         .with_context(|| format!("could not replace {}", target.display()))?;
+    Ok(safety)
+}
+
+pub(crate) async fn create_restore_safety_backup(target: &Path) -> Result<PathBuf> {
+    let safety = default_sqlite_backup_path(target, "before-restore")?;
+    if target.exists() {
+        backup_database(target, &safety).await?;
+    } else {
+        SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(&safety)
+                .create_if_missing(true),
+        )
+        .await
+        .with_context(|| format!("could not create {}", safety.display()))?
+        .close()
+        .await?;
+    }
     Ok(safety)
 }
 
@@ -230,26 +302,25 @@ fn backup_timestamp() -> Result<u64> {
         .as_secs())
 }
 
-fn run_sqlite_backup(source: &Path, backup: &Path) -> Result<()> {
-    let backup_sql = format!(".backup '{}'", sqlite_single_quoted(backup));
-    let output = Command::new("sqlite3")
-        .arg(source)
-        .arg(backup_sql)
-        .output()
-        .context("could not run sqlite3 for backup")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "sqlite3 backup failed status={} stderr={}",
-            output.status,
-            stderr.trim()
-        );
-    }
+pub(crate) async fn backup_database_with_connection(
+    conn: &mut SqliteConnection,
+    backup: &Path,
+) -> Result<()> {
+    let parent = backup.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent).with_context(|| format!("could not create {}", parent.display()))?;
+    let staging_dir = tempfile::Builder::new()
+        .prefix(".aven-sqlite-backup-")
+        .tempdir_in(parent)
+        .with_context(|| format!("could not create backup staging in {}", parent.display()))?;
+    let staging = staging_dir.path().join("database.sqlite");
+    sqlx::query("VACUUM INTO ?")
+        .bind(staging.display().to_string())
+        .execute(&mut *conn)
+        .await
+        .with_context(|| format!("could not back up database to {}", backup.display()))?;
+    fs::rename(&staging, backup)
+        .with_context(|| format!("could not replace {}", backup.display()))?;
     Ok(())
-}
-
-fn sqlite_single_quoted(path: &Path) -> String {
-    path.display().to_string().replace('\'', "''")
 }
 
 fn prune_migration_backups(path: &Path) -> Result<()> {
@@ -768,6 +839,181 @@ pub(crate) async fn conflict_exists(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn wal_readers_progress_while_writes_remain_serialized() {
+        let temp = tempfile::tempdir().unwrap();
+        let database = Database::open(&temp.path().join("concurrency.sqlite"))
+            .await
+            .unwrap();
+        let mut writer = database.acquire_writer().await.unwrap();
+        let mut tx = begin_immediate(&mut writer).await.unwrap();
+        set_meta(&mut tx, "local_seq", "1").await.unwrap();
+
+        let reader_database = database.clone();
+        let reader = tokio::spawn(async move {
+            let mut conn = reader_database.acquire_reader().await.unwrap();
+            get_meta(&mut conn, "local_seq").await.unwrap()
+        });
+        let observed = tokio::time::timeout(Duration::from_secs(1), reader)
+            .await
+            .expect("reader should not wait for the writer")
+            .unwrap();
+        assert_eq!(observed.as_deref(), Some("0"));
+
+        let second_writer_database = database.clone();
+        let second_writer = tokio::spawn(async move {
+            let mut conn = second_writer_database.acquire_writer().await.unwrap();
+            let mut tx = begin_immediate(&mut conn).await.unwrap();
+            set_meta(&mut tx, "local_seq", "2").await.unwrap();
+            tx.commit().await.unwrap();
+        });
+        tokio::task::yield_now().await;
+        assert!(!second_writer.is_finished());
+
+        tx.commit().await.unwrap();
+        drop(writer);
+        tokio::time::timeout(Duration::from_secs(1), second_writer)
+            .await
+            .expect("second writer should proceed after the first commits")
+            .unwrap();
+        assert_eq!(
+            database.meta("local_seq").await.unwrap().as_deref(),
+            Some("2")
+        );
+    }
+
+    #[tokio::test]
+    async fn in_memory_database_keeps_one_coherent_connection() {
+        let database = Database::open(Path::new(":memory:")).await.unwrap();
+        assert!(database.meta("client_id").await.unwrap().is_some());
+        let mut writer = database.acquire_writer().await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM workspaces")
+            .fetch_one(&mut *writer)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn in_process_backup_captures_wal_and_replaces_destination() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.sqlite");
+        let backup = temp.path().join("backup.sqlite");
+        let database = Database::open(&source).await.unwrap();
+        let mut writer = database.acquire_writer().await.unwrap();
+        let mut tx = begin_immediate(&mut writer).await.unwrap();
+        set_meta(&mut tx, "backup-test", "first").await.unwrap();
+        tx.commit().await.unwrap();
+        drop(writer);
+        assert!(wal_path(&source).exists());
+
+        fs::write(&backup, b"existing destination").unwrap();
+        backup_database(&source, &backup).await.unwrap();
+        let mut backup_conn = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(&backup)
+                .read_only(true),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            get_meta(&mut backup_conn, "backup-test")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("first")
+        );
+        drop(backup_conn);
+
+        let mut writer = database.acquire_writer().await.unwrap();
+        set_meta(&mut writer, "backup-test", "second")
+            .await
+            .unwrap();
+        drop(writer);
+        backup_database(&source, &backup).await.unwrap();
+        let mut backup_conn = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(&backup)
+                .read_only(true),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            get_meta(&mut backup_conn, "backup-test")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("second")
+        );
+    }
+
+    #[tokio::test]
+    async fn in_process_backup_rejects_missing_source() {
+        let temp = tempfile::tempdir().unwrap();
+        let backup = temp.path().join("backup.sqlite");
+        let error = backup_database(&temp.path().join("missing.sqlite"), &backup)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("could not open source"));
+        assert!(!backup.exists());
+    }
+
+    #[tokio::test]
+    async fn restore_replaces_sidecars_and_preserves_safety_copy() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target.sqlite");
+        let source = temp.path().join("source.sqlite");
+        let target_database = Database::open(&target).await.unwrap();
+        let source_database = Database::open(&source).await.unwrap();
+        let mut target_writer = target_database.acquire_writer().await.unwrap();
+        set_meta(&mut target_writer, "restore-test", "target")
+            .await
+            .unwrap();
+        drop(target_writer);
+        let mut source_writer = source_database.acquire_writer().await.unwrap();
+        set_meta(&mut source_writer, "restore-test", "source")
+            .await
+            .unwrap();
+        drop(source_writer);
+        target_database.pool.close().await;
+        source_database.pool.close().await;
+        fs::write(wal_path(&target), b"stale wal").unwrap();
+        fs::write(shm_path(&target), b"stale shm").unwrap();
+
+        let safety = restore_database_file(&target, &source).await.unwrap();
+        assert!(!wal_path(&target).exists());
+        assert!(!shm_path(&target).exists());
+
+        let mut restored = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(&target)
+                .read_only(true),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            get_meta(&mut restored, "restore-test")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("source")
+        );
+        let mut preserved = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(&safety)
+                .read_only(true),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            get_meta(&mut preserved, "restore-test")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("target")
+        );
+    }
 
     #[tokio::test]
     async fn task_from_row_maps_empty_dates_to_absence() {

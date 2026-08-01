@@ -160,7 +160,7 @@ impl Database {
         workspace: &Workspace,
         params: CreateRecurrenceSeriesParams,
     ) -> Result<RecurrenceCreateOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         create_recurrence_series(&mut conn, workspace, params).await
     }
 
@@ -170,7 +170,7 @@ impl Database {
         series_id: &RecurrenceSeriesId,
         params: UpdateRecurrenceTemplateParams,
     ) -> Result<RecurrenceTemplateUpdateOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         update_recurrence_template(&mut conn, workspace, series_id, params).await
     }
 
@@ -180,7 +180,7 @@ impl Database {
         series_id: &RecurrenceSeriesId,
         at: DateTime<Utc>,
     ) -> Result<RecurrenceReconcileOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut last_error = None;
         for _ in 0..RECONCILE_ATTEMPTS {
             match reconcile_recurrence_series_once(&mut conn, workspace, series_id, at).await {
@@ -209,7 +209,7 @@ impl Database {
         outcome: RecurrenceOutcome,
         undo: UndoContext,
     ) -> Result<RecurrenceResolveOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let before = get_task_in_workspace(&mut tx, workspace, task_id).await?;
         let result = resolve_recurrence_occurrence_in_transaction(
@@ -247,7 +247,7 @@ impl Database {
         workspace: &Workspace,
         series_id: &RecurrenceSeriesId,
     ) -> Result<RecurrenceStateOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         pause_recurrence_series(&mut conn, workspace, series_id, &now()).await
     }
 
@@ -257,7 +257,7 @@ impl Database {
         series_id: &RecurrenceSeriesId,
         at: DateTime<Utc>,
     ) -> Result<RecurrenceStateOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         resume_recurrence_series(&mut conn, workspace, series_id, at).await
     }
 
@@ -267,7 +267,7 @@ impl Database {
         series_id: &RecurrenceSeriesId,
         skip_current: bool,
     ) -> Result<RecurrenceStateOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         stop_recurrence_series(&mut conn, workspace, series_id, skip_current, &now()).await
     }
 
@@ -276,7 +276,7 @@ impl Database {
         workspace: &Workspace,
         input: &str,
     ) -> Result<RecurrenceSeries> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         resolve_recurrence_ref(&mut conn, workspace, input).await
     }
 
@@ -285,7 +285,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         series_id: &RecurrenceSeriesId,
     ) -> Result<String> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         recurrence_series_ref(&mut conn, workspace_id, series_id).await
     }
 }

@@ -19,12 +19,12 @@ impl Database {
         &self,
         workspace_id: &WorkspaceId,
     ) -> Result<DisplayRefContext> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         DisplayRefContext::for_workspace(&mut conn, workspace_id).await
     }
 
     pub async fn resolve_task_ref(&self, workspace: &Workspace, input: &str) -> Result<Task> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         resolve_task_ref_in_workspace(&mut conn, workspace, input).await
     }
 }

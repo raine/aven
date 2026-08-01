@@ -97,7 +97,7 @@ impl Database {
         blob_dir: &Path,
         contract: &BlobUploadContract,
     ) -> Result<PreparedBlobUpload> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let row = blob_inventory_row(&mut conn, &contract.sha256)
             .await?
             .filter(|row| row.available)
@@ -122,7 +122,7 @@ impl Database {
     }
 
     pub(super) async fn finish_blob_upload(&self, lease_id: &str) -> Result<()> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         release_lease(&mut conn, lease_id).await
     }
 
@@ -130,7 +130,7 @@ impl Database {
         &self,
         blob_dir: &Path,
     ) -> Result<Vec<MissingLocalBlob>> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         missing_local_blobs(&mut conn, blob_dir).await
     }
 
@@ -152,7 +152,7 @@ impl Database {
         {
             bail!("error attachment-blob-remote-invalid");
         }
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let reservation = ensure_local_capacity(
             &mut conn,
             blob_dir,
@@ -176,7 +176,7 @@ impl Database {
         blobs: &[BlobUploadContract],
     ) -> Result<Vec<String>> {
         super::wire::validate_blob_contracts(blobs)?;
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         prune(&mut conn, blob_dir, policy, true, &SystemClock).await?;
         let mut missing = Vec::new();
         let mut missing_hashes = HashSet::new();
@@ -217,7 +217,7 @@ impl Database {
         if (validated.facts.width, validated.facts.height) != (contract.width, contract.height) {
             bail!("error blob-validation-failed");
         }
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         prune(&mut conn, blob_dir, policy, true, &SystemClock).await?;
         let reservation = reserve_upload(
             &mut conn,
@@ -243,7 +243,7 @@ impl Database {
         sha256: &str,
     ) -> Result<Option<ServerBlobDownload>> {
         super::wire::validate_blob_hashes(&[sha256.to_string()])?;
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         if !blob_available(&mut conn, blob_dir, sha256).await? {
             return Ok(None);
         }
@@ -260,7 +260,7 @@ impl Database {
         blob_dir: &Path,
         policy: LifecyclePolicy,
     ) -> Result<()> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         prune(&mut conn, blob_dir, policy, true, &SystemClock)
             .await
             .map(|_| ())

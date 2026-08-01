@@ -205,7 +205,7 @@ impl Database {
         draft: TaskDraft,
         options: TaskCreationOptions,
     ) -> Result<TaskOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         create_task_with_epic(&mut conn, workspace, draft, options).await
     }
 
@@ -226,7 +226,7 @@ impl Database {
         epic_id: &TaskId,
         undo: TaskCreationUndo,
     ) -> Result<TaskOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         create_task_with_epic(
             &mut conn,
             workspace,
@@ -284,7 +284,7 @@ impl Database {
         attachments: Vec<super::attachments::TaskAttachmentAddInput>,
         options: TaskCreationOptions,
     ) -> Result<TaskOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         create_task_with_attachments_and_epic(
             &mut conn,
             workspace,
@@ -326,7 +326,7 @@ impl Database {
         attachments: Vec<super::attachments::TaskAttachmentAddInput>,
         options: TaskCreationOptions,
     ) -> Result<TaskOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         create_task_with_attachments_and_epic(
             &mut conn,
             workspace,
@@ -420,7 +420,7 @@ impl Database {
             bail!("compact task mutations cannot record undo");
         }
 
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let mut outcomes = Vec::with_capacity(updates.len());
         let mut undo_commands = Vec::new();
@@ -505,7 +505,7 @@ impl Database {
         task_id: &TaskId,
         body: String,
     ) -> Result<NoteOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         add_note_operation(&mut conn, workspace, task_id, body, false).await
     }
 
@@ -515,7 +515,7 @@ impl Database {
         task_id: &TaskId,
         body: String,
     ) -> Result<NoteOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         add_note_operation(&mut conn, workspace, task_id, body, true).await
     }
 
@@ -526,7 +526,7 @@ impl Database {
         note_id: &str,
         body: String,
     ) -> Result<NoteEditOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         edit_note_operation(&mut conn, workspace, task_id, note_id, body, false).await
     }
 
@@ -537,7 +537,7 @@ impl Database {
         note_id: &str,
         body: String,
     ) -> Result<NoteEditOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         edit_note_operation(&mut conn, workspace, task_id, note_id, body, true).await
     }
 
@@ -547,7 +547,7 @@ impl Database {
         task_id: &TaskId,
         note_id: &str,
     ) -> Result<NoteDeleteOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         delete_note_operation(&mut conn, workspace, task_id, note_id, false).await
     }
 
@@ -557,7 +557,7 @@ impl Database {
         task_id: &TaskId,
         note_id: &str,
     ) -> Result<NoteDeleteOutcome> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         delete_note_operation(&mut conn, workspace, task_id, note_id, true).await
     }
 }

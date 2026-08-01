@@ -2,7 +2,6 @@ mod common;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use chrono::Utc;
 use serde_json::Value;
@@ -1113,15 +1112,22 @@ fn default_blob_dir(db: &Path) -> PathBuf {
 }
 
 fn sqlite_backup(source: &Path, target: &Path) {
-    let backup_sql = format!(".backup '{}'", target.display());
-    let output = Command::new("sqlite3")
-        .arg(source)
-        .arg(backup_sql)
-        .output()
-        .expect("run sqlite3");
-    assert!(
-        output.status.success(),
-        "sqlite backup failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("create runtime");
+    runtime.block_on(async {
+        let mut conn = SqliteConnectOptions::new()
+            .filename(source)
+            .read_only(true)
+            .foreign_keys(true)
+            .connect()
+            .await
+            .expect("open backup source");
+        sqlx::query("VACUUM INTO ?")
+            .bind(target.display().to_string())
+            .execute(&mut conn)
+            .await
+            .expect("back up sqlite database");
+    });
 }

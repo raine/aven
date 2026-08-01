@@ -14,7 +14,7 @@ pub enum OnboardingStatus {
 
 impl Database {
     pub async fn onboarding_status(&self) -> Result<OnboardingStatus> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_reader().await?;
         let marker = get_meta(&mut conn, ONBOARDING_META_KEY).await?;
         if marker_version(marker.as_deref())
             .is_some_and(|version| version >= FIRST_LAUNCH_ONBOARDING_VERSION)
@@ -33,7 +33,7 @@ impl Database {
     }
 
     pub async fn complete_onboarding(&self) -> Result<()> {
-        let mut conn = self.acquire().await?;
+        let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let marker = get_meta(&mut tx, ONBOARDING_META_KEY).await?;
         if marker_version(marker.as_deref())
