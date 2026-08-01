@@ -2011,6 +2011,46 @@ mod multiline_overlays {
     }
 
     #[test]
+    fn description_discard_confirmation_replaces_editor_with_explicit_controls() {
+        let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
+            kind: MultilineInputKind::EditDescription,
+            title: "Edit description".to_string(),
+            prompt: String::new(),
+            lines: vec!["changed description".to_string()],
+            row: 0,
+            column: 10,
+            mode: MultilineInputMode::ConfirmDiscard,
+        }));
+
+        assert!(rendered.contains("Discard description changes?"));
+        assert!(rendered.contains("The description changes will be lost."));
+        assert!(rendered.contains("y discard"));
+        assert!(rendered.contains("n keep editing"));
+        assert!(!rendered.contains("Edit description"));
+        assert!(!rendered.contains("changed description"));
+    }
+
+    #[test]
+    fn conflict_manual_discard_confirmation_replaces_editor_with_explicit_controls() {
+        let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
+            kind: MultilineInputKind::ConflictManual,
+            title: "Resolve conflict: manual".to_string(),
+            prompt: "manual value for field=description:".to_string(),
+            lines: vec!["changed value".to_string()],
+            row: 0,
+            column: 12,
+            mode: MultilineInputMode::ConfirmDiscard,
+        }));
+
+        assert!(rendered.contains("Discard manual merge?"));
+        assert!(rendered.contains("The manual value will be lost."));
+        assert!(rendered.contains("y discard"));
+        assert!(rendered.contains("n keep editing"));
+        assert!(!rendered.contains("Resolve conflict: manual"));
+        assert!(!rendered.contains("changed value"));
+    }
+
+    #[test]
     fn add_note_overlay_hides_placeholder_on_later_empty_lines() {
         let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
             kind: MultilineInputKind::AddNote,
