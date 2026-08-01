@@ -234,8 +234,12 @@ pub(crate) struct DetailCopyHit {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DetailMetadataTarget {
+    Project,
     Status,
     Priority,
+    Labels,
+    Availability,
+    Due,
 }
 
 fn detail_relationship_snapshots(item: &TaskListItem) -> Vec<DetailRelationshipSnapshot> {
@@ -2478,6 +2482,51 @@ fn detail_metadata_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>
         Line::from(""),
         metadata_label("LABELS"),
         Line::from(labels_display(&item.labels, ", ")),
+    ];
+    let now_seconds = crate::queue::now_seconds();
+    let availability = crate::tui::time::availability_summary_lines(
+        item.task.available_at.as_deref().unwrap_or(""),
+        item.queue.band == crate::queue::QueueBand::Available,
+        now_seconds,
+    )
+    .unwrap_or_else(|| ["none".to_string(), String::new()]);
+    let availability_style = if item.task.available_at.is_some() {
+        Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(FG_MUTED)
+    };
+    lines.extend([
+        Line::from(""),
+        metadata_label("AVAILABILITY"),
+        Line::from(Span::styled(
+            truncate_width(&availability[0], width),
+            availability_style,
+        )),
+        Line::from(Span::styled(
+            truncate_width(&availability[1], width),
+            availability_style,
+        )),
+    ]);
+    let due =
+        crate::tui::time::due_summary_lines(item.task.due_on.as_deref().unwrap_or(""), now_seconds)
+            .unwrap_or_else(|| ["none".to_string(), String::new()]);
+    let due_color = if item.task.due_on.is_none() || !item.task.status.is_open() {
+        FG_MUTED
+    } else {
+        match crate::tui::time::due_state_at(item.task.due_on.as_deref().unwrap_or(""), now_seconds)
+        {
+            crate::due::DueState::Overdue(_) => RED,
+            crate::due::DueState::Today => ORANGE,
+            crate::due::DueState::Future(_) => ACCENT,
+            crate::due::DueState::None => FG_MUTED,
+        }
+    };
+    let due_style = Style::new().fg(due_color).add_modifier(Modifier::BOLD);
+    lines.extend([
+        Line::from(""),
+        metadata_label("DUE"),
+        Line::from(Span::styled(truncate_width(&due[0], width), due_style)),
+        Line::from(Span::styled(truncate_width(&due[1], width), due_style)),
         Line::from(""),
         metadata_label("REF"),
         Line::from(Span::styled(
@@ -2496,45 +2545,7 @@ fn detail_metadata_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>
             local_timestamp_display(&item.task.updated_at),
             Style::new().fg(FG_MUTED),
         )),
-    ];
-    let now_seconds = crate::queue::now_seconds();
-    if let Some([relative, local]) = crate::tui::time::availability_summary_lines(
-        item.task.available_at.as_deref().unwrap_or(""),
-        item.queue.band == crate::queue::QueueBand::Available,
-        now_seconds,
-    ) {
-        let value_style = Style::new().fg(ACCENT).add_modifier(Modifier::BOLD);
-        lines.extend([
-            Line::from(""),
-            metadata_label("AVAILABILITY"),
-            Line::from(Span::styled(truncate_width(&relative, width), value_style)),
-            Line::from(Span::styled(truncate_width(&local, width), value_style)),
-        ]);
-    }
-    if let Some([relative, date]) =
-        crate::tui::time::due_summary_lines(item.task.due_on.as_deref().unwrap_or(""), now_seconds)
-    {
-        let color = if !item.task.status.is_open() {
-            FG_MUTED
-        } else {
-            match crate::tui::time::due_state_at(
-                item.task.due_on.as_deref().unwrap_or(""),
-                now_seconds,
-            ) {
-                crate::due::DueState::Overdue(_) => RED,
-                crate::due::DueState::Today => ORANGE,
-                crate::due::DueState::Future(_) => ACCENT,
-                crate::due::DueState::None => FG_MUTED,
-            }
-        };
-        let value_style = Style::new().fg(color).add_modifier(Modifier::BOLD);
-        lines.extend([
-            Line::from(""),
-            metadata_label("DUE"),
-            Line::from(Span::styled(truncate_width(&relative, width), value_style)),
-            Line::from(Span::styled(truncate_width(&date, width), value_style)),
-        ]);
-    }
+    ]);
     if let Some(recurrence) = item.recurrence.as_ref() {
         let outcome = recurrence
             .outcome
@@ -2748,9 +2759,9 @@ pub(crate) fn detail_copy_target_at(
     let body = detail_body_area(Rect::new(0, 0, terminal_width, terminal_height));
     let line = metadata_content_row(layout.metadata_area, body, column, row)?;
     let value = match line {
-        15 => item.display_ref.clone(),
-        18 => local_timestamp_display(&item.task.created_at),
-        21 => local_timestamp_display(&item.task.updated_at),
+        23 => item.display_ref.clone(),
+        26 => local_timestamp_display(&item.task.created_at),
+        29 => local_timestamp_display(&item.task.updated_at),
         _ => return None,
     };
     let value_start = layout.metadata_area.x.saturating_add(2);
@@ -2771,8 +2782,12 @@ pub(crate) fn detail_metadata_target_at(
     let body = detail_body_area(Rect::new(0, 0, terminal_width, terminal_height));
     let line = metadata_content_row(layout.metadata_area, body, column, row)?;
     let target = match line {
+        3 => DetailMetadataTarget::Project,
         6 => DetailMetadataTarget::Status,
         9 => DetailMetadataTarget::Priority,
+        12 => DetailMetadataTarget::Labels,
+        15 | 16 => DetailMetadataTarget::Availability,
+        19 | 20 => DetailMetadataTarget::Due,
         _ => return None,
     };
     Some((target, column, row))
@@ -3631,6 +3646,8 @@ mod tests {
         assert!(rendered.contains("STATUS\n● active"));
         assert!(rendered.contains("PRIORITY\n▲ urgent"));
         assert!(rendered.contains("LABELS\nbug, mobile"));
+        assert!(rendered.contains("AVAILABILITY\nnone"));
+        assert!(rendered.contains("DUE\nnone"));
         assert!(rendered.contains("CONFLICTS\nyes"));
     }
 
@@ -3764,34 +3781,44 @@ mod tests {
         let item = detail_test_item();
         let expected = [
             (2, 5, item.display_ref.clone()),
-            (88, 17, item.display_ref.clone()),
-            (88, 20, local_timestamp_display(&item.task.created_at)),
-            (88, 23, local_timestamp_display(&item.task.updated_at)),
+            (88, 25, item.display_ref.clone()),
+            (88, 28, local_timestamp_display(&item.task.created_at)),
+            (88, 31, local_timestamp_display(&item.task.updated_at)),
         ];
 
         for (column, row, value) in expected {
             assert_eq!(
-                detail_copy_target_at(&item, 120, 30, column, row).map(|hit| hit.value),
+                detail_copy_target_at(&item, 120, 40, column, row).map(|hit| hit.value),
                 Some(value)
             );
         }
-        assert!(detail_copy_target_at(&item, 120, 30, 87, 17).is_none());
-        assert!(detail_copy_target_at(&item, 120, 30, 88, 16).is_none());
-        assert!(detail_copy_target_at(&item, 80, 30, 70, 20).is_none());
+        assert!(detail_copy_target_at(&item, 120, 40, 87, 25).is_none());
+        assert!(detail_copy_target_at(&item, 120, 40, 88, 24).is_none());
+        assert!(detail_copy_target_at(&item, 80, 40, 70, 28).is_none());
     }
 
     #[test]
-    fn detail_metadata_target_maps_status_and_priority_values() {
-        assert_eq!(
-            detail_metadata_target_at(120, 30, 88, 8),
-            Some((DetailMetadataTarget::Status, 88, 8))
-        );
-        assert_eq!(
-            detail_metadata_target_at(120, 30, 88, 11),
-            Some((DetailMetadataTarget::Priority, 88, 11))
-        );
-        assert_eq!(detail_metadata_target_at(120, 30, 88, 7), None);
-        assert_eq!(detail_metadata_target_at(80, 30, 70, 9), None);
+    fn detail_metadata_target_maps_editable_values_without_body_conflicts() {
+        let expected = [
+            (5, DetailMetadataTarget::Project),
+            (8, DetailMetadataTarget::Status),
+            (11, DetailMetadataTarget::Priority),
+            (14, DetailMetadataTarget::Labels),
+            (17, DetailMetadataTarget::Availability),
+            (18, DetailMetadataTarget::Availability),
+            (21, DetailMetadataTarget::Due),
+            (22, DetailMetadataTarget::Due),
+        ];
+
+        for (row, target) in expected {
+            assert_eq!(
+                detail_metadata_target_at(120, 40, 88, row),
+                Some((target, 88, row))
+            );
+        }
+        assert_eq!(detail_metadata_target_at(120, 40, 88, 7), None);
+        assert_eq!(detail_metadata_target_at(120, 40, 50, 8), None);
+        assert_eq!(detail_metadata_target_at(80, 40, 70, 11), None);
     }
 
     #[test]

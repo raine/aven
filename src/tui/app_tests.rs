@@ -1727,8 +1727,12 @@ fn picker_row_click(app: &App, visible_row: u16, size: ratatui::layout::Size) ->
 
 fn detail_metadata_click(target: crate::tui::ui::DetailMetadataTarget) -> MouseEvent {
     let row = match target {
+        crate::tui::ui::DetailMetadataTarget::Project => 5,
         crate::tui::ui::DetailMetadataTarget::Status => 8,
         crate::tui::ui::DetailMetadataTarget::Priority => 11,
+        crate::tui::ui::DetailMetadataTarget::Labels => 14,
+        crate::tui::ui::DetailMetadataTarget::Availability => 17,
+        crate::tui::ui::DetailMetadataTarget::Due => 21,
     };
     left_click(88, row)
 }
@@ -13236,9 +13240,9 @@ mod detail_mode {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Copy target")).await;
         app.show_detail(4);
-        let terminal_size: ratatui::layout::Size = (120, 30).into();
+        let terminal_size: ratatui::layout::Size = (120, 40).into();
 
-        for (column, row) in [(2, 5), (88, 17), (88, 20), (88, 23)] {
+        for (column, row) in [(2, 5), (88, 25), (88, 28), (88, 31)] {
             let value = crate::tui::ui::detail_copy_target_at(
                 app.store.selected_task(app.list.selected_task()).unwrap(),
                 terminal_size.width,
@@ -13631,6 +13635,94 @@ mod detail_mode {
             app.store.tasks[selected].task.priority,
             TaskPriority::Urgent
         );
+    }
+
+    #[tokio::test]
+    async fn detail_project_mouse_click_opens_established_picker() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Project click target")).await;
+        app.show_detail(3);
+
+        app.dispatch_mouse(
+            detail_metadata_click(crate::tui::ui::DetailMetadataTarget::Project),
+            (120, 40).into(),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(PickerState {
+                intent: PickerIntent::EditProject { .. },
+                ..
+            }))
+        ));
+        assert!(app.view().detail_underlay);
+    }
+
+    #[tokio::test]
+    async fn detail_labels_mouse_click_opens_established_combobox_for_unset_labels() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Labels click target")).await;
+        app.show_detail(3);
+
+        app.dispatch_mouse(
+            detail_metadata_click(crate::tui::ui::DetailMetadataTarget::Labels),
+            (120, 40).into(),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TagCombobox(state))
+                if matches!(state.intent, TagComboboxIntent::EditLabels { .. })
+        ));
+        assert!(app.view().detail_underlay);
+    }
+
+    #[tokio::test]
+    async fn detail_availability_mouse_click_opens_established_editor_for_unset_date() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Availability click target")).await;
+        app.show_detail(3);
+
+        app.dispatch_mouse(
+            detail_metadata_click(crate::tui::ui::DetailMetadataTarget::Availability),
+            (120, 40).into(),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(state))
+                if matches!(state.intent, TextIntent::EditAvailability { .. })
+                    && state.input.text.is_empty()
+        ));
+        assert!(app.view().detail_underlay);
+    }
+
+    #[tokio::test]
+    async fn detail_due_mouse_click_opens_established_editor_for_unset_date() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Due click target")).await;
+        app.show_detail(3);
+
+        app.dispatch_mouse(
+            detail_metadata_click(crate::tui::ui::DetailMetadataTarget::Due),
+            (120, 40).into(),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(state))
+                if matches!(state.intent, TextIntent::EditDue { .. })
+                    && state.input.text.is_empty()
+        ));
+        assert!(app.view().detail_underlay);
     }
 
     #[tokio::test]
