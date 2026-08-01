@@ -506,6 +506,21 @@ pub fn resolve_sync_server(flag: Option<&str>, config: &AppConfig) -> Result<Str
     bail!("error sync-server-required hint=\"pass --server or configure sync.server_url\"")
 }
 
+pub(crate) fn ensure_sync_allowed(db_path: &Path) -> Result<()> {
+    if sync_disabled_for_database(db_path) {
+        bail!(
+            "error sync-disabled-in-worktree hint=\"use the primary checkout to sync this database\""
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn sync_disabled_for_database(db_path: &Path) -> bool {
+    db_path
+        .components()
+        .any(|component| component.as_os_str().to_str() == Some(".aven"))
+}
+
 pub fn write_config(path: &Path, config: &AppConfig) -> Result<()> {
     config.validate()?;
     let text = serde_yaml::to_string(config)?;
@@ -736,6 +751,23 @@ mod tests {
             .unwrap(),
             PathBuf::from("/tmp/configured.sqlite")
         );
+    }
+
+    #[test]
+    fn worktree_database_blocks_sync() {
+        let path = PathBuf::from("/tmp/worktree/.aven/db.sqlite");
+
+        assert!(sync_disabled_for_database(&path));
+        let error = ensure_sync_allowed(&path).unwrap_err();
+        assert!(format!("{error:#}").contains("sync-disabled-in-worktree"));
+    }
+
+    #[test]
+    fn regular_database_allows_sync() {
+        let path = PathBuf::from("/tmp/aven/db.sqlite");
+
+        assert!(!sync_disabled_for_database(&path));
+        ensure_sync_allowed(&path).unwrap();
     }
 
     #[test]

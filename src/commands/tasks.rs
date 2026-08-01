@@ -292,7 +292,7 @@ pub(crate) async fn cmd_internal_natural_add(
         "created task from internal natural-add"
     );
     print_created_task(&task, &workspace, &display_refs);
-    crate::daemon::wake_if_enabled(config);
+    crate::daemon::wake_if_enabled(config, database.path());
     Ok(())
 }
 
