@@ -8679,6 +8679,145 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn focused_detail_child_back_shortcut_uses_detail_navigation() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+        let child_index = create_and_select_task(&mut app, test_task_draft("Child task")).await;
+        let child_id = app.store.tasks[child_index].task.id.clone();
+        let mut conn = pool.acquire().await.unwrap();
+        crate::operations::add_task_to_epic(
+            &mut conn,
+            &app.store.active_workspace,
+            &child_id,
+            &parent_id,
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        app.store.refresh(Some(&parent_id)).await.unwrap();
+        let parent_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == parent_id)
+            .unwrap();
+        app.list.select_task(Some(parent_index));
+        app.show_detail(0);
+
+        app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('g')), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('[')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(!app.detail.is_active());
+        assert!(app.overlay.is_none());
+        assert_ne!(
+            toast_message(&app).as_deref(),
+            Some("no previous navigation state")
+        );
+    }
+
+    #[tokio::test]
+    async fn focused_detail_child_return_shortcut_targets_recent_change() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+        let child_index = create_and_select_task(&mut app, test_task_draft("Child task")).await;
+        let child_id = app.store.tasks[child_index].task.id.clone();
+        let mut conn = pool.acquire().await.unwrap();
+        crate::operations::add_task_to_epic(
+            &mut conn,
+            &app.store.active_workspace,
+            &child_id,
+            &parent_id,
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        app.store.refresh(Some(&parent_id)).await.unwrap();
+        let parent_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == parent_id)
+            .unwrap();
+        let child_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == child_id)
+            .unwrap();
+        app.list.select_task(Some(parent_index));
+        app.show_detail(0);
+        app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
+            .await
+            .unwrap();
+        app.list.record_changed_task(child_id.clone());
+
+        app.dispatch_key(key(KeyCode::Char('g')), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('.')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(app.detail.is_active());
+        assert_eq!(app.list.selected_task(), Some(child_index));
+        assert!(
+            app.detail
+                .state()
+                .is_some_and(|detail| detail.focused_target().is_none())
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_detail_child_focus_is_cleared_before_shortcuts() {
+        let mut app = test_app().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Parent epic")).await;
+        app.show_detail(0);
+        app.detail
+            .state_mut()
+            .unwrap()
+            .set_focused_target(Some(DetailTargetId::Task {
+                section: DetailSection::EpicChildren,
+                task_id: crate::test_support::task_id("stale-child"),
+            }));
+
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(
+            app.detail
+                .state()
+                .is_some_and(|detail| detail.focused_target().is_none())
+        );
+        assert!(app.pending_shortcut.is_empty());
+        assert!(app.overlay.is_none());
+        assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Inbox);
+    }
+
+    #[tokio::test]
     async fn focused_detail_child_blocks_prefixed_parent_mutations() {
         let (_dir, pool, mut app) = test_app_with_pool().await;
         let parent_index = create_and_select_task(
@@ -10366,6 +10505,34 @@ mod detail_mode {
                 .task
                 .title,
             "Detail target updated"
+        );
+
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('d')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == marked_id)
+                .unwrap()
+                .task
+                .status,
+            TaskStatus::Inbox
+        );
+        assert_eq!(
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == selected_id)
+                .unwrap()
+                .task
+                .status,
+            TaskStatus::Done
         );
         assert!(app.overlay.is_none());
         assert!(app.detail.is_active());
