@@ -649,6 +649,7 @@ pub(crate) async fn cmd_edit(
                 add_labels: args.label,
                 remove_labels: args.remove_label,
                 label_selection: None,
+                create_missing_labels: false,
             },
         )
         .await?;

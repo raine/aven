@@ -295,6 +295,7 @@ fn bulk_update_for_item(
             .cloned()
             .collect(),
         label_selection: None,
+        create_missing_labels: false,
     }
 }
 

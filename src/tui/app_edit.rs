@@ -3,7 +3,6 @@ use std::collections::BTreeSet;
 use anyhow::Result;
 
 use crate::choices::TaskStatus;
-use crate::labels::normalize_label;
 use crate::query::TaskListItem;
 use crate::tui::app::{App, FooterChoiceMode, FooterChoiceState};
 use crate::tui::overlay::{
@@ -1102,16 +1101,6 @@ impl App {
         selection: TaskSelection,
         labels: Vec<String>,
     ) -> Result<()> {
-        for label in &labels {
-            let label = normalize_label(label);
-            if !self.store.labels.contains(&label)
-                && let Err(error) = self.store.create_label(label).await
-            {
-                self.set_error(format!("{error:#}"));
-                self.open_edit_labels(selection);
-                return Ok(());
-            }
-        }
         let retry_selection = selection.clone();
         let result = self
             .store
@@ -1179,16 +1168,6 @@ impl App {
         labels: Vec<String>,
         partial_labels: Vec<String>,
     ) -> Result<()> {
-        for label in &labels {
-            let label = normalize_label(label);
-            if !self.store.labels.contains(&label)
-                && let Err(error) = self.store.create_label(label).await
-            {
-                self.set_error(format!("{error:#}"));
-                self.open_edit_labels_multi(selection);
-                return Ok(());
-            }
-        }
         let retry_selection = selection.clone();
         let result = self
             .store

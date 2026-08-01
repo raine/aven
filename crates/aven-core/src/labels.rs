@@ -5,6 +5,7 @@ use sqlx::{Row, SqliteConnection};
 use crate::db::Database;
 use crate::matching::is_near;
 use crate::projects::normalize_key;
+use crate::workspaces::Workspace;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabelUsage {
@@ -133,6 +134,19 @@ pub(crate) async fn resolve_labels_in_workspace(
     let mut resolved = Vec::with_capacity(labels.len());
     for label in labels {
         resolved.push(ensure_label_exists_in_workspace(conn, workspace_id, label).await?);
+    }
+    Ok(resolved)
+}
+
+pub(crate) async fn resolve_or_create_labels_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    labels: &[String],
+) -> Result<Vec<String>> {
+    let mut resolved = Vec::with_capacity(labels.len());
+    for label in labels {
+        let outcome = crate::operations::create_label_operation(conn, workspace, label).await?;
+        resolved.push(outcome.name);
     }
     Ok(resolved)
 }

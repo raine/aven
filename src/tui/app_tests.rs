@@ -6481,6 +6481,39 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn add_task_label_draft_does_not_persist_before_task_creation() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(ctrl_l()).await.unwrap();
+        type_chars(&mut app, "Orphan Label").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        let before_cancel: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM labels WHERE workspace_id = (SELECT id FROM workspaces LIMIT 1) AND name = 'orphan-label'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(before_cancel, 0);
+
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+
+        let after_cancel: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM labels WHERE workspace_id = (SELECT id FROM workspaces LIMIT 1) AND name = 'orphan-label'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(after_cancel, 0);
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
     async fn add_task_labels_escape_returns_to_add_task_only_dialog() {
         let mut app = test_app().await;
         app.intake.enter_add_task_only(AppConfig::default());
@@ -7755,6 +7788,65 @@ mod authoring {
                     && state.row == 0
                     && state.column == 0
         ));
+    }
+
+    #[tokio::test]
+    async fn add_note_targets_one_marked_task_instead_of_cursor() {
+        let mut app = test_app().await;
+        let marked = create_and_select_task(&mut app, test_task_draft("Marked note target")).await;
+        let marked_id = app.store.tasks[marked].task.id.clone();
+        let cursor = create_and_select_task(&mut app, test_task_draft("Cursor note target")).await;
+        let cursor_id = app.store.tasks[cursor].task.id.clone();
+        assert_ne!(marked_id, cursor_id);
+        app.list.mark(marked_id.clone());
+
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+
+        let task_id = match &app.overlay {
+            Some(OverlayState::MultilineInput(state)) => match &state.intent {
+                MultilineIntent::AddNote { task_id, .. } => task_id.clone(),
+                intent => panic!("expected add-note intent, got {intent:?}"),
+            },
+            overlay => panic!("expected add-note overlay, got {overlay:?}"),
+        };
+        assert_eq!(task_id, marked_id);
+
+        type_chars(&mut app, "Marked detail").await;
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        let marked = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == marked_id)
+            .unwrap();
+        let cursor = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.id != marked_id)
+            .unwrap();
+        assert_eq!(marked.notes.len(), 1);
+        assert!(cursor.notes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_note_rejects_multiple_marked_tasks() {
+        let mut app = test_app().await;
+        let first = create_and_select_task(&mut app, test_task_draft("First note target")).await;
+        let first_id = app.store.tasks[first].task.id.clone();
+        let second = create_and_select_task(&mut app, test_task_draft("Second note target")).await;
+        let second_id = app.store.tasks[second].task.id.clone();
+        app.list.mark(first_id);
+        app.list.mark(second_id);
+
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("note requires one task · 2 tasks marked")
+        );
     }
 
     #[tokio::test]

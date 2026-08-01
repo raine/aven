@@ -378,6 +378,7 @@ impl TuiStore {
                             selected: selected_labels.clone(),
                             partial: partial_labels.clone(),
                         }),
+                        create_missing_labels: true,
                         ..TaskUpdate::default()
                     },
                 )
