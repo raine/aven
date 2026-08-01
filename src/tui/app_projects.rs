@@ -29,6 +29,19 @@ fn add_project_path_input(project: String, value: String) -> OverlayState {
     )
 }
 
+fn usage_count(count: usize, singular: &str, plural: &str) -> String {
+    let noun = if count == 1 { singular } else { plural };
+    format!("{count} {noun}")
+}
+
+fn label_delete_prompt(label: &str, task_count: usize, series_count: usize) -> String {
+    format!(
+        "Type {label} to delete this label.\nUsed by: {}, {}",
+        usage_count(task_count, "task", "tasks"),
+        usage_count(series_count, "recurring series", "recurring series")
+    )
+}
+
 fn task_text_for_copy(title: &str, description: &str, kind: TaskCopyKind) -> String {
     match kind {
         TaskCopyKind::Title => title.to_string(),
@@ -125,8 +138,10 @@ impl App {
             .into_iter()
             .map(|usage| PickerItem {
                 label: format!(
-                    "{}  {} tasks  {} recurring series",
-                    usage.name, usage.task_count, usage.series_count
+                    "{}  {}  {}",
+                    usage.name,
+                    usage_count(usage.task_count, "task", "tasks"),
+                    usage_count(usage.series_count, "recurring series", "recurring series")
                 ),
                 value: usage.name,
                 selected: false,
@@ -213,10 +228,7 @@ impl App {
                 series_count: usage.series_count,
             },
             DELETE_LABEL_TITLE,
-            format!(
-                "Type {label} to remove it from {} tasks and {} recurring series:",
-                usage.task_count, usage.series_count
-            ),
+            label_delete_prompt(&label, usage.task_count, usage.series_count),
             String::new(),
         ));
         Ok(())
@@ -254,9 +266,7 @@ impl App {
                     series_count,
                 },
                 DELETE_LABEL_TITLE,
-                format!(
-                    "Type {label} to remove it from {task_count} tasks and {series_count} recurring series:"
-                ),
+                label_delete_prompt(&label, task_count, series_count),
                 value,
             ));
             return;
