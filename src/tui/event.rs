@@ -8,7 +8,7 @@ pub(crate) use self::catalog::PROJECT_PATH_FLOW_REASON;
 #[allow(unused_imports)]
 pub(crate) use self::catalog::{
     COMMAND_DOMAINS, COMMANDS, CommandContext, CommandDomain, CommandLifecycle, CommandSpec,
-    DETAIL_COMMANDS, KeySequence,
+    KeySequence,
 };
 #[allow(unused_imports)]
 pub(crate) use self::lookup::{
@@ -635,6 +635,78 @@ mod tests {
             ),
             ShortcutLookup::Found(Action::BeginEditLabels)
         );
+    }
+
+    #[test]
+    fn detail_context_preserves_shared_task_shortcuts() {
+        let detail = CommandContext::Detail;
+        let cases = [
+            (&[KeyCode::Char(':')][..], Action::BeginCommand),
+            (&[KeyCode::Char('/')][..], Action::BeginSearch),
+            (&[KeyCode::Char('r')][..], Action::Refresh),
+            (
+                &[KeyCode::Char('d')][..],
+                Action::SetStatus(TaskStatus::Done),
+            ),
+            (
+                &[KeyCode::Char('x')][..],
+                Action::SetStatus(TaskStatus::Canceled),
+            ),
+            (
+                &[KeyCode::Char('t'), KeyCode::Char('R')][..],
+                Action::Restore,
+            ),
+            (
+                &[KeyCode::Char('t'), KeyCode::Char('a')][..],
+                Action::SetStatus(TaskStatus::Active),
+            ),
+            (
+                &[KeyCode::Char('t'), KeyCode::Char('h')][..],
+                Action::SetPriority(TaskPriority::High),
+            ),
+            (
+                &[KeyCode::Char('c'), KeyCode::Char('a')][..],
+                Action::AcceptConflictLocal,
+            ),
+            (
+                &[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('r')][..],
+                Action::RemoveEpicChild,
+            ),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(
+                resolve_shortcut_for(detail, input),
+                ShortcutLookup::Found(expected)
+            );
+        }
+
+        for (code, status) in [
+            ('i', TaskStatus::Inbox),
+            ('b', TaskStatus::Backlog),
+            ('t', TaskStatus::Todo),
+            ('a', TaskStatus::Active),
+            ('d', TaskStatus::Done),
+            ('x', TaskStatus::Canceled),
+        ] {
+            assert_eq!(
+                resolve_shortcut_for(detail, &[KeyCode::Char('t'), KeyCode::Char(code)]),
+                ShortcutLookup::Found(Action::SetStatus(status))
+            );
+        }
+
+        for (code, priority) in [
+            ('0', TaskPriority::None),
+            ('l', TaskPriority::Low),
+            ('m', TaskPriority::Medium),
+            ('h', TaskPriority::High),
+            ('u', TaskPriority::Urgent),
+        ] {
+            assert_eq!(
+                resolve_shortcut_for(detail, &[KeyCode::Char('t'), KeyCode::Char(code)]),
+                ShortcutLookup::Found(Action::SetPriority(priority))
+            );
+        }
     }
 
     #[test]

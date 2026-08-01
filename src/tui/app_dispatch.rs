@@ -1231,7 +1231,7 @@ impl App {
                 return Ok(());
             }
             if !self.pending_shortcut.is_empty()
-                && self.handle_focused_child_shortcut(key, scroll).await?
+                && self.handle_focused_detail_shortcut(key, scroll).await?
             {
                 return Ok(());
             }
@@ -1297,7 +1297,7 @@ impl App {
                         focused_scroll = self.detail_focus_scroll(scroll, terminal_size);
                     }
                     _ => {
-                        if self.handle_focused_child_shortcut(key, scroll).await? {
+                        if self.handle_focused_detail_shortcut(key, scroll).await? {
                             return Ok(());
                         }
                     }
@@ -1593,8 +1593,34 @@ impl App {
         Ok(())
     }
 
-    async fn handle_focused_child_shortcut(&mut self, key: KeyEvent, scroll: u16) -> Result<bool> {
-        let child_is_focused = matches!(
+    fn detail_focus_allows_action(&self, action: Action) -> bool {
+        let Some(target) = self
+            .detail
+            .state()
+            .and_then(|detail| detail.focused_target())
+        else {
+            return true;
+        };
+        if matches!(
+            action,
+            Action::GoBack | Action::ReturnToLastChange | Action::BeginSearch | Action::Refresh
+        ) {
+            return true;
+        }
+        matches!(
+            target,
+            DetailTargetId::Task {
+                section: DetailSection::EpicChildren,
+                ..
+            }
+        ) && matches!(
+            action,
+            Action::BeginAddEpicChild | Action::RemoveEpicChild | Action::Undo
+        )
+    }
+
+    fn detail_focus_warning(&self) -> &'static str {
+        if matches!(
             self.detail
                 .state()
                 .and_then(|detail| detail.focused_target()),
@@ -1602,10 +1628,14 @@ impl App {
                 section: DetailSection::EpicChildren,
                 ..
             })
-        );
-        if !child_is_focused {
-            return Ok(false);
+        ) {
+            "Leave child focus before using that command"
+        } else {
+            "Leave detail focus before using that command"
         }
+    }
+
+    async fn handle_focused_detail_shortcut(&mut self, key: KeyEvent, scroll: u16) -> Result<bool> {
         if !key.modifiers.is_empty() && key.modifiers != KeyModifiers::SHIFT {
             return Ok(false);
         }
@@ -1615,23 +1645,17 @@ impl App {
                 self.navigate_back_from_detail().await?;
                 Ok(true)
             }
-            DetailShortcutResolution::Action(
-                action @ (Action::BeginAddEpicChild
-                | Action::RemoveEpicChild
-                | Action::Undo
-                | Action::ReturnToLastChange),
-            ) => {
+            DetailShortcutResolution::Action(action) => {
                 self.pending_shortcut_scroll = 0;
+                if !self.detail_focus_allows_action(action) {
+                    self.set_warning(self.detail_focus_warning());
+                    self.show_detail(scroll);
+                    return Ok(true);
+                }
                 if let Some(detail) = self.detail.state_mut() {
                     detail.set_scroll(scroll);
                 }
                 self.execute(action).await?;
-                Ok(true)
-            }
-            DetailShortcutResolution::Action(_) => {
-                self.pending_shortcut_scroll = 0;
-                self.set_warning("Leave child focus before using that command");
-                self.show_detail(scroll);
                 Ok(true)
             }
             DetailShortcutResolution::Prefix => {
@@ -1666,6 +1690,14 @@ impl App {
             }
             DetailShortcutResolution::Action(action) => {
                 self.pending_shortcut_scroll = 0;
+                if !self.detail_focus_allows_action(action) {
+                    self.set_warning(self.detail_focus_warning());
+                    if let Some(detail) = self.detail.state_mut() {
+                        detail.set_scroll(scroll);
+                    }
+                    self.show_detail(scroll);
+                    return Ok(Some(self.overlay.take()));
+                }
                 if let Some(detail) = self.detail.state_mut() {
                     detail.set_scroll(scroll);
                 }

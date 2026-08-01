@@ -276,6 +276,13 @@ pub(crate) fn render(
     }
     let footer_mode = match view.footer_mode(footer.width) {
         FooterMode::List if store.view_state.view == TaskView::Columns => FooterMode::Columns,
+        FooterMode::Detail
+            if store
+                .selected_task(list.selected_task())
+                .is_some_and(|item| item.task.deleted) =>
+        {
+            FooterMode::DetailDeleted
+        }
         mode => mode,
     };
     frame.render_widget(

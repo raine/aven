@@ -26,6 +26,7 @@ pub(crate) struct CommandSpec {
     pub(crate) description: &'static str,
     pub(crate) section: &'static str,
     pub(crate) keys: &'static [KeySequence],
+    pub(crate) detail_keys: &'static [KeySequence],
     pub(crate) action: Action,
     pub(crate) lifecycle: CommandLifecycle,
 }
@@ -57,6 +58,37 @@ impl CommandSpec {
             description,
             section,
             keys,
+            detail_keys: &[],
+            action,
+            lifecycle: CommandLifecycle::Implemented,
+        }
+    }
+
+    pub(crate) const fn implemented_in_detail(
+        name: &'static str,
+        description: &'static str,
+        section: &'static str,
+        keys: &'static [KeySequence],
+        action: Action,
+    ) -> Self {
+        Self::implemented_with_aliases_in_detail(name, &[], description, section, keys, action)
+    }
+
+    pub(crate) const fn implemented_with_aliases_in_detail(
+        name: &'static str,
+        aliases: &'static [&'static str],
+        description: &'static str,
+        section: &'static str,
+        keys: &'static [KeySequence],
+        action: Action,
+    ) -> Self {
+        Self {
+            name,
+            aliases,
+            description,
+            section,
+            keys,
+            detail_keys: keys,
             action,
             lifecycle: CommandLifecycle::Implemented,
         }
@@ -75,6 +107,7 @@ impl CommandSpec {
             description,
             section,
             keys,
+            detail_keys: &[],
             action: Action::Planned { name, reason },
             lifecycle: CommandLifecycle::Planned { reason },
         }
@@ -94,6 +127,7 @@ impl CommandSpec {
             description,
             section,
             keys,
+            detail_keys: &[],
             action: Action::Disabled { name, reason },
             lifecycle: CommandLifecycle::Disabled { reason },
         }
@@ -107,11 +141,14 @@ pub(crate) enum CommandContext {
 }
 
 impl CommandContext {
-    pub(crate) const fn commands(self) -> &'static [CommandSpec] {
-        match self {
-            Self::Normal => COMMANDS,
-            Self::Detail => DETAIL_COMMANDS,
-        }
+    pub(crate) fn commands(self) -> Vec<&'static CommandSpec> {
+        COMMANDS
+            .iter()
+            .filter(|command| match self {
+                Self::Normal => true,
+                Self::Detail => !command.detail_keys.is_empty(),
+            })
+            .collect()
     }
 
     pub(crate) const fn sections(self) -> &'static [&'static str] {
@@ -135,7 +172,8 @@ pub(crate) const NORMAL_HELP_SECTIONS: &[&str] = &[
     "Config",
 ];
 
-pub(crate) const DETAIL_HELP_SECTIONS: &[&str] = &["General", "Navigation", "Task detail", "Tasks"];
+pub(crate) const DETAIL_HELP_SECTIONS: &[&str] =
+    &["General", "Navigation", "Task detail", "Tasks", "Conflicts"];
 
 pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
@@ -148,7 +186,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::Quit,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "command",
         "open the command panel",
         "General",
@@ -175,7 +213,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         &[],
         Action::ShowWelcome,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "refresh",
         "reload tasks",
         "General",
@@ -199,7 +237,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         &[],
         Action::ShowChangelog,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "undo",
         "undo last TUI mutation",
         "General",
@@ -209,7 +247,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::Undo,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "search",
         "search all tasks",
         "General",
@@ -381,7 +419,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::ToggleFocus,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "back",
         "return to the previous navigation state",
         "Navigation",
@@ -391,7 +429,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::GoBack,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "return-to-change",
         "select the task most recently changed",
         "Navigation",
@@ -431,7 +469,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ToggleColumnsPreview,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "delete",
         "confirm deleting selected task",
         "Tasks",
@@ -441,7 +479,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::Delete,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "status-picker",
         "open task status picker",
         "Tasks",
@@ -457,7 +495,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::BeginStatusPicker,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "restore",
         "restore selected task",
         "Tasks",
@@ -467,7 +505,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::Restore,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "status-inbox",
         "set status to inbox",
         "Tasks",
@@ -477,7 +515,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetStatus(TaskStatus::Inbox),
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "status-backlog",
         "set status to backlog",
         "Tasks",
@@ -487,7 +525,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetStatus(TaskStatus::Backlog),
     ),
-    CommandSpec::implemented_with_aliases(
+    CommandSpec::implemented_with_aliases_in_detail(
         "status-todo",
         &["todo"],
         "set status to todo",
@@ -498,7 +536,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetStatus(TaskStatus::Todo),
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "status-active",
         "set status to active",
         "Tasks",
@@ -508,7 +546,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetStatus(TaskStatus::Active),
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "status-done",
         "set status to done",
         "Tasks",
@@ -524,7 +562,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::SetStatus(TaskStatus::Done),
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "status-canceled",
         "set status to canceled",
         "Tasks",
@@ -540,7 +578,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::SetStatus(TaskStatus::Canceled),
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "recurrence-skip",
         "skip the current recurring occurrence",
         "Tasks",
@@ -550,7 +588,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SkipRecurrence,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "recurrence-edit-template",
         "edit the recurring template for future occurrences",
         "Tasks",
@@ -560,7 +598,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginEditRecurrenceTemplate,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "recurrence-pause",
         "pause the selected recurring series",
         "Tasks",
@@ -570,7 +608,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::PauseRecurrence,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "recurrence-resume",
         "resume the selected recurring series",
         "Tasks",
@@ -580,7 +618,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ResumeRecurrence,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "recurrence-stop",
         "stop future occurrences after the current task",
         "Tasks",
@@ -590,7 +628,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::StopRecurrence,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "recurrence-history",
         "show recurring series history",
         "Tasks",
@@ -778,7 +816,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::BeginAddTask,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "add-note",
         "add a note to selected task",
         "Tasks",
@@ -856,7 +894,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         PROJECT_PATH_FLOW_REASON,
     ),
     // Edit
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "edit-title",
         "edit selected task title",
         "Tasks",
@@ -872,7 +910,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::BeginEditTitle,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "edit-description",
         "edit selected task description",
         "Tasks",
@@ -888,7 +926,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::BeginEditDescription,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "edit-project",
         "edit selected task project",
         "Tasks",
@@ -904,7 +942,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::BeginEditProject,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "edit-priority",
         "edit selected task priority",
         "Tasks",
@@ -920,7 +958,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::BeginEditPriority,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "edit-availability",
         "edit selected task availability",
         "Tasks",
@@ -936,7 +974,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::BeginEditAvailability,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "edit-due",
         "edit selected task due date",
         "Tasks",
@@ -952,7 +990,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::BeginEditDue,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "edit-labels",
         "edit selected task labels",
         "Tasks",
@@ -968,7 +1006,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::BeginEditLabels,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "copy-ref",
         "copy selected task display ref",
         "Tasks",
@@ -978,7 +1016,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::CopyShortRef,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "copy-id",
         "copy selected task id",
         "Tasks",
@@ -988,7 +1026,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::CopyDurableRef,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "copy-title",
         "copy selected task title",
         "Tasks",
@@ -998,7 +1036,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::CopyTaskTitle,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "copy-description",
         "copy selected task description",
         "Tasks",
@@ -1008,7 +1046,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::CopyTaskDescription,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "copy-text",
         "copy selected task title and description",
         "Tasks",
@@ -1018,7 +1056,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::CopyTaskText,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "copy-notes",
         "copy selected task notes",
         "Tasks",
@@ -1029,7 +1067,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::CopyTaskNotes,
     ),
     // Priority
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "priority-none",
         "set priority to none",
         "Tasks",
@@ -1039,7 +1077,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetPriority(TaskPriority::None),
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "priority-low",
         "set priority to low",
         "Tasks",
@@ -1049,7 +1087,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetPriority(TaskPriority::Low),
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "priority-medium",
         "set priority to medium",
         "Tasks",
@@ -1059,7 +1097,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetPriority(TaskPriority::Medium),
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "priority-high",
         "set priority to high",
         "Tasks",
@@ -1069,7 +1107,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetPriority(TaskPriority::High),
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "priority-urgent",
         "set priority to urgent",
         "Tasks",
@@ -1110,7 +1148,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ClearMarks,
     ),
     // Dependencies
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "add-dependency",
         "add blocker to selected task",
         "Tasks",
@@ -1120,7 +1158,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginAddDependency,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "remove-dependency",
         "remove blocker from selected task",
         "Tasks",
@@ -1141,7 +1179,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ToggleEpicExpanded,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "task-child-add",
         "add a child to the selected epic",
         "Tasks",
@@ -1151,7 +1189,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginAddEpicChild,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "task-child-remove",
         "remove the selected child from its epic",
         "Tasks",
@@ -1294,7 +1332,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ReverseSort,
     ),
     // Conflict
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "conflict-list",
         "list or filter conflicts",
         "Conflicts",
@@ -1304,7 +1342,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginConflictList,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "conflict-show",
         "show conflict details",
         "Conflicts",
@@ -1314,7 +1352,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowConflictDetails,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "conflict-next",
         "jump to next conflict",
         "Conflicts",
@@ -1324,7 +1362,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::NextConflict,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "conflict-prev",
         "jump to previous conflict",
         "Conflicts",
@@ -1334,7 +1372,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::PreviousConflict,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "conflict-use-local",
         "resolve with local value",
         "Conflicts",
@@ -1344,7 +1382,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::AcceptConflictLocal,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "conflict-use-remote",
         "resolve with remote value",
         "Conflicts",
@@ -1354,7 +1392,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::AcceptConflictRemote,
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_in_detail(
         "conflict-manual-merge",
         "resolve with manual value",
         "Conflicts",
@@ -1414,363 +1452,6 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             label: "C i",
         }],
         Action::BeginConfigInit,
-    ),
-];
-
-pub(crate) const DETAIL_COMMANDS: &[CommandSpec] = &[
-    CommandSpec::implemented(
-        "detail-back",
-        "back one detail level",
-        "General",
-        &[KeySequence {
-            codes: &[KeyCode::Char('g'), KeyCode::Char('[')],
-            label: "g [",
-        }],
-        Action::GoBack,
-    ),
-    CommandSpec::implemented(
-        "detail-return-to-change",
-        "select the task most recently changed",
-        "Navigation",
-        &[KeySequence {
-            codes: &[KeyCode::Char('g'), KeyCode::Char('.')],
-            label: "g .",
-        }],
-        Action::ReturnToLastChange,
-    ),
-    CommandSpec::implemented(
-        "detail-edit-title",
-        "edit selected task title",
-        "Tasks",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('t')],
-                label: "t e t",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('e'), KeyCode::Char('t')],
-                label: "e t",
-            },
-        ],
-        Action::BeginEditTitle,
-    ),
-    CommandSpec::implemented(
-        "detail-edit-description",
-        "edit selected task description",
-        "Tasks",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('d')],
-                label: "t e d",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('e'), KeyCode::Char('d')],
-                label: "e d",
-            },
-        ],
-        Action::BeginEditDescription,
-    ),
-    CommandSpec::implemented(
-        "detail-edit-project",
-        "edit selected task project",
-        "Tasks",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('e'), KeyCode::Char('j')],
-                label: "e j",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('j')],
-                label: "t e j",
-            },
-        ],
-        Action::BeginEditProject,
-    ),
-    CommandSpec::implemented(
-        "detail-edit-priority",
-        "edit selected task priority",
-        "Tasks",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('e'), KeyCode::Char('p')],
-                label: "e p",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('p')],
-                label: "t e p",
-            },
-        ],
-        Action::BeginEditPriority,
-    ),
-    CommandSpec::implemented(
-        "detail-edit-availability",
-        "edit selected task availability",
-        "Tasks",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('e'), KeyCode::Char('a')],
-                label: "e a",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('a')],
-                label: "t e a",
-            },
-        ],
-        Action::BeginEditAvailability,
-    ),
-    CommandSpec::implemented(
-        "detail-edit-due",
-        "edit selected task due date",
-        "Tasks",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('e'), KeyCode::Char('u')],
-                label: "e u",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('u')],
-                label: "t e u",
-            },
-        ],
-        Action::BeginEditDue,
-    ),
-    CommandSpec::implemented(
-        "detail-edit-labels",
-        "edit selected task labels",
-        "Tasks",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('l')],
-                label: "t e l",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('e'), KeyCode::Char('l')],
-                label: "e l",
-            },
-        ],
-        Action::BeginEditLabels,
-    ),
-    CommandSpec::implemented(
-        "detail-add-note",
-        "add a note to selected task",
-        "Tasks",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('n')],
-                label: "n",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('t'), KeyCode::Char('N')],
-                label: "t N",
-            },
-        ],
-        Action::BeginAddNote,
-    ),
-    CommandSpec::implemented(
-        "detail-status-picker",
-        "open task status picker",
-        "Tasks",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('t'), KeyCode::Char('s')],
-                label: "t s",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('s')],
-                label: "s",
-            },
-        ],
-        Action::BeginStatusPicker,
-    ),
-    CommandSpec::implemented(
-        "detail-status-done",
-        "set status to done",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('d')],
-            label: "t d",
-        }],
-        Action::SetStatus(TaskStatus::Done),
-    ),
-    CommandSpec::implemented(
-        "detail-recurrence-skip",
-        "skip the current recurring occurrence",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('k')],
-            label: "t r k",
-        }],
-        Action::SkipRecurrence,
-    ),
-    CommandSpec::implemented(
-        "detail-recurrence-edit-template",
-        "edit the recurring template for future occurrences",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('e')],
-            label: "t r e",
-        }],
-        Action::BeginEditRecurrenceTemplate,
-    ),
-    CommandSpec::implemented(
-        "detail-recurrence-pause",
-        "pause the selected recurring series",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('p')],
-            label: "t r p",
-        }],
-        Action::PauseRecurrence,
-    ),
-    CommandSpec::implemented(
-        "detail-recurrence-resume",
-        "resume the selected recurring series",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('r')],
-            label: "t r r",
-        }],
-        Action::ResumeRecurrence,
-    ),
-    CommandSpec::implemented(
-        "detail-recurrence-stop",
-        "stop future occurrences after the current task",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('s')],
-            label: "t r s",
-        }],
-        Action::StopRecurrence,
-    ),
-    CommandSpec::implemented(
-        "detail-recurrence-history",
-        "show recurring series history",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('h')],
-            label: "t r h",
-        }],
-        Action::ShowRecurrenceHistory,
-    ),
-    CommandSpec::implemented(
-        "detail-delete",
-        "confirm deleting selected task",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('D')],
-            label: "t D",
-        }],
-        Action::Delete,
-    ),
-    CommandSpec::implemented(
-        "detail-copy-ref",
-        "copy selected task display ref",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('y'), KeyCode::Char('r')],
-            label: "y r",
-        }],
-        Action::CopyShortRef,
-    ),
-    CommandSpec::implemented(
-        "detail-copy-id",
-        "copy selected task id",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('y'), KeyCode::Char('i')],
-            label: "y i",
-        }],
-        Action::CopyDurableRef,
-    ),
-    CommandSpec::implemented(
-        "detail-copy-title",
-        "copy task title",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('y'), KeyCode::Char('t')],
-            label: "y t",
-        }],
-        Action::CopyTaskTitle,
-    ),
-    CommandSpec::implemented(
-        "detail-copy-description",
-        "copy task description",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('y'), KeyCode::Char('d')],
-            label: "y d",
-        }],
-        Action::CopyTaskDescription,
-    ),
-    CommandSpec::implemented(
-        "detail-copy-text",
-        "copy task title and description",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('y'), KeyCode::Char('a')],
-            label: "y a",
-        }],
-        Action::CopyTaskText,
-    ),
-    CommandSpec::implemented(
-        "detail-copy-notes",
-        "copy task notes",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('y'), KeyCode::Char('n')],
-            label: "y n",
-        }],
-        Action::CopyTaskNotes,
-    ),
-    CommandSpec::implemented(
-        "detail-undo",
-        "undo last TUI mutation",
-        "General",
-        &[KeySequence {
-            codes: &[KeyCode::Char('u')],
-            label: "u",
-        }],
-        Action::Undo,
-    ),
-    CommandSpec::implemented(
-        "detail-task-child-add",
-        "add a child to the selected epic",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')],
-            label: "t c a",
-        }],
-        Action::BeginAddEpicChild,
-    ),
-    CommandSpec::implemented(
-        "detail-task-child-remove",
-        "remove the selected child from its epic",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('r')],
-            label: "t c r",
-        }],
-        Action::RemoveEpicChild,
-    ),
-    CommandSpec::implemented(
-        "detail-add-dependency",
-        "add blocker to selected task",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('B')],
-            label: "t B",
-        }],
-        Action::BeginAddDependency,
-    ),
-    CommandSpec::implemented(
-        "detail-remove-dependency",
-        "remove blocker from selected task",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('U')],
-            label: "t U",
-        }],
-        Action::BeginRemoveDependency,
     ),
 ];
 

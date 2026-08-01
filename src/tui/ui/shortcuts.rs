@@ -147,7 +147,7 @@ fn help_columns() -> [Vec<&'static str>; 2] {
 fn help_section_len(section: &str) -> usize {
     CommandContext::Normal
         .commands()
-        .iter()
+        .into_iter()
         .filter(|command| command.section == section)
         .count()
         + 1
@@ -207,7 +207,7 @@ fn detail_help_lines() -> Vec<Line<'static>> {
             .collect::<Vec<_>>();
         let commands = CommandContext::Detail
             .commands()
-            .iter()
+            .into_iter()
             .filter(|command| command.section == *section)
             .collect::<Vec<_>>();
         if fixed.is_empty() && commands.is_empty() {
@@ -271,7 +271,7 @@ fn help_column_lines(sections: &[&'static str]) -> Vec<Line<'static>> {
         )));
         for command in CommandContext::Normal
             .commands()
-            .iter()
+            .into_iter()
             .filter(|command| command.section == *section)
         {
             lines.push(help_command_line(command));
@@ -664,7 +664,7 @@ mod tests {
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(rendered.contains(":detail-edit-title"));
+        assert!(rendered.contains(":edit-title"));
         assert!(rendered.contains(" e t "));
     }
 
@@ -697,11 +697,11 @@ mod tests {
 
         let title = rendered
             .lines()
-            .find(|line| line.contains(":detail-edit-title"))
+            .find(|line| line.contains(":edit-title"))
             .unwrap();
         let description = rendered
             .lines()
-            .find(|line| line.contains(":detail-edit-description"))
+            .find(|line| line.contains(":edit-description"))
             .unwrap();
         assert_eq!(
             title.find("edit selected task title"),
@@ -713,7 +713,7 @@ mod tests {
     fn copy_prefix_groups_every_copy_action() {
         for (context, command_prefix) in [
             (CommandContext::Normal, ":copy-"),
-            (CommandContext::Detail, ":detail-copy-"),
+            (CommandContext::Detail, ":copy-"),
         ] {
             let rendered = prefix_hint_lines(context, &["y".to_string()])
                 .iter()
@@ -765,7 +765,7 @@ mod tests {
             0,
         );
 
-        for command_name in [":detail-copy-description", ":detail-copy-notes"] {
+        for command_name in [":copy-description", ":copy-notes"] {
             let line = lines
                 .iter()
                 .find(|line| line.to_string().contains(command_name))
@@ -856,6 +856,7 @@ mod tests {
             description: "disabled test command",
             section: "Test",
             keys: &[],
+            detail_keys: &[],
             action: crate::tui::event::Action::Disabled {
                 name: "disabled-test",
                 reason: "test reason",
@@ -937,9 +938,6 @@ mod tests {
         assert!(rendered.contains("open focused child or attachment"));
         assert!(rendered.contains("close detail"));
         assert!(rendered.contains("focus children and attachments"));
-        assert!(rendered.contains("scroll one page"));
-        assert!(rendered.contains("select previous or next task"));
-        assert!(rendered.contains("select the task most recently changed"));
         assert!(!rendered.contains("view updated"));
     }
 
@@ -956,10 +954,10 @@ mod tests {
         assert!(rendered.contains("close detail"));
         assert!(rendered.contains("scroll one page"));
         assert!(rendered.contains("select previous or next task"));
-        assert!(rendered.contains("copy task title"));
-        assert!(rendered.contains("copy task description"));
-        assert!(rendered.contains("copy task title and description"));
-        assert!(rendered.contains("copy task notes"));
+        assert!(rendered.contains("copy selected task title"));
+        assert!(rendered.contains("copy selected task description"));
+        assert!(rendered.contains("copy selected task title and description"));
+        assert!(rendered.contains("copy selected task notes"));
 
         for command in CommandContext::Detail.commands() {
             let keys = command
