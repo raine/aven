@@ -103,18 +103,32 @@ impl Database {
 }
 
 pub(crate) async fn open_db(path: &Path) -> Result<SqlitePool> {
-    let existed_before_open = path.exists();
-    if let Some(parent) = path.parent() {
+    let connection_input = path.to_string_lossy();
+    let mut options = SqliteConnectOptions::from_str(&connection_input)?;
+    let storage = database_storage(&connection_input);
+    let existed_before_open = storage == DatabaseStorage::File && path.exists();
+    if storage == DatabaseStorage::File
+        && let Some(parent) = path.parent()
+    {
         fs::create_dir_all(parent)
             .with_context(|| format!("could not create {}", parent.display()))?;
     }
-    let options = SqliteConnectOptions::from_str(&path.display().to_string())?
+    options = options
         .create_if_missing(true)
         .foreign_keys(true)
-        .journal_mode(SqliteJournalMode::Wal)
         .busy_timeout(Duration::from_secs(5));
-    let pool = SqlitePoolOptions::new()
-        .max_connections(database_connection_limit(path))
+    let pool_options = match storage {
+        DatabaseStorage::InMemory => SqlitePoolOptions::new()
+            .min_connections(1)
+            .max_connections(1)
+            .idle_timeout(None)
+            .max_lifetime(None),
+        DatabaseStorage::File => {
+            options = options.journal_mode(SqliteJournalMode::Wal);
+            SqlitePoolOptions::new().max_connections(FILE_DATABASE_CONNECTIONS)
+        }
+    };
+    let pool = pool_options
         .connect_with(options)
         .await
         .with_context(|| format!("could not open {}", path.display()))?;
@@ -126,12 +140,27 @@ pub(crate) async fn open_db(path: &Path) -> Result<SqlitePool> {
     Ok(pool)
 }
 
-fn database_connection_limit(path: &Path) -> u32 {
-    let path = path.to_string_lossy();
-    if path == ":memory:" || path.starts_with("file::memory:") || path.contains("mode=memory") {
-        1
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DatabaseStorage {
+    InMemory,
+    File,
+}
+
+fn database_storage(connection_input: &str) -> DatabaseStorage {
+    let connection_input = connection_input
+        .trim_start_matches("sqlite://")
+        .trim_start_matches("sqlite:");
+    let mut database_and_params = connection_input.splitn(2, '?');
+    let database = database_and_params.next().unwrap_or_default();
+    let uses_memory_mode = database_and_params.next().is_some_and(|params| {
+        url::form_urlencoded::parse(params.as_bytes())
+            .any(|(key, value)| key == "mode" && value == "memory")
+    });
+
+    if database == ":memory:" || database == "file::memory:" || uses_memory_mode {
+        DatabaseStorage::InMemory
     } else {
-        FILE_DATABASE_CONNECTIONS
+        DatabaseStorage::File
     }
 }
 
@@ -840,6 +869,21 @@ pub(crate) async fn conflict_exists(
 mod tests {
     use super::*;
 
+    const PRIVATE_IN_MEMORY_INPUTS: &[&str] = &[
+        ":memory:",
+        "sqlite::memory:",
+        "sqlite://:memory:",
+        "file::memory:",
+        "sqlite:file::memory:",
+        "sqlite://file::memory:",
+        "file::memory:?cache=private",
+        "sqlite://?mode=memory&cache=private",
+        "named?mode=memory&cache=private",
+        "sqlite://named?mode=memory&cache=private",
+        "sqlite://named?cache=private&mode=memory",
+        "sqlite://named?mode=mem%6Fry&cache=private",
+    ];
+
     #[tokio::test]
     async fn wal_readers_progress_while_writes_remain_serialized() {
         let temp = tempfile::tempdir().unwrap();
@@ -883,16 +927,93 @@ mod tests {
         );
     }
 
+    #[test]
+    fn database_storage_follows_sqlx_connection_input_semantics() {
+        for &input in PRIVATE_IN_MEMORY_INPUTS {
+            assert_eq!(
+                database_storage(input),
+                DatabaseStorage::InMemory,
+                "{input}"
+            );
+        }
+
+        for input in [
+            "mode=memory.sqlite",
+            "ordinary-file::memory:.sqlite",
+            "sqlite::memory:.sqlite",
+            "/tmp/directory-mode=memory/database.sqlite",
+        ] {
+            assert_eq!(database_storage(input), DatabaseStorage::File, "{input}");
+        }
+    }
+
     #[tokio::test]
-    async fn in_memory_database_keeps_one_coherent_connection() {
-        let database = Database::open(Path::new(":memory:")).await.unwrap();
-        assert!(database.meta("client_id").await.unwrap().is_some());
-        let mut writer = database.acquire_writer().await.unwrap();
-        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM workspaces")
-            .fetch_one(&mut *writer)
+    async fn private_in_memory_inputs_keep_one_connection_and_one_schema() {
+        for &input in PRIVATE_IN_MEMORY_INPUTS {
+            let pool = open_db(Path::new(input)).await.unwrap();
+            let pool_options = pool.options();
+            assert_eq!(pool_options.get_min_connections(), 1, "{input}");
+            assert_eq!(pool_options.get_max_connections(), 1, "{input}");
+            assert_eq!(pool_options.get_idle_timeout(), None, "{input}");
+            assert_eq!(pool_options.get_max_lifetime(), None, "{input}");
+            assert_eq!(pool.size(), 1, "{input}");
+            let mut first = pool.acquire().await.unwrap();
+            let second_pool = pool.clone();
+            let mut second = tokio::spawn(async move {
+                let mut connection = second_pool.acquire().await.unwrap();
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT count(*) FROM sqlite_schema WHERE name = 'acquisition_visibility'",
+                )
+                .fetch_one(&mut *connection)
+                .await
+                .unwrap()
+            });
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), &mut second)
+                    .await
+                    .is_err(),
+                "{input} opened another connection"
+            );
+
+            sqlx::query("CREATE TABLE acquisition_visibility(id INTEGER PRIMARY KEY)")
+                .execute(&mut *first)
+                .await
+                .unwrap();
+            drop(first);
+
+            let visible = tokio::time::timeout(Duration::from_secs(1), second)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(visible, 1, "{input}");
+        }
+    }
+
+    #[tokio::test]
+    async fn filesystem_lookalike_keeps_wal_and_concurrent_connections() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp
+            .path()
+            .join("ordinary-file::memory:-mode=memory.sqlite");
+        let pool = open_db(&path).await.unwrap();
+        let first = pool.acquire().await.unwrap();
+        let mut second = tokio::time::timeout(Duration::from_secs(1), pool.acquire())
+            .await
+            .expect("file pool should allow a concurrent acquisition")
+            .unwrap();
+        let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode")
+            .fetch_one(&mut *second)
             .await
             .unwrap();
-        assert_eq!(count, 1);
+
+        assert_eq!(
+            pool.options().get_max_connections(),
+            FILE_DATABASE_CONNECTIONS
+        );
+        assert_eq!(journal_mode, "wal");
+        drop(first);
+        drop(second);
+        pool.close().await;
     }
 
     #[tokio::test]
