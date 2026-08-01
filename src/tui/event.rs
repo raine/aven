@@ -126,6 +126,7 @@ mod tests {
     use crossterm::event::KeyCode;
 
     use crate::choices::{TaskPriority, TaskStatus};
+    use crate::tui::store::TaskView;
 
     use super::*;
 
@@ -480,6 +481,34 @@ mod tests {
                 .unwrap();
             assert!(command.keys(CommandContext::Normal).is_empty());
         }
+    }
+
+    #[test]
+    fn catalog_includes_upcoming_view_command() {
+        let command = COMMANDS
+            .iter()
+            .find(|command| command.name == "view-upcoming")
+            .expect("upcoming view command");
+
+        assert_eq!(command.description, "show upcoming task view");
+        assert_eq!(command.section, "Views");
+        assert_eq!(command.action, Action::ShowView(TaskView::Upcoming));
+        assert_eq!(
+            command
+                .keys(CommandContext::Normal)
+                .iter()
+                .map(|key| key.label)
+                .collect::<Vec<_>>(),
+            vec!["v p"]
+        );
+    }
+
+    #[test]
+    fn resolves_upcoming_view_shortcut() {
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('p')]),
+            ShortcutLookup::Found(Action::ShowView(TaskView::Upcoming))
+        );
     }
 
     #[test]

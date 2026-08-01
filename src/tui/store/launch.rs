@@ -194,6 +194,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolves_upcoming_browse_view() {
+        let (_temp, database, _conn) = setup().await;
+        let mut input = args();
+        input.view = Some(TuiViewArg::Upcoming);
+
+        let launch = TuiLaunch::resolve(&database, &Workspace::default(), input)
+            .await
+            .unwrap();
+
+        assert_eq!(launch.view_state.view, TaskView::Upcoming);
+        assert_eq!(launch.startup, TuiStartup::Browse);
+    }
+
+    #[tokio::test]
     async fn resolves_deleted_task_as_singleton_search_detail() {
         let (_temp, database, mut conn) = setup().await;
         seed_project(&mut conn).await;

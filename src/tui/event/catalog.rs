@@ -775,6 +775,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ShowView(TaskView::Open),
     ),
     CommandSpec::implemented(
+        "view-upcoming",
+        "show upcoming task view",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('v'), KeyCode::Char('p')],
+            label: "v p",
+        }],
+        Action::ShowView(TaskView::Upcoming),
+    ),
+    CommandSpec::implemented(
         "view-epics",
         "show open epics",
         "Views",

@@ -661,6 +661,19 @@ mod tests {
     }
 
     #[test]
+    fn view_prefix_hints_include_upcoming() {
+        let rendered = prefix_hint_lines(CommandContext::Normal, &["v".to_string()])
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains(":view-upcoming"));
+        assert!(rendered.contains(" p "));
+        assert!(rendered.contains("show upcoming task view"));
+    }
+
+    #[test]
     fn prefix_hint_lines_use_shared_catalog() {
         let lines = prefix_hint_lines(CommandContext::Normal, &["t".to_string()]);
         let rendered = lines
@@ -942,6 +955,19 @@ mod tests {
             assert!(title_row.contains(&format!("╭─ {title} ")), "{title_row}");
             assert!(title_row.contains("─╮"), "{title_row}");
         }
+    }
+
+    #[test]
+    fn global_help_includes_upcoming_view_route() {
+        let rendered = help_columns()
+            .iter()
+            .flat_map(|sections| help_column_lines(sections))
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("v p"));
+        assert!(rendered.contains("show upcoming task view"));
     }
 
     #[test]
