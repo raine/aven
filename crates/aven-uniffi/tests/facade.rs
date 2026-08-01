@@ -7,9 +7,9 @@ use aven_core::sync::wire::{SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse};
 use aven_uniffi::{
     AvenClient, AvenError, AvenSyncSession, CreateRecurrenceSeries, CreateTask, ErrorCode,
     OptionalDateUpdate, OptionalLocalTimeUpdate, RecurrenceDuePolicy, RecurrenceFrequency,
-    RecurrenceHistoryKind, RecurrenceOutcome, RecurrenceRule, RecurrenceScheduleInput,
-    RecurrenceSeriesState, SyncHttpResponse, TaskPriority, TaskStatus, UpdateRecurrenceTemplate,
-    UpdateTask,
+    RecurrenceHistoryKind, RecurrenceOutcome, RecurrenceProjectionState, RecurrenceRule,
+    RecurrenceScheduleInput, RecurrenceSeriesState, SyncHttpResponse, TaskPriority, TaskStatus,
+    UpdateRecurrenceTemplate, UpdateTask,
 };
 
 fn error_parts(error: AvenError) -> (ErrorCode, String) {
@@ -185,6 +185,10 @@ fn recurrence_facade_exposes_lifecycle_history_reports_and_typed_ingress() {
         .unwrap();
     assert_eq!(created.series.state, RecurrenceSeriesState::Active);
     assert_eq!(
+        created.occurrence.projection_state,
+        RecurrenceProjectionState::Projected
+    );
+    assert_eq!(
         created.occurrence.task_id.as_deref(),
         Some(created.task.id.as_str())
     );
@@ -218,6 +222,7 @@ fn recurrence_facade_exposes_lifecycle_history_reports_and_typed_ingress() {
         )
         .unwrap();
     assert!(edited.changed);
+    assert_eq!(edited.series.due_policy, RecurrenceDuePolicy::None);
 
     assert_eq!(
         client

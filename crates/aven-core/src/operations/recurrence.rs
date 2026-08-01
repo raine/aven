@@ -48,30 +48,6 @@ const SERIES_TEMPLATE_FIELDS: &[&str] = &[
     "deleted",
 ];
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct RecurrenceCreationOptions {
-    create_missing_labels: bool,
-}
-
-impl RecurrenceCreationOptions {
-    pub fn with_create_missing_labels(mut self) -> Self {
-        self.create_missing_labels = true;
-        self
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct RecurrenceTemplateUpdateOptions {
-    create_missing_labels: bool,
-}
-
-impl RecurrenceTemplateUpdateOptions {
-    pub fn with_create_missing_labels(mut self) -> Self {
-        self.create_missing_labels = true;
-        self
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct RecurrenceSeriesDraft {
     pub title: String,
@@ -81,6 +57,33 @@ pub struct RecurrenceSeriesDraft {
     pub initial_status: String,
     pub labels: Vec<String>,
     pub schedule: RecurrenceSchedule,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateRecurrenceSeriesParams {
+    pub draft: RecurrenceSeriesDraft,
+    at: Option<DateTime<Utc>>,
+    create_missing_labels: bool,
+}
+
+impl CreateRecurrenceSeriesParams {
+    pub fn new(draft: RecurrenceSeriesDraft) -> Self {
+        Self {
+            draft,
+            at: None,
+            create_missing_labels: false,
+        }
+    }
+
+    pub fn at(mut self, at: DateTime<Utc>) -> Self {
+        self.at = Some(at);
+        self
+    }
+
+    pub fn with_create_missing_labels(mut self) -> Self {
+        self.create_missing_labels = true;
+        self
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -93,6 +96,26 @@ pub struct RecurrenceTemplateUpdate {
     pub labels: Option<Vec<String>>,
     pub available_local_time: Option<Option<NaiveTime>>,
     pub due_policy: Option<RecurrenceDuePolicy>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdateRecurrenceTemplateParams {
+    pub update: RecurrenceTemplateUpdate,
+    create_missing_labels: bool,
+}
+
+impl UpdateRecurrenceTemplateParams {
+    pub fn new(update: RecurrenceTemplateUpdate) -> Self {
+        Self {
+            update,
+            create_missing_labels: false,
+        }
+    }
+
+    pub fn with_create_missing_labels(mut self) -> Self {
+        self.create_missing_labels = true;
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -135,63 +158,20 @@ impl Database {
     pub async fn create_recurrence_series(
         &self,
         workspace: &Workspace,
-        draft: RecurrenceSeriesDraft,
-    ) -> Result<RecurrenceCreateOutcome> {
-        self.create_recurrence_series_at(workspace, draft, utc_now()?)
-            .await
-    }
-
-    pub async fn create_recurrence_series_with_options(
-        &self,
-        workspace: &Workspace,
-        draft: RecurrenceSeriesDraft,
-        options: RecurrenceCreationOptions,
-    ) -> Result<RecurrenceCreateOutcome> {
-        self.create_recurrence_series_at_with_options(workspace, draft, utc_now()?, options)
-            .await
-    }
-
-    pub async fn create_recurrence_series_at(
-        &self,
-        workspace: &Workspace,
-        draft: RecurrenceSeriesDraft,
-        at: DateTime<Utc>,
+        params: CreateRecurrenceSeriesParams,
     ) -> Result<RecurrenceCreateOutcome> {
         let mut conn = self.acquire().await?;
-        create_recurrence_series(&mut conn, workspace, draft, at).await
-    }
-
-    pub async fn create_recurrence_series_at_with_options(
-        &self,
-        workspace: &Workspace,
-        draft: RecurrenceSeriesDraft,
-        at: DateTime<Utc>,
-        options: RecurrenceCreationOptions,
-    ) -> Result<RecurrenceCreateOutcome> {
-        let mut conn = self.acquire().await?;
-        create_recurrence_series_with_options(&mut conn, workspace, draft, at, options).await
+        create_recurrence_series(&mut conn, workspace, params).await
     }
 
     pub async fn update_recurrence_template(
         &self,
         workspace: &Workspace,
         series_id: &RecurrenceSeriesId,
-        update: RecurrenceTemplateUpdate,
+        params: UpdateRecurrenceTemplateParams,
     ) -> Result<RecurrenceTemplateUpdateOutcome> {
         let mut conn = self.acquire().await?;
-        update_recurrence_template(&mut conn, workspace, series_id, update).await
-    }
-
-    pub async fn update_recurrence_template_with_options(
-        &self,
-        workspace: &Workspace,
-        series_id: &RecurrenceSeriesId,
-        update: RecurrenceTemplateUpdate,
-        options: RecurrenceTemplateUpdateOptions,
-    ) -> Result<RecurrenceTemplateUpdateOutcome> {
-        let mut conn = self.acquire().await?;
-        update_recurrence_template_with_options(&mut conn, workspace, series_id, update, options)
-            .await
+        update_recurrence_template(&mut conn, workspace, series_id, params).await
     }
 
     pub async fn reconcile_recurrence_series(
@@ -313,26 +293,14 @@ impl Database {
 pub async fn create_recurrence_series(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    draft: RecurrenceSeriesDraft,
-    at: DateTime<Utc>,
+    params: CreateRecurrenceSeriesParams,
 ) -> Result<RecurrenceCreateOutcome> {
-    create_recurrence_series_with_options(
-        conn,
-        workspace,
+    let CreateRecurrenceSeriesParams {
         draft,
         at,
-        RecurrenceCreationOptions::default(),
-    )
-    .await
-}
-
-pub async fn create_recurrence_series_with_options(
-    conn: &mut SqliteConnection,
-    workspace: &Workspace,
-    draft: RecurrenceSeriesDraft,
-    at: DateTime<Utc>,
-    options: RecurrenceCreationOptions,
-) -> Result<RecurrenceCreateOutcome> {
+        create_missing_labels,
+    } = params;
+    let at = at.map_or_else(utc_now, Ok)?;
     let priority = TaskPriority::parse(&draft.priority)?;
     let initial_status = TaskStatus::parse(&draft.initial_status)?;
     ensure!(
@@ -357,7 +325,7 @@ pub async fn create_recurrence_series_with_options(
     let project =
         resolve_or_create_project_in_workspace(&mut tx, &workspace.id, draft.project.as_str())
             .await?;
-    let labels = if options.create_missing_labels {
+    let labels = if create_missing_labels {
         resolve_or_create_labels_in_workspace(&mut tx, workspace, &draft.labels)
             .await?
             .names
@@ -470,25 +438,12 @@ pub async fn update_recurrence_template(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     series_id: &RecurrenceSeriesId,
-    update: RecurrenceTemplateUpdate,
+    params: UpdateRecurrenceTemplateParams,
 ) -> Result<RecurrenceTemplateUpdateOutcome> {
-    update_recurrence_template_with_options(
-        conn,
-        workspace,
-        series_id,
+    let UpdateRecurrenceTemplateParams {
         update,
-        RecurrenceTemplateUpdateOptions::default(),
-    )
-    .await
-}
-
-pub async fn update_recurrence_template_with_options(
-    conn: &mut SqliteConnection,
-    workspace: &Workspace,
-    series_id: &RecurrenceSeriesId,
-    update: RecurrenceTemplateUpdate,
-    options: RecurrenceTemplateUpdateOptions,
-) -> Result<RecurrenceTemplateUpdateOutcome> {
+        create_missing_labels,
+    } = params;
     if let Some(priority) = update.priority.as_deref() {
         TaskPriority::parse(priority)?;
     }
@@ -545,7 +500,7 @@ pub async fn update_recurrence_template_with_options(
 
     let current_labels = load_series_labels(&mut tx, &workspace.id, series_id).await?;
     let target_labels = if let Some(labels) = update.labels {
-        if options.create_missing_labels {
+        if create_missing_labels {
             resolve_or_create_labels_in_workspace(&mut tx, workspace, &labels)
                 .await?
                 .names

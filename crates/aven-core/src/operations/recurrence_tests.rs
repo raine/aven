@@ -56,9 +56,13 @@ async fn create_daily(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
 ) -> RecurrenceCreateOutcome {
-    create_recurrence_series(conn, workspace, draft(20), at(20, 12))
-        .await
-        .unwrap()
+    create_recurrence_series(
+        conn,
+        workspace,
+        CreateRecurrenceSeriesParams::new(draft(20)).at(at(20, 12)),
+    )
+    .await
+    .unwrap()
 }
 
 async fn resolve(
@@ -334,6 +338,51 @@ async fn create_series_atomically_materializes_complete_deterministic_snapshot()
 }
 
 #[tokio::test]
+async fn recurrence_params_combine_clock_and_label_creation_policy() {
+    let (_temp, mut conn, workspace) = setup().await;
+    let mut input = draft(20);
+    input.labels = vec!["created-with-series".to_string()];
+    let created = create_recurrence_series(
+        &mut conn,
+        &workspace,
+        CreateRecurrenceSeriesParams::new(input)
+            .at(at(20, 12))
+            .with_create_missing_labels(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(created.series.created_at, "2026-07-20T12:00:00Z");
+    assert_eq!(
+        load_series_labels(&mut conn, &workspace.id, &created.series.id)
+            .await
+            .unwrap(),
+        vec!["created-with-series"]
+    );
+
+    let updated = update_recurrence_template(
+        &mut conn,
+        &workspace,
+        &created.series.id,
+        UpdateRecurrenceTemplateParams::new(RecurrenceTemplateUpdate {
+            labels: Some(vec!["created-with-update".to_string()]),
+            ..RecurrenceTemplateUpdate::default()
+        })
+        .with_create_missing_labels(),
+    )
+    .await
+    .unwrap();
+
+    assert!(updated.changed);
+    assert_eq!(
+        load_series_labels(&mut conn, &workspace.id, &created.series.id)
+            .await
+            .unwrap(),
+        vec!["created-with-update"]
+    );
+}
+
+#[tokio::test]
 async fn create_rolls_back_series_task_and_changes_on_materialization_failure() {
     let (_temp, mut conn, workspace) = setup().await;
     sqlx::query(
@@ -346,9 +395,13 @@ async fn create_rolls_back_series_task_and_changes_on_materialization_failure() 
     .unwrap();
 
     assert!(
-        create_recurrence_series(&mut conn, &workspace, draft(20), at(20, 12))
-            .await
-            .is_err()
+        create_recurrence_series(
+            &mut conn,
+            &workspace,
+            CreateRecurrenceSeriesParams::new(draft(20)).at(at(20, 12)),
+        )
+        .await
+        .is_err()
     );
     for (table, query) in [
         (
@@ -381,9 +434,14 @@ async fn template_edits_apply_only_to_future_occurrences() {
         labels: Some(vec!["future".to_string()]),
         ..Default::default()
     };
-    let updated = update_recurrence_template(&mut conn, &workspace, &created.series.id, update)
-        .await
-        .unwrap();
+    let updated = update_recurrence_template(
+        &mut conn,
+        &workspace,
+        &created.series.id,
+        UpdateRecurrenceTemplateParams::new(update),
+    )
+    .await
+    .unwrap();
     assert!(updated.changed);
     let old_task = get_task_in_workspace(&mut conn, &workspace, &original_task_id)
         .await
@@ -654,9 +712,13 @@ async fn stopped_series_keeps_final_task_and_skip_current_creates_no_successor()
     .await;
     assert!(resolved.successor.is_none());
 
-    let second = create_recurrence_series(&mut conn, &workspace, draft(20), at(20, 12))
-        .await
-        .unwrap();
+    let second = create_recurrence_series(
+        &mut conn,
+        &workspace,
+        CreateRecurrenceSeriesParams::new(draft(20)).at(at(20, 12)),
+    )
+    .await
+    .unwrap();
     let stopped = stop_recurrence_series(
         &mut conn,
         &workspace,
@@ -694,9 +756,13 @@ async fn task_mutation_routing_rejects_delete_reopen_and_archived_edits() {
         None,
         RecurrenceDuePolicy::SameDay,
     );
-    let created = create_recurrence_series(&mut conn, &workspace, current_draft, current_at)
-        .await
-        .unwrap();
+    let created = create_recurrence_series(
+        &mut conn,
+        &workspace,
+        CreateRecurrenceSeriesParams::new(current_draft).at(current_at),
+    )
+    .await
+    .unwrap();
     let delete_error =
         crate::mutation::set_task_field(&mut conn, &workspace, &created.task.id, "deleted", "1")
             .await

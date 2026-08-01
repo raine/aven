@@ -391,18 +391,20 @@ async fn add_recurrence_history_fixture(
         .await
         .unwrap();
     let created = database
-        .create_recurrence_series_at(
+        .create_recurrence_series(
             &app.store.active_workspace,
-            crate::tui::store::recurrence_draft(
-                "History fixture".to_string(),
-                "History detail".to_string(),
-                Some(app.store.projects[0].key.clone()),
-                "medium".to_string(),
-                "todo".to_string(),
-                Vec::new(),
-                schedule,
-            ),
-            created_at,
+            aven_core::operations::CreateRecurrenceSeriesParams::new(
+                crate::tui::store::recurrence_draft(
+                    "History fixture".to_string(),
+                    "History detail".to_string(),
+                    Some(app.store.projects[0].key.clone()),
+                    "medium".to_string(),
+                    "todo".to_string(),
+                    Vec::new(),
+                    schedule,
+                ),
+            )
+            .at(created_at),
         )
         .await
         .unwrap();

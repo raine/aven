@@ -75,15 +75,17 @@ pub(crate) async fn cmd_add(
         let outcome = database
             .create_recurrence_series(
                 workspace,
-                aven_core::operations::RecurrenceSeriesDraft {
-                    title: args.title,
-                    description,
-                    project,
-                    priority: args.priority,
-                    initial_status: args.status.unwrap_or_else(|| "todo".to_string()),
-                    labels: args.label,
-                    schedule,
-                },
+                aven_core::operations::CreateRecurrenceSeriesParams::new(
+                    aven_core::operations::RecurrenceSeriesDraft {
+                        title: args.title,
+                        description,
+                        project,
+                        priority: args.priority,
+                        initial_status: args.status.unwrap_or_else(|| "todo".to_string()),
+                        labels: args.label,
+                        schedule,
+                    },
+                ),
             )
             .await?;
         let display_refs = database.display_ref_context(&workspace.id).await?;
@@ -137,7 +139,10 @@ pub(crate) async fn cmd_add(
                 recurring.project = resolve_add_project(database, workspace, None).await?;
             }
             let outcome = database
-                .create_recurrence_series(workspace, recurring)
+                .create_recurrence_series(
+                    workspace,
+                    aven_core::operations::CreateRecurrenceSeriesParams::new(recurring),
+                )
                 .await?;
             let display_refs = database.display_ref_context(&workspace.id).await?;
             println!(
@@ -249,7 +254,10 @@ pub(crate) async fn cmd_internal_natural_add(
                 draft.project = resolve_add_project(database, &workspace, None).await?;
             }
             return Ok(database
-                .create_recurrence_series(&workspace, draft)
+                .create_recurrence_series(
+                    &workspace,
+                    aven_core::operations::CreateRecurrenceSeriesParams::new(draft),
+                )
                 .await?
                 .task);
         }

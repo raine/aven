@@ -1,7 +1,7 @@
 mod common;
 
 use aven_core::db::Database;
-use aven_core::operations::RecurrenceSeriesDraft;
+use aven_core::operations::{CreateRecurrenceSeriesParams, RecurrenceSeriesDraft};
 use aven_core::recurrence::{RecurrenceDuePolicy, RecurrenceRule, RecurrenceSchedule, TimeZoneId};
 use chrono::{Duration, Utc};
 use common::{TestEnv, contains_all, contains_none, fail, ok};
@@ -357,9 +357,9 @@ fn history_combines_archived_and_derived_misses() {
         let created_at = Utc::now() - Duration::days(6);
         let start_on = created_at.date_naive();
         let result = database
-            .create_recurrence_series_at(
+            .create_recurrence_series(
                 &workspace,
-                RecurrenceSeriesDraft {
+                CreateRecurrenceSeriesParams::new(RecurrenceSeriesDraft {
                     title: "Six days behind".to_string(),
                     description: String::new(),
                     project: "default".to_string(),
@@ -373,8 +373,8 @@ fn history_combines_archived_and_derived_misses() {
                         None,
                         RecurrenceDuePolicy::SameDay,
                     ),
-                },
-                created_at,
+                })
+                .at(created_at),
             )
             .await
             .unwrap();

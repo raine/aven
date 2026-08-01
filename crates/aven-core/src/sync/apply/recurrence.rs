@@ -1147,7 +1147,9 @@ mod tests {
 
     use super::*;
     use crate::db::begin_immediate;
-    use crate::operations::recurrence::{RecurrenceSeriesDraft, create_recurrence_series};
+    use crate::operations::recurrence::{
+        CreateRecurrenceSeriesParams, RecurrenceSeriesDraft, create_recurrence_series,
+    };
 
     #[tokio::test]
     async fn lifecycle_conflict_preserves_existing_projection_during_remote_projection_apply() {
@@ -1165,7 +1167,7 @@ mod tests {
         let created = create_recurrence_series(
             &mut conn,
             &workspace,
-            RecurrenceSeriesDraft {
+            CreateRecurrenceSeriesParams::new(RecurrenceSeriesDraft {
                 title: "sync projection".to_string(),
                 description: String::new(),
                 project: "recurrence".to_string(),
@@ -1173,10 +1175,11 @@ mod tests {
                 initial_status: "todo".to_string(),
                 labels: Vec::new(),
                 schedule,
-            },
-            Utc.with_ymd_and_hms(2026, 7, 20, 12, 0, 0)
+            })
+            .at(Utc
+                .with_ymd_and_hms(2026, 7, 20, 12, 0, 0)
                 .single()
-                .unwrap(),
+                .unwrap()),
         )
         .await
         .unwrap();

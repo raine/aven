@@ -8,24 +8,25 @@ use crate::choices::{TaskPriority, TaskSource, TaskStatus};
 use crate::db::Database;
 use crate::ids::{ProjectId, TaskId, WorkspaceId};
 use crate::operations::{
-    RecurrenceSeriesDraft, RecurrenceTemplateUpdate as InternalRecurrenceTemplateUpdate, TaskDraft,
-    TaskUpdate as InternalTaskUpdate,
+    CreateRecurrenceSeriesParams, RecurrenceSeriesDraft,
+    RecurrenceTemplateUpdate as InternalRecurrenceTemplateUpdate, TaskDraft,
+    TaskUpdate as InternalTaskUpdate, UpdateRecurrenceTemplateParams,
 };
+pub use crate::query::RecurrenceHistoryKind;
 use crate::query::{
     MAX_RECURRENCE_HISTORY_LIMIT, RecurrenceCounts as InternalRecurrenceCounts,
     RecurrenceHistoryEntry as InternalRecurrenceHistoryEntry,
-    RecurrenceHistoryKind as InternalRecurrenceHistoryKind,
     RecurrenceSeriesDetail as InternalRecurrenceSeriesDetail,
     RecurrenceSeriesSummary as InternalRecurrenceSeriesSummary, SortDirection, TaskFilters,
     TaskListItem, TaskQueryMode, TaskSort,
 };
+pub use crate::recurrence::{
+    RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceOutcome, RecurrenceProjectionState,
+    RecurrenceSeriesState,
+};
 use crate::recurrence::{
-    RecurrenceDuePolicy as InternalRecurrenceDuePolicy,
-    RecurrenceFrequency as InternalRecurrenceFrequency,
-    RecurrenceOutcome as InternalRecurrenceOutcome,
-    RecurrenceProjectionState as InternalRecurrenceProjectionState,
-    RecurrenceRule as InternalRecurrenceRule, RecurrenceSchedule, RecurrenceSeriesId,
-    RecurrenceSeriesState as InternalRecurrenceSeriesState, TimeZoneId, WeekdaySet,
+    RecurrenceRule as InternalRecurrenceRule, RecurrenceSchedule, RecurrenceSeriesId, TimeZoneId,
+    WeekdaySet,
 };
 use crate::sync::SyncSession;
 use crate::task_fields::TaskField;
@@ -220,7 +221,7 @@ impl Store {
         self.database
             .create_recurrence_series(
                 &workspace,
-                RecurrenceSeriesDraft {
+                CreateRecurrenceSeriesParams::new(RecurrenceSeriesDraft {
                     title: input.title,
                     description: input.description,
                     project: input.project,
@@ -228,7 +229,7 @@ impl Store {
                     initial_status: input.initial_status.as_str().to_string(),
                     labels: input.labels,
                     schedule,
-                },
+                }),
             )
             .await
             .map(|outcome| RecurrenceCreateResult {
@@ -254,7 +255,7 @@ impl Store {
             .update_recurrence_template(
                 &workspace,
                 series_id,
-                InternalRecurrenceTemplateUpdate {
+                UpdateRecurrenceTemplateParams::new(InternalRecurrenceTemplateUpdate {
                     title: input.title,
                     description: input.description,
                     project: input.project,
@@ -262,8 +263,8 @@ impl Store {
                     initial_status: input.initial_status.map(|value| value.as_str().to_string()),
                     labels: input.labels,
                     available_local_time: input.available_local_time.into_internal()?,
-                    due_policy: input.due_policy.map(Into::into),
-                },
+                    due_policy: input.due_policy,
+                }),
             )
             .await
             .map(|outcome| RecurrenceTemplateUpdateResult {
@@ -358,7 +359,7 @@ impl Store {
     ) -> Result<RecurrenceResolveResult, Error> {
         let workspace = self.workspace(workspace_id).await?;
         self.database
-            .resolve_recurrence_occurrence(&workspace, task_id, outcome.into())
+            .resolve_recurrence_occurrence(&workspace, task_id, outcome)
             .await
             .map(|value| RecurrenceResolveResult {
                 series: value.series.into(),
@@ -680,33 +681,6 @@ impl OptionalDateUpdate {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RecurrenceFrequency {
-    Daily,
-    Weekly,
-    Monthly,
-}
-
-impl From<RecurrenceFrequency> for InternalRecurrenceFrequency {
-    fn from(value: RecurrenceFrequency) -> Self {
-        match value {
-            RecurrenceFrequency::Daily => Self::Daily,
-            RecurrenceFrequency::Weekly => Self::Weekly,
-            RecurrenceFrequency::Monthly => Self::Monthly,
-        }
-    }
-}
-
-impl From<InternalRecurrenceFrequency> for RecurrenceFrequency {
-    fn from(value: InternalRecurrenceFrequency) -> Self {
-        match value {
-            InternalRecurrenceFrequency::Daily => Self::Daily,
-            InternalRecurrenceFrequency::Weekly => Self::Weekly,
-            InternalRecurrenceFrequency::Monthly => Self::Monthly,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecurrenceWeekday {
     Monday,
     Tuesday,
@@ -755,7 +729,7 @@ pub struct RecurrenceRule {
 impl RecurrenceRule {
     fn into_internal(self) -> Result<InternalRecurrenceRule, Error> {
         InternalRecurrenceRule::new(
-            self.frequency.into(),
+            self.frequency,
             self.interval,
             WeekdaySet::from_weekdays(self.weekdays.into_iter().map(Into::into)),
         )
@@ -766,91 +740,9 @@ impl RecurrenceRule {
 impl From<InternalRecurrenceRule> for RecurrenceRule {
     fn from(value: InternalRecurrenceRule) -> Self {
         Self {
-            frequency: value.frequency().into(),
+            frequency: value.frequency(),
             interval: value.interval(),
             weekdays: value.weekdays_set().iter().map(Into::into).collect(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RecurrenceDuePolicy {
-    SameDay,
-    None,
-}
-
-impl From<RecurrenceDuePolicy> for InternalRecurrenceDuePolicy {
-    fn from(value: RecurrenceDuePolicy) -> Self {
-        match value {
-            RecurrenceDuePolicy::SameDay => Self::SameDay,
-            RecurrenceDuePolicy::None => Self::None,
-        }
-    }
-}
-
-impl From<InternalRecurrenceDuePolicy> for RecurrenceDuePolicy {
-    fn from(value: InternalRecurrenceDuePolicy) -> Self {
-        match value {
-            InternalRecurrenceDuePolicy::SameDay => Self::SameDay,
-            InternalRecurrenceDuePolicy::None => Self::None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RecurrenceSeriesState {
-    Active,
-    Paused,
-    Stopped,
-}
-
-impl From<InternalRecurrenceSeriesState> for RecurrenceSeriesState {
-    fn from(value: InternalRecurrenceSeriesState) -> Self {
-        match value {
-            InternalRecurrenceSeriesState::Active => Self::Active,
-            InternalRecurrenceSeriesState::Paused => Self::Paused,
-            InternalRecurrenceSeriesState::Stopped => Self::Stopped,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RecurrenceOutcome {
-    Completed,
-    Skipped,
-}
-
-impl From<RecurrenceOutcome> for InternalRecurrenceOutcome {
-    fn from(value: RecurrenceOutcome) -> Self {
-        match value {
-            RecurrenceOutcome::Completed => Self::Completed,
-            RecurrenceOutcome::Skipped => Self::Skipped,
-        }
-    }
-}
-
-impl From<InternalRecurrenceOutcome> for RecurrenceOutcome {
-    fn from(value: InternalRecurrenceOutcome) -> Self {
-        match value {
-            InternalRecurrenceOutcome::Completed => Self::Completed,
-            InternalRecurrenceOutcome::Skipped => Self::Skipped,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RecurrenceProjectionState {
-    Projected,
-    Resolved,
-    Archived,
-}
-
-impl From<InternalRecurrenceProjectionState> for RecurrenceProjectionState {
-    fn from(value: InternalRecurrenceProjectionState) -> Self {
-        match value {
-            InternalRecurrenceProjectionState::Projected => Self::Projected,
-            InternalRecurrenceProjectionState::Resolved => Self::Resolved,
-            InternalRecurrenceProjectionState::Archived => Self::Archived,
         }
     }
 }
@@ -880,7 +772,7 @@ impl RecurrenceScheduleInput {
             timezone,
             start_on,
             available_local_time,
-            self.due_policy.into(),
+            self.due_policy,
         ))
     }
 }
@@ -965,8 +857,8 @@ impl From<RecurrenceSeries> for RecurrenceSeriesRecord {
             available_local_time: value
                 .available_local_time
                 .map(|time| time.format("%H:%M:%S").to_string()),
-            due_policy: value.due_policy.into(),
-            state: value.state.into(),
+            due_policy: value.due_policy,
+            state: value.state,
             stopped_at: value.stopped_at,
             created_at: value.created_at,
             updated_at: value.updated_at,
@@ -991,9 +883,9 @@ impl From<RecurrenceOccurrence> for RecurrenceOccurrenceRecord {
             series_id: value.series_id,
             slot_on: value.slot_on.to_string(),
             task_id: value.task_id,
-            outcome: value.outcome.map(Into::into),
+            outcome: value.outcome,
             resolved_at: value.resolved_at,
-            projection_state: value.projection_state.into(),
+            projection_state: value.projection_state,
             archived_at: value.archived_at,
         }
     }
@@ -1060,7 +952,7 @@ impl From<InternalRecurrenceCounts> for RecurrenceCounts {
             missed: value.missed as u64,
             pause_intervals: value.pause_intervals as u64,
             latest_slot_on: value.latest_slot_on,
-            latest_outcome: value.latest_outcome.map(Into::into),
+            latest_outcome: value.latest_outcome,
         }
     }
 }
@@ -1128,25 +1020,6 @@ impl From<InternalRecurrenceSeriesDetail> for RecurrenceSeriesDetail {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RecurrenceHistoryKind {
-    Completed,
-    Skipped,
-    Missed,
-    Paused,
-}
-
-impl From<InternalRecurrenceHistoryKind> for RecurrenceHistoryKind {
-    fn from(value: InternalRecurrenceHistoryKind) -> Self {
-        match value {
-            InternalRecurrenceHistoryKind::Completed => Self::Completed,
-            InternalRecurrenceHistoryKind::Skipped => Self::Skipped,
-            InternalRecurrenceHistoryKind::Missed => Self::Missed,
-            InternalRecurrenceHistoryKind::Paused => Self::Paused,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecurrenceHistoryRow {
     pub kind: RecurrenceHistoryKind,
@@ -1163,7 +1036,7 @@ pub struct RecurrenceHistoryRow {
 impl From<InternalRecurrenceHistoryEntry> for RecurrenceHistoryRow {
     fn from(value: InternalRecurrenceHistoryEntry) -> Self {
         Self {
-            kind: value.kind.into(),
+            kind: value.kind,
             slot_on: value.slot_on,
             interval_started_at: value.interval_started_at,
             interval_ended_at: value.interval_ended_at,
@@ -1224,9 +1097,9 @@ impl From<TaskListItem> for TaskSummary {
                 slot_on: summary.slot_on,
                 rule_label: summary.rule_label,
                 timezone: summary.timezone,
-                lifecycle: summary.lifecycle.into(),
-                outcome: summary.outcome.map(Into::into),
-                projection_state: summary.projection_state.into(),
+                lifecycle: summary.lifecycle,
+                outcome: summary.outcome,
+                projection_state: summary.projection_state,
             }),
             recurrence_group: value.recurrence_group.map(|group| RecurrenceTaskGroup {
                 series_id: group.series_id,

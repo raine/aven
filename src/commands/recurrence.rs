@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
 use aven_core::db::Database;
-use aven_core::operations::RecurrenceTemplateUpdate;
+use aven_core::operations::{RecurrenceTemplateUpdate, UpdateRecurrenceTemplateParams};
 use aven_core::query::{
     RecurrenceCounts, RecurrenceHistoryEntry, RecurrenceHistoryKind, RecurrenceHistoryPage,
     RecurrenceSeriesDetail, RecurrenceSeriesSummary,
@@ -271,7 +271,7 @@ async fn edit(database: &Database, workspace: &Workspace, args: RecurEditArgs) -
         .update_recurrence_template(
             workspace,
             &series.id,
-            RecurrenceTemplateUpdate {
+            UpdateRecurrenceTemplateParams::new(RecurrenceTemplateUpdate {
                 title: args.title,
                 description,
                 project: args.project,
@@ -280,7 +280,7 @@ async fn edit(database: &Database, workspace: &Workspace, args: RecurEditArgs) -
                 labels: (!args.label.is_empty()).then_some(args.label),
                 available_local_time,
                 due_policy,
-            },
+            }),
         )
         .await?;
     let series_ref = database

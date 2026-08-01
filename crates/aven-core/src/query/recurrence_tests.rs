@@ -2,7 +2,7 @@ use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use sqlx::Connection;
 
 use super::*;
-use crate::operations::RecurrenceSeriesDraft;
+use crate::operations::{CreateRecurrenceSeriesParams, RecurrenceSeriesDraft};
 use crate::query::{SortDirection, TaskFilters, TaskQueryMode, TaskSearchQuery, TaskSort};
 use crate::recurrence::{
     RecurrenceDuePolicy, RecurrenceOutcome, RecurrenceRule, RecurrenceSchedule, TimeZoneId,
@@ -54,7 +54,10 @@ async fn create(
     start_day: u32,
 ) -> crate::operations::RecurrenceCreateOutcome {
     database
-        .create_recurrence_series_at(workspace, draft(title, start_day), at(start_day, 12))
+        .create_recurrence_series(
+            workspace,
+            CreateRecurrenceSeriesParams::new(draft(title, start_day)).at(at(start_day, 12)),
+        )
         .await
         .unwrap()
 }
@@ -224,7 +227,10 @@ async fn recurring_series_list_respects_project_scope() {
     let mut mobile_draft = draft("Mobile review", 20);
     mobile_draft.project = mobile.key.clone();
     let mobile_series = database
-        .create_recurrence_series_at(&workspace, mobile_draft, at(20, 12))
+        .create_recurrence_series(
+            &workspace,
+            CreateRecurrenceSeriesParams::new(mobile_draft).at(at(20, 12)),
+        )
         .await
         .unwrap();
 
