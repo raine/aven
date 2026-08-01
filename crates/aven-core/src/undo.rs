@@ -742,6 +742,7 @@ async fn apply_undo_command(
                 task_id: Some(task_id.clone()),
                 include_deleted: None,
                 project_rename: None,
+                label_rename: None,
             })
         }
         UndoCommand::RestoreDeletedNote {
@@ -798,6 +799,7 @@ async fn apply_undo_command(
                 task_id: Some(task_id.clone()),
                 include_deleted: None,
                 project_rename: None,
+                label_rename: None,
             })
         }
         UndoCommand::DeleteCreatedNote {
