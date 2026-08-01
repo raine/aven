@@ -167,7 +167,8 @@ async fn recurrence_history_test_app() -> (App, aven_core::db::Database) {
     let pool = crate::test_support::open_db(&path).await.unwrap();
     reset_default_workspace(&pool).await;
     let database = aven_core::db::Database::open(&path).await.unwrap();
-    let app = App::new_for_tests(database.clone()).await.unwrap();
+    let mut app = App::new_for_tests(database.clone()).await.unwrap();
+    app._test_database_dir = Some(dir);
     (app, database)
 }
 

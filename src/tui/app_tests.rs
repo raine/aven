@@ -56,7 +56,9 @@ async fn test_app() -> App {
     let database = aven_core::db::Database::open(&dir.path().join("test.db"))
         .await
         .unwrap();
-    App::new_for_tests(database).await.unwrap()
+    let mut app = App::new_for_tests(database).await.unwrap();
+    app._test_database_dir = Some(dir);
+    app
 }
 
 #[path = "app_tests/configuration.rs"]

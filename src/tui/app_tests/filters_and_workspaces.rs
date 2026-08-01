@@ -714,7 +714,7 @@ async fn header_home_click_closes_detail_overlay() {
 }
 
 #[tokio::test]
-async fn header_home_click_closes_detail_underlay() {
+async fn header_home_click_closes_picker_and_preserves_detail_underlay() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("Detail target")).await;
     app.detail = crate::tui::detail_session::DetailSession::open(0);
@@ -738,7 +738,7 @@ async fn header_home_click_closes_detail_underlay() {
         .unwrap();
 
     assert!(app.overlay.is_none());
-    assert!(!app.detail.is_active());
+    assert!(app.detail.is_active());
     assert_eq!(app.list.selected_task(), Some(0));
 }
 
@@ -911,6 +911,12 @@ async fn picker_row_click_toggles_multi_select_row() {
     )
     .await;
     app.begin_edit_labels();
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::TagCombobox(state))
+            if state.options.iter().any(|item| item == "bug")
+                && state.selected.iter().any(|item| item == "bug")
+    ));
 
     app.dispatch_mouse(picker_row_click(&app, 0, size), size)
         .await
@@ -920,7 +926,7 @@ async fn picker_row_click_toggles_multi_select_row() {
         &app.overlay,
         Some(OverlayState::TagCombobox(state))
             if state.options.iter().any(|item| item == "bug")
-                && state.selected.iter().any(|item| item == "bug")
+                && !state.selected.iter().any(|item| item == "bug")
     ));
 }
 

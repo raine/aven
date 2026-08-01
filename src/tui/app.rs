@@ -196,6 +196,8 @@ pub(crate) struct App {
     pub(super) inline_image_backend: InlineImageBackend,
     pub(super) preview_controller: crate::tui::preview_controller::PreviewController,
     pub(super) attachment_controller: crate::tui::attachment_controller::AttachmentController,
+    #[cfg(test)]
+    pub(super) _test_database_dir: Option<tempfile::TempDir>,
 }
 
 impl App {
@@ -260,6 +262,8 @@ impl App {
             inline_image_backend: active_backend_from_env(AppConfig::default().local.inline_images),
             preview_controller: crate::tui::preview_controller::PreviewController::new(),
             attachment_controller: crate::tui::attachment_controller::AttachmentController::new(),
+            #[cfg(test)]
+            _test_database_dir: None,
         };
         app.set_config(config);
         app.restore_sidebar_selection();
