@@ -699,7 +699,7 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
     match overlay {
         OverlayView::Onboarding { .. } => render_onboarding(frame),
         OverlayView::Help { scroll } => render_help(frame, *scroll),
-        OverlayView::DetailHelp { scroll } => render_detail_help(frame, *scroll),
+        OverlayView::DetailHelp { scroll } => render_detail_help(frame, *scroll, None),
         OverlayView::Search {
             input,
             cursor,
@@ -780,6 +780,10 @@ fn render_overlay(
     pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
     removed_epic_child: Option<&crate::tui::app::RemovedEpicChild>,
 ) {
+    if let OverlayView::DetailHelp { scroll } = overlay {
+        render_detail_help(frame, *scroll, focused_detail_target);
+        return;
+    }
     if let OverlayView::AttachmentPreview { attachment_id, .. } = overlay {
         if let Some(item) = store.selected_task(list.selected_task()) {
             render_attachment_preview(frame, item, attachment_id, widgets, inline_images);

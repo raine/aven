@@ -3014,9 +3014,9 @@ mod attachment_paste {
             .unwrap()
             .set_focused_target(Some(DetailTargetId::Attachment { attachment_id }));
 
-        app.dispatch_key(key(KeyCode::Char('s')), (100, 30).into())
-            .await
-            .unwrap();
+        for code in [KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('e')] {
+            app.dispatch_key(key(code), (100, 30).into()).await.unwrap();
+        }
 
         assert!(app.footer_choice.is_none());
         assert_eq!(
@@ -9145,10 +9145,13 @@ mod detail_mode {
         for code in [KeyCode::Char('t'), KeyCode::Char('U')] {
             app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
         }
-        assert_eq!(
-            toast_message(&app).as_deref(),
-            Some("Open the related task before using that command")
-        );
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Confirm(ConfirmState {
+                intent: ConfirmIntent::UnlinkDependency { .. },
+                ..
+            }))
+        ));
     }
 
     #[tokio::test]
@@ -10379,7 +10382,7 @@ mod detail_mode {
     }
 
     #[tokio::test]
-    async fn focused_detail_child_routes_prefixed_status_to_child() {
+    async fn focused_detail_child_routes_actions_and_preserves_parent_detail() {
         let (_dir, pool, mut app) = test_app_with_pool().await;
         let parent_index = create_and_select_task(
             &mut app,
@@ -10423,6 +10426,18 @@ mod detail_mode {
             Some(&child_id)
         );
 
+        for code in [KeyCode::Char('y'), KeyCode::Char('t')] {
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        }
+        assert_eq!(toast_message(&app).as_deref(), Some("copied task title"));
+        assert_eq!(
+            app.detail
+                .state()
+                .and_then(|detail| detail.focused_target())
+                .and_then(DetailTargetId::task_id),
+            Some(&child_id)
+        );
+
         app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
             .await
             .unwrap();
@@ -10432,10 +10447,362 @@ mod detail_mode {
 
         assert!(app.overlay.is_none());
         assert!(app.detail.is_active());
-        let parent = app.store.load_task_item(&parent_id).await.unwrap().unwrap();
-        let child = app.store.load_task_item(&child_id).await.unwrap().unwrap();
-        assert_eq!(parent.task.status, TaskStatus::Inbox);
-        assert_eq!(child.task.status, TaskStatus::Done);
+        assert_eq!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .map(|item| &item.task.id),
+            Some(&parent_id)
+        );
+        assert_eq!(app.store.tasks[0].task.id, parent_id);
+        assert_eq!(app.store.tasks[0].task.status, TaskStatus::Inbox);
+        assert_eq!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .unwrap()
+                .epic_children
+                .iter()
+                .find(|child| child.task_id == child_id)
+                .map(|child| child.status.as_str()),
+            Some("done")
+        );
+        assert_eq!(
+            app.store
+                .load_task_item(&child_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .task
+                .status,
+            TaskStatus::Done
+        );
+        assert_eq!(
+            app.detail
+                .state()
+                .and_then(|detail| detail.focused_target())
+                .and_then(DetailTargetId::task_id),
+            Some(&child_id)
+        );
+
+        app.dispatch_key(key(KeyCode::Char('u')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .map(|item| &item.task.id),
+            Some(&parent_id)
+        );
+        assert_eq!(
+            app.store
+                .load_task_item(&child_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .task
+                .status,
+            TaskStatus::Inbox
+        );
+        assert_eq!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .unwrap()
+                .epic_children
+                .iter()
+                .find(|child| child.task_id == child_id)
+                .map(|child| child.status.as_str()),
+            Some("inbox")
+        );
+        assert_eq!(
+            app.detail
+                .state()
+                .and_then(|detail| detail.focused_target())
+                .and_then(DetailTargetId::task_id),
+            Some(&child_id)
+        );
+
+        app.dispatch_key(key(KeyCode::Char('?')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(app.overlay, Some(OverlayState::DetailHelp { .. })));
+        assert_eq!(
+            app.detail
+                .state()
+                .and_then(|detail| detail.focused_target())
+                .and_then(DetailTargetId::task_id),
+            Some(&child_id)
+        );
+    }
+
+    #[tokio::test]
+    async fn focused_blocker_status_picker_targets_blocker() {
+        let mut app = test_app().await;
+        let blocker_index = create_and_select_task(&mut app, test_task_draft("Blocker")).await;
+        let blocker_id = app.store.tasks[blocker_index].task.id.clone();
+        let blocked_index = create_and_select_task(&mut app, test_task_draft("Blocked")).await;
+        let blocked_id = app.store.tasks[blocked_index].task.id.clone();
+        app.store
+            .add_dependency(Some(blocked_index), &blocker_id)
+            .await
+            .unwrap()
+            .unwrap();
+        app.store.refresh(Some(&blocked_id)).await.unwrap();
+        let blocked_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == blocked_id)
+            .unwrap();
+        app.list.select_task(Some(blocked_index));
+        app.show_detail(0);
+        app.detail
+            .state_mut()
+            .unwrap()
+            .set_focused_target(Some(DetailTargetId::Task {
+                section: DetailSection::DependsOn,
+                task_id: blocker_id.clone(),
+            }));
+
+        app.dispatch_key(key(KeyCode::Char('s')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            app.footer_choice
+                .as_ref()
+                .and_then(|choice| choice.selection.single_id()),
+            Some(&blocker_id)
+        );
+        app.dispatch_key(key(KeyCode::Char('d')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(app.store.tasks[0].task.id, blocked_id);
+        assert_eq!(app.store.tasks[0].task.status, TaskStatus::Inbox);
+        assert_eq!(
+            app.store
+                .load_task_item(&blocker_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .task
+                .status,
+            TaskStatus::Done
+        );
+    }
+
+    #[tokio::test]
+    async fn focused_blocked_task_unlink_requires_confirmation() {
+        let mut app = test_app().await;
+        let blocker_index = create_and_select_task(&mut app, test_task_draft("Blocker")).await;
+        let blocker_id = app.store.tasks[blocker_index].task.id.clone();
+        let blocked_index = create_and_select_task(&mut app, test_task_draft("Blocked")).await;
+        let blocked_id = app.store.tasks[blocked_index].task.id.clone();
+        app.store
+            .add_dependency(Some(blocked_index), &blocker_id)
+            .await
+            .unwrap()
+            .unwrap();
+        app.store.refresh(Some(&blocker_id)).await.unwrap();
+        let blocker_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == blocker_id)
+            .unwrap();
+        app.list.select_task(Some(blocker_index));
+        app.show_detail(0);
+        app.detail
+            .state_mut()
+            .unwrap()
+            .set_focused_target(Some(DetailTargetId::Task {
+                section: DetailSection::Blocks,
+                task_id: blocked_id.clone(),
+            }));
+
+        for code in [KeyCode::Char('t'), KeyCode::Char('U')] {
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        }
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Confirm(ConfirmState {
+                intent: ConfirmIntent::UnlinkDependency { .. },
+                ..
+            }))
+        ));
+        assert_eq!(
+            app.store
+                .load_task_item(&blocked_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .depends_on
+                .len(),
+            1
+        );
+
+        app.dispatch_key(key(KeyCode::Char('y')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(
+            app.store
+                .load_task_item(&blocked_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .depends_on
+                .is_empty()
+        );
+        assert_eq!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .map(|item| &item.task.id),
+            Some(&blocker_id)
+        );
+    }
+
+    #[tokio::test]
+    async fn focused_relationship_delete_and_unsupported_actions_are_explicit() {
+        let mut app = test_app().await;
+        let blocker_index = create_and_select_task(&mut app, test_task_draft("Blocker")).await;
+        let blocker_id = app.store.tasks[blocker_index].task.id.clone();
+        let blocked_index = create_and_select_task(&mut app, test_task_draft("Blocked")).await;
+        let blocked_id = app.store.tasks[blocked_index].task.id.clone();
+        app.store
+            .add_dependency(Some(blocked_index), &blocker_id)
+            .await
+            .unwrap()
+            .unwrap();
+        app.store.refresh(Some(&blocked_id)).await.unwrap();
+        let blocked_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == blocked_id)
+            .unwrap();
+        app.list.select_task(Some(blocked_index));
+        app.show_detail(0);
+        app.detail
+            .state_mut()
+            .unwrap()
+            .set_focused_target(Some(DetailTargetId::Task {
+                section: DetailSection::DependsOn,
+                task_id: blocker_id.clone(),
+            }));
+
+        for code in [KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('e')] {
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        }
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("open the related task before using that command")
+        );
+
+        for code in [KeyCode::Char('t'), KeyCode::Char('D')] {
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        }
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Confirm(ConfirmState {
+                intent: ConfirmIntent::DeleteFocusedTask { ref selection },
+                ..
+            })) if selection.single_id() == Some(&blocker_id)
+        ));
+        assert!(
+            !app.store
+                .load_task_item(&blocker_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .task
+                .deleted
+        );
+    }
+
+    #[tokio::test]
+    async fn focused_epic_parent_unlink_requires_confirmation() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+        let child_index = create_and_select_task(&mut app, test_task_draft("Child task")).await;
+        let child_id = app.store.tasks[child_index].task.id.clone();
+        let mut conn = pool.acquire().await.unwrap();
+        crate::operations::add_task_to_epic(
+            &mut conn,
+            &app.store.active_workspace,
+            &child_id,
+            &parent_id,
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        app.store.refresh(Some(&child_id)).await.unwrap();
+        let child_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == child_id)
+            .unwrap();
+        app.list.select_task(Some(child_index));
+        app.show_detail(0);
+        app.detail
+            .state_mut()
+            .unwrap()
+            .set_focused_target(Some(DetailTargetId::Task {
+                section: DetailSection::EpicParent,
+                task_id: parent_id.clone(),
+            }));
+
+        for code in [KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('r')] {
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        }
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Confirm(ConfirmState {
+                intent: ConfirmIntent::UnlinkEpicChild { .. },
+                ..
+            }))
+        ));
+        assert!(
+            app.store
+                .load_task_item(&child_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .epic_parent
+                .is_some()
+        );
+
+        app.dispatch_key(key(KeyCode::Char('y')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(
+            app.store
+                .load_task_item(&child_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .epic_parent
+                .is_none()
+        );
+        assert_eq!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .map(|item| &item.task.id),
+            Some(&child_id)
+        );
     }
 
     #[tokio::test]
@@ -10492,6 +10859,26 @@ mod detail_mode {
         for code in [KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('r')] {
             app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
         }
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Confirm(ConfirmState {
+                intent: ConfirmIntent::UnlinkEpicChild { .. },
+                ..
+            }))
+        ));
+        let linked: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM task_epic_links WHERE epic_task_id = ? AND child_task_id = ?",
+        )
+        .bind(&parent_id)
+        .bind(&child_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(linked, 1);
+
+        app.dispatch_key(key(KeyCode::Char('y')), (80, 24).into())
+            .await
+            .unwrap();
 
         assert_eq!(
             app.detail

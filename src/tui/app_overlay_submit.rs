@@ -549,6 +549,19 @@ impl App {
             ConfirmIntent::DeleteNote { task_id, note_id } => {
                 self.submit_delete_note(task_id, note_id).await?;
             }
+            ConfirmIntent::DeleteFocusedTask { selection } => {
+                self.submit_delete_focused_task(selection).await?;
+            }
+            ConfirmIntent::UnlinkDependency {
+                selection,
+                depends_on_task_id,
+            } => {
+                self.submit_remove_dependency(selection, depends_on_task_id)
+                    .await?;
+            }
+            ConfirmIntent::UnlinkEpicChild { epic_id, child_id } => {
+                self.submit_unlink_epic_child(epic_id, child_id).await?;
+            }
             ConfirmIntent::DeleteAttachment { attachment_id } => {
                 self.submit_delete_attachment(attachment_id).await?;
             }

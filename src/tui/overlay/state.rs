@@ -665,6 +665,17 @@ pub(crate) enum ConfirmIntent {
         task_id: crate::ids::TaskId,
         note_id: String,
     },
+    DeleteFocusedTask {
+        selection: TaskSelection,
+    },
+    UnlinkDependency {
+        selection: TaskSelection,
+        depends_on_task_id: crate::ids::TaskId,
+    },
+    UnlinkEpicChild {
+        epic_id: crate::ids::TaskId,
+        child_id: crate::ids::TaskId,
+    },
     DeleteAttachment {
         attachment_id: String,
     },

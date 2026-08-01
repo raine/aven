@@ -8,6 +8,7 @@ use super::ViewState;
 use super::dialog::Dialog;
 use super::input::input_line;
 use super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
+use crate::tui::app::{DetailSection, DetailTargetId};
 use crate::tui::event::{
     CommandContext, CommandLifecycle, CommandSpec, matching_commands_for, prefix_hint_commands,
 };
@@ -27,7 +28,7 @@ const DETAIL_HELP_TOPICS: &[HelpTopic] = &[
     },
     HelpTopic {
         keys: "Enter",
-        description: "open focused child or attachment",
+        description: "open focused relationship or attachment",
         section: "General",
     },
     HelpTopic {
@@ -42,7 +43,22 @@ const DETAIL_HELP_TOPICS: &[HelpTopic] = &[
     },
     HelpTopic {
         keys: "Tab/Shift+Tab",
-        description: "focus children and attachments",
+        description: "focus relationships and attachments",
+        section: "Task detail",
+    },
+    HelpTopic {
+        keys: "s / t d",
+        description: "set focused related task status / done",
+        section: "Task detail",
+    },
+    HelpTopic {
+        keys: "t U / t c r",
+        description: "unlink focused dependency / epic relationship",
+        section: "Task detail",
+    },
+    HelpTopic {
+        keys: "y r / y i / t D",
+        description: "copy focused related ref / id or delete task",
         section: "Task detail",
     },
     HelpTopic {
@@ -59,6 +75,64 @@ const DETAIL_HELP_TOPICS: &[HelpTopic] = &[
         keys: "[/]",
         description: "select previous or next task",
         section: "Task detail",
+    },
+];
+
+const CHILD_DETAIL_HELP_TOPICS: &[HelpTopic] = &[
+    HelpTopic {
+        keys: "Esc",
+        description: "clear child focus",
+        section: "General",
+    },
+    HelpTopic {
+        keys: "Enter",
+        description: "open focused child",
+        section: "General",
+    },
+    HelpTopic {
+        keys: "?",
+        description: "toggle child task help",
+        section: "General",
+    },
+    HelpTopic {
+        keys: "q",
+        description: "close detail",
+        section: "General",
+    },
+    HelpTopic {
+        keys: "Tab/Shift+Tab",
+        description: "focus next or previous detail row",
+        section: "Child task",
+    },
+    HelpTopic {
+        keys: "j/k Up/Down",
+        description: "focus next or previous child",
+        section: "Child task",
+    },
+    HelpTopic {
+        keys: "s / d / x",
+        description: "choose status / mark done / cancel",
+        section: "Child task",
+    },
+    HelpTopic {
+        keys: "y t / y r / y i",
+        description: "copy title / display ref / durable ID",
+        section: "Child task",
+    },
+    HelpTopic {
+        keys: "t c r",
+        description: "unlink from epic after confirmation",
+        section: "Child task",
+    },
+    HelpTopic {
+        keys: "t D",
+        description: "delete task after confirmation",
+        section: "Child task",
+    },
+    HelpTopic {
+        keys: "u",
+        description: "undo last TUI mutation",
+        section: "Child task",
     },
 ];
 
@@ -187,14 +261,67 @@ fn render_scrollable_help_lines(
     render_vertical_scrollbar(frame, area, content_height, scroll);
 }
 
-pub(super) fn render_detail_help(frame: &mut Frame, scroll: u16) {
-    let mut dialog = Dialog::new("Task detail shortcuts", 72, 19);
+fn focused_epic_child(target: Option<&DetailTargetId>) -> bool {
+    matches!(
+        target,
+        Some(DetailTargetId::Task {
+            section: DetailSection::EpicChildren,
+            ..
+        })
+    )
+}
+
+pub(super) fn render_detail_help(
+    frame: &mut Frame,
+    scroll: u16,
+    focused_target: Option<&DetailTargetId>,
+) {
+    let child_help = focused_epic_child(focused_target);
+    let title = if child_help {
+        "Child task shortcuts"
+    } else {
+        "Task detail shortcuts"
+    };
+    let lines = detail_help_lines_for(focused_target);
+    let mut dialog = Dialog::new(title, 72, 19);
     let visible_rows = dialog.area(frame).height.saturating_sub(2);
-    if let Some(title) = detail_help_scroll_title(scroll, visible_rows) {
+    if let Some(title) = detail_help_scroll_title(scroll, visible_rows, lines.len()) {
         dialog = dialog.right_title(Line::from(Span::styled(title, Style::new().fg(FG_MUTED))));
     }
     let content = dialog.render_block(frame);
-    render_scrollable_help_lines(frame, content, detail_help_lines(), scroll);
+    render_scrollable_help_lines(frame, content, lines, scroll);
+}
+
+fn detail_help_lines_for(focused_target: Option<&DetailTargetId>) -> Vec<Line<'static>> {
+    if focused_epic_child(focused_target) {
+        return focused_help_lines(CHILD_DETAIL_HELP_TOPICS);
+    }
+    detail_help_lines()
+}
+
+fn focused_help_lines(topics: &[HelpTopic]) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let mut sections = Vec::new();
+    for section in topics.iter().map(|topic| topic.section) {
+        if sections.contains(&section) {
+            continue;
+        }
+        sections.push(section);
+        if !lines.is_empty() {
+            lines.push(Line::from(""));
+        }
+        lines.push(Line::from(Span::styled(
+            section,
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )));
+        lines.extend(
+            topics
+                .iter()
+                .filter(|topic| topic.section == section)
+                .map(detail_help_line),
+        );
+    }
+    lines
 }
 
 fn detail_help_lines() -> Vec<Line<'static>> {
@@ -235,8 +362,7 @@ fn detail_help_line(topic: &HelpTopic) -> Line<'static> {
     ])
 }
 
-fn detail_help_scroll_title(scroll: u16, visible_rows: u16) -> Option<String> {
-    let max_rows = detail_help_lines().len();
+fn detail_help_scroll_title(scroll: u16, visible_rows: u16, max_rows: usize) -> Option<String> {
     let visible_rows = visible_rows as usize;
     if max_rows <= visible_rows {
         return None;
@@ -294,9 +420,14 @@ pub(crate) fn help_scroll_cap(frame_height: u16) -> u16 {
         .unwrap_or(0) as u16
 }
 
-pub(crate) fn detail_help_scroll_cap(frame_height: u16) -> u16 {
+pub(crate) fn detail_help_scroll_cap(
+    frame_height: u16,
+    focused_target: Option<&DetailTargetId>,
+) -> u16 {
     let visible_rows = frame_height.min(18).saturating_sub(2) as usize;
-    detail_help_lines().len().saturating_sub(visible_rows) as u16
+    detail_help_lines_for(focused_target)
+        .len()
+        .saturating_sub(visible_rows) as u16
 }
 
 fn command_name_style(command: &CommandSpec) -> Style {
@@ -592,7 +723,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_detail_help(frame, scroll))
+            .draw(|frame| render_detail_help(frame, scroll, None))
             .unwrap();
         terminal.backend().buffer().clone()
     }
@@ -601,7 +732,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_detail_help(frame, scroll))
+            .draw(|frame| render_detail_help(frame, scroll, None))
             .unwrap();
         buffer_text(terminal.backend())
     }
@@ -975,10 +1106,32 @@ mod tests {
         let rendered = render_detail_help_overlay(0);
         assert!(rendered.contains("Task detail shortcuts"));
         assert!(rendered.contains("back one level"));
-        assert!(rendered.contains("open focused child or attachment"));
+        assert!(rendered.contains("open focused relationship or attachment"));
         assert!(rendered.contains("close detail"));
-        assert!(rendered.contains("focus children and attachments"));
+        assert!(rendered.contains("focus relationships and attachments"));
         assert!(!rendered.contains("view updated"));
+    }
+
+    #[test]
+    fn focused_child_help_only_lists_child_actions() {
+        let target = DetailTargetId::Task {
+            section: DetailSection::EpicChildren,
+            task_id: crate::test_support::task_id("focused-child-help"),
+        };
+        let rendered = detail_help_lines_for(Some(&target))
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("open focused child"));
+        assert!(rendered.contains("choose status / mark done / cancel"));
+        assert!(rendered.contains("copy title / display ref / durable ID"));
+        assert!(rendered.contains("unlink from epic after confirmation"));
+        assert!(rendered.contains("delete task after confirmation"));
+        assert!(!rendered.contains("edit selected task title"));
+        assert!(!rendered.contains("add a child to the selected epic"));
+        assert!(!rendered.contains("select previous or next task"));
     }
 
     #[test]
@@ -990,8 +1143,9 @@ mod tests {
             .join("\n");
 
         assert!(rendered.contains("back one level"));
-        assert!(rendered.contains("open focused child or attachment"));
+        assert!(rendered.contains("open focused relationship or attachment"));
         assert!(rendered.contains("close detail"));
+        assert!(rendered.contains("set focused related task status / done"));
         assert!(rendered.contains("scroll one page"));
         assert!(rendered.contains("select previous or next task"));
         assert!(rendered.contains("copy selected task title"));
@@ -1017,7 +1171,7 @@ mod tests {
 
     #[test]
     fn detail_help_scroll_cap_uses_detail_rows() {
-        assert!(detail_help_scroll_cap(10) > 0);
+        assert!(detail_help_scroll_cap(10, None) > 0);
     }
 
     #[test]
