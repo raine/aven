@@ -5,28 +5,23 @@ description: Release notes for aven.
 
 ## Unreleased
 
-- Add children to ordinary tasks from the TUI through a confirmed promotion to
-  an epic. Promotion and child linking are atomic, and undo restores both.
-- Epic child search finds eligible same-project tasks before limiting results,
-  and `Tab` or `Shift+Tab` cycles relationship picker choices.
-- TUI detail mutations target only the displayed task, even when other tasks
-  are marked, preventing accidental batch edits or deletions.
-- Focused epic child commands do not mutate the parent epic, and detail back
-  navigation remains scoped to detail history.
-- Multiline editors confirm before discarding changed note drafts, task
-  descriptions, or manual conflict resolutions, while clean editors close
-  immediately.
-- Focus, edit, delete, and undo individual notes directly in task details, with
-  safe confirmations and external-editor support for longer changes.
-- Browse label usage in a structured TUI view, rename labels everywhere they are
-  used, and safely delete them with impact details, confirmation, and undo.
-- Browse label usage in a structured TUI view, rename labels everywhere they are
-  used, and safely delete them with impact details, confirmation, and undo.
-- Create and rename workspaces from the TUI with `W n` and `W r`.
-- TUI mutations wake the sync daemon after successful local commits, and `:sync`
-  starts a non-blocking manual sync without requiring the daemon.
-- Sync-disabled environments prevent accidental remote changes while preserving
-  local-first operation and clear errors when sync is unavailable.
+- Create and edit epics in the TUI, or promote an ordinary task when adding its
+  first child.
+- Task detail commands consistently target the displayed or focused related
+  task, with direct actions for linked tasks and reliable back and sibling
+  navigation.
+- Multiline editors confirm before discarding changed content, and individual
+  notes can be edited, deleted, and restored with undo.
+- Create, browse, rename, and delete labels, create and rename workspaces,
+  manage project paths, and create projects from task workflows in the TUI.
+- Save attachments from task detail with explicit handling for missing data,
+  invalid destinations, and existing files.
+- Open Upcoming from the shared command catalog, open tasks from Recent Actions,
+  and receive series-specific guidance for task commands in the Recurring view.
+- TUI task and label workflows apply their changes atomically and restore labels
+  created by the same operation during undo.
+- TUI mutations wake the sync daemon, `:sync` starts a manual sync, and
+  sync-disabled environments preserve local-only operation with clear errors.
 
 ## v0.1.20 (2026-07-31)
 
