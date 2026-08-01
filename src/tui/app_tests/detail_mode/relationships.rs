@@ -493,27 +493,9 @@ async fn epic_child_search_tab_cycles_results() {
 #[tokio::test]
 async fn right_navigation_toggles_selected_epic() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
-    let parent_index = create_and_select_task(
-        &mut app,
-        TaskDraft {
-            is_epic: true,
-            ..test_task_draft("Parent epic")
-        },
-    )
-    .await;
-    let parent_id = app.store.tasks[parent_index].task.id.clone();
-    let child_index = create_and_select_task(&mut app, test_task_draft("Child task")).await;
-    let child_id = app.store.tasks[child_index].task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    crate::operations::add_task_to_epic(
-        &mut conn,
-        &app.store.active_workspace,
-        &child_id,
-        &parent_id,
-    )
-    .await
-    .unwrap();
-    drop(conn);
+    let (parent_id, child_ids) =
+        create_epic_with_children(&mut app, &pool, "Parent epic", &["Child task"]).await;
+    let child_id = child_ids[0].clone();
     app.store.show_view(TaskView::Epics).await.unwrap();
 
     for code in [KeyCode::Char('l'), KeyCode::Right] {
@@ -540,27 +522,8 @@ async fn right_navigation_toggles_selected_epic() {
 #[tokio::test]
 async fn focused_detail_child_back_shortcut_uses_detail_navigation() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
-    let parent_index = create_and_select_task(
-        &mut app,
-        TaskDraft {
-            is_epic: true,
-            ..test_task_draft("Parent epic")
-        },
-    )
-    .await;
-    let parent_id = app.store.tasks[parent_index].task.id.clone();
-    let child_index = create_and_select_task(&mut app, test_task_draft("Child task")).await;
-    let child_id = app.store.tasks[child_index].task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    crate::operations::add_task_to_epic(
-        &mut conn,
-        &app.store.active_workspace,
-        &child_id,
-        &parent_id,
-    )
-    .await
-    .unwrap();
-    drop(conn);
+    let (parent_id, _child_ids) =
+        create_epic_with_children(&mut app, &pool, "Parent epic", &["Child task"]).await;
     app.store.refresh(Some(&parent_id)).await.unwrap();
     let parent_index = app
         .store
@@ -592,27 +555,9 @@ async fn focused_detail_child_back_shortcut_uses_detail_navigation() {
 #[tokio::test]
 async fn focused_detail_child_return_shortcut_targets_recent_change() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
-    let parent_index = create_and_select_task(
-        &mut app,
-        TaskDraft {
-            is_epic: true,
-            ..test_task_draft("Parent epic")
-        },
-    )
-    .await;
-    let parent_id = app.store.tasks[parent_index].task.id.clone();
-    let child_index = create_and_select_task(&mut app, test_task_draft("Child task")).await;
-    let child_id = app.store.tasks[child_index].task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    crate::operations::add_task_to_epic(
-        &mut conn,
-        &app.store.active_workspace,
-        &child_id,
-        &parent_id,
-    )
-    .await
-    .unwrap();
-    drop(conn);
+    let (parent_id, child_ids) =
+        create_epic_with_children(&mut app, &pool, "Parent epic", &["Child task"]).await;
+    let child_id = child_ids[0].clone();
     app.store.refresh(Some(&parent_id)).await.unwrap();
     let parent_index = app
         .store
@@ -679,27 +624,9 @@ async fn stale_detail_child_focus_is_cleared_before_shortcuts() {
 #[tokio::test]
 async fn focused_detail_child_routes_actions_and_preserves_parent_detail() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
-    let parent_index = create_and_select_task(
-        &mut app,
-        TaskDraft {
-            is_epic: true,
-            ..test_task_draft("Parent epic")
-        },
-    )
-    .await;
-    let parent_id = app.store.tasks[parent_index].task.id.clone();
-    let child_index = create_and_select_task(&mut app, test_task_draft("Child task")).await;
-    let child_id = app.store.tasks[child_index].task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    crate::operations::add_task_to_epic(
-        &mut conn,
-        &app.store.active_workspace,
-        &child_id,
-        &parent_id,
-    )
-    .await
-    .unwrap();
-    drop(conn);
+    let (parent_id, child_ids) =
+        create_epic_with_children(&mut app, &pool, "Parent epic", &["Child task"]).await;
+    let child_id = child_ids[0].clone();
     app.store.refresh(Some(&parent_id)).await.unwrap();
     let parent_index = app
         .store
@@ -833,15 +760,7 @@ async fn focused_detail_child_routes_actions_and_preserves_parent_detail() {
 #[tokio::test]
 async fn focused_blocker_status_picker_targets_blocker() {
     let mut app = test_app().await;
-    let blocker_index = create_and_select_task(&mut app, test_task_draft("Blocker")).await;
-    let blocker_id = app.store.tasks[blocker_index].task.id.clone();
-    let blocked_index = create_and_select_task(&mut app, test_task_draft("Blocked")).await;
-    let blocked_id = app.store.tasks[blocked_index].task.id.clone();
-    app.store
-        .add_dependency(Some(blocked_index), &blocker_id)
-        .await
-        .unwrap()
-        .unwrap();
+    let (blocker_id, blocked_id) = create_blocked_pair(&mut app).await;
     app.store.refresh(Some(&blocked_id)).await.unwrap();
     let blocked_index = app
         .store
@@ -890,15 +809,7 @@ async fn focused_blocker_status_picker_targets_blocker() {
 #[tokio::test]
 async fn focused_blocked_task_unlink_requires_confirmation() {
     let mut app = test_app().await;
-    let blocker_index = create_and_select_task(&mut app, test_task_draft("Blocker")).await;
-    let blocker_id = app.store.tasks[blocker_index].task.id.clone();
-    let blocked_index = create_and_select_task(&mut app, test_task_draft("Blocked")).await;
-    let blocked_id = app.store.tasks[blocked_index].task.id.clone();
-    app.store
-        .add_dependency(Some(blocked_index), &blocker_id)
-        .await
-        .unwrap()
-        .unwrap();
+    let (blocker_id, blocked_id) = create_blocked_pair(&mut app).await;
     app.store.refresh(Some(&blocker_id)).await.unwrap();
     let blocker_index = app
         .store
@@ -962,15 +873,7 @@ async fn focused_blocked_task_unlink_requires_confirmation() {
 #[tokio::test]
 async fn focused_relationship_delete_and_unsupported_actions_are_explicit() {
     let mut app = test_app().await;
-    let blocker_index = create_and_select_task(&mut app, test_task_draft("Blocker")).await;
-    let blocker_id = app.store.tasks[blocker_index].task.id.clone();
-    let blocked_index = create_and_select_task(&mut app, test_task_draft("Blocked")).await;
-    let blocked_id = app.store.tasks[blocked_index].task.id.clone();
-    app.store
-        .add_dependency(Some(blocked_index), &blocker_id)
-        .await
-        .unwrap()
-        .unwrap();
+    let (blocker_id, blocked_id) = create_blocked_pair(&mut app).await;
     app.store.refresh(Some(&blocked_id)).await.unwrap();
     let blocked_index = app
         .store
@@ -1020,27 +923,9 @@ async fn focused_relationship_delete_and_unsupported_actions_are_explicit() {
 #[tokio::test]
 async fn focused_epic_parent_unlink_requires_confirmation() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
-    let parent_index = create_and_select_task(
-        &mut app,
-        TaskDraft {
-            is_epic: true,
-            ..test_task_draft("Parent epic")
-        },
-    )
-    .await;
-    let parent_id = app.store.tasks[parent_index].task.id.clone();
-    let child_index = create_and_select_task(&mut app, test_task_draft("Child task")).await;
-    let child_id = app.store.tasks[child_index].task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    crate::operations::add_task_to_epic(
-        &mut conn,
-        &app.store.active_workspace,
-        &child_id,
-        &parent_id,
-    )
-    .await
-    .unwrap();
-    drop(conn);
+    let (parent_id, child_ids) =
+        create_epic_with_children(&mut app, &pool, "Parent epic", &["Child task"]).await;
+    let child_id = child_ids[0].clone();
     app.store.refresh(Some(&child_id)).await.unwrap();
     let child_index = app
         .store
@@ -1103,27 +988,9 @@ async fn focused_epic_parent_unlink_requires_confirmation() {
 #[tokio::test]
 async fn focused_detail_child_removes_and_undo_restores_relationship() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
-    let parent_index = create_and_select_task(
-        &mut app,
-        TaskDraft {
-            is_epic: true,
-            ..test_task_draft("Parent epic")
-        },
-    )
-    .await;
-    let parent_id = app.store.tasks[parent_index].task.id.clone();
-    let child_index = create_and_select_task(&mut app, test_task_draft("Child task")).await;
-    let child_id = app.store.tasks[child_index].task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    crate::operations::add_task_to_epic(
-        &mut conn,
-        &app.store.active_workspace,
-        &child_id,
-        &parent_id,
-    )
-    .await
-    .unwrap();
-    drop(conn);
+    let (parent_id, child_ids) =
+        create_epic_with_children(&mut app, &pool, "Parent epic", &["Child task"]).await;
+    let child_id = child_ids[0].clone();
     app.store.view_state.view = crate::tui::store::TaskView::Epics;
     app.store.refresh(Some(&parent_id)).await.unwrap();
     let parent_index = app

@@ -1517,27 +1517,8 @@ async fn edit_epic_picker_toggles_container_state() {
 #[tokio::test]
 async fn edit_epic_picker_keeps_container_with_children() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
-    let parent = create_and_select_task(
-        &mut app,
-        TaskDraft {
-            is_epic: true,
-            ..test_task_draft("Plan release")
-        },
-    )
-    .await;
-    let parent_id = app.store.tasks[parent].task.id.clone();
-    let child = create_and_select_task(&mut app, test_task_draft("Ship build")).await;
-    let child_id = app.store.tasks[child].task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    crate::operations::add_task_to_epic(
-        &mut conn,
-        &app.store.active_workspace,
-        &child_id,
-        &parent_id,
-    )
-    .await
-    .unwrap();
-    drop(conn);
+    let (parent_id, _child_ids) =
+        create_epic_with_children(&mut app, &pool, "Plan release", &["Ship build"]).await;
     app.store.refresh(Some(&parent_id)).await.unwrap();
     let parent = app
         .store

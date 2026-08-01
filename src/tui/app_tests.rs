@@ -168,6 +168,71 @@ async fn create_and_select_task(app: &mut App, draft: TaskDraft) -> usize {
     selected
 }
 
+async fn create_epic_with_children(
+    app: &mut App,
+    pool: &SqlitePool,
+    parent_title: &str,
+    child_titles: &[&str],
+) -> (crate::ids::TaskId, Vec<crate::ids::TaskId>) {
+    let (_, parent_index) = app
+        .store
+        .create_task(
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft(parent_title)
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let parent_id = app.store.tasks[parent_index.unwrap()].task.id.clone();
+    let mut child_ids = Vec::with_capacity(child_titles.len());
+    for title in child_titles {
+        let (_, child_index) = app
+            .store
+            .create_task(test_task_draft(title), None)
+            .await
+            .unwrap();
+        child_ids.push(app.store.tasks[child_index.unwrap()].task.id.clone());
+    }
+
+    let mut conn = pool.acquire().await.unwrap();
+    for child_id in &child_ids {
+        crate::operations::add_task_to_epic(
+            &mut conn,
+            &app.store.active_workspace,
+            child_id,
+            &parent_id,
+        )
+        .await
+        .unwrap();
+    }
+    (parent_id, child_ids)
+}
+
+async fn create_blocked_pair(app: &mut App) -> (crate::ids::TaskId, crate::ids::TaskId) {
+    let (_, blocker_index) = app
+        .store
+        .create_task(test_task_draft("Blocker"), None)
+        .await
+        .unwrap();
+    let blocker_index = blocker_index.unwrap();
+    let blocker_id = app.store.tasks[blocker_index].task.id.clone();
+    let (_, blocked_index) = app
+        .store
+        .create_task(test_task_draft("Blocked"), None)
+        .await
+        .unwrap();
+    let blocked_index = blocked_index.unwrap();
+    let blocked_id = app.store.tasks[blocked_index].task.id.clone();
+    app.store
+        .add_dependency(Some(blocked_index), &blocker_id)
+        .await
+        .unwrap()
+        .unwrap();
+    (blocker_id, blocked_id)
+}
+
 async fn test_app_with_pool() -> (tempfile::TempDir, SqlitePool, App) {
     let dir = tempfile::tempdir().unwrap();
     let pool = crate::test_support::open_db(&dir.path().join("test.db"))

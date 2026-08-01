@@ -163,37 +163,13 @@ async fn focused_epic_parent_routes_status_picker_to_parent() {
 #[tokio::test]
 async fn detail_tab_focuses_epic_children_and_j_k_selects_and_opens() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
-    let parent_index = create_and_select_task(
+    let (parent_id, _child_ids) = create_epic_with_children(
         &mut app,
-        TaskDraft {
-            is_epic: true,
-            ..test_task_draft("Parent epic")
-        },
+        &pool,
+        "Parent epic",
+        &["First child", "Second child"],
     )
     .await;
-    let parent_id = app.store.tasks[parent_index].task.id.clone();
-    let first_index = create_and_select_task(&mut app, test_task_draft("First child")).await;
-    let first_id = app.store.tasks[first_index].task.id.clone();
-    let second_index = create_and_select_task(&mut app, test_task_draft("Second child")).await;
-    let second_id = app.store.tasks[second_index].task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    crate::operations::add_task_to_epic(
-        &mut conn,
-        &app.store.active_workspace,
-        &first_id,
-        &parent_id,
-    )
-    .await
-    .unwrap();
-    crate::operations::add_task_to_epic(
-        &mut conn,
-        &app.store.active_workspace,
-        &second_id,
-        &parent_id,
-    )
-    .await
-    .unwrap();
-    drop(conn);
     app.store.refresh(Some(&parent_id)).await.unwrap();
     let parent_index = app
         .store
@@ -411,26 +387,10 @@ async fn focused_detail_missing_relationship_reports_unavailable_without_mutatin
 #[tokio::test]
 async fn linked_task_opens_outside_active_list_filter() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
-    let parent_index = create_and_select_task(
-        &mut app,
-        TaskDraft {
-            is_epic: true,
-            ..test_task_draft("Parent epic")
-        },
-    )
-    .await;
-    let parent_id = app.store.tasks[parent_index].task.id.clone();
-    let child_index = create_and_select_task(&mut app, test_task_draft("Filtered child")).await;
-    let child_id = app.store.tasks[child_index].task.id.clone();
+    let (parent_id, child_ids) =
+        create_epic_with_children(&mut app, &pool, "Parent epic", &["Filtered child"]).await;
+    let child_id = child_ids[0].clone();
     let mut conn = pool.acquire().await.unwrap();
-    crate::operations::add_task_to_epic(
-        &mut conn,
-        &app.store.active_workspace,
-        &child_id,
-        &parent_id,
-    )
-    .await
-    .unwrap();
     sqlx::query("UPDATE tasks SET status = 'todo' WHERE id = ?")
         .bind(&child_id)
         .execute(&mut *conn)

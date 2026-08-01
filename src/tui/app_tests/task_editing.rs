@@ -1,5 +1,24 @@
 use super::*;
 
+async fn create_copyable_task(app: &mut App) -> usize {
+    let selected = create_and_select_task(
+        app,
+        TaskDraft {
+            description: "First paragraph.\n\n- item".to_string(),
+            ..test_task_draft("Copy target")
+        },
+    )
+    .await;
+    app.store.tasks[selected]
+        .notes
+        .push(crate::query::TaskNote {
+            id: "note-id".to_string(),
+            body: "Note body".to_string(),
+            created_at: crate::ids::now(),
+        });
+    selected
+}
+
 #[tokio::test]
 async fn add_note_blank_body_is_rejected() {
     let mut app = test_app().await;
@@ -658,21 +677,7 @@ async fn edit_description_conflict_preserves_overlay() {
 #[tokio::test]
 async fn detail_copy_hotkeys_copy_task_text_and_show_feedback() {
     let mut app = test_app().await;
-    let selected = create_and_select_task(
-        &mut app,
-        TaskDraft {
-            description: "First paragraph.\n\n- item".to_string(),
-            ..test_task_draft("Copy target")
-        },
-    )
-    .await;
-    app.store.tasks[selected]
-        .notes
-        .push(crate::query::TaskNote {
-            id: "note-id".to_string(),
-            body: "Note body".to_string(),
-            created_at: crate::ids::now(),
-        });
+    create_copyable_task(&mut app).await;
     assert!(app.view().copy_description_available);
     assert!(app.view().copy_notes_available);
 
@@ -734,21 +739,7 @@ async fn copying_task_without_notes_shows_info() {
 #[tokio::test]
 async fn table_copy_hotkeys_copy_task_text_and_show_feedback() {
     let mut app = test_app().await;
-    let selected = create_and_select_task(
-        &mut app,
-        TaskDraft {
-            description: "First paragraph.\n\n- item".to_string(),
-            ..test_task_draft("Copy target")
-        },
-    )
-    .await;
-    app.store.tasks[selected]
-        .notes
-        .push(crate::query::TaskNote {
-            id: "note-id".to_string(),
-            body: "Note body".to_string(),
-            created_at: crate::ids::now(),
-        });
+    create_copyable_task(&mut app).await;
     assert!(app.view().copy_description_available);
     assert!(app.view().copy_notes_available);
 

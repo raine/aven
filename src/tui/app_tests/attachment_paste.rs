@@ -26,6 +26,28 @@ async fn finish_task_intake_draft(app: &mut App) {
     .expect("task intake should produce an add-task draft");
 }
 
+async fn paste_test_app() -> (tempfile::TempDir, SqlitePool, App) {
+    let (dir, pool, mut app) = test_app_with_pool().await;
+    app.set_add_task_db_path(dir.path().join("test.db"));
+    (dir, pool, app)
+}
+
+async fn stored_attachments(
+    pool: &SqlitePool,
+    app: &App,
+    task_id: &crate::ids::TaskId,
+) -> Vec<aven_core::operations::AttachmentReadItem> {
+    let mut conn = pool.acquire().await.unwrap();
+    crate::operations::attachment_read_items_by_task(
+        &mut conn,
+        app.store.active_workspace.id.as_str(),
+        task_id,
+        false,
+    )
+    .await
+    .unwrap()
+}
+
 fn compressible_png_bytes() -> Vec<u8> {
     let width = 16u32;
     let height = 16u32;
@@ -82,8 +104,7 @@ fn crc32(bytes: &[u8]) -> u32 {
 
 #[tokio::test]
 async fn detail_paste_image_path_attaches_to_selected_task() {
-    let (dir, pool, mut app) = test_app_with_pool().await;
-    app.set_add_task_db_path(dir.path().join("test.db"));
+    let (dir, pool, mut app) = paste_test_app().await;
     let selected = create_and_select_task(&mut app, test_task_draft("image target")).await;
     let task_id = app.store.tasks[selected].task.id.clone();
     let image = dir.path().join("photo.png");
@@ -120,15 +141,7 @@ async fn detail_paste_image_path_attaches_to_selected_task() {
         .find(|item| item.task.id == task_id)
         .unwrap();
     assert!(item.task.description.is_empty());
-    let mut conn = pool.acquire().await.unwrap();
-    let attachments = crate::operations::attachment_read_items_by_task(
-        &mut conn,
-        app.store.active_workspace.id.as_str(),
-        &task_id,
-        false,
-    )
-    .await
-    .unwrap();
+    let attachments = stored_attachments(&pool, &app, &task_id).await;
     assert_eq!(attachments.len(), 1);
     assert_eq!(
         attachments[0].attachment.filename.as_deref(),
@@ -144,8 +157,7 @@ async fn detail_paste_image_path_attaches_to_selected_task() {
 
 #[tokio::test]
 async fn focused_attachment_reports_task_commands_as_unavailable() {
-    let (dir, _pool, mut app) = test_app_with_pool().await;
-    app.set_add_task_db_path(dir.path().join("test.db"));
+    let (dir, _pool, mut app) = paste_test_app().await;
     create_and_select_task(&mut app, test_task_draft("image target")).await;
     let image = dir.path().join("photo.png");
     std::fs::write(&image, compressible_png_bytes()).unwrap();
@@ -180,8 +192,7 @@ async fn focused_attachment_reports_task_commands_as_unavailable() {
 
 #[tokio::test]
 async fn focused_detail_image_can_be_removed_after_confirmation() {
-    let (dir, pool, mut app) = test_app_with_pool().await;
-    app.set_add_task_db_path(dir.path().join("test.db"));
+    let (dir, pool, mut app) = paste_test_app().await;
     create_and_select_task(&mut app, test_task_draft("image target")).await;
     let image = dir.path().join("photo.png");
     std::fs::write(&image, compressible_png_bytes()).unwrap();
@@ -231,8 +242,7 @@ async fn focused_detail_image_can_be_removed_after_confirmation() {
 
 #[tokio::test]
 async fn removing_focused_attachment_selects_the_next_attachment() {
-    let (dir, _pool, mut app) = test_app_with_pool().await;
-    app.set_add_task_db_path(dir.path().join("test.db"));
+    let (dir, _pool, mut app) = paste_test_app().await;
     create_and_select_task(&mut app, test_task_draft("image target")).await;
     let first = dir.path().join("first.png");
     let second = dir.path().join("second.jpg");
@@ -276,8 +286,7 @@ async fn removing_focused_attachment_selects_the_next_attachment() {
 
 #[tokio::test]
 async fn attachment_preview_remove_can_be_cancelled() {
-    let (dir, _pool, mut app) = test_app_with_pool().await;
-    app.set_add_task_db_path(dir.path().join("test.db"));
+    let (dir, _pool, mut app) = paste_test_app().await;
     create_and_select_task(&mut app, test_task_draft("image target")).await;
     let image = dir.path().join("photo.png");
     std::fs::write(&image, compressible_png_bytes()).unwrap();
@@ -311,8 +320,7 @@ async fn attachment_preview_remove_can_be_cancelled() {
 
 #[tokio::test]
 async fn detail_paste_image_path_obeys_optimization_config() {
-    let (dir, pool, mut app) = test_app_with_pool().await;
-    app.set_add_task_db_path(dir.path().join("test.db"));
+    let (dir, pool, mut app) = paste_test_app().await;
     let mut config = crate::config::AppConfig::default();
     config.local.image_optimization = crate::config::ImageOptimizationConfig::Off;
     app.set_config(config);
@@ -331,23 +339,14 @@ async fn detail_paste_image_path_obeys_optimization_config() {
         toast_message(&app).as_deref(),
         Some("image already attached")
     );
-    let mut conn = pool.acquire().await.unwrap();
-    let attachments = crate::operations::attachment_read_items_by_task(
-        &mut conn,
-        app.store.active_workspace.id.as_str(),
-        &task_id,
-        false,
-    )
-    .await
-    .unwrap();
+    let attachments = stored_attachments(&pool, &app, &task_id).await;
     assert_eq!(attachments.len(), 1);
     assert_eq!(attachments[0].attachment.byte_size, bytes.len() as i64);
 }
 
 #[tokio::test]
 async fn detail_paste_optimizes_asynchronously_when_enabled() {
-    let (dir, pool, mut app) = test_app_with_pool().await;
-    app.set_add_task_db_path(dir.path().join("test.db"));
+    let (dir, pool, mut app) = paste_test_app().await;
     let mut config = crate::config::AppConfig::default();
     config.local.image_optimization = crate::config::ImageOptimizationConfig::Paste;
     app.set_config(config);
@@ -362,23 +361,14 @@ async fn detail_paste_optimizes_asynchronously_when_enabled() {
     assert_eq!(app.attachment_controller.views().len(), 1);
     finish_attachment_work(&mut app).await;
 
-    let mut conn = pool.acquire().await.unwrap();
-    let attachments = crate::operations::attachment_read_items_by_task(
-        &mut conn,
-        app.store.active_workspace.id.as_str(),
-        &task_id,
-        false,
-    )
-    .await
-    .unwrap();
+    let attachments = stored_attachments(&pool, &app, &task_id).await;
     assert_eq!(attachments.len(), 1);
     assert!(attachments[0].attachment.byte_size < bytes.len() as i64);
 }
 
 #[tokio::test]
 async fn detail_paste_failure_stays_visible_without_metadata() {
-    let (dir, pool, mut app) = test_app_with_pool().await;
-    app.set_add_task_db_path(dir.path().join("test.db"));
+    let (dir, pool, mut app) = paste_test_app().await;
     create_and_select_task(&mut app, test_task_draft("invalid image target")).await;
     let image = dir.path().join("invalid.png");
     std::fs::write(&image, b"not an image").unwrap();
@@ -407,8 +397,7 @@ async fn detail_paste_failure_stays_visible_without_metadata() {
 
 #[tokio::test]
 async fn detail_paste_keeps_target_across_refresh_and_task_switch() {
-    let (dir, pool, mut app) = test_app_with_pool().await;
-    app.set_add_task_db_path(dir.path().join("test.db"));
+    let (dir, pool, mut app) = paste_test_app().await;
     let first = create_and_select_task(&mut app, test_task_draft("first target")).await;
     let first_id = app.store.tasks[first].task.id.clone();
     let second = create_and_select_task(&mut app, test_task_draft("second target")).await;
@@ -450,9 +439,8 @@ async fn detail_paste_keeps_target_across_refresh_and_task_switch() {
 
 #[tokio::test]
 async fn background_database_failure_cleans_staged_content() {
-    let (dir, pool, mut app) = test_app_with_pool().await;
+    let (dir, pool, mut app) = paste_test_app().await;
     let db_path = dir.path().join("test.db");
-    app.set_add_task_db_path(db_path.clone());
     create_and_select_task(&mut app, test_task_draft("failing target")).await;
     let image = dir.path().join("failure.png");
     std::fs::write(&image, compressible_png_bytes()).unwrap();
@@ -490,8 +478,7 @@ async fn background_database_failure_cleans_staged_content() {
 
 #[tokio::test]
 async fn concurrent_pastes_keep_paste_order() {
-    let (dir, pool, mut app) = test_app_with_pool().await;
-    app.set_add_task_db_path(dir.path().join("test.db"));
+    let (dir, pool, mut app) = paste_test_app().await;
     let mut config = crate::config::AppConfig::default();
     config.local.image_optimization = crate::config::ImageOptimizationConfig::Paste;
     app.set_config(config);
@@ -507,15 +494,7 @@ async fn concurrent_pastes_keep_paste_order() {
     app.dispatch_paste(second.to_str().unwrap()).await.unwrap();
     finish_attachment_work(&mut app).await;
 
-    let mut conn = pool.acquire().await.unwrap();
-    let attachments = crate::operations::attachment_read_items_by_task(
-        &mut conn,
-        app.store.active_workspace.id.as_str(),
-        &task_id,
-        false,
-    )
-    .await
-    .unwrap();
+    let attachments = stored_attachments(&pool, &app, &task_id).await;
     let filenames = attachments
         .iter()
         .map(|item| item.attachment.filename.as_deref())
@@ -525,8 +504,7 @@ async fn concurrent_pastes_keep_paste_order() {
 
 #[tokio::test]
 async fn attachment_shutdown_finishes_commit_and_clears_pending_state() {
-    let (dir, pool, mut app) = test_app_with_pool().await;
-    app.set_add_task_db_path(dir.path().join("test.db"));
+    let (dir, pool, mut app) = paste_test_app().await;
     create_and_select_task(&mut app, test_task_draft("shutdown target")).await;
     let image = dir.path().join("shutdown.png");
     std::fs::write(&image, compressible_png_bytes()).unwrap();
@@ -546,8 +524,7 @@ async fn attachment_shutdown_finishes_commit_and_clears_pending_state() {
 
 #[tokio::test]
 async fn detail_paste_image_path_ignores_existing_image() {
-    let (dir, pool, mut app) = test_app_with_pool().await;
-    app.set_add_task_db_path(dir.path().join("test.db"));
+    let (dir, pool, mut app) = paste_test_app().await;
     let selected = create_and_select_task(&mut app, test_task_draft("image target")).await;
     let task_id = app.store.tasks[selected].task.id.clone();
     let image = dir.path().join("photo.png");
@@ -569,22 +546,13 @@ async fn detail_paste_image_path_ignores_existing_image() {
         .find(|item| item.task.id == task_id)
         .unwrap();
     assert!(item.task.description.is_empty());
-    let mut conn = pool.acquire().await.unwrap();
-    let attachments = crate::operations::attachment_read_items_by_task(
-        &mut conn,
-        app.store.active_workspace.id.as_str(),
-        &task_id,
-        false,
-    )
-    .await
-    .unwrap();
+    let attachments = stored_attachments(&pool, &app, &task_id).await;
     assert_eq!(attachments.len(), 1);
 }
 
 #[tokio::test]
 async fn add_task_paste_image_path_attaches_to_created_task_once() {
-    let (dir, pool, mut app) = test_app_with_pool().await;
-    app.set_add_task_db_path(dir.path().join("test.db"));
+    let (dir, pool, mut app) = paste_test_app().await;
     let image = dir.path().join("composer.png");
     let image_bytes = compressible_png_bytes();
     std::fs::write(&image, &image_bytes).unwrap();
@@ -611,15 +579,7 @@ async fn add_task_paste_image_path_attaches_to_created_task_once() {
     let item = &app.store.tasks[selected];
     assert_eq!(item.task.title, "Write docs");
     assert_eq!(item.task.description, "Include setup details");
-    let mut conn = pool.acquire().await.unwrap();
-    let attachments = crate::operations::attachment_read_items_by_task(
-        &mut conn,
-        app.store.active_workspace.id.as_str(),
-        &item.task.id,
-        false,
-    )
-    .await
-    .unwrap();
+    let attachments = stored_attachments(&pool, &app, &item.task.id).await;
     assert_eq!(attachments.len(), 1);
     assert_eq!(
         attachments[0].attachment.filename.as_deref(),
@@ -634,8 +594,7 @@ async fn add_task_paste_image_path_attaches_to_created_task_once() {
 
 #[tokio::test]
 async fn add_task_removing_draft_image_preserves_fields_without_database_or_sync_changes() {
-    let (dir, pool, mut app) = test_app_with_pool().await;
-    app.set_add_task_db_path(dir.path().join("test.db"));
+    let (dir, pool, mut app) = paste_test_app().await;
     let image = dir.path().join("remove.png");
     let retained = dir.path().join("retained.jpg");
     std::fs::write(&image, compressible_png_bytes()).unwrap();
@@ -698,8 +657,7 @@ async fn add_task_removing_draft_image_preserves_fields_without_database_or_sync
 
 #[tokio::test]
 async fn add_task_attachment_only_dismissal_confirms_and_discards_draft() {
-    let (dir, pool, mut app) = test_app_with_pool().await;
-    app.set_add_task_db_path(dir.path().join("test.db"));
+    let (dir, pool, mut app) = paste_test_app().await;
     let image = dir.path().join("discard.png");
     std::fs::write(&image, compressible_png_bytes()).unwrap();
 
@@ -731,8 +689,7 @@ async fn add_task_attachment_only_dismissal_confirms_and_discards_draft() {
 
 #[tokio::test]
 async fn failed_attachment_task_submission_preserves_composer_for_retry() {
-    let (dir, pool, mut app) = test_app_with_pool().await;
-    app.set_add_task_db_path(dir.path().join("test.db"));
+    let (dir, pool, mut app) = paste_test_app().await;
     let image = dir.path().join("retry.png");
     std::fs::write(&image, compressible_png_bytes()).unwrap();
 
@@ -787,8 +744,7 @@ async fn failed_attachment_task_submission_preserves_composer_for_retry() {
 
 #[tokio::test]
 async fn failed_epic_child_attachment_submission_retains_owned_origin_for_retry() {
-    let (dir, pool, mut app) = test_app_with_pool().await;
-    app.set_add_task_db_path(dir.path().join("test.db"));
+    let (dir, pool, mut app) = paste_test_app().await;
     let parent_index = create_and_select_task(
         &mut app,
         TaskDraft {
@@ -859,8 +815,7 @@ async fn failed_epic_child_attachment_submission_retains_owned_origin_for_retry(
 
 #[tokio::test]
 async fn rolled_back_attachment_task_is_retained_for_retry() {
-    let (dir, pool, mut app) = test_app_with_pool().await;
-    app.set_add_task_db_path(dir.path().join("test.db"));
+    let (dir, pool, mut app) = paste_test_app().await;
     let image = dir.path().join("committed.png");
     std::fs::write(&image, compressible_png_bytes()).unwrap();
 
@@ -895,8 +850,7 @@ async fn rolled_back_attachment_task_is_retained_for_retry() {
 
 #[tokio::test]
 async fn natural_add_paste_image_path_carries_attachment_into_created_task() {
-    let (dir, pool, mut app) = test_app_with_pool().await;
-    app.set_add_task_db_path(dir.path().join("test.db"));
+    let (dir, pool, mut app) = paste_test_app().await;
     configure_task_intake_success(&mut app, dir.path(), "parsed natural task", "model details");
     let image = dir.path().join("natural.webp");
     std::fs::write(&image, compressible_png_bytes()).unwrap();
@@ -913,15 +867,7 @@ async fn natural_add_paste_image_path_carries_attachment_into_created_task() {
     let item = &app.store.tasks[selected];
     assert_eq!(item.task.title, "parsed natural task");
     assert_eq!(item.task.description, "model details");
-    let mut conn = pool.acquire().await.unwrap();
-    let attachments = crate::operations::attachment_read_items_by_task(
-        &mut conn,
-        app.store.active_workspace.id.as_str(),
-        &item.task.id,
-        false,
-    )
-    .await
-    .unwrap();
+    let attachments = stored_attachments(&pool, &app, &item.task.id).await;
     assert_eq!(attachments.len(), 1);
     assert_eq!(
         attachments[0].attachment.filename.as_deref(),

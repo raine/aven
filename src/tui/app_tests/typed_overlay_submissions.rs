@@ -168,15 +168,7 @@ async fn add_dependency_search_tab_keeps_picker_context() {
 #[tokio::test]
 async fn remove_shortcut_opens_current_dependency_picker() {
     let mut app = test_app().await;
-    let blocker_index = create_and_select_task(&mut app, test_task_draft("Blocker")).await;
-    let blocker_id = app.store.tasks[blocker_index].task.id.clone();
-    let blocked_index = create_and_select_task(&mut app, test_task_draft("Blocked")).await;
-    let blocked_id = app.store.tasks[blocked_index].task.id.clone();
-    app.store
-        .add_dependency(Some(blocked_index), &blocker_id)
-        .await
-        .unwrap()
-        .unwrap();
+    let (blocker_id, blocked_id) = create_blocked_pair(&mut app).await;
     let blocked_index = app
         .store
         .tasks
@@ -203,15 +195,7 @@ async fn remove_shortcut_opens_current_dependency_picker() {
 #[tokio::test]
 async fn submitting_dependency_removal_removes_dependency() {
     let mut app = test_app().await;
-    let blocker_index = create_and_select_task(&mut app, test_task_draft("Blocker")).await;
-    let blocker_id = app.store.tasks[blocker_index].task.id.clone();
-    let blocked_index = create_and_select_task(&mut app, test_task_draft("Blocked")).await;
-    let blocked_id = app.store.tasks[blocked_index].task.id.clone();
-    app.store
-        .add_dependency(Some(blocked_index), &blocker_id)
-        .await
-        .unwrap()
-        .unwrap();
+    let (_blocker_id, blocked_id) = create_blocked_pair(&mut app).await;
     let blocked_index = app
         .store
         .tasks

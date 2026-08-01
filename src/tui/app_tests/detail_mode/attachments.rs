@@ -339,27 +339,9 @@ async fn detail_child_focus_order_includes_images_and_enter_opens_preview() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
     app.inline_images
         .set_context_override(crate::tui::ui::DetailInlineImageContext::default());
-    let parent_index = create_and_select_task(
-        &mut app,
-        TaskDraft {
-            is_epic: true,
-            ..test_task_draft("Parent epic")
-        },
-    )
-    .await;
-    let parent_id = app.store.tasks[parent_index].task.id.clone();
-    let child_index = create_and_select_task(&mut app, test_task_draft("Child")).await;
-    let child_id = app.store.tasks[child_index].task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    crate::operations::add_task_to_epic(
-        &mut conn,
-        &app.store.active_workspace,
-        &child_id,
-        &parent_id,
-    )
-    .await
-    .unwrap();
-    drop(conn);
+    let (parent_id, child_ids) =
+        create_epic_with_children(&mut app, &pool, "Parent epic", &["Child"]).await;
+    let child_id = child_ids[0].clone();
     app.store.refresh(Some(&parent_id)).await.unwrap();
     let parent_index = app
         .store

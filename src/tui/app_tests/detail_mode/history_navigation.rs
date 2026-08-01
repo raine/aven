@@ -3,27 +3,9 @@ use super::*;
 #[tokio::test]
 async fn detail_back_returns_from_epic_child_to_parent_detail() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
-    let parent_index = create_and_select_task(
-        &mut app,
-        TaskDraft {
-            is_epic: true,
-            ..test_task_draft("Parent epic")
-        },
-    )
-    .await;
-    let parent_id = app.store.tasks[parent_index].task.id.clone();
-    let child_index = create_and_select_task(&mut app, test_task_draft("Child task")).await;
-    let child_id = app.store.tasks[child_index].task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    crate::operations::add_task_to_epic(
-        &mut conn,
-        &crate::workspaces::Workspace::default(),
-        &child_id,
-        &parent_id,
-    )
-    .await
-    .unwrap();
-    drop(conn);
+    let (parent_id, child_ids) =
+        create_epic_with_children(&mut app, &pool, "Parent epic", &["Child task"]).await;
+    let child_id = child_ids[0].clone();
     app.store.refresh(Some(&parent_id)).await.unwrap();
     let parent_index = app
         .store
@@ -66,27 +48,9 @@ async fn detail_back_returns_from_epic_child_to_parent_detail() {
 #[tokio::test]
 async fn detail_back_escape_restores_parent_scroll_and_child_focus() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
-    let parent_index = create_and_select_task(
-        &mut app,
-        TaskDraft {
-            is_epic: true,
-            ..test_task_draft("Parent epic")
-        },
-    )
-    .await;
-    let parent_id = app.store.tasks[parent_index].task.id.clone();
-    let child_index = create_and_select_task(&mut app, test_task_draft("Child task")).await;
-    let child_id = app.store.tasks[child_index].task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    crate::operations::add_task_to_epic(
-        &mut conn,
-        &app.store.active_workspace,
-        &child_id,
-        &parent_id,
-    )
-    .await
-    .unwrap();
-    drop(conn);
+    let (parent_id, child_ids) =
+        create_epic_with_children(&mut app, &pool, "Parent epic", &["Child task"]).await;
+    let child_id = child_ids[0].clone();
     app.store.refresh(Some(&parent_id)).await.unwrap();
     app.list.select_task(Some(
         app.store
