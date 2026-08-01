@@ -35,6 +35,7 @@ impl App {
             selection: detail.text_selection(),
             inline_images: inline_images.as_ref(),
             pending_attachments: &pending_attachments,
+            removed_epic_child: detail.removed_epic_child(),
         };
         if let Some(document) = self
             .widgets

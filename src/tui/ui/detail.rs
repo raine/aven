@@ -18,8 +18,7 @@ use crate::task_render::{AttachmentMetadataJson, attachment_state_placeholder, h
 use crate::tui::app::{DetailSection, DetailTargetId, WidgetState};
 use crate::tui::detail_selection::{DetailTextSelection, TextCell, text_cell_at_column};
 use crate::tui::markdown::{
-    MarkdownBlock, MarkdownRenderContext, flatten_markdown_blocks, render_markdown,
-    render_markdown_with_context,
+    MarkdownBlock, MarkdownRenderContext, render_markdown, render_markdown_with_context,
 };
 use crate::tui::overlay::TextInputView;
 use crate::tui::store::TuiStore;
@@ -95,6 +94,7 @@ pub(crate) struct DetailRenderContext<'a> {
     pub(crate) inline_images: Option<&'a DetailInlineImageContext>,
     pub(crate) pending_attachments:
         &'a [crate::tui::attachment_controller::PendingAttachmentView],
+    pub(crate) removed_epic_child: Option<&'a crate::tui::app::RemovedEpicChild>,
 }
 
 impl DetailRenderContext<'_> {
@@ -164,6 +164,28 @@ struct DetailBodyAttachmentPlacement {
     height: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EpicChildState {
+    Live,
+    Removed,
+}
+
+#[derive(Debug, Clone)]
+struct DetailEpicChild {
+    link: crate::query::TaskDependencyLink,
+    state: EpicChildState,
+}
+
+#[derive(Debug, Clone)]
+struct DetailBodyDocument {
+    lines: Vec<Line<'static>>,
+    image_placements: Vec<DetailBodyImagePlacement>,
+    interactive_rows: Vec<DetailInteractiveRow>,
+    selectable_description: Vec<SelectableLine>,
+    selectable_text: String,
+    section_body_indices: Vec<usize>,
+}
+
 #[derive(Debug, Clone)]
 enum DetailBodyBlock {
     Line(Line<'static>),
@@ -199,12 +221,14 @@ struct DetailRelationshipSnapshot {
     status: String,
     priority: String,
     unresolved: bool,
+    removed: bool,
 }
 
 #[derive(Debug)]
 pub(crate) struct DetailDocument {
     task_id: crate::ids::TaskId,
     relationships: Vec<DetailRelationshipSnapshot>,
+    epic_children: Vec<DetailEpicChild>,
     layout: DetailContentLayout,
     scroll: u16,
     expanded_sections: BTreeSet<DetailSection>,
@@ -242,24 +266,64 @@ pub(crate) enum DetailMetadataTarget {
     Due,
 }
 
-fn detail_relationship_snapshots(item: &TaskListItem) -> Vec<DetailRelationshipSnapshot> {
+fn detail_epic_children(
+    item: &TaskListItem,
+    removed: Option<&crate::tui::app::RemovedEpicChild>,
+) -> Vec<DetailEpicChild> {
+    let mut children = item
+        .epic_children
+        .iter()
+        .cloned()
+        .map(|link| DetailEpicChild {
+            link,
+            state: EpicChildState::Live,
+        })
+        .collect::<Vec<_>>();
+    if let Some(removed) = removed
+        && removed.epic_id == item.task.id
+        && !children
+            .iter()
+            .any(|child| child.link.task_id == removed.child.task_id)
+    {
+        let position = removed.original_position.min(children.len());
+        children.insert(
+            position,
+            DetailEpicChild {
+                link: removed.child.clone(),
+                state: EpicChildState::Removed,
+            },
+        );
+    }
+    children
+}
+
+fn detail_relationship_snapshots(
+    item: &TaskListItem,
+    epic_children: &[DetailEpicChild],
+) -> Vec<DetailRelationshipSnapshot> {
     let links = item
         .epic_parent
         .iter()
-        .map(|link| (DetailSection::EpicParent, link))
-        .chain(
-            item.epic_children
-                .iter()
-                .map(|link| (DetailSection::EpicChildren, link)),
-        )
+        .map(|link| (DetailSection::EpicParent, link, false))
+        .chain(epic_children.iter().map(|child| {
+            (
+                DetailSection::EpicChildren,
+                &child.link,
+                child.state == EpicChildState::Removed,
+            )
+        }))
         .chain(
             item.depends_on
                 .iter()
-                .map(|link| (DetailSection::DependsOn, link)),
+                .map(|link| (DetailSection::DependsOn, link, false)),
         )
-        .chain(item.blocks.iter().map(|link| (DetailSection::Blocks, link)));
+        .chain(
+            item.blocks
+                .iter()
+                .map(|link| (DetailSection::Blocks, link, false)),
+        );
     links
-        .map(|(section, link)| DetailRelationshipSnapshot {
+        .map(|(section, link, removed)| DetailRelationshipSnapshot {
             section,
             task_id: link.task_id.clone(),
             display_ref: link.display_ref.clone(),
@@ -267,6 +331,7 @@ fn detail_relationship_snapshots(item: &TaskListItem) -> Vec<DetailRelationshipS
             status: link.status.clone(),
             priority: link.priority.clone(),
             unresolved: link.unresolved,
+            removed,
         })
         .collect()
 }
@@ -278,27 +343,36 @@ impl DetailDocument {
             images.focused_attachment_id = None;
             images
         });
-        let model = build_detail_content_model_with_pending(
+        let epic_children = detail_epic_children(item, context.removed_epic_child);
+        let sticky_lines = detail_header_options(
             item,
-            layout.content_area,
-            context.scroll,
+            layout.content_area.width as usize,
             context.inline_title_editor,
-            None,
+        );
+        let body = build_detail_body_document(
+            item,
+            &epic_children,
+            layout.content_area.width as usize,
             context.expanded_sections,
-            None,
             inline_images.as_ref(),
             context.pending_attachments,
         );
-        let width = layout.content_area.width as usize;
-        let selectable = detail_selectable_document_with_title_wrap(
+        let model = project_detail_content_model(
+            sticky_lines,
+            &body,
+            layout.content_area.height as usize,
+            context.scroll,
+        );
+        let selectable = detail_selectable_document_from_body(
             item,
-            width,
-            inline_images.as_ref(),
+            layout.content_area.width as usize,
             context.inline_title_editor.is_none(),
+            &body,
         );
         Self {
             task_id: item.task.id.clone(),
-            relationships: detail_relationship_snapshots(item),
+            relationships: detail_relationship_snapshots(item, &epic_children),
+            epic_children,
             layout,
             scroll: context.scroll,
             expanded_sections: context.expanded_sections.clone(),
@@ -309,7 +383,7 @@ impl DetailDocument {
                 .map(|editor| (editor.input.clone(), editor.cursor)),
             model,
             selectable,
-            section_body_indices: detail_section_body_indices(item, width, context.inline_images),
+            section_body_indices: body.section_body_indices,
             #[cfg(test)]
             projection_id: next_detail_projection_id(),
         }
@@ -355,7 +429,7 @@ impl DetailDocument {
         }
         render_detail_content_from_model(frame, self.layout.content_area, &model, widgets);
         if self.layout.metadata_area.width > 0 {
-            render_detail_metadata(frame, item, self.layout.metadata_area);
+            render_detail_metadata(frame, item, &self.epic_children, self.layout.metadata_area);
         }
     }
 
@@ -365,7 +439,11 @@ impl DetailDocument {
         context: &DetailRenderContext<'_>,
     ) -> bool {
         self.task_id == item.task.id
-            && self.relationships == detail_relationship_snapshots(item)
+            && self.relationships
+                == detail_relationship_snapshots(
+                    item,
+                    &detail_epic_children(item, context.removed_epic_child),
+                )
             && self.layout == context.content_layout()
             && self.scroll == context.scroll
             && self.expanded_sections == *context.expanded_sections
@@ -644,6 +722,7 @@ fn detail_query_context<'a>(
         selection: None,
         inline_images,
         pending_attachments: &[],
+        removed_epic_child: None,
     }
 }
 
@@ -832,6 +911,7 @@ fn build_detail_content_model(
     )
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn build_detail_content_model_with_pending(
     item: &TaskListItem,
@@ -844,33 +924,51 @@ fn build_detail_content_model_with_pending(
     inline_images: Option<&DetailInlineImageContext>,
     pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
 ) -> DetailContentRenderModel {
-    let mut sticky_lines = detail_header_options(item, area.width as usize, inline_title_editor);
-    let (mut body_lines, image_placements, _attachment_placements, interactive_rows) =
-        detail_body_lines_with_pending_images(
-            item,
-            area.width as usize,
-            active_target,
-            expanded_sections,
-            inline_images,
-            pending_attachments,
-        );
+    let epic_children = detail_epic_children(item, None);
+    let body = build_detail_body_document(
+        item,
+        &epic_children,
+        area.width as usize,
+        expanded_sections,
+        inline_images,
+        pending_attachments,
+    );
+    let mut model = project_detail_content_model(
+        detail_header_options(item, area.width as usize, inline_title_editor),
+        &body,
+        area.height as usize,
+        scroll,
+    );
+    if let Some(active_target) = active_target {
+        apply_active_style(&mut model, active_target);
+    }
     if inline_title_editor.is_none()
         && let Some(selection) = selection.filter(|selection| selection.task_id == item.task.id)
     {
-        apply_detail_selection(
-            item,
-            area.width as usize,
+        let selectable =
+            detail_selectable_document_from_body(item, area.width as usize, true, &body);
+        apply_detail_selection_from_document(
+            &selectable,
             selection,
-            inline_images,
-            &mut sticky_lines,
-            &mut body_lines,
+            &mut model.sticky_lines,
+            &mut model.lines,
+            model.body_start,
         );
     }
-    let content_height = body_lines.len().max(1);
-    let sticky_height = sticky_lines.len().min(area.height as usize);
-    let visible = (area.height as usize).saturating_sub(sticky_height);
+    model
+}
+
+fn project_detail_content_model(
+    sticky_lines: Vec<Line<'static>>,
+    body: &DetailBodyDocument,
+    area_height: usize,
+    scroll: u16,
+) -> DetailContentRenderModel {
+    let content_height = body.lines.len().max(1);
+    let sticky_height = sticky_lines.len().min(area_height);
+    let visible = area_height.saturating_sub(sticky_height);
     let start = clamp_scroll_start(scroll, content_height, visible.max(1));
-    let lines = body_lines.into_iter().skip(start).collect();
+    let lines = body.lines.iter().skip(start).cloned().collect();
     let scrollbar_position = if content_height > visible {
         scrollbar_thumb_position(start, content_height, visible.max(1))
     } else {
@@ -882,8 +980,8 @@ fn build_detail_content_model_with_pending(
         content_height,
         body_start: start,
         scrollbar_position,
-        image_placements,
-        interactive_rows,
+        image_placements: body.image_placements.clone(),
+        interactive_rows: body.interactive_rows.clone(),
     }
 }
 
@@ -1101,6 +1199,7 @@ fn detail_body_lines_with_images(
     )
 }
 
+#[cfg(test)]
 fn detail_body_lines_with_pending_images(
     item: &TaskListItem,
     width: usize,
@@ -1114,37 +1213,124 @@ fn detail_body_lines_with_pending_images(
     Vec<DetailBodyAttachmentPlacement>,
     Vec<DetailInteractiveRow>,
 ) {
+    let epic_children = detail_epic_children(item, None);
+    let body = build_detail_body_document(
+        item,
+        &epic_children,
+        width,
+        expanded_sections,
+        inline_images,
+        pending_attachments,
+    );
+    let mut model = project_detail_content_model(Vec::new(), &body, usize::MAX, 0);
+    if let Some(active_target) = active_target {
+        apply_active_style(&mut model, active_target);
+    }
+    let attachment_placements = body
+        .interactive_rows
+        .iter()
+        .filter_map(|row| match &row.target {
+            DetailTargetId::Attachment { attachment_id } => Some(DetailBodyAttachmentPlacement {
+                attachment_id: attachment_id.clone(),
+                line_index: row.line_index,
+                height: row.height,
+            }),
+            _ => None,
+        })
+        .collect();
+    (
+        model.lines,
+        body.image_placements,
+        attachment_placements,
+        body.interactive_rows,
+    )
+}
+
+fn build_detail_body_document(
+    item: &TaskListItem,
+    epic_children: &[DetailEpicChild],
+    width: usize,
+    expanded_sections: &BTreeSet<DetailSection>,
+    inline_images: Option<&DetailInlineImageContext>,
+    pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
+) -> DetailBodyDocument {
     let mut lines = Vec::new();
     let mut interactive_rows = Vec::new();
-    extend_epic_parent_section(
-        &mut lines,
-        &mut interactive_rows,
-        item,
-        width,
-        active_target,
-    );
+    let mut section_body_indices = vec![0];
+    extend_epic_parent_section(&mut lines, &mut interactive_rows, item, width, None);
     extend_epic_children_section(
         &mut lines,
         &mut interactive_rows,
         item,
+        epic_children,
         width,
-        active_target,
+        None,
         expanded_sections.contains(&DetailSection::EpicChildren),
     );
     if !lines.is_empty() {
         lines.push(Line::from(""));
     }
+    section_body_indices.push(lines.len());
+
     let mut image_placements = Vec::new();
-    let mut attachment_placements = Vec::new();
-    extend_detail_body_blocks(
-        &mut lines,
-        &mut image_placements,
-        &description_or_placeholder(&item.task.description),
-        width,
-        Style::new().fg(FG_MUTED),
+    let mut selectable_description = Vec::new();
+    let mut selectable_text = String::new();
+    let description = description_or_placeholder(&item.task.description);
+    let content_width = width.saturating_sub(3).max(1);
+    let blocks = detail_body_blocks(
+        &description,
+        content_width,
         MarkdownRenderContext,
         inline_images,
     );
+    for (index, block) in blocks.into_iter().enumerate() {
+        let selectable_line = match &block {
+            DetailBodyBlock::Line(line) => line.to_string(),
+            DetailBodyBlock::Image { placeholder, .. } => placeholder.to_string(),
+        };
+        if !item.task.description.is_empty() {
+            if index > 0 {
+                selectable_text.push('\n');
+            }
+            let document_start = selectable_text.len();
+            selectable_text.push_str(&selectable_line);
+            selectable_description.push(SelectableLine {
+                text: selectable_line,
+                document_start,
+                body_index: Some(lines.len()),
+            });
+        }
+        match block {
+            DetailBodyBlock::Line(line) => {
+                lines.push(quoted_line(line, Style::new().fg(FG_MUTED)));
+            }
+            DetailBodyBlock::Image {
+                placeholder,
+                attachment_id,
+                source_hash,
+                width,
+                height,
+            } => {
+                let line_index = lines.len().saturating_add(1);
+                lines.push(quoted_line(placeholder, Style::new().fg(FG_MUTED)));
+                for _ in 0..height {
+                    lines.push(Line::from(vec![Span::styled(
+                        "│ ",
+                        Style::new().fg(BORDER),
+                    )]));
+                }
+                image_placements.push(DetailBodyImagePlacement {
+                    attachment_id,
+                    source_hash,
+                    line_index,
+                    width,
+                    height,
+                });
+            }
+        }
+    }
+
+    let mut attachment_placements = Vec::new();
     extend_attachment_section(
         &mut lines,
         &mut image_placements,
@@ -1153,10 +1339,10 @@ fn detail_body_lines_with_pending_images(
         width,
         inline_images,
     );
-    for placement in &attachment_placements {
+    for placement in attachment_placements {
         interactive_rows.push(DetailInteractiveRow {
             target: DetailTargetId::Attachment {
-                attachment_id: placement.attachment_id.clone(),
+                attachment_id: placement.attachment_id,
             },
             line_index: placement.line_index,
             height: placement.height,
@@ -1171,36 +1357,56 @@ fn detail_body_lines_with_pending_images(
             .any(|attachment| !attachment.deleted),
     );
     lines.push(Line::from(""));
+    section_body_indices.push(lines.len());
     extend_detail_note_section(&mut lines, &mut interactive_rows, item, width);
-    extend_dependency_sections(
-        &mut lines,
-        &mut interactive_rows,
-        item,
-        width,
-        active_target,
-        expanded_sections,
-    );
-    (
+    if !item.depends_on.is_empty() || !item.blocks.is_empty() {
+        let dependency_start = lines.len();
+        extend_dependency_sections(
+            &mut lines,
+            &mut interactive_rows,
+            item,
+            width,
+            None,
+            expanded_sections,
+        );
+        section_body_indices.push(dependency_start.saturating_add(1));
+    }
+    section_body_indices.sort_unstable();
+    section_body_indices.dedup();
+
+    DetailBodyDocument {
         lines,
         image_placements,
-        attachment_placements,
         interactive_rows,
-    )
+        selectable_description,
+        selectable_text,
+        section_body_indices,
+    }
 }
 
+#[cfg(test)]
 fn detail_selectable_document(
     item: &TaskListItem,
     width: usize,
     inline_images: Option<&DetailInlineImageContext>,
 ) -> DetailSelectableDocument {
-    detail_selectable_document_with_title_wrap(item, width, inline_images, true)
+    let epic_children = detail_epic_children(item, None);
+    let body = build_detail_body_document(
+        item,
+        &epic_children,
+        width,
+        &BTreeSet::new(),
+        inline_images,
+        &[],
+    );
+    detail_selectable_document_from_body(item, width, true, &body)
 }
 
-fn detail_selectable_document_with_title_wrap(
+fn detail_selectable_document_from_body(
     item: &TaskListItem,
     width: usize,
-    inline_images: Option<&DetailInlineImageContext>,
     wrap_title: bool,
+    body: &DetailBodyDocument,
 ) -> DetailSelectableDocument {
     let title = if wrap_title {
         title_line_ranges(&item.task.title, width)
@@ -1219,39 +1425,13 @@ fn detail_selectable_document_with_title_wrap(
         }]
     };
     let mut text = item.task.title.clone();
-    let mut description = Vec::new();
-    if !item.task.description.is_empty() {
+    let mut description = body.selectable_description.clone();
+    if !description.is_empty() {
         text.push('\n');
-        let epic_lines = detail_epic_child_lines(item, width, None);
-        let mut body_index = epic_lines.len() + usize::from(!epic_lines.is_empty());
-        let content_width = width.saturating_sub(3).max(1);
-        let blocks = detail_body_blocks(
-            &item.task.description,
-            content_width,
-            MarkdownRenderContext,
-            inline_images,
-        );
-        for (index, block) in blocks.into_iter().enumerate() {
-            if index > 0 {
-                text.push('\n');
-            }
-            let (line, rendered_height) = match block {
-                DetailBodyBlock::Line(line) => (line, 1),
-                DetailBodyBlock::Image {
-                    placeholder,
-                    height,
-                    ..
-                } => (placeholder, 1 + height as usize),
-            };
-            let line_text = line.to_string();
-            let document_start = text.len();
-            text.push_str(&line_text);
-            description.push(SelectableLine {
-                text: line_text,
-                document_start,
-                body_index: Some(body_index),
-            });
-            body_index += rendered_height;
+        let description_start = text.len();
+        text.push_str(&body.selectable_text);
+        for line in &mut description {
+            line.document_start += description_start;
         }
     }
     DetailSelectableDocument {
@@ -1259,18 +1439,6 @@ fn detail_selectable_document_with_title_wrap(
         title,
         description,
     }
-}
-
-fn apply_detail_selection(
-    item: &TaskListItem,
-    width: usize,
-    selection: &DetailTextSelection,
-    inline_images: Option<&DetailInlineImageContext>,
-    sticky_lines: &mut [Line<'static>],
-    body_lines: &mut [Line<'static>],
-) {
-    let document = detail_selectable_document(item, width, inline_images);
-    apply_detail_selection_from_document(&document, selection, sticky_lines, body_lines, 0);
 }
 
 fn apply_detail_selection_from_document(
@@ -1344,29 +1512,21 @@ fn highlight_selectable_line(
     line.spans = rebuilt;
 }
 
+#[cfg(test)]
 fn detail_section_body_indices(
     item: &TaskListItem,
     width: usize,
     inline_images: Option<&DetailInlineImageContext>,
 ) -> Vec<usize> {
-    let epic_lines = detail_epic_child_lines(item, width, None);
-    let description_index = epic_lines.len() + usize::from(!epic_lines.is_empty());
-    let notes_index = detail_description_lines(item, width, None, inline_images).len();
-    let mut indices = if item.task.is_epic {
-        vec![0, description_index, notes_index]
-    } else {
-        vec![description_index, notes_index]
-    };
-    if !item.depends_on.is_empty() || !item.blocks.is_empty() {
-        indices.push(notes_index + detail_note_lines(item, width).len() + 1);
-    }
-    indices
-}
-
-fn detail_note_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    extend_detail_note_section(&mut lines, &mut Vec::new(), item, width);
-    lines
+    build_detail_body_document(
+        item,
+        &detail_epic_children(item, None),
+        width,
+        &BTreeSet::new(),
+        inline_images,
+        &[],
+    )
+    .section_body_indices
 }
 
 fn extend_detail_note_section(
@@ -1420,34 +1580,6 @@ fn extend_detail_note_section(
     }
 }
 
-fn detail_description_lines(
-    item: &TaskListItem,
-    width: usize,
-    hovered_child_task_id: Option<&str>,
-    inline_images: Option<&DetailInlineImageContext>,
-) -> Vec<Line<'static>> {
-    let mut lines = detail_epic_child_lines(item, width, hovered_child_task_id);
-    if !lines.is_empty() {
-        lines.push(Line::from(""));
-    }
-    lines.extend(quoted_block_lines_with_context(
-        &description_or_placeholder(&item.task.description),
-        width,
-        Style::new().fg(FG_MUTED),
-        MarkdownRenderContext,
-    ));
-    extend_attachment_section(
-        &mut lines,
-        &mut Vec::new(),
-        &mut Vec::new(),
-        &item.attachments,
-        width,
-        inline_images,
-    );
-    lines.push(Line::from(""));
-    lines
-}
-
 fn extend_epic_parent_section(
     lines: &mut Vec<Line<'static>>,
     rows: &mut Vec<DetailInteractiveRow>,
@@ -1468,7 +1600,7 @@ fn extend_epic_parent_section(
     };
     let start = lines.len();
     let active = active_target == Some(&target);
-    let rendered = epic_child_tree_item_lines(parent, true, width, active);
+    let rendered = epic_child_tree_item_lines(parent, EpicChildState::Live, true, width, active);
     let height = rendered.len();
     lines.extend(rendered);
     rows.push(DetailInteractiveRow {
@@ -1478,11 +1610,11 @@ fn extend_epic_parent_section(
     });
 }
 
-fn ordered_epic_children(item: &TaskListItem) -> Vec<&crate::query::TaskDependencyLink> {
-    item.epic_children
+fn ordered_epic_children(children: &[DetailEpicChild]) -> Vec<&DetailEpicChild> {
+    children
         .iter()
-        .filter(|link| link.unresolved)
-        .chain(item.epic_children.iter().filter(|link| !link.unresolved))
+        .filter(|child| child.link.unresolved)
+        .chain(children.iter().filter(|child| !child.link.unresolved))
         .collect()
 }
 
@@ -1490,6 +1622,7 @@ fn extend_epic_children_section(
     lines: &mut Vec<Line<'static>>,
     rows: &mut Vec<DetailInteractiveRow>,
     item: &TaskListItem,
+    children: &[DetailEpicChild],
     width: usize,
     active_target: Option<&DetailTargetId>,
     expanded: bool,
@@ -1500,15 +1633,13 @@ fn extend_epic_children_section(
     if !lines.is_empty() {
         lines.push(Line::from(""));
     }
-    let open = item
-        .epic_children
+    let open = children
         .iter()
-        .filter(|link| link.unresolved && !link.title.ends_with("[removed]"))
+        .filter(|child| child.state == EpicChildState::Live && child.link.unresolved)
         .count();
-    let total = item
-        .epic_children
+    let total = children
         .iter()
-        .filter(|link| !link.title.ends_with("[removed]"))
+        .filter(|child| child.state == EpicChildState::Live)
         .count();
     lines.push(Line::from(vec![
         Span::styled(
@@ -1520,7 +1651,7 @@ fn extend_epic_children_section(
             Style::new().fg(FG_DIM),
         ),
     ]));
-    let links = ordered_epic_children(item);
+    let links = ordered_epic_children(children);
     if links.is_empty() {
         lines.push(Line::from(Span::styled("none", Style::new().fg(FG_MUTED))));
         return;
@@ -1531,15 +1662,20 @@ fn extend_epic_children_section(
         links.len().min(5)
     };
     let has_disclosure = links.len() > 5;
-    for (index, link) in links.iter().take(visible).enumerate() {
+    for (index, child) in links.iter().take(visible).enumerate() {
         let target = DetailTargetId::Task {
             section: DetailSection::EpicChildren,
-            task_id: link.task_id.clone(),
+            task_id: child.link.task_id.clone(),
         };
         let is_last = index + 1 == visible && !has_disclosure;
         let start = lines.len();
-        let rendered =
-            epic_child_tree_item_lines(link, is_last, width, active_target == Some(&target));
+        let rendered = epic_child_tree_item_lines(
+            &child.link,
+            child.state,
+            is_last,
+            width,
+            active_target == Some(&target),
+        );
         let height = rendered.len();
         lines.extend(rendered);
         rows.push(DetailInteractiveRow {
@@ -1587,67 +1723,15 @@ fn disclosure_line(label: &str, active: bool) -> Line<'static> {
     ])
 }
 
-fn detail_epic_child_lines(
-    item: &TaskListItem,
-    width: usize,
-    hovered_child_task_id: Option<&str>,
-) -> Vec<Line<'static>> {
-    if !item.task.is_epic {
-        return Vec::new();
-    }
-
-    let open = item
-        .epic_children
-        .iter()
-        .filter(|link| link.unresolved && !link.title.ends_with("[removed]"))
-        .count();
-    let total = item
-        .epic_children
-        .iter()
-        .filter(|link| !link.title.ends_with("[removed]"))
-        .count();
-    let mut lines = vec![Line::from(vec![
-        Span::styled(
-            "CHILD TASKS",
-            Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!(" open={open} total={total}"),
-            Style::new().fg(FG_DIM),
-        ),
-    ])];
-
-    if item.epic_children.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "No children · t c a to add",
-            Style::new().fg(FG_MUTED),
-        )));
-        return lines;
-    }
-
-    let links = item
-        .epic_children
-        .iter()
-        .filter(|link| link.unresolved)
-        .chain(item.epic_children.iter().filter(|link| !link.unresolved))
-        .collect::<Vec<_>>();
-    for (index, link) in links.iter().enumerate() {
-        let is_last = index + 1 == links.len();
-        let hovered = hovered_child_task_id == Some(link.task_id.as_str());
-        lines.extend(epic_child_tree_item_lines(link, is_last, width, hovered));
-    }
-
-    lines
-}
-
 fn epic_child_tree_item_lines(
     link: &crate::query::TaskDependencyLink,
+    state: EpicChildState,
     is_last: bool,
     width: usize,
     hovered: bool,
 ) -> Vec<Line<'static>> {
     let tree_glyph = if is_last { "└─ " } else { "├─ " };
-    let removed = link.title.ends_with("[removed]");
+    let removed = state == EpicChildState::Removed;
     let ref_style = if hovered {
         Style::new()
             .fg(ACCENT)
@@ -1680,9 +1764,14 @@ fn epic_child_tree_item_lines(
         Span::styled(link.display_ref.clone(), ref_style),
         Span::styled("  ", gap_style),
     ];
+    let title = if removed {
+        format!("{}  [removed]", link.title)
+    } else {
+        link.title.clone()
+    };
     dependency_node_lines_with_title_style(
         prefix,
-        &link.title,
+        &title,
         &link.status,
         &link.priority,
         width,
@@ -2088,60 +2177,6 @@ fn quoted_block_lines(body: &str, width: usize, style: Style) -> Vec<Line<'stati
         .collect()
 }
 
-fn quoted_block_lines_with_context(
-    body: &str,
-    width: usize,
-    style: Style,
-    context: MarkdownRenderContext,
-) -> Vec<Line<'static>> {
-    let content_width = width.saturating_sub(3).max(1);
-    flatten_markdown_blocks(render_markdown_with_context(body, content_width, context))
-        .into_iter()
-        .map(|line| quoted_line(line, style))
-        .collect()
-}
-
-fn extend_detail_body_blocks(
-    lines: &mut Vec<Line<'static>>,
-    placements: &mut Vec<DetailBodyImagePlacement>,
-    body: &str,
-    width: usize,
-    style: Style,
-    context: MarkdownRenderContext,
-    inline_images: Option<&DetailInlineImageContext>,
-) {
-    let content_width = width.saturating_sub(3).max(1);
-    for block in detail_body_blocks(body, content_width, context, inline_images) {
-        match block {
-            DetailBodyBlock::Line(line) => lines.push(quoted_line(line, style)),
-            DetailBodyBlock::Image {
-                placeholder,
-                attachment_id,
-                source_hash,
-                width,
-                height,
-            } => {
-                let line_index = lines.len().saturating_add(1);
-                lines.push(quoted_line(placeholder, style));
-                let blank_count = height as usize;
-                for _ in 0..blank_count {
-                    lines.push(Line::from(vec![Span::styled(
-                        "│ ",
-                        Style::new().fg(BORDER),
-                    )]));
-                }
-                placements.push(DetailBodyImagePlacement {
-                    attachment_id,
-                    source_hash,
-                    line_index,
-                    width,
-                    height,
-                });
-            }
-        }
-    }
-}
-
 fn extend_pending_attachment_section(
     lines: &mut Vec<Line<'static>>,
     task_id: &crate::ids::TaskId,
@@ -2427,7 +2462,12 @@ fn line_with_base_style(mut line: Line<'static>, base: Style) -> Line<'static> {
     line
 }
 
-fn render_detail_metadata(frame: &mut Frame, item: &TaskListItem, area: Rect) {
+fn render_detail_metadata(
+    frame: &mut Frame,
+    item: &TaskListItem,
+    epic_children: &[DetailEpicChild],
+    area: Rect,
+) {
     let block = Block::new()
         .borders(Borders::LEFT)
         .border_style(Style::new().fg(BORDER))
@@ -2436,8 +2476,9 @@ fn render_detail_metadata(frame: &mut Frame, item: &TaskListItem, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
     frame.render_widget(
-        Paragraph::new(Text::from(detail_metadata_lines(
+        Paragraph::new(Text::from(detail_metadata_lines_with_children(
             item,
+            epic_children,
             inner.width as usize,
         )))
         .style(Style::new().fg(FG).bg(BG)),
@@ -2445,7 +2486,16 @@ fn render_detail_metadata(frame: &mut Frame, item: &TaskListItem, area: Rect) {
     );
 }
 
+#[cfg(test)]
 fn detail_metadata_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
+    detail_metadata_lines_with_children(item, &detail_epic_children(item, None), width)
+}
+
+fn detail_metadata_lines_with_children(
+    item: &TaskListItem,
+    epic_children: &[DetailEpicChild],
+    width: usize,
+) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::from(Span::styled(
             if item.task.is_epic {
@@ -2579,7 +2629,7 @@ fn detail_metadata_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>
             Line::from(format!("missed {}", group.counts.missed)),
         ]);
     }
-    lines.extend(detail_epic_metadata_lines(item));
+    lines.extend(detail_epic_metadata_lines(item, epic_children));
     if item.has_conflict {
         lines.extend([
             Line::from(""),
@@ -2603,20 +2653,21 @@ fn detail_metadata_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>
     lines
 }
 
-fn detail_epic_metadata_lines(item: &TaskListItem) -> Vec<Line<'static>> {
+fn detail_epic_metadata_lines(
+    item: &TaskListItem,
+    children: &[DetailEpicChild],
+) -> Vec<Line<'static>> {
     if !item.task.is_epic {
         return Vec::new();
     }
 
-    let open = item
-        .epic_children
+    let open = children
         .iter()
-        .filter(|link| link.unresolved && !link.title.ends_with("[removed]"))
+        .filter(|child| child.state == EpicChildState::Live && child.link.unresolved)
         .count();
-    let total = item
-        .epic_children
+    let total = children
         .iter()
-        .filter(|link| !link.title.ends_with("[removed]"))
+        .filter(|child| child.state == EpicChildState::Live)
         .count();
     let lines = vec![
         Line::from(""),
@@ -2627,7 +2678,7 @@ fn detail_epic_metadata_lines(item: &TaskListItem) -> Vec<Line<'static>> {
         )),
     ];
 
-    if item.epic_children.is_empty() {
+    if children.is_empty() {
         return lines
             .into_iter()
             .chain(std::iter::once(Line::from(Span::styled(
@@ -2927,19 +2978,6 @@ pub(super) fn render_detail_underlay(
     removed_epic_child: Option<&crate::tui::app::RemovedEpicChild>,
 ) {
     if let Some(task) = store.selected_task(selected_task) {
-        let mut task = task.clone();
-        if let Some(removed) = removed_epic_child
-            && removed.epic_id == task.task.id
-            && !task
-                .epic_children
-                .iter()
-                .any(|child| child.task_id == removed.child.task_id)
-        {
-            let mut child = removed.child.clone();
-            child.title = format!("{}  [removed]", child.title);
-            let position = removed.original_position.min(task.epic_children.len());
-            task.epic_children.insert(position, child);
-        }
         let context = DetailRenderContext {
             terminal_area: frame.area(),
             scroll,
@@ -2950,8 +2988,9 @@ pub(super) fn render_detail_underlay(
             selection,
             inline_images,
             pending_attachments,
+            removed_epic_child,
         };
-        render_detail(frame, &task, &context, widgets);
+        render_detail(frame, task, &context, widgets);
     }
 }
 
@@ -3085,6 +3124,52 @@ mod tests {
 
         assert!(lines.iter().all(|line| line.width() <= 32));
         assert!(lines.len() > 2);
+    }
+
+    #[test]
+    fn detail_document_projections_share_semantic_body_geometry() {
+        let mut item = detail_test_epic_item();
+        item.epic_parent = Some(crate::query::TaskDependencyLink {
+            task_id: crate::test_support::task_id("epic-parent-id"),
+            display_ref: "APP-EPIC".to_string(),
+            title: "Parent epic".to_string(),
+            status: "active".to_string(),
+            priority: "high".to_string(),
+            unresolved: true,
+        });
+        item.task.description =
+            "A wrapped description with enough words to occupy several rows.".to_string();
+        item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
+        let images = DetailInlineImageContext::default();
+        let children = detail_epic_children(&item, None);
+        let body =
+            build_detail_body_document(&item, &children, 42, &BTreeSet::new(), Some(&images), &[]);
+        let selectable = detail_selectable_document_from_body(&item, 42, true, &body);
+        let model = project_detail_content_model(Vec::new(), &body, usize::MAX, 0);
+
+        assert_eq!(model.content_height, body.lines.len());
+        assert_eq!(model.interactive_rows, body.interactive_rows);
+        assert_eq!(model.image_placements.len(), body.image_placements.len());
+        for line in &selectable.description {
+            let body_index = line.body_index.expect("description body index");
+            assert_eq!(
+                body.lines[body_index].to_string(),
+                format!("│ {}", line.text)
+            );
+        }
+        for row in &body.interactive_rows {
+            assert!(row.line_index < body.lines.len());
+            assert!(row.line_index + row.height <= body.lines.len());
+        }
+        let section_lines = body
+            .section_body_indices
+            .iter()
+            .map(|index| body.lines[*index].to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(section_lines[0], "EPIC PARENT");
+        assert!(section_lines[1].starts_with("│ A wrapped description"));
+        assert_eq!(section_lines[2], "NOTES (n add · e edit · D delete)");
+        assert_eq!(section_lines[3], "WHY BLOCKED open=1 total=1");
     }
 
     #[test]
@@ -3590,17 +3675,57 @@ mod tests {
     #[test]
     fn removed_epic_child_is_labeled_and_excluded_from_counts() {
         let mut item = detail_test_epic_item();
-        item.epic_children.truncate(1);
-        item.epic_children[0].title.push_str("  [removed]");
-
-        let rendered = detail_content_lines(&item, 80, None)
-            .into_iter()
-            .map(|line| line.to_string())
+        let child = item.epic_children.remove(0);
+        item.epic_children.clear();
+        let removed = crate::tui::app::RemovedEpicChild {
+            epic_id: item.task.id.clone(),
+            child,
+            original_position: 0,
+        };
+        let children = detail_epic_children(&item, Some(&removed));
+        let body = build_detail_body_document(&item, &children, 80, &BTreeSet::new(), None, &[]);
+        let rendered = body
+            .lines
+            .iter()
+            .map(Line::to_string)
             .collect::<Vec<_>>()
             .join("\n");
 
         assert!(rendered.contains("CHILD TASKS open=0 total=0"));
-        assert!(rendered.contains("[removed]"));
+        assert!(rendered.contains("Build the first child task  [removed]"));
+        assert_eq!(children[0].state, EpicChildState::Removed);
+    }
+
+    #[test]
+    fn legitimate_removed_suffix_remains_a_live_epic_child_title() {
+        let mut item = detail_test_epic_item();
+        item.epic_children.truncate(1);
+        item.epic_children[0].title = "Investigate literal [removed]".to_string();
+
+        let children = detail_epic_children(&item, None);
+        let body = build_detail_body_document(&item, &children, 80, &BTreeSet::new(), None, &[]);
+        let child_line = body
+            .lines
+            .iter()
+            .find(|line| line.to_string().contains("APP-CHLD"))
+            .expect("child row");
+        let child_ref = child_line
+            .spans
+            .iter()
+            .find(|span| span.content.as_ref() == "APP-CHLD")
+            .expect("child ref");
+        let rendered = body
+            .lines
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("CHILD TASKS open=1 total=1"));
+        assert!(rendered.contains("Investigate literal [removed]"));
+        assert_eq!(children[0].state, EpicChildState::Live);
+        assert_eq!(child_ref.style.fg, Some(ACCENT));
+        assert!(!child_ref.style.add_modifier.contains(Modifier::DIM));
     }
 
     #[test]
@@ -4406,6 +4531,7 @@ mod tests {
                     selection: None,
                     inline_images: Some(&context),
                     pending_attachments: &[],
+                    removed_epic_child: None,
                 };
                 render_detail(frame, &item, &render_context, &mut widgets);
             })
@@ -4454,6 +4580,7 @@ mod tests {
             selection: None,
             inline_images: Some(&images),
             pending_attachments: &[],
+            removed_epic_child: None,
         };
         let document = DetailDocument::build(&item, &base);
         let active = DetailTargetId::Task {
@@ -4480,6 +4607,7 @@ mod tests {
             selection: Some(&selection),
             inline_images: Some(&focused_images),
             pending_attachments: &[],
+            removed_epic_child: None,
         };
 
         assert!(document.matches_frame(&item, &styled));
@@ -4500,6 +4628,7 @@ mod tests {
             selection: None,
             inline_images: Some(&images),
             pending_attachments: &[],
+            removed_epic_child: None,
         };
         let document = DetailDocument::build(&item, &base);
         assert!(document.matches_frame(&item, &base));
