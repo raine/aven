@@ -5,6 +5,10 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Add children to ordinary tasks from the TUI through a confirmed promotion to
+  an epic. Promotion and child linking are atomic, and undo restores both.
+- Epic child search finds eligible same-project tasks before limiting results,
+  and `Tab` or `Shift+Tab` cycles relationship picker choices.
 - TUI detail mutations target only the displayed task, even when other tasks
   are marked, preventing accidental batch edits or deletions.
 - Focused epic child commands do not mutate the parent epic, and detail back
