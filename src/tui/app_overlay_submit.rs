@@ -529,6 +529,9 @@ impl App {
             ConfirmIntent::DeleteAttachment { attachment_id } => {
                 self.submit_delete_attachment(attachment_id).await?;
             }
+            ConfirmIntent::PromoteTaskForChild { epic } => {
+                self.open_add_epic_child_search(epic);
+            }
             ConfirmIntent::ClearAvailability { selection } => {
                 self.submit_clear_availability(selection).await?;
             }

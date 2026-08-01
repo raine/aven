@@ -4,7 +4,9 @@ use crate::tui::authoring::{AddTaskStep, InitialStatusOrigin, PendingTaskAttachm
 use crate::tui::conflict_flow::ConflictResolutionChoice;
 use crate::tui::event::{Action, CommandContext};
 use crate::tui::overlay::text_input::LineEdit;
-use crate::tui::store::{ConflictTarget, TaskOrder, TaskView, TuiDatabaseStats, TuiSyncStatus};
+use crate::tui::store::{
+    ConflictTarget, EpicContext, TaskOrder, TaskView, TuiDatabaseStats, TuiSyncStatus,
+};
 use crate::tui::task_selection::TaskSelection;
 use crate::tui::text::{char_boundary_at_or_before, normalize_pasted_newlines};
 use aven_core::query::{RecurrenceHistoryEntry, RecurrenceHistoryPage};
@@ -634,6 +636,9 @@ pub(crate) enum ConfirmIntent {
     },
     DeleteAttachment {
         attachment_id: String,
+    },
+    PromoteTaskForChild {
+        epic: EpicContext,
     },
     ClearAvailability {
         selection: TaskSelection,

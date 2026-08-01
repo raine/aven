@@ -8790,6 +8790,98 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn ordinary_task_add_child_confirms_promotion_and_links_child() {
+        let (_dir, _pool, mut app) = test_app_with_pool().await;
+        let parent_index =
+            create_and_select_task(&mut app, test_task_draft("Ordinary parent")).await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+        let parent_ref = app.store.tasks[parent_index].display_ref.clone();
+        let child_index =
+            create_and_select_task(&mut app, test_task_draft("Promotion link target")).await;
+        let child_id = app.store.tasks[child_index].task.id.clone();
+        let parent_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == parent_id)
+            .unwrap();
+        app.list.select_task(Some(parent_index));
+
+        for code in [KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')] {
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        }
+
+        let Some(OverlayState::Confirm(state)) = &app.overlay else {
+            panic!("expected promotion confirmation");
+        };
+        assert!(matches!(
+            &state.intent,
+            ConfirmIntent::PromoteTaskForChild { epic }
+                if epic.epic_id == parent_id && epic.display_ref == parent_ref
+        ));
+        assert!(!app.store.tasks[parent_index].task.is_epic);
+
+        app.dispatch_key(key(KeyCode::Char('y')), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::Search(_))));
+        type_chars(&mut app, "Promotion link target").await;
+        settle_search_preview(&mut app).await;
+        let Some(OverlayState::Search(state)) = &mut app.overlay else {
+            panic!("expected add-child search");
+        };
+        state.selected = state
+            .results
+            .iter()
+            .position(|result| result.task_id == child_id)
+            .expect("existing child result");
+
+        app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
+            .await
+            .unwrap();
+
+        let parent = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == parent_id)
+            .unwrap();
+        assert!(parent.task.is_epic);
+        assert!(
+            parent
+                .epic_children
+                .iter()
+                .any(|child| child.task_id == child_id)
+        );
+    }
+
+    #[tokio::test]
+    async fn canceling_ordinary_task_promotion_keeps_task_ordinary() {
+        let mut app = test_app().await;
+        let parent_index =
+            create_and_select_task(&mut app, test_task_draft("Ordinary parent")).await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+
+        for code in [KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')] {
+            app.handle_normal_key(code).await.unwrap();
+        }
+        assert!(matches!(app.overlay, Some(OverlayState::Confirm(_))));
+
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(app.overlay.is_none());
+        assert!(
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == parent_id)
+                .is_some_and(|item| !item.task.is_epic)
+        );
+    }
+
+    #[tokio::test]
     async fn canceling_new_epic_child_authoring_preserves_list_origin() {
         let mut app = test_app().await;
         let parent_index = create_and_select_task(

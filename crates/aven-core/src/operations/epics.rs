@@ -36,18 +36,19 @@ impl Database {
         if outcome.changed
             && let UndoContext::Tui { summary } = undo
         {
-            record_tui_undo(
-                &mut tx,
-                &workspace.id,
-                &summary,
-                UndoPayload {
-                    commands: vec![UndoCommand::AddEpicChild {
-                        epic_id: outcome.epic.id.clone(),
-                        child_id: outcome.child.id.clone(),
-                    }],
-                },
-            )
-            .await?;
+            let mut commands = vec![UndoCommand::AddEpicChild {
+                epic_id: outcome.epic.id.clone(),
+                child_id: outcome.child.id.clone(),
+            }];
+            if outcome.promoted {
+                commands.push(UndoCommand::SetTaskField {
+                    task_id: outcome.epic.id.clone(),
+                    field: TaskField::IsEpic.as_str().to_string(),
+                    before: "0".to_string(),
+                    after: "1".to_string(),
+                });
+            }
+            record_tui_undo(&mut tx, &workspace.id, &summary, UndoPayload { commands }).await?;
         }
         tx.commit().await?;
         Ok(outcome)
@@ -99,6 +100,7 @@ pub struct EpicLinkOutcome {
     pub epic: Task,
     pub child: Task,
     pub changed: bool,
+    pub promoted: bool,
 }
 
 struct EpicPair {
@@ -215,7 +217,8 @@ pub(crate) async fn add_task_to_epic_in_transaction(
         bail!("error epic-parent-deleted epic_task_id={epic_id}");
     }
     let ts = now();
-    if !pair.epic.is_epic {
+    let promoted = !pair.epic.is_epic;
+    if promoted {
         mark_task_as_epic(conn, workspace, &pair.epic).await?;
     }
     let existing_epic_id = sqlx::query_scalar::<_, crate::ids::TaskId>(
@@ -255,6 +258,7 @@ pub(crate) async fn add_task_to_epic_in_transaction(
         epic: get_task_in_workspace(conn, workspace, &pair.epic.id).await?,
         child: pair.child,
         changed,
+        promoted,
     })
 }
 
@@ -300,6 +304,7 @@ pub(crate) async fn restore_task_to_epic_in_transaction(
         epic: pair.epic,
         child: pair.child,
         changed,
+        promoted: false,
     })
 }
 
@@ -340,6 +345,7 @@ pub(crate) async fn remove_task_from_epic_in_transaction(
         epic: pair.epic,
         child: pair.child,
         changed,
+        promoted: false,
     })
 }
 
