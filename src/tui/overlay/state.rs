@@ -870,10 +870,12 @@ pub(crate) enum AddTaskMode {
 impl AddTaskMode {
     pub(crate) fn expands_composer(&self) -> bool {
         match self {
-            Self::Compose | Self::Schedule(_) => false,
-            Self::Picker { .. } | Self::Labels(_) | Self::Help { .. } | Self::ConfirmDiscard => {
-                true
-            }
+            Self::Help { .. } => true,
+            Self::Compose
+            | Self::Schedule(_)
+            | Self::Picker { .. }
+            | Self::Labels(_)
+            | Self::ConfirmDiscard => false,
         }
     }
 }

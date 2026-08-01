@@ -25,9 +25,16 @@ pub(in crate::tui::ui) fn render_tag_combobox(frame: &mut Frame, state: &TagComb
 }
 
 pub(in crate::tui::ui) fn tag_combobox_lines(state: &TagComboboxView) -> Vec<Line<'static>> {
+    tag_combobox_lines_with_viewport(state, TAG_COMBOBOX_VIEWPORT_ROWS)
+}
+
+pub(in crate::tui::ui) fn tag_combobox_lines_with_viewport(
+    state: &TagComboboxView,
+    viewport_rows: usize,
+) -> Vec<Line<'static>> {
     let mut lines = vec![tag_combobox_input_line(state)];
     lines.push(Line::from(""));
-    lines.extend(option_lines(state));
+    lines.extend(option_lines(state, viewport_rows));
     lines.push(Line::from(""));
     let hints = if state.partial.is_empty() {
         vec![
@@ -98,19 +105,31 @@ fn tag_combobox_input_line(state: &TagComboboxView) -> Line<'static> {
     Line::from(spans)
 }
 
-fn option_lines(state: &TagComboboxView) -> Vec<Line<'static>> {
+fn option_lines(state: &TagComboboxView, viewport_rows: usize) -> Vec<Line<'static>> {
+    let highlighted_position = state
+        .visible_indices
+        .iter()
+        .position(|index| *index == state.highlighted);
+    let visible_start = highlighted_position
+        .map(|position| {
+            state
+                .visible_start
+                .max(position.saturating_add(1).saturating_sub(viewport_rows))
+        })
+        .unwrap_or(state.visible_start)
+        .min(state.visible_indices.len().saturating_sub(viewport_rows));
     let mut lines = state
         .visible_indices
         .iter()
-        .skip(state.visible_start)
-        .take(TAG_COMBOBOX_VIEWPORT_ROWS)
+        .skip(visible_start)
+        .take(viewport_rows)
         .map(|index| option_line(state, *index))
         .collect::<Vec<_>>();
 
     if lines.is_empty() {
         lines.push(create_option_line(state));
     }
-    while lines.len() < TAG_COMBOBOX_VIEWPORT_ROWS {
+    while lines.len() < viewport_rows {
         lines.push(Line::from(""));
     }
     lines

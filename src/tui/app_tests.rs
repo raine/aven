@@ -2271,7 +2271,7 @@ mod onboarding {
 
 mod theme_background {
     use super::*;
-    use ratatui::style::Color;
+    use ratatui::style::{Color, Modifier};
 
     #[tokio::test]
     async fn tui_background_uses_terminal_background_for_main_surface() {
@@ -2280,6 +2280,42 @@ mod theme_background {
         let buf = render_app_buffer(&mut app, 120, 30);
 
         assert_eq!(buf[(119, 10)].bg, Color::Reset);
+    }
+
+    #[tokio::test]
+    async fn modal_overlay_dims_main_surface_underlay() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::Confirm(ConfirmState {
+            intent: ConfirmIntent::InitializeConfig {
+                path: std::path::PathBuf::from("/tmp/config.toml"),
+            },
+            title: "Confirm".to_string(),
+            prompt: "Continue?".to_string(),
+        }));
+
+        let buf = render_app_buffer(&mut app, 120, 30);
+        let underlay = &buf[(119, 10)];
+
+        assert_eq!(underlay.bg, Color::Rgb(10, 11, 10));
+        assert!(underlay.modifier.contains(Modifier::DIM));
+    }
+
+    #[tokio::test]
+    async fn popover_menu_keeps_main_surface_underlay_bright() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::OrderMenu(
+            crate::tui::overlay::OrderMenuState {
+                column: 0,
+                row: 0,
+                selected: TaskOrder::Created,
+            },
+        ));
+
+        let buf = render_app_buffer(&mut app, 120, 30);
+        let underlay = &buf[(119, 10)];
+
+        assert_eq!(underlay.bg, Color::Reset);
+        assert!(!underlay.modifier.contains(Modifier::DIM));
     }
 }
 
@@ -12929,11 +12965,21 @@ mod detail_mode {
         assert!(app.view().detail_underlay);
         assert_eq!(app.view().detail_underlay_scroll, 0);
 
-        let rendered = render_app_text(&mut app, 100, 30);
+        let buffer = render_app_buffer(&mut app, 100, 30);
+        let rendered = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
 
         assert!(rendered.contains("Detail title target"));
         assert!(!rendered.contains("Edit title"));
         assert!(!rendered.contains("Enter submit"));
+        assert!(
+            !buffer[(99, 10)]
+                .modifier
+                .contains(ratatui::style::Modifier::DIM)
+        );
     }
 
     #[tokio::test]

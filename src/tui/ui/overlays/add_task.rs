@@ -15,7 +15,7 @@ use super::picker::{
     picker_filter_line, picker_hint_line, priority_picker_line, project_picker_line,
 };
 use super::shared::viewport_start_for_cursor;
-use super::tag_combobox::tag_combobox_lines;
+use super::tag_combobox::tag_combobox_lines_with_viewport;
 use crate::task_render::human_file_size;
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::{
@@ -830,7 +830,12 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
                 mode: state.mode,
                 visible_indices: visible_picker_indices(state),
             };
-            (view.title.clone(), add_task_picker_lines(&view), 54, BG_ALT)
+            (
+                view.title.clone(),
+                add_task_picker_lines(&view, content.height.saturating_sub(2) as usize),
+                54,
+                BG_ALT,
+            )
         }
         AddTaskMode::Labels(state) => {
             let visible_indices = tag_combobox_matches(state);
@@ -851,7 +856,13 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
                     .saturating_sub(TAG_COMBOBOX_VIEWPORT_ROWS.saturating_sub(1)),
                 visible_indices,
             };
-            (view.title.clone(), tag_combobox_lines(&view), 64, BG_PANEL)
+            let viewport_rows = content.height.saturating_sub(2).saturating_sub(4).max(1) as usize;
+            (
+                view.title.clone(),
+                tag_combobox_lines_with_viewport(&view, viewport_rows),
+                64,
+                BG_PANEL,
+            )
         }
         AddTaskMode::Help { .. } => unreachable!("composer help renders separately"),
         AddTaskMode::ConfirmDiscard => unreachable!("discard confirmation renders above"),
@@ -937,21 +948,37 @@ pub(in crate::tui::ui) fn composer_help_line(
     ])
 }
 
-fn add_task_picker_lines(state: &PickerView) -> Vec<Line<'static>> {
+fn add_task_picker_lines(state: &PickerView, available_rows: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    if matches!(state.mode, crate::tui::overlay::PickerMode::Filter) {
+    let filter_rows = if matches!(state.mode, crate::tui::overlay::PickerMode::Filter) {
         lines.push(picker_filter_line(
             Span::raw("/"),
             &state.filter,
             state.filter_cursor,
         ));
         lines.push(Line::from(""));
-    }
+        2
+    } else {
+        0
+    };
+    let viewport_rows = available_rows.saturating_sub(filter_rows + 2).max(1);
+    let selected_position = state
+        .visible_indices
+        .iter()
+        .position(|index| *index == state.selected);
+    let scroll = selected_position
+        .map(|position| {
+            state
+                .scroll
+                .max(position.saturating_add(1).saturating_sub(viewport_rows))
+        })
+        .unwrap_or(state.scroll)
+        .min(state.visible_indices.len().saturating_sub(viewport_rows));
     let visible = state
         .visible_indices
         .iter()
-        .skip(state.scroll)
-        .take(8)
+        .skip(scroll)
+        .take(viewport_rows)
         .copied()
         .collect::<Vec<_>>();
     for index in visible {
