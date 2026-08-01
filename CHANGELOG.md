@@ -3,6 +3,13 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## Unreleased
+
+- TUI detail mutations target only the displayed task, even when other tasks
+  are marked, preventing accidental batch edits or deletions.
+- Focused epic child commands do not mutate the parent epic, and detail back
+  navigation remains scoped to detail history.
+
 ## v0.1.20 (2026-07-31)
 
 - [Create and manage recurring tasks](/recurring-tasks/) from the CLI or TUI
