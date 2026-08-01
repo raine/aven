@@ -76,13 +76,13 @@
 #### Persistence and refresh
 
 - Store modules call owned methods on `aven_core::db::Database`. Each task mutation family has one batch-capable policy method in `src/tui/store/task_commands.rs` for one or many `TaskSelection` targets.
-- Persisted TUI mutations request undo from the owning core operation. The core transaction loads authoritative values, applies all targets, derives undo, writes one grouped entry when needed, and commits once.
+- Persisted TUI mutations request undo from the owning core operation. The core transaction loads authoritative values, applies all targets, derives undo, writes one grouped entry when needed, and commits once. Individual note edits and deletes use the hydrated note ID as stable identity, emit note-specific sync changes, and retain that identity through edit and undo.
 - Structured mutation reports drive messages and selection restoration. A TUI refresh reconciles recurrence once, then builds a complete replacement projection from current-projection reads and publishes it only after every query succeeds. A committed-refresh error closes completed edit flows so stale input cannot duplicate a mutation.
 
 #### Rendering and lifecycle
 
 - `src/tui/ui.rs` and `src/tui/ui/` render application state without database or filesystem access. `src/tui/ui/task_list/` owns task-list view models, empty states, and hit testing.
-- `DetailDocument` in `src/tui/ui/detail.rs` owns semantic task-detail geometry shared by rendering and interaction, including wrapping, layout, focus targets, selection mapping, scroll bounds, hit testing, and image placement. `WidgetState` retains the document for stable frame queries.
+- `DetailDocument` in `src/tui/ui/detail.rs` owns semantic task-detail geometry shared by rendering and interaction, including wrapping, layout, focus targets for note identities and relationships, selection mapping, scroll bounds, hit testing, and image placement. `WidgetState` retains the document for stable frame queries.
 - `src/tui/app_lifecycle.rs` polls background completion, coordinates image emission after frame draws, and performs orderly shutdown. Attachment detail sections combine committed metadata with app-owned pending and failed preparation state.
 - `src/tui/app_update.rs` coordinates update discovery and a unified Software Update overlay that presents target-release notes, install metadata, actions, progress, and outcomes in one fixed frame. `src/update/` owns release discovery, verification, install classification, and executable replacement. `src/tui/changelog.rs` fetches and caches canonical GitHub `CHANGELOG.md` content shared by the update review and historical changelog reader.
 

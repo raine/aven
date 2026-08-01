@@ -211,6 +211,12 @@ fn action_text(
             payload_string(payload, "body").map(|body| preview(&body, 96)),
             "blue".to_string(),
         ),
+        ("task", op_type::NOTE_EDIT) => (
+            "note".to_string(),
+            title_summary("edited note", task_title),
+            payload_string(payload, "body").map(|body| preview(&body, 96)),
+            "blue".to_string(),
+        ),
         ("task", op_type::NOTE_DELETE) => (
             "note".to_string(),
             title_summary("deleted note", task_title),

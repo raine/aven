@@ -12,6 +12,7 @@ pub mod op_type {
     pub const LABEL_ADD: &str = "label_add";
     pub const LABEL_REMOVE: &str = "label_remove";
     pub const NOTE_ADD: &str = "note_add";
+    pub const NOTE_EDIT: &str = "note_edit";
     pub const NOTE_DELETE: &str = "note_delete";
     pub const DEPENDENCY_ADD: &str = "dependency_add";
     pub const DEPENDENCY_REMOVE: &str = "dependency_remove";

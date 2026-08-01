@@ -173,7 +173,7 @@ async fn notes_for_tasks(
             continue;
         }
         let mut query = QueryBuilder::<Sqlite>::new(
-            "SELECT task_id, body, created_at FROM notes WHERE workspace_id = ",
+            "SELECT task_id, id, body, created_at FROM notes WHERE workspace_id = ",
         );
         query.push_bind(workspace_id);
         query.push(" AND task_id IN (");
@@ -188,6 +188,7 @@ async fn notes_for_tasks(
         for row in query.build().fetch_all(&mut *conn).await? {
             let task_id: TaskId = row.get("task_id");
             let note = TaskNote {
+                id: row.get("id"),
                 body: row.get("body"),
                 created_at: row.get("created_at"),
             };

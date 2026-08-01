@@ -99,6 +99,18 @@ pub enum UndoCommand {
         #[serde(default)]
         attachment_change_ids: Vec<String>,
     },
+    SetNoteBody {
+        task_id: crate::ids::TaskId,
+        note_id: String,
+        before: String,
+        after: String,
+    },
+    RestoreDeletedNote {
+        task_id: crate::ids::TaskId,
+        note_id: String,
+        body: String,
+        created_at: String,
+    },
     DeleteCreatedNote {
         task_id: crate::ids::TaskId,
         note_id: String,
@@ -372,7 +384,9 @@ fn undo_payload_has_effect(payload: &UndoPayload) -> bool {
             after_prefix,
             ..
         } => before_key != after_key || before_name != after_name || before_prefix != after_prefix,
+        UndoCommand::SetNoteBody { before, after, .. } => before != after,
         UndoCommand::DeleteCreatedTask { .. }
+        | UndoCommand::RestoreDeletedNote { .. }
         | UndoCommand::DeleteCreatedNote { .. }
         | UndoCommand::DeleteCreatedProject { .. }
         | UndoCommand::DeleteCreatedLabel { .. }
@@ -637,6 +651,116 @@ async fn apply_undo_command(
                 }
             }
             set_task_field_in_workspace(conn, workspace_id, task_id, TaskField::Deleted, "1")
+                .await?;
+            Ok(CommandOutcome {
+                task_id: Some(task_id.clone()),
+                include_deleted: None,
+                project_rename: None,
+            })
+        }
+        UndoCommand::SetNoteBody {
+            task_id,
+            note_id,
+            before,
+            after,
+        } => {
+            let current = sqlx::query_scalar::<_, String>(
+                "SELECT body FROM notes WHERE workspace_id = ? AND task_id = ? AND id = ?",
+            )
+            .bind(workspace_id)
+            .bind(task_id)
+            .bind(note_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+            if current.as_deref() != Some(after) {
+                bail!("error undo-state-changed task_id={task_id} field=notes");
+            }
+            let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
+            crate::operations::route_recurrence_task_field(conn, &workspace, task_id, "notes", "")
+                .await?;
+            let edited_at = now();
+            sqlx::query(
+                "UPDATE notes SET body = ? WHERE workspace_id = ? AND task_id = ? AND id = ?",
+            )
+            .bind(before)
+            .bind(workspace_id)
+            .bind(task_id)
+            .bind(note_id)
+            .execute(&mut *conn)
+            .await?;
+            crate::change_log::append_change(
+                conn,
+                crate::change_log::ChangeEntity::Task,
+                task_id,
+                Some("notes"),
+                crate::change_log::op_type::NOTE_EDIT,
+                crate::change_log::ChangePayload::workspace(&workspace)
+                    .set("note_id", note_id)
+                    .set("body", before)
+                    .set("edited_at", &edited_at),
+            )
+            .await?;
+            sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
+                .bind(&edited_at)
+                .bind(workspace_id)
+                .bind(task_id)
+                .execute(&mut *conn)
+                .await?;
+            Ok(CommandOutcome {
+                task_id: Some(task_id.clone()),
+                include_deleted: None,
+                project_rename: None,
+            })
+        }
+        UndoCommand::RestoreDeletedNote {
+            task_id,
+            note_id,
+            body,
+            created_at,
+        } => {
+            let exists: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM notes WHERE workspace_id = ? AND task_id = ? AND id = ?",
+            )
+            .bind(workspace_id)
+            .bind(task_id)
+            .bind(note_id)
+            .fetch_one(&mut *conn)
+            .await?;
+            if exists != 0 {
+                bail!("error undo-state-changed task_id={task_id} field=notes");
+            }
+            let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
+            crate::operations::route_recurrence_task_field(conn, &workspace, task_id, "notes", "")
+                .await?;
+            let change_id = crate::change_log::append_change(
+                conn,
+                crate::change_log::ChangeEntity::Task,
+                task_id,
+                Some("notes"),
+                crate::change_log::op_type::NOTE_ADD,
+                crate::change_log::ChangePayload::workspace(&workspace)
+                    .set("note_id", note_id)
+                    .set("body", body)
+                    .set("created_at", created_at),
+            )
+            .await?;
+            sqlx::query(
+                "INSERT INTO notes(workspace_id, id, task_id, body, created_at, change_id)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(workspace_id)
+            .bind(note_id)
+            .bind(task_id)
+            .bind(body)
+            .bind(created_at)
+            .bind(change_id)
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
+                .bind(now())
+                .bind(workspace_id)
+                .bind(task_id)
+                .execute(&mut *conn)
                 .await?;
             Ok(CommandOutcome {
                 task_id: Some(task_id.clone()),

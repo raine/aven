@@ -348,6 +348,14 @@ impl App {
             } => {
                 self.submit_add_note(task_id, display_ref, value).await?;
             }
+            MultilineIntent::EditNote {
+                task_id,
+                display_ref,
+                note_id,
+            } => {
+                self.submit_edit_note(task_id, display_ref, note_id, value)
+                    .await?;
+            }
             MultilineIntent::EditDescription { selection } => {
                 self.submit_edit_description(selection, value).await?;
             }
@@ -514,6 +522,9 @@ impl App {
             }
             ConfirmIntent::DeleteTasks { selection } => {
                 self.submit_delete_selection(selection).await?;
+            }
+            ConfirmIntent::DeleteNote { task_id, note_id } => {
+                self.submit_delete_note(task_id, note_id).await?;
             }
             ConfirmIntent::DeleteAttachment { attachment_id } => {
                 self.submit_delete_attachment(attachment_id).await?;

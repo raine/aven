@@ -40,9 +40,9 @@ pub use recurrence::{
 pub(crate) use recurrence::{route_recurrence_task_field, undo_recurrence_resolution};
 pub(crate) use tasks::update_task_labels_in_workspace;
 pub use tasks::{
-    NoteDeleteOutcome, NoteOutcome, TaskCreationOptions, TaskCreationUndo, TaskDraft,
-    TaskLabelSelection, TaskMutationOutcome, TaskMutationReport, TaskOutcome, TaskUpdate,
-    TaskUpdateOutcome,
+    NoteDeleteOutcome, NoteEditOutcome, NoteOutcome, TaskCreationOptions, TaskCreationUndo,
+    TaskDraft, TaskLabelSelection, TaskMutationOutcome, TaskMutationReport, TaskOutcome,
+    TaskUpdate, TaskUpdateOutcome,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use tasks::{create_task, update_task};

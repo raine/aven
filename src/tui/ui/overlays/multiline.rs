@@ -22,7 +22,9 @@ pub(in crate::tui::ui) fn render_multiline_input(frame: &mut Frame, state: &Mult
         return;
     }
     match state.kind {
-        MultilineInputKind::AddNote => render_add_note_input(frame, state),
+        MultilineInputKind::AddNote | MultilineInputKind::EditNote => {
+            render_add_note_input(frame, state)
+        }
         MultilineInputKind::EditDescription => render_description_input(frame, state),
         MultilineInputKind::AddTaskDescription => render_add_task_description_input(frame, state),
         MultilineInputKind::AddTaskNatural => render_add_task_natural_input(frame, state),
@@ -33,6 +35,7 @@ pub(in crate::tui::ui) fn render_multiline_input(frame: &mut Frame, state: &Mult
 fn render_multiline_discard_confirmation(frame: &mut Frame, kind: MultilineInputKind) {
     let (title, prompt) = match kind {
         MultilineInputKind::AddNote => ("Discard note draft?", "The note text will be lost."),
+        MultilineInputKind::EditNote => ("Discard note changes?", "The note changes will be lost."),
         MultilineInputKind::EditDescription => (
             "Discard description changes?",
             "The description changes will be lost.",
@@ -256,7 +259,21 @@ pub(in crate::tui::ui) fn add_task_natural_hint_line() -> Line<'static> {
 
 pub(in crate::tui::ui) fn render_add_note_input(frame: &mut Frame, state: &MultilineInputView) {
     let show_placeholder = state.lines.len() == 1 && state.lines[0].is_empty();
-    render_tail_viewport_multiline(frame, state, 60, multiline_hint_line(), |line, cursor| {
+    let hint_line = if state.kind == MultilineInputKind::EditNote {
+        dialog_hint_line(&[
+            ("Ctrl-Enter / ^S", "submit"),
+            ("Ctrl+X Ctrl+E", "editor"),
+            ("Esc", "cancel"),
+        ])
+    } else {
+        multiline_hint_line()
+    };
+    let width = if state.kind == MultilineInputKind::EditNote {
+        80
+    } else {
+        60
+    };
+    render_tail_viewport_multiline(frame, state, width, hint_line, |line, cursor| {
         add_note_input_line(line, cursor, show_placeholder)
     });
 }

@@ -101,6 +101,7 @@ pub(crate) enum DetailSection {
     EpicParent,
     EpicChildren,
     Attachments,
+    Notes,
     DependsOn,
     Blocks,
 }
@@ -110,6 +111,9 @@ pub(crate) enum DetailTargetId {
     Task {
         section: DetailSection,
         task_id: crate::ids::TaskId,
+    },
+    Note {
+        note_id: String,
     },
     Attachment {
         attachment_id: String,
@@ -123,6 +127,7 @@ impl DetailTargetId {
     pub(crate) fn section(&self) -> DetailSection {
         match self {
             Self::Task { section, .. } | Self::Expand { section } => *section,
+            Self::Note { .. } => DetailSection::Notes,
             Self::Attachment { .. } => DetailSection::Attachments,
         }
     }

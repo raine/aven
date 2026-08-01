@@ -220,6 +220,7 @@ pub(crate) enum MultilineInputKind {
     AddTaskDescription,
     AddTaskNatural,
     AddNote,
+    EditNote,
     EditDescription,
     ConflictManual,
 }
@@ -230,6 +231,7 @@ impl From<&MultilineIntent> for MultilineInputKind {
             MultilineIntent::AddTaskDescription => Self::AddTaskDescription,
             MultilineIntent::AddTaskNatural => Self::AddTaskNatural,
             MultilineIntent::AddNote { .. } => Self::AddNote,
+            MultilineIntent::EditNote { .. } => Self::EditNote,
             MultilineIntent::EditDescription { .. } => Self::EditDescription,
             MultilineIntent::ResolveConflictManually { .. } => Self::ConflictManual,
         }

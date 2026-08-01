@@ -12,6 +12,8 @@ description: Release notes for aven.
 - Multiline editors confirm before discarding changed note drafts, task
   descriptions, or manual conflict resolutions, while clean editors close
   immediately.
+- Focus, edit, delete, and undo individual notes directly in task details, with
+  safe confirmations and external-editor support for longer changes.
 
 ## v0.1.20 (2026-07-31)
 

@@ -391,12 +391,9 @@ impl App {
         }
         if self.detail.is_active() && self.overlay.is_none() {
             let scroll = self.detail.state().map_or(0, |detail| detail.scroll());
-            if self
-                .handle_detail_mouse_click(mouse, terminal_size, scroll)
-                .await?
-            {
-                return Ok(());
-            }
+            self.handle_detail_mouse_click(mouse, terminal_size, scroll)
+                .await?;
+            return Ok(());
         }
         let add_task_field = self.overlay.as_ref().and_then(|overlay| match overlay {
             OverlayState::AddTask(state) if state.mode == AddTaskMode::Compose => {
@@ -798,6 +795,9 @@ impl App {
                         } else {
                             self.open_attachment_externally(&attachment_id).await;
                         }
+                    }
+                    Some(DetailTargetActivation::Focus) => {
+                        self.show_detail(scroll);
                     }
                     Some(DetailTargetActivation::FollowTask(_)) | None => {}
                 }
@@ -1252,10 +1252,23 @@ impl App {
                         self.move_detail_focus_selection(-1, terminal_size);
                         focused_scroll = self.detail_focus_scroll(scroll, terminal_size);
                     }
-                    (KeyCode::Char('D'), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
-                        if let DetailTargetId::Attachment { attachment_id } = &selected_target {
-                            self.begin_delete_attachment(attachment_id, scroll);
+                    (KeyCode::Char('e'), KeyModifiers::NONE) => {
+                        if let DetailTargetId::Note { note_id } = &selected_target {
+                            self.begin_edit_note(note_id, scroll);
                             return Ok(());
+                        }
+                    }
+                    (KeyCode::Char('D'), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+                        match &selected_target {
+                            DetailTargetId::Note { note_id } => {
+                                self.begin_delete_note(note_id, scroll);
+                                return Ok(());
+                            }
+                            DetailTargetId::Attachment { attachment_id } => {
+                                self.begin_delete_attachment(attachment_id, scroll);
+                                return Ok(());
+                            }
+                            _ => {}
                         }
                     }
                     (KeyCode::Char('o'), KeyModifiers::NONE) => {
@@ -1268,6 +1281,7 @@ impl App {
                             self.open_detail_task(&task_id, scroll).await;
                             return Ok(());
                         }
+                        DetailTargetId::Note { .. } => {}
                         DetailTargetId::Attachment { attachment_id } => {
                             if self.detail_attachment_supports_inline_preview(&attachment_id) {
                                 self.open_detail_attachment(attachment_id, scroll);
@@ -1425,6 +1439,11 @@ impl App {
                 OverlayState::MultilineInput(state) if state.intent.is_description_edit() => {
                     self.open_description_external_editor(state.clone());
                 }
+                OverlayState::MultilineInput(state)
+                    if matches!(state.intent, MultilineIntent::EditNote { .. }) =>
+                {
+                    self.open_note_external_editor(state.clone());
+                }
                 OverlayState::AddTask(state) if state.focus == AddTaskStep::Description => {
                     if self.capture_add_task_state(state) {
                         self.open_add_task_description_editor();
@@ -1439,7 +1458,7 @@ impl App {
             && matches!(
                 &overlay,
                 OverlayState::MultilineInput(state)
-                    if state.intent.is_description_edit()
+                    if state.intent.supports_external_editor()
             )
         {
             self.pending_shortcut.begin_editor_prefix();
@@ -1632,6 +1651,7 @@ impl App {
             Some(DetailTargetId::Task { .. }) => {
                 "leave relationship focus before using that command"
             }
+            Some(DetailTargetId::Note { .. }) => "leave note focus before using that command",
             Some(DetailTargetId::Attachment { .. }) => {
                 "leave attachment focus before using that command"
             }

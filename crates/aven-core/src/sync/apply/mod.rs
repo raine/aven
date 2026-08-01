@@ -39,6 +39,7 @@ pub async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWir
         op_type::LABEL_ADD => label::add_label(conn, change).await?,
         op_type::LABEL_REMOVE => label::remove_label(conn, change).await?,
         op_type::NOTE_ADD => note::add_note(conn, change).await?,
+        op_type::NOTE_EDIT => note::edit_note(conn, change).await?,
         op_type::NOTE_DELETE => note::delete_note(conn, change).await?,
         op_type::DEPENDENCY_ADD => dependency::add_dependency(conn, change).await?,
         op_type::DEPENDENCY_REMOVE => dependency::remove_dependency(conn, change).await?,

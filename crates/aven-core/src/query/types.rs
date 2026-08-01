@@ -300,6 +300,7 @@ pub struct AttachmentMetadata {
 
 #[derive(Debug, Clone)]
 pub struct TaskNote {
+    pub id: String,
     pub body: String,
     pub created_at: String,
 }
