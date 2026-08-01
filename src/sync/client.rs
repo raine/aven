@@ -35,6 +35,56 @@ impl SyncHttpClient {
 
 pub(crate) type SyncSummary = aven_core::sync::SyncSessionSummary;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SyncRunSummary {
+    pub(crate) pushed: i64,
+    pub(crate) pulled: usize,
+    pub(crate) cursor: i64,
+    pub(crate) complete: bool,
+    pub(crate) pages: usize,
+}
+
+pub(crate) async fn run_sync_to_completion(
+    database: &Database,
+    config: &config::AppConfig,
+) -> Result<SyncRunSummary> {
+    let server = config::resolve_sync_server(None, config)?;
+    let blob_dir = config::resolve_blob_dir(database.path(), config)?;
+    let client = SyncHttpClient::new()?;
+    let mut total = SyncRunSummary {
+        pushed: 0,
+        pulled: 0,
+        cursor: 0,
+        complete: false,
+        pages: 0,
+    };
+
+    loop {
+        let summary = run_sync_with_page_budget_using_client_and_policy(
+            database,
+            &blob_dir,
+            &server,
+            config.sync_auth_token(),
+            None,
+            &client,
+            config.local.attachment_lifecycle.policy(),
+        )
+        .await?;
+        let stalled = summary.pushed == 0
+            && summary.pulled == 0
+            && summary.blob_uploaded == 0
+            && summary.blob_downloaded == 0;
+        total.pushed += summary.pushed;
+        total.pulled += summary.pulled;
+        total.cursor = summary.cursor;
+        total.complete = summary.complete;
+        total.pages += summary.pages;
+        if summary.complete || stalled {
+            return Ok(total);
+        }
+    }
+}
+
 pub(crate) async fn sync_client(
     database: &Database,
     args: SyncArgs,

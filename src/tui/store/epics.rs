@@ -169,6 +169,7 @@ impl TuiStore {
                 UndoContext::tui(format!("add {child_ref} to {}", epic.display_ref)),
             )
             .await?;
+        self.wake_after_mutation();
         let mut view_state = self.view_state.clone();
         if view_state.render_mode() == TaskListRenderMode::Epics {
             view_state.collapsed_epic_ids.remove(&epic.epic_id);
@@ -228,6 +229,7 @@ impl TuiStore {
                 )),
             )
             .await?;
+        self.wake_after_mutation();
         self.refresh(Some(&target.epic.epic_id)).await?;
         let selected = self
             .tasks

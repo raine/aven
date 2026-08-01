@@ -1,3 +1,4 @@
+use crate::config::AppConfig;
 use crate::ids::WorkspaceId;
 mod attachments;
 mod config;
@@ -53,6 +54,7 @@ use crate::workspaces::Workspace;
 
 pub(crate) struct TuiStore {
     database: Database,
+    app_config: AppConfig,
     pub(crate) tasks: Vec<TaskListItem>,
     pub(crate) recurrence_series: Vec<RecurrenceSeriesListItem>,
     pub(crate) recurrence_detail: Option<RecurrenceSeriesDetail>,
@@ -91,13 +93,25 @@ impl TuiStore {
         Self::new_with_view_state(database, workspace, TaskViewState::default()).await
     }
 
+    #[cfg(test)]
     pub(crate) async fn new_with_view_state(
         database: Database,
         workspace: Workspace,
         view_state: TaskViewState,
     ) -> Result<Self> {
+        Self::new_with_view_state_and_config(database, workspace, view_state, AppConfig::default())
+            .await
+    }
+
+    pub(crate) async fn new_with_view_state_and_config(
+        database: Database,
+        workspace: Workspace,
+        view_state: TaskViewState,
+        app_config: AppConfig,
+    ) -> Result<Self> {
         let mut store = Self {
             database,
+            app_config,
             tasks: Vec::new(),
             recurrence_series: Vec::new(),
             recurrence_detail: None,
@@ -120,6 +134,18 @@ impl TuiStore {
         store.database.clear_pending_tui_undo_entries().await?;
         store.refresh(None).await?;
         Ok(store)
+    }
+
+    pub(crate) fn set_config(&mut self, config: AppConfig) {
+        self.app_config = config;
+    }
+
+    pub(crate) fn database(&self) -> Database {
+        self.database.clone()
+    }
+
+    pub(super) fn wake_after_mutation(&self) {
+        crate::daemon::wake_if_enabled(&self.app_config);
     }
 
     #[cfg(test)]
@@ -278,6 +304,7 @@ impl TuiStore {
     fn replacement_shell(&self, active_workspace: Workspace, view_state: TaskViewState) -> Self {
         Self {
             database: self.database.clone(),
+            app_config: self.app_config.clone(),
             tasks: Vec::new(),
             recurrence_series: Vec::new(),
             recurrence_detail: self.recurrence_detail.clone(),
@@ -305,9 +332,13 @@ impl TuiStore {
     ) -> Result<ScopeRefreshResult> {
         let workspace_id = self.active_workspace.id.clone();
         self.workspaces = self.database.list_workspaces().await?;
-        self.database
+        let reconciliation = self
+            .database
             .reconcile_recurrence_reports(&workspace_id)
             .await?;
+        if reconciliation.changed > 0 {
+            self.wake_after_mutation();
+        }
         self.inject_refresh_failure(RefreshFailureStage::Projects)?;
         self.projects = self
             .database

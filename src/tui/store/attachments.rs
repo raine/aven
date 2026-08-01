@@ -12,6 +12,7 @@ use super::TuiStore;
 pub(crate) struct AttachmentWorkerContext {
     database: Database,
     workspace: crate::workspaces::Workspace,
+    app_config: crate::config::AppConfig,
 }
 
 impl AttachmentWorkerContext {
@@ -23,7 +24,7 @@ impl AttachmentWorkerContext {
         created_at: String,
         input: TaskAttachmentAddInput,
     ) -> Result<bool> {
-        Ok(self
+        let outcome = self
             .database
             .add_ordered_task_attachment(
                 &self.workspace,
@@ -33,8 +34,9 @@ impl AttachmentWorkerContext {
                 created_at,
                 input,
             )
-            .await?
-            .created)
+            .await?;
+        crate::daemon::wake_if_enabled(&self.app_config);
+        Ok(outcome.created)
     }
 }
 
@@ -43,6 +45,7 @@ impl TuiStore {
         AttachmentWorkerContext {
             database: self.database.clone(),
             workspace: self.active_workspace.clone(),
+            app_config: self.app_config.clone(),
         }
     }
 
@@ -50,6 +53,7 @@ impl TuiStore {
         self.database
             .delete_task_attachment(&self.active_workspace, attachment_id)
             .await?;
+        self.wake_after_mutation();
         Ok(())
     }
 

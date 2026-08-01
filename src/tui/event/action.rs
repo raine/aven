@@ -41,6 +41,7 @@ pub(crate) enum Action {
     SearchChar(char),
     CommandChar(char),
     Refresh,
+    SyncNow,
     SetOrder(TaskOrder),
     ReverseSort,
     SetStatus(TaskStatus),

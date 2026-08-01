@@ -81,6 +81,7 @@ impl TuiStore {
                 ),
             )
             .await?;
+        self.wake_after_mutation();
         let changed = report.changed_count();
         let message = if selection.is_single() {
             let verb = if changed == 0 { "unchanged" } else { "set" };
@@ -145,6 +146,7 @@ impl TuiStore {
                 ),
             )
             .await?;
+        self.wake_after_mutation();
         let changed = report.changed_count();
         let message = if changed == 0 {
             format!("column unchanged on {} tasks", selection.len())
@@ -190,6 +192,7 @@ impl TuiStore {
                 ),
             )
             .await?;
+        self.wake_after_mutation();
         let changed = report.changed_count();
         let message = if selection.is_single() {
             let priority = report.outcomes[0].task.priority;
@@ -242,6 +245,7 @@ impl TuiStore {
                 UndoContext::tui(format!("{field_name} {}", item.display_ref)),
             )
             .await?;
+        self.wake_after_mutation();
         let verb = if report.changed_count() == 0 {
             "unchanged"
         } else {
@@ -293,6 +297,7 @@ impl TuiStore {
                 ),
             )
             .await?;
+        self.wake_after_mutation();
         let changed = report.changed_count();
         let message = if selection.is_single() {
             let verb = match (changed, value.is_none()) {
@@ -342,6 +347,7 @@ impl TuiStore {
                 ),
             )
             .await?;
+        self.wake_after_mutation();
         let changed = report.changed_count();
         let message = if selection.is_single() {
             let verb = if changed == 0 { "unchanged" } else { "set" };
@@ -390,6 +396,7 @@ impl TuiStore {
                 ),
             )
             .await?;
+        self.wake_after_mutation();
         let changed = report.changed_count();
         let message = if selection.is_single() {
             let verb = if changed == 0 { "unchanged" } else { "set" };
@@ -439,6 +446,7 @@ impl TuiStore {
                 ),
             )
             .await?;
+        self.wake_after_mutation();
         let changed = report.changed_count();
         let message = if selection.is_single() {
             let verb = match (deleted, changed) {
@@ -546,6 +554,7 @@ impl TuiStore {
                 UndoContext::tui(format!("dependency {task_ref}")),
             )
             .await?;
+        self.wake_after_mutation();
         let depends_on_ref = display_refs.display_ref(&outcome.depends_on);
         let verb = if outcome.changed { "added" } else { "kept" };
         self.refresh_task_message(
@@ -589,6 +598,7 @@ impl TuiStore {
                 UndoContext::tui(format!("dependency {}", item.display_ref)),
             )
             .await?;
+        self.wake_after_mutation();
         let display_refs = self
             .database
             .display_ref_context(&self.active_workspace.id)

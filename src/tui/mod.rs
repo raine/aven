@@ -44,6 +44,7 @@ mod platform;
 mod preview_controller;
 mod shortcut_buffer;
 mod store;
+mod sync_controller;
 mod task_selection;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -136,7 +137,13 @@ async fn run_with_welcome_intro(
     config: crate::config::AppConfig,
     show_welcome_intro: bool,
 ) -> Result<()> {
-    let mut app = app::App::new_with_view_state(database, workspace, launch.view_state).await?;
+    let mut app = app::App::new_with_view_state_and_config(
+        database,
+        workspace,
+        launch.view_state,
+        config.clone(),
+    )
+    .await?;
     app.set_add_task_db_path(db_path);
     match launch.startup {
         store::TuiStartup::AddTaskOnly { natural } => {

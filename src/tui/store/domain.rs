@@ -29,6 +29,7 @@ impl TuiStore {
             .create_project_with_tui_undo(&self.active_workspace, &name)
             .await?;
         let project_key = outcome.project.key;
+        self.wake_after_mutation();
         self.refresh(None).await?;
         Ok(ProjectCreationResult { project_key })
     }
@@ -48,6 +49,7 @@ impl TuiStore {
             .database
             .delete_project(&self.active_workspace, &project.key)
             .await?;
+        self.wake_after_mutation();
 
         let mut view_state = self.view_state.clone();
         if self.scope_project() == Some(outcome.project.key.as_str()) {
@@ -73,6 +75,7 @@ impl TuiStore {
             .database
             .rename_project_with_tui_undo(&self.active_workspace, project, &new_name, None)
             .await?;
+        self.wake_after_mutation();
         let config_mapping = if outcome.changed {
             rename_config_project_mapping(
                 &self.active_workspace,
@@ -113,6 +116,7 @@ impl TuiStore {
             .database
             .create_label_with_tui_undo(&self.active_workspace, &name)
             .await?;
+        self.wake_after_mutation();
         self.labels = self
             .database
             .list_labels(&self.active_workspace.id, None)

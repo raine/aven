@@ -49,6 +49,7 @@ impl App {
         natural: bool,
         config: AppConfig,
     ) -> Result<Option<String>> {
+        self.set_config(config.clone());
         self.intake.enter_add_task_only(config);
         self.open_add_task_on_start(natural).await?;
         execute!(std::io::stdout(), EnableBracketedPaste)?;
@@ -75,6 +76,10 @@ impl App {
             }
 
             if self.poll_pending_task_intake().await? {
+                needs_redraw = true;
+            }
+
+            if self.poll_sync().await? {
                 needs_redraw = true;
             }
 
@@ -664,6 +669,7 @@ impl App {
             || self.search_preview_work_pending()
             || self.preview_controller.work_pending()
             || self.attachment_controller.work_pending()
+            || self.sync.work_pending()
             || self.update.work_pending()
             || self.changelog.work_pending()
         {
