@@ -218,6 +218,9 @@ impl App {
     }
 
     async fn handle_mouse(&mut self, mouse: MouseEvent, terminal_size: Size) -> Result<()> {
+        if mouse.kind == MouseEventKind::Moved && self.overlay.is_some() {
+            self.handle_detail_mouse_move(mouse, terminal_size);
+        }
         if matches!(self.overlay, Some(OverlayState::RecurrenceHistory(_))) {
             return self.dispatch_overlay_mouse(mouse, terminal_size).await;
         }

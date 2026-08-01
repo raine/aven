@@ -20,6 +20,7 @@ use super::state::{
 };
 use super::tag_combobox::{
     handle_tag_combobox_key, normalize_tag_combobox_highlight, tag_combobox_matches,
+    toggle_tag_combobox_label,
 };
 use crate::tui::overlay::{confirm_layout, picker_layout, tag_combobox_layout, text_panel_layout};
 use crate::tui::store::TaskOrder;
@@ -628,14 +629,7 @@ fn handle_tag_combobox_mouse(
         TagComboboxMouseTarget::Input => OverlayOutcome::None(OverlayState::TagCombobox(state)),
         TagComboboxMouseTarget::Row(index) => {
             state.highlighted = index;
-            let Some(label) = state.options.get(index).cloned() else {
-                return OverlayOutcome::None(OverlayState::TagCombobox(state));
-            };
-            if let Some(selected) = state.selected.iter().position(|item| item == &label) {
-                state.selected.remove(selected);
-            } else {
-                state.selected.push(label);
-            }
+            toggle_tag_combobox_label(&mut state, index);
             OverlayOutcome::None(OverlayState::TagCombobox(state))
         }
         TagComboboxMouseTarget::Interior => OverlayOutcome::None(OverlayState::TagCombobox(state)),
@@ -662,17 +656,13 @@ fn tag_combobox_mouse_target(
         visible_start: 0,
     };
     let layout = tag_combobox_layout(&view, terminal_size);
-    if !layout
-        .area
-        .contains(ratatui::layout::Position { x: column, y: row })
-    {
+    if !contains(layout.area, column, row) {
         return TagComboboxMouseTarget::Outside;
     }
-    let inner_column = column.saturating_sub(layout.inner.x);
-    let inner_row = row.saturating_sub(layout.inner.y);
-    if inner_column >= layout.inner.width {
+    if !contains(layout.inner, column, row) {
         return TagComboboxMouseTarget::Interior;
     }
+    let inner_row = row.saturating_sub(layout.inner.y);
     if inner_row == layout.input_row {
         return TagComboboxMouseTarget::Input;
     }
@@ -957,7 +947,7 @@ mod tests {
     use super::*;
     use crate::tui::overlay::{
         ConfirmIntent, LineEdit, MultilineInputState, MultilineIntent, PickerIntent, PickerItem,
-        TextInputState, TextIntent,
+        TagComboboxIntent, TagComboboxView, TextInputState, TextIntent,
     };
     use crate::tui::task_selection::TaskSelection;
 
@@ -1069,6 +1059,156 @@ mod tests {
 
     fn handle(key: KeyEvent, overlay: OverlayState) -> OverlayOutcome {
         handle_generic_overlay_key(key, overlay, 100)
+    }
+
+    fn left_click(column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn tag_combobox_state(selected: Vec<&str>, partial: Vec<&str>) -> TagComboboxState {
+        TagComboboxState {
+            intent: TagComboboxIntent::AddTaskLabels,
+            title: "Labels".to_string(),
+            input: LineEdit::blank(),
+            options: vec!["bug".to_string(), "feature".to_string()],
+            selected: selected.into_iter().map(str::to_string).collect(),
+            partial: partial.into_iter().map(str::to_string).collect(),
+            highlighted: 0,
+        }
+    }
+
+    fn tag_combobox_test_layout(
+        state: &TagComboboxState,
+        terminal_size: Size,
+    ) -> crate::tui::overlay::layout::TagComboboxLayout {
+        let visible_indices = tag_combobox_matches(state);
+        tag_combobox_layout(
+            &TagComboboxView {
+                kind: (&state.intent).into(),
+                title: state.title.clone(),
+                input: state.input.text.clone(),
+                input_cursor: state.input.cursor,
+                completion: None,
+                options: state.options.clone(),
+                selected: state.selected.clone(),
+                partial: state.partial.clone(),
+                highlighted: state.highlighted,
+                visible_indices,
+                visible_start: 0,
+            },
+            terminal_size,
+        )
+    }
+
+    fn retained_tag_combobox(outcome: OverlayOutcome) -> TagComboboxState {
+        let OverlayOutcome::None(OverlayState::TagCombobox(state)) = outcome else {
+            panic!("expected retained tag combobox");
+        };
+        state
+    }
+
+    #[test]
+    fn tag_combobox_mouse_cycles_partial_label_to_selected_then_absent() {
+        let terminal_size = Size::new(80, 24);
+        let state = tag_combobox_state(Vec::new(), vec!["bug"]);
+        let layout = tag_combobox_test_layout(&state, terminal_size);
+        let click = left_click(layout.inner.x, layout.inner.y + layout.list_start);
+
+        let state = retained_tag_combobox(handle_tag_combobox_mouse(state, click, terminal_size));
+        assert_eq!(state.selected, vec!["bug".to_string()]);
+        assert!(state.partial.is_empty());
+
+        let state = retained_tag_combobox(handle_tag_combobox_mouse(state, click, terminal_size));
+        assert!(state.selected.is_empty());
+        assert!(state.partial.is_empty());
+    }
+
+    #[test]
+    fn tag_combobox_mouse_removes_selected_label() {
+        let terminal_size = Size::new(80, 24);
+        let state = tag_combobox_state(vec!["bug"], Vec::new());
+        let layout = tag_combobox_test_layout(&state, terminal_size);
+
+        let state = retained_tag_combobox(handle_tag_combobox_mouse(
+            state,
+            left_click(layout.inner.x, layout.inner.y + layout.list_start),
+            terminal_size,
+        ));
+
+        assert!(state.selected.is_empty());
+        assert!(state.partial.is_empty());
+    }
+
+    #[test]
+    fn tag_combobox_dialog_borders_and_padding_do_not_toggle_rows() {
+        let terminal_size = Size::new(80, 24);
+        let state = tag_combobox_state(Vec::new(), Vec::new());
+        let layout = tag_combobox_test_layout(&state, terminal_size);
+        let mut points = Vec::new();
+        for column in layout.area.x..layout.area.x + layout.area.width {
+            points.push((column, layout.area.y));
+            points.push((column, layout.area.y + layout.area.height - 1));
+        }
+        for row in layout.area.y..layout.area.y + layout.area.height {
+            points.push((layout.area.x, row));
+            points.push((layout.area.x + layout.area.width - 1, row));
+        }
+        for row in layout.inner.y..layout.inner.y + layout.inner.height {
+            points.push((layout.inner.x - 1, row));
+            points.push((layout.inner.x + layout.inner.width, row));
+        }
+
+        for (column, row) in points {
+            let retained = retained_tag_combobox(handle_tag_combobox_mouse(
+                state.clone(),
+                left_click(column, row),
+                terminal_size,
+            ));
+            assert!(retained.selected.is_empty(), "toggle at ({column}, {row})");
+        }
+    }
+
+    #[test]
+    fn tag_combobox_clipped_and_small_terminal_rows_do_not_toggle() {
+        let terminal_size = Size::new(80, 24);
+        let state = tag_combobox_state(Vec::new(), Vec::new());
+        let layout = tag_combobox_test_layout(&state, terminal_size);
+        let retained = retained_tag_combobox(handle_tag_combobox_mouse(
+            state,
+            left_click(
+                layout.inner.x,
+                layout.inner.y + layout.list_start + layout.viewport_rows as u16,
+            ),
+            terminal_size,
+        ));
+        assert!(retained.selected.is_empty());
+
+        let terminal_size = Size::new(20, 6);
+        let state = tag_combobox_state(Vec::new(), Vec::new());
+        let layout = tag_combobox_test_layout(&state, terminal_size);
+        let retained = retained_tag_combobox(handle_tag_combobox_mouse(
+            state,
+            left_click(layout.inner.x, layout.inner.y + layout.list_start),
+            terminal_size,
+        ));
+        assert!(retained.selected.is_empty());
+    }
+
+    #[test]
+    fn tag_combobox_outside_click_cancels() {
+        assert_eq!(
+            handle_tag_combobox_mouse(
+                tag_combobox_state(Vec::new(), Vec::new()),
+                left_click(0, 0),
+                Size::new(80, 24),
+            ),
+            OverlayOutcome::Cancelled
+        );
     }
 
     #[test]

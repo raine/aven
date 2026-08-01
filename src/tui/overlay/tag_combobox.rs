@@ -120,8 +120,14 @@ fn tag_combobox_submit(state: TagComboboxState) -> OverlayOutcome {
 }
 
 fn toggle_highlighted_label(state: &mut TagComboboxState, clear_after_toggle: bool) {
-    let Some(label) = state.options.get(state.highlighted).cloned() else {
-        return;
+    if toggle_tag_combobox_label(state, state.highlighted) && clear_after_toggle {
+        clear_input(state);
+    }
+}
+
+pub(super) fn toggle_tag_combobox_label(state: &mut TagComboboxState, index: usize) -> bool {
+    let Some(label) = state.options.get(index).cloned() else {
+        return false;
     };
     if let Some(index) = state.partial.iter().position(|partial| partial == &label) {
         state.partial.remove(index);
@@ -135,9 +141,7 @@ fn toggle_highlighted_label(state: &mut TagComboboxState, clear_after_toggle: bo
     } else {
         state.selected.push(label);
     }
-    if clear_after_toggle {
-        clear_input(state);
-    }
+    true
 }
 
 fn clear_input(state: &mut TagComboboxState) {

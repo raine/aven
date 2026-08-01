@@ -462,6 +462,45 @@ async fn mouse_wheel_scrolls_detail_help_overlay() {
 }
 
 #[tokio::test]
+async fn modal_overlay_pointer_move_clears_stale_detail_hover() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Overlay hover target")).await;
+    app.show_detail(0);
+    app.detail
+        .state_mut()
+        .unwrap()
+        .set_hovered_target(Some(DetailTargetId::Expand {
+            section: DetailSection::DependsOn,
+        }));
+    app.overlay = Some(OverlayState::DetailHelp { scroll: 0 });
+
+    let changed = app
+        .dispatch_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Moved,
+                column: 4,
+                row: 7,
+                modifiers: KeyModifiers::NONE,
+            },
+            (80, 24).into(),
+        )
+        .await
+        .unwrap();
+
+    assert!(changed);
+    assert!(
+        app.detail
+            .state()
+            .and_then(|detail| detail.hovered_target())
+            .is_none()
+    );
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::DetailHelp { scroll: 0 })
+    ));
+}
+
+#[tokio::test]
 async fn stable_frame_mouse_movement_reuses_detail_document() {
     let mut app = test_app().await;
     let mut draft = test_task_draft("Stable detail projection");
