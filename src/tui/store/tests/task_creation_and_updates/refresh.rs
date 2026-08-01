@@ -101,19 +101,35 @@ async fn late_refresh_failure_preserves_view_and_cached_state() {
 }
 
 #[tokio::test]
-async fn refresh_replacement_preserves_configuration_and_loaded_stats() {
+async fn refresh_replacement_preserves_retained_state_without_cloning_projection() {
     let mut store = test_store().await;
+    create_selected_task(&mut store, "Hydrated projection").await;
+    store.app_config.sync.server_url = Some("https://sync.example.test".to_string());
     store.task_columns = vec![crate::config::TaskColumnConfig {
         name: "Work".to_string(),
         statuses: vec!["todo".to_string(), "active".to_string()],
     }];
     store.columns_preview_visible = false;
     store.db_stats.total_tasks = 42;
+    let database_dir = store._test_database_dir.as_ref().unwrap().clone();
+    let projection_clone_count = store.projection_clone_count();
 
     store.refresh(None).await.unwrap();
 
+    assert_eq!(
+        store.config().sync.server_url.as_deref(),
+        Some("https://sync.example.test")
+    );
     assert_eq!(store.task_columns.len(), 1);
     assert_eq!(store.task_columns[0].name, "Work");
     assert!(!store.columns_preview_visible);
     assert_eq!(store.db_stats.total_tasks, 42);
+    assert!(std::sync::Arc::ptr_eq(
+        store._test_database_dir.as_ref().unwrap(),
+        &database_dir
+    ));
+    assert_eq!(
+        projection_clone_count.load(std::sync::atomic::Ordering::Relaxed),
+        0
+    );
 }

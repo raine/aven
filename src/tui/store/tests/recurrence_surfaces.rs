@@ -105,6 +105,7 @@ async fn recurring_series_search_and_refresh_restore_series_identity() {
         beta
     );
 
+    store.load_recurrence_series_detail(&beta).await.unwrap();
     store.view_state.recurring.search = None;
     let selection = MainRowSelection::RecurrenceSeries(beta.clone());
     let selected = store
@@ -120,6 +121,7 @@ async fn recurring_series_search_and_refresh_restore_series_identity() {
             .id,
         beta
     );
+    assert_eq!(store.recurrence_detail.as_ref().unwrap().series.id, beta);
 }
 
 #[tokio::test]

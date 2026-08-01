@@ -54,7 +54,6 @@ use crate::query::{
 };
 use crate::workspaces::Workspace;
 
-#[derive(Clone)]
 pub(crate) struct TuiStore {
     database: Database,
     app_config: AppConfig,
@@ -68,7 +67,17 @@ pub(crate) struct TuiStore {
     _test_database_dir: Option<std::sync::Arc<tempfile::TempDir>>,
 }
 
-#[derive(Clone)]
+struct RefreshRetainedState {
+    database: Database,
+    app_config: AppConfig,
+    task_columns: Vec<crate::config::TaskColumnConfig>,
+    columns_preview_visible: bool,
+    db_stats: TuiDatabaseStats,
+    #[cfg(test)]
+    test_database_dir: Option<std::sync::Arc<tempfile::TempDir>>,
+}
+
+#[cfg_attr(test, derive(Clone))]
 pub(crate) struct TuiProjection {
     pub(crate) tasks: Vec<TaskListItem>,
     pub(crate) recurrence_series: Vec<RecurrenceSeriesListItem>,
@@ -83,6 +92,25 @@ pub(crate) struct TuiProjection {
     pub(crate) view_state: TaskViewState,
     pub(crate) sync_status: TuiSyncStatus,
     pub(crate) last_refresh: Instant,
+    #[cfg(test)]
+    clone_sentinel: ProjectionCloneSentinel,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct ProjectionCloneSentinel {
+    clone_count: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[cfg(test)]
+impl Clone for ProjectionCloneSentinel {
+    fn clone(&self) -> Self {
+        self.clone_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self {
+            clone_count: self.clone_count.clone(),
+        }
+    }
 }
 
 impl Deref for TuiStore {
@@ -109,6 +137,37 @@ pub(crate) enum RefreshFailureStage {
 pub(crate) struct ScopeRefreshResult {
     pub(crate) selected: Option<usize>,
     pub(crate) fallback_scope: Option<String>,
+}
+
+impl From<&TuiStore> for RefreshRetainedState {
+    fn from(store: &TuiStore) -> Self {
+        Self {
+            database: store.database.clone(),
+            app_config: store.app_config.clone(),
+            task_columns: store.task_columns.clone(),
+            columns_preview_visible: store.columns_preview_visible,
+            db_stats: store.db_stats.clone(),
+            #[cfg(test)]
+            test_database_dir: store._test_database_dir.clone(),
+        }
+    }
+}
+
+impl RefreshRetainedState {
+    fn with_projection(self, projection: TuiProjection) -> TuiStore {
+        TuiStore {
+            database: self.database,
+            app_config: self.app_config,
+            projection,
+            task_columns: self.task_columns,
+            columns_preview_visible: self.columns_preview_visible,
+            db_stats: self.db_stats,
+            #[cfg(test)]
+            fail_next_refresh: None,
+            #[cfg(test)]
+            _test_database_dir: self.test_database_dir,
+        }
+    }
 }
 
 impl TuiStore {
@@ -151,6 +210,8 @@ impl TuiStore {
                 view_state,
                 sync_status: TuiSyncStatus::default(),
                 last_refresh: Instant::now(),
+                #[cfg(test)]
+                clone_sentinel: ProjectionCloneSentinel::default(),
             },
             task_columns,
             columns_preview_visible: true,
@@ -189,6 +250,11 @@ impl TuiStore {
     #[cfg(test)]
     pub(crate) fn fail_next_refresh_at(&mut self, stage: RefreshFailureStage) {
         self.fail_next_refresh = Some(stage);
+    }
+
+    #[cfg(test)]
+    fn projection_clone_count(&self) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+        self.projection.clone_sentinel.clone_count.clone()
     }
 
     pub(crate) async fn load_task_item(
@@ -321,13 +387,22 @@ impl TuiStore {
     ) -> Result<ScopeRefreshResult> {
         let active_workspace = active_workspace.unwrap_or_else(|| self.active_workspace.clone());
         let view_state = view_state.unwrap_or_else(|| self.view_state.clone());
-        let mut replacement = self.clone();
-        replacement.projection = self.replacement_projection(active_workspace, view_state);
+        let recurrence_detail_id = self
+            .recurrence_detail
+            .as_ref()
+            .map(|detail| detail.series.id.clone());
+        #[cfg(test)]
+        let fail_next_refresh = self.fail_next_refresh.take();
+        let retained = RefreshRetainedState::from(&*self);
+        let mut replacement =
+            retained.with_projection(Self::fresh_projection(active_workspace, view_state));
         #[cfg(test)]
         {
-            replacement.fail_next_refresh = self.fail_next_refresh.take();
+            replacement.fail_next_refresh = fail_next_refresh;
         }
-        let result = replacement.refresh_in_place(selected).await?;
+        let result = replacement
+            .refresh_in_place(selected, recurrence_detail_id.as_ref())
+            .await?;
         #[cfg(test)]
         {
             replacement.fail_next_refresh = None;
@@ -336,15 +411,11 @@ impl TuiStore {
         Ok(result)
     }
 
-    fn replacement_projection(
-        &self,
-        active_workspace: Workspace,
-        view_state: TaskViewState,
-    ) -> TuiProjection {
+    fn fresh_projection(active_workspace: Workspace, view_state: TaskViewState) -> TuiProjection {
         TuiProjection {
             tasks: Vec::new(),
             recurrence_series: Vec::new(),
-            recurrence_detail: self.recurrence_detail.clone(),
+            recurrence_detail: None,
             recent_actions: Vec::new(),
             projects: Vec::new(),
             labels: Vec::new(),
@@ -354,13 +425,16 @@ impl TuiStore {
             sidebar_entries: Vec::new(),
             view_state,
             sync_status: TuiSyncStatus::default(),
-            last_refresh: self.last_refresh,
+            last_refresh: Instant::now(),
+            #[cfg(test)]
+            clone_sentinel: ProjectionCloneSentinel::default(),
         }
     }
 
     async fn refresh_in_place(
         &mut self,
         selected: Option<&MainRowSelection>,
+        recurrence_detail_id: Option<&aven_core::recurrence::RecurrenceSeriesId>,
     ) -> Result<ScopeRefreshResult> {
         let workspace_id = self.active_workspace.id.clone();
         self.workspaces = self.database.list_workspaces().await?;
@@ -404,6 +478,15 @@ impl TuiStore {
                     self.view_state.recurrence_query(),
                 )
                 .await?;
+            self.recurrence_detail = None;
+            if let Some(series_id) = recurrence_detail_id
+                && self
+                    .recurrence_series
+                    .iter()
+                    .any(|item| &item.series.id == series_id)
+            {
+                self.load_recurrence_series_detail(series_id).await?;
+            }
         } else {
             self.recurrence_series.clear();
             self.recurrence_detail = None;

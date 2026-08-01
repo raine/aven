@@ -532,7 +532,14 @@ impl App {
                 .selected_recurrence_series(selected)
                 .is_some_and(|item| item.series.id == series_id);
             if selected_matches {
-                self.store.load_recurrence_series_detail(&series_id).await?;
+                let detail_matches = self
+                    .store
+                    .recurrence_detail
+                    .as_ref()
+                    .is_some_and(|detail| detail.series.id == series_id);
+                if !detail_matches {
+                    self.store.load_recurrence_series_detail(&series_id).await?;
+                }
             } else {
                 self.store.recurrence_detail = None;
                 self.detail.close();
