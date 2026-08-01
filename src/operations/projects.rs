@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use aven_core::db::Database;
 
 use crate::config;
@@ -100,20 +100,22 @@ pub fn rename_config_project_mapping(
 }
 
 fn canonicalize_project_path(path: &Path) -> Result<PathBuf> {
-    fs::canonicalize(path).with_context(|| format!("could not resolve {}", path.display()))
+    let path = config::expand_tilde(path)?;
+    fs::canonicalize(&path).with_context(|| format!("could not resolve {}", path.display()))
 }
 
 fn project_path_remove_candidates(path: &Path) -> Vec<PathBuf> {
+    let path = config::expand_tilde(path).unwrap_or_else(|_| path.to_path_buf());
     let mut paths = Vec::new();
-    if let Ok(path) = fs::canonicalize(path) {
+    if let Ok(path) = fs::canonicalize(&path) {
         paths.push(path);
     }
     let supplied = if path.is_absolute() {
-        path.to_path_buf()
+        path
     } else if let Ok(cwd) = env::current_dir() {
         cwd.join(path)
     } else {
-        path.to_path_buf()
+        path
     };
     if !paths.iter().any(|path| path == &supplied) {
         paths.push(supplied);
@@ -167,7 +169,13 @@ pub async fn remove_project_path_operation(
         .await?;
     let config_path = config::config_file_path()?;
     let remove_paths = project_path_remove_candidates(path);
-    config_edit::remove_project_path(&config_path, &workspace.id, &project.key, &remove_paths)?;
+    if !config_edit::remove_project_path(&config_path, &workspace.id, &project.key, &remove_paths)?
+    {
+        bail!(
+            "project path mapping is not managed by aven: {}",
+            path.display()
+        );
+    }
     for path in &remove_paths {
         database
             .remove_project_path(&project.workspace_id, &project.id, path)

@@ -39,8 +39,6 @@ pub(crate) struct CommandSpec {
     pub(crate) lifecycle: CommandLifecycle,
 }
 
-pub(crate) const PROJECT_PATH_FLOW_REASON: &str = "requires a multi-step project/path picker flow";
-
 impl CommandSpec {
     pub(crate) const fn implemented(
         name: &'static str,
@@ -191,6 +189,7 @@ impl CommandSpec {
         }
     }
 
+    #[allow(dead_code)]
     const fn planned(
         name: &'static str,
         description: &'static str,
@@ -968,7 +967,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginDeleteProject,
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "add-project-path",
         "add a path to a project",
         "Projects",
@@ -976,9 +975,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('p'), KeyCode::Char('n')],
             label: "p n",
         }],
-        PROJECT_PATH_FLOW_REASON,
+        Action::BeginAddProjectPath,
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "remove-project-path",
         "remove a path from a project",
         "Projects",
@@ -986,7 +985,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('p'), KeyCode::Char('x')],
             label: "p x",
         }],
-        PROJECT_PATH_FLOW_REASON,
+        Action::BeginRemoveProjectPath,
     ),
     // Edit
     CommandSpec::implemented_in_detail(

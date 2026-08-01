@@ -26,6 +26,7 @@ struct ManagedProjectOverride {
 
 pub fn add_project_path(path: &Path, edit: ProjectPathMappingEdit<'_>) -> Result<()> {
     let text = read_config_text(path)?;
+    let text = mark_scoped_project_overrides(&text);
     let (text, mut entries) = remove_managed_entries(&text);
     for entry in &mut entries {
         if &entry.workspace_id == edit.workspace_id {
@@ -54,18 +55,25 @@ pub fn remove_project_path(
     workspace_id: &WorkspaceId,
     project: &str,
     remove_paths: &[PathBuf],
-) -> Result<()> {
+) -> Result<bool> {
     let text = read_config_text(path)?;
+    let text = mark_scoped_project_overrides(&text);
     let (text, mut entries) = remove_managed_entries(&text);
+    let mut changed = false;
     for entry in &mut entries {
         if &entry.workspace_id == workspace_id && entry.project == project {
+            let original_len = entry.paths.len();
             entry
                 .paths
                 .retain(|path| !remove_paths.iter().any(|remove_path| path == remove_path));
+            changed |= entry.paths.len() != original_len;
         }
     }
-    entries.retain(|entry| !entry.paths.is_empty());
-    write_edited_config(path, append_managed_entries(&text, &entries)?)
+    if changed {
+        entries.retain(|entry| !entry.paths.is_empty());
+        write_edited_config(path, append_managed_entries(&text, &entries)?)?;
+    }
+    Ok(changed)
 }
 
 pub fn rename_project_path(
@@ -75,6 +83,7 @@ pub fn rename_project_path(
     new_project: &str,
 ) -> Result<bool> {
     let text = read_config_text(path)?;
+    let text = mark_scoped_project_overrides(&text);
     let (text, mut entries) = remove_managed_entries(&text);
     let mut changed = false;
     for entry in &mut entries {
@@ -103,6 +112,40 @@ fn write_edited_config(path: &Path, text: String) -> Result<()> {
     write_config_text(path, text)
 }
 
+fn mark_scoped_project_overrides(text: &str) -> String {
+    let mut lines = split_lines(text);
+    let Some(project_line) = find_top_level_key(&lines, "project") else {
+        return text.to_string();
+    };
+    let project_end = find_section_end(&lines, project_line, 0);
+    let Some(overrides_line) =
+        find_child_key(&lines, project_line + 1, project_end, 2, "overrides")
+    else {
+        return text.to_string();
+    };
+    let overrides_end = find_section_end(&lines, overrides_line, 2);
+    let mut changed = false;
+    for index in (overrides_line + 1..overrides_end).rev() {
+        if indent_len(&lines[index]) == 4
+            && lines[index].trim_start().starts_with("- workspace_id:")
+            && index
+                .checked_sub(1)
+                .is_none_or(|previous| lines[previous].trim() != MANAGED_MARKER)
+        {
+            lines.insert(index, format!("    {MANAGED_MARKER}"));
+            changed = true;
+        }
+    }
+    if !changed {
+        return text.to_string();
+    }
+    let mut output = lines.join("\n");
+    if text.ends_with('\n') {
+        output.push('\n');
+    }
+    output
+}
+
 fn remove_managed_entries(text: &str) -> (String, Vec<ManagedProjectOverride>) {
     let lines = split_lines(text);
     let mut output = Vec::new();
@@ -122,10 +165,11 @@ fn remove_managed_entries(text: &str) -> (String, Vec<ManagedProjectOverride>) {
             let line = &lines[i];
             let trimmed = line.trim_start();
             let indent = indent_len(line);
+            let starts_next_marker = indent == marker_indent && trimmed == MANAGED_MARKER;
             let starts_next_entry =
                 seen_entry && indent == marker_indent && trimmed.starts_with("- ");
             let starts_sibling = indent < marker_indent && !trimmed.is_empty();
-            if starts_sibling || starts_next_entry {
+            if starts_next_marker || starts_sibling || starts_next_entry {
                 break;
             }
             seen_entry |= indent == marker_indent && trimmed.starts_with("- ");

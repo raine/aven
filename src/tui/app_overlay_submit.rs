@@ -293,6 +293,9 @@ impl App {
                 self.restore_selection_after_mutation();
                 self.set_success(format!("created project {}", outcome.project_key));
             }
+            TextIntent::AddProjectPath { project } => {
+                self.submit_add_project_path(project, value).await?;
+            }
             TextIntent::AddLabel => {
                 let message = self.store.create_label(value).await?;
                 self.set_success(message);
@@ -433,6 +436,13 @@ impl App {
             PickerIntent::ScopeProject => self.submit_scope_project(values).await?,
             PickerIntent::RenameProject => self.submit_rename_project_picker(values),
             PickerIntent::DeleteProject => self.submit_delete_project_picker(values),
+            PickerIntent::AddProjectPath => self.submit_add_project_path_picker(values),
+            PickerIntent::RemoveProjectPath => {
+                self.submit_remove_project_path_picker(values).await;
+            }
+            PickerIntent::RemoveProjectPathValue { project } => {
+                self.submit_remove_project_path_value(project, values);
+            }
             PickerIntent::SwitchWorkspace => self.submit_switch_workspace(values).await?,
             intent @ (PickerIntent::PickConflictVariant { .. }
             | PickerIntent::PickConflictManual { .. }) => {
@@ -498,6 +508,9 @@ impl App {
             ConfirmIntent::InitializeConfig { path } => self.submit_config_init(path)?,
             ConfirmIntent::DeleteProject { project } => {
                 self.submit_delete_project(project).await?;
+            }
+            ConfirmIntent::RemoveProjectPath { project, path } => {
+                self.submit_remove_project_path(project, path).await?;
             }
             ConfirmIntent::DeleteTasks { selection } => {
                 self.submit_delete_selection(selection).await?;

@@ -831,24 +831,24 @@ mod tests {
     }
 
     #[test]
-    fn command_line_marks_planned_actions() {
+    fn command_line_omits_planned_badge_for_project_paths() {
         let command = COMMANDS
             .iter()
             .find(|command| command.name == "add-project-path")
             .unwrap();
         let rendered = command_line(command, CommandContext::Normal).to_string();
-        assert!(rendered.contains("planned"));
+        assert!(!rendered.contains("planned"));
     }
 
     #[test]
-    fn prefix_hint_lines_mark_planned_actions() {
+    fn prefix_hint_lines_omit_planned_badge_for_project_paths() {
         let rendered = prefix_hint_lines(CommandContext::Normal, &["p".to_string()])
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
         assert!(rendered.contains(":add-project-path"));
-        assert!(rendered.contains("planned"));
+        assert!(!rendered.contains("planned"));
     }
 
     #[test]

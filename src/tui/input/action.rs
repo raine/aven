@@ -82,6 +82,8 @@ impl App {
             Action::BeginRenameProject => self.begin_rename_project(),
             Action::BeginDeleteProject => self.begin_delete_project(),
             Action::BeginAddProject => self.begin_add_project(),
+            Action::BeginAddProjectPath => self.begin_add_project_path(),
+            Action::BeginRemoveProjectPath => self.begin_remove_project_path(),
             Action::BeginAddLabel => self.begin_add_label(),
             Action::BeginAddTask => self.begin_add_task().await?,
             Action::BeginAddNote => self.begin_add_note(),

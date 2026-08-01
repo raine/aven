@@ -76,6 +76,8 @@ pub(crate) enum Action {
     BeginAddTask,
     BeginAddNote,
     BeginAddProject,
+    BeginAddProjectPath,
+    BeginRemoveProjectPath,
     BeginAddLabel,
     BeginFilterLabel,
     BeginFilterPriority,
