@@ -136,9 +136,22 @@ const CHILD_DETAIL_HELP_TOPICS: &[HelpTopic] = &[
     },
 ];
 
+const HELP_DIALOG_MAX_WIDTH: u16 = 112;
+const HELP_DIALOG_MAX_HEIGHT: u16 = 28;
+
+fn help_dialog_height(frame_height: u16) -> u16 {
+    frame_height.saturating_sub(4).min(HELP_DIALOG_MAX_HEIGHT)
+}
+
+fn help_dialog_size(area: Rect) -> (u16, u16) {
+    (
+        area.width.saturating_sub(6).min(HELP_DIALOG_MAX_WIDTH),
+        help_dialog_height(area.height),
+    )
+}
+
 pub(super) fn render_help(frame: &mut Frame, scroll: u16) {
-    let width = frame.area().width.saturating_sub(6).min(112);
-    let height = frame.area().height.saturating_sub(4).min(28);
+    let (width, height) = help_dialog_size(frame.area());
     let visible_rows = height.saturating_sub(2);
     let dialog = if let Some(title) = help_scroll_title(scroll, visible_rows) {
         Dialog::new("Shortcuts", width, height)
@@ -283,7 +296,8 @@ pub(super) fn render_detail_help(
         "Task detail shortcuts"
     };
     let lines = detail_help_lines_for(focused_target);
-    let mut dialog = Dialog::new(title, 72, 19);
+    let (width, height) = help_dialog_size(frame.area());
+    let mut dialog = Dialog::new(title, width, height);
     let visible_rows = dialog.area(frame).height.saturating_sub(2);
     if let Some(title) = detail_help_scroll_title(scroll, visible_rows, lines.len()) {
         dialog = dialog.right_title(Line::from(Span::styled(title, Style::new().fg(FG_MUTED))));
@@ -408,7 +422,7 @@ fn help_column_lines(sections: &[&'static str]) -> Vec<Line<'static>> {
 }
 
 pub(crate) fn help_scroll_cap(frame_height: u16) -> u16 {
-    let visible_rows = frame_height.saturating_sub(4).min(28).saturating_sub(2) as usize;
+    let visible_rows = help_dialog_height(frame_height).saturating_sub(2) as usize;
     help_columns()
         .iter()
         .map(|sections| {
@@ -424,7 +438,7 @@ pub(crate) fn detail_help_scroll_cap(
     frame_height: u16,
     focused_target: Option<&DetailTargetId>,
 ) -> u16 {
-    let visible_rows = frame_height.min(18).saturating_sub(2) as usize;
+    let visible_rows = help_dialog_height(frame_height).saturating_sub(2) as usize;
     detail_help_lines_for(focused_target)
         .len()
         .saturating_sub(visible_rows) as u16
@@ -486,8 +500,12 @@ fn help_command_line(command: &CommandSpec, context: CommandContext) -> Line<'st
         .map(|key| key.label)
         .collect::<Vec<_>>()
         .join("/");
+    let key_width = match context {
+        CommandContext::Normal => 14,
+        CommandContext::Detail => 18,
+    };
     let mut spans = vec![Span::styled(
-        format!("{keys:<14}"),
+        format!("{keys:<key_width$}"),
         Style::new().fg(FG_MUTED),
     )];
     if let Some(badge) = lifecycle_badge(command.lifecycle) {
@@ -711,6 +729,19 @@ mod tests {
         (0..buffer.area.width)
             .map(|column| buffer[(column, row)].symbol())
             .collect()
+    }
+
+    fn dialog_corners(buffer: &ratatui::buffer::Buffer) -> Vec<(u16, u16, String)> {
+        let mut corners = Vec::new();
+        for row in 0..buffer.area.height {
+            for column in 0..buffer.area.width {
+                let symbol = buffer[(column, row)].symbol();
+                if matches!(symbol, "╭" | "╮" | "╰" | "╯") {
+                    corners.push((column, row, symbol.to_string()));
+                }
+            }
+        }
+        corners
     }
 
     fn render_help_buffer(scroll: u16) -> ratatui::buffer::Buffer {
@@ -1074,6 +1105,14 @@ mod tests {
     }
 
     #[test]
+    fn help_overlays_use_matching_bounds() {
+        assert_eq!(
+            dialog_corners(&render_help_buffer(0)),
+            dialog_corners(&render_detail_help_buffer(0))
+        );
+    }
+
+    #[test]
     fn help_overlays_render_title_edge_lines() {
         for (buffer, title) in [
             (render_help_buffer(0), "Shortcuts"),
@@ -1186,6 +1225,18 @@ mod tests {
             assert!(rendered.contains(keys));
             assert!(rendered.contains(description));
         }
+    }
+
+    #[test]
+    fn detail_help_aligns_description_columns() {
+        let key_widths = detail_help_lines()
+            .iter()
+            .filter(|line| line.spans.len() > 1)
+            .map(|line| line.spans[0].content.chars().count())
+            .collect::<Vec<_>>();
+
+        assert!(!key_widths.is_empty());
+        assert!(key_widths.iter().all(|width| *width == 18));
     }
 
     #[test]
