@@ -187,9 +187,7 @@ fn render_placeholder_text_input(
     let content = dialog.render_block(frame);
     let hints = if matches!(
         state.kind,
-        TextInputKind::RenameLabel
-            | TextInputKind::RenameProject
-            | TextInputKind::RenameWorkspace
+        TextInputKind::RenameLabel | TextInputKind::RenameProject | TextInputKind::RenameWorkspace
     ) {
         &[("Enter", "submit"), ("Ctrl+U", "clear"), ("Esc", "cancel")][..]
     } else {

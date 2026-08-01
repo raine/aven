@@ -1838,8 +1838,7 @@ impl App {
         match lookup_command_spec_for(state.context, input) {
             CommandSpecLookup::Found(command) => {
                 self.pending_shortcut.clear();
-                let focused_target = (state.context
-                    == crate::tui::event::CommandContext::Detail)
+                let focused_target = (state.context == crate::tui::event::CommandContext::Detail)
                     .then(|| {
                         self.detail
                             .state()
@@ -1847,10 +1846,9 @@ impl App {
                             .cloned()
                     })
                     .flatten();
-                let routes_to_related_task = matches!(
-                    &focused_target,
-                    Some(DetailTargetId::Task { .. })
-                ) && Self::action_supports_related_task(command.action);
+                let routes_to_related_task =
+                    matches!(&focused_target, Some(DetailTargetId::Task { .. }))
+                        && Self::action_supports_related_task(command.action);
                 if focused_target.is_some()
                     && !routes_to_related_task
                     && !self.detail_focus_allows_action(command.action)
