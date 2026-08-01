@@ -407,6 +407,7 @@ impl App {
             self.list.focus_tasks();
             if let Some(detail) = self.detail.state_mut() {
                 detail.restore_snapshot(&previous);
+                detail.select_sibling_task(&previous.task_id);
             }
             self.show_detail(previous.scroll);
             if skipped {

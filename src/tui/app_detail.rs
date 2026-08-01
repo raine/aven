@@ -320,6 +320,12 @@ impl App {
             .store
             .selected_task(self.list.selected_task())
             .map(|item| item.task.id.clone());
+        let source_task_ids = self
+            .store
+            .tasks
+            .iter()
+            .map(|item| item.task.id.clone())
+            .collect::<Vec<_>>();
         self.show_detail(scroll);
         let item = match self.store.load_task_item(task_id).await {
             Ok(Some(item)) => item,
@@ -339,7 +345,7 @@ impl App {
                 .expect("show_detail establishes an active detail session")
                 .snapshot(current_task_id, self.store.view_state.clone());
             if let Some(detail) = self.detail.state_mut() {
-                detail.follow_link(previous);
+                detail.follow_link(previous, task_id, source_task_ids);
             }
         }
         self.store.show_exact_task(item);
