@@ -3,7 +3,9 @@ use anyhow::Result;
 use crate::tui::app::{App, Focus, LastChangeReturnState, RecentActionReturnState};
 use crate::tui::navigation::{next_index, next_selectable_sidebar};
 use crate::tui::overlay::{OverlayState, PickerIntent, PickerItem};
-use crate::tui::store::{TaskFilterModifiers, TaskScope, TaskView, TaskViewState};
+use crate::tui::store::{
+    MainRowSelection, TaskFilterModifiers, TaskScope, TaskView, TaskViewState,
+};
 
 impl App {
     pub(super) fn restore_sidebar_selection(&mut self) {
@@ -202,7 +204,58 @@ impl App {
         }
     }
 
-    pub(super) fn select_detail_task(&mut self, delta: isize) {
+    pub(super) async fn select_detail_task(&mut self, delta: isize) -> Result<()> {
+        let sibling_target = self
+            .detail
+            .state()
+            .and_then(|detail| detail.sibling_target(delta));
+        if let Some(target) = sibling_target {
+            let Some(item) = self.store.load_task_item(&target.task_id).await? else {
+                self.set_warning("sibling task is unavailable");
+                return Ok(());
+            };
+            let selected = self
+                .store
+                .restore_view_state(
+                    target.view_state,
+                    Some(&MainRowSelection::Task(target.task_id.clone())),
+                )
+                .await?
+                .selected;
+            let index = if let Some(index) = selected.filter(|&index| {
+                self.store
+                    .tasks
+                    .get(index)
+                    .is_some_and(|candidate| candidate.task.id == target.task_id)
+            }) {
+                index
+            } else {
+                self.store.show_exact_task(item);
+                0
+            };
+            self.list.select_task(Some(index));
+            self.list.focus_tasks();
+            if let Some(detail) = self.detail.state_mut() {
+                detail.select_sibling_task(&target.task_id);
+                detail.reset_task_state(0);
+            }
+            let message = if delta > 0 {
+                "selected next task"
+            } else {
+                "selected previous task"
+            };
+            self.set_info(message);
+            return Ok(());
+        }
+        if self
+            .detail
+            .state()
+            .is_some_and(|detail| detail.has_sibling_context())
+        {
+            self.set_info("no other tasks in source list");
+            return Ok(());
+        }
+
         let current = self.list.selected_task();
         let next = next_index(current, self.store.tasks.len(), delta, true);
         self.list.select_task(next);
@@ -218,6 +271,7 @@ impl App {
             };
             self.set_info(message);
         }
+        Ok(())
     }
 
     pub(super) async fn activate_or_toggle_detail(&mut self) -> Result<()> {

@@ -9659,6 +9659,15 @@ mod detail_mode {
         assert!(app.overlay.is_none());
         assert!(app.detail.is_active());
 
+        app.dispatch_key(key(KeyCode::Char(']')), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(app.store.tasks[0].task.id, child_id);
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("no other tasks in source list")
+        );
+
         app.dispatch_key(key(KeyCode::Char('g')), (80, 24).into())
             .await
             .unwrap();
@@ -9686,6 +9695,203 @@ mod detail_mode {
                 .and_then(crate::tui::app::DetailTargetId::task_id),
             Some(&child_id)
         );
+    }
+
+    #[tokio::test]
+    async fn in_filter_linked_task_uses_its_source_list_position_for_siblings() {
+        let mut app = test_app().await;
+        let source = create_and_select_task(&mut app, test_task_draft("Source task")).await;
+        let source_id = app.store.tasks[source].task.id.clone();
+        let linked = create_and_select_task(&mut app, test_task_draft("Linked task")).await;
+        let linked_id = app.store.tasks[linked].task.id.clone();
+        create_and_select_task(&mut app, test_task_draft("Following task")).await;
+        let source = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == source_id)
+            .unwrap();
+        let linked = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == linked_id)
+            .unwrap();
+        let next_id = app.store.tasks[(linked + 1) % app.store.tasks.len()]
+            .task
+            .id
+            .clone();
+        app.list.select_task(Some(source));
+        app.show_detail(3);
+
+        app.open_detail_task(&linked_id, 3).await;
+        app.dispatch_key(key(KeyCode::Char(']')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(app.store.view_state.view, TaskView::Queue);
+        assert_eq!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .map(|item| &item.task.id),
+            Some(&next_id)
+        );
+
+        app.dispatch_key(key(KeyCode::Char('[')), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .map(|item| &item.task.id),
+            Some(&linked_id)
+        );
+
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .map(|item| &item.task.id),
+            Some(&source_id)
+        );
+        assert!(app.detail.is_active());
+    }
+
+    #[tokio::test]
+    async fn hidden_linked_task_navigates_previous_and_next_in_source_list() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        create_and_select_task(&mut app, test_task_draft("Before source")).await;
+        let source = create_and_select_task(&mut app, test_task_draft("Source task")).await;
+        let source_id = app.store.tasks[source].task.id.clone();
+        create_and_select_task(&mut app, test_task_draft("After source")).await;
+        let hidden = create_and_select_task(&mut app, test_task_draft("Hidden linked task")).await;
+        let hidden_id = app.store.tasks[hidden].task.id.clone();
+        sqlx::query("UPDATE tasks SET status = 'todo' WHERE id = ?")
+            .bind(&hidden_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        app.store.view_state.view = TaskView::Inbox;
+        app.store.refresh(Some(&source_id)).await.unwrap();
+        let source = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == source_id)
+            .unwrap();
+        let previous_id = app.store.tasks
+            [(source + app.store.tasks.len() - 1) % app.store.tasks.len()]
+        .task
+        .id
+        .clone();
+        let next_id = app.store.tasks[(source + 1) % app.store.tasks.len()]
+            .task
+            .id
+            .clone();
+        app.list.select_task(Some(source));
+        app.show_detail(4);
+
+        app.open_detail_task(&hidden_id, 4).await;
+        assert_eq!(app.store.tasks[0].task.status, TaskStatus::Todo);
+        app.dispatch_key(key(KeyCode::Char('[')), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(app.store.view_state.view, TaskView::Inbox);
+        assert_eq!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .map(|item| &item.task.id),
+            Some(&previous_id)
+        );
+
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .map(|item| &item.task.id),
+            Some(&source_id)
+        );
+
+        app.open_detail_task(&hidden_id, 4).await;
+        app.dispatch_key(key(KeyCode::Char(']')), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(app.store.view_state.view, TaskView::Inbox);
+        assert_eq!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .map(|item| &item.task.id),
+            Some(&next_id)
+        );
+
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .map(|item| &item.task.id),
+            Some(&source_id)
+        );
+        assert!(app.detail.is_active());
+    }
+
+    #[tokio::test]
+    async fn deleted_linked_task_navigates_in_source_list_and_returns_to_parent() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let source = create_and_select_task(&mut app, test_task_draft("Source task")).await;
+        let source_id = app.store.tasks[source].task.id.clone();
+        create_and_select_task(&mut app, test_task_draft("Next source task")).await;
+        let deleted =
+            create_and_select_task(&mut app, test_task_draft("Deleted linked task")).await;
+        let deleted_id = app.store.tasks[deleted].task.id.clone();
+        sqlx::query("UPDATE tasks SET deleted = 1 WHERE id = ?")
+            .bind(&deleted_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        app.store.refresh(Some(&source_id)).await.unwrap();
+        let source = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == source_id)
+            .unwrap();
+        let next_id = app.store.tasks[(source + 1) % app.store.tasks.len()]
+            .task
+            .id
+            .clone();
+        app.list.select_task(Some(source));
+        app.show_detail(5);
+
+        app.open_detail_task(&deleted_id, 5).await;
+        assert!(app.store.tasks[0].task.deleted);
+        app.dispatch_key(key(KeyCode::Char(']')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(app.store.view_state.view, TaskView::Queue);
+        assert_eq!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .map(|item| &item.task.id),
+            Some(&next_id)
+        );
+
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .map(|item| &item.task.id),
+            Some(&source_id)
+        );
+        assert!(app.detail.is_active());
     }
 
     #[tokio::test]
@@ -11755,7 +11961,7 @@ mod detail_mode {
             });
 
         let previous = app.list.selected_task();
-        app.select_detail_task(1);
+        app.select_detail_task(1).await.unwrap();
 
         assert_ne!(app.list.selected_task(), previous);
         assert!(app.detail.state_mut().unwrap().focused_target.is_none());

@@ -17,6 +17,19 @@ pub(crate) struct DetailSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DetailSiblingTarget {
+    pub(crate) task_id: crate::ids::TaskId,
+    pub(crate) view_state: TaskViewState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DetailSiblingContext {
+    view_state: TaskViewState,
+    task_ids: Vec<crate::ids::TaskId>,
+    selected: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DetailTargetActivation {
     Focus,
     FollowTask(crate::ids::TaskId),
@@ -75,6 +88,7 @@ pub(crate) struct DetailState {
     pub(crate) text_selection: Option<DetailTextSelection>,
     pub(crate) text_dragging: bool,
     pub(crate) history: BoundedHistory<DetailSnapshot>,
+    sibling_context: Option<DetailSiblingContext>,
     pub(crate) removed_epic_child: Option<RemovedEpicChild>,
 }
 
@@ -88,6 +102,7 @@ impl DetailState {
             text_selection: None,
             text_dragging: false,
             history: BoundedHistory::new(DETAIL_HISTORY_LIMIT),
+            sibling_context: None,
             removed_epic_child: None,
         }
     }
@@ -187,13 +202,60 @@ impl DetailState {
         self.history.push(previous);
     }
 
-    pub(crate) fn follow_link(&mut self, previous: DetailSnapshot) {
+    pub(crate) fn follow_link(
+        &mut self,
+        previous: DetailSnapshot,
+        linked_task_id: &crate::ids::TaskId,
+        source_task_ids: Vec<crate::ids::TaskId>,
+    ) {
+        if self.sibling_context.is_none()
+            && let Some(selected) = source_task_ids
+                .iter()
+                .position(|task_id| task_id == &previous.task_id)
+        {
+            self.sibling_context = Some(DetailSiblingContext {
+                view_state: previous.view_state.clone(),
+                task_ids: source_task_ids,
+                selected,
+            });
+        }
+        self.select_sibling_task(linked_task_id);
         self.history.push(previous);
         self.scroll = 0;
         self.focused_target = None;
         self.hovered_target = None;
         self.expanded_sections.clear();
         self.text_dragging = false;
+    }
+
+    pub(crate) fn has_sibling_context(&self) -> bool {
+        self.sibling_context.is_some()
+    }
+
+    pub(crate) fn sibling_target(&self, delta: isize) -> Option<DetailSiblingTarget> {
+        let context = self.sibling_context.as_ref()?;
+        if context.task_ids.len() < 2 {
+            return None;
+        }
+        let next = (context.selected as isize + delta).rem_euclid(context.task_ids.len() as isize)
+            as usize;
+        Some(DetailSiblingTarget {
+            task_id: context.task_ids[next].clone(),
+            view_state: context.view_state.clone(),
+        })
+    }
+
+    pub(crate) fn select_sibling_task(&mut self, task_id: &crate::ids::TaskId) {
+        let Some(context) = self.sibling_context.as_mut() else {
+            return;
+        };
+        if let Some(selected) = context
+            .task_ids
+            .iter()
+            .position(|candidate| candidate == task_id)
+        {
+            context.selected = selected;
+        }
     }
 
     pub(crate) fn pop_history(&mut self) -> Option<DetailSnapshot> {
@@ -387,8 +449,13 @@ mod tests {
             view_state: TaskViewState::default(),
         };
         let mut session = DetailState::new(2);
+        let linked_task_id = parsed_task_id("ABCD000000000001");
 
-        session.follow_link(entry.clone());
+        session.follow_link(
+            entry.clone(),
+            &linked_task_id,
+            vec![entry.task_id.clone(), linked_task_id.clone()],
+        );
         assert!(session.has_parent());
         assert_eq!(session.scroll(), 0);
 

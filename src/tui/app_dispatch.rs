@@ -1370,7 +1370,7 @@ impl App {
             }
 
             if let Some(delta) = detail_task_delta(key) {
-                self.select_detail_task(delta);
+                self.select_detail_task(delta).await?;
                 self.show_detail(0);
                 return Ok(());
             }
