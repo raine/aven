@@ -442,7 +442,12 @@ fn render_add_task_surface_overlay(frame: &mut Frame, _view: &ViewState, overlay
         {
             render_add_task_multiline_full_frame(frame, state)
         }
-        _ => render_overlay_content(frame, overlay, false),
+        _ => {
+            if overlay_dims_underlay(overlay, false) {
+                dialog::dim_rendered_background(frame);
+            }
+            render_overlay_content(frame, overlay, false);
+        }
     }
 }
 
@@ -715,6 +720,34 @@ fn order_menu_items() -> [(TaskOrder, &'static str, &'static str); 6] {
     ]
 }
 
+fn overlay_dims_underlay(overlay: &OverlayView, inline_title_editor: bool) -> bool {
+    match overlay {
+        OverlayView::Onboarding { .. }
+        | OverlayView::Help { .. }
+        | OverlayView::DetailHelp { .. }
+        | OverlayView::Search { .. }
+        | OverlayView::Command { .. }
+        | OverlayView::AddTask(_)
+        | OverlayView::MultilineInput(_)
+        | OverlayView::Picker(_)
+        | OverlayView::TagCombobox(_)
+        | OverlayView::Confirm(_)
+        | OverlayView::TextPanel(_)
+        | OverlayView::Changelog { .. }
+        | OverlayView::RecurrenceHistory(_)
+        | OverlayView::SyncStatus(_)
+        | OverlayView::DatabaseStats { .. }
+        | OverlayView::Update(_) => true,
+        OverlayView::TextInput(state) => {
+            !(inline_title_editor && state.kind == TextInputKind::EditTitle)
+        }
+        OverlayView::Detail { .. }
+        | OverlayView::AttachmentPreview { .. }
+        | OverlayView::HeaderMenu(_)
+        | OverlayView::OrderMenu(_) => false,
+    }
+}
+
 fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title_editor: bool) {
     match overlay {
         OverlayView::Onboarding { .. } => render_onboarding(frame),
@@ -800,10 +833,6 @@ fn render_overlay(
     pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
     removed_epic_child: Option<&crate::tui::app::RemovedEpicChild>,
 ) {
-    if let OverlayView::DetailHelp { scroll } = overlay {
-        render_detail_help(frame, *scroll, focused_detail_target);
-        return;
-    }
     if let OverlayView::AttachmentPreview { attachment_id, .. } = overlay {
         if let Some(item) = store.selected_task(list.selected_task()) {
             render_attachment_preview(frame, item, attachment_id, widgets, inline_images);
@@ -829,6 +858,13 @@ fn render_overlay(
             pending_attachments,
             removed_epic_child,
         );
+        return;
+    }
+    if overlay_dims_underlay(overlay, inline_title_editor) {
+        dialog::dim_rendered_background(frame);
+    }
+    if let OverlayView::DetailHelp { scroll } = overlay {
+        render_detail_help(frame, *scroll, focused_detail_target);
         return;
     }
     render_overlay_content(frame, overlay, inline_title_editor);

@@ -921,6 +921,40 @@ mod add_task_overlay {
     }
 
     #[test]
+    fn nested_controls_preserve_composer_height() {
+        let compact_height = dialog_height(add_task_view());
+        let picker = PickerState::new(
+            PickerIntent::AddTaskPriority,
+            "Add task: priority",
+            Vec::new(),
+            false,
+        );
+        let OverlayState::TagCombobox(labels) = OverlayState::tag_combobox(
+            TagComboboxIntent::AddTaskLabels,
+            "Add task: labels",
+            Vec::new(),
+            Vec::new(),
+        ) else {
+            panic!("expected labels control");
+        };
+
+        for mode in [
+            AddTaskMode::Picker {
+                field: AddTaskStep::Priority,
+                state: picker,
+            },
+            AddTaskMode::Labels(labels),
+            AddTaskMode::ConfirmDiscard,
+        ] {
+            let child_height = dialog_height(AddTaskView {
+                mode: Box::new(mode),
+                ..add_task_view()
+            });
+            assert_eq!(child_height, compact_height);
+        }
+    }
+
+    #[test]
     fn nested_schedule_editor_dims_only_its_underlay() {
         let buffer = overlay_buffer(add_task_overlay(AddTaskView {
             mode: Box::new(AddTaskMode::Schedule(schedule_editor(
