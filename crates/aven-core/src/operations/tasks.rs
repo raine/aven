@@ -10,7 +10,9 @@ use crate::change_log::{ChangeEntity, ChangePayload, append_change, op_type};
 use crate::choices::{TaskPriority, TaskSource, TaskStatus};
 use crate::db::{Database, begin_immediate, set_field_version};
 use crate::ids::{TaskId, new_id, now};
-use crate::labels::{resolve_labels_in_workspace, resolve_or_create_labels_in_workspace};
+use crate::labels::{
+    CreatedLabel, resolve_labels_in_workspace, resolve_or_create_labels_in_workspace,
+};
 use crate::mutation::{set_task_field, set_task_project};
 use crate::projects::resolve_or_create_project_in_workspace;
 use crate::refs::{DisplayRefContext, get_task_in_workspace};
@@ -87,6 +89,7 @@ struct InsertedTask {
     change_id: String,
     project_key: String,
     label_count: usize,
+    created_labels: Vec<CreatedLabel>,
 }
 
 #[derive(Debug, Clone)]
@@ -421,6 +424,7 @@ impl Database {
         let mut tx = begin_immediate(&mut conn).await?;
         let mut outcomes = Vec::with_capacity(updates.len());
         let mut undo_commands = Vec::new();
+        let mut created_labels = Vec::new();
         for (task_id, update) in &updates {
             let before =
                 if detail == TaskMutationDetail::Report || task_update_requires_snapshot(update) {
@@ -432,7 +436,9 @@ impl Database {
                 Some(before) => materialize_task_update(update, before)?,
                 None => update.clone(),
             };
-            let changed = apply_task_update(&mut tx, workspace, task_id, &update).await?;
+            let (changed, task_created_labels) =
+                apply_task_update(&mut tx, workspace, task_id, &update).await?;
+            created_labels.extend(task_created_labels);
             let task = get_task_in_workspace(&mut tx, workspace, task_id).await?;
             let after = if detail == TaskMutationDetail::Report {
                 Some(task_snapshot(&mut tx, &workspace.id, task_id).await?)
@@ -450,6 +456,7 @@ impl Database {
             });
         }
         let changed_count = outcomes.iter().filter(|outcome| outcome.changed).count();
+        append_created_label_undo_commands(&mut undo_commands, &created_labels);
         if let Some(summary) = undo.task_mutation_summary(changed_count) {
             record_tui_undo(
                 &mut tx,
@@ -592,7 +599,7 @@ async fn create_task_with_epic(
         &mut tx,
         workspace,
         &task,
-        Some(inserted.change_id.clone()),
+        &inserted,
         Vec::new(),
         Vec::new(),
         undo,
@@ -767,7 +774,7 @@ async fn create_task_with_attachments_and_epic(
             &mut tx,
             workspace,
             &task,
-            Some(inserted.change_id.clone()),
+            &inserted,
             attachment_ids,
             attachment_change_ids.clone(),
             undo,
@@ -813,23 +820,24 @@ async fn record_task_creation_undo(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     task: &Task,
-    create_change_id: Option<String>,
+    inserted: &InsertedTask,
     attachment_ids: Vec<String>,
     attachment_change_ids: Vec<String>,
     undo: TaskCreationUndo,
 ) -> Result<()> {
-    let (summary, command) = match undo {
+    let (summary, commands) = match undo {
         TaskCreationUndo::None => return Ok(()),
-        TaskCreationUndo::TuiTask => (
-            format!("task {}", task.id),
-            UndoCommand::DeleteCreatedTask {
+        TaskCreationUndo::TuiTask => {
+            let mut commands = vec![UndoCommand::DeleteCreatedTask {
                 task_id: task.id.clone(),
-                create_change_id,
+                create_change_id: Some(inserted.change_id.clone()),
                 expected: task_snapshot(conn, &workspace.id, &task.id).await?,
                 attachment_ids,
                 attachment_change_ids,
-            },
-        ),
+            }];
+            append_created_label_undo_commands(&mut commands, &inserted.created_labels);
+            (format!("task {}", task.id), commands)
+        }
         TaskCreationUndo::TuiEpicChild {
             epic_id,
             epic_display_ref,
@@ -838,22 +846,28 @@ async fn record_task_creation_undo(
             let child_ref = display_refs.display_ref(task);
             (
                 format!("add {child_ref} to {epic_display_ref}"),
-                UndoCommand::AddEpicChild {
+                vec![UndoCommand::AddEpicChild {
                     epic_id,
                     child_id: task.id.clone(),
-                },
+                }],
             )
         }
     };
-    record_tui_undo(
-        conn,
-        &workspace.id,
-        &summary,
-        UndoPayload {
-            commands: vec![command],
-        },
-    )
-    .await
+    record_tui_undo(conn, &workspace.id, &summary, UndoPayload { commands }).await
+}
+
+fn append_created_label_undo_commands(
+    commands: &mut Vec<UndoCommand>,
+    created_labels: &[CreatedLabel],
+) {
+    commands.extend(
+        created_labels
+            .iter()
+            .map(|label| UndoCommand::DeleteCreatedLabel {
+                label: label.name.clone(),
+                create_change_id: label.change_id.clone(),
+            }),
+    );
 }
 
 fn validate_task_draft(draft: &TaskDraft) -> Result<()> {
@@ -885,10 +899,15 @@ async fn insert_task(
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("error project-required"))?;
     let project = resolve_or_create_project_in_workspace(conn, &workspace.id, project).await?;
-    let labels = if create_missing_labels {
-        resolve_or_create_labels_in_workspace(conn, workspace, &draft.labels).await?
+    let (labels, created_labels) = if create_missing_labels {
+        let resolution =
+            resolve_or_create_labels_in_workspace(conn, workspace, &draft.labels).await?;
+        (resolution.names, resolution.created)
     } else {
-        resolve_labels_in_workspace(conn, &workspace.id, &draft.labels).await?
+        (
+            resolve_labels_in_workspace(conn, &workspace.id, &draft.labels).await?,
+            Vec::new(),
+        )
     };
     sqlx::query(
         "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, source, created_at, updated_at, queue_activity_at, available_at, due_on, is_epic)
@@ -951,6 +970,7 @@ async fn insert_task(
         change_id,
         project_key: project.key,
         label_count: labels.len(),
+        created_labels,
     })
 }
 
@@ -989,7 +1009,7 @@ pub async fn update_task(
 ) -> Result<TaskUpdateOutcome> {
     validate_task_update(&update)?;
     let mut tx = begin_immediate(conn).await?;
-    let changed = apply_task_update(&mut tx, workspace, task_id, &update).await?;
+    let (changed, _) = apply_task_update(&mut tx, workspace, task_id, &update).await?;
     tx.commit().await?;
     Ok(TaskUpdateOutcome {
         task: get_task_in_workspace(conn, workspace, task_id).await?,
@@ -1137,10 +1157,14 @@ async fn apply_task_update(
     workspace: &Workspace,
     task_id: &crate::ids::TaskId,
     update: &TaskUpdate,
-) -> Result<bool> {
-    if update.create_missing_labels {
-        resolve_or_create_labels_in_workspace(conn, workspace, &update.add_labels).await?;
-    }
+) -> Result<(bool, Vec<CreatedLabel>)> {
+    let created_labels = if update.create_missing_labels {
+        resolve_or_create_labels_in_workspace(conn, workspace, &update.add_labels)
+            .await?
+            .created
+    } else {
+        Vec::new()
+    };
     let mut changed = false;
     if let Some(title) = update.title.as_deref() {
         changed |= update_task_field(conn, workspace, task_id, "title", title).await?;
@@ -1217,7 +1241,7 @@ async fn apply_task_update(
         &update.remove_labels,
     )
     .await?;
-    Ok(changed)
+    Ok((changed, created_labels))
 }
 
 pub async fn update_task_field(
