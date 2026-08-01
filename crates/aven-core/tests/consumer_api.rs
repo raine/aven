@@ -420,6 +420,24 @@ async fn consumer_api_owns_recurrence_lifecycle_reports_and_mutation_routing() {
     assert_eq!(created.task.status, TaskStatus::Todo);
     assert_eq!(created.occurrence.task_id.as_ref(), Some(&created.task.id));
     assert!(created.series_ref.starts_with("RCR-"));
+
+    let terminal_status = store
+        .update_recurrence_template(
+            &workspace.id,
+            &created.series.id,
+            UpdateRecurrenceTemplate {
+                initial_status: Some(TaskStatus::Done),
+                ..UpdateRecurrenceTemplate::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(terminal_status.code, ErrorCode::Validation);
+    assert_eq!(
+        terminal_status.message,
+        "error recurrence-initial-status-terminal status=done"
+    );
+
     assert_eq!(
         store
             .resolve_recurrence_ref(&workspace.id, created.task.id.as_str())

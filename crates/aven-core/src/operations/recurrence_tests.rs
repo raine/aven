@@ -1,3 +1,8 @@
+use std::future::Future;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::task::{Context as TaskContext, Poll, Wake, Waker};
+
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use sqlx::SqliteConnection;
 
@@ -380,6 +385,77 @@ async fn recurrence_params_combine_clock_and_label_creation_policy() {
             .unwrap(),
         vec!["created-with-update"]
     );
+}
+
+#[tokio::test]
+async fn database_creation_samples_implicit_time_before_waiting_for_writer() {
+    struct NoopWake;
+
+    impl Wake for NoopWake {
+        fn wake(self: Arc<Self>) {}
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let database = Database::open(&temp.path().join("boundary.sqlite"))
+        .await
+        .unwrap();
+    let workspace = database.resolve_workspace("default").await.unwrap();
+    {
+        let mut writer = database.acquire_writer().await.unwrap();
+        for label in ["habit", "writing"] {
+            sqlx::query("INSERT INTO labels(workspace_id, name, created_at) VALUES (?, ?, 't')")
+                .bind(&workspace.id)
+                .bind(label)
+                .execute(&mut *writer)
+                .await
+                .unwrap();
+        }
+    }
+
+    let held_writer = database.acquire_writer().await.unwrap();
+    let after_boundary = Arc::new(AtomicBool::new(false));
+    let clock_calls = Arc::new(AtomicUsize::new(0));
+    let mut creation = Box::pin(database.create_recurrence_series_with_clock(
+        &workspace,
+        CreateRecurrenceSeriesParams::new(draft(20)),
+        {
+            let after_boundary = Arc::clone(&after_boundary);
+            let clock_calls = Arc::clone(&clock_calls);
+            move || {
+                clock_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(if after_boundary.load(Ordering::SeqCst) {
+                    at(21, 0)
+                } else {
+                    at(20, 23)
+                })
+            }
+        },
+    ));
+    let waker = Waker::from(Arc::new(NoopWake));
+    let mut context = TaskContext::from_waker(&waker);
+
+    assert!(matches!(
+        creation.as_mut().poll(&mut context),
+        Poll::Pending
+    ));
+    assert_eq!(clock_calls.load(Ordering::SeqCst), 1);
+    after_boundary.store(true, Ordering::SeqCst);
+    drop(held_writer);
+
+    let created = creation.await.unwrap();
+    assert_eq!(created.series.created_at, "2026-07-20T23:00:00Z");
+    assert_eq!(created.occurrence.slot_on.to_string(), "2026-07-20");
+
+    let explicit = database
+        .create_recurrence_series_with_clock(
+            &workspace,
+            CreateRecurrenceSeriesParams::new(draft(20)).at(at(22, 12)),
+            || panic!("explicit creation time must bypass the default clock"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(explicit.series.created_at, "2026-07-22T12:00:00Z");
+    assert_eq!(explicit.occurrence.slot_on.to_string(), "2026-07-22");
 }
 
 #[tokio::test]

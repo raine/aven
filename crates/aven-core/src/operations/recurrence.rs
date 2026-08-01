@@ -84,6 +84,13 @@ impl CreateRecurrenceSeriesParams {
         self.create_missing_labels = true;
         self
     }
+
+    fn resolve_at_with(mut self, clock: impl FnOnce() -> Result<DateTime<Utc>>) -> Result<Self> {
+        if self.at.is_none() {
+            self.at = Some(clock()?);
+        }
+        Ok(self)
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -160,6 +167,17 @@ impl Database {
         workspace: &Workspace,
         params: CreateRecurrenceSeriesParams,
     ) -> Result<RecurrenceCreateOutcome> {
+        self.create_recurrence_series_with_clock(workspace, params, utc_now)
+            .await
+    }
+
+    async fn create_recurrence_series_with_clock(
+        &self,
+        workspace: &Workspace,
+        params: CreateRecurrenceSeriesParams,
+        clock: impl FnOnce() -> Result<DateTime<Utc>>,
+    ) -> Result<RecurrenceCreateOutcome> {
+        let params = params.resolve_at_with(clock)?;
         let mut conn = self.acquire_writer().await?;
         create_recurrence_series(&mut conn, workspace, params).await
     }
@@ -451,8 +469,10 @@ pub async fn update_recurrence_template(
         let status = TaskStatus::parse(status)?;
         ensure!(
             status.is_open(),
-            "error recurrence-initial-status-terminal status={}",
-            status.as_str()
+            CoreError::validation(format!(
+                "error recurrence-initial-status-terminal status={}",
+                status.as_str()
+            ))
         );
     }
 

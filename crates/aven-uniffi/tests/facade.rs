@@ -205,6 +205,30 @@ fn recurrence_facade_exposes_lifecycle_history_reports_and_typed_ingress() {
         Some(created.task.id.clone())
     );
 
+    let (code, message) = error_parts(
+        client
+            .update_recurrence_template(
+                workspace.id.clone(),
+                created.series.id.clone(),
+                UpdateRecurrenceTemplate {
+                    title: None,
+                    description: None,
+                    project: None,
+                    priority: None,
+                    initial_status: Some(TaskStatus::Done),
+                    labels: None,
+                    available_local_time: OptionalLocalTimeUpdate::Unchanged,
+                    due_policy: None,
+                },
+            )
+            .unwrap_err(),
+    );
+    assert_eq!(code, ErrorCode::Validation);
+    assert_eq!(
+        message,
+        "error recurrence-initial-status-terminal status=done"
+    );
+
     let edited = client
         .update_recurrence_template(
             workspace.id.clone(),
