@@ -391,11 +391,15 @@ impl App {
     }
 
     pub(super) fn resolve_task_selection(&self) -> Option<TaskSelection> {
-        TaskSelection::resolve(
-            &self.store.tasks,
-            self.list.marked_task_ids(),
-            self.list.selected_task(),
-        )
+        if self.detail.is_active() {
+            TaskSelection::resolve_single(&self.store.tasks, self.list.selected_task())
+        } else {
+            TaskSelection::resolve(
+                &self.store.tasks,
+                self.list.marked_task_ids(),
+                self.list.selected_task(),
+            )
+        }
     }
 
     fn capture_edit_selection(&mut self) -> Option<TaskSelection> {

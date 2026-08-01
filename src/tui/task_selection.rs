@@ -56,6 +56,17 @@ impl TaskSelection {
         })
     }
 
+    pub(crate) fn resolve_single(tasks: &[TaskListItem], selected: Option<usize>) -> Option<Self> {
+        let index = selected.filter(|index| *index < tasks.len())?;
+        Some(Self {
+            targets: vec![tasks[index].clone()],
+            anchor: TaskSelectionAnchor {
+                task_id: tasks[index].task.id.clone(),
+                index,
+            },
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn from_ids(
         tasks: &[TaskListItem],
@@ -135,6 +146,21 @@ mod tests {
         );
         assert_eq!(selection.anchor_id(), &tasks[1].task.id);
         assert_eq!(selection.anchor_index(), 1);
+    }
+
+    #[test]
+    fn resolves_single_target_without_marks() {
+        let tasks = vec![
+            task_list_item_with_id("first", "task-1"),
+            task_list_item_with_id("second", "task-2"),
+        ];
+
+        let selection = TaskSelection::resolve_single(&tasks, Some(1)).unwrap();
+
+        assert_eq!(selection.single_id(), Some(&tasks[1].task.id));
+        assert_eq!(selection.anchor_id(), &tasks[1].task.id);
+        assert_eq!(selection.anchor_index(), 1);
+        assert_eq!(TaskSelection::resolve_single(&tasks, None), None);
     }
 
     #[test]
