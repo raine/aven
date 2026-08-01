@@ -35,7 +35,7 @@ impl AttachmentWorkerContext {
                 input,
             )
             .await?;
-        crate::daemon::wake_if_enabled(&self.app_config, self.database.path());
+        crate::daemon::wake_if_enabled(&self.app_config);
         Ok(outcome.created)
     }
 }

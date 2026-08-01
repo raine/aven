@@ -145,7 +145,7 @@ impl TuiStore {
     }
 
     pub(super) fn wake_after_mutation(&self) {
-        crate::daemon::wake_if_enabled(&self.app_config, self.database.path());
+        crate::daemon::wake_if_enabled(&self.app_config);
     }
 
     #[cfg(test)]

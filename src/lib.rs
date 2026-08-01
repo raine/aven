@@ -321,7 +321,7 @@ async fn dispatch_database(
         }
     };
     if result.is_ok() && should_wake {
-        daemon::wake_if_enabled(&config, database.path());
+        daemon::wake_if_enabled(&config);
     }
     result
 }

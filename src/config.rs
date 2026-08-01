@@ -254,6 +254,8 @@ impl Default for TaskIntakeConfig {
 pub struct SyncConfig {
     #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
+    pub disabled: bool,
     pub server_url: Option<String>,
     pub interval_seconds: Option<u64>,
     pub auth_token: Option<String>,
@@ -263,6 +265,7 @@ impl Default for SyncConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            disabled: false,
             server_url: None,
             interval_seconds: Some(DEFAULT_SYNC_INTERVAL_SECONDS),
             auth_token: None,
@@ -310,13 +313,15 @@ impl AppConfig {
     }
 
     pub fn load_from_path(path: &Path) -> Result<Self> {
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let text = fs::read_to_string(path)
-            .with_context(|| format!("could not read {}", path.display()))?;
-        let config: Self = serde_yaml::from_str(&text)
-            .with_context(|| format!("could not parse {}", path.display()))?;
+        let mut config = if !path.exists() {
+            Self::default()
+        } else {
+            let text = fs::read_to_string(path)
+                .with_context(|| format!("could not read {}", path.display()))?;
+            serde_yaml::from_str(&text)
+                .with_context(|| format!("could not parse {}", path.display()))?
+        };
+        config.sync.disabled |= sync_disabled_from_env();
         config
             .validate()
             .with_context(|| format!("invalid config {}", path.display()))?;
@@ -506,19 +511,23 @@ pub fn resolve_sync_server(flag: Option<&str>, config: &AppConfig) -> Result<Str
     bail!("error sync-server-required hint=\"pass --server or configure sync.server_url\"")
 }
 
-pub(crate) fn ensure_sync_allowed(db_path: &Path) -> Result<()> {
-    if sync_disabled_for_database(db_path) {
-        bail!(
-            "error sync-disabled-in-worktree hint=\"use the primary checkout to sync this database\""
-        );
+pub(crate) fn ensure_sync_allowed(config: &AppConfig) -> Result<()> {
+    ensure_sync_allowed_value(config.sync.disabled)
+}
+
+fn sync_disabled_from_env() -> bool {
+    sync_disabled_value(env::var("AVEN_SYNC_DISABLED").ok().as_deref())
+}
+
+fn ensure_sync_allowed_value(disabled: bool) -> Result<()> {
+    if disabled {
+        bail!("error sync-disabled hint=\"sync is disabled in this environment\"");
     }
     Ok(())
 }
 
-pub(crate) fn sync_disabled_for_database(db_path: &Path) -> bool {
-    db_path
-        .components()
-        .any(|component| component.as_os_str().to_str() == Some(".aven"))
+fn sync_disabled_value(value: Option<&str>) -> bool {
+    matches!(value, Some("1") | Some("true") | Some("yes"))
 }
 
 pub fn write_config(path: &Path, config: &AppConfig) -> Result<()> {
@@ -754,20 +763,32 @@ mod tests {
     }
 
     #[test]
-    fn worktree_database_blocks_sync() {
-        let path = PathBuf::from("/tmp/worktree/.aven/db.sqlite");
-
-        assert!(sync_disabled_for_database(&path));
-        let error = ensure_sync_allowed(&path).unwrap_err();
-        assert!(format!("{error:#}").contains("sync-disabled-in-worktree"));
+    fn sync_disabled_flag_recognizes_true_values() {
+        for value in [Some("1"), Some("true"), Some("yes")] {
+            assert!(sync_disabled_value(value));
+        }
     }
 
     #[test]
-    fn regular_database_allows_sync() {
-        let path = PathBuf::from("/tmp/aven/db.sqlite");
+    fn sync_disabled_flag_ignores_other_values() {
+        for value in [None, Some("0"), Some("false"), Some("")] {
+            assert!(!sync_disabled_value(value));
+        }
+    }
 
-        assert!(!sync_disabled_for_database(&path));
-        ensure_sync_allowed(&path).unwrap();
+    #[test]
+    fn disabled_sync_reports_actionable_error() {
+        let mut config = AppConfig::default();
+        config.sync.disabled = true;
+        let error = ensure_sync_allowed(&config).unwrap_err();
+
+        assert!(format!("{error:#}").contains("sync-disabled"));
+        assert!(format!("{error:#}").contains("sync is disabled"));
+    }
+
+    #[test]
+    fn enabled_sync_is_allowed() {
+        ensure_sync_allowed(&AppConfig::default()).unwrap();
     }
 
     #[test]
