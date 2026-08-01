@@ -9,6 +9,9 @@ description: Release notes for aven.
   are marked, preventing accidental batch edits or deletions.
 - Focused epic child commands do not mutate the parent epic, and detail back
   navigation remains scoped to detail history.
+- Multiline editors confirm before discarding changed note drafts, task
+  descriptions, or manual conflict resolutions, while clean editors close
+  immediately.
 
 ## v0.1.20 (2026-07-31)
 
