@@ -9145,6 +9145,60 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn epic_child_search_applies_result_limit_within_parent_project() {
+        let (_dir, _pool, mut app) = test_app_with_pool().await;
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+        let target_index = create_and_select_task(
+            &mut app,
+            test_task_draft("GitHub issue: Dangerous speed adjustment"),
+        )
+        .await;
+        let target_id = app.store.tasks[target_index].task.id.clone();
+        for index in 0..SEARCH_PREVIEW_LIMIT {
+            create_and_select_task(
+                &mut app,
+                TaskDraft {
+                    title: "GitHub".to_string(),
+                    project: Some(format!("other-{index}")),
+                    ..test_task_draft("")
+                },
+            )
+            .await;
+        }
+        let parent_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == parent_id)
+            .unwrap();
+        app.list.select_task(Some(parent_index));
+
+        for code in [KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')] {
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        }
+        type_chars(&mut app, "github").await;
+        settle_search_preview(&mut app).await;
+
+        let Some(OverlayState::Search(state)) = &app.overlay else {
+            panic!("expected add-child search");
+        };
+        assert!(
+            state
+                .results
+                .iter()
+                .any(|result| result.task_id == target_id)
+        );
+    }
+
+    #[tokio::test]
     async fn right_navigation_toggles_selected_epic() {
         let (_dir, pool, mut app) = test_app_with_pool().await;
         let parent_index = create_and_select_task(

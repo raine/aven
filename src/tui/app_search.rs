@@ -385,11 +385,11 @@ impl App {
         state.results_query = Some(query);
     }
 
-    fn start_search_preview(&mut self, query: String) {
+    fn start_search_preview(&mut self, query: String, project: Option<String>) {
         let workspace_id = self.store.active_workspace.id.clone();
         let handle = self
             .store
-            .spawn_search_preview(query.clone(), SEARCH_PREVIEW_LIMIT);
+            .spawn_search_preview(query.clone(), project, SEARCH_PREVIEW_LIMIT);
         self.search.start(query, workspace_id, handle);
     }
 
@@ -418,7 +418,11 @@ impl App {
         }
 
         self.clear_live_search_preview();
-        self.start_search_preview(query);
+        let project = match &state.intent {
+            SearchIntent::AddEpicChild { project_key, .. } => Some(project_key.clone()),
+            SearchIntent::Navigate | SearchIntent::AddDependency { .. } => None,
+        };
+        self.start_search_preview(query, project);
     }
 
     pub(super) async fn poll_search_preview(&mut self) -> Result<bool> {
