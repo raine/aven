@@ -262,6 +262,7 @@ pub(crate) enum PickerKind {
     ProjectPathProject,
     DeleteProject,
     EditPriority,
+    LabelAdministration,
     Generic,
 }
 
@@ -277,6 +278,9 @@ impl From<&PickerIntent> for PickerKind {
             }
             PickerIntent::DeleteProject => Self::DeleteProject,
             PickerIntent::EditPriority { .. } => Self::EditPriority,
+            PickerIntent::BrowseLabels | PickerIntent::RenameLabel | PickerIntent::DeleteLabel => {
+                Self::LabelAdministration
+            }
             _ => Self::Generic,
         }
     }
