@@ -10,7 +10,7 @@ use crate::change_log::{ChangeEntity, ChangePayload, append_change, op_type};
 use crate::choices::{TaskPriority, TaskSource, TaskStatus};
 use crate::db::{Database, begin_immediate, set_field_version};
 use crate::ids::{TaskId, new_id, now};
-use crate::labels::resolve_labels_in_workspace;
+use crate::labels::{resolve_labels_in_workspace, resolve_or_create_labels_in_workspace};
 use crate::mutation::{set_task_field, set_task_project};
 use crate::projects::resolve_or_create_project_in_workspace;
 use crate::refs::{DisplayRefContext, get_task_in_workspace};
@@ -49,6 +49,7 @@ pub enum TaskCreationUndo {
 pub struct TaskCreationOptions {
     epic_id: Option<TaskId>,
     undo: TaskCreationUndo,
+    create_missing_labels: bool,
 }
 
 impl TaskCreationOptions {
@@ -56,6 +57,7 @@ impl TaskCreationOptions {
         Self {
             epic_id: None,
             undo,
+            create_missing_labels: false,
         }
     }
 
@@ -63,7 +65,13 @@ impl TaskCreationOptions {
         Self {
             epic_id: Some(epic_id),
             undo,
+            create_missing_labels: false,
         }
+    }
+
+    pub fn with_create_missing_labels(mut self) -> Self {
+        self.create_missing_labels = true;
+        self
     }
 }
 
@@ -102,6 +110,7 @@ pub struct TaskUpdate {
     pub add_labels: Vec<String>,
     pub remove_labels: Vec<String>,
     pub label_selection: Option<TaskLabelSelection>,
+    pub create_missing_labels: bool,
 }
 
 pub struct TaskUpdateOutcome {
@@ -183,8 +192,18 @@ impl Database {
         draft: TaskDraft,
         undo: TaskCreationUndo,
     ) -> Result<TaskOutcome> {
+        self.create_task_with_options(workspace, draft, TaskCreationOptions::standalone(undo))
+            .await
+    }
+
+    pub async fn create_task_with_options(
+        &self,
+        workspace: &Workspace,
+        draft: TaskDraft,
+        options: TaskCreationOptions,
+    ) -> Result<TaskOutcome> {
         let mut conn = self.acquire().await?;
-        create_task_with_epic(&mut conn, workspace, draft, None, undo).await
+        create_task_with_epic(&mut conn, workspace, draft, options).await
     }
 
     pub async fn create_task_for_epic(
@@ -205,7 +224,13 @@ impl Database {
         undo: TaskCreationUndo,
     ) -> Result<TaskOutcome> {
         let mut conn = self.acquire().await?;
-        create_task_with_epic(&mut conn, workspace, draft, Some(epic_id), undo).await
+        create_task_with_epic(
+            &mut conn,
+            workspace,
+            draft,
+            TaskCreationOptions::for_epic(epic_id.clone(), undo),
+        )
+        .await
     }
 
     pub async fn create_task_with_attachments(
@@ -236,6 +261,26 @@ impl Database {
         attachments: Vec<super::attachments::TaskAttachmentAddInput>,
         undo: TaskCreationUndo,
     ) -> Result<TaskOutcome> {
+        self.create_task_with_attachments_and_options(
+            workspace,
+            blob_dir,
+            lifecycle_policy,
+            draft,
+            attachments,
+            TaskCreationOptions::standalone(undo),
+        )
+        .await
+    }
+
+    pub async fn create_task_with_attachments_and_options(
+        &self,
+        workspace: &Workspace,
+        blob_dir: &Path,
+        lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
+        draft: TaskDraft,
+        attachments: Vec<super::attachments::TaskAttachmentAddInput>,
+        options: TaskCreationOptions,
+    ) -> Result<TaskOutcome> {
         let mut conn = self.acquire().await?;
         create_task_with_attachments_and_epic(
             &mut conn,
@@ -244,7 +289,7 @@ impl Database {
             lifecycle_policy,
             draft,
             attachments,
-            TaskCreationOptions::standalone(undo),
+            options,
         )
         .await
     }
@@ -516,21 +561,31 @@ pub async fn create_task(
     workspace: &Workspace,
     draft: TaskDraft,
 ) -> Result<TaskOutcome> {
-    create_task_with_epic(conn, workspace, draft, None, TaskCreationUndo::None).await
+    create_task_with_epic(
+        conn,
+        workspace,
+        draft,
+        TaskCreationOptions::standalone(TaskCreationUndo::None),
+    )
+    .await
 }
 
 async fn create_task_with_epic(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     draft: TaskDraft,
-    epic_id: Option<&TaskId>,
-    undo: TaskCreationUndo,
+    options: TaskCreationOptions,
 ) -> Result<TaskOutcome> {
     validate_task_draft(&draft)?;
+    let TaskCreationOptions {
+        epic_id,
+        undo,
+        create_missing_labels,
+    } = options;
     let mut tx = begin_immediate(conn).await?;
-    let inserted = insert_task(&mut tx, workspace, draft).await?;
+    let inserted = insert_task(&mut tx, workspace, draft, create_missing_labels).await?;
     if let Some(epic_id) = epic_id {
-        super::add_task_to_epic_in_transaction(&mut tx, workspace, &inserted.id, epic_id).await?;
+        super::add_task_to_epic_in_transaction(&mut tx, workspace, &inserted.id, &epic_id).await?;
     }
     let task = get_task_in_workspace(&mut tx, workspace, &inserted.id).await?;
     record_task_creation_undo(
@@ -567,7 +622,11 @@ async fn create_task_with_attachments_and_epic(
     options: TaskCreationOptions,
 ) -> Result<TaskOutcome> {
     validate_task_draft(&draft)?;
-    let TaskCreationOptions { epic_id, undo } = options;
+    let TaskCreationOptions {
+        epic_id,
+        undo,
+        create_missing_labels,
+    } = options;
     let mut prepared = Vec::with_capacity(attachments.len());
     for attachment in attachments {
         prepared.push(super::attachments::prepare_task_attachment(attachment).await?);
@@ -677,7 +736,7 @@ async fn create_task_with_attachments_and_epic(
             )
             .await?;
         }
-        let inserted = insert_task(&mut tx, workspace, draft).await?;
+        let inserted = insert_task(&mut tx, workspace, draft, create_missing_labels).await?;
         if let Some(epic_id) = epic_id.as_ref() {
             super::add_task_to_epic_in_transaction(&mut tx, workspace, &inserted.id, epic_id)
                 .await?;
@@ -813,6 +872,7 @@ async fn insert_task(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     draft: TaskDraft,
+    create_missing_labels: bool,
 ) -> Result<InsertedTask> {
     let status = TaskStatus::parse(&draft.status)?;
     let priority = TaskPriority::parse(&draft.priority)?;
@@ -825,7 +885,11 @@ async fn insert_task(
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("error project-required"))?;
     let project = resolve_or_create_project_in_workspace(conn, &workspace.id, project).await?;
-    let labels = resolve_labels_in_workspace(conn, &workspace.id, &draft.labels).await?;
+    let labels = if create_missing_labels {
+        resolve_or_create_labels_in_workspace(conn, workspace, &draft.labels).await?
+    } else {
+        resolve_labels_in_workspace(conn, &workspace.id, &draft.labels).await?
+    };
     sqlx::query(
         "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, source, created_at, updated_at, queue_activity_at, available_at, due_on, is_epic)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -1074,6 +1138,9 @@ async fn apply_task_update(
     task_id: &crate::ids::TaskId,
     update: &TaskUpdate,
 ) -> Result<bool> {
+    if update.create_missing_labels {
+        resolve_or_create_labels_in_workspace(conn, workspace, &update.add_labels).await?;
+    }
     let mut changed = false;
     if let Some(title) = update.title.as_deref() {
         changed |= update_task_field(conn, workspace, task_id, "title", title).await?;

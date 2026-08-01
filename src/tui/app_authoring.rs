@@ -1,7 +1,6 @@
 use anyhow::Result;
 
 use crate::config::resolve_blob_dir;
-use crate::labels::normalize_label;
 use crate::operations::TaskDraft;
 use crate::tui::app::{App, Notification};
 use crate::tui::app_intake::{IntakeCompletion, IntakePoll, NaturalRetry};
@@ -225,7 +224,7 @@ impl App {
                 let OverlayState::TagCombobox(labels) = OverlayState::tag_combobox(
                     TagComboboxIntent::AddTaskLabels,
                     ADD_TASK_LABELS_TITLE,
-                    self.store.labels.clone(),
+                    task_label_options(&self.store.labels, &state.labels),
                     state.labels.clone(),
                 ) else {
                     unreachable!();
@@ -246,43 +245,29 @@ impl App {
 
     pub(super) fn begin_add_note(&mut self) {
         self.pending_shortcut.clear();
-        let Some(item) = self.selected_command_task() else {
+        let Some(selection) = self.resolve_task_selection() else {
             self.set_info("no selected task for note");
             return;
         };
+        if !selection.is_single() {
+            self.set_info(format!(
+                "note requires one task · {} tasks marked",
+                selection.len()
+            ));
+            return;
+        }
+        let item = &selection.targets()[0];
         self.overlay = Some(OverlayState::blank_multiline_input(
             MultilineIntent::AddNote {
-                task_id: item.task.id,
-                display_ref: item.display_ref,
+                task_id: item.task.id.clone(),
+                display_ref: item.display_ref.clone(),
             },
             ADD_NOTE_TITLE,
             "note body:",
         ));
     }
 
-    pub(super) fn begin_add_task_title_labels(&mut self) {
-        let Some(context) = self.authoring.add_task_context() else {
-            return;
-        };
-        self.overlay = Some(OverlayState::tag_combobox(
-            TagComboboxIntent::AddTaskLabels,
-            ADD_TASK_LABELS_TITLE,
-            self.store.labels.clone(),
-            context.labels,
-        ));
-    }
-
     pub(super) async fn submit_add_task_title_labels(&mut self, labels: Vec<String>) -> Result<()> {
-        for label in &labels {
-            let label = normalize_label(label);
-            if !self.store.labels.contains(&label)
-                && let Err(error) = self.store.create_label(label).await
-            {
-                self.set_error(format!("{error:#}"));
-                self.begin_add_task_title_labels();
-                return Ok(());
-            }
-        }
         if self.authoring.apply_add_task_labels(labels) {
             self.begin_add_task_step();
         }
@@ -635,6 +620,14 @@ impl App {
             }
         }
     }
+}
+
+fn task_label_options(existing: &[String], selected: &[String]) -> Vec<String> {
+    let mut options = existing.to_vec();
+    options.extend(selected.iter().cloned());
+    options.sort();
+    options.dedup();
+    options
 }
 
 fn add_task_natural_intake(title: &str, description: &str) -> String {

@@ -1,5 +1,8 @@
 use anyhow::{Context, Result};
-use aven_core::operations::{RecurrenceSeriesDraft, RecurrenceTemplateUpdate};
+use aven_core::operations::{
+    RecurrenceCreationOptions, RecurrenceSeriesDraft, RecurrenceTemplateUpdate,
+    RecurrenceTemplateUpdateOptions,
+};
 use aven_core::query::{RecurrenceHistoryPage, RecurrenceSeriesDetail};
 use aven_core::recurrence::{RecurrenceOutcome, RecurrenceSchedule, RecurrenceSeriesId};
 use chrono::{DateTime, NaiveDate, Utc};
@@ -49,7 +52,11 @@ impl TuiStore {
             .flatten();
         let outcome = self
             .database
-            .create_recurrence_series(&self.active_workspace, draft)
+            .create_recurrence_series_with_options(
+                &self.active_workspace,
+                draft,
+                RecurrenceCreationOptions::default().with_create_missing_labels(),
+            )
             .await?;
         self.wake_after_mutation();
         if recurring_view {
@@ -126,7 +133,12 @@ impl TuiStore {
             .await?;
         let outcome = self
             .database
-            .update_recurrence_template(&self.active_workspace, series_id, update)
+            .update_recurrence_template_with_options(
+                &self.active_workspace,
+                series_id,
+                update,
+                RecurrenceTemplateUpdateOptions::default().with_create_missing_labels(),
+            )
             .await?;
         self.wake_after_mutation();
         let selected = self

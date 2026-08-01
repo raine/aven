@@ -165,17 +165,6 @@ impl App {
             return Ok(());
         }
 
-        for label in state.labels.clone() {
-            let label = crate::labels::normalize_label(&label);
-            if !self.store.labels.contains(&label)
-                && let Err(error) = self.store.create_label(label).await
-            {
-                state.mode = AddTaskMode::Compose;
-                self.overlay = Some(OverlayState::AddTask(Box::new(state)));
-                return Err(error);
-            }
-        }
-
         if let Some(series_id) = state.recurrence_series_id.clone() {
             let schedule = recurrence_schedule
                 .as_ref()

@@ -85,7 +85,12 @@ impl TuiStore {
         }
         let outcome = self
             .database
-            .create_task_with_undo(&self.active_workspace, draft, TaskCreationUndo::TuiTask)
+            .create_task_with_options(
+                &self.active_workspace,
+                draft,
+                TaskCreationOptions::standalone(TaskCreationUndo::TuiTask)
+                    .with_create_missing_labels(),
+            )
             .await?;
         self.wake_after_mutation();
         let created = self
@@ -105,14 +110,17 @@ impl TuiStore {
         draft.project = Some(epic.project_key.clone());
         let outcome = self
             .database
-            .create_task_for_epic_with_undo(
+            .create_task_with_options(
                 &self.active_workspace,
                 draft,
-                &epic.epic_id,
-                TaskCreationUndo::TuiEpicChild {
-                    epic_id: epic.epic_id.clone(),
-                    epic_display_ref: epic.display_ref.clone(),
-                },
+                TaskCreationOptions::for_epic(
+                    epic.epic_id.clone(),
+                    TaskCreationUndo::TuiEpicChild {
+                        epic_id: epic.epic_id.clone(),
+                        epic_display_ref: epic.display_ref.clone(),
+                    },
+                )
+                .with_create_missing_labels(),
             )
             .await?;
         self.wake_after_mutation();
@@ -160,13 +168,14 @@ impl TuiStore {
             .collect();
         let outcome = self
             .database
-            .create_task_with_attachments_and_undo(
+            .create_task_with_attachments_and_options(
                 &self.active_workspace,
                 blob_dir,
                 lifecycle_policy,
                 draft,
                 inputs,
-                TaskCreationUndo::TuiTask,
+                TaskCreationOptions::standalone(TaskCreationUndo::TuiTask)
+                    .with_create_missing_labels(),
             )
             .await?;
         self.wake_after_mutation();
@@ -213,7 +222,8 @@ impl TuiStore {
                         epic_id: epic.epic_id.clone(),
                         epic_display_ref: epic.display_ref.clone(),
                     },
-                ),
+                )
+                .with_create_missing_labels(),
             )
             .await?;
         self.wake_after_mutation();

@@ -13,7 +13,7 @@ use crate::db::{
     recurrence_series_from_row, set_entity_field_version, set_field_version,
 };
 use crate::ids::{TaskId, WorkspaceId, new_id, now};
-use crate::labels::resolve_labels_in_workspace;
+use crate::labels::{resolve_labels_in_workspace, resolve_or_create_labels_in_workspace};
 use crate::mutation::apply_field_value_in_workspace;
 use crate::projects::resolve_or_create_project_in_workspace;
 use crate::recurrence::{
@@ -46,6 +46,30 @@ const SERIES_TEMPLATE_FIELDS: &[&str] = &[
     "stopped_at",
     "deleted",
 ];
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RecurrenceCreationOptions {
+    create_missing_labels: bool,
+}
+
+impl RecurrenceCreationOptions {
+    pub fn with_create_missing_labels(mut self) -> Self {
+        self.create_missing_labels = true;
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RecurrenceTemplateUpdateOptions {
+    create_missing_labels: bool,
+}
+
+impl RecurrenceTemplateUpdateOptions {
+    pub fn with_create_missing_labels(mut self) -> Self {
+        self.create_missing_labels = true;
+        self
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct RecurrenceSeriesDraft {
@@ -116,6 +140,16 @@ impl Database {
             .await
     }
 
+    pub async fn create_recurrence_series_with_options(
+        &self,
+        workspace: &Workspace,
+        draft: RecurrenceSeriesDraft,
+        options: RecurrenceCreationOptions,
+    ) -> Result<RecurrenceCreateOutcome> {
+        self.create_recurrence_series_at_with_options(workspace, draft, utc_now()?, options)
+            .await
+    }
+
     pub async fn create_recurrence_series_at(
         &self,
         workspace: &Workspace,
@@ -126,6 +160,17 @@ impl Database {
         create_recurrence_series(&mut conn, workspace, draft, at).await
     }
 
+    pub async fn create_recurrence_series_at_with_options(
+        &self,
+        workspace: &Workspace,
+        draft: RecurrenceSeriesDraft,
+        at: DateTime<Utc>,
+        options: RecurrenceCreationOptions,
+    ) -> Result<RecurrenceCreateOutcome> {
+        let mut conn = self.acquire().await?;
+        create_recurrence_series_with_options(&mut conn, workspace, draft, at, options).await
+    }
+
     pub async fn update_recurrence_template(
         &self,
         workspace: &Workspace,
@@ -134,6 +179,18 @@ impl Database {
     ) -> Result<RecurrenceTemplateUpdateOutcome> {
         let mut conn = self.acquire().await?;
         update_recurrence_template(&mut conn, workspace, series_id, update).await
+    }
+
+    pub async fn update_recurrence_template_with_options(
+        &self,
+        workspace: &Workspace,
+        series_id: &RecurrenceSeriesId,
+        update: RecurrenceTemplateUpdate,
+        options: RecurrenceTemplateUpdateOptions,
+    ) -> Result<RecurrenceTemplateUpdateOutcome> {
+        let mut conn = self.acquire().await?;
+        update_recurrence_template_with_options(&mut conn, workspace, series_id, update, options)
+            .await
     }
 
     pub async fn reconcile_recurrence_series(
@@ -258,6 +315,23 @@ pub async fn create_recurrence_series(
     draft: RecurrenceSeriesDraft,
     at: DateTime<Utc>,
 ) -> Result<RecurrenceCreateOutcome> {
+    create_recurrence_series_with_options(
+        conn,
+        workspace,
+        draft,
+        at,
+        RecurrenceCreationOptions::default(),
+    )
+    .await
+}
+
+pub async fn create_recurrence_series_with_options(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    draft: RecurrenceSeriesDraft,
+    at: DateTime<Utc>,
+    options: RecurrenceCreationOptions,
+) -> Result<RecurrenceCreateOutcome> {
     let priority = TaskPriority::parse(&draft.priority)?;
     let initial_status = TaskStatus::parse(&draft.initial_status)?;
     ensure!(
@@ -280,7 +354,11 @@ pub async fn create_recurrence_series(
     let project =
         resolve_or_create_project_in_workspace(&mut tx, &workspace.id, draft.project.as_str())
             .await?;
-    let labels = resolve_labels_in_workspace(&mut tx, &workspace.id, &draft.labels).await?;
+    let labels = if options.create_missing_labels {
+        resolve_or_create_labels_in_workspace(&mut tx, workspace, &draft.labels).await?
+    } else {
+        resolve_labels_in_workspace(&mut tx, &workspace.id, &draft.labels).await?
+    };
     sqlx::query(
         "INSERT INTO recurrence_series(
             workspace_id, id, title, description, project_id, priority, initial_status,
@@ -389,6 +467,23 @@ pub async fn update_recurrence_template(
     series_id: &RecurrenceSeriesId,
     update: RecurrenceTemplateUpdate,
 ) -> Result<RecurrenceTemplateUpdateOutcome> {
+    update_recurrence_template_with_options(
+        conn,
+        workspace,
+        series_id,
+        update,
+        RecurrenceTemplateUpdateOptions::default(),
+    )
+    .await
+}
+
+pub async fn update_recurrence_template_with_options(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    series_id: &RecurrenceSeriesId,
+    update: RecurrenceTemplateUpdate,
+    options: RecurrenceTemplateUpdateOptions,
+) -> Result<RecurrenceTemplateUpdateOutcome> {
     if let Some(priority) = update.priority.as_deref() {
         TaskPriority::parse(priority)?;
     }
@@ -445,7 +540,11 @@ pub async fn update_recurrence_template(
 
     let current_labels = load_series_labels(&mut tx, &workspace.id, series_id).await?;
     let target_labels = if let Some(labels) = update.labels {
-        resolve_labels_in_workspace(&mut tx, &workspace.id, &labels).await?
+        if options.create_missing_labels {
+            resolve_or_create_labels_in_workspace(&mut tx, workspace, &labels).await?
+        } else {
+            resolve_labels_in_workspace(&mut tx, &workspace.id, &labels).await?
+        }
     } else {
         current_labels.clone()
     };
