@@ -42,6 +42,7 @@ pub struct DaemonRunArgs {
 }
 
 pub async fn run(args: DaemonRunArgs) -> Result<()> {
+    crate::config::ensure_sync_allowed(&args.db_path)?;
     if !args.config.sync.enabled {
         bail!("error sync-disabled hint=\"set sync.enabled = true in config.yaml\"");
     }
@@ -260,8 +261,8 @@ async fn sync_once(
     Ok(summary)
 }
 
-pub(crate) fn wake_if_enabled(config: &AppConfig) {
-    if !config.sync.enabled {
+pub(crate) fn wake_if_enabled(config: &AppConfig, db_path: &Path) {
+    if !config.sync.enabled || crate::config::sync_disabled_for_database(db_path) {
         return;
     }
     let Ok(addr) = config.wake_addr() else {
@@ -298,7 +299,7 @@ mod tests {
         config.sync.enabled = true;
         config.daemon.wake_addr = Some(socket.local_addr().unwrap().to_string());
 
-        wake_if_enabled(&config);
+        wake_if_enabled(&config, Path::new("/tmp/aven/db.sqlite"));
 
         let mut buf = [0_u8; 1];
         assert_eq!(socket.recv(&mut buf).unwrap(), 1);
@@ -314,7 +315,27 @@ mod tests {
         let mut config = AppConfig::default();
         config.daemon.wake_addr = Some(socket.local_addr().unwrap().to_string());
 
-        wake_if_enabled(&config);
+        wake_if_enabled(&config, Path::new("/tmp/aven/db.sqlite"));
+
+        let mut buf = [0_u8; 1];
+        let error = socket.recv(&mut buf).unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ));
+    }
+
+    #[test]
+    fn wake_if_enabled_skips_worktree_database() {
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_millis(25)))
+            .unwrap();
+        let mut config = AppConfig::default();
+        config.sync.enabled = true;
+        config.daemon.wake_addr = Some(socket.local_addr().unwrap().to_string());
+
+        wake_if_enabled(&config, Path::new("/tmp/worktree/.aven/db.sqlite"));
 
         let mut buf = [0_u8; 1];
         let error = socket.recv(&mut buf).unwrap_err();
@@ -330,7 +351,19 @@ mod tests {
         config.sync.enabled = true;
         config.daemon.wake_addr = Some("not-an-address".to_string());
 
-        wake_if_enabled(&config);
+        wake_if_enabled(&config, Path::new("/tmp/aven/db.sqlite"));
+    }
+
+    #[tokio::test]
+    async fn daemon_run_rejects_worktree_database() {
+        let error = run(DaemonRunArgs {
+            db_path: PathBuf::from("/tmp/worktree/.aven/db.sqlite"),
+            config: AppConfig::default(),
+        })
+        .await
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("sync-disabled-in-worktree"));
     }
 
     #[test]

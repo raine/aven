@@ -48,6 +48,7 @@ pub(crate) async fn run_sync_to_completion(
     database: &Database,
     config: &config::AppConfig,
 ) -> Result<SyncRunSummary> {
+    config::ensure_sync_allowed(database.path())?;
     let server = config::resolve_sync_server(None, config)?;
     let blob_dir = config::resolve_blob_dir(database.path(), config)?;
     let client = SyncHttpClient::new()?;
@@ -90,6 +91,7 @@ pub(crate) async fn sync_client(
     args: SyncArgs,
     config: &config::AppConfig,
 ) -> Result<()> {
+    config::ensure_sync_allowed(database.path())?;
     let server = config::resolve_sync_server(args.server.as_deref(), config)?;
     let blob_dir = config::resolve_blob_dir(database.path(), config)?;
     let client = SyncHttpClient::new()?;
@@ -140,6 +142,7 @@ pub(crate) async fn run_sync_with_page_budget_using_client_and_policy(
     client: &SyncHttpClient,
     lifecycle_policy: LifecyclePolicy,
 ) -> Result<SyncSummary> {
+    config::ensure_sync_allowed(database.path())?;
     let mut session = SyncSession::start_with_attachment_storage(
         database.clone(),
         server.to_string(),
@@ -277,4 +280,28 @@ async fn drive_sync_session(
         "sync client finished"
     );
     Ok(summary)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn sync_client_rejects_worktree_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join(".aven/db.sqlite");
+        std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+        let _pool = crate::test_support::open_db(&db_path).await.unwrap();
+        let database = Database::open(&db_path).await.unwrap();
+
+        let error = sync_client(
+            &database,
+            SyncArgs { server: None },
+            &crate::config::AppConfig::default(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("sync-disabled-in-worktree"));
+    }
 }
