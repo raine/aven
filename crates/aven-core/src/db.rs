@@ -105,7 +105,7 @@ impl Database {
 pub(crate) async fn open_db(path: &Path) -> Result<SqlitePool> {
     let connection_input = path.to_string_lossy();
     let mut options = SqliteConnectOptions::from_str(&connection_input)?;
-    let storage = database_storage(&connection_input);
+    let storage = database_storage(&connection_input, &options);
     let existed_before_open = storage == DatabaseStorage::File && path.exists();
     if storage == DatabaseStorage::File
         && let Some(parent) = path.parent()
@@ -146,7 +146,7 @@ enum DatabaseStorage {
     File,
 }
 
-fn database_storage(connection_input: &str) -> DatabaseStorage {
+fn database_storage(connection_input: &str, options: &SqliteConnectOptions) -> DatabaseStorage {
     let connection_input = connection_input
         .trim_start_matches("sqlite://")
         .trim_start_matches("sqlite:");
@@ -156,8 +156,14 @@ fn database_storage(connection_input: &str) -> DatabaseStorage {
         url::form_urlencoded::parse(params.as_bytes())
             .any(|(key, value)| key == "mode" && value == "memory")
     });
+    let filename = options.get_filename();
 
-    if database == ":memory:" || database == "file::memory:" || uses_memory_mode {
+    if database == ":memory:"
+        || database == "file::memory:"
+        || filename == Path::new(":memory:")
+        || filename == Path::new("file::memory:")
+        || uses_memory_mode
+    {
         DatabaseStorage::InMemory
     } else {
         DatabaseStorage::File
@@ -876,6 +882,12 @@ mod tests {
         "file::memory:",
         "sqlite:file::memory:",
         "sqlite://file::memory:",
+        "%3Amemory%3A",
+        "sqlite:%3Amemory%3A",
+        "sqlite://%3Amemory%3A",
+        "file:%3Amemory%3A",
+        "sqlite:file:%3Amemory%3A",
+        "sqlite://file:%3Amemory%3A",
         "file::memory:?cache=private",
         "sqlite://?mode=memory&cache=private",
         "named?mode=memory&cache=private",
@@ -930,8 +942,9 @@ mod tests {
     #[test]
     fn database_storage_follows_sqlx_connection_input_semantics() {
         for &input in PRIVATE_IN_MEMORY_INPUTS {
+            let options = SqliteConnectOptions::from_str(input).unwrap();
             assert_eq!(
-                database_storage(input),
+                database_storage(input, &options),
                 DatabaseStorage::InMemory,
                 "{input}"
             );
@@ -943,7 +956,12 @@ mod tests {
             "sqlite::memory:.sqlite",
             "/tmp/directory-mode=memory/database.sqlite",
         ] {
-            assert_eq!(database_storage(input), DatabaseStorage::File, "{input}");
+            let options = SqliteConnectOptions::from_str(input).unwrap();
+            assert_eq!(
+                database_storage(input, &options),
+                DatabaseStorage::File,
+                "{input}"
+            );
         }
     }
 
