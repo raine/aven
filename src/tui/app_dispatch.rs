@@ -1217,17 +1217,6 @@ impl App {
                 self.show_detail(scroll);
                 return Ok(());
             }
-            if !self.pending_shortcut.is_empty()
-                && self.handle_focused_child_shortcut(key, scroll).await?
-            {
-                return Ok(());
-            }
-            if (!self.pending_shortcut.is_empty() || key.code == KeyCode::Char('g'))
-                && let Some(outcome) = self.handle_detail_shortcut(key, scroll).await?
-            {
-                self.overlay = outcome;
-                return Ok(());
-            }
             let had_detail_focus = self
                 .detail
                 .state()
@@ -1239,6 +1228,17 @@ impl App {
                     detail.set_focused_target(None);
                 }
                 self.show_detail(scroll);
+                return Ok(());
+            }
+            if !self.pending_shortcut.is_empty()
+                && self.handle_focused_child_shortcut(key, scroll).await?
+            {
+                return Ok(());
+            }
+            if (!self.pending_shortcut.is_empty() || key.code == KeyCode::Char('g'))
+                && let Some(outcome) = self.handle_detail_shortcut(key, scroll).await?
+            {
+                self.overlay = outcome;
                 return Ok(());
             }
             if let Some(selected_target) = selected_target {
@@ -1610,11 +1610,15 @@ impl App {
             return Ok(false);
         }
         match self.pending_shortcut.resolve_detail(key) {
+            DetailShortcutResolution::Action(Action::GoBack) => {
+                self.pending_shortcut_scroll = 0;
+                self.navigate_back_from_detail().await?;
+                Ok(true)
+            }
             DetailShortcutResolution::Action(
                 action @ (Action::BeginAddEpicChild
                 | Action::RemoveEpicChild
                 | Action::Undo
-                | Action::GoBack
                 | Action::ReturnToLastChange),
             ) => {
                 self.pending_shortcut_scroll = 0;
