@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
+use std::future::Future;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
@@ -66,6 +67,19 @@ pub(super) async fn create_backup_archive(
     blob_dir: &Path,
     output: &Path,
 ) -> Result<()> {
+    create_backup_archive_with_snapshot_hook(conn, blob_dir, output, || async { Ok(()) }).await
+}
+
+async fn create_backup_archive_with_snapshot_hook<F, Fut>(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+    output: &Path,
+    after_snapshot: F,
+) -> Result<()>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<()>>,
+{
     if let Some(parent) = output.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("could not create {}", parent.display()))?;
@@ -73,11 +87,19 @@ pub(super) async fn create_backup_archive(
     let staging = tempfile::tempdir().context("could not create backup staging directory")?;
     let database_path = staging.path().join(DATABASE_ENTRY);
     db::backup_database_with_connection(conn, &database_path).await?;
+    after_snapshot().await?;
 
+    let mut snapshot = SqliteConnection::connect_with(
+        &SqliteConnectOptions::new()
+            .filename(&database_path)
+            .read_only(true)
+            .foreign_keys(true),
+    )
+    .await?;
     let rows: Vec<AvailableBlobRow> = sqlx::query_as(
         "SELECT sha256, byte_size, media_type FROM blob_inventory WHERE available = 1 ORDER BY sha256",
     )
-    .fetch_all(&mut *conn)
+    .fetch_all(&mut snapshot)
     .await?;
     let objects_dir = staging.path().join("objects").join("sha256");
     fs::create_dir_all(&objects_dir)
@@ -494,4 +516,86 @@ fn copy_dir(source: &Path, target: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use image::{DynamicImage, ImageFormat, RgbaImage};
+
+    use crate::attachments::storage::upsert_inventory_available;
+
+    use super::*;
+
+    fn png_bytes() -> Vec<u8> {
+        let image = DynamicImage::ImageRgba8(RgbaImage::new(1, 1));
+        let mut bytes = Cursor::new(Vec::new());
+        image.write_to(&mut bytes, ImageFormat::Png).unwrap();
+        bytes.into_inner()
+    }
+
+    #[tokio::test]
+    async fn live_inventory_mutation_after_snapshot_does_not_change_archive_inventory() {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("live.sqlite");
+        let pool = db::open_db(&db_path).await.unwrap();
+        let mut backup_conn = pool.acquire().await.unwrap();
+        let mut mutation_conn =
+            SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&db_path))
+                .await
+                .unwrap();
+        let blob_dir = temp.path().join("blobs");
+        let bytes = png_bytes();
+        let hash = sha256_hex(&bytes);
+        let object = object_path(&blob_dir, &hash).unwrap();
+        fs::create_dir_all(object.parent().unwrap()).unwrap();
+        fs::write(object, &bytes).unwrap();
+        let archive_path = temp.path().join("backup.aven-backup.tar.zst");
+        let mutation_hash = hash.clone();
+        let byte_size = i64::try_from(bytes.len()).unwrap();
+
+        create_backup_archive_with_snapshot_hook(
+            &mut backup_conn,
+            &blob_dir,
+            &archive_path,
+            || async move {
+                upsert_inventory_available(
+                    &mut mutation_conn,
+                    &mutation_hash,
+                    byte_size,
+                    "image/png",
+                )
+                .await
+            },
+        )
+        .await
+        .unwrap();
+
+        let extracted = tempfile::tempdir().unwrap();
+        let entries = extract_archive(&archive_path, extracted.path()).unwrap();
+        let manifest: BackupManifest =
+            serde_json::from_slice(&fs::read(extracted.path().join(MANIFEST_ENTRY)).unwrap())
+                .unwrap();
+        assert!(manifest.objects.is_empty());
+        assert_eq!(
+            entries,
+            HashSet::from([PathBuf::from(MANIFEST_ENTRY), PathBuf::from(DATABASE_ENTRY)])
+        );
+        validate_archive_attachment_metadata(
+            &extracted.path().join(DATABASE_ENTRY),
+            extracted.path(),
+            &manifest,
+        )
+        .await
+        .unwrap();
+
+        let live_available: i64 =
+            sqlx::query_scalar("SELECT available FROM blob_inventory WHERE sha256 = ?")
+                .bind(hash)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(live_available, 1);
+    }
 }
