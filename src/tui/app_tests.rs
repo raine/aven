@@ -12148,7 +12148,7 @@ mod task_editing {
             Some(OverlayState::Picker(state))
                 if state.intent == PickerIntent::BrowseLabels
                     && state.items.iter().any(|item| {
-                        item.value == "bug-report" && item.label.contains("1 tasks")
+                        item.value == "bug-report" && item.label.contains("1 task")
                     })
         ));
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
@@ -12178,6 +12178,13 @@ mod task_editing {
                     series_count: 0,
                 } if label == "customer-bug")
         ));
+        let Some(OverlayState::TextInput(state)) = &app.overlay else {
+            panic!("delete label confirmation should remain open");
+        };
+        assert_eq!(
+            state.prompt,
+            "Type customer-bug to delete this label.\nUsed by: 1 task, 0 recurring series"
+        );
         type_chars(&mut app, "wrong").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         assert!(app.store.labels.iter().any(|label| label == "customer-bug"));

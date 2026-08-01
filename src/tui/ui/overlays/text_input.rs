@@ -73,13 +73,18 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
         TextInputKind::ConfirmDeleteProject | TextInputKind::ConfirmDeleteLabel
     );
     let lines = if confirms_named_delete {
-        vec![
-            Line::from(Span::styled(&state.prompt, Style::new().fg(FG_DIM))),
+        let mut lines = state
+            .prompt
+            .lines()
+            .map(|line| Line::from(Span::styled(line.to_string(), Style::new().fg(FG_DIM))))
+            .collect::<Vec<_>>();
+        lines.extend([
             Line::from(""),
             input,
             Line::from(""),
             dialog_hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
-        ]
+        ]);
+        lines
     } else if edit_date {
         let mut lines = state
             .prompt
@@ -106,7 +111,7 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
         ]
     };
     let height = if confirms_named_delete {
-        7
+        state.prompt.lines().count() as u16 + 6
     } else if edit_date {
         state.prompt.lines().count() as u16 + 5
     } else {
@@ -175,6 +180,14 @@ fn render_placeholder_text_input(
 ) {
     let dialog = Dialog::new(&state.title, 54, 5);
     let content = dialog.render_block(frame);
+    let hints = if matches!(
+        state.kind,
+        TextInputKind::RenameLabel | TextInputKind::RenameProject
+    ) {
+        &[("Enter", "submit"), ("Ctrl+U", "clear"), ("Esc", "cancel")][..]
+    } else {
+        &[("Enter", "submit"), ("Esc", "cancel")][..]
+    };
     let text = Text::from(vec![
         placeholder_text_input_line(
             &state.input,
@@ -183,7 +196,7 @@ fn render_placeholder_text_input(
             placeholder,
         ),
         Line::from(""),
-        dialog_hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
+        dialog_hint_line(hints),
     ]);
     frame.render_widget(
         Paragraph::new(text).style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT)),

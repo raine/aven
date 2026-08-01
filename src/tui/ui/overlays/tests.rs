@@ -656,6 +656,22 @@ mod text_input {
     }
 
     #[test]
+    fn delete_label_name_confirmation_renders_usage_without_clipping() {
+        let rendered = render_overlay_view(OverlayView::TextInput(TextInputView {
+            kind: TextInputKind::ConfirmDeleteLabel,
+            title: "Delete label".to_string(),
+            prompt:
+                "Type review-needed to delete this label.\nUsed by: 2 tasks, 0 recurring series"
+                    .to_string(),
+            input: String::new(),
+            cursor: 0,
+        }));
+
+        assert!(rendered.contains("Type review-needed to delete this label."));
+        assert!(rendered.contains("Used by: 2 tasks, 0 recurring series"));
+    }
+
+    #[test]
     fn placeholder_text_input_kinds_use_placeholder_style() {
         for (kind, title, prompt, placeholder) in [
             (
@@ -669,6 +685,12 @@ mod text_input {
                 "Add label",
                 "label name:",
                 ADD_LABEL_NAME_PLACEHOLDER,
+            ),
+            (
+                TextInputKind::RenameLabel,
+                "Rename label",
+                "new label name:",
+                RENAME_LABEL_NAME_PLACEHOLDER,
             ),
             (
                 TextInputKind::RenameProject,
@@ -694,6 +716,12 @@ mod text_input {
             assert!(rendered.contains(placeholder), "{kind:?}");
             assert!(!rendered.contains(prompt), "{kind:?}");
             assert!(rendered.contains("Enter submit"), "{kind:?}");
+            if matches!(
+                kind,
+                TextInputKind::RenameLabel | TextInputKind::RenameProject
+            ) {
+                assert!(rendered.contains("Ctrl+U clear"), "{kind:?}");
+            }
         }
     }
 

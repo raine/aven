@@ -16,6 +16,11 @@ pub(crate) struct ProjectCreationResult {
     pub(crate) project_key: String,
 }
 
+fn usage_count(count: usize, singular: &str, plural: &str) -> String {
+    let noun = if count == 1 { singular } else { plural };
+    format!("{count} {noun}")
+}
+
 impl TuiStore {
     pub(crate) async fn create_project(&mut self, name: String) -> Result<ProjectCreationResult> {
         let name = name.trim().to_string();
@@ -138,8 +143,11 @@ impl TuiStore {
             .selected;
         let message = if outcome.changed {
             format!(
-                "renamed label {} to {} on {} tasks and {} recurring series",
-                outcome.previous_name, outcome.name, outcome.task_count, outcome.series_count
+                "renamed label {} to {} on {} and {}",
+                outcome.previous_name,
+                outcome.name,
+                usage_count(outcome.task_count, "task", "tasks"),
+                usage_count(outcome.series_count, "recurring series", "recurring series")
             )
         } else {
             format!("renamed label {} changed=none", outcome.name)
@@ -161,8 +169,10 @@ impl TuiStore {
             .await?
             .selected;
         let message = format!(
-            "deleted label {} from {} tasks and {} recurring series",
-            outcome.name, outcome.task_count, outcome.series_count
+            "deleted label {} from {} and {}",
+            outcome.name,
+            usage_count(outcome.task_count, "task", "tasks"),
+            usage_count(outcome.series_count, "recurring series", "recurring series")
         );
         Ok(MutationMessage::new(message, selected))
     }
