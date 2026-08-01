@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::operations::TaskDraft;
 use crate::tui::app::App;
-use crate::tui::authoring::AddTaskStep;
+use crate::tui::authoring::{ADD_TASK_TITLE_PROJECT_TITLE, AddTaskStep};
 use crate::tui::overlay::{
     AddTaskMode, AddTaskState, ConfirmIntent, MultilineIntent, OverlayState, OverlaySubmit,
     PickerIntent, TagComboboxIntent, TextIntent,
@@ -12,6 +12,9 @@ impl App {
     pub(super) async fn handle_overlay_submit(&mut self, submit: OverlaySubmit) -> Result<()> {
         match submit {
             OverlaySubmit::AddTask(state) => self.handle_add_task_submit(*state).await?,
+            OverlaySubmit::CreateAddTaskProject { state, name } => {
+                self.handle_create_add_task_project(state, name).await?;
+            }
             OverlaySubmit::Picker {
                 intent,
                 values,
@@ -40,6 +43,41 @@ impl App {
                 self.handle_multiline_submit(intent, value).await?;
             }
             OverlaySubmit::Confirm { intent } => self.handle_confirm_submit(intent).await?,
+        }
+        Ok(())
+    }
+
+    async fn handle_create_add_task_project(
+        &mut self,
+        mut state: Box<AddTaskState>,
+        name: String,
+    ) -> Result<()> {
+        match self.store.create_project(name.clone()).await {
+            Ok(outcome) => {
+                state.selected_project = Some(outcome.project_key.clone());
+                state.project = outcome.project_key.clone();
+                state.refresh_recurrence_preview();
+                self.overlay = Some(OverlayState::AddTask(state));
+                self.set_success(format!("created project {}", outcome.project_key));
+            }
+            Err(error) => {
+                let mut picker = crate::tui::overlay::PickerState::new(
+                    PickerIntent::AddTaskProject,
+                    ADD_TASK_TITLE_PROJECT_TITLE,
+                    self.store
+                        .project_picker_items(state.selected_project.as_deref()),
+                    false,
+                );
+                picker.filter = crate::tui::overlay::LineEdit::new(name);
+                crate::tui::overlay::sync_project_creation_item(&mut picker);
+                crate::tui::overlay::normalize_picker_selection(&mut picker);
+                state.mode = AddTaskMode::Picker {
+                    field: AddTaskStep::Project,
+                    state: picker,
+                };
+                self.overlay = Some(OverlayState::AddTask(state));
+                self.set_error(format!("{error:#}"));
+            }
         }
         Ok(())
     }
@@ -251,9 +289,9 @@ impl App {
     async fn handle_text_submit(&mut self, intent: TextIntent, value: String) -> Result<()> {
         match intent {
             TextIntent::AddProject => {
-                let message = self.store.create_project(value).await?;
+                let outcome = self.store.create_project(value).await?;
                 self.restore_selection_after_mutation();
-                self.set_success(message);
+                self.set_success(format!("created project {}", outcome.project_key));
             }
             TextIntent::AddLabel => {
                 let message = self.store.create_label(value).await?;
@@ -349,6 +387,28 @@ impl App {
                 }
             },
             PickerIntent::EditProject { selection, mixed } => match values.first() {
+                Some(project)
+                    if crate::tui::store::create_project_picker_name(project).is_some() =>
+                {
+                    let name = crate::tui::store::create_project_picker_name(project)
+                        .expect("guarded project creation value")
+                        .to_string();
+                    match self.store.create_project(name.clone()).await {
+                        Ok(outcome) => {
+                            self.submit_edit_project(selection, mixed, outcome.project_key)
+                                .await?;
+                        }
+                        Err(error) => {
+                            self.open_edit_project_picker(selection);
+                            if let Some(OverlayState::Picker(picker)) = self.overlay.as_mut() {
+                                picker.filter = crate::tui::overlay::LineEdit::new(name);
+                                crate::tui::overlay::sync_project_creation_item(picker);
+                                crate::tui::overlay::normalize_picker_selection(picker);
+                            }
+                            self.set_error(format!("{error:#}"));
+                        }
+                    }
+                }
                 Some(project) => {
                     self.submit_edit_project(selection, mixed, project.clone())
                         .await?;

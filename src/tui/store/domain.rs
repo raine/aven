@@ -6,15 +6,21 @@ use crate::tui::store::{MutationMessage, TaskScope};
 
 use super::TuiStore;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProjectCreationResult {
+    pub(crate) project_key: String,
+}
+
 impl TuiStore {
-    pub(crate) async fn create_project(&mut self, name: String) -> Result<String> {
+    pub(crate) async fn create_project(&mut self, name: String) -> Result<ProjectCreationResult> {
         let name = name.trim().to_string();
         let outcome = self
             .database
             .create_project_with_tui_undo(&self.active_workspace, &name)
             .await?;
+        let project_key = outcome.project.key;
         self.refresh(None).await?;
-        Ok(format!("created project {}", outcome.project.key))
+        Ok(ProjectCreationResult { project_key })
     }
 
     pub(crate) async fn delete_project(&mut self, project: &str) -> Result<MutationMessage> {

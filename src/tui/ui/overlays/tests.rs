@@ -2208,6 +2208,30 @@ mod picker_overlays {
     }
 
     #[test]
+    fn project_creation_suggestion_keeps_stable_prefix_color() {
+        let suggestion = |name: &str| PickerItem {
+            label: format!("+ Create project \"{name}\""),
+            value: format!(
+                "{}{}",
+                crate::tui::store::CREATE_PROJECT_PICKER_VALUE_PREFIX,
+                name
+            ),
+            selected: false,
+        };
+
+        let first = super::picker::project_picker_line(&suggestion("M"), false);
+        let second = super::picker::project_picker_line(&suggestion("Mobile App"), false);
+
+        assert_eq!(first.spans[1].style.fg, second.spans[1].style.fg);
+        assert_eq!(
+            first.spans[1].style.fg,
+            Some(theme::project_color(
+                crate::tui::store::CREATE_PROJECT_PICKER_VALUE_PREFIX
+            ))
+        );
+    }
+
+    #[test]
     fn project_picker_uses_structured_columns() {
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
             filter: "claude".to_string(),

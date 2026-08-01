@@ -16,10 +16,10 @@ use crate::tui::config_overlay::{CONFIG_INFO_TITLE, CONFIG_INIT_TITLE, CONFIG_PA
 use crate::tui::detail_session::DetailSnapshot;
 use crate::tui::event::Action;
 use crate::tui::overlay::{
-    CommandState, ConfirmIntent, ConfirmState, LineEdit, MultilineInputMode, MultilineInputState,
-    MultilineIntent, OverlayState, OverlayTarget, OverlayView, PickerIntent, PickerItem,
-    PickerMode, PickerState, SearchIntent, SearchState, TagComboboxIntent, TextInputState,
-    TextIntent, TextPanelState,
+    AddTaskMode, CommandState, ConfirmIntent, ConfirmState, LineEdit, MultilineInputMode,
+    MultilineInputState, MultilineIntent, OverlayState, OverlayTarget, OverlayView, PickerIntent,
+    PickerItem, PickerMode, PickerState, SearchIntent, SearchState, TagComboboxIntent,
+    TextInputState, TextIntent, TextPanelState,
 };
 use crate::tui::store::{
     SidebarEntryTarget, TaskOrder, TaskScope, TaskScopeTarget, TaskView, TaskViewState,
@@ -6372,6 +6372,100 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn add_task_project_picker_creates_and_selects_project() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(ctrl_p()).await.unwrap();
+        type_chars(&mut app, "Mobile App").await;
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if matches!(
+                    &state.mode,
+                    AddTaskMode::Picker { state: picker, .. }
+                        if picker.items.iter().any(|item| {
+                            item.label == "+ Create project \"Mobile App\""
+                                && crate::tui::store::create_project_picker_name(&item.value)
+                                    == Some("Mobile App")
+                        })
+                )
+        ));
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if state.selected_project.as_deref() == Some("mobile-app")
+                    && state.project == "mobile-app"
+        ));
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        let selected = app.list.selected_task().unwrap();
+        assert_eq!(app.store.tasks[selected].task.project_key, "mobile-app");
+    }
+
+    #[tokio::test]
+    async fn add_task_project_creation_cancel_restores_inference_selection() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        let Some(OverlayState::AddTask(state)) = &mut app.overlay else {
+            panic!("expected add task overlay");
+        };
+        state.project = "inferred-project".to_string();
+        state.inferred_project = Some("inferred-project".to_string());
+
+        app.handle_overlay_key(ctrl_p()).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if matches!(
+                    &state.mode,
+                    AddTaskMode::Picker { state: picker, .. }
+                        if picker.items.iter().any(|item| item.value.is_empty() && item.selected)
+                )
+        ));
+        type_chars(&mut app, "New Project").await;
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if state.selected_project.is_none()
+                    && state.inferred_project.as_deref() == Some("inferred-project")
+                    && state.project == "inferred-project"
+                    && state.mode == AddTaskMode::Compose
+        ));
+    }
+
+    #[tokio::test]
+    async fn add_task_project_creation_error_keeps_picker_filter_open() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_overlay_key(ctrl_p()).await.unwrap();
+        type_chars(&mut app, "---").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if matches!(
+                    &state.mode,
+                    AddTaskMode::Picker { state: picker, .. }
+                        if picker.filter.as_str() == "---"
+                            && picker.items.iter().any(|item| {
+                                item.label == "+ Create project \"---\""
+                                    && crate::tui::store::create_project_picker_name(&item.value)
+                                        == Some("---")
+                            })
+                )
+        ));
+        assert!(toast_message(&app).is_some_and(|message| message.contains("invalid-project")));
+    }
+
+    #[tokio::test]
     async fn add_task_tab_opens_description_step() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
@@ -11684,7 +11778,70 @@ mod task_editing {
     }
 
     #[tokio::test]
-    async fn edit_project_picker_uses_existing_projects_only() {
+    async fn edit_project_picker_creates_and_assigns_project() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Project target")).await;
+
+        app.begin_edit_project();
+        type_chars(&mut app, "Mobile App").await;
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(PickerState { items, .. }))
+                if items.iter().any(|item| {
+                    item.label == "+ Create project \"Mobile App\""
+                        && crate::tui::store::create_project_picker_name(&item.value)
+                            == Some("Mobile App")
+                })
+        ));
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        let selected = app.list.selected_task().unwrap();
+        assert_eq!(app.store.tasks[selected].task.project_key, "mobile-app");
+    }
+
+    #[tokio::test]
+    async fn edit_project_creation_cancel_leaves_task_unchanged() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Project target")).await;
+        let original_project = app.store.tasks[app.list.selected_task().unwrap()]
+            .task
+            .project_key
+            .clone();
+
+        app.begin_edit_project();
+        type_chars(&mut app, "New Project").await;
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        let selected = app.list.selected_task().unwrap();
+        assert_eq!(app.store.tasks[selected].task.project_key, original_project);
+    }
+
+    #[tokio::test]
+    async fn edit_project_creation_error_keeps_picker_filter_open() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Project target")).await;
+
+        app.begin_edit_project();
+        type_chars(&mut app, "---").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(PickerState { filter, items, .. }))
+                if filter.as_str() == "---"
+                    && items.iter().any(|item| {
+                        item.label == "+ Create project \"---\""
+                            && crate::tui::store::create_project_picker_name(&item.value)
+                                == Some("---")
+                    })
+        ));
+        assert!(toast_message(&app).is_some_and(|message| message.contains("invalid-project")));
+    }
+
+    #[tokio::test]
+    async fn edit_project_picker_excludes_project_inference() {
         let mut app = test_app().await;
         app.store
             .create_project("Mobile App".to_string())

@@ -5,6 +5,14 @@ use crate::workspaces::Workspace;
 
 use super::TuiStore;
 
+pub(crate) const CREATE_PROJECT_PICKER_VALUE_PREFIX: &str = "\0create-project:";
+
+pub(crate) fn create_project_picker_name(value: &str) -> Option<&str> {
+    value
+        .strip_prefix(CREATE_PROJECT_PICKER_VALUE_PREFIX)
+        .filter(|name| !name.is_empty())
+}
+
 impl TuiStore {
     pub(crate) fn status_picker_items(&self, selected: Option<&str>) -> Vec<PickerItem> {
         let selected = selected.unwrap_or_default();
@@ -36,6 +44,12 @@ impl TuiStore {
             .collect()
     }
 
+    pub(crate) fn edit_project_picker_items(&self, selected: &str) -> Vec<PickerItem> {
+        let mut items = self.existing_project_picker_items(selected);
+        items.push(create_project_picker_item());
+        items
+    }
+
     pub(crate) fn project_picker_items(&self, selected: Option<&str>) -> Vec<PickerItem> {
         let selected = selected.unwrap_or_default();
         let inferred_label = self
@@ -54,6 +68,7 @@ impl TuiStore {
                 .iter()
                 .map(|project| project_picker_item(project, selected)),
         );
+        items.push(create_project_picker_item());
         items
     }
 
@@ -98,6 +113,14 @@ impl TuiStore {
                 selected: false,
             })
             .collect()
+    }
+}
+
+fn create_project_picker_item() -> PickerItem {
+    PickerItem {
+        label: "+ Create project".to_string(),
+        value: CREATE_PROJECT_PICKER_VALUE_PREFIX.to_string(),
+        selected: false,
     }
 }
 

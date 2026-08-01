@@ -185,8 +185,16 @@ pub(in crate::tui::ui) fn project_picker_line(item: &PickerItem, selected: bool)
     } else {
         Style::new().bg(BG_ALT)
     };
+    let project_color_key = if item
+        .value
+        .starts_with(crate::tui::store::CREATE_PROJECT_PICKER_VALUE_PREFIX)
+    {
+        crate::tui::store::CREATE_PROJECT_PICKER_VALUE_PREFIX
+    } else {
+        item.value.as_str()
+    };
     let project_style = Style::new()
-        .fg(theme::project_color(&item.value))
+        .fg(theme::project_color(project_color_key))
         .add_modifier(Modifier::BOLD)
         .bg(row_style.bg.unwrap_or(BG_ALT));
     let name_style = Style::new()

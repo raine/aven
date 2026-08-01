@@ -31,7 +31,9 @@ pub(crate) use attachments::AttachmentWorkerContext;
 pub(crate) use epics::EpicContext;
 pub(crate) use launch::{TuiLaunch, TuiStartup};
 pub(crate) use onboarding::OnboardingStatus;
-pub(crate) use pickers::deleted_picker_items;
+pub(crate) use pickers::{
+    CREATE_PROJECT_PICKER_VALUE_PREFIX, create_project_picker_name, deleted_picker_items,
+};
 pub(crate) use recurrence::recurrence_draft;
 pub(crate) use task_commands::{PriorityMutation, TaskDateField, TaskTextField};
 pub(crate) use task_creation::task_creation_committed;
