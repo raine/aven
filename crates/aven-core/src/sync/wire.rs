@@ -19,7 +19,7 @@ use crate::recurrence::{
 };
 use crate::task_fields::TaskField;
 
-pub const SYNC_PROTOCOL_VERSION: u32 = 11;
+pub const SYNC_PROTOCOL_VERSION: u32 = 12;
 const MAX_CHANGE_PAYLOAD_BYTES: usize = 64 * 1024;
 pub fn sync_server_url_is_valid(server: &str) -> bool {
     let Ok(url) = url::Url::parse(server) else {
@@ -477,6 +477,16 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             required_workspace_payload(&change.payload)?;
             required_timestamp_payload("deleted_at", &change.payload)?;
         }
+        op_type::SET_LABEL_NAME => {
+            ensure_entity_type(change, "label")?;
+            required_workspace_payload(&change.payload)?;
+            let name = required_string_payload("name", &change.payload)?;
+            if name != change.entity_id {
+                bail!("error invalid-sync-change label-value-mismatch");
+            }
+            required_string_payload("new_name", &change.payload)?;
+            required_timestamp_payload("renamed_at", &change.payload)?;
+        }
         op_type::LABEL_DELETE => {
             ensure_entity_type(change, "label")?;
             required_workspace_payload(&change.payload)?;
@@ -497,6 +507,28 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             ensure_sync_id("note_id", &note_id)?;
             required_string_payload("body", &change.payload)?;
             required_timestamp_payload("edited_at", &change.payload)?;
+        }
+        op_type::LABEL_RESTORE => {
+            ensure_entity_type(change, "label")?;
+            required_workspace_payload(&change.payload)?;
+            let name = required_string_payload("name", &change.payload)?;
+            if name != change.entity_id {
+                bail!("error invalid-sync-change label-value-mismatch");
+            }
+            required_timestamp_payload("created_at", &change.payload)?;
+            required_timestamp_payload("restored_at", &change.payload)?;
+            for key in ["task_ids", "series_ids"] {
+                optional_string_array_payload(key, &change.payload)?;
+                if change.payload.get(key).is_none() {
+                    bail!("error invalid-sync-change payload.{key} missing");
+                }
+            }
+            for task_id in string_array_payload("task_ids", &change.payload)? {
+                ensure_sync_id("task_ids", &task_id)?;
+            }
+            for series_id in string_array_payload("series_ids", &change.payload)? {
+                ensure_sync_id("series_ids", &series_id)?;
+            }
         }
         op_type::NOTE_DELETE => {
             ensure_entity_type(change, "task")?;
@@ -1206,6 +1238,21 @@ fn optional_i64_payload(key: &str, payload: &Value) -> Result<Option<i64>> {
     }
 }
 
+fn string_array_payload(key: &str, payload: &Value) -> Result<Vec<String>> {
+    payload
+        .get(key)
+        .and_then(Value::as_array)
+        .with_context(|| format!("error invalid-sync-change payload.{key} invalid"))?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_string)
+                .with_context(|| format!("error invalid-sync-change payload.{key} invalid"))
+        })
+        .collect()
+}
+
 fn optional_string_array_payload(key: &str, payload: &Value) -> Result<()> {
     match payload.get(key) {
         Some(Value::Array(values))
@@ -1537,6 +1584,36 @@ mod tests {
         change.field = Some("labels".to_string());
         validate_pushed_change(&change)
             .expect("label_add payload built with ChangePayload should be wire-valid");
+    }
+
+    #[test]
+    fn constructed_label_administration_payloads_pass_wire_validation() {
+        let ws = test_workspace();
+        let rename = make_change_wire(
+            op_type::SET_LABEL_NAME,
+            "label",
+            "old",
+            ChangePayload::workspace(&ws)
+                .set("name", "old")
+                .set("new_name", "new")
+                .set("renamed_at", "2026-06-01T00:00:00Z")
+                .into_value(),
+        );
+        validate_pushed_change(&rename).unwrap();
+
+        let restore = make_change_wire(
+            op_type::LABEL_RESTORE,
+            "label",
+            "new",
+            ChangePayload::workspace(&ws)
+                .set("name", "new")
+                .set("created_at", "2026-06-01T00:00:00Z")
+                .set("task_ids", ["BBBBBBBBBBBBBBBB"])
+                .set("series_ids", ["CCCCCCCCCCCCCCCC"])
+                .set("restored_at", "2026-06-01T00:00:01Z")
+                .into_value(),
+        );
+        validate_pushed_change(&restore).unwrap();
     }
 
     #[test]

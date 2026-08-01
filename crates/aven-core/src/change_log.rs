@@ -24,7 +24,9 @@ pub mod op_type {
     pub const SET_PROJECT_METADATA: &str = "set_project_metadata";
     pub const PROJECT_DELETE: &str = "project_delete";
     pub const CREATE_LABEL: &str = "create_label";
+    pub const SET_LABEL_NAME: &str = "set_label_name";
     pub const LABEL_DELETE: &str = "label_delete";
+    pub const LABEL_RESTORE: &str = "label_restore";
     pub const CREATE_WORKSPACE: &str = "create_workspace";
     pub const SET_WORKSPACE_FIELD: &str = "set_workspace_field";
     pub const CREATE_RECURRENCE_SERIES: &str = "create_recurrence_series";

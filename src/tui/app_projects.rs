@@ -14,6 +14,9 @@ pub(crate) const RENAME_PROJECT_TITLE: &str = "Rename project";
 pub(crate) const DELETE_PROJECT_TITLE: &str = "Delete project";
 pub(crate) const DELETE_TASK_TITLE: &str = "Delete task";
 pub(crate) const ADD_LABEL_TITLE: &str = "Add label";
+pub(crate) const BROWSE_LABELS_TITLE: &str = "Labels";
+pub(crate) const RENAME_LABEL_TITLE: &str = "Rename label";
+pub(crate) const DELETE_LABEL_TITLE: &str = "Delete label";
 
 fn add_project_path_input(project: String, value: String) -> OverlayState {
     OverlayState::text_input(
@@ -96,6 +99,183 @@ impl App {
             ADD_LABEL_TITLE,
             "label name:",
         ));
+    }
+
+    pub(super) async fn begin_browse_labels(&mut self) -> Result<()> {
+        self.open_label_picker(PickerIntent::BrowseLabels, BROWSE_LABELS_TITLE)
+            .await
+    }
+
+    pub(super) async fn begin_rename_label(&mut self) -> Result<()> {
+        self.open_label_picker(PickerIntent::RenameLabel, RENAME_LABEL_TITLE)
+            .await
+    }
+
+    pub(super) async fn begin_delete_label(&mut self) -> Result<()> {
+        self.open_label_picker(PickerIntent::DeleteLabel, DELETE_LABEL_TITLE)
+            .await
+    }
+
+    async fn open_label_picker(&mut self, intent: PickerIntent, title: &str) -> Result<()> {
+        self.pending_shortcut.clear();
+        let items = self
+            .store
+            .label_usage()
+            .await?
+            .into_iter()
+            .map(|usage| PickerItem {
+                label: format!(
+                    "{}  {} tasks  {} recurring series",
+                    usage.name, usage.task_count, usage.series_count
+                ),
+                value: usage.name,
+                selected: false,
+            })
+            .collect();
+        self.open_picker_overlay(intent, title, items, false);
+        Ok(())
+    }
+
+    pub(super) fn submit_browse_label(&mut self, values: Vec<String>) {
+        let Some(label) = self.require_picker_value(values, "no matching label") else {
+            return;
+        };
+        self.open_picker_overlay(
+            PickerIntent::LabelActions {
+                label: label.clone(),
+            },
+            format!("Label {label}"),
+            vec![
+                PickerItem {
+                    label: "Rename label".to_string(),
+                    value: "rename".to_string(),
+                    selected: false,
+                },
+                PickerItem {
+                    label: "Delete label".to_string(),
+                    value: "delete".to_string(),
+                    selected: false,
+                },
+            ],
+            false,
+        );
+    }
+
+    pub(super) async fn submit_label_action(
+        &mut self,
+        label: String,
+        values: Vec<String>,
+    ) -> Result<()> {
+        match values.first().map(String::as_str) {
+            Some("rename") => self.open_rename_label_input(label),
+            Some("delete") => self.submit_delete_label_picker(vec![label]).await?,
+            _ => self.set_warning("no label action selected"),
+        }
+        Ok(())
+    }
+
+    pub(super) fn submit_rename_label_picker(&mut self, values: Vec<String>) {
+        let Some(label) = self.require_picker_value(values, "no matching label") else {
+            return;
+        };
+        self.open_rename_label_input(label);
+    }
+
+    fn open_rename_label_input(&mut self, label: String) {
+        self.overlay = Some(OverlayState::text_input(
+            TextIntent::RenameLabel {
+                label: label.clone(),
+            },
+            RENAME_LABEL_TITLE,
+            "new label name:",
+            label,
+        ));
+    }
+
+    pub(super) async fn submit_delete_label_picker(&mut self, values: Vec<String>) -> Result<()> {
+        let Some(label) = self.require_picker_value(values, "no matching label") else {
+            return Ok(());
+        };
+        let Some(usage) = self
+            .store
+            .label_usage()
+            .await?
+            .into_iter()
+            .find(|usage| usage.name == label)
+        else {
+            self.set_warning("label no longer exists");
+            return Ok(());
+        };
+        self.overlay = Some(OverlayState::text_input(
+            TextIntent::ConfirmDeleteLabel {
+                label: label.clone(),
+                task_count: usage.task_count,
+                series_count: usage.series_count,
+            },
+            DELETE_LABEL_TITLE,
+            format!(
+                "Type {label} to remove it from {} tasks and {} recurring series:",
+                usage.task_count, usage.series_count
+            ),
+            String::new(),
+        ));
+        Ok(())
+    }
+
+    pub(super) async fn submit_rename_label(&mut self, label: String, value: String) -> Result<()> {
+        match self.store.rename_label(&label, value.clone()).await {
+            Ok(result) => self.apply_mutation_result(result),
+            Err(error) => {
+                self.set_error(format!("{error:#}"));
+                self.overlay = Some(OverlayState::text_input(
+                    TextIntent::RenameLabel { label },
+                    RENAME_LABEL_TITLE,
+                    "new label name:",
+                    value,
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn submit_delete_label_name(
+        &mut self,
+        label: String,
+        task_count: usize,
+        series_count: usize,
+        value: String,
+    ) {
+        if value.trim() != label {
+            self.set_warning("label name does not match");
+            self.overlay = Some(OverlayState::text_input(
+                TextIntent::ConfirmDeleteLabel {
+                    label: label.clone(),
+                    task_count,
+                    series_count,
+                },
+                DELETE_LABEL_TITLE,
+                format!(
+                    "Type {label} to remove it from {task_count} tasks and {series_count} recurring series:"
+                ),
+                value,
+            ));
+            return;
+        }
+        self.overlay = Some(OverlayState::confirm(
+            ConfirmIntent::DeleteLabel {
+                label: label.clone(),
+            },
+            DELETE_LABEL_TITLE,
+            format!("Delete label {label} everywhere it is used?"),
+        ));
+    }
+
+    pub(super) async fn submit_delete_label(&mut self, label: String) -> Result<()> {
+        match self.store.delete_label(&label).await {
+            Ok(result) => self.apply_mutation_result(result),
+            Err(error) => self.set_error(format!("{error:#}")),
+        }
+        Ok(())
     }
 
     pub(super) fn begin_delete_task(&mut self) {

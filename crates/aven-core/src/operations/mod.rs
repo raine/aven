@@ -28,10 +28,10 @@ pub(crate) use epics::{
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use projects::create_label_operation;
 pub use projects::{
-    LabelDeleteOutcome, LabelOutcome, ProjectDeleteOutcome, ProjectMetadata, ProjectOutcome,
-    ProjectRenameOutcome,
+    LabelDeleteOutcome, LabelOutcome, LabelRenameOutcome, ProjectDeleteOutcome, ProjectMetadata,
+    ProjectOutcome, ProjectRenameOutcome,
 };
-pub(crate) use projects::{insert_project_metadata_change, set_project_metadata};
+pub(crate) use projects::{insert_project_metadata_change, set_label_name, set_project_metadata};
 pub use recurrence::{
     RecurrenceCreateOutcome, RecurrenceReconcileOutcome, RecurrenceResolveOutcome,
     RecurrenceSeriesDraft, RecurrenceStateOutcome, RecurrenceTemplateUpdate,

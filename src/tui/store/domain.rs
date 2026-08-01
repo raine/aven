@@ -115,6 +115,58 @@ impl TuiStore {
         Ok(format!("created label {}", outcome.name))
     }
 
+    pub(crate) async fn label_usage(&self) -> Result<Vec<aven_core::labels::LabelUsage>> {
+        self.database.label_usage(&self.active_workspace.id).await
+    }
+
+    pub(crate) async fn rename_label(
+        &mut self,
+        label: &str,
+        new_name: String,
+    ) -> Result<MutationMessage> {
+        let outcome = self
+            .database
+            .rename_label_with_tui_undo(&self.active_workspace, label, &new_name)
+            .await?;
+        let mut view_state = self.view_state.clone();
+        if view_state.filter_modifiers.label.as_deref() == Some(outcome.previous_name.as_str()) {
+            view_state.filter_modifiers.label = Some(outcome.name.clone());
+        }
+        let selected = self
+            .refresh_with_view_state(view_state, None)
+            .await?
+            .selected;
+        let message = if outcome.changed {
+            format!(
+                "renamed label {} to {} on {} tasks and {} recurring series",
+                outcome.previous_name, outcome.name, outcome.task_count, outcome.series_count
+            )
+        } else {
+            format!("renamed label {} changed=none", outcome.name)
+        };
+        Ok(MutationMessage::new(message, selected))
+    }
+
+    pub(crate) async fn delete_label(&mut self, label: &str) -> Result<MutationMessage> {
+        let outcome = self
+            .database
+            .delete_label_with_tui_undo(&self.active_workspace, label)
+            .await?;
+        let mut view_state = self.view_state.clone();
+        if view_state.filter_modifiers.label.as_deref() == Some(outcome.name.as_str()) {
+            view_state.filter_modifiers.label = None;
+        }
+        let selected = self
+            .refresh_with_view_state(view_state, None)
+            .await?
+            .selected;
+        let message = format!(
+            "deleted label {} from {} tasks and {} recurring series",
+            outcome.name, outcome.task_count, outcome.series_count
+        );
+        Ok(MutationMessage::new(message, selected))
+    }
+
     pub(crate) async fn inferred_add_project(&self) -> Result<Option<String>> {
         inferred_project_key_for_add_with_database(&self.database, &self.active_workspace).await
     }

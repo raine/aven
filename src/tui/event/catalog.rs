@@ -948,6 +948,36 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::BeginAddLabel,
     ),
     CommandSpec::implemented(
+        "browse-labels",
+        "browse labels and usage",
+        "Labels",
+        &[KeySequence {
+            codes: &[KeyCode::Char('L'), KeyCode::Char('b')],
+            label: "L b",
+        }],
+        Action::BeginBrowseLabels,
+    ),
+    CommandSpec::implemented(
+        "rename-label",
+        "rename a label everywhere it is used",
+        "Labels",
+        &[KeySequence {
+            codes: &[KeyCode::Char('L'), KeyCode::Char('r')],
+            label: "L r",
+        }],
+        Action::BeginRenameLabel,
+    ),
+    CommandSpec::implemented(
+        "delete-label",
+        "delete a label everywhere it is used",
+        "Labels",
+        &[KeySequence {
+            codes: &[KeyCode::Char('L'), KeyCode::Char('D')],
+            label: "L D",
+        }],
+        Action::BeginDeleteLabel,
+    ),
+    CommandSpec::implemented(
         "rename-project",
         "rename a project and display prefix",
         "Projects",

@@ -271,11 +271,23 @@ fn action_text(
             payload_string(payload, "label").or_else(|| payload_string(payload, "name")),
             "green".to_string(),
         ),
+        ("label", op_type::SET_LABEL_NAME) => (
+            "label".to_string(),
+            "renamed label".to_string(),
+            payload_string(payload, "new_name"),
+            "blue".to_string(),
+        ),
         ("label", op_type::LABEL_DELETE) => (
             "label".to_string(),
             "deleted label".to_string(),
             payload_string(payload, "label").or_else(|| payload_string(payload, "name")),
             "red".to_string(),
+        ),
+        ("label", op_type::LABEL_RESTORE) => (
+            "label".to_string(),
+            "restored label".to_string(),
+            payload_string(payload, "name"),
+            "green".to_string(),
         ),
         ("workspace", _) => (
             "workspace".to_string(),

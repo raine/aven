@@ -3598,6 +3598,14 @@ mod command_and_config_overlays {
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::Command { state })
+                if state.input.text == "delete-label"
+                    && state.highlighted.as_deref() == Some("delete-label")
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Command { state })
                 if state.input.text == "delete-project"
                     && state.highlighted.as_deref() == Some("delete-project")
         ));
@@ -12116,6 +12124,83 @@ mod task_editing {
                 .iter()
                 .any(|item| item.value == "needs-review")
         );
+    }
+
+    #[tokio::test]
+    async fn label_browser_renames_and_safely_deletes_used_labels() {
+        let mut app = test_app().await;
+        app.store
+            .create_label("Bug Report".to_string())
+            .await
+            .unwrap();
+        create_and_select_task(
+            &mut app,
+            TaskDraft {
+                labels: vec!["bug-report".to_string()],
+                ..test_task_draft("Labeled task")
+            },
+        )
+        .await;
+
+        app.execute(Action::BeginBrowseLabels).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state))
+                if state.intent == PickerIntent::BrowseLabels
+                    && state.items.iter().any(|item| {
+                        item.value == "bug-report" && item.label.contains("1 tasks")
+                    })
+        ));
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state))
+                if matches!(state.intent, PickerIntent::LabelActions { ref label } if label == "bug-report")
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        app.handle_overlay_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+            .await
+            .unwrap();
+        type_chars(&mut app, "Customer Bug").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(app.store.labels.iter().any(|label| label == "customer-bug"));
+        assert_eq!(app.store.tasks[0].labels, vec!["customer-bug"]);
+
+        app.execute(Action::BeginDeleteLabel).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(state))
+                if matches!(state.intent, TextIntent::ConfirmDeleteLabel {
+                    ref label,
+                    task_count: 1,
+                    series_count: 0,
+                } if label == "customer-bug")
+        ));
+        type_chars(&mut app, "wrong").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(app.store.labels.iter().any(|label| label == "customer-bug"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("label name does not match")
+        );
+
+        app.handle_overlay_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+            .await
+            .unwrap();
+        type_chars(&mut app, "customer-bug").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Confirm(state))
+                if matches!(state.intent, ConfirmIntent::DeleteLabel { ref label } if label == "customer-bug")
+        ));
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+        assert!(!app.store.labels.iter().any(|label| label == "customer-bug"));
+        assert!(app.store.tasks[0].labels.is_empty());
     }
 
     #[tokio::test]

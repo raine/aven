@@ -1,12 +1,45 @@
 use crate::ids::WorkspaceId;
 use anyhow::{Result, bail};
-use sqlx::SqliteConnection;
+use sqlx::{Row, SqliteConnection};
 
 use crate::db::Database;
 use crate::matching::is_near;
 use crate::projects::normalize_key;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LabelUsage {
+    pub name: String,
+    pub task_count: usize,
+    pub series_count: usize,
+}
+
 impl Database {
+    pub async fn label_usage(&self, workspace_id: &WorkspaceId) -> Result<Vec<LabelUsage>> {
+        let mut conn = self.acquire().await?;
+        let rows = sqlx::query(
+            "SELECT l.name,
+                    (SELECT count(*) FROM task_labels tl
+                     WHERE tl.workspace_id = l.workspace_id AND tl.label = l.name) AS task_count,
+                    (SELECT count(*) FROM recurrence_series_labels sl
+                     WHERE sl.workspace_id = l.workspace_id AND sl.label = l.name) AS series_count
+             FROM labels l
+             WHERE l.workspace_id = ?
+             ORDER BY l.name",
+        )
+        .bind(workspace_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| LabelUsage {
+                name: row.get("name"),
+                task_count: usize::try_from(row.get::<i64, _>("task_count")).unwrap_or(usize::MAX),
+                series_count: usize::try_from(row.get::<i64, _>("series_count"))
+                    .unwrap_or(usize::MAX),
+            })
+            .collect())
+    }
+
     pub async fn list_labels(
         &self,
         workspace_id: &WorkspaceId,

@@ -481,6 +481,14 @@ pub(crate) enum TextIntent {
         project: String,
     },
     AddLabel,
+    RenameLabel {
+        label: String,
+    },
+    ConfirmDeleteLabel {
+        label: String,
+        task_count: usize,
+        series_count: usize,
+    },
     RenameProject {
         project: String,
     },
@@ -566,6 +574,12 @@ pub(crate) enum PickerIntent {
     RemoveProjectPathValue {
         project: String,
     },
+    BrowseLabels,
+    LabelActions {
+        label: String,
+    },
+    RenameLabel,
+    DeleteLabel,
     SwitchWorkspace,
     PickConflictVariant {
         choice: ConflictResolutionChoice,
@@ -598,7 +612,10 @@ impl PickerIntent {
             | Self::DeleteProject
             | Self::AddProjectPath
             | Self::RemoveProjectPath
-            | Self::RemoveProjectPathValue { .. } => PickerMode::Filter,
+            | Self::RemoveProjectPathValue { .. }
+            | Self::BrowseLabels
+            | Self::RenameLabel
+            | Self::DeleteLabel => PickerMode::Filter,
             _ => PickerMode::Navigate,
         }
     }
@@ -626,6 +643,9 @@ pub(crate) enum ConfirmIntent {
     RemoveProjectPath {
         project: String,
         path: String,
+    },
+    DeleteLabel {
+        label: String,
     },
     DeleteTasks {
         selection: TaskSelection,
