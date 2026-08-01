@@ -693,6 +693,18 @@ mod text_input {
                 RENAME_LABEL_NAME_PLACEHOLDER,
             ),
             (
+                TextInputKind::AddWorkspace,
+                "Create workspace",
+                "workspace name:",
+                ADD_WORKSPACE_NAME_PLACEHOLDER,
+            ),
+            (
+                TextInputKind::RenameWorkspace,
+                "Rename workspace",
+                "new workspace name:",
+                RENAME_WORKSPACE_NAME_PLACEHOLDER,
+            ),
+            (
                 TextInputKind::RenameProject,
                 "Rename project",
                 "new project name:",
@@ -718,7 +730,9 @@ mod text_input {
             assert!(rendered.contains("Enter submit"), "{kind:?}");
             if matches!(
                 kind,
-                TextInputKind::RenameLabel | TextInputKind::RenameProject
+                TextInputKind::RenameLabel
+                    | TextInputKind::RenameProject
+                    | TextInputKind::RenameWorkspace
             ) {
                 assert!(rendered.contains("Ctrl+U clear"), "{kind:?}");
             }

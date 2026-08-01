@@ -11,6 +11,7 @@ use crate::tui::app_filters::{SCOPE_PROJECT_TITLE, SWITCH_WORKSPACE_TITLE};
 use crate::tui::app_intake::{IntakeWorkView, NaturalRetry};
 use crate::tui::app_projects::{DELETE_PROJECT_TITLE, DELETE_TASK_TITLE};
 use crate::tui::app_search::SearchControllerView;
+use crate::tui::app_workspaces::{ADD_WORKSPACE_TITLE, RENAME_WORKSPACE_TITLE};
 use crate::tui::authoring::{ADD_NOTE_TITLE, AddTaskOrigin, AddTaskStep};
 use crate::tui::config_overlay::{CONFIG_INFO_TITLE, CONFIG_INIT_TITLE, CONFIG_PATHS_TITLE};
 use crate::tui::detail_session::DetailSnapshot;
@@ -4932,6 +4933,131 @@ mod filters_and_workspaces {
         assert_eq!(
             toast_message(&app).as_deref(),
             Some("showing deleted tasks only")
+        );
+    }
+
+    #[tokio::test]
+    async fn workspace_creation_validates_input_and_keeps_active_workspace() {
+        let mut app = test_app().await;
+        let active_id = app.store.active_workspace.id.clone();
+
+        app.handle_normal_key(KeyCode::Char('W')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(TextInputState { title, .. }))
+                if title == ADD_WORKSPACE_TITLE
+        ));
+
+        app.submit_add_workspace("---".to_string()).await.unwrap();
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("workspace name must contain an ASCII letter or number")
+        );
+        assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(TextInputState {
+                intent: TextIntent::AddWorkspace,
+                ..
+            }))
+        ));
+
+        app.overlay = None;
+        app.submit_add_workspace("  Client Work  ".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(app.store.active_workspace.id, active_id);
+        assert_eq!(app.store.active_workspace.key, "default");
+        assert!(
+            app.store
+                .workspaces
+                .iter()
+                .any(|workspace| workspace.key == "client-work" && workspace.name == "Client Work")
+        );
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("created workspace Client Work (client-work)")
+        );
+    }
+
+    #[tokio::test]
+    async fn workspace_rename_targets_picker_choice_and_preserves_errors() {
+        let mut app = test_app().await;
+        app.store
+            .create_workspace("Client Work".to_string())
+            .await
+            .unwrap();
+
+        app.handle_normal_key(KeyCode::Char('W')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(PickerState {
+                intent: PickerIntent::RenameWorkspace,
+                title,
+                items,
+                ..
+            })) if title == RENAME_WORKSPACE_TITLE
+                && items.iter().find(|item| item.value == "default").is_some_and(|item| item.selected)
+                && items.iter().find(|item| item.value == "client-work").is_some_and(|item| !item.selected)
+        ));
+
+        app.submit_rename_workspace_picker(vec!["default".to_string()]);
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(TextInputState {
+                intent: TextIntent::RenameWorkspace { workspace },
+                input,
+                ..
+            })) if workspace == "default" && input.as_str() == "default"
+        ));
+
+        app.submit_rename_workspace("default".to_string(), "Client Work".to_string())
+            .await
+            .unwrap();
+        assert_eq!(app.store.active_workspace.key, "default");
+        assert_eq!(toast_severity(&app), Some(ToastSeverity::Error));
+        assert!(toast_message(&app).is_some_and(|message| message.contains("workspace-exists")));
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(TextInputState {
+                intent: TextIntent::RenameWorkspace { workspace },
+                ..
+            })) if workspace == "default"
+        ));
+
+        app.overlay = None;
+        app.submit_rename_workspace("default".to_string(), "Personal".to_string())
+            .await
+            .unwrap();
+        assert_eq!(app.store.active_workspace.key, "personal");
+        assert_eq!(app.store.active_workspace.name, "Personal");
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("renamed active workspace to personal (Personal)")
+        );
+    }
+
+    #[tokio::test]
+    async fn workspace_administration_cancellation_reports_the_canceled_flow() {
+        let mut app = test_app().await;
+
+        app.begin_add_workspace();
+        app.cancel_overlay();
+        assert!(app.overlay.is_none());
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("workspace creation canceled")
+        );
+
+        app.begin_rename_workspace();
+        app.cancel_overlay();
+        assert!(app.overlay.is_none());
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("workspace rename canceled")
         );
     }
 

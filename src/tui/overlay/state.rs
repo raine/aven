@@ -489,6 +489,10 @@ pub(crate) enum TextIntent {
         task_count: usize,
         series_count: usize,
     },
+    AddWorkspace,
+    RenameWorkspace {
+        workspace: String,
+    },
     RenameProject {
         project: String,
     },
@@ -581,6 +585,7 @@ pub(crate) enum PickerIntent {
     RenameLabel,
     DeleteLabel,
     SwitchWorkspace,
+    RenameWorkspace,
     PickConflictVariant {
         choice: ConflictResolutionChoice,
         targets: Vec<ConflictTarget>,
@@ -615,7 +620,8 @@ impl PickerIntent {
             | Self::RemoveProjectPathValue { .. }
             | Self::BrowseLabels
             | Self::RenameLabel
-            | Self::DeleteLabel => PickerMode::Filter,
+            | Self::DeleteLabel
+            | Self::RenameWorkspace => PickerMode::Filter,
             _ => PickerMode::Navigate,
         }
     }

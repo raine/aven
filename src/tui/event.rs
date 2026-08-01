@@ -89,6 +89,8 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginFilterPriority
             | Action::BeginScopeProject
             | Action::BeginSwitchWorkspace
+            | Action::BeginAddWorkspace
+            | Action::BeginRenameWorkspace
             | Action::ClearFilters
             | Action::ToggleClosedFilter
             | Action::ToggleDeletedFilter
@@ -257,6 +259,7 @@ mod tests {
                 "move-column-right",
                 "view-recurring",
                 "view-recent",
+                "workspace-rename",
                 "copy-ref",
                 "task-child-remove",
                 "filter-recurring-lifecycle",
@@ -1083,6 +1086,14 @@ mod tests {
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('w')]),
             ShortcutLookup::Found(Action::BeginSwitchWorkspace)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('W'), KeyCode::Char('n')]),
+            ShortcutLookup::Found(Action::BeginAddWorkspace)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('W'), KeyCode::Char('r')]),
+            ShortcutLookup::Found(Action::BeginRenameWorkspace)
         );
     }
 

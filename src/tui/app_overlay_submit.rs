@@ -310,6 +310,12 @@ impl App {
             } => {
                 self.submit_delete_label_name(label, task_count, series_count, value);
             }
+            TextIntent::AddWorkspace => {
+                self.submit_add_workspace(value).await?;
+            }
+            TextIntent::RenameWorkspace { workspace } => {
+                self.submit_rename_workspace(workspace, value).await?;
+            }
             TextIntent::RenameProject { project } => {
                 self.submit_rename_project(project, value).await?;
             }
@@ -468,6 +474,7 @@ impl App {
             PickerIntent::RenameLabel => self.submit_rename_label_picker(values),
             PickerIntent::DeleteLabel => self.submit_delete_label_picker(values).await?,
             PickerIntent::SwitchWorkspace => self.submit_switch_workspace(values).await?,
+            PickerIntent::RenameWorkspace => self.submit_rename_workspace_picker(values),
             intent @ (PickerIntent::PickConflictVariant { .. }
             | PickerIntent::PickConflictManual { .. }) => {
                 self.submit_conflict_field_picker(intent, values).await?;

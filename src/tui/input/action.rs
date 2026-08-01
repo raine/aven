@@ -94,6 +94,8 @@ impl App {
             Action::BeginFilterPriority => self.begin_filter_priority(),
             Action::BeginScopeProject => self.begin_scope_project(),
             Action::BeginSwitchWorkspace => self.begin_switch_workspace().await?,
+            Action::BeginAddWorkspace => self.begin_add_workspace(),
+            Action::BeginRenameWorkspace => self.begin_rename_workspace(),
             Action::ClearFilters => self.clear_filters().await?,
             Action::ToggleClosedFilter => self.toggle_closed_filter().await?,
             Action::ToggleDeletedFilter => self.toggle_deleted_filter().await?,

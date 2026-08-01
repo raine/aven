@@ -21,6 +21,7 @@ mod app_projects;
 mod app_recurrence;
 mod app_search;
 mod app_update;
+mod app_workspaces;
 mod attachment_controller;
 mod authoring;
 mod bounded_history;
