@@ -321,6 +321,14 @@ impl App {
             TextIntent::EditDue { selection, mixed } => {
                 self.submit_edit_due(selection, mixed, value).await?;
             }
+            TextIntent::SaveAttachment {
+                attachment_id,
+                filename,
+                scroll,
+            } => {
+                self.submit_save_attachment(attachment_id, filename, scroll, value)
+                    .await?;
+            }
             TextIntent::ResolveConflictManually { target } => {
                 self.submit_manual_conflict_value(target, value).await?;
             }

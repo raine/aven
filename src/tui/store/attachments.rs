@@ -1,9 +1,10 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use aven_core::db::Database;
 
 use crate::attachments::export::{LeasedImageExport, lease_image_export};
+use crate::attachments::save::{AttachmentSaveError, AttachmentSaveOutcome, save_attachment};
 use crate::operations::TaskAttachmentAddInput;
 
 use super::TuiStore;
@@ -55,6 +56,22 @@ impl TuiStore {
             .await?;
         self.wake_after_mutation();
         Ok(())
+    }
+
+    pub(crate) async fn save_attachment(
+        &self,
+        blob_dir: &Path,
+        attachment_id: &str,
+        destination: PathBuf,
+    ) -> Result<AttachmentSaveOutcome, AttachmentSaveError> {
+        save_attachment(
+            &self.database,
+            &self.active_workspace,
+            blob_dir,
+            attachment_id,
+            destination,
+        )
+        .await
     }
 
     pub(crate) async fn lease_image_export(

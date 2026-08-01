@@ -510,6 +510,11 @@ pub(crate) enum TextIntent {
         selection: TaskSelection,
         mixed: bool,
     },
+    SaveAttachment {
+        attachment_id: String,
+        filename: String,
+        scroll: u16,
+    },
     ResolveConflictManually {
         target: ConflictTarget,
     },

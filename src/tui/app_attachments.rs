@@ -1,8 +1,10 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+use crate::attachments::AttachmentBytesState;
 use crate::attachments::optimization::ImageOptimizationPolicy;
+use crate::attachments::save::AttachmentSaveError;
 use crate::config::resolve_blob_dir;
 use crate::ids::new_id;
 use crate::operations::AttachmentAddInput;
@@ -11,7 +13,9 @@ use crate::tui::attachment_controller::{
     AttachmentCompletion, AttachmentRequest, AttachmentSource,
 };
 use crate::tui::authoring::PendingTaskAttachment;
-use crate::tui::overlay::{ConfirmIntent, MultilineInputState, MultilineIntent, OverlayState};
+use crate::tui::overlay::{
+    ConfirmIntent, MultilineInputState, MultilineIntent, OverlayState, TextIntent,
+};
 use crate::tui::platform::{ClipboardImage, read_clipboard_image, read_clipboard_text};
 use crate::tui::ui::attachment_is_locally_openable;
 
@@ -46,6 +50,196 @@ impl App {
             DELETE_ATTACHMENT_TITLE,
             format!("Remove {label}?"),
         ));
+    }
+
+    pub(super) fn begin_save_attachment(&mut self, attachment_id: &str, scroll: u16) {
+        let Some(attachment) = self
+            .store
+            .selected_task(self.list.selected_task())
+            .and_then(|item| {
+                item.attachments.iter().find(|attachment| {
+                    attachment.attachment_id == attachment_id && !attachment.deleted
+                })
+            })
+        else {
+            self.set_warning("attachment is no longer available");
+            return;
+        };
+        if attachment.bytes_state != AttachmentBytesState::Present {
+            self.set_warning("attachment bytes are unavailable");
+            return;
+        }
+        let filename = attachment_default_filename(attachment);
+        let Ok(current_dir) = std::env::current_dir() else {
+            self.set_error("could not resolve the save destination");
+            return;
+        };
+        if let Some(detail) = self.detail.state_mut() {
+            detail.set_scroll(scroll);
+        }
+        self.overlay = Some(OverlayState::text_input(
+            TextIntent::SaveAttachment {
+                attachment_id: attachment_id.to_string(),
+                filename: filename.clone(),
+                scroll,
+            },
+            "Save attachment as",
+            "destination path:",
+            current_dir.join(filename).display().to_string(),
+        ));
+    }
+
+    pub(super) async fn submit_save_attachment(
+        &mut self,
+        attachment_id: String,
+        filename: String,
+        scroll: u16,
+        value: String,
+    ) -> Result<()> {
+        let entered = value.trim();
+        if entered.is_empty() {
+            self.reopen_save_attachment_input(
+                attachment_id,
+                filename,
+                scroll,
+                value,
+                "enter a destination path",
+                false,
+            );
+            return Ok(());
+        }
+        let mut destination = match crate::config::expand_tilde(Path::new(entered)) {
+            Ok(path) => path,
+            Err(_) => {
+                self.reopen_save_attachment_input(
+                    attachment_id,
+                    filename,
+                    scroll,
+                    value,
+                    "could not resolve the destination path",
+                    true,
+                );
+                return Ok(());
+            }
+        };
+        if destination.is_relative() {
+            destination = match std::env::current_dir() {
+                Ok(current_dir) => current_dir.join(destination),
+                Err(_) => {
+                    self.reopen_save_attachment_input(
+                        attachment_id,
+                        filename,
+                        scroll,
+                        value,
+                        "could not resolve the destination path",
+                        true,
+                    );
+                    return Ok(());
+                }
+            };
+        }
+        if destination.is_dir() {
+            destination = destination.join(&filename);
+        }
+        let Some(db_path) = self.intake.db_path() else {
+            self.show_detail(scroll);
+            self.set_error("could not resolve attachment storage");
+            return Ok(());
+        };
+        let Ok(blob_dir) = resolve_blob_dir(db_path, self.intake.config()) else {
+            self.show_detail(scroll);
+            self.set_error("could not resolve attachment storage");
+            return Ok(());
+        };
+        match self
+            .store
+            .save_attachment(&blob_dir, &attachment_id, destination.clone())
+            .await
+        {
+            Ok(outcome) => {
+                self.show_detail(scroll);
+                if outcome.lease_release_failed {
+                    self.set_warning(format!(
+                        "saved attachment to {}; read protection expires automatically",
+                        outcome.destination.display()
+                    ));
+                } else {
+                    self.set_success(format!(
+                        "saved attachment to {}",
+                        outcome.destination.display()
+                    ));
+                }
+            }
+            Err(AttachmentSaveError::Invalidated) => {
+                self.show_detail(scroll);
+                self.set_warning("attachment is no longer available");
+            }
+            Err(AttachmentSaveError::BlobUnavailable) => {
+                self.show_detail(scroll);
+                self.set_warning("attachment bytes are unavailable");
+            }
+            Err(AttachmentSaveError::StorageUnavailable) => {
+                self.show_detail(scroll);
+                self.set_error("could not read attachment storage");
+            }
+            Err(AttachmentSaveError::DestinationExists(path)) => {
+                self.reopen_save_attachment_input(
+                    attachment_id,
+                    filename,
+                    scroll,
+                    value,
+                    format!("destination already exists: {}", path.display()),
+                    false,
+                );
+            }
+            Err(AttachmentSaveError::DestinationParentUnavailable(path)) => {
+                self.reopen_save_attachment_input(
+                    attachment_id,
+                    filename,
+                    scroll,
+                    value,
+                    format!("destination directory is unavailable: {}", path.display()),
+                    false,
+                );
+            }
+            Err(AttachmentSaveError::WriteFailed(path)) => {
+                self.reopen_save_attachment_input(
+                    attachment_id,
+                    filename,
+                    scroll,
+                    value,
+                    format!("could not save attachment to {}", path.display()),
+                    true,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn reopen_save_attachment_input(
+        &mut self,
+        attachment_id: String,
+        filename: String,
+        scroll: u16,
+        value: String,
+        message: impl Into<String>,
+        error: bool,
+    ) {
+        self.overlay = Some(OverlayState::text_input(
+            TextIntent::SaveAttachment {
+                attachment_id,
+                filename,
+                scroll,
+            },
+            "Save attachment as",
+            "destination path:",
+            value,
+        ));
+        if error {
+            self.set_error(message);
+        } else {
+            self.set_warning(message);
+        }
     }
 
     pub(super) async fn submit_delete_attachment(&mut self, attachment_id: String) -> Result<()> {
@@ -331,6 +525,26 @@ impl App {
         }
         Ok(true)
     }
+}
+
+fn attachment_default_filename(attachment: &crate::task_render::AttachmentMetadataJson) -> String {
+    if let Some(filename) = attachment
+        .filename
+        .as_deref()
+        .and_then(|filename| Path::new(filename).file_name())
+        .and_then(|filename| filename.to_str())
+        .filter(|filename| !filename.is_empty() && *filename != "." && *filename != "..")
+    {
+        return filename.to_string();
+    }
+    let extension = match attachment.media_type.as_str() {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        _ => "image",
+    };
+    format!("attachment-{}.{}", attachment.attachment_id, extension)
 }
 
 fn pasted_image_path(text: &str) -> Option<PathBuf> {

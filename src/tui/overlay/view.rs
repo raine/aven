@@ -192,6 +192,7 @@ pub(crate) enum TextInputKind {
     ConfirmDeleteProject,
     EditTitle,
     EditDate,
+    SaveAttachment,
     ConflictManual,
 }
 
@@ -209,6 +210,7 @@ impl From<&TextIntent> for TextInputKind {
             TextIntent::ConfirmDeleteProject { .. } => Self::ConfirmDeleteProject,
             TextIntent::EditTitle { .. } => Self::EditTitle,
             TextIntent::EditAvailability { .. } | TextIntent::EditDue { .. } => Self::EditDate,
+            TextIntent::SaveAttachment { .. } => Self::SaveAttachment,
             TextIntent::ResolveConflictManually { .. } => Self::ConflictManual,
         }
     }

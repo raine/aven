@@ -14,6 +14,7 @@ pub(super) enum FooterMode {
     DetailNestedDeleted,
     DetailLinks,
     DetailNote,
+    DetailAttachment,
     DetailEpicChild,
     AttachmentPreview,
     DetailSelection,
@@ -133,6 +134,15 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("Esc", "browse"),
             ("q", "task list"),
         ],
+        FooterMode::DetailAttachment => &[
+            ("j/k", "select image"),
+            ("Enter", "preview"),
+            ("o", "system viewer"),
+            ("s", "save as"),
+            ("D", "remove"),
+            ("Tab", "next section"),
+            ("Esc", "browse"),
+        ],
         FooterMode::DetailEpicChild => &[
             ("j/k", "select"),
             ("Enter", "open"),
@@ -144,6 +154,7 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
         FooterMode::AttachmentPreview => &[
             ("j/k", "switch image"),
             ("o", "system viewer"),
+            ("s", "save as"),
             ("D", "remove"),
             ("Esc", "detail"),
             ("q", "task list"),
@@ -325,6 +336,7 @@ fn cmd(mode: FooterMode, label: &str) -> Span<'static> {
         | FooterMode::DetailNestedDeleted
         | FooterMode::DetailLinks
         | FooterMode::DetailNote
+        | FooterMode::DetailAttachment
         | FooterMode::DetailEpicChild
         | FooterMode::AttachmentPreview
         | FooterMode::DetailSelection => Style::new().fg(FG_DIM),
@@ -408,12 +420,23 @@ mod tests {
     }
 
     #[test]
+    fn detail_attachment_footer_advertises_save_controls() {
+        let hints = footer_hints(FooterMode::DetailAttachment, 80);
+
+        assert!(hints.contains(&("Enter", "preview")));
+        assert!(hints.contains(&("o", "system viewer")));
+        assert!(hints.contains(&("s", "save as")));
+        assert!(hints.contains(&("D", "remove")));
+    }
+
+    #[test]
     fn attachment_preview_footer_advertises_preview_controls() {
         assert_eq!(
             footer_hints(FooterMode::AttachmentPreview, 80),
             &[
                 ("j/k", "switch image"),
                 ("o", "system viewer"),
+                ("s", "save as"),
                 ("D", "remove"),
                 ("Esc", "detail"),
                 ("q", "task list"),
