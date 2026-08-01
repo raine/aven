@@ -308,8 +308,27 @@ impl App {
         Ok(())
     }
 
+    pub(super) async fn submit_delete_focused_task(
+        &mut self,
+        selection: TaskSelection,
+    ) -> Result<()> {
+        let result = self
+            .store
+            .mutate_deleted_selection(&selection, true, false)
+            .await?;
+        self.apply_mutation_result(result);
+        Ok(())
+    }
+
     pub(super) async fn undo_last(&mut self) -> Result<()> {
         let in_detail = self.detail.is_active();
+        let detail_anchor_id = in_detail
+            .then(|| {
+                self.store
+                    .selected_task(self.list.selected_task())
+                    .map(|item| item.task.id.clone())
+            })
+            .flatten();
         let selected = if in_detail {
             None
         } else {
@@ -337,7 +356,10 @@ impl App {
             None
         };
         match self.store.undo_last(selected).await? {
-            Some(result) => {
+            Some(mut result) => {
+                if let Some(anchor_id) = detail_anchor_id {
+                    result.selected = self.store.refresh(Some(&anchor_id)).await?;
+                }
                 self.apply_mutation_result(result);
                 let removed = self
                     .detail
@@ -757,7 +779,11 @@ impl App {
         status: String,
     ) -> Result<()> {
         let status = TaskStatus::parse(&status)?;
-        let preserve_task = self.status_change_preserves_task();
+        let relationship_anchor = selection
+            .single_id()
+            .filter(|task_id| *task_id != selection.anchor_id())
+            .map(|_| selection.anchor_id().clone());
+        let preserve_task = self.status_change_preserves_task() && relationship_anchor.is_none();
         let changed_task_id = self.changed_status_target(&selection, status);
         let viewport_row = (!preserve_task)
             .then(|| self.selected_task_viewport_row())
@@ -767,7 +793,12 @@ impl App {
             .mutate_status_selection(&selection, status, preserve_task)
             .await
         {
-            Ok(result) => self.apply_status_mutation_result(result, changed_task_id, viewport_row),
+            Ok(mut result) => {
+                if let Some(anchor_id) = relationship_anchor {
+                    result.selected = self.store.refresh(Some(&anchor_id)).await?;
+                }
+                self.apply_status_mutation_result(result, changed_task_id, viewport_row);
+            }
             Err(error) => {
                 let committed = crate::tui::store::mutation_committed(&error);
                 self.set_error(format!("{error:#}"));
@@ -1243,12 +1274,21 @@ impl App {
         selection: TaskSelection,
         depends_on_task_id: crate::ids::TaskId,
     ) -> Result<()> {
+        let relationship_anchor = selection
+            .single_id()
+            .filter(|task_id| *task_id != selection.anchor_id())
+            .map(|_| selection.anchor_id().clone());
         match self
             .store
             .remove_dependency_from_selection(&selection, &depends_on_task_id)
             .await
         {
-            Ok(result) => self.apply_mutation_result(result),
+            Ok(mut result) => {
+                if let Some(anchor_id) = relationship_anchor {
+                    result.selected = self.store.refresh(Some(&anchor_id)).await?;
+                }
+                self.apply_mutation_result(result);
+            }
             Err(error) => {
                 let committed = crate::tui::store::mutation_committed(&error);
                 self.set_error(format!("{error:#}"));

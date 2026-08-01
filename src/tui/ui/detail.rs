@@ -190,9 +190,21 @@ struct DetailSelectableDocument {
     description: Vec<SelectableLine>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DetailRelationshipSnapshot {
+    section: DetailSection,
+    task_id: crate::ids::TaskId,
+    display_ref: String,
+    title: String,
+    status: String,
+    priority: String,
+    unresolved: bool,
+}
+
 #[derive(Debug)]
 pub(crate) struct DetailDocument {
     task_id: crate::ids::TaskId,
+    relationships: Vec<DetailRelationshipSnapshot>,
     layout: DetailContentLayout,
     scroll: u16,
     expanded_sections: BTreeSet<DetailSection>,
@@ -226,6 +238,35 @@ pub(crate) enum DetailMetadataTarget {
     Priority,
 }
 
+fn detail_relationship_snapshots(item: &TaskListItem) -> Vec<DetailRelationshipSnapshot> {
+    let links = item
+        .epic_parent
+        .iter()
+        .map(|link| (DetailSection::EpicParent, link))
+        .chain(
+            item.epic_children
+                .iter()
+                .map(|link| (DetailSection::EpicChildren, link)),
+        )
+        .chain(
+            item.depends_on
+                .iter()
+                .map(|link| (DetailSection::DependsOn, link)),
+        )
+        .chain(item.blocks.iter().map(|link| (DetailSection::Blocks, link)));
+    links
+        .map(|(section, link)| DetailRelationshipSnapshot {
+            section,
+            task_id: link.task_id.clone(),
+            display_ref: link.display_ref.clone(),
+            title: link.title.clone(),
+            status: link.status.clone(),
+            priority: link.priority.clone(),
+            unresolved: link.unresolved,
+        })
+        .collect()
+}
+
 impl DetailDocument {
     pub(crate) fn build(item: &TaskListItem, context: &DetailRenderContext<'_>) -> Self {
         let layout = context.content_layout();
@@ -253,6 +294,7 @@ impl DetailDocument {
         );
         Self {
             task_id: item.task.id.clone(),
+            relationships: detail_relationship_snapshots(item),
             layout,
             scroll: context.scroll,
             expanded_sections: context.expanded_sections.clone(),
@@ -319,6 +361,7 @@ impl DetailDocument {
         context: &DetailRenderContext<'_>,
     ) -> bool {
         self.task_id == item.task.id
+            && self.relationships == detail_relationship_snapshots(item)
             && self.layout == context.content_layout()
             && self.scroll == context.scroll
             && self.expanded_sections == *context.expanded_sections
@@ -4433,6 +4476,13 @@ mod tests {
         };
         let document = DetailDocument::build(&item, &base);
         assert!(document.matches_frame(&item, &base));
+
+        let epic = detail_test_epic_item();
+        let epic_document = DetailDocument::build(&epic, &base);
+        let mut changed_epic = epic.clone();
+        changed_epic.epic_children[0].status = "done".to_string();
+        changed_epic.epic_children[0].unresolved = false;
+        assert!(!epic_document.matches_frame(&changed_epic, &base));
 
         let pending = [crate::tui::attachment_controller::PendingAttachmentView {
             attachment_id: "pending".to_string(),

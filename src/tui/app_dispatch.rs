@@ -22,8 +22,8 @@ use crate::tui::navigation::{
     handle_detail_scroll_key_with_images, next_index, scroll_with_delta,
 };
 use crate::tui::overlay::{
-    AddTaskMode, CommandState, MultilineIntent, OverlayOutcome, OverlayState, PickerIntent,
-    ScheduleEditorField, ScheduleEditorMode, TagComboboxIntent, UpdateOverlayState,
+    AddTaskMode, CommandState, ConfirmIntent, MultilineIntent, OverlayOutcome, OverlayState,
+    PickerIntent, ScheduleEditorField, ScheduleEditorMode, TagComboboxIntent, UpdateOverlayState,
 };
 use crate::tui::platform::{copy_to_clipboard, is_editor_prefix_key, open_url_in_default_browser};
 use crate::tui::shortcut_buffer::DetailShortcutResolution;
@@ -33,6 +33,14 @@ use crate::tui::ui::{
     detail_help_scroll_cap, help_scroll_cap, prefix_hint_scroll_cap, task_at_position,
     task_status_at_position, text_panel_scroll_cap,
 };
+
+#[derive(Clone)]
+struct FocusedRelationship {
+    section: DetailSection,
+    task_id: crate::ids::TaskId,
+    display_ref: String,
+    title: String,
+}
 
 impl App {
     pub(super) async fn dispatch_paste(&mut self, text: &str) -> Result<()> {
@@ -66,11 +74,6 @@ impl App {
                 overlay_captures: self.overlay_captures_input()
                     || (self.detail.is_active() && self.overlay.is_none()),
                 detail_overlay: self.detail.is_active() && self.overlay.is_none(),
-                detail_target_focused: self
-                    .detail
-                    .state()
-                    .and_then(|detail| detail.focused_target())
-                    .is_some(),
                 add_task_image_target: matches!(
                     self.overlay,
                     Some(OverlayState::AddTask(_))
@@ -946,6 +949,11 @@ impl App {
             }
             return true;
         }
+        let detail_focus = self
+            .detail
+            .state()
+            .and_then(|detail| detail.focused_target())
+            .cloned();
         match &mut self.overlay {
             Some(OverlayState::Help { scroll }) => {
                 let cap = help_scroll_cap(terminal_size.height);
@@ -953,7 +961,7 @@ impl App {
                 true
             }
             Some(OverlayState::DetailHelp { scroll }) => {
-                let cap = detail_help_scroll_cap(terminal_size.height);
+                let cap = detail_help_scroll_cap(terminal_size.height, detail_focus.as_ref());
                 *scroll = scroll_with_delta(*scroll, delta, cap);
                 true
             }
@@ -1281,11 +1289,14 @@ impl App {
                             self.open_attachment_externally(attachment_id).await;
                         }
                     }
-                    (KeyCode::Char('s'), KeyModifiers::NONE) => {
-                        if let DetailTargetId::Attachment { attachment_id } = &selected_target {
-                            self.begin_save_attachment(attachment_id, scroll);
-                            return Ok(());
-                        }
+                    (KeyCode::Char('s'), KeyModifiers::NONE)
+                        if matches!(&selected_target, DetailTargetId::Attachment { .. }) =>
+                    {
+                        let DetailTargetId::Attachment { attachment_id } = &selected_target else {
+                            unreachable!("guarded attachment target");
+                        };
+                        self.begin_save_attachment(attachment_id, scroll);
+                        return Ok(());
                     }
                     (KeyCode::Enter, KeyModifiers::NONE) => match selected_target {
                         DetailTargetId::Task { task_id, .. } => {
@@ -1566,7 +1577,12 @@ impl App {
                     state.schedule_expanded,
                 )
             }
-            OverlayState::DetailHelp { .. } => detail_help_scroll_cap(terminal_size.height),
+            OverlayState::DetailHelp { .. } => detail_help_scroll_cap(
+                terminal_size.height,
+                self.detail
+                    .state()
+                    .and_then(|detail| detail.focused_target()),
+            ),
             OverlayState::DatabaseStats { .. } => database_stats_scroll_cap(terminal_size.height),
             OverlayState::Changelog(state) => {
                 crate::tui::changelog::changelog_scroll_cap(&state.markdown, terminal_size)
@@ -1673,6 +1689,203 @@ impl App {
         }
     }
 
+    fn focused_relationship(&self) -> Option<FocusedRelationship> {
+        let DetailTargetId::Task { section, task_id } = self
+            .detail
+            .state()
+            .and_then(|detail| detail.focused_target())?
+        else {
+            return None;
+        };
+        let item = self.store.selected_task(self.list.selected_task())?;
+        let link = match section {
+            DetailSection::EpicParent => item
+                .epic_parent
+                .as_ref()
+                .filter(|link| link.task_id == *task_id),
+            DetailSection::EpicChildren => item
+                .epic_children
+                .iter()
+                .find(|link| link.task_id == *task_id)
+                .or_else(|| {
+                    self.detail
+                        .state()
+                        .and_then(|detail| detail.removed_epic_child())
+                        .map(|removed| &removed.child)
+                        .filter(|link| link.task_id == *task_id)
+                }),
+            DetailSection::DependsOn => {
+                item.depends_on.iter().find(|link| link.task_id == *task_id)
+            }
+            DetailSection::Blocks => item.blocks.iter().find(|link| link.task_id == *task_id),
+            DetailSection::Attachments | DetailSection::Notes => None,
+        }?;
+        Some(FocusedRelationship {
+            section: *section,
+            task_id: link.task_id.clone(),
+            display_ref: link.display_ref.clone(),
+            title: link.title.clone(),
+        })
+    }
+
+    async fn focused_relationship_selection(
+        &self,
+        relationship: &FocusedRelationship,
+    ) -> Result<Option<crate::tui::task_selection::TaskSelection>> {
+        let Some(anchor_index) = self.list.selected_task() else {
+            return Ok(None);
+        };
+        let Some(anchor) = self.store.selected_task(Some(anchor_index)) else {
+            return Ok(None);
+        };
+        let Some(target) = self.store.load_task_item(&relationship.task_id).await? else {
+            return Ok(None);
+        };
+        Ok(Some(
+            crate::tui::task_selection::TaskSelection::for_detail_target(
+                target,
+                anchor,
+                anchor_index,
+            ),
+        ))
+    }
+
+    async fn begin_unlink_focused_relationship(
+        &mut self,
+        relationship: &FocusedRelationship,
+    ) -> Result<()> {
+        let intent = match relationship.section {
+            DetailSection::DependsOn => {
+                let Some(selection) = self.resolve_task_selection() else {
+                    self.set_info("no selected task to edit");
+                    return Ok(());
+                };
+                ConfirmIntent::UnlinkDependency {
+                    selection,
+                    depends_on_task_id: relationship.task_id.clone(),
+                }
+            }
+            DetailSection::Blocks => {
+                let Some(selection) = self.focused_relationship_selection(relationship).await?
+                else {
+                    self.set_warning("linked task is unavailable");
+                    return Ok(());
+                };
+                let Some(depends_on_task_id) = self
+                    .store
+                    .selected_task(self.list.selected_task())
+                    .map(|item| item.task.id.clone())
+                else {
+                    self.set_info("no selected task to edit");
+                    return Ok(());
+                };
+                ConfirmIntent::UnlinkDependency {
+                    selection,
+                    depends_on_task_id,
+                }
+            }
+            DetailSection::EpicParent => {
+                let Some(target) = self
+                    .store
+                    .resolve_epic_child_target(self.list.selected_task(), None)
+                else {
+                    self.set_warning("focused epic relationship is unavailable");
+                    return Ok(());
+                };
+                ConfirmIntent::UnlinkEpicChild {
+                    epic_id: target.epic.epic_id,
+                    child_id: target.child.task_id,
+                }
+            }
+            DetailSection::EpicChildren => {
+                let Some(target) = self.store.resolve_epic_child_target(
+                    self.list.selected_task(),
+                    Some(&relationship.task_id),
+                ) else {
+                    self.set_warning("focused epic relationship is unavailable");
+                    return Ok(());
+                };
+                ConfirmIntent::UnlinkEpicChild {
+                    epic_id: target.epic.epic_id,
+                    child_id: target.child.task_id,
+                }
+            }
+            DetailSection::Attachments | DetailSection::Notes => {
+                self.set_warning("focused row does not support unlink");
+                return Ok(());
+            }
+        };
+        self.overlay = Some(OverlayState::confirm(
+            intent,
+            "Unlink relationship",
+            format!(
+                "Unlink {} {} from this task?",
+                relationship.display_ref, relationship.title
+            ),
+        ));
+        Ok(())
+    }
+
+    pub(super) async fn submit_unlink_epic_child(
+        &mut self,
+        epic_id: crate::ids::TaskId,
+        child_id: crate::ids::TaskId,
+    ) -> Result<()> {
+        let focused_epic_parent = matches!(
+            self.detail
+                .state()
+                .and_then(|detail| detail.focused_target()),
+            Some(DetailTargetId::Task {
+                section: DetailSection::EpicParent,
+                ..
+            })
+        );
+        let anchor_id = self
+            .store
+            .selected_task(self.list.selected_task())
+            .map(|item| item.task.id.clone());
+        let focused_child_id = self
+            .store
+            .selected_task(self.list.selected_task())
+            .is_some_and(|item| item.task.id == epic_id)
+            .then_some(&child_id);
+        let Some(target) = self
+            .store
+            .resolve_epic_child_target(self.list.selected_task(), focused_child_id)
+            .filter(|target| target.epic.epic_id == epic_id && target.child.task_id == child_id)
+        else {
+            self.set_warning("epic relationship is unavailable");
+            return Ok(());
+        };
+        let mut mutation = self.store.remove_epic_child(target).await?;
+        if focused_epic_parent && let Some(anchor_id) = anchor_id {
+            mutation.message.selected = self.store.refresh(Some(&anchor_id)).await?;
+        }
+        self.list.select_task(mutation.message.selected);
+        if mutation.changed
+            && let Some(detail) = self.detail.state_mut()
+            && matches!(
+                detail.focused_target(),
+                Some(DetailTargetId::Task {
+                    section: DetailSection::EpicChildren,
+                    ..
+                })
+            )
+        {
+            detail.set_removed_epic_child(Some(crate::tui::app::RemovedEpicChild {
+                epic_id: mutation.epic.epic_id,
+                child: mutation.child.clone(),
+                original_position: mutation.original_position,
+            }));
+            detail.set_focused_target(Some(DetailTargetId::Task {
+                section: DetailSection::EpicChildren,
+                task_id: mutation.child.task_id,
+            }));
+        }
+        self.set_success(mutation.message.message);
+        Ok(())
+    }
+
     async fn handle_focused_detail_shortcut(&mut self, key: KeyEvent, scroll: u16) -> Result<bool> {
         let Some(target) = self
             .detail
@@ -1685,10 +1898,96 @@ impl App {
         if !key.modifiers.is_empty() && key.modifiers != KeyModifiers::SHIFT {
             return Ok(false);
         }
+        let relationship = self.focused_relationship();
         match self.pending_shortcut.resolve_detail(key) {
             DetailShortcutResolution::Action(Action::GoBack) => {
                 self.pending_shortcut_scroll = 0;
                 self.navigate_back_from_detail().await?;
+                Ok(true)
+            }
+            DetailShortcutResolution::Action(Action::BeginStatusPicker)
+                if relationship.is_some() =>
+            {
+                self.pending_shortcut_scroll = 0;
+                let Some(selection) = self
+                    .focused_relationship_selection(relationship.as_ref().unwrap())
+                    .await?
+                else {
+                    self.set_warning("linked task is unavailable");
+                    return Ok(true);
+                };
+                self.footer_choice = Some(crate::tui::app::FooterChoiceState {
+                    mode: FooterChoiceMode::Status,
+                    selection,
+                });
+                Ok(true)
+            }
+            DetailShortcutResolution::Action(Action::SetStatus(status))
+                if relationship.is_some() =>
+            {
+                self.pending_shortcut_scroll = 0;
+                let Some(selection) = self
+                    .focused_relationship_selection(relationship.as_ref().unwrap())
+                    .await?
+                else {
+                    self.set_warning("linked task is unavailable");
+                    return Ok(true);
+                };
+                self.submit_edit_status(selection, status.to_string())
+                    .await?;
+                Ok(true)
+            }
+            DetailShortcutResolution::Action(Action::CopyShortRef) if relationship.is_some() => {
+                self.pending_shortcut_scroll = 0;
+                let relationship = relationship.as_ref().unwrap();
+                match copy_to_clipboard(&relationship.display_ref) {
+                    Ok(()) => self.set_success(format!("copied {}", relationship.display_ref)),
+                    Err(error) => self.set_error(format!("copy failed: {error}")),
+                }
+                Ok(true)
+            }
+            DetailShortcutResolution::Action(Action::CopyDurableRef) if relationship.is_some() => {
+                self.pending_shortcut_scroll = 0;
+                let relationship = relationship.as_ref().unwrap();
+                match copy_to_clipboard(relationship.task_id.as_str()) {
+                    Ok(()) => self.set_success(format!("copied {}", relationship.display_ref)),
+                    Err(error) => self.set_error(format!("copy failed: {error}")),
+                }
+                Ok(true)
+            }
+            DetailShortcutResolution::Action(Action::CopyTaskTitle) if relationship.is_some() => {
+                self.pending_shortcut_scroll = 0;
+                let relationship = relationship.as_ref().unwrap();
+                match copy_to_clipboard(&relationship.title) {
+                    Ok(()) => self.set_success("copied task title"),
+                    Err(error) => self.set_error(format!("copy failed: {error}")),
+                }
+                Ok(true)
+            }
+            DetailShortcutResolution::Action(Action::Delete) if relationship.is_some() => {
+                self.pending_shortcut_scroll = 0;
+                let relationship = relationship.as_ref().unwrap();
+                let Some(selection) = self.focused_relationship_selection(relationship).await?
+                else {
+                    self.set_warning("linked task is unavailable");
+                    return Ok(true);
+                };
+                self.overlay = Some(OverlayState::confirm(
+                    ConfirmIntent::DeleteFocusedTask { selection },
+                    "Delete task",
+                    format!(
+                        "Delete {} {}?",
+                        relationship.display_ref, relationship.title
+                    ),
+                ));
+                Ok(true)
+            }
+            DetailShortcutResolution::Action(
+                Action::BeginRemoveDependency | Action::RemoveEpicChild,
+            ) if relationship.is_some() => {
+                self.pending_shortcut_scroll = 0;
+                self.begin_unlink_focused_relationship(relationship.as_ref().unwrap())
+                    .await?;
                 Ok(true)
             }
             DetailShortcutResolution::Action(action) => {
@@ -1704,6 +2003,11 @@ impl App {
             DetailShortcutResolution::MissingAfterPrefix(label) => {
                 self.pending_shortcut_scroll = 0;
                 self.set_warning(format!("invalid shortcut: {label}"));
+                self.show_detail(scroll);
+                Ok(true)
+            }
+            DetailShortcutResolution::PassThrough if relationship.is_some() => {
+                self.set_warning("focused relationship does not support that key");
                 self.show_detail(scroll);
                 Ok(true)
             }
@@ -1764,14 +2068,14 @@ impl App {
             if *section == DetailSection::EpicChildren {
                 self.execute(action).await?;
             } else {
-                self.set_warning("This relationship cannot be removed with that command");
+                self.set_warning("this relationship cannot be removed with that command");
                 self.show_detail(scroll);
             }
             return Ok(());
         }
 
         if !Self::action_supports_related_task(action) {
-            self.set_warning("Open the related task before using that command");
+            self.set_warning("open the related task before using that command");
             self.show_detail(scroll);
             return Ok(());
         }

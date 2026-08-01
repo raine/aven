@@ -29,7 +29,6 @@ pub(crate) struct KeyRouteState {
     pub(crate) prefix_hints: bool,
     pub(crate) overlay_captures: bool,
     pub(crate) detail_overlay: bool,
-    pub(crate) detail_target_focused: bool,
     pub(crate) add_task_image_target: bool,
 }
 
@@ -50,7 +49,7 @@ pub(crate) fn route_key(key: KeyEvent, state: KeyRouteState, terminal_height: u1
         return KeyInput::CancelShortcut;
     }
     if state.overlay_captures {
-        if key.code == KeyCode::Char('?') && state.detail_overlay && !state.detail_target_focused {
+        if key.code == KeyCode::Char('?') && state.detail_overlay {
             return KeyInput::ToggleHelp;
         }
         if let Some(delta) = prefix_scroll_delta(key, terminal_height, state.prefix_hints) {
@@ -176,6 +175,20 @@ mod tests {
             18,
         );
         assert_eq!(input, KeyInput::ScrollPrefix(14));
+    }
+
+    #[test]
+    fn detail_help_routes_before_detail_input_capture() {
+        let input = route_key(
+            key(KeyCode::Char('?')),
+            KeyRouteState {
+                overlay_captures: true,
+                detail_overlay: true,
+                ..KeyRouteState::default()
+            },
+            24,
+        );
+        assert_eq!(input, KeyInput::ToggleHelp);
     }
 
     #[test]
