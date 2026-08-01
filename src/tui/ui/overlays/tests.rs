@@ -499,6 +499,7 @@ mod text_panel_and_search {
         });
 
         assert!(rendered.contains("Enter add selected child"));
+        assert!(rendered.contains("Tab/Shift+Tab select"));
         assert!(!rendered.contains("Enter create child"));
     }
 

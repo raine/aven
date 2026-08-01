@@ -9199,6 +9199,56 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn epic_child_search_tab_cycles_results() {
+        let (_dir, _pool, mut app) = test_app_with_pool().await;
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+        create_and_select_task(&mut app, test_task_draft("Selectable child")).await;
+        let parent_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == parent_id)
+            .unwrap();
+        app.list.select_task(Some(parent_index));
+
+        for code in [KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')] {
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        }
+        type_chars(&mut app, "Selectable child").await;
+        settle_search_preview(&mut app).await;
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Search(state)) if state.selected == 0 && state.results.len() == 2
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Search(state)) if state.selected == 1
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Search(state)) if state.selected == 0
+        ));
+
+        app.handle_overlay_key(key(KeyCode::BackTab)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Search(state)) if state.selected == 1
+        ));
+    }
+
+    #[tokio::test]
     async fn right_navigation_toggles_selected_epic() {
         let (_dir, pool, mut app) = test_app_with_pool().await;
         let parent_index = create_and_select_task(
