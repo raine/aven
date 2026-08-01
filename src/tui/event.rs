@@ -726,6 +726,33 @@ mod tests {
     }
 
     #[test]
+    fn detail_context_resolves_explicit_recurrence_shortcuts() {
+        let cases = [
+            ('k', Action::SkipRecurrence),
+            ('e', Action::BeginEditRecurrenceTemplate),
+            ('p', Action::PauseRecurrence),
+            ('r', Action::ResumeRecurrence),
+            ('s', Action::StopRecurrence),
+            ('h', Action::ShowRecurrenceHistory),
+        ];
+
+        for (code, expected) in cases {
+            assert_eq!(
+                resolve_shortcut_for(
+                    CommandContext::Detail,
+                    &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char(code),],
+                ),
+                ShortcutLookup::Found(expected)
+            );
+        }
+
+        assert_eq!(
+            resolve_shortcut_for(CommandContext::Detail, &[KeyCode::Char('s')]),
+            ShortcutLookup::Found(Action::BeginStatusPicker)
+        );
+    }
+
+    #[test]
     fn detail_context_preserves_shared_task_shortcuts() {
         let detail = CommandContext::Detail;
         let cases = [

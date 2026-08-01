@@ -1171,6 +1171,24 @@ mod tests {
     }
 
     #[test]
+    fn detail_help_lists_recurrence_lifecycle_shortcuts() {
+        let rendered = detail_help_lines()
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        for (keys, description) in [
+            ("t r p", "pause the selected recurring series"),
+            ("t r r", "resume the selected recurring series"),
+            ("t r s", "stop future occurrences after the current task"),
+        ] {
+            assert!(rendered.contains(keys));
+            assert!(rendered.contains(description));
+        }
+    }
+
+    #[test]
     fn detail_help_scroll_cap_uses_detail_rows() {
         assert!(detail_help_scroll_cap(10, None) > 0);
     }

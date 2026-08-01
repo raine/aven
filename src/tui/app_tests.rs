@@ -609,10 +609,9 @@ async fn recurring_series_list_and_detail_use_compact_natural_language() {
         "Available    start of day",
         "Due          same day",
         "Enter open task",
-        "e edit",
-        "p pause",
-        "h history",
-        "s stop",
+        "t r p pause",
+        "t r h history",
+        "t r s stop",
         "Esc close",
     ] {
         assert!(detail.contains(expected), "missing detail text: {expected}");
@@ -960,6 +959,54 @@ async fn recurrence_series_detail_restores_after_lifecycle_history_and_stop_roun
         .unwrap();
     assert!(app.detail.is_active());
     assert!(app.overlay.is_none());
+    assert_eq!(
+        app.store.recurrence_detail.as_ref().unwrap().series.id,
+        series_id
+    );
+}
+
+#[tokio::test]
+async fn recurrence_series_detail_keeps_status_and_stop_shortcuts_distinct() {
+    let mut app = test_app().await;
+    let (_, series_id) = add_recurring_series(&mut app, "Shortcut distinction").await;
+    app.list
+        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+    let terminal = ratatui::layout::Size::new(120, 40);
+    app.dispatch_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), terminal)
+        .await
+        .unwrap();
+    let rendered = render_app_text(&mut app, terminal.width, terminal.height);
+    assert!(rendered.contains("t r p") && rendered.contains("pause"));
+    assert!(rendered.contains("t r s") && rendered.contains("stop"));
+
+    app.dispatch_key(
+        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+        terminal,
+    )
+    .await
+    .unwrap();
+
+    assert!(app.overlay.is_none());
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("Status applies to occurrence tasks. Press Enter to open the current occurrence")
+    );
+    assert_eq!(
+        app.store.recurrence_detail.as_ref().unwrap().series.state,
+        aven_core::recurrence::RecurrenceSeriesState::Active
+    );
+
+    dispatch_keys(
+        &mut app,
+        terminal,
+        &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('s')],
+    )
+    .await;
+
+    let Some(OverlayState::Picker(picker)) = app.overlay.as_ref() else {
+        panic!("explicit stop shortcut did not open confirmation");
+    };
+    assert!(matches!(picker.intent, PickerIntent::StopRecurrence { .. }));
     assert_eq!(
         app.store.recurrence_detail.as_ref().unwrap().series.id,
         series_id

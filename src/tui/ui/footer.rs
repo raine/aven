@@ -12,6 +12,9 @@ pub(super) enum FooterMode {
     DetailDeleted,
     DetailNested,
     DetailNestedDeleted,
+    RecurrenceDetailActive,
+    RecurrenceDetailPaused,
+    RecurrenceDetailStopped,
     DetailLinks,
     DetailNote,
     DetailAttachment,
@@ -118,6 +121,59 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("</>", "move"),
             ("m", "lane"),
             ("?", "more"),
+        ],
+        FooterMode::RecurrenceDetailActive if width >= 128 => &[
+            ("j/k", "scroll"),
+            ("Enter", "task"),
+            ("t r p", "pause series"),
+            ("t r s", "stop series"),
+            ("t r h", "history"),
+            ("?", "more"),
+            ("Esc", "close"),
+        ],
+        FooterMode::RecurrenceDetailPaused if width >= 128 => &[
+            ("j/k", "scroll"),
+            ("Enter", "task"),
+            ("t r r", "resume series"),
+            ("t r s", "stop series"),
+            ("t r h", "history"),
+            ("?", "more"),
+            ("Esc", "close"),
+        ],
+        FooterMode::RecurrenceDetailStopped if width >= 128 => &[
+            ("j/k", "scroll"),
+            ("Enter", "task"),
+            ("t r h", "history"),
+            ("?", "more"),
+            ("Esc", "close"),
+        ],
+        FooterMode::RecurrenceDetailActive if width >= 72 => &[
+            ("Enter", "task"),
+            ("t r p", "pause"),
+            ("t r s", "stop"),
+            ("t r h", "history"),
+            ("?", "more"),
+        ],
+        FooterMode::RecurrenceDetailPaused if width >= 72 => &[
+            ("Enter", "task"),
+            ("t r r", "resume"),
+            ("t r s", "stop"),
+            ("t r h", "history"),
+            ("?", "more"),
+        ],
+        FooterMode::RecurrenceDetailStopped if width >= 72 => &[
+            ("Enter", "task"),
+            ("t r h", "history"),
+            ("?", "more"),
+            ("Esc", "close"),
+        ],
+        FooterMode::RecurrenceDetailActive
+        | FooterMode::RecurrenceDetailPaused
+        | FooterMode::RecurrenceDetailStopped => &[
+            ("Enter", "occurrence"),
+            ("t r h", "history"),
+            ("?", "more"),
+            ("Esc", "task list"),
         ],
         FooterMode::DetailLinks => &[
             ("j/k", "select link"),
@@ -334,6 +390,9 @@ fn cmd(mode: FooterMode, label: &str) -> Span<'static> {
         | FooterMode::DetailDeleted
         | FooterMode::DetailNested
         | FooterMode::DetailNestedDeleted
+        | FooterMode::RecurrenceDetailActive
+        | FooterMode::RecurrenceDetailPaused
+        | FooterMode::RecurrenceDetailStopped
         | FooterMode::DetailLinks
         | FooterMode::DetailNote
         | FooterMode::DetailAttachment
@@ -477,6 +536,30 @@ mod tests {
         }
         for mode in [FooterMode::DetailDeleted, FooterMode::DetailNestedDeleted] {
             assert!(footer_hints(mode, 128).contains(&("t R", "restore deleted")));
+        }
+    }
+
+    #[test]
+    fn recurrence_detail_footer_advertises_catalog_lifecycle_shortcuts() {
+        let active = footer_hints(FooterMode::RecurrenceDetailActive, 128);
+        assert!(active.contains(&("t r p", "pause series")));
+        assert!(active.contains(&("t r s", "stop series")));
+        assert!(active.contains(&("t r h", "history")));
+
+        let paused = footer_hints(FooterMode::RecurrenceDetailPaused, 128);
+        assert!(paused.contains(&("t r r", "resume series")));
+        assert!(paused.contains(&("t r s", "stop series")));
+
+        let stopped = footer_hints(FooterMode::RecurrenceDetailStopped, 128);
+        assert!(
+            !stopped
+                .iter()
+                .any(|(_, label)| label.contains("stop series"))
+        );
+        assert!(stopped.contains(&("t r h", "history")));
+
+        for label in ["t r p", "t r r", "t r s", "t r h"] {
+            assert!(detail_command_has_key(label), "missing catalog key {label}");
         }
     }
 
