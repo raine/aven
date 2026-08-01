@@ -2002,6 +2002,7 @@ mod tests {
         let plain = task_list_item("plain");
         let mut documented = task_list_item("documented");
         documented.notes = vec![crate::query::TaskNote {
+            id: "note-id".to_string(),
             body: "one".to_string(),
             created_at: "001".to_string(),
         }];
@@ -2045,6 +2046,7 @@ mod tests {
     fn metadata_column_width_reserves_lane_for_metadata() {
         let mut task = task_list_item("documented");
         task.notes = vec![crate::query::TaskNote {
+            id: "note-id".to_string(),
             body: "one".to_string(),
             created_at: "001".to_string(),
         }];
@@ -2267,10 +2269,12 @@ mod tests {
         item.task.description = "details".to_string();
         item.notes = vec![
             crate::query::TaskNote {
+                id: "note-1".to_string(),
                 body: "one".to_string(),
                 created_at: "001".to_string(),
             },
             crate::query::TaskNote {
+                id: "note-2".to_string(),
                 body: "two".to_string(),
                 created_at: "002".to_string(),
             },
@@ -2474,6 +2478,7 @@ mod tests {
         let mut item = task_list_item("documented");
         item.task.description = "details".to_string();
         item.notes = vec![crate::query::TaskNote {
+            id: "note-id".to_string(),
             body: "one".to_string(),
             created_at: "001".to_string(),
         }];

@@ -285,6 +285,31 @@ impl TuiStore {
         })
     }
 
+    pub(crate) async fn edit_note(
+        &mut self,
+        task_id: &crate::ids::TaskId,
+        note_id: &str,
+        body: String,
+    ) -> Result<Option<bool>> {
+        let outcome = self
+            .database
+            .edit_note_with_tui_undo(&self.active_workspace, task_id, note_id, body)
+            .await?;
+        Ok(outcome.found.then_some(outcome.changed))
+    }
+
+    pub(crate) async fn delete_note(
+        &mut self,
+        task_id: &crate::ids::TaskId,
+        note_id: &str,
+    ) -> Result<bool> {
+        Ok(self
+            .database
+            .delete_note_with_tui_undo(&self.active_workspace, task_id, note_id)
+            .await?
+            .changed)
+    }
+
     pub(crate) async fn add_note_to_task(
         &mut self,
         task_id: &crate::ids::TaskId,

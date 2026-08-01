@@ -5,6 +5,32 @@ use crate::sync::wire::ChangeWire;
 
 use super::shared::{str_payload, task_field_workspace_id_payload, task_id, workspace_id_payload};
 
+pub(super) async fn edit_note(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
+    let workspace_id = task_field_workspace_id_payload(conn, change).await?;
+    let task_id = task_id(change)?;
+    let note_id = str_payload(&change.payload, "note_id")?;
+    let body = str_payload(&change.payload, "body")?;
+    let edited_at = str_payload(&change.payload, "edited_at")?;
+    let edited =
+        sqlx::query("UPDATE notes SET body = ? WHERE workspace_id = ? AND task_id = ? AND id = ?")
+            .bind(&body)
+            .bind(&workspace_id)
+            .bind(&task_id)
+            .bind(&note_id)
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+    if edited > 0 {
+        sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
+            .bind(&edited_at)
+            .bind(&workspace_id)
+            .bind(&task_id)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
+
 pub(super) async fn delete_note(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
     let workspace_id = task_field_workspace_id_payload(conn, change).await?;
     let task_id = task_id(change)?;

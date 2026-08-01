@@ -44,8 +44,9 @@ pub(crate) fn detail_target_is_actionable(item: &TaskListItem, target: &DetailTa
                 .any(|link| &link.task_id == task_id),
             DetailSection::DependsOn => item.depends_on.iter().any(|link| &link.task_id == task_id),
             DetailSection::Blocks => item.blocks.iter().any(|link| &link.task_id == task_id),
-            DetailSection::Attachments => false,
+            DetailSection::Attachments | DetailSection::Notes => false,
         },
+        DetailTargetId::Note { note_id } => item.notes.iter().any(|note| note.id == *note_id),
         DetailTargetId::Attachment { attachment_id } => item
             .attachments
             .iter()
@@ -55,7 +56,7 @@ pub(crate) fn detail_target_is_actionable(item: &TaskListItem, target: &DetailTa
             DetailSection::EpicChildren => item.epic_children.len() > 5,
             DetailSection::DependsOn => item.depends_on.len() > DETAIL_DEPENDENCY_TREE_CAP,
             DetailSection::Blocks => item.blocks.len() > DETAIL_DEPENDENCY_TREE_CAP,
-            DetailSection::EpicParent | DetailSection::Attachments => false,
+            DetailSection::EpicParent | DetailSection::Attachments | DetailSection::Notes => false,
         },
     }
 }
@@ -878,6 +879,13 @@ fn apply_active_style(model: &mut DetailContentRenderModel, target: &DetailTarge
                 }
             }
         }
+        DetailTargetId::Note { .. } => {
+            for line in lines {
+                for span in &mut line.spans {
+                    span.style = span.style.bg(BG_PANEL);
+                }
+            }
+        }
         DetailTargetId::Attachment { .. } => {
             for line in lines {
                 for span in line.spans.iter_mut().skip(1) {
@@ -920,7 +928,11 @@ fn apply_hover_style(model: &mut DetailContentRenderModel, target: &DetailTarget
     let lines_len = model.lines.len();
     for line in &mut model.lines[start.min(lines_len)..end] {
         for span in &mut line.spans {
-            span.style = span.style.add_modifier(Modifier::UNDERLINED);
+            if matches!(target, DetailTargetId::Note { .. }) {
+                span.style = span.style.bg(BG_PANEL);
+            } else {
+                span.style = span.style.add_modifier(Modifier::UNDERLINED);
+            }
         }
     }
 }
@@ -1112,7 +1124,7 @@ fn detail_body_lines_with_pending_images(
             .any(|attachment| !attachment.deleted),
     );
     lines.push(Line::from(""));
-    lines.extend(detail_note_lines(item, width));
+    extend_detail_note_section(&mut lines, &mut interactive_rows, item, width);
     extend_dependency_sections(
         &mut lines,
         &mut interactive_rows,
@@ -1305,20 +1317,43 @@ fn detail_section_body_indices(
 }
 
 fn detail_note_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
-    let mut lines = vec![Line::from(vec![
+    let mut lines = Vec::new();
+    extend_detail_note_section(&mut lines, &mut Vec::new(), item, width);
+    lines
+}
+
+fn extend_detail_note_section(
+    lines: &mut Vec<Line<'static>>,
+    rows: &mut Vec<DetailInteractiveRow>,
+    item: &TaskListItem,
+    width: usize,
+) {
+    let mut header = vec![
         Span::styled(
             "NOTES",
             Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
         ),
         Span::styled(" (", Style::new().fg(FG_DIM)),
         Span::styled("n", keycap_style()),
-        Span::styled(" add)", Style::new().fg(FG_DIM)),
-    ])];
+        Span::styled(" add", Style::new().fg(FG_DIM)),
+    ];
+    if !item.notes.is_empty() && width >= 42 {
+        header.extend([
+            Span::styled(" · ", Style::new().fg(FG_DIM)),
+            Span::styled("e", keycap_style()),
+            Span::styled(" edit · ", Style::new().fg(FG_DIM)),
+            Span::styled("D", keycap_style()),
+            Span::styled(" delete", Style::new().fg(FG_DIM)),
+        ]);
+    }
+    header.push(Span::styled(")", Style::new().fg(FG_DIM)));
+    lines.push(Line::from(header));
     if item.notes.is_empty() {
         lines.push(Line::from(Span::styled("none", Style::new().fg(FG_MUTED))));
     } else {
         for note in &item.notes {
             lines.push(Line::from(""));
+            let line_index = lines.len();
             lines.push(Line::from(vec![
                 Span::styled(
                     local_timestamp_display(&note.created_at),
@@ -1327,9 +1362,15 @@ fn detail_note_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
                 Span::styled("  you", Style::new().fg(ACCENT)),
             ]));
             lines.extend(quoted_block_lines(&note.body, width, Style::new().fg(FG)));
+            rows.push(DetailInteractiveRow {
+                target: DetailTargetId::Note {
+                    note_id: note.id.clone(),
+                },
+                line_index,
+                height: lines.len() - line_index,
+            });
         }
     }
-    lines
 }
 
 fn detail_description_lines(
@@ -3032,6 +3073,7 @@ mod tests {
                 DetailSection::EpicParent,
                 DetailSection::EpicChildren,
                 DetailSection::Attachments,
+                DetailSection::Notes,
                 DetailSection::DependsOn,
                 DetailSection::Blocks,
             ]
@@ -4501,6 +4543,7 @@ mod tests {
             display_ref: "APP-7KQ9A1X".to_string(),
             labels: vec!["bug".to_string(), "mobile".to_string()],
             notes: vec![crate::query::TaskNote {
+                id: "note-id".to_string(),
                 body: "Confirmed race in useTokenRefresh.ts".to_string(),
                 created_at: "2026-06-20T12:00:00Z".to_string(),
             }],

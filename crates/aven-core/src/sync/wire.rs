@@ -486,6 +486,18 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             }
             required_timestamp_payload("deleted_at", &change.payload)?;
         }
+        op_type::NOTE_EDIT => {
+            ensure_entity_type(change, "task")?;
+            ensure_sync_id("entity_id", &change.entity_id)?;
+            if change.field.as_deref() != Some("notes") {
+                bail!("error invalid-sync-change field=notes");
+            }
+            required_workspace_payload(&change.payload)?;
+            let note_id = required_string_payload("note_id", &change.payload)?;
+            ensure_sync_id("note_id", &note_id)?;
+            required_string_payload("body", &change.payload)?;
+            required_timestamp_payload("edited_at", &change.payload)?;
+        }
         op_type::NOTE_DELETE => {
             ensure_entity_type(change, "task")?;
             ensure_sync_id("entity_id", &change.entity_id)?;
@@ -1538,6 +1550,20 @@ mod tests {
         change.field = Some("dependencies".to_string());
         validate_pushed_change(&change)
             .expect("dependency_add payload built with ChangePayload should be wire-valid");
+    }
+
+    #[test]
+    fn constructed_note_edit_payload_passes_wire_validation() {
+        let ws = test_workspace();
+        let payload = ChangePayload::workspace(&ws)
+            .set("note_id", "DDDDDDDDDDDDDDDD")
+            .set("body", "corrected note body")
+            .set("edited_at", "2026-06-01T01:00:00Z")
+            .into_value();
+        let mut change = make_change_wire(op_type::NOTE_EDIT, "task", "BBBBBBBBBBBBBBBB", payload);
+        change.field = Some("notes".to_string());
+        validate_pushed_change(&change)
+            .expect("note_edit payload built with ChangePayload should be wire-valid");
     }
 
     #[test]

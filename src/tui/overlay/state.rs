@@ -515,6 +515,11 @@ pub(crate) enum MultilineIntent {
         task_id: crate::ids::TaskId,
         display_ref: String,
     },
+    EditNote {
+        task_id: crate::ids::TaskId,
+        display_ref: String,
+        note_id: String,
+    },
     EditDescription {
         selection: TaskSelection,
     },
@@ -524,6 +529,10 @@ pub(crate) enum MultilineIntent {
 }
 
 impl MultilineIntent {
+    pub(crate) fn supports_external_editor(&self) -> bool {
+        matches!(self, Self::EditDescription { .. } | Self::EditNote { .. })
+    }
+
     pub(crate) fn is_description_edit(&self) -> bool {
         matches!(self, Self::EditDescription { .. })
     }
@@ -618,6 +627,10 @@ pub(crate) enum ConfirmIntent {
     },
     DeleteTasks {
         selection: TaskSelection,
+    },
+    DeleteNote {
+        task_id: crate::ids::TaskId,
+        note_id: String,
     },
     DeleteAttachment {
         attachment_id: String,
@@ -1177,6 +1190,7 @@ impl MultilineInputState {
             && matches!(
                 self.intent,
                 MultilineIntent::AddNote { .. }
+                    | MultilineIntent::EditNote { .. }
                     | MultilineIntent::EditDescription { .. }
                     | MultilineIntent::ResolveConflictManually { .. }
             )

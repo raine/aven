@@ -7635,6 +7635,150 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn focused_note_edit_preserves_note_identity() {
+        let mut app = test_app().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Note edit target")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        let note_id = app
+            .store
+            .add_note_to_task(&task_id, "original note".to_string())
+            .await
+            .unwrap();
+        app.refresh().await.unwrap();
+        app.show_detail(0);
+
+        app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(
+            app.detail
+                .state()
+                .and_then(|detail| detail.focused_target()),
+            Some(&crate::tui::app::DetailTargetId::Note {
+                note_id: note_id.clone(),
+            })
+        );
+
+        app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
+            .await
+            .unwrap();
+        let Some(OverlayState::MultilineInput(state)) = app.overlay.as_mut() else {
+            panic!("expected note editor");
+        };
+        assert!(matches!(
+            &state.intent,
+            MultilineIntent::EditNote {
+                task_id: intent_task_id,
+                note_id: intent_note_id,
+                ..
+            } if intent_task_id == &task_id && intent_note_id == &note_id
+        ));
+        state.lines = vec!["corrected note".to_string()];
+        state.row = 0;
+        state.column = 14;
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        let item = app.store.selected_task(app.list.selected_task()).unwrap();
+        assert_eq!(item.notes.len(), 1);
+        assert_eq!(item.notes[0].id, note_id);
+        assert_eq!(item.notes[0].body, "corrected note");
+        assert!(toast_message(&app).is_some_and(|message| message.starts_with("edited note ")));
+    }
+
+    #[tokio::test]
+    async fn focused_note_delete_requires_confirmation_and_honors_cancellation() {
+        let mut app = test_app().await;
+        let selected =
+            create_and_select_task(&mut app, test_task_draft("Note delete target")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        let note_id = app
+            .store
+            .add_note_to_task(&task_id, "keep until confirmed".to_string())
+            .await
+            .unwrap();
+        app.refresh().await.unwrap();
+        app.show_detail(0);
+        app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
+            .await
+            .unwrap();
+
+        app.dispatch_key(key(KeyCode::Char('D')), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Confirm(ConfirmState {
+                intent: ConfirmIntent::DeleteNote {
+                    task_id: intent_task_id,
+                    note_id: intent_note_id,
+                },
+                ..
+            })) if intent_task_id == &task_id && intent_note_id == &note_id
+        ));
+        app.handle_overlay_key(key(KeyCode::Char('n')))
+            .await
+            .unwrap();
+        assert_eq!(app.store.tasks[selected].notes[0].id, note_id);
+
+        app.dispatch_key(key(KeyCode::Char('D')), (80, 24).into())
+            .await
+            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+
+        assert!(app.store.tasks[selected].notes.is_empty());
+        assert!(
+            app.detail
+                .state()
+                .and_then(|detail| detail.focused_target())
+                .is_none()
+        );
+        assert_eq!(toast_message(&app).as_deref(), Some("deleted note"));
+    }
+
+    #[tokio::test]
+    async fn canceling_dirty_note_edit_preserves_persisted_body() {
+        let mut app = test_app().await;
+        let selected =
+            create_and_select_task(&mut app, test_task_draft("Note cancel target")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        let note_id = app
+            .store
+            .add_note_to_task(&task_id, "original note".to_string())
+            .await
+            .unwrap();
+        app.refresh().await.unwrap();
+        app.show_detail(0);
+        app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
+            .await
+            .unwrap();
+        type_chars(&mut app, " changed").await;
+
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::MultilineInput(state))
+                if matches!(state.intent, MultilineIntent::EditNote { .. })
+                    && state.mode == MultilineInputMode::ConfirmDiscard
+        ));
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+
+        assert!(app.overlay.is_none());
+        let note = app.store.tasks[selected]
+            .notes
+            .iter()
+            .find(|note| note.id == note_id)
+            .unwrap();
+        assert_eq!(note.body, "original note");
+    }
+
+    #[tokio::test]
     async fn detail_tab_jumps_to_notes_below_viewport() {
         let mut app = test_app().await;
         let mut draft = test_task_draft("Hidden notes target");
@@ -12259,6 +12403,7 @@ mod task_editing {
         app.store.tasks[selected]
             .notes
             .push(crate::query::TaskNote {
+                id: "note-id".to_string(),
                 body: "Note body".to_string(),
                 created_at: crate::ids::now(),
             });
@@ -12334,6 +12479,7 @@ mod task_editing {
         app.store.tasks[selected]
             .notes
             .push(crate::query::TaskNote {
+                id: "note-id".to_string(),
                 body: "Note body".to_string(),
                 created_at: crate::ids::now(),
             });

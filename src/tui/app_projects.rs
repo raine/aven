@@ -459,10 +459,12 @@ mod tests {
     fn task_notes_copy_preserves_bodies_and_separates_notes() {
         let notes = vec![
             crate::query::TaskNote {
+                id: "note-1".to_string(),
                 body: "First note\n- item".to_string(),
                 created_at: "2026-07-13T10:00:00Z".to_string(),
             },
             crate::query::TaskNote {
+                id: "note-2".to_string(),
                 body: "Second note\n\nParagraph".to_string(),
                 created_at: "2026-07-13T11:00:00Z".to_string(),
             },

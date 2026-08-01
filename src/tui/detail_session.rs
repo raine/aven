@@ -18,6 +18,7 @@ pub(crate) struct DetailSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DetailTargetActivation {
+    Focus,
     FollowTask(crate::ids::TaskId),
     OpenAttachment(String),
     ToggleSection(DetailSection),
@@ -295,6 +296,7 @@ impl DetailState {
         self.focused_target = Some(target.clone());
         match target {
             DetailTargetId::Task { task_id, .. } => DetailTargetActivation::FollowTask(task_id),
+            DetailTargetId::Note { .. } => DetailTargetActivation::Focus,
             DetailTargetId::Attachment { attachment_id } => {
                 DetailTargetActivation::OpenAttachment(attachment_id)
             }

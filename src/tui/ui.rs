@@ -130,6 +130,11 @@ impl ViewState {
         {
             if matches!(
                 self.detail_focus,
+                Some(crate::tui::app::DetailTargetId::Note { .. })
+            ) {
+                FooterMode::DetailNote
+            } else if matches!(
+                self.detail_focus,
                 Some(crate::tui::app::DetailTargetId::Task {
                     section: crate::tui::app::DetailSection::EpicChildren,
                     ..

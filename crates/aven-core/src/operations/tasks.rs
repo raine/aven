@@ -144,6 +144,15 @@ impl TaskMutationReport {
     }
 }
 
+pub struct NoteEditOutcome {
+    #[allow(dead_code)]
+    pub task_id: TaskId,
+    #[allow(dead_code)]
+    pub note_id: String,
+    pub found: bool,
+    pub changed: bool,
+}
+
 pub struct NoteDeleteOutcome {
     #[allow(dead_code)]
     pub task_id: TaskId,
@@ -458,6 +467,28 @@ impl Database {
         add_note_operation(&mut conn, workspace, task_id, body, true).await
     }
 
+    pub async fn edit_note(
+        &self,
+        workspace: &Workspace,
+        task_id: &TaskId,
+        note_id: &str,
+        body: String,
+    ) -> Result<NoteEditOutcome> {
+        let mut conn = self.acquire().await?;
+        edit_note_operation(&mut conn, workspace, task_id, note_id, body, false).await
+    }
+
+    pub async fn edit_note_with_tui_undo(
+        &self,
+        workspace: &Workspace,
+        task_id: &TaskId,
+        note_id: &str,
+        body: String,
+    ) -> Result<NoteEditOutcome> {
+        let mut conn = self.acquire().await?;
+        edit_note_operation(&mut conn, workspace, task_id, note_id, body, true).await
+    }
+
     pub async fn delete_note(
         &self,
         workspace: &Workspace,
@@ -465,7 +496,17 @@ impl Database {
         note_id: &str,
     ) -> Result<NoteDeleteOutcome> {
         let mut conn = self.acquire().await?;
-        delete_note(&mut conn, workspace, task_id, note_id).await
+        delete_note_operation(&mut conn, workspace, task_id, note_id, false).await
+    }
+
+    pub async fn delete_note_with_tui_undo(
+        &self,
+        workspace: &Workspace,
+        task_id: &TaskId,
+        note_id: &str,
+    ) -> Result<NoteDeleteOutcome> {
+        let mut conn = self.acquire().await?;
+        delete_note_operation(&mut conn, workspace, task_id, note_id, true).await
     }
 }
 
@@ -1254,15 +1295,101 @@ pub(super) async fn add_note_operation(
     })
 }
 
-pub async fn delete_note(
+async fn edit_note_operation(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     task_id: &crate::ids::TaskId,
     note_id: &str,
+    body: String,
+    tui_undo: bool,
+) -> Result<NoteEditOutcome> {
+    let mut tx = begin_immediate(conn).await?;
+    crate::operations::route_recurrence_task_field(&mut tx, workspace, task_id, "notes", "")
+        .await?;
+    let before = sqlx::query_scalar::<_, String>(
+        "SELECT body FROM notes WHERE workspace_id = ? AND task_id = ? AND id = ?",
+    )
+    .bind(&workspace.id)
+    .bind(task_id)
+    .bind(note_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let found = before.is_some();
+    let changed = before.as_ref().is_some_and(|before| before != &body);
+    if changed {
+        let edited_at = now();
+        sqlx::query("UPDATE notes SET body = ? WHERE workspace_id = ? AND task_id = ? AND id = ?")
+            .bind(&body)
+            .bind(&workspace.id)
+            .bind(task_id)
+            .bind(note_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
+            .bind(&edited_at)
+            .bind(&workspace.id)
+            .bind(task_id)
+            .execute(&mut *tx)
+            .await?;
+        append_change(
+            &mut tx,
+            ChangeEntity::Task,
+            task_id,
+            Some("notes"),
+            op_type::NOTE_EDIT,
+            ChangePayload::workspace(workspace)
+                .set("note_id", note_id)
+                .set("body", &body)
+                .set("edited_at", edited_at),
+        )
+        .await?;
+        if tui_undo {
+            record_tui_undo(
+                &mut tx,
+                &workspace.id,
+                &format!("edit note {note_id}"),
+                UndoPayload {
+                    commands: vec![UndoCommand::SetNoteBody {
+                        task_id: task_id.clone(),
+                        note_id: note_id.to_string(),
+                        before: before.expect("changed note has before body"),
+                        after: body,
+                    }],
+                },
+            )
+            .await?;
+        }
+    }
+    tx.commit().await?;
+    if changed {
+        info!(task_id = %task_id, note_id = %note_id, "note edited");
+    }
+    Ok(NoteEditOutcome {
+        task_id: task_id.clone(),
+        note_id: note_id.to_string(),
+        found,
+        changed,
+    })
+}
+
+async fn delete_note_operation(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    task_id: &crate::ids::TaskId,
+    note_id: &str,
+    tui_undo: bool,
 ) -> Result<NoteDeleteOutcome> {
     let mut tx = begin_immediate(conn).await?;
     crate::operations::route_recurrence_task_field(&mut tx, workspace, task_id, "notes", "")
         .await?;
+    let before = sqlx::query_as::<_, (String, String)>(
+        "SELECT body, created_at FROM notes WHERE workspace_id = ? AND task_id = ? AND id = ?",
+    )
+    .bind(&workspace.id)
+    .bind(task_id)
+    .bind(note_id)
+    .fetch_optional(&mut *tx)
+    .await?;
     let deleted_at = now();
     let deleted =
         sqlx::query("DELETE FROM notes WHERE workspace_id = ? AND task_id = ? AND id = ?")
@@ -1290,6 +1417,23 @@ pub async fn delete_note(
                 .set("deleted_at", deleted_at),
         )
         .await?;
+        if tui_undo {
+            let (body, created_at) = before.expect("deleted note has before state");
+            record_tui_undo(
+                &mut tx,
+                &workspace.id,
+                &format!("delete note {note_id}"),
+                UndoPayload {
+                    commands: vec![UndoCommand::RestoreDeletedNote {
+                        task_id: task_id.clone(),
+                        note_id: note_id.to_string(),
+                        body,
+                        created_at,
+                    }],
+                },
+            )
+            .await?;
+        }
     }
     tx.commit().await?;
     if deleted > 0 {
