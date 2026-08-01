@@ -1146,11 +1146,26 @@ pub(crate) struct MultilineInputState {
     pub(crate) row: usize,
     pub(crate) column: usize,
     pub(crate) mode: MultilineInputMode,
+    baseline: Vec<String>,
 }
 
 impl MultilineInputState {
-    pub(crate) fn has_meaningful_content(&self) -> bool {
-        self.lines.iter().any(|line| !line.trim().is_empty())
+    pub(crate) fn is_dirty(&self) -> bool {
+        self.lines != self.baseline
+    }
+
+    pub(crate) fn should_confirm_discard(&self) -> bool {
+        self.is_dirty()
+            && matches!(
+                self.intent,
+                MultilineIntent::AddNote { .. }
+                    | MultilineIntent::EditDescription { .. }
+                    | MultilineIntent::ResolveConflictManually { .. }
+            )
+    }
+
+    pub(crate) fn baseline_value(&self) -> String {
+        self.baseline.join("\n")
     }
 
     pub(crate) fn insert_paste(&mut self, text: &str) {
@@ -1183,15 +1198,7 @@ impl MultilineInputState {
         title: impl Into<String>,
         prompt: impl Into<String>,
     ) -> Self {
-        Self {
-            intent,
-            title: title.into(),
-            prompt: prompt.into(),
-            lines: vec![String::new()],
-            row: 0,
-            column: 0,
-            mode: MultilineInputMode::Compose,
-        }
+        Self::from_value(intent, title, prompt, String::new())
     }
 
     pub(crate) fn from_value(
@@ -1200,10 +1207,18 @@ impl MultilineInputState {
         prompt: impl Into<String>,
         value: String,
     ) -> Self {
-        let mut lines = value.split('\n').map(str::to_string).collect::<Vec<_>>();
-        if lines.is_empty() {
-            lines.push(String::new());
-        }
+        Self::from_value_with_baseline(intent, title, prompt, value.clone(), value)
+    }
+
+    pub(crate) fn from_value_with_baseline(
+        intent: MultilineIntent,
+        title: impl Into<String>,
+        prompt: impl Into<String>,
+        value: String,
+        baseline: String,
+    ) -> Self {
+        let lines = value.split('\n').map(str::to_string).collect::<Vec<_>>();
+        let baseline = baseline.split('\n').map(str::to_string).collect::<Vec<_>>();
         let row = lines.len() - 1;
         let column = lines[row].len();
         Self {
@@ -1214,6 +1229,7 @@ impl MultilineInputState {
             row,
             column,
             mode: MultilineInputMode::Compose,
+            baseline,
         }
     }
 }
@@ -1369,6 +1385,18 @@ impl OverlayState {
     ) -> Self {
         Self::MultilineInput(MultilineInputState::from_value(
             intent, title, prompt, value,
+        ))
+    }
+
+    pub(crate) fn multiline_input_with_baseline(
+        intent: MultilineIntent,
+        title: impl Into<String>,
+        prompt: impl Into<String>,
+        value: String,
+        baseline: String,
+    ) -> Self {
+        Self::MultilineInput(MultilineInputState::from_value_with_baseline(
+            intent, title, prompt, value, baseline,
         ))
     }
 

@@ -154,15 +154,15 @@ mod tests {
     }
 
     fn state_with_lines(lines: Vec<String>, row: usize, column: usize) -> MultilineInputState {
-        MultilineInputState {
-            intent: MultilineIntent::AddTaskNatural,
-            title: "Title".to_string(),
-            prompt: "Prompt".to_string(),
-            lines,
-            row,
-            column,
-            mode: crate::tui::overlay::MultilineInputMode::Compose,
-        }
+        let mut state = MultilineInputState::from_value(
+            MultilineIntent::AddTaskNatural,
+            "Title",
+            "Prompt",
+            lines.join("\n"),
+        );
+        state.row = row;
+        state.column = column;
+        state
     }
 
     #[test]
