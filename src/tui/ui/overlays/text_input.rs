@@ -68,8 +68,11 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
     let edit_date = state.kind == TextInputKind::EditDate;
     let dialog_width = if edit_date { 64 } else { 54 };
     let input = input_line("", &state.input, state.cursor);
-    let confirms_project_delete = state.kind == TextInputKind::ConfirmDeleteProject;
-    let lines = if confirms_project_delete {
+    let confirms_named_delete = matches!(
+        state.kind,
+        TextInputKind::ConfirmDeleteProject | TextInputKind::ConfirmDeleteLabel
+    );
+    let lines = if confirms_named_delete {
         vec![
             Line::from(Span::styled(&state.prompt, Style::new().fg(FG_DIM))),
             Line::from(""),
@@ -102,7 +105,7 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
             dialog_hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
         ]
     };
-    let height = if confirms_project_delete {
+    let height = if confirms_named_delete {
         7
     } else if edit_date {
         state.prompt.lines().count() as u16 + 5
@@ -150,6 +153,7 @@ pub(in crate::tui::ui) fn project_path_input_line(
 
 pub(in crate::tui::ui) const ADD_PROJECT_NAME_PLACEHOLDER: &str = "Enter project name here...";
 pub(in crate::tui::ui) const ADD_LABEL_NAME_PLACEHOLDER: &str = "Enter label name here...";
+pub(in crate::tui::ui) const RENAME_LABEL_NAME_PLACEHOLDER: &str = "Enter label name here...";
 pub(in crate::tui::ui) const RENAME_PROJECT_NAME_PLACEHOLDER: &str = "Enter project name here...";
 pub(in crate::tui::ui) const CONFLICT_MANUAL_VALUE_PLACEHOLDER: &str = "Enter manual value here...";
 
@@ -157,6 +161,7 @@ fn text_input_placeholder(kind: TextInputKind) -> Option<&'static str> {
     match kind {
         TextInputKind::AddProject => Some(ADD_PROJECT_NAME_PLACEHOLDER),
         TextInputKind::AddLabel => Some(ADD_LABEL_NAME_PLACEHOLDER),
+        TextInputKind::RenameLabel => Some(RENAME_LABEL_NAME_PLACEHOLDER),
         TextInputKind::RenameProject => Some(RENAME_PROJECT_NAME_PLACEHOLDER),
         TextInputKind::ConflictManual => Some(CONFLICT_MANUAL_VALUE_PLACEHOLDER),
         _ => None,

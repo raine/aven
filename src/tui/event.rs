@@ -82,6 +82,9 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginAddProjectPath
             | Action::BeginRemoveProjectPath
             | Action::BeginAddLabel
+            | Action::BeginBrowseLabels
+            | Action::BeginRenameLabel
+            | Action::BeginDeleteLabel
             | Action::BeginFilterLabel
             | Action::BeginFilterPriority
             | Action::BeginScopeProject
@@ -246,6 +249,7 @@ mod tests {
                 "recurrence-resume",
                 "recurrence-stop",
                 "recurrence-history",
+                "rename-label",
                 "rename-project",
                 "remove-project-path",
                 "remove-dependency",
@@ -266,7 +270,7 @@ mod tests {
     fn command_cycle_options_keeps_visible_matches_after_exact_match() {
         assert_eq!(
             command_cycle_options("delete"),
-            vec!["delete", "delete-project", "filter-deleted"]
+            vec!["delete", "delete-label", "delete-project", "filter-deleted"]
         );
     }
 
@@ -797,6 +801,25 @@ mod tests {
             resolve_shortcut(&[KeyCode::Char('p'), KeyCode::Char('x')]),
             ShortcutLookup::Found(Action::BeginRemoveProjectPath)
         ));
+    }
+
+    #[test]
+    fn resolves_label_administration_shortcuts() {
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('L')]),
+            ShortcutLookup::Prefix
+        ));
+        for (key, action) in [
+            ('n', Action::BeginAddLabel),
+            ('b', Action::BeginBrowseLabels),
+            ('r', Action::BeginRenameLabel),
+            ('D', Action::BeginDeleteLabel),
+        ] {
+            assert_eq!(
+                resolve_shortcut(&[KeyCode::Char('L'), KeyCode::Char(key)]),
+                ShortcutLookup::Found(action)
+            );
+        }
     }
 
     #[test]

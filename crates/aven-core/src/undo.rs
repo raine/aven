@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use anyhow::{Result, bail, ensure};
 use sqlx::{Row, SqliteConnection};
 
+use crate::change_log::{ChangeEntity, ChangePayload, append_change, op_type};
 use crate::db::{
     Database, begin_immediate, conflict_exists, field_version, insert_change, set_field_version,
     task_from_row,
@@ -135,6 +136,16 @@ pub enum UndoCommand {
         label: String,
         create_change_id: String,
     },
+    SetLabelName {
+        before: String,
+        after: String,
+    },
+    RestoreDeletedLabel {
+        name: String,
+        created_at: String,
+        task_ids: Vec<crate::ids::TaskId>,
+        series_ids: Vec<crate::recurrence::RecurrenceSeriesId>,
+    },
     RestoreConflictResolution {
         task_id: crate::ids::TaskId,
         field: String,
@@ -182,6 +193,12 @@ pub struct UndoOutcome {
     pub task_id: Option<crate::ids::TaskId>,
     pub include_deleted: Option<bool>,
     pub project_rename: Option<ProjectRenameUndoOutcome>,
+    pub label_rename: Option<LabelRenameUndoOutcome>,
+}
+
+pub struct LabelRenameUndoOutcome {
+    pub before: String,
+    pub after: String,
 }
 
 pub struct ProjectRenameUndoOutcome {
@@ -385,11 +402,13 @@ fn undo_payload_has_effect(payload: &UndoPayload) -> bool {
             ..
         } => before_key != after_key || before_name != after_name || before_prefix != after_prefix,
         UndoCommand::SetNoteBody { before, after, .. } => before != after,
+        UndoCommand::SetLabelName { before, after } => before != after,
         UndoCommand::DeleteCreatedTask { .. }
         | UndoCommand::RestoreDeletedNote { .. }
         | UndoCommand::DeleteCreatedNote { .. }
         | UndoCommand::DeleteCreatedProject { .. }
         | UndoCommand::DeleteCreatedLabel { .. }
+        | UndoCommand::RestoreDeletedLabel { .. }
         | UndoCommand::RestoreConflictResolution { .. }
         | UndoCommand::AddTaskDependency { .. }
         | UndoCommand::RemoveTaskDependency { .. }
@@ -403,6 +422,7 @@ fn empty_command_outcome() -> CommandOutcome {
         task_id: None,
         include_deleted: None,
         project_rename: None,
+        label_rename: None,
     }
 }
 
@@ -479,6 +499,7 @@ pub(crate) async fn apply_latest_tui_undo(
                 task_id: outcome.task_id,
                 include_deleted: outcome.include_deleted,
                 project_rename: outcome.project_rename,
+                label_rename: outcome.label_rename,
             }))
         }
         Err(error) => {
@@ -492,6 +513,7 @@ struct CommandOutcome {
     task_id: Option<crate::ids::TaskId>,
     include_deleted: Option<bool>,
     project_rename: Option<ProjectRenameUndoOutcome>,
+    label_rename: Option<LabelRenameUndoOutcome>,
 }
 
 async fn apply_undo_commands(
@@ -502,6 +524,7 @@ async fn apply_undo_commands(
     let mut task_id = None;
     let mut include_deleted = None;
     let mut project_rename = None;
+    let mut label_rename = None;
     for command in commands {
         let outcome = apply_undo_command(conn, workspace_id, command).await?;
         if outcome.task_id.is_some() {
@@ -513,11 +536,15 @@ async fn apply_undo_commands(
         if outcome.project_rename.is_some() {
             project_rename = outcome.project_rename;
         }
+        if outcome.label_rename.is_some() {
+            label_rename = outcome.label_rename;
+        }
     }
     Ok(CommandOutcome {
         task_id,
         include_deleted,
         project_rename,
+        label_rename,
     })
 }
 
@@ -557,6 +584,7 @@ async fn apply_undo_command(
                         task_id: Some(task_id.clone()),
                         include_deleted: None,
                         project_rename: None,
+                        label_rename: None,
                     });
                 }
                 if task_field == TaskField::Project {
@@ -579,6 +607,7 @@ async fn apply_undo_command(
                 task_id: Some(task_id.clone()),
                 include_deleted,
                 project_rename: None,
+                label_rename: None,
             })
         }
         UndoCommand::SetTaskLabels {
@@ -603,6 +632,7 @@ async fn apply_undo_command(
                 task_id: Some(task_id.clone()),
                 include_deleted: None,
                 project_rename: None,
+                label_rename: None,
             })
         }
         UndoCommand::DeleteCreatedTask {
@@ -647,6 +677,7 @@ async fn apply_undo_command(
                         task_id: Some(task_id.clone()),
                         include_deleted: None,
                         project_rename: None,
+                        label_rename: None,
                     });
                 }
             }
@@ -656,6 +687,7 @@ async fn apply_undo_command(
                 task_id: Some(task_id.clone()),
                 include_deleted: None,
                 project_rename: None,
+                label_rename: None,
             })
         }
         UndoCommand::SetNoteBody {
@@ -781,6 +813,7 @@ async fn apply_undo_command(
                 task_id: Some(task_id.clone()),
                 include_deleted: None,
                 project_rename: None,
+                label_rename: None,
             })
         }
         UndoCommand::DeleteCreatedProject {
@@ -832,6 +865,7 @@ async fn apply_undo_command(
                     before_key: before_key.clone(),
                     after_key: after_key.clone(),
                 }),
+                label_rename: None,
             })
         }
         UndoCommand::DeleteCreatedLabel {
@@ -839,6 +873,48 @@ async fn apply_undo_command(
             create_change_id,
         } => {
             delete_created_label(conn, workspace_id, label, create_change_id).await?;
+            Ok(empty_command_outcome())
+        }
+        UndoCommand::SetLabelName { before, after } => {
+            let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
+            let after_exists = sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM labels WHERE workspace_id = ? AND name = ?",
+            )
+            .bind(workspace_id)
+            .bind(after)
+            .fetch_one(&mut *conn)
+            .await?
+                == 1;
+            let before_exists = sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM labels WHERE workspace_id = ? AND name = ?",
+            )
+            .bind(workspace_id)
+            .bind(before)
+            .fetch_one(&mut *conn)
+            .await?
+                > 0;
+            if !after_exists || before_exists {
+                bail!("error undo-state-changed label={after}");
+            }
+            crate::operations::set_label_name(conn, &workspace, after, before).await?;
+            Ok(CommandOutcome {
+                task_id: None,
+                include_deleted: None,
+                project_rename: None,
+                label_rename: Some(LabelRenameUndoOutcome {
+                    before: before.clone(),
+                    after: after.clone(),
+                }),
+            })
+        }
+        UndoCommand::RestoreDeletedLabel {
+            name,
+            created_at,
+            task_ids,
+            series_ids,
+        } => {
+            restore_deleted_label(conn, workspace_id, name, created_at, task_ids, series_ids)
+                .await?;
             Ok(empty_command_outcome())
         }
         UndoCommand::RestoreConflictResolution {
@@ -870,6 +946,7 @@ async fn apply_undo_command(
                 task_id: Some(task_id.clone()),
                 include_deleted: None,
                 project_rename: None,
+                label_rename: None,
             })
         }
         UndoCommand::AddTaskDependency {
@@ -902,6 +979,7 @@ async fn apply_undo_command(
                 task_id: Some(task_id.clone()),
                 include_deleted: None,
                 project_rename: None,
+                label_rename: None,
             })
         }
         UndoCommand::RemoveTaskDependency {
@@ -944,6 +1022,7 @@ async fn apply_undo_command(
                 task_id: Some(task_id.clone()),
                 include_deleted: None,
                 project_rename: None,
+                label_rename: None,
             })
         }
         UndoCommand::AddEpicChild { epic_id, child_id } => {
@@ -956,6 +1035,7 @@ async fn apply_undo_command(
                 task_id: Some(child_id.clone()),
                 include_deleted: None,
                 project_rename: None,
+                label_rename: None,
             })
         }
         UndoCommand::RemoveEpicChild { epic_id, child_id } => {
@@ -968,6 +1048,7 @@ async fn apply_undo_command(
                 task_id: Some(child_id.clone()),
                 include_deleted: None,
                 project_rename: None,
+                label_rename: None,
             })
         }
     }
@@ -1303,13 +1384,20 @@ async fn delete_created_label(
     if exists == 0 || !change_is_unsynced(conn, create_change_id).await? {
         bail!("error undo-state-changed label={label}");
     }
-    let refs: i64 =
+    let task_refs: i64 =
         sqlx::query_scalar("SELECT count(*) FROM task_labels WHERE workspace_id = ? AND label = ?")
             .bind(workspace_id)
             .bind(label)
             .fetch_one(&mut *conn)
             .await?;
-    if refs > 0 {
+    let series_refs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM recurrence_series_labels WHERE workspace_id = ? AND label = ?",
+    )
+    .bind(workspace_id)
+    .bind(label)
+    .fetch_one(&mut *conn)
+    .await?;
+    if task_refs > 0 || series_refs > 0 {
         bail!("error undo-state-changed label={label}");
     }
     sqlx::query("DELETE FROM labels WHERE workspace_id = ? AND name = ?")
@@ -1321,6 +1409,77 @@ async fn delete_created_label(
         .bind(create_change_id)
         .execute(&mut *conn)
         .await?;
+    Ok(())
+}
+
+async fn restore_deleted_label(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    name: &str,
+    created_at: &str,
+    task_ids: &[crate::ids::TaskId],
+    series_ids: &[crate::recurrence::RecurrenceSeriesId],
+) -> Result<()> {
+    let exists: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM labels WHERE workspace_id = ? AND name = ?")
+            .bind(workspace_id)
+            .bind(name)
+            .fetch_one(&mut *conn)
+            .await?;
+    if exists > 0 {
+        bail!("error undo-state-changed label={name}");
+    }
+    sqlx::query("INSERT INTO labels(workspace_id, name, created_at) VALUES (?, ?, ?)")
+        .bind(workspace_id)
+        .bind(name)
+        .bind(created_at)
+        .execute(&mut *conn)
+        .await?;
+    for task_id in task_ids {
+        let inserted = sqlx::query(
+            "INSERT INTO task_labels(workspace_id, task_id, label)
+             SELECT ?, id, ? FROM tasks WHERE workspace_id = ? AND id = ?",
+        )
+        .bind(workspace_id)
+        .bind(name)
+        .bind(workspace_id)
+        .bind(task_id)
+        .execute(&mut *conn)
+        .await?;
+        if inserted.rows_affected() != 1 {
+            bail!("error undo-state-changed label={name} task_id={task_id}");
+        }
+    }
+    for series_id in series_ids {
+        let inserted = sqlx::query(
+            "INSERT INTO recurrence_series_labels(workspace_id, series_id, label)
+             SELECT ?, id, ? FROM recurrence_series WHERE workspace_id = ? AND id = ?",
+        )
+        .bind(workspace_id)
+        .bind(name)
+        .bind(workspace_id)
+        .bind(series_id)
+        .execute(&mut *conn)
+        .await?;
+        if inserted.rows_affected() != 1 {
+            bail!("error undo-state-changed label={name} series_id={series_id}");
+        }
+    }
+    let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
+    append_change(
+        conn,
+        ChangeEntity::Label,
+        name,
+        None,
+        op_type::LABEL_RESTORE,
+        ChangePayload::workspace(&workspace)
+            .set("name", name)
+            .set("created_at", created_at)
+            .set("task_ids", task_ids)
+            .set("series_ids", series_ids)
+            .set("restored_at", now()),
+    )
+    .await?;
     Ok(())
 }
 

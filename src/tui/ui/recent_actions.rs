@@ -404,7 +404,10 @@ fn action_icon(action: &RecentActionItem) -> &'static str {
         op_type::EPIC_LINK_ADD => "★",
         op_type::EPIC_LINK_REMOVE => "☆",
         op_type::CREATE_PROJECT | op_type::SET_PROJECT_METADATA | op_type::PROJECT_DELETE => "◆",
-        op_type::CREATE_LABEL | op_type::LABEL_DELETE => "#",
+        op_type::CREATE_LABEL
+        | op_type::SET_LABEL_NAME
+        | op_type::LABEL_DELETE
+        | op_type::LABEL_RESTORE => "#",
         op_type::CREATE_WORKSPACE | op_type::SET_WORKSPACE_FIELD => "◎",
         _ => fallback_action_icon(action),
     }

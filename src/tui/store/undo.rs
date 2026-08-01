@@ -35,6 +35,11 @@ impl TuiStore {
         {
             view_state.scope = TaskScope::Project(project_rename.before_key.clone());
         }
+        if let Some(label_rename) = &outcome.label_rename
+            && view_state.filter_modifiers.label.as_deref() == Some(label_rename.after.as_str())
+        {
+            view_state.filter_modifiers.label = Some(label_rename.before.clone());
+        }
 
         let selected = if selected.is_some() {
             self.refresh_with_view_state(view_state, None)

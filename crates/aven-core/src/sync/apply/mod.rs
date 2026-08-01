@@ -33,6 +33,8 @@ pub async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWir
         op_type::CREATE_PROJECT => project::create_project(conn, change).await?,
         op_type::SET_PROJECT_METADATA => project::set_project_metadata(conn, change).await?,
         op_type::CREATE_LABEL => label::create_label(conn, change).await?,
+        op_type::SET_LABEL_NAME => label::set_label_name(conn, change).await?,
+        op_type::LABEL_RESTORE => label::restore_label(conn, change).await?,
         op_type::CREATE_TASK => task::create_task(conn, change).await?,
         op_type::SET_FIELD => task::set_field(conn, change, false).await?,
         op_type::RESOLVE_FIELD => task::set_field(conn, change, true).await?,
@@ -76,6 +78,115 @@ mod tests {
     use crate::projects::create_project;
     use crate::test_support::test_conn;
     use crate::workspaces::Workspace;
+
+    #[tokio::test]
+    async fn label_administration_changes_preserve_task_references() {
+        let (_temp, mut conn) = test_conn().await;
+        let workspace = Workspace::default();
+        let project = create_project(&mut conn, &workspace, "app").await.unwrap();
+        sqlx::query(
+            "INSERT INTO tasks(id, workspace_id, title, description, project_id, status, priority, created_at, updated_at)
+             VALUES ('7KQ9A1X4MV2P8D6R', ?, 'local', '', ?, 'inbox', 'none', 't', 't')",
+        )
+        .bind(&workspace.id)
+        .bind(project.id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO labels(workspace_id, name, created_at) VALUES (?, 'old', 't')")
+            .bind(&workspace.id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO task_labels(workspace_id, task_id, label)
+             VALUES (?, '7KQ9A1X4MV2P8D6R', 'old')",
+        )
+        .bind(&workspace.id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let change = |op_type: &str, entity_id: &str, payload| ChangeWire {
+            change_id: format!("{op_type}change"),
+            client_id: "remote".to_string(),
+            local_seq: 1,
+            entity_type: "label".to_string(),
+            entity_id: entity_id.to_string(),
+            field: None,
+            op_type: op_type.to_string(),
+            payload,
+            base_version: None,
+            created_at: "t".to_string(),
+            server_seq: Some(1),
+        };
+
+        label::set_label_name(
+            &mut conn,
+            &change(
+                op_type::SET_LABEL_NAME,
+                "old",
+                json!({
+                    "workspace_id": workspace.id.clone(),
+                    "workspace_key": workspace.key.clone(),
+                    "name": "old",
+                    "new_name": "new",
+                    "renamed_at": "2026-08-01T00:00:00Z"
+                }),
+            ),
+        )
+        .await
+        .unwrap();
+        let labels: Vec<String> = sqlx::query_scalar(
+            "SELECT label FROM task_labels WHERE workspace_id = ? AND task_id = '7KQ9A1X4MV2P8D6R'",
+        )
+        .bind(&workspace.id)
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(labels, vec!["new"]);
+
+        label::delete_label(
+            &mut conn,
+            &change(
+                op_type::LABEL_DELETE,
+                "new",
+                json!({
+                    "workspace_id": workspace.id.clone(),
+                    "workspace_key": workspace.key.clone(),
+                    "name": "new",
+                    "deleted_at": "2026-08-01T00:00:01Z"
+                }),
+            ),
+        )
+        .await
+        .unwrap();
+        label::restore_label(
+            &mut conn,
+            &change(
+                op_type::LABEL_RESTORE,
+                "new",
+                json!({
+                    "workspace_id": workspace.id.clone(),
+                    "workspace_key": workspace.key.clone(),
+                    "name": "new",
+                    "created_at": "t",
+                    "task_ids": ["7KQ9A1X4MV2P8D6R"],
+                    "series_ids": [],
+                    "restored_at": "2026-08-01T00:00:02Z"
+                }),
+            ),
+        )
+        .await
+        .unwrap();
+        let labels: Vec<String> = sqlx::query_scalar(
+            "SELECT label FROM task_labels WHERE workspace_id = ? AND task_id = '7KQ9A1X4MV2P8D6R'",
+        )
+        .bind(&workspace.id)
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(labels, vec!["new"]);
+    }
 
     #[tokio::test]
     async fn creates_conflict_on_same_field_version_mismatch() {

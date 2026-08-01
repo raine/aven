@@ -300,6 +300,16 @@ impl App {
                 let message = self.store.create_label(value).await?;
                 self.set_success(message);
             }
+            TextIntent::RenameLabel { label } => {
+                self.submit_rename_label(label, value).await?;
+            }
+            TextIntent::ConfirmDeleteLabel {
+                label,
+                task_count,
+                series_count,
+            } => {
+                self.submit_delete_label_name(label, task_count, series_count, value);
+            }
             TextIntent::RenameProject { project } => {
                 self.submit_rename_project(project, value).await?;
             }
@@ -451,6 +461,12 @@ impl App {
             PickerIntent::RemoveProjectPathValue { project } => {
                 self.submit_remove_project_path_value(project, values);
             }
+            PickerIntent::BrowseLabels => self.submit_browse_label(values),
+            PickerIntent::LabelActions { label } => {
+                self.submit_label_action(label, values).await?;
+            }
+            PickerIntent::RenameLabel => self.submit_rename_label_picker(values),
+            PickerIntent::DeleteLabel => self.submit_delete_label_picker(values).await?,
             PickerIntent::SwitchWorkspace => self.submit_switch_workspace(values).await?,
             intent @ (PickerIntent::PickConflictVariant { .. }
             | PickerIntent::PickConflictManual { .. }) => {
@@ -519,6 +535,9 @@ impl App {
             }
             ConfirmIntent::RemoveProjectPath { project, path } => {
                 self.submit_remove_project_path(project, path).await?;
+            }
+            ConfirmIntent::DeleteLabel { label } => {
+                self.submit_delete_label(label).await?;
             }
             ConfirmIntent::DeleteTasks { selection } => {
                 self.submit_delete_selection(selection).await?;

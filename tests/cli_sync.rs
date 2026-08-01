@@ -19,7 +19,7 @@ const SYNC_OPPOSITE_DEP_CHANGE_ID: &str = "FFFFFFFFFFFFFFFF";
 const SYNC_CLIENT_ID: &str = "GGGGGGGGGGGGGGGG";
 const MAX_PUSH_BATCH: usize = 256;
 const MAX_PULL_BATCH: usize = 512;
-const SYNC_PROTOCOL_VERSION: u32 = 11;
+const SYNC_PROTOCOL_VERSION: u32 = 12;
 
 fn sync_round_values(output: &str, key: &str) -> Vec<u64> {
     output

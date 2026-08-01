@@ -212,9 +212,11 @@ Open the preview to move between attachments, open one in the system viewer, or 
 
 ## Projects and relationships
 
-Press `p` to administer projects and `L` to administer labels. The `t B` and
-`t U` actions add and remove blockers. Epic membership actions live under
-`t c`, and `v e` opens the Epics view.
+Press `p` to administer projects. Label administration uses `L n` to create,
+`L b` to browse names and usage, `L r` to rename, and `L D` to delete. Rename
+and delete update tasks and recurring templates that use the label. The `t B` and
+`t U` actions add and remove blockers. Epic membership actions live under `t c`,
+and `v e` opens the Epics view.
 
 See [Organizing tasks](/organize-tasks/) for choosing among workspaces, projects,
 labels, epics, and dependencies.
