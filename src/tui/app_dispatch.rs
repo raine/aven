@@ -850,8 +850,14 @@ impl App {
             detail.set_scroll(scroll);
         }
         match target {
+            crate::tui::ui::DetailMetadataTarget::Project => self.begin_edit_project(),
             crate::tui::ui::DetailMetadataTarget::Status => self.begin_status_picker(),
             crate::tui::ui::DetailMetadataTarget::Priority => self.begin_edit_priority(),
+            crate::tui::ui::DetailMetadataTarget::Labels => self.begin_edit_labels(),
+            crate::tui::ui::DetailMetadataTarget::Availability => {
+                self.begin_edit_availability();
+            }
+            crate::tui::ui::DetailMetadataTarget::Due => self.begin_edit_due(),
         }
         if self.overlay.is_none() {
             self.show_detail(scroll);
