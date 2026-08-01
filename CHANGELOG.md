@@ -20,7 +20,13 @@ description: Release notes for aven.
   safe confirmations and external-editor support for longer changes.
 - Browse label usage in a structured TUI view, rename labels everywhere they are
   used, and safely delete them with impact details, confirmation, and undo.
+- Browse label usage in a structured TUI view, rename labels everywhere they are
+  used, and safely delete them with impact details, confirmation, and undo.
 - Create and rename workspaces from the TUI with `W n` and `W r`.
+- TUI mutations wake the sync daemon after successful local commits, and `:sync`
+  starts a non-blocking manual sync without requiring the daemon.
+- Sync-disabled environments prevent accidental remote changes while preserving
+  local-first operation and clear errors when sync is unavailable.
 
 ## v0.1.20 (2026-07-31)
 
