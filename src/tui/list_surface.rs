@@ -33,6 +33,14 @@ pub(crate) struct LastChangeReturnState {
     pub(crate) detail: Option<DetailSnapshot>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RecentActionReturnState {
+    pub(crate) view_state: TaskViewState,
+    pub(crate) change_id: String,
+    pub(crate) selected_index: usize,
+    pub(crate) table_offset: usize,
+}
+
 pub(crate) struct ListSurface {
     sidebar: ListState,
     table: TableState,
@@ -42,6 +50,7 @@ pub(crate) struct ListSurface {
     navigation_history: BoundedHistory<TaskViewState>,
     last_changed_task_id: Option<TaskId>,
     last_change_return: Option<LastChangeReturnState>,
+    recent_action_return: Option<RecentActionReturnState>,
     last_task_click: Option<TaskRowClick>,
 }
 
@@ -58,6 +67,7 @@ impl ListSurface {
             navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),
             last_changed_task_id: None,
             last_change_return: None,
+            recent_action_return: None,
             last_task_click: None,
         }
     }
@@ -219,6 +229,14 @@ impl ListSurface {
         self.last_change_return.take()
     }
 
+    pub(crate) fn set_recent_action_return(&mut self, state: RecentActionReturnState) {
+        self.recent_action_return = Some(state);
+    }
+
+    pub(crate) fn take_recent_action_return(&mut self) -> Option<RecentActionReturnState> {
+        self.recent_action_return.take()
+    }
+
     pub(crate) fn register_task_click(
         &mut self,
         task_id: TaskId,
@@ -259,6 +277,10 @@ impl ListSurface {
 
     pub(crate) fn has_last_change_return(&self) -> bool {
         self.last_change_return.is_some()
+    }
+
+    pub(crate) fn has_recent_action_return(&self) -> bool {
+        self.recent_action_return.is_some()
     }
 }
 

@@ -6937,6 +6937,100 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn recent_action_opens_its_task_detail() {
+        let mut app = test_app().await;
+        let selected =
+            create_and_select_task(&mut app, test_task_draft("recent action task")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        app.store.view_state.view = TaskView::RecentActions;
+        app.refresh().await.unwrap();
+        let action_index = app
+            .store
+            .recent_actions
+            .iter()
+            .position(|action| {
+                action.entity_type == "task" && action.entity_id == task_id.to_string()
+            })
+            .unwrap();
+        app.list.select_task(Some(action_index));
+
+        app.handle_normal_key(KeyCode::Enter).await.unwrap();
+
+        assert!(app.detail.is_active());
+        assert_eq!(app.store.view_state.view, TaskView::Search);
+        assert_eq!(app.store.tasks.len(), 1);
+        assert_eq!(app.store.tasks[0].task.id, task_id);
+        assert_eq!(app.list.selected_task(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn recent_action_detail_returns_to_the_selected_action() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("first recent task")).await;
+        create_and_select_task(&mut app, test_task_draft("second recent task")).await;
+        app.store.view_state.view = TaskView::RecentActions;
+        app.refresh().await.unwrap();
+        let selected_index = 1;
+        let change_id = app.store.recent_actions[selected_index].change_id.clone();
+        app.list.select_task(Some(selected_index));
+        app.list.set_task_offset(1);
+
+        app.handle_normal_key(KeyCode::Enter).await.unwrap();
+        app.handle_normal_key(KeyCode::Esc).await.unwrap();
+
+        assert!(!app.detail.is_active());
+        assert_eq!(app.store.view_state.view, TaskView::RecentActions);
+        let selected = app.list.selected_task().unwrap();
+        assert_eq!(app.store.recent_actions[selected].change_id, change_id);
+        assert_eq!(app.list.task_offset(), 1);
+    }
+
+    #[tokio::test]
+    async fn unavailable_recent_action_task_reports_feedback() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("available task")).await;
+        app.store.view_state.view = TaskView::RecentActions;
+        app.refresh().await.unwrap();
+        let mut action = app.store.recent_actions[0].clone();
+        action.entity_type = "task".to_string();
+        action.entity_id = crate::ids::TaskId::new().to_string();
+        app.store.recent_actions = vec![action];
+        app.list.select_task(Some(0));
+
+        app.handle_normal_key(KeyCode::Enter).await.unwrap();
+
+        assert!(!app.detail.is_active());
+        assert_eq!(app.store.view_state.view, TaskView::RecentActions);
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("recent action task is unavailable")
+        );
+        assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
+    }
+
+    #[tokio::test]
+    async fn non_task_recent_action_reports_missing_task_identity() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("task action")).await;
+        app.store.view_state.view = TaskView::RecentActions;
+        app.refresh().await.unwrap();
+        let mut action = app.store.recent_actions[0].clone();
+        action.entity_type = "project".to_string();
+        app.store.recent_actions = vec![action];
+        app.list.select_task(Some(0));
+
+        app.handle_normal_key(KeyCode::Enter).await.unwrap();
+
+        assert!(!app.detail.is_active());
+        assert_eq!(app.store.view_state.view, TaskView::RecentActions);
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("recent action has no task identity")
+        );
+        assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
+    }
+
+    #[tokio::test]
     async fn add_task_start_view_keeps_main_surface() {
         let mut app = test_app().await;
         app.open_add_task_on_start(false).await.unwrap();

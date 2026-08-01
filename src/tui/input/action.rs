@@ -27,7 +27,13 @@ impl App {
 
         match action {
             Action::Quit => self.should_quit = true,
-            Action::CancelOverlay => self.cancel_overlay(),
+            Action::CancelOverlay => {
+                if self.detail.is_active() && self.list.has_recent_action_return() {
+                    self.close_detail_session().await?;
+                } else {
+                    self.cancel_overlay();
+                }
+            }
             Action::MoveDown => self.move_selection(1).await?,
             Action::MoveUp => self.move_selection(-1).await?,
             Action::MoveLeft => self.move_left(),
