@@ -18,6 +18,8 @@ description: Release notes for aven.
   immediately.
 - Focus, edit, delete, and undo individual notes directly in task details, with
   safe confirmations and external-editor support for longer changes.
+- Browse label usage in a structured TUI view, rename labels everywhere they are
+  used, and safely delete them with impact details, confirmation, and undo.
 
 ## v0.1.20 (2026-07-31)
 
