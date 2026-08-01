@@ -9,7 +9,7 @@ use crate::tui::authoring::AuthoringState;
 use crate::tui::inline_image_surface::InlineImageSurface;
 use crate::tui::inline_images::{InlineImageBackend, active_backend_from_env};
 use crate::tui::list_surface::ListSurface;
-pub(crate) use crate::tui::list_surface::{Focus, LastChangeReturnState};
+pub(crate) use crate::tui::list_surface::{Focus, LastChangeReturnState, RecentActionReturnState};
 use crate::tui::overlay::OverlayState;
 use crate::tui::shortcut_buffer::ShortcutBuffer;
 use crate::tui::store::{TaskOrder, TaskViewState, TuiStore};

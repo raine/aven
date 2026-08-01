@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::tui::app::{App, Focus, LastChangeReturnState};
+use crate::tui::app::{App, Focus, LastChangeReturnState, RecentActionReturnState};
 use crate::tui::navigation::{next_index, next_selectable_sidebar};
 use crate::tui::overlay::{OverlayState, PickerIntent, PickerItem};
 use crate::tui::store::{TaskFilterModifiers, TaskScope, TaskView, TaskViewState};
@@ -238,9 +238,13 @@ impl App {
                 self.set_warning("no recurring series selected");
             }
         } else if self.detail.is_active() {
-            self.clear_detail_session();
+            if self.list.has_recent_action_return() {
+                self.close_detail_session().await?;
+            } else {
+                self.clear_detail_session();
+            }
         } else if self.store.view_state.view == crate::tui::store::TaskView::RecentActions {
-            self.set_info("recent actions are read-only");
+            self.open_recent_action_task().await?;
         } else {
             self.detail = crate::tui::detail_session::DetailSession::open(0);
             self.show_detail(0);
@@ -315,6 +319,72 @@ impl App {
             self.list.focus_tasks();
             self.preserve_or_restore_sidebar_selection();
         }
+    }
+
+    pub(super) async fn open_recent_action_task(&mut self) -> Result<()> {
+        let Some(selected_index) = self.list.selected_task() else {
+            self.set_warning("no recent action selected");
+            return Ok(());
+        };
+        let Some(action) = self
+            .store
+            .selected_recent_action(Some(selected_index))
+            .cloned()
+        else {
+            self.set_warning("no recent action selected");
+            return Ok(());
+        };
+        if action.entity_type != "task" {
+            self.set_warning("recent action has no task identity");
+            return Ok(());
+        }
+        let Ok(task_id) = action.entity_id.parse() else {
+            self.set_warning("recent action task is unavailable");
+            return Ok(());
+        };
+        let Some(item) = self.store.load_task_item(&task_id).await? else {
+            self.set_warning("recent action task is unavailable");
+            return Ok(());
+        };
+
+        self.list.set_recent_action_return(RecentActionReturnState {
+            view_state: self.store.view_state.clone(),
+            change_id: action.change_id,
+            selected_index,
+            table_offset: self.list.task_offset(),
+        });
+        self.store.show_exact_task(item);
+        self.list.focus_tasks();
+        self.list.select_task(Some(0));
+        self.list.clear_task_click();
+        self.detail = crate::tui::detail_session::DetailSession::open(0);
+        self.show_detail(0);
+        Ok(())
+    }
+
+    pub(super) async fn restore_recent_action_return(&mut self) -> Result<bool> {
+        let Some(return_state) = self.list.take_recent_action_return() else {
+            return Ok(false);
+        };
+        self.store.view_state = return_state.view_state;
+        self.store.refresh(None).await?;
+        let selected = self
+            .store
+            .recent_actions
+            .iter()
+            .position(|action| action.change_id == return_state.change_id)
+            .or_else(|| {
+                (!self.store.recent_actions.is_empty()).then_some(
+                    return_state
+                        .selected_index
+                        .min(self.store.recent_actions.len() - 1),
+                )
+            });
+        self.list.select_task(selected);
+        self.list.set_task_offset(return_state.table_offset);
+        self.list.focus_tasks();
+        self.preserve_or_restore_sidebar_selection();
+        Ok(true)
     }
 
     pub(super) async fn return_to_last_change(&mut self) -> Result<()> {

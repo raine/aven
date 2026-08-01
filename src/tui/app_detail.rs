@@ -298,14 +298,18 @@ impl App {
 
     pub(super) async fn close_detail_session(&mut self) -> Result<()> {
         self.clear_detail_session();
-        if !self.restore_last_change_return().await? {
+        if !self.restore_recent_action_return().await? && !self.restore_last_change_return().await?
+        {
             self.refresh().await?;
         }
         Ok(())
     }
 
     pub(super) async fn navigate_back_from_detail(&mut self) -> Result<()> {
-        if self.list.has_last_change_return() || !self.go_back_in_detail().await? {
+        if self.list.has_recent_action_return()
+            || self.list.has_last_change_return()
+            || !self.go_back_in_detail().await?
+        {
             self.close_detail_session().await?;
         }
         Ok(())
