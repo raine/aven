@@ -1320,6 +1320,10 @@ impl ConfirmState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlaySubmit {
     AddTask(Box<AddTaskState>),
+    CreateAddTaskProject {
+        state: Box<AddTaskState>,
+        name: String,
+    },
     Text {
         intent: TextIntent,
         value: String,

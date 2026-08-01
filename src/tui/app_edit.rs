@@ -551,7 +551,7 @@ impl App {
     pub(super) fn open_edit_project_picker(&mut self, selection: TaskSelection) {
         let (aggregate, selected) =
             Self::aggregate_value(&selection, |item| item.task.project_key.clone());
-        let mut items = self.store.existing_project_picker_items(&selected);
+        let mut items = self.store.edit_project_picker_items(&selected);
         if aggregate == EditAggregate::Mixed {
             items.insert(
                 0,

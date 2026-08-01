@@ -18,7 +18,10 @@ pub(crate) use layout::{
     TEXT_PANEL_WIDTH, confirm_layout, confirm_width, dialog_area, picker_layout,
     tag_combobox_layout, text_panel_layout, text_panel_scroll_cap,
 };
-pub(crate) use picker::{picker_viewport_start, visible_picker_indices};
+pub(crate) use picker::{
+    normalize_picker_selection, picker_viewport_start, sync_project_creation_item,
+    visible_picker_indices,
+};
 pub(crate) use state::{
     AddTaskMode, AddTaskState, ChangelogState, CommandAvailabilityOverride, CommandState,
     ConfirmIntent, HeaderMenuAction, HeaderMenuItem, HeaderMenuKind, HeaderMenuState,

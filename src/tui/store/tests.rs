@@ -496,7 +496,7 @@ mod domain_mutations_and_pickers {
     }
 
     #[tokio::test]
-    async fn project_picker_includes_infer_project_and_existing_projects() {
+    async fn project_picker_includes_inference_creation_and_existing_projects() {
         let mut store = test_store().await;
         create_mobile_project(&mut store).await;
 
@@ -504,6 +504,11 @@ mod domain_mutations_and_pickers {
         assert!(items[0].label.starts_with("Infer project"));
         assert!(items[0].selected);
         assert!(items.iter().any(|item| item.value == "mobile-app"));
+        assert!(
+            items
+                .iter()
+                .any(|item| item.value == CREATE_PROJECT_PICKER_VALUE_PREFIX)
+        );
     }
 
     #[tokio::test]
@@ -523,6 +528,20 @@ mod domain_mutations_and_pickers {
         assert!(!items.iter().any(|item| item.label == "Infer project"));
         assert!(items.iter().any(|item| item.value == "mobile-app"));
         assert!(items.iter().any(|item| item.selected));
+    }
+
+    #[tokio::test]
+    async fn edit_project_picker_items_includes_project_creation() {
+        let mut store = test_store().await;
+        create_mobile_project(&mut store).await;
+
+        let items = store.edit_project_picker_items("mobile-app");
+        assert!(items.iter().any(|item| item.value == "mobile-app"));
+        assert!(
+            items
+                .iter()
+                .any(|item| item.value == CREATE_PROJECT_PICKER_VALUE_PREFIX)
+        );
     }
 }
 

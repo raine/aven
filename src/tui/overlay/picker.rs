@@ -7,11 +7,28 @@ use super::state::{
 pub(crate) fn visible_picker_indices(state: &PickerState) -> Vec<usize> {
     let filter = state.filter.as_str().trim().to_ascii_lowercase();
     let dashless_filter = filter.replace('-', "");
+    let normalized_project = crate::projects::normalize_key(&filter);
+    let exact_project = !normalized_project.is_empty()
+        && state.items.iter().any(|item| {
+            !item
+                .value
+                .starts_with(crate::tui::store::CREATE_PROJECT_PICKER_VALUE_PREFIX)
+                && item.value == normalized_project
+        });
     state
         .items
         .iter()
         .enumerate()
-        .filter(|(_, item)| picker_item_matches(item, &filter, &dashless_filter))
+        .filter(|(_, item)| {
+            if item
+                .value
+                .starts_with(crate::tui::store::CREATE_PROJECT_PICKER_VALUE_PREFIX)
+            {
+                !filter.is_empty() && !exact_project
+            } else {
+                picker_item_matches(item, &filter, &dashless_filter)
+            }
+        })
         .map(|(index, _)| index)
         .collect()
 }
@@ -21,7 +38,24 @@ fn picker_item_matches(item: &PickerItem, filter: &str, dashless_filter: &str) -
         return true;
     }
     let label = item.label.to_ascii_lowercase();
-    label.contains(filter) || label.replace('-', "").contains(dashless_filter)
+    label.contains(filter)
+        || (!dashless_filter.is_empty() && label.replace('-', "").contains(dashless_filter))
+}
+
+pub(crate) fn sync_project_creation_item(state: &mut PickerState) {
+    let name = state.filter.as_str().trim();
+    let Some(item) = state.items.iter_mut().find(|item| {
+        item.value
+            .starts_with(crate::tui::store::CREATE_PROJECT_PICKER_VALUE_PREFIX)
+    }) else {
+        return;
+    };
+    item.label = format!("+ Create project \"{name}\"");
+    item.value = format!(
+        "{}{}",
+        crate::tui::store::CREATE_PROJECT_PICKER_VALUE_PREFIX,
+        name
+    );
 }
 
 pub(crate) fn normalize_picker_selection(state: &mut PickerState) {
@@ -120,6 +154,7 @@ fn handle_picker_filter_key(mut state: PickerState, key: KeyEvent) -> OverlayOut
         }
         _ => {
             state.filter.handle_key(key);
+            sync_project_creation_item(&mut state);
             normalize_picker_selection(&mut state);
             OverlayOutcome::None(OverlayState::Picker(state))
         }
@@ -243,6 +278,59 @@ mod tests {
             multi: true,
             mode: PickerMode::Navigate,
         }
+    }
+
+    fn project_creation_picker_state() -> PickerState {
+        PickerState {
+            intent: PickerIntent::AddTaskProject,
+            title: "Add task: project".to_string(),
+            filter: crate::tui::overlay::LineEdit::blank(),
+            items: vec![
+                PickerItem {
+                    label: "AVN aven".to_string(),
+                    value: "aven".to_string(),
+                    selected: true,
+                },
+                PickerItem {
+                    label: "+ Create project".to_string(),
+                    value: crate::tui::store::CREATE_PROJECT_PICKER_VALUE_PREFIX.to_string(),
+                    selected: false,
+                },
+            ],
+            selected: 0,
+            scroll: 0,
+            multi: false,
+            mode: PickerMode::Filter,
+        }
+    }
+
+    #[test]
+    fn project_creation_suggestion_tracks_unmatched_filter() {
+        let mut state = project_creation_picker_state();
+        assert_eq!(visible_picker_indices(&state), vec![0]);
+
+        state.filter = crate::tui::overlay::LineEdit::new("Mobile App".to_string());
+        sync_project_creation_item(&mut state);
+        normalize_picker_selection(&mut state);
+
+        assert_eq!(visible_picker_indices(&state), vec![1]);
+        assert_eq!(state.selected, 1);
+        assert_eq!(state.items[1].label, "+ Create project \"Mobile App\"");
+        assert_eq!(
+            crate::tui::store::create_project_picker_name(&state.items[1].value),
+            Some("Mobile App")
+        );
+    }
+
+    #[test]
+    fn project_creation_suggestion_yields_to_exact_project() {
+        let mut state = project_creation_picker_state();
+        state.filter = crate::tui::overlay::LineEdit::new("aven".to_string());
+        sync_project_creation_item(&mut state);
+        normalize_picker_selection(&mut state);
+
+        assert_eq!(visible_picker_indices(&state), vec![0]);
+        assert_eq!(state.selected, 0);
     }
 
     #[test]

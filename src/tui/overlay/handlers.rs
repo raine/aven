@@ -38,6 +38,13 @@ pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) ->
             OverlayState::Command { state }
         }
         OverlayState::AddTask(mut state) => {
+            if let AddTaskMode::Picker { state: picker, .. } = &mut state.mode {
+                picker.filter.insert_paste(text);
+                super::picker::sync_project_creation_item(picker);
+                normalize_picker_selection(picker);
+                normalize_picker_scroll(picker, crate::tui::overlay::GENERIC_PICKER_VIEWPORT_ROWS);
+                return OverlayState::AddTask(state);
+            }
             if let AddTaskMode::Schedule(editor) = &mut state.mode {
                 if let Some(input) = schedule_editor_input_mut(editor) {
                     input.insert_paste(text);
@@ -82,6 +89,7 @@ pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) ->
         }
         OverlayState::Picker(mut state) => {
             state.filter.insert_paste(text);
+            super::picker::sync_project_creation_item(&mut state);
             normalize_picker_selection(&mut state);
             normalize_picker_scroll(
                 &mut state,
@@ -202,6 +210,17 @@ pub(crate) fn handle_generic_overlay_key(
                         OverlayOutcome::Cancelled => {}
                         OverlayOutcome::Submitted(OverlaySubmit::Picker { values, .. }) => {
                             let value = values.first().cloned().unwrap_or_default();
+                            if field == AddTaskStep::Project
+                                && let Some(name) =
+                                    crate::tui::store::create_project_picker_name(&value)
+                            {
+                                return OverlayOutcome::Submitted(
+                                    OverlaySubmit::CreateAddTaskProject {
+                                        state,
+                                        name: name.to_string(),
+                                    },
+                                );
+                            }
                             match field {
                                 AddTaskStep::Project => {
                                     state.selected_project =
