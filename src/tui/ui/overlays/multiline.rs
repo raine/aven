@@ -17,6 +17,10 @@ use crate::tui::text::{
 use crate::tui::theme::{FG, FG_DIM, FG_MUTED};
 
 pub(in crate::tui::ui) fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
+    if state.mode == MultilineInputMode::ConfirmDiscard {
+        render_multiline_discard_confirmation(frame, state.kind);
+        return;
+    }
     match state.kind {
         MultilineInputKind::AddNote => render_add_note_input(frame, state),
         MultilineInputKind::EditDescription => render_description_input(frame, state),
@@ -24,6 +28,38 @@ pub(in crate::tui::ui) fn render_multiline_input(frame: &mut Frame, state: &Mult
         MultilineInputKind::AddTaskNatural => render_add_task_natural_input(frame, state),
         MultilineInputKind::ConflictManual => render_conflict_manual_input(frame, state),
     }
+}
+
+fn render_multiline_discard_confirmation(frame: &mut Frame, kind: MultilineInputKind) {
+    let (title, prompt) = match kind {
+        MultilineInputKind::AddNote => ("Discard note draft?", "The note text will be lost."),
+        MultilineInputKind::EditDescription => (
+            "Discard description changes?",
+            "The description changes will be lost.",
+        ),
+        MultilineInputKind::ConflictManual => {
+            ("Discard manual merge?", "The manual value will be lost.")
+        }
+        MultilineInputKind::AddTaskDescription => (
+            "Discard description draft?",
+            "The description text will be lost.",
+        ),
+        MultilineInputKind::AddTaskNatural => {
+            ("Discard task draft?", "The task text will be lost.")
+        }
+    };
+    render_confirm_with_hints(
+        frame,
+        &ConfirmView {
+            title: title.to_string(),
+            prompt: prompt.to_string(),
+        },
+        &[
+            ("y", "discard"),
+            ("n", "keep editing"),
+            ("Esc", "keep editing"),
+        ],
+    );
 }
 
 fn render_description_input(frame: &mut Frame, state: &MultilineInputView) {
@@ -219,22 +255,6 @@ pub(in crate::tui::ui) fn add_task_natural_hint_line() -> Line<'static> {
 }
 
 pub(in crate::tui::ui) fn render_add_note_input(frame: &mut Frame, state: &MultilineInputView) {
-    if state.mode == MultilineInputMode::ConfirmDiscard {
-        render_confirm_with_hints(
-            frame,
-            &ConfirmView {
-                title: "Discard note draft?".to_string(),
-                prompt: "The note text will be lost.".to_string(),
-            },
-            &[
-                ("y", "discard"),
-                ("n", "keep editing"),
-                ("Esc", "keep editing"),
-            ],
-        );
-        return;
-    }
-
     let show_placeholder = state.lines.len() == 1 && state.lines[0].is_empty();
     render_tail_viewport_multiline(frame, state, 60, multiline_hint_line(), |line, cursor| {
         add_note_input_line(line, cursor, show_placeholder)
