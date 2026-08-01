@@ -6069,15 +6069,19 @@ mod filters_and_workspaces {
         create_and_select_task(&mut app, test_task_draft("second")).await;
         app.list.select_task(Some(0));
 
-        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollUp), (80, 24).into())
+        let changed = app
+            .dispatch_mouse(mouse_wheel(MouseEventKind::ScrollUp), (80, 24).into())
             .await
             .unwrap();
+        assert!(!changed);
         assert_eq!(app.list.selected_task(), Some(0));
 
         app.list.select_task(Some(1));
-        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
+        let changed = app
+            .dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
             .await
             .unwrap();
+        assert!(!changed);
         assert_eq!(app.list.selected_task(), Some(1));
     }
 
@@ -8973,6 +8977,12 @@ mod detail_mode {
         }
 
         assert!(matches!(app.overlay, Some(OverlayState::Help { scroll }) if scroll == expected));
+
+        let changed = app
+            .dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(!changed);
     }
 
     #[tokio::test]

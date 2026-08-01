@@ -194,9 +194,15 @@ impl App {
         mouse: MouseEvent,
         terminal_size: Size,
     ) -> Result<bool> {
+        let shortcut_scroll = self.shortcut_overlay_scroll(mouse.kind);
+        let task_list_wheel = self.routes_wheel_to_task_list(mouse.kind, terminal_size);
+        let previous_selection = self.list.selected_task();
         if mouse.kind != MouseEventKind::Moved {
             self.handle_mouse(mouse, terminal_size).await?;
-            return Ok(true);
+            if let Some(previous_scroll) = shortcut_scroll {
+                return Ok(self.shortcut_overlay_scroll(mouse.kind) != Some(previous_scroll));
+            }
+            return Ok(!task_list_wheel || self.list.selected_task() != previous_selection);
         }
         let previous_hover = self
             .detail
@@ -866,6 +872,28 @@ impl App {
         if let Some(detail) = self.detail.state_mut() {
             detail.set_hovered_target(hovered);
         }
+    }
+
+    fn shortcut_overlay_scroll(&self, kind: MouseEventKind) -> Option<u16> {
+        if !matches!(kind, MouseEventKind::ScrollDown | MouseEventKind::ScrollUp) {
+            return None;
+        }
+        match self.overlay.as_ref() {
+            Some(OverlayState::Help { scroll } | OverlayState::DetailHelp { scroll }) => {
+                Some(*scroll)
+            }
+            _ => None,
+        }
+    }
+
+    fn routes_wheel_to_task_list(&self, kind: MouseEventKind, terminal_size: Size) -> bool {
+        matches!(kind, MouseEventKind::ScrollDown | MouseEventKind::ScrollUp)
+            && !self.prefix_hints_active()
+            && self.overlay.is_none()
+            && terminal_size.width >= 70
+            && terminal_size.height >= 18
+            && !self.detail_underlay()
+            && self.list.focus() == Focus::Tasks
     }
 
     async fn handle_task_list_wheel(&mut self, delta: isize, terminal_size: Size) -> Result<()> {

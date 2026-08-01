@@ -13,7 +13,7 @@ enum RefreshKind {
 use anyhow::Result;
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event,
+    Event, MouseEventKind,
 };
 use crossterm::execute;
 use ratatui::DefaultTerminal;
@@ -28,6 +28,17 @@ use crate::tui::overlay::{OverlayState, OverlayView};
 use crate::tui::preview_controller::PreviewKey;
 use crate::tui::store::{MainRowSelection, TaskView};
 use crate::tui::ui::{self, ViewState, ViewSurface};
+
+fn event_after_queued_wheel(direction: MouseEventKind) -> Result<Option<Event>> {
+    while event::poll(Duration::ZERO)? {
+        let queued = event::read()?;
+        if matches!(&queued, Event::Mouse(mouse) if mouse.kind == direction) {
+            continue;
+        }
+        return Ok(Some(queued));
+    }
+    Ok(None)
+}
 
 impl App {
     pub(crate) async fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
@@ -70,6 +81,7 @@ impl App {
 
     async fn run_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         let mut needs_redraw = true;
+        let mut pending_event = None;
         while !self.should_quit {
             if self.finish_onboarding_intro_if_elapsed() {
                 needs_redraw = true;
@@ -125,8 +137,13 @@ impl App {
             }
 
             let timeout = self.next_poll_timeout();
-            if event::poll(timeout)? {
-                match event::read()? {
+            if pending_event.is_some() || event::poll(timeout)? {
+                let input = if let Some(input) = pending_event.take() {
+                    input
+                } else {
+                    event::read()?
+                };
+                match input {
                     Event::Key(key) => {
                         needs_redraw = true;
                         if self.skip_onboarding_intro() {
@@ -151,7 +168,17 @@ impl App {
                     }
                     Event::Mouse(mouse) => {
                         match self.dispatch_mouse(mouse, terminal.size()?).await {
-                            Ok(changed) => needs_redraw |= changed,
+                            Ok(changed) => {
+                                needs_redraw |= changed;
+                                if !changed
+                                    && matches!(
+                                        mouse.kind,
+                                        MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
+                                    )
+                                {
+                                    pending_event = event_after_queued_wheel(mouse.kind)?;
+                                }
+                            }
                             Err(error) => {
                                 self.set_error(format!("{error:#}"));
                                 needs_redraw = true;
