@@ -3,11 +3,12 @@ use ratatui::widgets::{Block, Borders, Padding};
 
 use crate::tui::text::char_count_ranges;
 
-use super::{PickerKind, PickerView, TagComboboxView, picker_viewport_start};
+use super::{PickerKind, PickerMode, PickerView, TagComboboxView, picker_viewport_start};
 
 pub(crate) const GENERIC_PICKER_VIEWPORT_ROWS: usize = 8;
 pub(crate) const PROJECT_PICKER_VIEWPORT_ROWS: usize = 10;
 pub(crate) const GENERIC_PICKER_WIDTH: u16 = 60;
+pub(crate) const LABEL_PICKER_WIDTH: u16 = 68;
 pub(crate) const PROJECT_PICKER_WIDTH: u16 = 70;
 pub(crate) const TEXT_PANEL_VISIBLE_ROWS: usize = 12;
 pub(crate) const TEXT_PANEL_WIDTH: u16 = 60;
@@ -93,16 +94,30 @@ pub(crate) fn picker_layout(state: &PickerView, terminal_size: Size) -> PickerLa
     }
 
     let visible_count = state.visible_indices.len().max(1);
-    let height = (visible_count.min(GENERIC_PICKER_VIEWPORT_ROWS) as u16).saturating_add(6);
+    let label_picker = state.kind == PickerKind::LabelAdministration;
+    let height = (visible_count.min(GENERIC_PICKER_VIEWPORT_ROWS) as u16)
+        .saturating_add(if label_picker { 7 } else { 6 });
     let area = dialog_area(
         Rect::new(0, 0, terminal_size.width, terminal_size.height),
-        GENERIC_PICKER_WIDTH,
+        if label_picker {
+            LABEL_PICKER_WIDTH
+        } else {
+            GENERIC_PICKER_WIDTH
+        },
         height,
     );
     PickerLayout {
         area,
         inner: dialog_inner_area(area),
-        list_start: 2,
+        list_start: if label_picker {
+            if state.mode == PickerMode::Filter {
+                2
+            } else {
+                1
+            }
+        } else {
+            2
+        },
         viewport_rows: GENERIC_PICKER_VIEWPORT_ROWS,
         visible_start: picker_visible_start(state, GENERIC_PICKER_VIEWPORT_ROWS),
     }

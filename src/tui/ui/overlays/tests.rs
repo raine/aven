@@ -2307,6 +2307,30 @@ mod picker_overlays {
     }
 
     #[test]
+    fn label_picker_uses_structured_usage_columns() {
+        let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+            kind: PickerKind::LabelAdministration,
+            title: "Labels".to_string(),
+            items: vec![
+                picker_item("backend  6 tasks  2 recurring series", "backend"),
+                picker_item("bug  1 task  0 recurring series", "bug"),
+            ],
+            visible_indices: vec![0, 1],
+            mode: PickerMode::Filter,
+            ..picker_view()
+        }));
+
+        assert!(rendered.contains("LABEL"));
+        assert!(rendered.contains("TASKS"));
+        assert!(rendered.contains("RECURRING SERIES"));
+        assert!(rendered.contains("backend"));
+        assert!(rendered.contains("▸ backend"));
+        assert!(!rendered.contains("6 tasks"));
+        assert!(!rendered.contains("2 recurring series"));
+        assert!(rendered.contains("Enter choose"));
+    }
+
+    #[test]
     fn tag_combobox_shows_selected_labels_input_completion_and_matches() {
         let rendered = render_overlay_view(OverlayView::TagCombobox(Box::new(TagComboboxView {
             kind: TagComboboxKind::EditLabels,

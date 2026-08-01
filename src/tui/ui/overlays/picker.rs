@@ -5,13 +5,18 @@ use ratatui::text::{Line, Span, Text};
 use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::input::prefixed_input_line;
 use crate::tui::overlay::{
-    GENERIC_PICKER_VIEWPORT_ROWS, GENERIC_PICKER_WIDTH, PROJECT_PICKER_VIEWPORT_ROWS,
-    PROJECT_PICKER_WIDTH, PickerItem, PickerKind, PickerMode, PickerView, picker_viewport_start,
+    GENERIC_PICKER_VIEWPORT_ROWS, GENERIC_PICKER_WIDTH, LABEL_PICKER_WIDTH,
+    PROJECT_PICKER_VIEWPORT_ROWS, PROJECT_PICKER_WIDTH, PickerItem, PickerKind, PickerMode,
+    PickerView, picker_viewport_start,
 };
 use crate::tui::theme::{self, ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, SELECTED};
 use crate::tui::widgets::priority_icon;
 
 pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, state: &PickerView) {
+    if state.kind == PickerKind::LabelAdministration {
+        render_label_picker(frame, state);
+        return;
+    }
     if let Some(submit_label) = project_picker_submit_label(state.kind) {
         render_project_picker(frame, state, submit_label);
         return;
@@ -112,6 +117,78 @@ pub(in crate::tui::ui) fn picker_hint_line(
     }
     items.push(("Enter", submit_label));
     dialog_hint_line(&items)
+}
+
+fn render_label_picker(frame: &mut Frame, state: &PickerView) {
+    let viewport_rows = GENERIC_PICKER_VIEWPORT_ROWS;
+    let selected_position = picker_visible_start(state, viewport_rows);
+    let mut lines = Vec::new();
+    if matches!(state.mode, PickerMode::Filter) {
+        lines.push(picker_filter_line(
+            Span::styled("/", Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)),
+            &state.filter,
+            state.filter_cursor,
+        ));
+    }
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  LABEL                         ",
+            Style::new().fg(FG_DIM).bg(BG_PANEL),
+        ),
+        Span::styled("   TASKS", Style::new().fg(FG_DIM).bg(BG_PANEL)),
+        Span::styled("  RECURRING SERIES", Style::new().fg(FG_DIM).bg(BG_PANEL)),
+    ]));
+    for index in state
+        .visible_indices
+        .iter()
+        .skip(selected_position)
+        .take(viewport_rows)
+    {
+        lines.push(label_picker_line(
+            &state.items[*index],
+            *index == state.selected,
+        ));
+    }
+    if state.visible_indices.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  no matching labels",
+            Style::new().fg(FG_DIM),
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(picker_hint_line(state.mode, false, "choose"));
+    let height = (lines.len() as u16).saturating_add(2);
+    Dialog::new(&state.title, LABEL_PICKER_WIDTH, height).render_text(frame, Text::from(lines));
+}
+
+pub(in crate::tui::ui) fn label_picker_line(item: &PickerItem, selected: bool) -> Line<'static> {
+    let mut columns = item.label.splitn(3, "  ");
+    let label = columns.next().unwrap_or(item.value.as_str());
+    let task_count = columns
+        .next()
+        .and_then(|column| column.split_whitespace().next())
+        .unwrap_or("0");
+    let series_count = columns
+        .next()
+        .and_then(|column| column.split_whitespace().next())
+        .unwrap_or("0");
+    let marker = if selected { "▸" } else { " " };
+    let row_style = if selected {
+        SELECTED
+    } else {
+        Style::new().bg(BG_ALT)
+    };
+    let label_style = if selected {
+        row_style.add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(FG).bg(BG_ALT)
+    };
+    Line::from(vec![
+        Span::styled(format!("{marker} "), row_style),
+        Span::styled(format!("{label:<30}"), label_style),
+        Span::styled(format!("{task_count:>8}"), row_style),
+        Span::styled(format!("{series_count:>18}"), row_style),
+    ])
 }
 
 fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'static str) {
