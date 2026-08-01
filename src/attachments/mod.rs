@@ -20,6 +20,7 @@ pub(crate) mod optimization {
 }
 
 pub(crate) mod export;
+pub(crate) mod save;
 
 pub(crate) mod storage {
     pub(crate) use aven_core::attachments::{object_path, sha256_hex};

@@ -1115,6 +1115,11 @@ impl App {
                 });
                 return Ok(());
             }
+            if key.code == KeyCode::Char('s') && key.modifiers.is_empty() {
+                let attachment_id = attachment_id.clone();
+                self.begin_save_attachment(&attachment_id, *scroll);
+                return Ok(());
+            }
             let next_attachment_id = match (key.code, key.modifiers) {
                 (KeyCode::Char('j') | KeyCode::Down, KeyModifiers::NONE) => self
                     .move_attachment_preview_selection(attachment_id, 1)
@@ -1274,6 +1279,12 @@ impl App {
                     (KeyCode::Char('o'), KeyModifiers::NONE) => {
                         if let DetailTargetId::Attachment { attachment_id } = &selected_target {
                             self.open_attachment_externally(attachment_id).await;
+                        }
+                    }
+                    (KeyCode::Char('s'), KeyModifiers::NONE) => {
+                        if let DetailTargetId::Attachment { attachment_id } = &selected_target {
+                            self.begin_save_attachment(attachment_id, scroll);
+                            return Ok(());
                         }
                     }
                     (KeyCode::Enter, KeyModifiers::NONE) => match selected_target {

@@ -19,7 +19,10 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
         return;
     }
 
-    if state.kind == TextInputKind::ProjectPath {
+    if matches!(
+        state.kind,
+        TextInputKind::ProjectPath | TextInputKind::SaveAttachment
+    ) {
         render_project_path_input(frame, state);
         return;
     }
