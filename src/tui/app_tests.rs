@@ -60,6 +60,59 @@ async fn test_app() -> App {
 }
 
 #[tokio::test]
+async fn constructor_applies_supplied_configuration_to_every_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let pool = crate::test_support::open_db(&db_path).await.unwrap();
+    reset_default_workspace(&pool).await;
+    let database = aven_core::db::Database::open(&db_path).await.unwrap();
+    let mut config = AppConfig::default();
+    config.tui.columns = vec![crate::config::TaskColumnConfig {
+        name: "Configured".to_string(),
+        statuses: vec![
+            "inbox".to_string(),
+            "backlog".to_string(),
+            "todo".to_string(),
+            "active".to_string(),
+            "done".to_string(),
+            "canceled".to_string(),
+        ],
+    }];
+    config.local.inline_images = crate::config::InlineImagesConfig::Off;
+    config.agent.task_intake.command = Some("configured-intake".to_string());
+    config.sync.enabled = true;
+
+    let app = App::new_with_view_state_and_config(
+        database,
+        crate::workspaces::Workspace::default(),
+        TaskViewState::default(),
+        config,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(app.store.task_columns[0].name, "Configured");
+    assert_eq!(
+        app.store.config().agent.task_intake.command.as_deref(),
+        Some("configured-intake")
+    );
+    assert!(app.store.config().sync.enabled);
+    assert_eq!(
+        app.store.config().local.inline_images,
+        crate::config::InlineImagesConfig::Off
+    );
+    assert_eq!(
+        app.intake.config().agent.task_intake.command.as_deref(),
+        Some("configured-intake")
+    );
+    assert_eq!(
+        app.intake.config().local.inline_images,
+        crate::config::InlineImagesConfig::Off
+    );
+    assert_eq!(app.inline_image_backend, InlineImageBackend::None);
+}
+
+#[tokio::test]
 async fn sync_now_requires_configured_server() {
     let mut app = test_app().await;
 
@@ -6925,7 +6978,7 @@ mod authoring {
     #[tokio::test]
     async fn add_task_labels_escape_returns_to_add_task_only_dialog() {
         let mut app = test_app().await;
-        app.intake.enter_add_task_only(AppConfig::default());
+        app.intake.enter_add_task_only();
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
         app.handle_overlay_key(ctrl_l()).await.unwrap();
@@ -7135,7 +7188,7 @@ mod authoring {
     #[tokio::test]
     async fn add_task_only_view_uses_popup_surface() {
         let mut app = test_app().await;
-        app.intake.enter_add_task_only(AppConfig::default());
+        app.intake.enter_add_task_only();
         app.begin_add_task().await.unwrap();
 
         let view = app.view();
@@ -7147,7 +7200,7 @@ mod authoring {
     async fn add_task_only_render_skips_normal_tui() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Existing queue task")).await;
-        app.intake.enter_add_task_only(AppConfig::default());
+        app.intake.enter_add_task_only();
         app.begin_add_task().await.unwrap();
 
         let rendered = render_app_text(&mut app, 50, 12);
@@ -7161,7 +7214,7 @@ mod authoring {
     #[tokio::test]
     async fn add_task_only_natural_render_uses_popup_surface() {
         let mut app = test_app().await;
-        app.intake.enter_add_task_only(AppConfig::default());
+        app.intake.enter_add_task_only();
         app.begin_add_task().await.unwrap();
         app.begin_add_task_natural();
 
@@ -7355,7 +7408,7 @@ mod authoring {
     #[tokio::test]
     async fn add_task_picker_escape_returns_to_add_task_only_dialog() {
         let mut app = test_app().await;
-        app.intake.enter_add_task_only(AppConfig::default());
+        app.intake.enter_add_task_only();
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
         app.handle_overlay_key(ctrl_p()).await.unwrap();
@@ -7809,7 +7862,7 @@ mod authoring {
     #[tokio::test]
     async fn add_task_only_ctrl_n_exits_immediately() {
         let mut app = test_app().await;
-        app.intake.enter_add_task_only(AppConfig::default());
+        app.intake.enter_add_task_only();
 
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "add from popup").await;
@@ -7824,7 +7877,7 @@ mod authoring {
     #[tokio::test]
     async fn add_task_only_natural_dialog_submit_exits_immediately() {
         let mut app = test_app().await;
-        app.intake.enter_add_task_only(AppConfig::default());
+        app.intake.enter_add_task_only();
 
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         app.begin_add_task_natural();

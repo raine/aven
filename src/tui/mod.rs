@@ -137,19 +137,15 @@ async fn run_with_welcome_intro(
     config: crate::config::AppConfig,
     show_welcome_intro: bool,
 ) -> Result<()> {
-    let mut app = app::App::new_with_view_state_and_config(
-        database,
-        workspace,
-        launch.view_state,
-        config.clone(),
-    )
-    .await?;
+    let mut app =
+        app::App::new_with_view_state_and_config(database, workspace, launch.view_state, config)
+            .await?;
     app.set_add_task_db_path(db_path);
     match launch.startup {
         store::TuiStartup::AddTaskOnly { natural } => {
             let mut terminal = TerminalSession::init()?;
             let result = app
-                .run_add_task_only(terminal.terminal_mut(), natural, config)
+                .run_add_task_only(terminal.terminal_mut(), natural)
                 .await;
             let restore_result = terminal.restore();
             let result = match (result, restore_result) {
@@ -162,7 +158,6 @@ async fn run_with_welcome_intro(
             result.map(|_| ())
         }
         startup => {
-            app.set_config(config);
             app.start_update_check();
             match startup {
                 store::TuiStartup::Browse if show_welcome_intro => app.show_welcome_intro(),

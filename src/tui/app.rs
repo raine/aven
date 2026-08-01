@@ -227,6 +227,7 @@ impl App {
     }
 
     fn new_with_store(store: TuiStore) -> Result<Self> {
+        let config = store.config().clone();
         let next_refresh_at = store.last_refresh + crate::tui::app_lifecycle::REFRESH_INTERVAL;
         let has_tasks = store.main_row_count() > 0;
         let mut app = Self {
@@ -260,6 +261,7 @@ impl App {
             preview_controller: crate::tui::preview_controller::PreviewController::new(),
             attachment_controller: crate::tui::attachment_controller::AttachmentController::new(),
         };
+        app.set_config(config);
         app.restore_sidebar_selection();
         Ok(app)
     }

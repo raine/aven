@@ -22,6 +22,7 @@ mod workspaces;
 #[cfg(test)]
 mod tests;
 
+use std::ops::{Deref, DerefMut};
 use std::time::Instant;
 
 use anyhow::Result;
@@ -53,9 +54,20 @@ use crate::query::{
 };
 use crate::workspaces::Workspace;
 
+#[derive(Clone)]
 pub(crate) struct TuiStore {
     database: Database,
     app_config: AppConfig,
+    projection: TuiProjection,
+    pub(crate) task_columns: Vec<crate::config::TaskColumnConfig>,
+    pub(crate) columns_preview_visible: bool,
+    pub(crate) db_stats: TuiDatabaseStats,
+    #[cfg(test)]
+    fail_next_refresh: Option<RefreshFailureStage>,
+}
+
+#[derive(Clone)]
+pub(crate) struct TuiProjection {
     pub(crate) tasks: Vec<TaskListItem>,
     pub(crate) recurrence_series: Vec<RecurrenceSeriesListItem>,
     pub(crate) recurrence_detail: Option<RecurrenceSeriesDetail>,
@@ -67,13 +79,22 @@ pub(crate) struct TuiStore {
     pub(crate) counts: SidebarCounts,
     pub(crate) sidebar_entries: Vec<SidebarEntry>,
     pub(crate) view_state: TaskViewState,
-    pub(crate) task_columns: Vec<crate::config::TaskColumnConfig>,
-    pub(crate) columns_preview_visible: bool,
     pub(crate) sync_status: TuiSyncStatus,
-    pub(crate) db_stats: TuiDatabaseStats,
     pub(crate) last_refresh: Instant,
-    #[cfg(test)]
-    fail_next_refresh: Option<RefreshFailureStage>,
+}
+
+impl Deref for TuiStore {
+    type Target = TuiProjection;
+
+    fn deref(&self) -> &Self::Target {
+        &self.projection
+    }
+}
+
+impl DerefMut for TuiStore {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.projection
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,31 +131,38 @@ impl TuiStore {
         view_state: TaskViewState,
         app_config: AppConfig,
     ) -> Result<Self> {
+        let task_columns = app_config.tui.columns.clone();
         let mut store = Self {
             database,
             app_config,
-            tasks: Vec::new(),
-            recurrence_series: Vec::new(),
-            recurrence_detail: None,
-            recent_actions: Vec::new(),
-            projects: Vec::new(),
-            labels: Vec::new(),
-            workspaces: Vec::new(),
-            active_workspace: workspace,
-            counts: SidebarCounts::default(),
-            sidebar_entries: Vec::new(),
-            view_state,
-            task_columns: crate::config::TuiConfig::default().columns,
+            projection: TuiProjection {
+                tasks: Vec::new(),
+                recurrence_series: Vec::new(),
+                recurrence_detail: None,
+                recent_actions: Vec::new(),
+                projects: Vec::new(),
+                labels: Vec::new(),
+                workspaces: Vec::new(),
+                active_workspace: workspace,
+                counts: SidebarCounts::default(),
+                sidebar_entries: Vec::new(),
+                view_state,
+                sync_status: TuiSyncStatus::default(),
+                last_refresh: Instant::now(),
+            },
+            task_columns,
             columns_preview_visible: true,
-            sync_status: TuiSyncStatus::default(),
             db_stats: TuiDatabaseStats::default(),
-            last_refresh: Instant::now(),
             #[cfg(test)]
             fail_next_refresh: None,
         };
         store.database.clear_pending_tui_undo_entries().await?;
         store.refresh(None).await?;
         Ok(store)
+    }
+
+    pub(crate) fn config(&self) -> &AppConfig {
+        &self.app_config
     }
 
     pub(crate) fn set_config(&mut self, config: AppConfig) {
@@ -248,7 +276,8 @@ impl TuiStore {
                 .iter()
                 .all(|candidate| candidate.task.id != item.task.id)
             {
-                self.tasks.insert(index.min(self.tasks.len()), item);
+                let insertion_index = index.min(self.tasks.len());
+                self.tasks.insert(insertion_index, item);
             }
         }
         if let Some(MainRowSelection::Task(task_id)) = selected {
@@ -288,7 +317,8 @@ impl TuiStore {
     ) -> Result<ScopeRefreshResult> {
         let active_workspace = active_workspace.unwrap_or_else(|| self.active_workspace.clone());
         let view_state = view_state.unwrap_or_else(|| self.view_state.clone());
-        let mut replacement = self.replacement_shell(active_workspace, view_state);
+        let mut replacement = self.clone();
+        replacement.projection = self.replacement_projection(active_workspace, view_state);
         #[cfg(test)]
         {
             replacement.fail_next_refresh = self.fail_next_refresh.take();
@@ -302,10 +332,12 @@ impl TuiStore {
         Ok(result)
     }
 
-    fn replacement_shell(&self, active_workspace: Workspace, view_state: TaskViewState) -> Self {
-        Self {
-            database: self.database.clone(),
-            app_config: self.app_config.clone(),
+    fn replacement_projection(
+        &self,
+        active_workspace: Workspace,
+        view_state: TaskViewState,
+    ) -> TuiProjection {
+        TuiProjection {
             tasks: Vec::new(),
             recurrence_series: Vec::new(),
             recurrence_detail: self.recurrence_detail.clone(),
@@ -317,13 +349,8 @@ impl TuiStore {
             counts: SidebarCounts::default(),
             sidebar_entries: Vec::new(),
             view_state,
-            task_columns: self.task_columns.clone(),
-            columns_preview_visible: self.columns_preview_visible,
             sync_status: TuiSyncStatus::default(),
-            db_stats: self.db_stats.clone(),
             last_refresh: self.last_refresh,
-            #[cfg(test)]
-            fail_next_refresh: None,
         }
     }
 

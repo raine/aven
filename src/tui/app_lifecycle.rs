@@ -19,7 +19,7 @@ use crossterm::execute;
 use ratatui::DefaultTerminal;
 use std::io::Write;
 
-use crate::config::{AppConfig, resolve_blob_dir};
+use crate::config::resolve_blob_dir;
 use crate::tui::app::App;
 use crate::tui::inline_image_surface::InlineImageSurface;
 use crate::tui::inline_images::InlineImageBackend;
@@ -58,10 +58,8 @@ impl App {
         mut self,
         terminal: &mut DefaultTerminal,
         natural: bool,
-        config: AppConfig,
     ) -> Result<Option<String>> {
-        self.set_config(config.clone());
-        self.intake.enter_add_task_only(config);
+        self.intake.enter_add_task_only();
         self.open_add_task_on_start(natural).await?;
         execute!(std::io::stdout(), EnableBracketedPaste)?;
         let result = self.run_loop(terminal).await;

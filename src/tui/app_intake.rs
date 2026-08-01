@@ -89,9 +89,8 @@ impl IntakeController {
         self.db_path = Some(db_path);
     }
 
-    pub(super) fn enter_add_task_only(&mut self, config: AppConfig) {
+    pub(super) fn enter_add_task_only(&mut self) {
         self.add_task_only = true;
-        self.config = config;
     }
 
     pub(super) fn start(

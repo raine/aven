@@ -75,7 +75,7 @@
 
 #### Persistence and refresh
 
-- Store modules call owned methods on `aven_core::db::Database`. Each task mutation family has one batch-capable policy method in `src/tui/store/task_commands.rs` for one or many `TaskSelection` targets.
+- Store modules call owned methods on `aven_core::db::Database`. `TuiStore` owns the database handle, application config, and refresh-independent state. Its `TuiProjection` owns the complete refresh result exposed to app and rendering code. Each task mutation family has one batch-capable policy method in `src/tui/store/task_commands.rs` for one or many `TaskSelection` targets.
 - Persisted TUI mutations request undo from the owning core operation. The core transaction loads authoritative values, applies all targets, derives undo, writes one grouped entry when needed, and commits once. Individual note edits and deletes use the hydrated note ID as stable identity, emit note-specific sync changes, and retain that identity through edit and undo.
 - Structured mutation reports drive messages and selection restoration. A TUI refresh reconciles recurrence once, then builds a complete replacement projection from current-projection reads and publishes it only after every query succeeds. A committed-refresh error closes completed edit flows so stale input cannot duplicate a mutation.
 
