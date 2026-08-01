@@ -12,6 +12,7 @@ use crate::db::{
     insert_change, insert_change_with_identity, recurrence_occurrence_from_row,
     recurrence_series_from_row, set_entity_field_version, set_field_version,
 };
+use crate::error::CoreError;
 use crate::ids::{TaskId, WorkspaceId, new_id, now};
 use crate::labels::{resolve_labels_in_workspace, resolve_or_create_labels_in_workspace};
 use crate::mutation::apply_field_value_in_workspace;
@@ -336,8 +337,10 @@ pub async fn create_recurrence_series_with_options(
     let initial_status = TaskStatus::parse(&draft.initial_status)?;
     ensure!(
         initial_status.is_open(),
-        "error recurrence-initial-status-terminal status={}",
-        initial_status.as_str()
+        CoreError::validation(format!(
+            "error recurrence-initial-status-terminal status={}",
+            initial_status.as_str()
+        ))
     );
     let creation_date = at
         .with_timezone(&draft.schedule.timezone.timezone())
@@ -740,12 +743,16 @@ pub(crate) async fn reconcile_recurrence_series_in_transaction(
         let expected = derive_occurrence_identity(&workspace.id, series_id, &schedule, target)?;
         ensure!(
             existing.task_id.as_ref() == Some(&expected.task_id),
-            "error recurrence-generation-conflict slot={target} field=task_id"
+            CoreError::generation_conflict(format!(
+                "error recurrence-generation-conflict slot={target} field=task_id"
+            ))
         );
         let task = get_task_in_workspace(conn, workspace, &expected.task_id).await?;
         ensure!(
             task.status.is_open() && !task.deleted,
-            "error recurrence-generation-conflict slot={target} field=task"
+            CoreError::generation_conflict(format!(
+                "error recurrence-generation-conflict slot={target} field=task"
+            ))
         );
         sqlx::query(
             "UPDATE recurrence_occurrences
@@ -787,7 +794,7 @@ pub(crate) async fn resolve_recurrence_occurrence_in_transaction(
 ) -> Result<RecurrenceResolveOutcome> {
     let mut occurrence = load_occurrence_for_task(conn, &workspace.id, task_id)
         .await?
-        .context("error recurrence-occurrence-not-found")?;
+        .ok_or_else(|| CoreError::not_found("error recurrence-occurrence-not-found"))?;
     if matches!(
         occurrence.projection_state,
         RecurrenceProjectionState::Projected
@@ -803,19 +810,23 @@ pub(crate) async fn resolve_recurrence_occurrence_in_transaction(
         .await?;
         occurrence = load_occurrence_for_task(conn, &workspace.id, task_id)
             .await?
-            .context("error recurrence-occurrence-not-found")?;
+            .ok_or_else(|| CoreError::not_found("error recurrence-occurrence-not-found"))?;
     }
     ensure!(
         matches!(
             occurrence.projection_state,
             RecurrenceProjectionState::Projected
         ),
-        "error recurrence-occurrence-not-current task_id={task_id}"
+        CoreError::validation(format!(
+            "error recurrence-occurrence-not-current task_id={task_id}"
+        ))
     );
     let task = get_task_in_workspace(conn, workspace, task_id).await?;
     ensure!(
         task.status.is_open(),
-        "error recurrence-occurrence-terminal task_id={task_id}"
+        CoreError::validation(format!(
+            "error recurrence-occurrence-terminal task_id={task_id}"
+        ))
     );
     let series = load_series(conn, &workspace.id, &occurrence.series_id).await?;
     let target_status = match outcome {
@@ -927,8 +938,10 @@ pub async fn pause_recurrence_series(
     let series = load_series(&mut tx, &workspace.id, series_id).await?;
     ensure!(
         matches!(series.state, RecurrenceSeriesState::Active),
-        "error recurrence-pause-invalid-state state={}",
-        series.state.as_str()
+        CoreError::validation(format!(
+            "error recurrence-pause-invalid-state state={}",
+            series.state.as_str()
+        ))
     );
     ensure_no_series_conflict(&mut tx, &workspace.id, series_id, "state").await?;
     reconcile_recurrence_series_in_transaction(&mut tx, workspace, series_id, paused_at_utc)
@@ -1016,8 +1029,10 @@ pub async fn resume_recurrence_series(
     let series = load_series(&mut tx, &workspace.id, series_id).await?;
     ensure!(
         matches!(series.state, RecurrenceSeriesState::Paused),
-        "error recurrence-resume-invalid-state state={}",
-        series.state.as_str()
+        CoreError::validation(format!(
+            "error recurrence-resume-invalid-state state={}",
+            series.state.as_str()
+        ))
     );
     ensure_no_series_conflict(&mut tx, &workspace.id, series_id, "state").await?;
     let interval = sqlx::query(
@@ -1029,7 +1044,7 @@ pub async fn resume_recurrence_series(
     .bind(series_id)
     .fetch_optional(&mut *tx)
     .await?
-    .context("error recurrence-open-pause-missing")?;
+    .ok_or_else(|| CoreError::validation("error recurrence-open-pause-missing"))?;
     let interval_id: String = interval.get("id");
     let paused_at: String = interval.get("paused_at");
     resumed_at = timestamp_strictly_after(&paused_at, &resumed_at)?;
@@ -1125,7 +1140,7 @@ pub async fn stop_recurrence_series(
     let series = load_series(&mut tx, &workspace.id, series_id).await?;
     ensure!(
         !matches!(series.state, RecurrenceSeriesState::Stopped),
-        "error recurrence-already-stopped"
+        CoreError::validation("error recurrence-already-stopped")
     );
     ensure_no_series_conflict(&mut tx, &workspace.id, series_id, "state").await?;
     let open_pause = if matches!(series.state, RecurrenceSeriesState::Paused) {
@@ -1137,7 +1152,7 @@ pub async fn stop_recurrence_series(
         .bind(series_id)
         .fetch_optional(&mut *tx)
         .await?
-        .context("error recurrence-open-pause-missing")?;
+        .ok_or_else(|| CoreError::validation("error recurrence-open-pause-missing"))?;
         let interval_id: String = interval.get("id");
         let paused_at: String = interval.get("paused_at");
         stopped_at = timestamp_strictly_after(&paused_at, &stopped_at)?;
@@ -1186,7 +1201,8 @@ pub async fn stop_recurrence_series(
     .await?;
     let projected = load_projected_occurrence(&mut tx, &workspace.id, series_id).await?;
     let occurrence = if skip_current {
-        let projected = projected.context("error recurrence-current-occurrence-missing")?;
+        let projected = projected
+            .ok_or_else(|| CoreError::validation("error recurrence-current-occurrence-missing"))?;
         let task_id = projected
             .task_id
             .as_ref()
@@ -1233,13 +1249,16 @@ pub(crate) async fn route_recurrence_task_field(
         .await?;
         occurrence = load_occurrence_for_task(conn, &workspace.id, task_id)
             .await?
-            .context("error recurrence-occurrence-not-found")?;
+            .ok_or_else(|| CoreError::not_found("error recurrence-occurrence-not-found"))?;
     }
     if matches!(
         occurrence.projection_state,
         RecurrenceProjectionState::Archived
     ) {
-        bail!("error recurrence-occurrence-archived task_id={task_id}");
+        return Err(CoreError::validation(format!(
+            "error recurrence-occurrence-archived task_id={task_id}"
+        ))
+        .into());
     }
     if field == "status" {
         let task = get_task_in_workspace(conn, workspace, task_id).await?;
@@ -1249,11 +1268,15 @@ pub(crate) async fn route_recurrence_task_field(
         }
         if task.status.is_terminal() {
             if target.is_open() {
-                bail!(
+                return Err(CoreError::validation(format!(
                     "error recurrence-terminal-reopen task_id={task_id} hint=\"use immediate undo\""
-                );
+                ))
+                .into());
             }
-            bail!("error recurrence-outcome-final task_id={task_id} hint=\"use immediate undo\"");
+            return Err(CoreError::validation(format!(
+                "error recurrence-outcome-final task_id={task_id} hint=\"use immediate undo\""
+            ))
+            .into());
         }
         if target.is_terminal() {
             ensure!(
@@ -1287,7 +1310,10 @@ pub(crate) async fn route_recurrence_task_field(
             RecurrenceSeriesState::Paused => "skip the occurrence or stop the series",
             RecurrenceSeriesState::Stopped => "complete or cancel the final occurrence",
         };
-        bail!("error recurrence-current-delete task_id={task_id} hint=\"{guidance}\"");
+        return Err(CoreError::validation(format!(
+            "error recurrence-current-delete task_id={task_id} hint=\"{guidance}\""
+        ))
+        .into());
     }
     Ok(None)
 }
@@ -1544,8 +1570,10 @@ async fn verify_materialized_occurrence(
 ) -> Result<()> {
     ensure!(
         occurrence.task_id.as_ref() == Some(&identity.task_id),
-        "error recurrence-generation-conflict slot={} field=task_id",
-        occurrence.slot_on
+        CoreError::generation_conflict(format!(
+            "error recurrence-generation-conflict slot={} field=task_id",
+            occurrence.slot_on
+        ))
     );
     let task = get_task_in_workspace(conn, workspace, &identity.task_id).await?;
     ensure!(
@@ -1561,8 +1589,10 @@ async fn verify_materialized_occurrence(
             && task.due_on == slot.due_on
             && !task.deleted
             && !task.is_epic,
-        "error recurrence-generation-conflict slot={} field=task",
-        occurrence.slot_on
+        CoreError::generation_conflict(format!(
+            "error recurrence-generation-conflict slot={} field=task",
+            occurrence.slot_on
+        ))
     );
     let stored_labels: Vec<String> = sqlx::query_scalar(
         "SELECT label FROM task_labels WHERE workspace_id = ? AND task_id = ? ORDER BY label",
@@ -1573,8 +1603,10 @@ async fn verify_materialized_occurrence(
     .await?;
     ensure!(
         stored_labels == labels,
-        "error recurrence-generation-conflict slot={} field=labels",
-        occurrence.slot_on
+        CoreError::generation_conflict(format!(
+            "error recurrence-generation-conflict slot={} field=labels",
+            occurrence.slot_on
+        ))
     );
     for field in TaskField::VERSIONED {
         let version = entity_field_version(
@@ -1587,8 +1619,10 @@ async fn verify_materialized_occurrence(
         .await?;
         ensure!(
             version.as_deref() == Some(identity.field_version_seeds.task.as_str()),
-            "error recurrence-generation-conflict slot={} field=field_versions",
-            occurrence.slot_on
+            CoreError::generation_conflict(format!(
+                "error recurrence-generation-conflict slot={} field=field_versions",
+                occurrence.slot_on
+            ))
         );
     }
     let payload = deterministic_task_payload(workspace, series, labels, slot, identity);
@@ -1827,7 +1861,11 @@ async fn load_series(
     .bind(series_id)
     .fetch_optional(&mut *conn)
     .await?
-    .with_context(|| format!("error recurrence-series-not-found series_id={series_id}"))?;
+    .ok_or_else(|| {
+        CoreError::not_found(format!(
+            "error recurrence-series-not-found series_id={series_id}"
+        ))
+    })?;
     recurrence_series_from_row(&row)
 }
 
@@ -1937,7 +1975,9 @@ async fn ensure_no_series_conflict(
             field,
         )
         .await?,
-        "error recurrence-conflicted-field series_id={series_id} field={field}"
+        CoreError::open_conflict(format!(
+            "error recurrence-conflicted-field series_id={series_id} field={field}"
+        ))
     );
     Ok(())
 }
@@ -1949,7 +1989,10 @@ pub async fn resolve_recurrence_ref(
 ) -> Result<RecurrenceSeries> {
     let (hint, suffix) = split_ref(input);
     if suffix.len() < 3 {
-        bail!("error recurrence-ref-too-short input={input} minimum=3");
+        return Err(CoreError::validation(format!(
+            "error recurrence-ref-too-short input={input} minimum=3"
+        ))
+        .into());
     }
     let series_rows = sqlx::query(
         "SELECT workspace_id, id, title, description, project_id, priority, initial_status,
@@ -1975,7 +2018,9 @@ pub async fn resolve_recurrence_ref(
         return Ok(series.remove(0));
     }
     if series.len() > 1 {
-        bail!("error ambiguous-recurrence-ref input={input}");
+        return Err(
+            CoreError::validation(format!("error ambiguous-recurrence-ref input={input}")).into(),
+        );
     }
     let task = crate::refs::resolve_task_ref_in_workspace(conn, workspace, input).await?;
     let occurrence = load_occurrence_for_task(conn, &workspace.id, &task.id)
@@ -1997,7 +2042,9 @@ async fn recurrence_series_ref(
     .await?;
     ensure!(
         ids.iter().any(|candidate| candidate == series_id),
-        "error recurrence-series-not-found series_id={series_id}"
+        CoreError::not_found(format!(
+            "error recurrence-series-not-found series_id={series_id}"
+        ))
     );
     Ok(recurrence_series_display_ref(series_id, &ids))
 }

@@ -9,6 +9,7 @@ use crate::db::{
     Database, begin_immediate, conflict_exists, field_version, insert_change, set_field_version,
     task_from_row,
 };
+use crate::error::CoreError;
 use crate::ids::{new_id, now};
 use crate::mutation::{apply_field_value_in_workspace, apply_project_id_in_workspace};
 use crate::operations::{
@@ -351,7 +352,12 @@ pub(crate) async fn conflict_row_id(
     .bind(field)
     .fetch_optional(&mut *conn)
     .await?
-    .ok_or_else(|| anyhow::anyhow!("error conflict-not-found task_id={task_id} field={field}"))
+    .ok_or_else(|| {
+        CoreError::not_found(format!(
+            "error conflict-not-found task_id={task_id} field={field}"
+        ))
+    })
+    .map_err(Into::into)
 }
 
 pub(crate) async fn record_tui_undo(

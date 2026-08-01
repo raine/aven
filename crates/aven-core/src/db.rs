@@ -12,6 +12,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 use sqlx::{Connection as _, Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
 
 use crate::choices::{TaskPriority, TaskSource, TaskStatus};
+use crate::error::CoreError;
 use crate::ids::{new_id, now};
 use crate::recurrence::{
     RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceOutcome, RecurrenceProjectionState,
@@ -424,7 +425,10 @@ pub(crate) async fn insert_change_with_identity(
         if equal {
             return Ok(());
         }
-        bail!("error recurrence-generation-conflict change_id={change_id}");
+        return Err(CoreError::generation_conflict(format!(
+            "error recurrence-generation-conflict change_id={change_id}"
+        ))
+        .into());
     }
 
     let client_id = get_meta(conn, "client_id")

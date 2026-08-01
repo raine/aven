@@ -4,6 +4,7 @@ pub mod change_log;
 pub mod choices;
 pub mod data_safety;
 pub mod db;
+mod error;
 pub mod ids;
 pub mod labels;
 pub mod local_state;

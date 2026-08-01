@@ -9,6 +9,7 @@ use aven_core::api::{
 use aven_core::choices::{TaskPriority, TaskStatus};
 use aven_core::db::Database;
 use aven_core::ids::TaskId;
+use aven_core::recurrence::RecurrenceSeriesId;
 use aven_core::sync::wire::{
     MAX_PULL_BATCH, MAX_PUSH_BATCH, SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse,
 };
@@ -375,6 +376,11 @@ async fn consumer_api_owns_recurrence_lifecycle_reports_and_mutation_routing() {
         .await
         .unwrap();
     let workspace = store.resolve_workspace("default").await.unwrap();
+    let missing_series = store
+        .pause_recurrence_series(&workspace.id, &RecurrenceSeriesId::new())
+        .await
+        .unwrap_err();
+    assert_eq!(missing_series.code, ErrorCode::NotFound);
     let created = store
         .create_recurrence_series(&workspace.id, daily_series("daily review"))
         .await

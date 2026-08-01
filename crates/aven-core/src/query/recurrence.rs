@@ -5,6 +5,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 
 use crate::db::{recurrence_occurrence_from_row, recurrence_series_from_row};
+use crate::error::CoreError;
 use crate::ids::{TaskId, WorkspaceId};
 use crate::recurrence::{
     RecurrenceOutcome, RecurrenceProjectionState, RecurrenceSchedule, RecurrenceSeriesId,
@@ -400,7 +401,11 @@ pub(crate) async fn recurrence_series_detail(
     .bind(series_id)
     .fetch_optional(&mut *conn)
     .await?
-    .with_context(|| format!("error recurrence-series-not-found series_id={series_id}"))?;
+    .ok_or_else(|| {
+        CoreError::not_found(format!(
+            "error recurrence-series-not-found series_id={series_id}"
+        ))
+    })?;
     let series = recurrence_series_from_row(&row)?;
     let labels = sqlx::query_scalar(
         "SELECT label FROM recurrence_series_labels
@@ -459,7 +464,11 @@ pub(crate) async fn recurrence_history(
     let series = load_series_for_ids(conn, workspace_id, std::slice::from_ref(series_id))
         .await?
         .pop()
-        .with_context(|| format!("error recurrence-series-not-found series_id={series_id}"))?;
+        .ok_or_else(|| {
+            CoreError::not_found(format!(
+                "error recurrence-series-not-found series_id={series_id}"
+            ))
+        })?;
     let series_ref = SeriesRefContext::load(conn, workspace_id)
         .await?
         .display_ref(series_id);

@@ -27,6 +27,7 @@ pub enum ErrorCode {
     Validation,
     NotFound,
     OpenConflict,
+    GenerationConflict,
     Database,
     Internal,
 }
@@ -60,6 +61,7 @@ impl From<core_api::Error> for AvenError {
                 core_api::ErrorCode::Validation => ErrorCode::Validation,
                 core_api::ErrorCode::NotFound => ErrorCode::NotFound,
                 core_api::ErrorCode::OpenConflict => ErrorCode::OpenConflict,
+                core_api::ErrorCode::GenerationConflict => ErrorCode::GenerationConflict,
                 core_api::ErrorCode::Database => ErrorCode::Database,
                 core_api::ErrorCode::Internal => ErrorCode::Internal,
             },

@@ -1351,6 +1351,7 @@ pub enum ErrorCode {
     Validation,
     NotFound,
     OpenConflict,
+    GenerationConflict,
     Database,
     Internal,
 }
@@ -1361,6 +1362,7 @@ impl ErrorCode {
             Self::Validation => "validation",
             Self::NotFound => "not_found",
             Self::OpenConflict => "open_conflict",
+            Self::GenerationConflict => "generation_conflict",
             Self::Database => "database",
             Self::Internal => "internal",
         }
@@ -1383,39 +1385,32 @@ impl Error {
     }
 
     fn from_internal(error: InternalError) -> Self {
-        let message = error.to_string();
-        let code = if error.chain().any(|cause| {
-            cause
-                .downcast_ref::<crate::mutation::OpenConflictError>()
-                .is_some()
-        }) || message.contains("recurrence-conflicted-field")
-        {
-            ErrorCode::OpenConflict
-        } else if error.chain().any(|cause| {
-            cause
-                .downcast_ref::<crate::operations::ConflictNotFoundError>()
-                .is_some()
-        }) || error
+        let code = error
             .chain()
-            .filter_map(|cause| cause.downcast_ref::<sqlx::Error>())
-            .any(|error| matches!(error, sqlx::Error::RowNotFound))
-            || message.contains("recurrence-series-not-found")
-            || message.contains("recurrence-occurrence-not-found")
-        {
-            ErrorCode::NotFound
-        } else if error
-            .chain()
-            .any(|cause| cause.downcast_ref::<sqlx::Error>().is_some())
-        {
-            ErrorCode::Database
-        } else if message.starts_with("error recurrence-")
-            || message.starts_with("invalid recurrence")
-        {
-            ErrorCode::Validation
-        } else {
-            ErrorCode::Internal
-        };
-        Self::new(code, message)
+            .find_map(|cause| cause.downcast_ref::<crate::error::CoreError>())
+            .map(|error| match error.kind() {
+                crate::error::ErrorKind::Validation => ErrorCode::Validation,
+                crate::error::ErrorKind::NotFound => ErrorCode::NotFound,
+                crate::error::ErrorKind::OpenConflict => ErrorCode::OpenConflict,
+                crate::error::ErrorKind::GenerationConflict => ErrorCode::GenerationConflict,
+            })
+            .unwrap_or_else(|| {
+                if error
+                    .chain()
+                    .filter_map(|cause| cause.downcast_ref::<sqlx::Error>())
+                    .any(|error| matches!(error, sqlx::Error::RowNotFound))
+                {
+                    ErrorCode::NotFound
+                } else if error
+                    .chain()
+                    .any(|cause| cause.downcast_ref::<sqlx::Error>().is_some())
+                {
+                    ErrorCode::Database
+                } else {
+                    ErrorCode::Internal
+                }
+            });
+        Self::new(code, error.to_string())
     }
 }
 
@@ -1436,8 +1431,29 @@ mod tests {
         assert_eq!(ErrorCode::Validation.as_str(), "validation");
         assert_eq!(ErrorCode::NotFound.as_str(), "not_found");
         assert_eq!(ErrorCode::OpenConflict.as_str(), "open_conflict");
+        assert_eq!(
+            ErrorCode::GenerationConflict.as_str(),
+            "generation_conflict"
+        );
         assert_eq!(ErrorCode::Database.as_str(), "database");
         assert_eq!(ErrorCode::Internal.as_str(), "internal");
+        assert_eq!(
+            Error::from_internal(
+                crate::error::CoreError::generation_conflict(
+                    "error recurrence-generation-conflict slot=2026-08-01 field=task"
+                )
+                .into()
+            )
+            .code,
+            ErrorCode::GenerationConflict
+        );
+        assert_eq!(
+            Error::from_internal(
+                crate::error::CoreError::not_found("error recurrence-series-not-found").into()
+            )
+            .code,
+            ErrorCode::NotFound
+        );
         assert_eq!(
             Error::from_internal(anyhow::anyhow!("unexpected invariant")).code,
             ErrorCode::Internal

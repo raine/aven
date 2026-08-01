@@ -324,6 +324,13 @@ async fn create_series_atomically_materializes_complete_deterministic_snapshot()
             .to_string()
             .contains("recurrence-generation-conflict")
     );
+    assert_eq!(
+        conflict
+            .downcast_ref::<crate::error::CoreError>()
+            .unwrap()
+            .kind(),
+        crate::error::ErrorKind::GenerationConflict
+    );
 }
 
 #[tokio::test]

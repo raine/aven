@@ -4,6 +4,7 @@ use tracing::info;
 
 use crate::change_log::op_type;
 use crate::db::{Database, begin_immediate, insert_change, set_field_version};
+use crate::error::CoreError;
 use crate::ids::{TaskId, now};
 use crate::mutation::{apply_field_value_in_workspace, apply_project_id_in_workspace};
 use crate::projects::{resolve_existing_project_in_workspace, resolve_project_for_stored_value};
@@ -720,24 +721,6 @@ pub(crate) enum ConflictValueChoice {
     Remote,
 }
 
-#[derive(Debug)]
-pub(crate) struct ConflictNotFoundError {
-    task_id: TaskId,
-    field: &'static str,
-}
-
-impl std::fmt::Display for ConflictNotFoundError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "error conflict-not-found task_id={} field={}",
-            self.task_id, self.field
-        )
-    }
-}
-
-impl std::error::Error for ConflictNotFoundError {}
-
 pub async fn resolve_conflict(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
@@ -807,10 +790,9 @@ async fn resolve_conflict_value(
             .fetch_optional(&mut *tx)
             .await?
             .ok_or_else(|| {
-                anyhow::Error::new(ConflictNotFoundError {
-                    task_id: task_id.clone(),
-                    field,
-                })
+                CoreError::not_found(format!(
+                    "error conflict-not-found task_id={task_id} field={field}"
+                ))
             })?;
             match choice {
                 ConflictValueChoice::Local => values.0,
@@ -833,10 +815,10 @@ async fn resolve_conflict_value(
     .execute(&mut *tx)
     .await?;
     if result.rows_affected() != 1 {
-        return Err(anyhow::Error::new(ConflictNotFoundError {
-            task_id: task_id.clone(),
-            field,
-        }));
+        return Err(CoreError::not_found(format!(
+            "error conflict-not-found task_id={task_id} field={field}"
+        ))
+        .into());
     }
     let payload = if task_field.is_project() {
         let project = resolve_project_for_stored_value(&mut tx, &workspace.id, &value).await?;

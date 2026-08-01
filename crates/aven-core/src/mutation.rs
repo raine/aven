@@ -9,30 +9,13 @@ use crate::db::{
     Database, begin_immediate, conflict_exists, field_version, insert_change, set_field_version,
     task_from_row,
 };
+use crate::error::CoreError;
 use crate::ids::now;
 use crate::projects::resolve_or_create_project_in_workspace;
 use crate::refs::get_task_in_workspace;
 use crate::task_fields::TaskField;
 use crate::types::{Project, Task};
 use crate::workspaces::Workspace;
-
-#[derive(Debug)]
-pub(crate) struct OpenConflictError {
-    task_id: crate::ids::TaskId,
-    field: &'static str,
-}
-
-impl std::fmt::Display for OpenConflictError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "error conflicted-field ref={} field={} hint=\"use conflict resolve\"",
-            self.task_id, self.field
-        )
-    }
-}
-
-impl std::error::Error for OpenConflictError {}
 
 impl Database {
     pub async fn set_task_status(
@@ -244,10 +227,10 @@ pub(crate) async fn set_task_project(
         return Ok(false);
     }
     if conflict_exists(conn, &workspace.id, task_id, field).await? {
-        return Err(anyhow::Error::new(OpenConflictError {
-            task_id: task_id.clone(),
-            field,
-        }));
+        return Err(CoreError::open_conflict(format!(
+            "error conflicted-field ref={task_id} field={field} hint=\"use conflict resolve\""
+        ))
+        .into());
     }
     debug!(task_id = %task_id, field = %field, "task field mutation started");
     let base = field_version(conn, task_id, field).await?;
@@ -272,10 +255,10 @@ async fn set_task_scalar_field(
         return Ok(false);
     }
     if conflict_exists(conn, &workspace.id, task_id, field).await? {
-        return Err(anyhow::Error::new(OpenConflictError {
-            task_id: task_id.clone(),
-            field,
-        }));
+        return Err(CoreError::open_conflict(format!(
+            "error conflicted-field ref={task_id} field={field} hint=\"use conflict resolve\""
+        ))
+        .into());
     }
     debug!(task_id = %task_id, field = %field, "task field mutation started");
     let base = field_version(conn, task_id, field).await?;
