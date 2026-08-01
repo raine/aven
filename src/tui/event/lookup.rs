@@ -1,6 +1,6 @@
 use crossterm::event::KeyCode;
 
-use super::{Action, COMMANDS, CommandContext, CommandSpec, KeySequence};
+use super::{Action, CommandContext, CommandSpec, KeySequence};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,24 +66,26 @@ pub(crate) fn resolve_shortcut(input: &[KeyCode]) -> ShortcutLookup {
 }
 
 pub(crate) fn resolve_shortcut_for(context: CommandContext, input: &[KeyCode]) -> ShortcutLookup {
-    let commands = context.commands();
-    resolve_shortcut_in_refs(&commands, input)
-}
-
-fn resolve_shortcut_in_refs(
-    commands: &[&'static CommandSpec],
-    input: &[KeyCode],
-) -> ShortcutLookup {
-    resolve_shortcut_iter(commands.iter().copied(), input)
+    resolve_shortcut_iter(context.commands(), context, input)
 }
 
 #[allow(dead_code)]
 pub(crate) fn resolve_shortcut_in(commands: &[CommandSpec], input: &[KeyCode]) -> ShortcutLookup {
-    resolve_shortcut_iter(commands.iter(), input)
+    resolve_shortcut_in_for(commands, CommandContext::Normal, input)
+}
+
+#[allow(dead_code)]
+pub(crate) fn resolve_shortcut_in_for(
+    commands: &[CommandSpec],
+    context: CommandContext,
+    input: &[KeyCode],
+) -> ShortcutLookup {
+    resolve_shortcut_iter(commands.iter(), context, input)
 }
 
 fn resolve_shortcut_iter<'a>(
     commands: impl IntoIterator<Item = &'a CommandSpec>,
+    context: CommandContext,
     input: &[KeyCode],
 ) -> ShortcutLookup {
     if input.is_empty() {
@@ -94,7 +96,7 @@ fn resolve_shortcut_iter<'a>(
     let mut prefix = false;
 
     for command in commands {
-        for key in command.keys {
+        for key in command.keys(context) {
             if key.codes == input {
                 exact.push(command.action);
             } else if key.codes.starts_with(input) {
@@ -112,13 +114,21 @@ fn resolve_shortcut_iter<'a>(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn matching_commands(input: &str) -> Vec<&'static CommandSpec> {
+    matching_commands_for(CommandContext::Normal, input)
+}
+
+pub(crate) fn matching_commands_for(
+    context: CommandContext,
+    input: &str,
+) -> Vec<&'static CommandSpec> {
     let input = normalize_command_input(input);
     if input.is_empty() {
-        return COMMANDS.iter().collect();
+        return context.commands().collect();
     }
-    let mut matches = COMMANDS
-        .iter()
+    let mut matches = context
+        .commands()
         .filter_map(|command| command_match_rank(command, input).map(|rank| (rank, command)))
         .collect::<Vec<_>>();
     matches.sort_by_key(|(rank, _)| *rank);
@@ -176,12 +186,17 @@ fn dashless_starts_with(value: &str, input: &str) -> bool {
     dashless.starts_with(input)
 }
 
+#[allow(dead_code)]
 pub(crate) fn complete_command(input: &str) -> CommandCompletion {
+    complete_command_for(CommandContext::Normal, input)
+}
+
+pub(crate) fn complete_command_for(context: CommandContext, input: &str) -> CommandCompletion {
     let input = normalize_command_input(input);
     if input.is_empty() {
         return CommandCompletion::Empty;
     }
-    let names = best_match_names(input);
+    let names = best_match_names(context, input);
     if names.is_empty() {
         return CommandCompletion::Missing;
     }
@@ -196,19 +211,24 @@ pub(crate) fn complete_command(input: &str) -> CommandCompletion {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn command_cycle_options(input: &str) -> Vec<&'static str> {
+    command_cycle_options_for(CommandContext::Normal, input)
+}
+
+pub(crate) fn command_cycle_options_for(context: CommandContext, input: &str) -> Vec<&'static str> {
     let input = normalize_command_input(input);
     if input.is_empty() {
         return Vec::new();
     }
-    ranked_matches(input)
+    ranked_matches(context, input)
         .into_iter()
         .map(|(_, command)| command.name)
         .collect()
 }
 
-fn best_match_names(input: &str) -> Vec<&'static str> {
-    let matches = ranked_matches(input);
+fn best_match_names(context: CommandContext, input: &str) -> Vec<&'static str> {
+    let matches = ranked_matches(context, input);
     let Some(best_rank) = matches.iter().map(|(rank, _)| *rank).min() else {
         return Vec::new();
     };
@@ -219,9 +239,9 @@ fn best_match_names(input: &str) -> Vec<&'static str> {
         .collect()
 }
 
-fn ranked_matches(input: &str) -> Vec<(u8, &'static CommandSpec)> {
-    let mut matches = COMMANDS
-        .iter()
+fn ranked_matches(context: CommandContext, input: &str) -> Vec<(u8, &'static CommandSpec)> {
+    let mut matches = context
+        .commands()
         .filter_map(|command| command_match_rank(command, input).map(|rank| (rank, command)))
         .collect::<Vec<_>>();
     matches.sort_by_key(|(rank, _)| *rank);
@@ -232,11 +252,10 @@ pub(crate) fn prefix_hint_commands(
     context: CommandContext,
     pending: &[String],
 ) -> Vec<(&'static CommandSpec, &'static KeySequence, String)> {
-    let commands = context.commands();
-    commands
-        .into_iter()
+    context
+        .commands()
         .flat_map(|command| {
-            command.keys.iter().filter_map(move |key| {
+            command.keys(context).iter().filter_map(move |key| {
                 if key.codes.len() <= pending.len() {
                     return None;
                 }
@@ -259,13 +278,18 @@ pub(crate) fn prefix_hint_commands(
         .collect()
 }
 
+#[allow(dead_code)]
 pub(crate) fn lookup_command_spec(input: &str) -> CommandSpecLookup {
+    lookup_command_spec_for(CommandContext::Normal, input)
+}
+
+pub(crate) fn lookup_command_spec_for(context: CommandContext, input: &str) -> CommandSpecLookup {
     let input = normalize_command_input(input);
     if input.is_empty() {
         return CommandSpecLookup::Empty;
     }
-    let matches = COMMANDS
-        .iter()
+    let matches = context
+        .commands()
         .filter_map(|command| command_match_rank(command, input).map(|rank| (rank, command)))
         .collect::<Vec<_>>();
     let Some(best_rank) = matches.iter().map(|(rank, _)| *rank).min() else {
@@ -291,8 +315,8 @@ pub(crate) fn lookup_command(input: &str) -> CommandLookup {
     if input.is_empty() {
         return CommandLookup::Empty;
     }
-    let matches = COMMANDS
-        .iter()
+    let matches = CommandContext::Normal
+        .commands()
         .filter_map(|command| command_match_rank(command, input).map(|rank| (rank, command)))
         .collect::<Vec<_>>();
     let Some(best_rank) = matches.iter().map(|(rank, _)| *rank).min() else {

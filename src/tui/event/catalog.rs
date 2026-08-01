@@ -19,14 +19,22 @@ pub(crate) struct KeySequence {
     pub(crate) label: &'static str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DetailFocusPolicy {
+    Global,
+    ParentTask,
+    EpicChild,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CommandSpec {
     pub(crate) name: &'static str,
     pub(crate) aliases: &'static [&'static str],
     pub(crate) description: &'static str,
     pub(crate) section: &'static str,
-    pub(crate) keys: &'static [KeySequence],
-    pub(crate) detail_keys: &'static [KeySequence],
+    list_keys: &'static [KeySequence],
+    detail_keys: &'static [KeySequence],
+    pub(crate) detail_focus: DetailFocusPolicy,
     pub(crate) action: Action,
     pub(crate) lifecycle: CommandLifecycle,
 }
@@ -57,8 +65,9 @@ impl CommandSpec {
             aliases,
             description,
             section,
-            keys,
+            list_keys: keys,
             detail_keys: &[],
+            detail_focus: DetailFocusPolicy::ParentTask,
             action,
             lifecycle: CommandLifecycle::Implemented,
         }
@@ -82,15 +91,103 @@ impl CommandSpec {
         keys: &'static [KeySequence],
         action: Action,
     ) -> Self {
-        Self {
+        Self::implemented_with_detail_bindings(
             name,
             aliases,
             description,
             section,
             keys,
-            detail_keys: keys,
+            keys,
+            DetailFocusPolicy::ParentTask,
+            action,
+        )
+    }
+
+    pub(crate) const fn implemented_global_in_detail(
+        name: &'static str,
+        description: &'static str,
+        section: &'static str,
+        keys: &'static [KeySequence],
+        action: Action,
+    ) -> Self {
+        Self::implemented_with_detail_bindings(
+            name,
+            &[],
+            description,
+            section,
+            keys,
+            keys,
+            DetailFocusPolicy::Global,
+            action,
+        )
+    }
+
+    pub(crate) const fn implemented_for_epic_child(
+        name: &'static str,
+        description: &'static str,
+        section: &'static str,
+        keys: &'static [KeySequence],
+        action: Action,
+    ) -> Self {
+        Self::implemented_with_detail_bindings(
+            name,
+            &[],
+            description,
+            section,
+            keys,
+            keys,
+            DetailFocusPolicy::EpicChild,
+            action,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) const fn implemented_with_detail_bindings(
+        name: &'static str,
+        aliases: &'static [&'static str],
+        description: &'static str,
+        section: &'static str,
+        list_keys: &'static [KeySequence],
+        detail_keys: &'static [KeySequence],
+        detail_focus: DetailFocusPolicy,
+        action: Action,
+    ) -> Self {
+        Self {
+            name,
+            aliases,
+            description,
+            section,
+            list_keys,
+            detail_keys,
+            detail_focus,
             action,
             lifecycle: CommandLifecycle::Implemented,
+        }
+    }
+
+    pub(crate) const fn keys(self, context: CommandContext) -> &'static [KeySequence] {
+        match context {
+            CommandContext::Normal => self.list_keys,
+            CommandContext::Detail => self.detail_keys,
+        }
+    }
+
+    pub(crate) const fn is_available(self, context: CommandContext) -> bool {
+        match context {
+            CommandContext::Normal => true,
+            CommandContext::Detail => !self.detail_keys.is_empty(),
+        }
+    }
+
+    pub(crate) const fn unavailable(self, reason: &'static str) -> Self {
+        Self {
+            description: reason,
+            action: Action::Disabled {
+                name: self.name,
+                reason,
+            },
+            lifecycle: CommandLifecycle::Disabled { reason },
+            ..self
         }
     }
 
@@ -106,15 +203,16 @@ impl CommandSpec {
             aliases: &[],
             description,
             section,
-            keys,
+            list_keys: keys,
             detail_keys: &[],
+            detail_focus: DetailFocusPolicy::ParentTask,
             action: Action::Planned { name, reason },
             lifecycle: CommandLifecycle::Planned { reason },
         }
     }
 
     #[allow(dead_code)]
-    const fn disabled(
+    pub(crate) const fn disabled(
         name: &'static str,
         description: &'static str,
         section: &'static str,
@@ -126,8 +224,9 @@ impl CommandSpec {
             aliases: &[],
             description,
             section,
-            keys,
+            list_keys: keys,
             detail_keys: &[],
+            detail_focus: DetailFocusPolicy::ParentTask,
             action: Action::Disabled { name, reason },
             lifecycle: CommandLifecycle::Disabled { reason },
         }
@@ -141,14 +240,10 @@ pub(crate) enum CommandContext {
 }
 
 impl CommandContext {
-    pub(crate) fn commands(self) -> Vec<&'static CommandSpec> {
+    pub(crate) fn commands(self) -> impl Iterator<Item = &'static CommandSpec> {
         COMMANDS
             .iter()
-            .filter(|command| match self {
-                Self::Normal => true,
-                Self::Detail => !command.detail_keys.is_empty(),
-            })
-            .collect()
+            .filter(move |command| command.is_available(self))
     }
 
     pub(crate) const fn sections(self) -> &'static [&'static str] {
@@ -186,7 +281,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::Quit,
     ),
-    CommandSpec::implemented_in_detail(
+    CommandSpec::implemented_global_in_detail(
         "command",
         "open the command panel",
         "General",
@@ -213,7 +308,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         &[],
         Action::ShowWelcome,
     ),
-    CommandSpec::implemented_in_detail(
+    CommandSpec::implemented_global_in_detail(
         "refresh",
         "reload tasks",
         "General",
@@ -237,7 +332,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         &[],
         Action::ShowChangelog,
     ),
-    CommandSpec::implemented_in_detail(
+    CommandSpec::implemented_for_epic_child(
         "undo",
         "undo last TUI mutation",
         "General",
@@ -247,7 +342,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::Undo,
     ),
-    CommandSpec::implemented_in_detail(
+    CommandSpec::implemented_global_in_detail(
         "search",
         "search all tasks",
         "General",
@@ -419,7 +514,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::ToggleFocus,
     ),
-    CommandSpec::implemented_in_detail(
+    CommandSpec::implemented_global_in_detail(
         "back",
         "return to the previous navigation state",
         "Navigation",
@@ -429,7 +524,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::GoBack,
     ),
-    CommandSpec::implemented_in_detail(
+    CommandSpec::implemented_global_in_detail(
         "return-to-change",
         "select the task most recently changed",
         "Navigation",
@@ -1179,7 +1274,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ToggleEpicExpanded,
     ),
-    CommandSpec::implemented_in_detail(
+    CommandSpec::implemented_for_epic_child(
         "task-child-add",
         "add a child to the selected epic",
         "Tasks",
@@ -1189,7 +1284,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginAddEpicChild,
     ),
-    CommandSpec::implemented_in_detail(
+    CommandSpec::implemented_for_epic_child(
         "task-child-remove",
         "remove the selected child from its epic",
         "Tasks",
@@ -1332,7 +1427,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ReverseSort,
     ),
     // Conflict
-    CommandSpec::implemented_in_detail(
+    CommandSpec::implemented_global_in_detail(
         "conflict-list",
         "list or filter conflicts",
         "Conflicts",
@@ -1352,7 +1447,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowConflictDetails,
     ),
-    CommandSpec::implemented_in_detail(
+    CommandSpec::implemented_global_in_detail(
         "conflict-next",
         "jump to next conflict",
         "Conflicts",
@@ -1362,7 +1457,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::NextConflict,
     ),
-    CommandSpec::implemented_in_detail(
+    CommandSpec::implemented_global_in_detail(
         "conflict-prev",
         "jump to previous conflict",
         "Conflicts",

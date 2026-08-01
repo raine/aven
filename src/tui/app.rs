@@ -301,6 +301,11 @@ impl App {
             }
         };
         let mut state = crate::tui::overlay::CommandState::blank();
+        state.context = if self.detail.is_active() {
+            crate::tui::event::CommandContext::Detail
+        } else {
+            crate::tui::event::CommandContext::Normal
+        };
         state.target = target;
         state.unavailable = unavailable;
         self.overlay = Some(OverlayState::Command { state });

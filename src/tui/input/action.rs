@@ -115,10 +115,19 @@ impl App {
                 self.show_scope(crate::tui::store::TaskScopeTarget::Workspace)
                     .await?
             }
-            Action::BeginConflictList => self.open_conflict_list().await?,
+            Action::BeginConflictList => {
+                self.clear_detail_session();
+                self.open_conflict_list().await?;
+            }
             Action::ShowConflictDetails => self.show_conflict_details().await?,
-            Action::NextConflict => self.move_to_conflict(1),
-            Action::PreviousConflict => self.move_to_conflict(-1),
+            Action::NextConflict => {
+                self.clear_detail_session();
+                self.move_to_conflict(1);
+            }
+            Action::PreviousConflict => {
+                self.clear_detail_session();
+                self.move_to_conflict(-1);
+            }
             Action::AcceptConflictLocal => {
                 self.begin_conflict_resolution(ConflictResolutionChoice::Local)
                     .await?

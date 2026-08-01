@@ -8,8 +8,8 @@ use crate::tui::app::{App, DetailSection, DetailTargetId, Focus, FooterChoiceMod
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::detail_session::DetailTargetActivation;
 use crate::tui::event::{
-    Action, CommandCompletion, CommandSpecLookup, command_cycle_options, complete_command,
-    lookup_command_spec,
+    Action, CommandCompletion, CommandSpecLookup, DetailFocusPolicy, command_cycle_options_for,
+    complete_command_for, lookup_command_spec_for,
 };
 use crate::tui::input::key::{
     ImagePasteTarget, KeyInput, KeyRouteState, NormalKeyInput, route_key, route_normal_key,
@@ -1593,7 +1593,7 @@ impl App {
         Ok(())
     }
 
-    fn detail_focus_allows_action(&self, action: Action) -> bool {
+    pub(in crate::tui) fn detail_focus_allows_action(&self, action: Action) -> bool {
         let Some(target) = self
             .detail
             .state()
@@ -1601,37 +1601,44 @@ impl App {
         else {
             return true;
         };
-        if matches!(
-            action,
-            Action::GoBack | Action::ReturnToLastChange | Action::BeginSearch | Action::Refresh
-        ) {
-            return true;
+        let policy = crate::tui::event::CommandContext::Detail
+            .commands()
+            .find(|command| command.action == action)
+            .map(|command| command.detail_focus)
+            .unwrap_or(DetailFocusPolicy::ParentTask);
+        match policy {
+            DetailFocusPolicy::Global => true,
+            DetailFocusPolicy::ParentTask => false,
+            DetailFocusPolicy::EpicChild => matches!(
+                target,
+                DetailTargetId::Task {
+                    section: DetailSection::EpicChildren,
+                    ..
+                }
+            ),
         }
-        matches!(
-            target,
-            DetailTargetId::Task {
-                section: DetailSection::EpicChildren,
-                ..
-            }
-        ) && matches!(
-            action,
-            Action::BeginAddEpicChild | Action::RemoveEpicChild | Action::Undo
-        )
     }
 
-    fn detail_focus_warning(&self) -> &'static str {
-        if matches!(
-            self.detail
-                .state()
-                .and_then(|detail| detail.focused_target()),
+    pub(in crate::tui) fn detail_focus_warning(&self) -> &'static str {
+        match self
+            .detail
+            .state()
+            .and_then(|detail| detail.focused_target())
+        {
             Some(DetailTargetId::Task {
                 section: DetailSection::EpicChildren,
                 ..
-            })
-        ) {
-            "Leave child focus before using that command"
-        } else {
-            "Leave detail focus before using that command"
+            }) => "leave epic child focus before using that command",
+            Some(DetailTargetId::Task { .. }) => {
+                "leave relationship focus before using that command"
+            }
+            Some(DetailTargetId::Attachment { .. }) => {
+                "leave attachment focus before using that command"
+            }
+            Some(DetailTargetId::Expand { .. }) => {
+                "leave relationship disclosure focus before using that command"
+            }
+            None => "leave detail focus before using that command",
         }
     }
 
@@ -1719,9 +1726,15 @@ impl App {
 
     async fn accept_command_input(&mut self, state: &CommandState) -> Result<bool> {
         let input = state.input.as_str();
-        match lookup_command_spec(input) {
+        match lookup_command_spec_for(state.context, input) {
             CommandSpecLookup::Found(command) => {
                 self.pending_shortcut.clear();
+                if state.context == crate::tui::event::CommandContext::Detail
+                    && !self.detail_focus_allows_action(command.action)
+                {
+                    self.set_warning(self.detail_focus_warning());
+                    return Ok(true);
+                }
                 if let Some(unavailable) = state
                     .unavailable
                     .iter()
@@ -1761,7 +1774,7 @@ impl App {
             .cycle_input
             .clone()
             .unwrap_or_else(|| state.input.text.clone());
-        let options = command_cycle_options(&cycle_input);
+        let options = command_cycle_options_for(state.context, &cycle_input);
         if options.len() > 1 {
             state.cycle_index = if state.cycle_input.is_some() {
                 if reverse {
@@ -1788,7 +1801,7 @@ impl App {
         let highlighted = state.highlighted.clone();
         state.reset_cycle();
         state.highlighted = highlighted;
-        match complete_command(state.input.as_str()) {
+        match complete_command_for(state.context, state.input.as_str()) {
             CommandCompletion::Completed(completion) => {
                 state.input.text = completion;
                 state.input.cursor = state.input.text.len();
