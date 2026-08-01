@@ -20,6 +20,7 @@ description: Release notes for aven.
   safe confirmations and external-editor support for longer changes.
 - Browse label usage in a structured TUI view, rename labels everywhere they are
   used, and safely delete them with impact details, confirmation, and undo.
+- Create and rename workspaces from the TUI with `W n` and `W r`.
 
 ## v0.1.20 (2026-07-31)
 

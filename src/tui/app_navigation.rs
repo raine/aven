@@ -301,7 +301,11 @@ impl App {
         self.pending_shortcut.clear();
         self.authoring.clear();
         self.clear_live_search_preview();
+        let cancellation_message = self.workspace_cancellation_message();
         let had_overlay = self.overlay.take().is_some();
+        if let Some(message) = cancellation_message {
+            self.set_info(message);
+        }
         if !had_overlay && self.detail.is_active() {
             self.detail.close();
             if self.store.view_state.view == crate::tui::store::TaskView::Recurring {

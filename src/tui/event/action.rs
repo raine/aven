@@ -86,6 +86,8 @@ pub(crate) enum Action {
     BeginFilterPriority,
     BeginScopeProject,
     BeginSwitchWorkspace,
+    BeginAddWorkspace,
+    BeginRenameWorkspace,
     ClearFilters,
     ToggleClosedFilter,
     ToggleDeletedFilter,

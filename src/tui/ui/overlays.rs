@@ -65,9 +65,10 @@ pub(super) use sync_status::sync_status_lines_for_test;
 
 #[cfg(test)]
 pub(super) use text_input::{
-    ADD_LABEL_NAME_PLACEHOLDER, ADD_PROJECT_NAME_PLACEHOLDER, CONFLICT_MANUAL_VALUE_PLACEHOLDER,
-    RENAME_LABEL_NAME_PLACEHOLDER, RENAME_PROJECT_NAME_PLACEHOLDER, placeholder_text_input_line,
-    project_path_input_line,
+    ADD_LABEL_NAME_PLACEHOLDER, ADD_PROJECT_NAME_PLACEHOLDER, ADD_WORKSPACE_NAME_PLACEHOLDER,
+    CONFLICT_MANUAL_VALUE_PLACEHOLDER, RENAME_LABEL_NAME_PLACEHOLDER,
+    RENAME_PROJECT_NAME_PLACEHOLDER, RENAME_WORKSPACE_NAME_PLACEHOLDER,
+    placeholder_text_input_line, project_path_input_line,
 };
 
 #[cfg(test)]

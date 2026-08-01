@@ -258,6 +258,7 @@ pub(crate) const NORMAL_HELP_SECTIONS: &[&str] = &[
     "Navigation",
     "Tasks",
     "Projects",
+    "Workspaces",
     "Labels",
     "Views",
     "Filters",
@@ -892,6 +893,26 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             label: "g w",
         }],
         Action::BeginSwitchWorkspace,
+    ),
+    CommandSpec::implemented(
+        "workspace-create",
+        "create a workspace",
+        "Workspaces",
+        &[KeySequence {
+            codes: &[KeyCode::Char('W'), KeyCode::Char('n')],
+            label: "W n",
+        }],
+        Action::BeginAddWorkspace,
+    ),
+    CommandSpec::implemented(
+        "workspace-rename",
+        "rename a workspace",
+        "Workspaces",
+        &[KeySequence {
+            codes: &[KeyCode::Char('W'), KeyCode::Char('r')],
+            label: "W r",
+        }],
+        Action::BeginRenameWorkspace,
     ),
     // Add/Create
     CommandSpec::implemented(
@@ -1604,6 +1625,9 @@ pub(crate) const COMMAND_DOMAINS: &[CommandDomain] = &[
     CommandDomain { section: "Tasks" },
     CommandDomain {
         section: "Projects",
+    },
+    CommandDomain {
+        section: "Workspaces",
     },
     CommandDomain { section: "Labels" },
     CommandDomain { section: "Views" },

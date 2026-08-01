@@ -101,6 +101,20 @@ impl TuiStore {
             .collect()
     }
 
+    pub(crate) fn workspace_rename_picker_items(&self) -> Vec<PickerItem> {
+        let selected_key = Some(self.active_workspace.key.as_str());
+        self.workspaces
+            .iter()
+            .filter(|workspace| workspace.key == self.active_workspace.key)
+            .chain(
+                self.workspaces
+                    .iter()
+                    .filter(|workspace| workspace.key != self.active_workspace.key),
+            )
+            .map(|workspace| workspace_picker_item(workspace, selected_key))
+            .collect()
+    }
+
     pub(crate) fn selected_dependency_picker_items(&self, index: Option<usize>) -> Vec<PickerItem> {
         let Some(item) = self.selected_task(index) else {
             return Vec::new();

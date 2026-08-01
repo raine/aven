@@ -3886,6 +3886,77 @@ mod workspace_scoping {
     }
 
     #[tokio::test]
+    async fn workspace_administration_preserves_active_workspace_and_task_ownership() {
+        let mut store = test_store().await;
+        let (_, selected) = store
+            .create_task(task_draft("Default workspace task"), None)
+            .await
+            .unwrap();
+        assert!(selected.is_some());
+        let task_id = store.tasks[0].task.id.clone();
+        let active_id = store.active_workspace.id.clone();
+
+        let create_message = store
+            .create_workspace("Client Work".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(store.active_workspace.id, active_id);
+        assert_eq!(store.active_workspace.key, "default");
+        assert_eq!(store.tasks.len(), 1);
+        assert_eq!(store.tasks[0].task.id, task_id);
+        assert_eq!(
+            create_message,
+            "created workspace Client Work (client-work)"
+        );
+        assert_eq!(
+            store
+                .create_workspace("hello-world".to_string())
+                .await
+                .unwrap(),
+            "created workspace hello-world"
+        );
+
+        let inactive_message = store
+            .rename_workspace("client-work".to_string(), "Consulting".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(store.active_workspace.id, active_id);
+        assert_eq!(store.active_workspace.key, "default");
+        assert_eq!(store.tasks[0].task.id, task_id);
+        assert_eq!(
+            inactive_message,
+            "renamed workspace to consulting (Consulting); active workspace remains default"
+        );
+
+        let active_message = store
+            .rename_workspace("default".to_string(), "Personal".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(store.active_workspace.id, active_id);
+        assert_eq!(store.active_workspace.key, "personal");
+        assert_eq!(store.active_workspace.name, "Personal");
+        assert_eq!(store.tasks.len(), 1);
+        assert_eq!(store.tasks[0].task.id, task_id);
+        assert_eq!(
+            active_message,
+            "renamed active workspace to personal (Personal)"
+        );
+        let mut conn = aven_core::test_support::acquire(&store.database)
+            .await
+            .unwrap();
+        let task_workspace: crate::ids::WorkspaceId =
+            sqlx::query_scalar("SELECT workspace_id FROM tasks WHERE id = ?")
+                .bind(&task_id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(task_workspace, active_id);
+    }
+
+    #[tokio::test]
     async fn switch_workspace_refreshes_workspace_scoped_state() {
         let dir = tempfile::tempdir().unwrap();
         let pool = crate::test_support::open_db(&dir.path().join("test.db"))
