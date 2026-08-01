@@ -2733,6 +2733,11 @@ mod presentation_kind_rendering {
                 "Enter select",
             ),
             (
+                PickerKind::RenameProject,
+                "Changed rename title",
+                "Enter rename",
+            ),
+            (
                 PickerKind::DeleteProject,
                 "Changed delete title",
                 "Enter delete",
