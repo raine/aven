@@ -14,6 +14,7 @@ async fn search_preview_with_database(
     database: Database,
     workspace_id: WorkspaceId,
     input: String,
+    project: Option<String>,
     limit: usize,
 ) -> Result<query::TaskSearchPreviewResultSet> {
     let text = input.trim().to_string();
@@ -28,7 +29,7 @@ async fn search_preview_with_database(
             &workspace_id,
             TaskSearchQuery {
                 text,
-                project: None,
+                project,
                 include_deleted: false,
                 limit,
             },
@@ -166,6 +167,7 @@ impl TuiStore {
             self.database.clone(),
             self.active_workspace.id.clone(),
             input.to_string(),
+            None,
             limit,
         )
         .await
@@ -174,12 +176,14 @@ impl TuiStore {
     pub(crate) fn spawn_search_preview(
         &self,
         input: String,
+        project: Option<String>,
         limit: usize,
     ) -> JoinHandle<Result<query::TaskSearchPreviewResultSet>> {
         tokio::spawn(search_preview_with_database(
             self.database.clone(),
             self.active_workspace.id.clone(),
             input,
+            project,
             limit,
         ))
     }
