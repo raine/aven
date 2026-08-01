@@ -150,6 +150,81 @@ impl TryFrom<&str> for StopDisposition {
 }
 
 impl App {
+    pub(super) async fn handle_recurring_series_task_action(
+        &mut self,
+        action: &Action,
+    ) -> Result<bool> {
+        if self.store.view_state.view != TaskView::Recurring || self.detail.is_active() {
+            return Ok(false);
+        }
+
+        match action {
+            Action::BeginEditTitle
+            | Action::BeginEditDescription
+            | Action::BeginEditProject
+            | Action::BeginEditPriority
+            | Action::BeginEditAvailability
+            | Action::BeginEditDue
+            | Action::BeginEditLabels => {
+                self.execute_selected_recurrence_action(Action::BeginEditRecurrenceTemplate)
+                    .await?;
+            }
+            Action::CopyShortRef | Action::CopyDurableRef => {
+                let Some(series) = self
+                    .store
+                    .selected_recurrence_series(self.list.selected_task())
+                else {
+                    self.set_warning("no selected recurring series");
+                    return Ok(true);
+                };
+                let (value, display_ref) = if *action == Action::CopyShortRef {
+                    (series.series_ref.clone(), series.series_ref.clone())
+                } else {
+                    (series.series.id.to_string(), series.series_ref.clone())
+                };
+                match crate::tui::platform::copy_to_clipboard(&value) {
+                    Ok(()) => self.set_success(format!("copied {display_ref}")),
+                    Err(error) => self.set_error(format!("copy failed: {error}")),
+                }
+            }
+            Action::SetStatus(_) | Action::BeginStatusPicker => {
+                self.set_info(
+                    "recurring rows select a series. press enter to open its occurrence before changing status.",
+                );
+            }
+            Action::ToggleMarkSelected | Action::ToggleMarkAllInView => {
+                self.set_info(
+                    "recurring rows select series and cannot be marked. press enter to open an occurrence.",
+                );
+            }
+            Action::Delete => {
+                self.set_info(
+                    "recurring rows select a series. use t r s to stop future occurrences with confirmation.",
+                );
+            }
+            Action::Restore => {
+                self.set_info(
+                    "recurring rows select a series. use the recurring lifecycle filter and t r r to resume a paused series.",
+                );
+            }
+            Action::CopyTaskTitle
+            | Action::CopyTaskDescription
+            | Action::CopyTaskText
+            | Action::CopyTaskNotes
+            | Action::BeginAddNote
+            | Action::BeginAddDependency
+            | Action::BeginRemoveDependency
+            | Action::SetPriority(_)
+            | Action::CyclePriority(_) => {
+                self.set_info(
+                    "recurring rows select a series. press enter to open its occurrence for task commands.",
+                );
+            }
+            _ => return Ok(false),
+        }
+        Ok(true)
+    }
+
     pub(super) async fn open_recurrence_occurrence(&mut self) -> Result<()> {
         let Some(detail) = self.store.recurrence_detail.as_ref() else {
             self.set_warning("recurring series detail is unavailable");
