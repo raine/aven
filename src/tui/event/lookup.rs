@@ -66,10 +66,26 @@ pub(crate) fn resolve_shortcut(input: &[KeyCode]) -> ShortcutLookup {
 }
 
 pub(crate) fn resolve_shortcut_for(context: CommandContext, input: &[KeyCode]) -> ShortcutLookup {
-    resolve_shortcut_in(context.commands(), input)
+    let commands = context.commands();
+    resolve_shortcut_in_refs(&commands, input)
 }
 
+fn resolve_shortcut_in_refs(
+    commands: &[&'static CommandSpec],
+    input: &[KeyCode],
+) -> ShortcutLookup {
+    resolve_shortcut_iter(commands.iter().copied(), input)
+}
+
+#[allow(dead_code)]
 pub(crate) fn resolve_shortcut_in(commands: &[CommandSpec], input: &[KeyCode]) -> ShortcutLookup {
+    resolve_shortcut_iter(commands.iter(), input)
+}
+
+fn resolve_shortcut_iter<'a>(
+    commands: impl IntoIterator<Item = &'a CommandSpec>,
+    input: &[KeyCode],
+) -> ShortcutLookup {
     if input.is_empty() {
         return ShortcutLookup::Missing;
     }
@@ -216,9 +232,9 @@ pub(crate) fn prefix_hint_commands(
     context: CommandContext,
     pending: &[String],
 ) -> Vec<(&'static CommandSpec, &'static KeySequence, String)> {
-    context
-        .commands()
-        .iter()
+    let commands = context.commands();
+    commands
+        .into_iter()
         .flat_map(|command| {
             command.keys.iter().filter_map(move |key| {
                 if key.codes.len() <= pending.len() {

@@ -9,6 +9,7 @@ pub(super) enum FooterMode {
     List,
     Columns,
     Detail,
+    DetailDeleted,
     DetailNested,
     DetailLinks,
     DetailEpicChild,
@@ -150,7 +151,8 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("s", "status"),
             ("e p", "priority"),
             ("n", "note"),
-            ("t d", "done"),
+            ("d/x", "done/cancel"),
+            ("t R", "restore deleted"),
             ("?", "more"),
             ("Esc", "parent"),
             ("q", "task list"),
@@ -159,6 +161,9 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("j/k Pg", "scroll"),
             ("[/]", "task"),
             ("e", "edit"),
+            ("s/e p", "status/priority"),
+            ("d/x", "done/cancel"),
+            ("t R", "restore deleted"),
             ("?", "more"),
             ("Esc", "parent"),
             ("q", "task list"),
@@ -169,6 +174,37 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("Esc", "parent"),
             ("q", "list"),
         ],
+        FooterMode::DetailDeleted if width >= 128 => &[
+            ("j/k Pg", "scroll"),
+            ("[/]", "task"),
+            ("e", "edit"),
+            ("s", "status"),
+            ("e p", "priority"),
+            ("d/x", "done/cancel"),
+            ("t R", "restore deleted"),
+            ("t y/Y", "copy"),
+            ("?", "more"),
+            ("Esc", "task list"),
+            ("q", "close"),
+        ],
+        FooterMode::DetailDeleted if width >= 72 => &[
+            ("j/k Pg", "scroll"),
+            ("[/]", "task"),
+            ("e", "edit"),
+            ("s/e p", "status/priority"),
+            ("d/x", "done/cancel"),
+            ("t R", "restore deleted"),
+            ("?", "more"),
+            ("Esc", "task list"),
+            ("q", "close"),
+        ],
+        FooterMode::DetailDeleted => &[
+            ("j/k", "scroll"),
+            ("t R", "restore deleted"),
+            ("?", "more"),
+            ("Esc", "task list"),
+            ("q", "close"),
+        ],
         FooterMode::Detail if width >= 128 => &[
             ("j/k Pg", "scroll"),
             ("[/]", "task"),
@@ -176,7 +212,7 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("s", "status"),
             ("e p", "priority"),
             ("n", "note"),
-            ("t d", "done"),
+            ("d/x", "done/cancel"),
             ("t y/Y", "copy"),
             ("?", "more"),
             ("Esc", "task list"),
@@ -188,6 +224,7 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("e", "edit"),
             ("s/e p", "status/priority"),
             ("n", "note"),
+            ("d/x", "done/cancel"),
             ("?", "more"),
             ("Esc", "task list"),
             ("q", "close"),
@@ -245,6 +282,7 @@ fn cmd(mode: FooterMode, label: &str) -> Span<'static> {
         FooterMode::List
         | FooterMode::Columns
         | FooterMode::Detail
+        | FooterMode::DetailDeleted
         | FooterMode::DetailNested
         | FooterMode::DetailLinks
         | FooterMode::DetailEpicChild
@@ -283,6 +321,7 @@ mod tests {
         assert!(rendered.contains("task"));
         assert!(rendered.contains("s"));
         assert!(rendered.contains("e p"));
+        assert!(rendered.contains("d/x"));
         assert!(rendered.contains("more"));
     }
 
@@ -340,6 +379,14 @@ mod tests {
                 ("q", "task list"),
             ]
         );
+    }
+
+    #[test]
+    fn deleted_detail_footer_advertises_restore() {
+        let hints = footer_hints(FooterMode::DetailDeleted, 80);
+
+        assert!(hints.contains(&("t R", "restore deleted")));
+        assert!(hints.contains(&("d/x", "done/cancel")));
     }
 
     #[test]

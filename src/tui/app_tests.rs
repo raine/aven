@@ -7400,6 +7400,39 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn detail_routes_global_overlays_and_refresh() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Global detail commands")).await;
+        app.show_detail(0);
+
+        app.dispatch_key(key(KeyCode::Char(':')), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::Command { .. })));
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_active());
+
+        app.dispatch_key(key(KeyCode::Char('/')), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::Search(_))));
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_active());
+
+        app.dispatch_key(key(KeyCode::Char('r')), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_active());
+    }
+
+    #[tokio::test]
     async fn help_key_opens_detail_help_from_detail_overlay() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Detail help target")).await;
@@ -8103,6 +8136,42 @@ mod detail_mode {
             Some("linked task is unavailable")
         );
         assert!(app.detail.state_mut().unwrap().history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn focused_detail_relationship_shortcut_warns_without_mutating_parent() {
+        let mut app = test_app().await;
+        let selected =
+            create_and_select_task(&mut app, test_task_draft("Relationship target")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        let linked_id = crate::test_support::task_id("focused-linked-task");
+        app.store.tasks[selected].depends_on = vec![crate::query::TaskDependencyLink {
+            task_id: linked_id.clone(),
+            display_ref: "APP-LINK".to_string(),
+            title: "Linked task".to_string(),
+            status: "todo".to_string(),
+            priority: "high".to_string(),
+            unresolved: true,
+        }];
+        app.show_detail(0);
+        app.detail.state_mut().unwrap().focused_target =
+            Some(crate::tui::app::DetailTargetId::Task {
+                section: crate::tui::app::DetailSection::DependsOn,
+                task_id: linked_id,
+            });
+
+        app.dispatch_key(key(KeyCode::Char('s')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(app.store.tasks[selected].task.id, task_id);
+        assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Inbox);
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("Leave detail focus before using that command")
+        );
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_active());
     }
 
     #[tokio::test]
@@ -10834,7 +10903,7 @@ mod detail_mode {
         let rendered = render_app_text(&mut app, 100, 30);
 
         assert!(rendered.contains("t …"));
-        assert!(rendered.contains(":detail-edit-title"));
+        assert!(rendered.contains(":edit-title"));
     }
 
     #[tokio::test]
@@ -10898,6 +10967,97 @@ mod detail_mode {
         let rendered = render_app_text(&mut app, 100, 30);
 
         assert!(rendered.contains("set APP-TEST status=done"));
+    }
+
+    #[tokio::test]
+    async fn detail_bare_status_and_priority_shortcuts_keep_detail() {
+        let mut app = test_app().await;
+        let selected =
+            create_and_select_task(&mut app, test_task_draft("Quick detail actions")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        app.show_detail(0);
+
+        app.dispatch_key(key(KeyCode::Char('d')), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Done);
+        assert!(app.detail.is_active());
+        assert!(app.overlay.is_none());
+
+        app.dispatch_key(key(KeyCode::Char('x')), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Canceled);
+        assert!(app.detail.is_active());
+        assert!(app.overlay.is_none());
+
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('h')), (80, 24).into())
+            .await
+            .unwrap();
+        let task = app.store.load_task_item(&task_id).await.unwrap().unwrap();
+        assert_eq!(task.task.id, task_id);
+        assert_eq!(task.task.priority, TaskPriority::High);
+        assert!(app.detail.is_active());
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn detail_restore_shortcut_restores_deleted_task() {
+        let mut app = test_app().await;
+        let selected =
+            create_and_select_task(&mut app, test_task_draft("Restore detail target")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        app.store
+            .update_deleted(Some(selected), true)
+            .await
+            .unwrap();
+        let deleted = app.store.load_task_item(&task_id).await.unwrap().unwrap();
+        app.store.show_exact_task(deleted);
+        app.list.select_task(Some(0));
+        app.show_detail(0);
+        assert!(render_app_text(&mut app, 100, 30).contains("t R"));
+
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('R')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(!app.store.tasks[0].task.deleted);
+        assert!(app.detail.is_active());
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn detail_conflict_shortcut_opens_confirmation() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let selected =
+            create_and_select_task(&mut app, test_task_draft("Conflict detail target")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        insert_title_conflict_for_task_id(&pool, &mut app, &task_id, "local", "remote").await;
+        app.list.select_task(Some(selected));
+        app.show_detail(0);
+
+        app.dispatch_key(key(KeyCode::Char('c')), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('a')), (80, 24).into())
+            .await
+            .unwrap();
+
+        let Some(OverlayState::Confirm(confirm)) = app.overlay else {
+            panic!("expected conflict confirmation");
+        };
+        assert_eq!(confirm.title, CONFLICT_CONFIRM_LOCAL_TITLE);
+        assert!(matches!(
+            confirm.intent,
+            ConfirmIntent::ResolveConflict { .. }
+        ));
+        assert!(app.detail.is_active());
     }
 
     #[tokio::test]
