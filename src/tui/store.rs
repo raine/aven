@@ -64,6 +64,8 @@ pub(crate) struct TuiStore {
     pub(crate) db_stats: TuiDatabaseStats,
     #[cfg(test)]
     fail_next_refresh: Option<RefreshFailureStage>,
+    #[cfg(test)]
+    _test_database_dir: Option<std::sync::Arc<tempfile::TempDir>>,
 }
 
 #[derive(Clone)]
@@ -155,6 +157,8 @@ impl TuiStore {
             db_stats: TuiDatabaseStats::default(),
             #[cfg(test)]
             fail_next_refresh: None,
+            #[cfg(test)]
+            _test_database_dir: None,
         };
         store.database.clear_pending_tui_undo_entries().await?;
         store.refresh(None).await?;

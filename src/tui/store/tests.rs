@@ -15,9 +15,11 @@ async fn test_store() -> TuiStore {
     let pool = crate::test_support::open_db(&db_path).await.unwrap();
     reset_default_workspace(&pool).await;
     let database = aven_core::db::Database::open(&db_path).await.unwrap();
-    TuiStore::new(database, crate::workspaces::Workspace::default())
+    let mut store = TuiStore::new(database, crate::workspaces::Workspace::default())
         .await
-        .unwrap()
+        .unwrap();
+    store._test_database_dir = Some(std::sync::Arc::new(dir));
+    store
 }
 
 async fn reset_default_workspace(pool: &SqlitePool) {

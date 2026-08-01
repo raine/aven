@@ -588,7 +588,7 @@ impl Database {
         task_id: &TaskId,
         input: AttachmentAddInput,
     ) -> Result<AttachmentAddOutcome> {
-        let mut conn = self.acquire_reader().await?;
+        let mut conn = self.acquire_writer().await?;
         add_task_attachment(&mut conn, workspace, blob_dir, policy, task_id, input).await
     }
 
@@ -601,7 +601,7 @@ impl Database {
         created_at: String,
         input: TaskAttachmentAddInput,
     ) -> Result<AttachmentAddOutcome> {
-        let mut conn = self.acquire_reader().await?;
+        let mut conn = self.acquire_writer().await?;
         add_ordered_task_attachment(
             &mut conn, workspace, blob_dir, policy, task_id, created_at, input,
         )
