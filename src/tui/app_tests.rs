@@ -3606,6 +3606,18 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
+    async fn command_palette_selects_upcoming_view() {
+        let mut app = test_app().await;
+
+        app.begin_command().await;
+        type_chars(&mut app, "upcoming").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert_eq!(app.store.view_state.view, TaskView::Upcoming);
+    }
+
+    #[tokio::test]
     async fn detail_command_overlay_limits_lookup_and_completion_to_detail_commands() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Detail command target")).await;
@@ -4957,6 +4969,16 @@ mod filters_and_workspaces {
             &app.overlay,
             Some(OverlayState::Picker(PickerState { title, .. })) if title == SCOPE_PROJECT_TITLE
         ));
+    }
+
+    #[tokio::test]
+    async fn upcoming_view_shortcut_selects_upcoming() {
+        let mut app = test_app().await;
+
+        app.handle_normal_key(KeyCode::Char('v')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
+
+        assert_eq!(app.store.view_state.view, TaskView::Upcoming);
     }
 
     #[tokio::test]
