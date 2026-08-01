@@ -2,8 +2,7 @@ use anyhow::Result;
 
 use crate::tui::app::App;
 use crate::tui::overlay::{
-    HeaderMenuAction, HeaderMenuItem, HeaderMenuKind, HeaderMenuState, OrderMenuState,
-    OverlayState, PickerIntent,
+    HeaderMenuAction, HeaderMenuItem, HeaderMenuKind, OverlayState, PickerIntent,
 };
 use crate::tui::store::{ClosedTaskVisibility, TaskOrder, TaskScope, TaskScopeTarget, TaskView};
 
@@ -205,37 +204,9 @@ impl App {
         }
     }
 
-    pub(super) async fn submit_header_menu_at(
-        &mut self,
-        state: HeaderMenuState,
-        column: u16,
-        row: u16,
-        terminal_size: ratatui::layout::Size,
-    ) -> Result<()> {
-        let Some(action) = header_menu_action_at(&state, column, row, terminal_size) else {
-            self.overlay = None;
-            return Ok(());
-        };
-        self.submit_header_menu(action).await
-    }
-
     pub(super) async fn submit_order_menu(&mut self, order: TaskOrder) -> Result<()> {
         self.overlay = None;
         self.set_sort(order).await
-    }
-
-    pub(super) async fn submit_order_menu_at(
-        &mut self,
-        state: OrderMenuState,
-        column: u16,
-        row: u16,
-        terminal_size: ratatui::layout::Size,
-    ) -> Result<()> {
-        let Some(order) = order_menu_order_at(state, column, row, terminal_size) else {
-            self.overlay = None;
-            return Ok(());
-        };
-        self.submit_order_menu(order).await
     }
 
     pub(super) fn apply_filter_selection(&mut self, selected: Option<usize>) {
@@ -352,48 +323,5 @@ impl App {
         self.apply_filter_selection(selected);
         self.set_success(message);
         Ok(())
-    }
-}
-
-fn header_menu_action_at(
-    state: &HeaderMenuState,
-    column: u16,
-    row: u16,
-    terminal_size: ratatui::layout::Size,
-) -> Option<HeaderMenuAction> {
-    let area = state.area(terminal_size.width, terminal_size.height);
-    if column < area.x
-        || column >= area.x.saturating_add(area.width)
-        || row < area.y
-        || row >= area.y.saturating_add(area.height)
-    {
-        return None;
-    }
-    let item_index = row.saturating_sub(area.y).checked_sub(1)? as usize;
-    state.items.get(item_index).map(|item| item.action.clone())
-}
-
-fn order_menu_order_at(
-    state: OrderMenuState,
-    column: u16,
-    row: u16,
-    terminal_size: ratatui::layout::Size,
-) -> Option<TaskOrder> {
-    let area = state.area(terminal_size.width, terminal_size.height);
-    if column < area.x
-        || column >= area.x.saturating_add(area.width)
-        || row < area.y
-        || row >= area.y.saturating_add(area.height)
-    {
-        return None;
-    }
-    match row.saturating_sub(area.y) {
-        1 => Some(TaskOrder::DueOn),
-        2 => Some(TaskOrder::Created),
-        3 => Some(TaskOrder::Updated),
-        4 => Some(TaskOrder::Priority),
-        5 => Some(TaskOrder::Project),
-        6 => Some(TaskOrder::Title),
-        _ => None,
     }
 }

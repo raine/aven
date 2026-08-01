@@ -601,50 +601,7 @@ impl App {
         Ok(())
     }
 
-    pub(super) async fn handle_recurrence_history_mouse(
-        &mut self,
-        mut state: RecurrenceHistoryState,
-        mouse: crossterm::event::MouseEvent,
-        terminal_size: ratatui::layout::Size,
-    ) -> Result<()> {
-        use crossterm::event::{MouseButton, MouseEventKind};
-
-        let view = crate::tui::overlay::RecurrenceHistoryView {
-            page: state.page.clone(),
-            selected: state.selected,
-        };
-        match mouse.kind {
-            MouseEventKind::ScrollDown => state.move_selection(1),
-            MouseEventKind::ScrollUp => state.move_selection(-1),
-            MouseEventKind::Down(MouseButton::Left | MouseButton::Right) => {
-                let Some(index) = crate::tui::ui::recurrence_history_entry_at(
-                    &view,
-                    terminal_size,
-                    mouse.column,
-                    mouse.row,
-                ) else {
-                    return Ok(());
-                };
-                state.selected = Some(index);
-                if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
-                    let openable = state
-                        .selected_entry()
-                        .is_some_and(|entry| entry.openable && entry.task_id.is_some());
-                    if openable {
-                        return self
-                            .run_recurrence_history_action(state, RecurrenceHistoryAction::OpenTask)
-                            .await;
-                    }
-                    self.set_warning("this history entry has no linked task");
-                }
-            }
-            _ => {}
-        }
-        self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
-        Ok(())
-    }
-
-    async fn run_recurrence_history_action(
+    pub(super) async fn run_recurrence_history_action(
         &mut self,
         state: RecurrenceHistoryState,
         action: RecurrenceHistoryAction,

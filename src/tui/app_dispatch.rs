@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::layout::{Rect, Size};
 
 use std::time::{Duration, Instant};
@@ -23,7 +23,7 @@ use crate::tui::navigation::{
 };
 use crate::tui::overlay::{
     AddTaskMode, CommandState, ConfirmIntent, MultilineIntent, OverlayOutcome, OverlayState,
-    PickerIntent, ScheduleEditorField, ScheduleEditorMode, TagComboboxIntent, UpdateOverlayState,
+    PickerIntent, ScheduleEditorField, ScheduleEditorMode, TagComboboxIntent,
 };
 use crate::tui::platform::{copy_to_clipboard, is_editor_prefix_key, open_url_in_default_browser};
 use crate::tui::shortcut_buffer::DetailShortcutResolution;
@@ -31,7 +31,7 @@ use crate::tui::store::TaskView;
 use crate::tui::ui::{
     composer_help_scroll_cap, database_stats_scroll_cap, detail_copy_target_at,
     detail_help_scroll_cap, help_scroll_cap, prefix_hint_scroll_cap, task_at_position,
-    task_status_at_position, text_panel_scroll_cap,
+    task_status_at_position,
 };
 
 #[derive(Clone)]
@@ -219,18 +219,19 @@ impl App {
 
     async fn handle_mouse(&mut self, mouse: MouseEvent, terminal_size: Size) -> Result<()> {
         if matches!(self.overlay, Some(OverlayState::RecurrenceHistory(_))) {
-            let Some(OverlayState::RecurrenceHistory(state)) = self.overlay.take() else {
-                unreachable!("history overlay was matched")
-            };
-            return self
-                .handle_recurrence_history_mouse(*state, mouse, terminal_size)
-                .await;
+            return self.dispatch_overlay_mouse(mouse, terminal_size).await;
         }
-        match route_mouse(mouse.kind, self.prefix_hints_active()) {
-            MouseInput::PrefixScroll(delta) => {
-                self.dispatch_prefix_hint_scroll(delta, terminal_size);
-                return Ok(());
-            }
+        let input = route_mouse(mouse.kind, self.prefix_hints_active());
+        if let MouseInput::PrefixScroll(delta) = input {
+            self.dispatch_prefix_hint_scroll(delta, terminal_size);
+            return Ok(());
+        }
+        if self.overlay.is_some() {
+            self.list.clear_task_click();
+            return self.dispatch_overlay_mouse(mouse, terminal_size).await;
+        }
+        match input {
+            MouseInput::PrefixScroll(_) => unreachable!("prefix scroll was handled"),
             MouseInput::OverlayScroll(kind) => {
                 if self.dispatch_mouse_scroll(kind, terminal_size) {
                     return Ok(());
@@ -301,63 +302,6 @@ impl App {
 
         self.list.expire_task_click(Instant::now());
 
-        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
-            && let Some(OverlayState::Update(state)) = self.overlay.as_ref()
-            && let Some(url) =
-                crate::tui::ui::update_link_at(state, terminal_size, mouse.column, mouse.row)
-        {
-            if let Err(error) = open_url_in_default_browser(&url) {
-                self.set_warning(format!("could not open release-note link: {error:#}"));
-            }
-            return Ok(());
-        }
-
-        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
-            && let Some(OverlayState::Update(state)) = self.overlay.as_ref()
-            && let Some(action) =
-                crate::tui::ui::update_action_at(state, terminal_size, mouse.column, mouse.row)
-        {
-            let Some(OverlayState::Update(UpdateOverlayState::Available {
-                plan,
-                notes,
-                scroll,
-                cached,
-                ..
-            })) = self.overlay.take()
-            else {
-                return Ok(());
-            };
-            self.handle_update_overlay_key(
-                UpdateOverlayState::Available {
-                    plan,
-                    notes,
-                    scroll,
-                    focus: action,
-                    cached,
-                },
-                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-                terminal_size,
-            )
-            .await;
-            return Ok(());
-        }
-
-        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
-            && let Some(OverlayState::Changelog(state)) = self.overlay.as_ref()
-            && let Some(url) = crate::tui::ui::changelog_link_at(
-                &state.markdown,
-                state.scroll,
-                terminal_size,
-                mouse.column,
-                mouse.row,
-            )
-        {
-            if let Err(error) = open_url_in_default_browser(&url) {
-                self.set_warning(format!("could not open changelog link: {error:#}"));
-            }
-            return Ok(());
-        }
-
         let header = ratatui::layout::Rect {
             x: 0,
             y: 0,
@@ -382,71 +326,9 @@ impl App {
             return Ok(());
         }
 
-        if matches!(self.overlay, Some(OverlayState::HeaderMenu(_))) {
-            let Some(OverlayState::HeaderMenu(state)) = self.overlay.take() else {
-                return Ok(());
-            };
-            self.submit_header_menu_at(state, mouse.column, mouse.row, terminal_size)
-                .await?;
-            return Ok(());
-        }
-        if matches!(self.overlay, Some(OverlayState::OrderMenu(_))) {
-            let Some(OverlayState::OrderMenu(state)) = self.overlay.take() else {
-                return Ok(());
-            };
-            self.submit_order_menu_at(state, mouse.column, mouse.row, terminal_size)
-                .await?;
-            return Ok(());
-        }
         if self.detail.is_active() && self.overlay.is_none() {
             let scroll = self.detail.state().map_or(0, |detail| detail.scroll());
             self.handle_detail_mouse_click(mouse, terminal_size, scroll)
-                .await?;
-            return Ok(());
-        }
-        let add_task_field = self.overlay.as_ref().and_then(|overlay| match overlay {
-            OverlayState::AddTask(state) if state.mode == AddTaskMode::Compose => {
-                crate::tui::ui::add_task_field_at(
-                    Rect::new(0, 0, terminal_size.width, terminal_size.height),
-                    self.intake.view().add_task_only,
-                    crate::tui::ui::AddTaskLayout {
-                        description: &state.description.lines,
-                        mode: &state.mode,
-                        has_attachments: !state.attachments.is_empty(),
-                        show_schedule_error: state.schedule_error.is_some()
-                            && state.schedule_validation_requested,
-                    },
-                    mouse.column,
-                    mouse.row,
-                )
-            }
-            _ => None,
-        });
-        if let Some(field) = add_task_field {
-            let editable = matches!(
-                self.overlay.as_ref(),
-                Some(OverlayState::AddTask(state)) if state.is_step_editable(field)
-            );
-            if !editable {
-                return Ok(());
-            }
-            if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
-                state.focus = field;
-            }
-            if field.is_metadata() {
-                self.open_focused_add_task_control();
-            }
-            return Ok(());
-        }
-        if matches!(
-            self.overlay,
-            Some(OverlayState::Picker(_) | OverlayState::Confirm(_) | OverlayState::TextPanel(_))
-        ) {
-            self.list.clear_task_click();
-            let Some(overlay) = self.overlay.take() else {
-                return Ok(());
-            };
-            self.handle_overlay_mouse(overlay, mouse, terminal_size)
                 .await?;
             return Ok(());
         }
@@ -983,40 +865,7 @@ impl App {
             }
             return true;
         }
-        let detail_focus = self
-            .detail
-            .state()
-            .and_then(|detail| detail.focused_target())
-            .cloned();
-        match &mut self.overlay {
-            Some(OverlayState::Help { scroll }) => {
-                let cap = help_scroll_cap(terminal_size.height);
-                *scroll = scroll_with_delta(*scroll, delta, cap);
-                true
-            }
-            Some(OverlayState::DetailHelp { scroll }) => {
-                let cap = detail_help_scroll_cap(terminal_size.height, detail_focus.as_ref());
-                *scroll = scroll_with_delta(*scroll, delta, cap);
-                true
-            }
-            Some(OverlayState::TextPanel(state)) => {
-                let cap = text_panel_scroll_cap(&state.lines);
-                state.scroll = scroll_with_delta(state.scroll, delta, cap);
-                true
-            }
-            Some(OverlayState::Update(UpdateOverlayState::Available { notes, scroll, .. })) => {
-                let cap = crate::tui::ui::update_notes_scroll_cap(notes, terminal_size);
-                *scroll = scroll_with_delta(*scroll, delta, cap);
-                true
-            }
-            Some(OverlayState::Changelog(state)) => {
-                let cap =
-                    crate::tui::changelog::changelog_scroll_cap(&state.markdown, terminal_size);
-                state.scroll = scroll_with_delta(state.scroll, delta, cap);
-                true
-            }
-            _ => false,
-        }
+        false
     }
 
     fn overlay_captures_input(&self) -> bool {
@@ -1101,12 +950,26 @@ impl App {
         Ok(())
     }
 
-    async fn handle_overlay_mouse(
+    async fn dispatch_overlay_mouse(
         &mut self,
-        overlay: OverlayState,
         mouse: MouseEvent,
         terminal_size: Size,
     ) -> Result<()> {
+        let detail_focus = self
+            .detail
+            .state()
+            .and_then(|detail| detail.focused_target())
+            .cloned();
+        let context = crate::tui::overlay::OverlayMouseContext {
+            add_task_only: self.intake.view().add_task_only,
+            detail_help_scroll_cap: detail_help_scroll_cap(
+                terminal_size.height,
+                detail_focus.as_ref(),
+            ),
+        };
+        let Some(overlay) = self.overlay.take() else {
+            return Ok(());
+        };
         let was_add_task_picker = matches!(
             &overlay,
             OverlayState::Picker(state)
@@ -1120,9 +983,54 @@ impl App {
                 if state.intent == TagComboboxIntent::AddTaskLabels
         );
         let outcome =
-            crate::tui::overlay::handle_generic_overlay_mouse(overlay, mouse, terminal_size);
-        self.apply_generic_overlay_outcome(outcome, false, false, was_add_task_picker)
-            .await?;
+            crate::tui::overlay::dispatch_overlay_mouse(overlay, mouse, terminal_size, context);
+        match outcome {
+            crate::tui::overlay::OverlayMouseOutcome::Retained(overlay) => {
+                self.overlay = Some(overlay)
+            }
+            crate::tui::overlay::OverlayMouseOutcome::Closed => {}
+            crate::tui::overlay::OverlayMouseOutcome::Cancelled => {
+                self.apply_generic_overlay_outcome(
+                    OverlayOutcome::Cancelled,
+                    false,
+                    false,
+                    was_add_task_picker,
+                )
+                .await?;
+            }
+            crate::tui::overlay::OverlayMouseOutcome::Submitted(submit) => {
+                self.handle_overlay_submit(submit).await?;
+            }
+            crate::tui::overlay::OverlayMouseOutcome::OpenUrl {
+                overlay,
+                url,
+                error_context,
+            } => {
+                self.overlay = Some(overlay);
+                if let Err(error) = open_url_in_default_browser(&url) {
+                    self.set_warning(format!("{error_context}: {error:#}"));
+                }
+            }
+            crate::tui::overlay::OverlayMouseOutcome::OpenAddTaskControl(overlay) => {
+                self.overlay = Some(overlay);
+                self.open_focused_add_task_control();
+            }
+            crate::tui::overlay::OverlayMouseOutcome::UpdateAction(state) => {
+                self.handle_update_overlay_key(
+                    state,
+                    KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                    terminal_size,
+                )
+                .await;
+            }
+            crate::tui::overlay::OverlayMouseOutcome::RecurrenceHistoryAction { state, action } => {
+                self.run_recurrence_history_action(state, action).await?
+            }
+            crate::tui::overlay::OverlayMouseOutcome::Warning { overlay, message } => {
+                self.overlay = Some(overlay);
+                self.set_warning(message);
+            }
+        }
         Ok(())
     }
 

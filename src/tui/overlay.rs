@@ -1,5 +1,6 @@
 mod handlers;
 mod layout;
+mod mouse;
 mod multiline;
 mod picker;
 mod scroll;
@@ -18,6 +19,7 @@ pub(crate) use layout::{
     TAG_COMBOBOX_WIDTH, TEXT_PANEL_VISIBLE_ROWS, TEXT_PANEL_WIDTH, confirm_layout, confirm_width,
     dialog_area, picker_layout, tag_combobox_layout, text_panel_layout, text_panel_scroll_cap,
 };
+pub(crate) use mouse::{OverlayMouseContext, OverlayMouseOutcome, dispatch_overlay_mouse};
 pub(crate) use picker::{
     normalize_picker_selection, picker_viewport_start, sync_project_creation_item,
     visible_picker_indices,

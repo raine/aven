@@ -6158,6 +6158,21 @@ mod filters_and_workspaces {
     }
 
     #[tokio::test]
+    async fn modal_overlay_mouse_does_not_reach_detail_underlay() {
+        let mut app = test_app().await;
+        let _ = create_and_select_task(&mut app, test_task_draft("task")).await;
+        app.detail = crate::tui::detail_session::DetailSession::open(0);
+        app.overlay = Some(OverlayState::Help { scroll: 0 });
+
+        app.dispatch_mouse(left_click(2, 0), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(app.detail.is_active());
+        assert_eq!(app.overlay, Some(OverlayState::Help { scroll: 0 }));
+    }
+
+    #[tokio::test]
     async fn mouse_wheel_ignored_in_sidebar_focus() {
         let mut app = test_app().await;
         let _ = create_and_select_task(&mut app, test_task_draft("task")).await;
