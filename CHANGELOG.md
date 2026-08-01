@@ -3,25 +3,32 @@ title: Changelog
 description: Release notes for aven.
 ---
 
-## Unreleased
+## v0.1.21 (2026-08-01)
 
-- Create and edit epics in the TUI, or promote an ordinary task when adding its
-  first child.
-- Task detail commands consistently target the displayed or focused related
+- New: Create and edit epics in the TUI, or promote an ordinary task when adding
+  its first child.
+- New: Click any editable metadata value in task details to change the project,
+  status, priority, labels, availability, or due date.
+- New: Multiline editors confirm before discarding changed content, and
+  individual notes can be edited, deleted, and restored with undo.
+- New: Create, browse, rename, and delete labels, create and rename workspaces,
+  manage project paths, and create projects from task workflows in the TUI.
+- New: Save attachments from task detail with explicit handling for missing
+  data, invalid destinations, and existing files.
+- New: Open Upcoming from the shared command catalog, open tasks from Recent
+  Actions, and receive series-specific guidance for task commands in the
+  Recurring view.
+- New: TUI mutations wake the sync daemon, `:sync` starts a manual sync, and
+  sync-disabled environments preserve local-only operation with clear errors.
+- Fix: Task detail commands consistently target the displayed or focused related
   task, with direct actions for linked tasks and reliable back and sibling
   navigation.
-- Multiline editors confirm before discarding changed content, and individual
-  notes can be edited, deleted, and restored with undo.
-- Create, browse, rename, and delete labels, create and rename workspaces,
-  manage project paths, and create projects from task workflows in the TUI.
-- Save attachments from task detail with explicit handling for missing data,
-  invalid destinations, and existing files.
-- Open Upcoming from the shared command catalog, open tasks from Recent Actions,
-  and receive series-specific guidance for task commands in the Recurring view.
-- TUI task and label workflows apply their changes atomically and restore labels
-  created by the same operation during undo.
-- TUI mutations wake the sync daemon, `:sync` starts a manual sync, and
-  sync-disabled environments preserve local-only operation with clear errors.
+- Fix: TUI task and label workflows apply their changes atomically and restore
+  labels created by the same operation during undo.
+- Fix: Trackpad scrolling stays responsive at list and help boundaries, while
+  modal dialogs and help overlays present clearer visual structure.
+- Fix: Consecutively deleted tasks remain visible in the TUI until an explicit
+  refresh.
 
 ## v0.1.20 (2026-07-31)
 
