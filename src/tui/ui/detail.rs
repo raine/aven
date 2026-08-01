@@ -483,8 +483,31 @@ impl DetailDocument {
             .saturating_sub(self.body_visible()) as u16
     }
 
+    #[cfg(test)]
     pub(crate) fn interactive_rows(&self) -> &[DetailInteractiveRow] {
         &self.model.interactive_rows
+    }
+
+    pub(crate) fn focus_targets(&self, item: &TaskListItem) -> Vec<DetailTargetId> {
+        self.model
+            .interactive_rows
+            .iter()
+            .map(|row| &row.target)
+            .filter(|target| match target {
+                DetailTargetId::Task {
+                    section: DetailSection::EpicChildren,
+                    task_id,
+                } => self
+                    .epic_children
+                    .iter()
+                    .any(|child| &child.link.task_id == task_id),
+                DetailTargetId::Expand {
+                    section: DetailSection::EpicChildren,
+                } => self.epic_children.len() > 5,
+                _ => detail_target_is_actionable(item, target),
+            })
+            .cloned()
+            .collect()
     }
 
     pub(crate) fn target_at_position(&self, column: u16, row: u16) -> Option<DetailTargetId> {

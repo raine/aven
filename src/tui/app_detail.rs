@@ -6,7 +6,6 @@ use crate::tui::app::{App, DetailSection, DetailTargetId};
 use crate::tui::overlay::{OverlayView, TextInputKind};
 use crate::tui::ui::{
     DetailRenderContext, attachment_is_locally_previewable, detail_selected_text,
-    detail_target_is_actionable,
 };
 
 impl App {
@@ -129,49 +128,9 @@ impl App {
         let Some(item) = self.store.selected_task(self.list.selected_task()) else {
             return Vec::new();
         };
-        let rows = self
-            .detail_document_for_query(terminal_size)
-            .map(|document| document.interactive_rows().to_vec())
-            .unwrap_or_default();
-        let mut targets = rows
-            .into_iter()
-            .map(|row| row.target)
-            .filter(|target| detail_target_is_actionable(item, target))
-            .collect::<Vec<_>>();
-        if let Some(removed) = self
-            .detail
-            .state()
-            .and_then(|detail| detail.removed_epic_child())
-            && removed.epic_id == item.task.id
-            && !item
-                .epic_children
-                .iter()
-                .any(|child| child.task_id == removed.child.task_id)
-        {
-            let removed_target = DetailTargetId::Task {
-                section: DetailSection::EpicChildren,
-                task_id: removed.child.task_id.clone(),
-            };
-            let child_indices = targets
-                .iter()
-                .enumerate()
-                .filter_map(|(index, target)| {
-                    (target.section() == DetailSection::EpicChildren).then_some(index)
-                })
-                .collect::<Vec<_>>();
-            let insert_at = child_indices
-                .get(removed.original_position)
-                .copied()
-                .or_else(|| child_indices.last().map(|index| index + 1))
-                .unwrap_or_else(|| {
-                    targets
-                        .iter()
-                        .position(|target| target.section() > DetailSection::EpicChildren)
-                        .unwrap_or(targets.len())
-                });
-            targets.insert(insert_at, removed_target);
-        }
-        targets
+        self.detail_document_for_query(terminal_size)
+            .map(|document| document.focus_targets(item))
+            .unwrap_or_default()
     }
 
     pub(super) fn selected_detail_focus_target(

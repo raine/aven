@@ -985,6 +985,132 @@ async fn focused_epic_parent_unlink_requires_confirmation() {
     );
 }
 
+async fn assert_six_child_removal_keyboard_reachability(removal_index: usize) {
+    let (_dir, pool, mut app) = test_app_with_pool().await;
+    let (parent_id, _) = create_epic_with_children(
+        &mut app,
+        &pool,
+        "Parent epic",
+        &[
+            "Child 0", "Child 1", "Child 2", "Child 3", "Child 4", "Child 5",
+        ],
+    )
+    .await;
+    app.store.refresh(Some(&parent_id)).await.unwrap();
+    let parent_index = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == parent_id)
+        .unwrap();
+    app.list.select_task(Some(parent_index));
+    app.show_detail(0);
+    let child_ids = app.store.tasks[parent_index]
+        .epic_children
+        .iter()
+        .map(|child| child.task_id.clone())
+        .collect::<Vec<_>>();
+    let removed_id = child_ids[removal_index].clone();
+    app.detail
+        .state_mut()
+        .unwrap()
+        .set_focused_target(Some(DetailTargetId::Task {
+            section: DetailSection::EpicChildren,
+            task_id: removed_id.clone(),
+        }));
+
+    app.remove_selected_epic_child().await.unwrap();
+
+    let size: ratatui::layout::Size = (80, 24).into();
+    let collapsed_targets = app.detail_focus_targets(size);
+    let collapsed_children = collapsed_targets
+        .iter()
+        .filter_map(DetailTargetId::task_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(collapsed_children, child_ids[..5]);
+    assert!(matches!(
+        collapsed_targets.last(),
+        Some(DetailTargetId::Expand {
+            section: DetailSection::EpicChildren
+        })
+    ));
+    let parent = app
+        .store
+        .selected_task(app.list.selected_task())
+        .expect("selected parent epic");
+    assert_eq!(parent.epic_children.len(), 5);
+    assert!(
+        parent
+            .epic_children
+            .iter()
+            .all(|child| child.task_id != removed_id)
+    );
+
+    let moves_to_disclosure = if removal_index == 5 {
+        app.dispatch_key(key(KeyCode::Tab), size).await.unwrap();
+        app.dispatch_key(key(KeyCode::Tab), size).await.unwrap();
+        5
+    } else {
+        5 - removal_index
+    };
+    for _ in 0..moves_to_disclosure {
+        app.dispatch_key(key(KeyCode::Char('j')), size)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        app.detail
+            .state()
+            .and_then(|detail| detail.focused_target()),
+        Some(&DetailTargetId::Expand {
+            section: DetailSection::EpicChildren,
+        })
+    );
+
+    app.dispatch_key(key(KeyCode::Enter), size).await.unwrap();
+
+    assert!(
+        app.detail
+            .state()
+            .unwrap()
+            .expanded_sections()
+            .contains(&DetailSection::EpicChildren)
+    );
+    assert_eq!(
+        app.detail
+            .state()
+            .and_then(|detail| detail.focused_target())
+            .and_then(DetailTargetId::task_id),
+        Some(&child_ids[5])
+    );
+    if removal_index < 5 {
+        assert!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .unwrap()
+                .epic_children
+                .iter()
+                .any(|child| child.task_id == child_ids[5])
+        );
+    }
+}
+
+#[tokio::test]
+async fn removing_first_of_six_children_keeps_disclosure_and_hidden_child_keyboard_reachable() {
+    assert_six_child_removal_keyboard_reachability(0).await;
+}
+
+#[tokio::test]
+async fn removing_middle_of_six_children_keeps_disclosure_and_hidden_child_keyboard_reachable() {
+    assert_six_child_removal_keyboard_reachability(2).await;
+}
+
+#[tokio::test]
+async fn removing_last_of_six_children_keeps_disclosure_keyboard_reachable() {
+    assert_six_child_removal_keyboard_reachability(5).await;
+}
+
 #[tokio::test]
 async fn focused_detail_child_removes_and_undo_restores_relationship() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
