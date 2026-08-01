@@ -382,15 +382,14 @@ fn recurrence_detail_actions(
     if has_current {
         actions.push(("Enter", "open task"));
     }
-    actions.push(("e", "edit"));
     match detail.series.state {
-        aven_core::recurrence::RecurrenceSeriesState::Active => actions.push(("p", "pause")),
-        aven_core::recurrence::RecurrenceSeriesState::Paused => actions.push(("p", "resume")),
+        aven_core::recurrence::RecurrenceSeriesState::Active => actions.push(("t r p", "pause")),
+        aven_core::recurrence::RecurrenceSeriesState::Paused => actions.push(("t r r", "resume")),
         aven_core::recurrence::RecurrenceSeriesState::Stopped => {}
     }
-    actions.push(("h", "history"));
+    actions.push(("t r h", "history"));
     if detail.series.state != aven_core::recurrence::RecurrenceSeriesState::Stopped {
-        actions.push(("s", "stop"));
+        actions.push(("t r s", "stop"));
     }
     actions.push(("Esc", "close"));
     actions
@@ -703,9 +702,9 @@ mod tests {
         let hint = dialog_hint_line(&recurrence_detail_actions(&detail, true));
         assert_eq!(
             line_text(&hint),
-            "Enter open task  e edit  p pause  h history  s stop  Esc close"
+            "Enter open task  t r p pause  t r h history  t r s stop  Esc close"
         );
-        for key in ["Enter", "e", "p", "h", "s", "Esc"] {
+        for key in ["Enter", "t r p", "t r h", "t r s", "Esc"] {
             let span = hint.spans.iter().find(|span| span.content == key).unwrap();
             assert_eq!(span.style.fg, Some(FG));
             assert!(span.style.add_modifier.contains(Modifier::BOLD));

@@ -286,6 +286,26 @@ pub(crate) fn render(
     }
     let footer_mode = match view.footer_mode(footer.width) {
         FooterMode::List if store.view_state.view == TaskView::Columns => FooterMode::Columns,
+        FooterMode::Detail | FooterMode::DetailNested
+            if store.view_state.view == TaskView::Recurring =>
+        {
+            match store
+                .recurrence_detail
+                .as_ref()
+                .map(|detail| detail.series.state)
+            {
+                Some(aven_core::recurrence::RecurrenceSeriesState::Active) => {
+                    FooterMode::RecurrenceDetailActive
+                }
+                Some(aven_core::recurrence::RecurrenceSeriesState::Paused) => {
+                    FooterMode::RecurrenceDetailPaused
+                }
+                Some(aven_core::recurrence::RecurrenceSeriesState::Stopped) => {
+                    FooterMode::RecurrenceDetailStopped
+                }
+                None => FooterMode::Detail,
+            }
+        }
         mode @ (FooterMode::Detail | FooterMode::DetailNested)
             if store
                 .selected_task(list.selected_task())

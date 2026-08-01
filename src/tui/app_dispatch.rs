@@ -1175,36 +1175,12 @@ impl App {
                 self.show_detail(scroll);
                 return Ok(());
             }
-            if self.store.view_state.view == TaskView::Recurring {
-                let recurrence_action = if key.modifiers.is_empty()
-                    && self.pending_shortcut.is_empty()
-                {
-                    match key.code {
-                        KeyCode::Char('e') => Some(Action::BeginEditRecurrenceTemplate),
-                        KeyCode::Char('h') => Some(Action::ShowRecurrenceHistory),
-                        KeyCode::Char('s') => Some(Action::StopRecurrence),
-                        KeyCode::Char('p') => self.store.recurrence_detail.as_ref().map(|detail| {
-                            if detail.series.state
-                                == aven_core::recurrence::RecurrenceSeriesState::Paused
-                            {
-                                Action::ResumeRecurrence
-                            } else {
-                                Action::PauseRecurrence
-                            }
-                        }),
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
-                if let Some(action) = recurrence_action {
-                    self.execute_selected_recurrence_action(action).await?;
-                    return Ok(());
-                }
-                if key.code == KeyCode::Enter && key.modifiers.is_empty() {
-                    self.open_recurrence_occurrence().await?;
-                    return Ok(());
-                }
+            if self.store.view_state.view == TaskView::Recurring
+                && key.code == KeyCode::Enter
+                && key.modifiers.is_empty()
+            {
+                self.open_recurrence_occurrence().await?;
+                return Ok(());
             }
             if key.code == KeyCode::Char('q') && key.modifiers.is_empty() {
                 self.close_detail_session().await?;
@@ -2122,6 +2098,18 @@ impl App {
             }
             DetailShortcutResolution::Action(action) => {
                 self.pending_shortcut_scroll = 0;
+                if self.store.view_state.view == TaskView::Recurring
+                    && action == Action::BeginStatusPicker
+                {
+                    self.set_info(
+                        "Status applies to occurrence tasks. Press Enter to open the current occurrence",
+                    );
+                    if let Some(detail) = self.detail.state_mut() {
+                        detail.set_scroll(scroll);
+                    }
+                    self.show_detail(scroll);
+                    return Ok(Some(self.overlay.take()));
+                }
                 if !self.detail_focus_allows_action(action) {
                     self.set_warning(self.detail_focus_warning());
                     if let Some(detail) = self.detail.state_mut() {

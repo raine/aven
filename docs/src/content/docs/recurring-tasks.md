@@ -112,10 +112,11 @@ The recurring-task detail footer shows the actions available for its state:
 | Key | Action |
 | --- | --- |
 | `Enter` | Open the current dated task, when one exists |
-| `e` | Edit template |
-| `p` | Pause an active recurring task or resume a paused one |
-| `h` | Show history |
-| `s` | Stop an active or paused recurring task permanently |
+| `t r e` | Edit the template |
+| `t r p` | Pause an active recurring task |
+| `t r r` | Resume a paused recurring task |
+| `t r h` | Show history |
+| `t r s` | Stop an active or paused recurring task permanently |
 
 ![Aven recurring-task detail showing an active weekly schedule and its current occurrence](/recurring-task-detail.webp)
 
@@ -130,8 +131,8 @@ Stopping ends the schedule permanently. The stop prompt lets you choose
 **Keep current occurrence** to leave the current task available as the last one,
 or **Skip current occurrence** to record it as skipped.
 
-The `t r` shortcuts work from other task lists when a recurring task or one of
-its dated tasks is selected:
+The `t r` shortcuts work in recurring detail and from other task lists when a
+recurring task or one of its dated tasks is selected:
 
 | Key | Action |
 | --- | --- |
