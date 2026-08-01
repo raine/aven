@@ -390,7 +390,17 @@ impl App {
         Ok(())
     }
 
+    pub(super) fn selected_command_task(&self) -> Option<TaskListItem> {
+        self.detail_command_selection
+            .as_ref()
+            .and_then(|selection| selection.targets().first().cloned())
+            .or_else(|| self.store.selected_task(self.list.selected_task()).cloned())
+    }
+
     pub(super) fn resolve_task_selection(&self) -> Option<TaskSelection> {
+        if let Some(selection) = &self.detail_command_selection {
+            return Some(selection.clone());
+        }
         if self.detail.is_active() {
             TaskSelection::resolve_single(&self.store.tasks, self.list.selected_task())
         } else {
@@ -500,11 +510,7 @@ impl App {
         let Some(selection) = self.capture_single_edit_selection("title") else {
             return;
         };
-        let Some(index) = self.selection_index(&selection) else {
-            self.set_info("no selected task to edit");
-            return;
-        };
-        let title = self.store.tasks[index].task.title.clone();
+        let title = selection.targets()[0].task.title.clone();
         self.open_edit_title_overlay(selection, title);
     }
 
@@ -533,11 +539,7 @@ impl App {
         let Some(selection) = self.capture_single_edit_selection("description") else {
             return;
         };
-        let Some(index) = self.selection_index(&selection) else {
-            self.set_info("no selected task to edit");
-            return;
-        };
-        let description = self.store.tasks[index].task.description.clone();
+        let description = selection.targets()[0].task.description.clone();
         self.open_edit_description_overlay(selection, description);
     }
 

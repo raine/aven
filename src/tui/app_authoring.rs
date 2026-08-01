@@ -246,7 +246,7 @@ impl App {
 
     pub(super) fn begin_add_note(&mut self) {
         self.pending_shortcut.clear();
-        let Some(item) = self.store.selected_task(self.list.selected_task()).cloned() else {
+        let Some(item) = self.selected_command_task() else {
             self.set_info("no selected task for note");
             return;
         };
