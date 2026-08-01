@@ -8679,6 +8679,77 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn focused_detail_child_blocks_prefixed_parent_mutations() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+        let child_index = create_and_select_task(&mut app, test_task_draft("Child task")).await;
+        let child_id = app.store.tasks[child_index].task.id.clone();
+        let mut conn = pool.acquire().await.unwrap();
+        crate::operations::add_task_to_epic(
+            &mut conn,
+            &app.store.active_workspace,
+            &child_id,
+            &parent_id,
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        app.store.refresh(Some(&parent_id)).await.unwrap();
+        let parent_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == parent_id)
+            .unwrap();
+        app.list.select_task(Some(parent_index));
+        app.show_detail(0);
+
+        app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(
+            app.detail
+                .state()
+                .and_then(|detail| detail.focused_target())
+                .and_then(DetailTargetId::task_id),
+            Some(&child_id)
+        );
+
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('d')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_active());
+        assert_eq!(app.store.tasks[parent_index].task.status, TaskStatus::Inbox);
+        assert_eq!(
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == child_id)
+                .unwrap()
+                .task
+                .status,
+            TaskStatus::Inbox
+        );
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("Leave child focus before using that command")
+        );
+    }
+
+    #[tokio::test]
     async fn focused_detail_child_removes_and_undo_restores_relationship() {
         let (_dir, pool, mut app) = test_app_with_pool().await;
         let parent_index = create_and_select_task(
@@ -10243,6 +10314,89 @@ mod detail_mode {
                 |item| item.task.title == "Clear from list" && item.task.available_at.is_none()
             )
         );
+    }
+
+    #[tokio::test]
+    async fn detail_mutation_targets_selected_task_when_tasks_are_marked() {
+        let mut app = test_app().await;
+        let marked_index = create_and_select_task(&mut app, test_task_draft("Marked task")).await;
+        let marked_id = app.store.tasks[marked_index].task.id.clone();
+        let selected_index =
+            create_and_select_task(&mut app, test_task_draft("Detail target")).await;
+        let selected_id = app.store.tasks[selected_index].task.id.clone();
+        app.list.mark(marked_id.clone());
+        app.list.mark(selected_id.clone());
+        app.list.select_task(Some(selected_index));
+        app.show_detail(0);
+
+        for code in [KeyCode::Char('e'), KeyCode::Char('t')] {
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        }
+
+        let selection = match &app.overlay {
+            Some(OverlayState::TextInput(state)) => match &state.intent {
+                TextIntent::EditTitle { selection } => selection.clone(),
+                intent => panic!("expected title edit intent, got {intent:?}"),
+            },
+            overlay => panic!("expected title editor, got {overlay:?}"),
+        };
+        assert_eq!(selection.len(), 1);
+        assert_eq!(selection.single_id(), Some(&selected_id));
+
+        app.handle_overlay_key(key(KeyCode::End)).await.unwrap();
+        type_chars(&mut app, " updated").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert_eq!(
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == marked_id)
+                .unwrap()
+                .task
+                .title,
+            "Marked task"
+        );
+        assert_eq!(
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == selected_id)
+                .unwrap()
+                .task
+                .title,
+            "Detail target updated"
+        );
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_active());
+    }
+
+    #[tokio::test]
+    async fn detail_delete_confirmation_names_selected_task_when_tasks_are_marked() {
+        let mut app = test_app().await;
+        let marked_index = create_and_select_task(&mut app, test_task_draft("Marked task")).await;
+        let marked_id = app.store.tasks[marked_index].task.id.clone();
+        let selected_index =
+            create_and_select_task(&mut app, test_task_draft("Detail target")).await;
+        let selected = app.store.tasks[selected_index].clone();
+        app.list.mark(marked_id);
+        app.list.mark(selected.task.id.clone());
+        app.list.select_task(Some(selected_index));
+        app.show_detail(0);
+
+        app.begin_delete_task();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Confirm(state))
+                if state.prompt == format!("Delete {} {}?", selected.display_ref, selected.task.title)
+                    && matches!(
+                        &state.intent,
+                        ConfirmIntent::DeleteTasks { selection }
+                            if selection.len() == 1
+                                && selection.single_id() == Some(&selected.task.id)
+                    )
+        ));
     }
 
     #[tokio::test]

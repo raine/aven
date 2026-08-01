@@ -1217,6 +1217,11 @@ impl App {
                 self.show_detail(scroll);
                 return Ok(());
             }
+            if !self.pending_shortcut.is_empty()
+                && self.handle_focused_child_shortcut(key, scroll).await?
+            {
+                return Ok(());
+            }
             if (!self.pending_shortcut.is_empty() || key.code == KeyCode::Char('g'))
                 && let Some(outcome) = self.handle_detail_shortcut(key, scroll).await?
             {
@@ -1606,7 +1611,11 @@ impl App {
         }
         match self.pending_shortcut.resolve_detail(key) {
             DetailShortcutResolution::Action(
-                action @ (Action::BeginAddEpicChild | Action::RemoveEpicChild | Action::Undo),
+                action @ (Action::BeginAddEpicChild
+                | Action::RemoveEpicChild
+                | Action::Undo
+                | Action::GoBack
+                | Action::ReturnToLastChange),
             ) => {
                 self.pending_shortcut_scroll = 0;
                 if let Some(detail) = self.detail.state_mut() {

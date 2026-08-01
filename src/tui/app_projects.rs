@@ -48,15 +48,11 @@ impl App {
 
     pub(super) fn begin_delete_task(&mut self) {
         self.pending_shortcut.clear();
-        let Some(selection) = crate::tui::task_selection::TaskSelection::resolve(
-            &self.store.tasks,
-            self.list.marked_task_ids(),
-            self.list.selected_task(),
-        ) else {
+        let Some(selection) = self.resolve_task_selection() else {
             self.set_info("no selected task to edit");
             return;
         };
-        if !self.marked_task_ids_in_view().is_empty() {
+        if !self.detail.is_active() && !self.marked_task_ids_in_view().is_empty() {
             let count = selection.len();
             self.overlay = Some(OverlayState::confirm(
                 ConfirmIntent::DeleteTasks { selection },
