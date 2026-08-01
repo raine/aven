@@ -589,6 +589,7 @@ fn prefix_hint_lines_with_availability(
                 command.action,
                 crate::tui::event::Action::BeginEditProject
                     | crate::tui::event::Action::BeginEditPriority
+                    | crate::tui::event::Action::BeginEditEpic
                     | crate::tui::event::Action::BeginEditAvailability
                     | crate::tui::event::Action::BeginEditDue
                     | crate::tui::event::Action::BeginEditLabels

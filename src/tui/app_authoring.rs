@@ -74,6 +74,7 @@ impl App {
             status_origin: context.status_origin,
             priority: context.priority,
             labels: context.labels,
+            is_epic: context.is_epic,
             available_at: LineEdit::new(context.available_at),
             due_on: LineEdit::new(context.due_on),
             schedule_input: LineEdit::new(context.schedule_input),
@@ -138,6 +139,7 @@ impl App {
             self.authoring
                 .apply_add_task_priority_value(&state.priority);
             self.authoring.apply_add_task_labels(state.labels.clone());
+            self.authoring.apply_add_task_epic(state.is_epic);
             self.authoring
                 .apply_add_task_available_at(state.available_at.text.clone());
             self.authoring
@@ -230,6 +232,10 @@ impl App {
                     unreachable!();
                 };
                 AddTaskMode::Labels(labels)
+            }
+            AddTaskStep::Epic => {
+                state.is_epic = !state.is_epic;
+                AddTaskMode::Compose
             }
             AddTaskStep::Schedule => {
                 let mut editor = state.schedule_editor(ScheduleEditorField::Mode);

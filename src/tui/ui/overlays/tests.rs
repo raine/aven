@@ -160,6 +160,7 @@ fn add_task_view() -> AddTaskView {
         status: "inbox".to_string(),
         priority: "none".to_string(),
         labels: Vec::new(),
+        is_epic: false,
         available_at: String::new(),
         available_at_cursor: 0,
         due_on: String::new(),
@@ -843,6 +844,7 @@ mod add_task_overlay {
         assert!(rendered.contains("Status: ▣ inbox"));
         assert!(rendered.contains("Priority: ● high"));
         assert!(rendered.contains("Labels: none"));
+        assert!(rendered.contains("Epic: no"));
         assert!(rendered.contains("Schedule: none"));
         assert!(rendered.contains("Title"));
         assert!(rendered.contains("Description"));
@@ -852,6 +854,21 @@ mod add_task_overlay {
         assert!(rendered.contains("Tab next"));
         assert!(rendered.contains("^N create with AI"));
         assert!(rendered.contains("F1 help"));
+    }
+
+    #[test]
+    fn epic_uses_the_third_metadata_column_after_schedule() {
+        let buffer = overlay_buffer(add_task_overlay(add_task_view()));
+        let metadata_row = (0..buffer.area.height)
+            .map(|row| buffer_row(&buffer, row))
+            .find(|row| row.contains("Labels: none"))
+            .expect("second metadata row");
+
+        let labels = metadata_row.find("Labels:").expect("labels column");
+        let schedule = metadata_row.find("Schedule:").expect("schedule column");
+        let epic = metadata_row.find("Epic:").expect("epic column");
+        assert!(labels < schedule);
+        assert!(schedule < epic);
     }
 
     #[test]
@@ -966,7 +983,7 @@ mod add_task_overlay {
             due_on: "next Friday".to_string(),
             ..add_task_view()
         }));
-        assert!(rendered.contains("Schedule: available tomorrow, due next Friday"));
+        assert!(rendered.contains("Schedule: available"));
         assert!(!rendered.contains("Available:"));
     }
 
@@ -976,7 +993,7 @@ mod add_task_overlay {
         let state = add_task_view();
         let outer = crate::tui::overlay::dialog_area(terminal, 100, 14);
         let schedule_row = outer.y + 2;
-        for column in [70, 100] {
+        for column in [60, 70] {
             assert_eq!(
                 add_task_field_at(
                     terminal,
@@ -1015,7 +1032,7 @@ mod add_task_overlay {
             ..add_task_view()
         }));
 
-        assert!(rendered.contains("Schedule: type a schedule or press enter"));
+        assert!(rendered.contains("type schedule"));
         assert!(rendered.contains("Enter details"));
     }
 
@@ -1805,7 +1822,7 @@ mod add_task_overlay {
             100,
             30,
         );
-        assert!(rendered.contains("Schedule: daily at 09:00, no due, starting 2026-08-03"));
+        assert!(rendered.contains("Schedule: daily"));
         assert!(!rendered.contains("Available:"));
         assert!(!rendered.contains("Starts:"));
     }

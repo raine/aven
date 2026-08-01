@@ -240,6 +240,7 @@ pub(crate) fn handle_generic_overlay_key(
                                         crate::tui::authoring::InitialStatusOrigin::Explicit;
                                 }
                                 AddTaskStep::Priority => state.priority = value,
+                                AddTaskStep::Epic => state.is_epic = value == "true",
                                 AddTaskStep::RepeatDue => state.repeat_due = value,
                                 _ => {}
                             }
@@ -1043,6 +1044,7 @@ mod tests {
             status_origin: crate::tui::authoring::InitialStatusOrigin::UntouchedDefault,
             priority: "none".to_string(),
             labels: Vec::new(),
+            is_epic: false,
             available_at: LineEdit::blank(),
             due_on: LineEdit::blank(),
             schedule_input: LineEdit::blank(),
@@ -1166,7 +1168,11 @@ mod tests {
     fn add_task_metadata_navigation_treats_schedule_as_one_field() {
         let mut state = add_task_state(AddTaskStep::Schedule);
         state.focus_metadata_next(false);
+        assert_eq!(state.focus, AddTaskStep::Epic);
+        state.focus_metadata_next(false);
         assert_eq!(state.focus, AddTaskStep::Project);
+        state.focus_metadata_next(true);
+        assert_eq!(state.focus, AddTaskStep::Epic);
         state.focus_metadata_next(true);
         assert_eq!(state.focus, AddTaskStep::Schedule);
     }
@@ -1209,6 +1215,7 @@ mod tests {
             AddTaskStep::Priority,
             AddTaskStep::Labels,
             AddTaskStep::Schedule,
+            AddTaskStep::Epic,
             AddTaskStep::Images,
             AddTaskStep::Title,
             AddTaskStep::Description,
@@ -1278,7 +1285,7 @@ mod tests {
         else {
             panic!("expected add task state");
         };
-        assert_eq!(state.focus, AddTaskStep::Schedule);
+        assert_eq!(state.focus, AddTaskStep::Epic);
     }
 
     #[test]

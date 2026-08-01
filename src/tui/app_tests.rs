@@ -7853,6 +7853,131 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn add_task_composer_creates_epic_container() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+            panic!("expected composer");
+        };
+        state.title = crate::tui::overlay::LineEdit::new("Plan release".to_string());
+        state.focus = AddTaskStep::Epic;
+
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+            panic!("expected composer");
+        };
+        assert!(state.is_epic);
+        assert_eq!(state.focus, AddTaskStep::Epic);
+        assert!(matches!(
+            state.mode,
+            crate::tui::overlay::AddTaskMode::Compose
+        ));
+        app.handle_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL))
+            .await
+            .unwrap();
+
+        let created = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.title == "Plan release")
+            .expect("created task");
+        assert!(created.task.is_epic);
+    }
+
+    #[tokio::test]
+    async fn edit_epic_picker_toggles_container_state() {
+        let mut app = test_app().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Plan release")).await;
+        app.list.select_task(Some(selected));
+
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Up)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        let task = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.title == "Plan release")
+            .expect("edited task");
+        assert!(task.task.is_epic);
+
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        let task = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.title == "Plan release")
+            .expect("edited task");
+        assert!(!task.task.is_epic);
+    }
+
+    #[tokio::test]
+    async fn edit_epic_picker_keeps_container_with_children() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let parent = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Plan release")
+            },
+        )
+        .await;
+        let parent_id = app.store.tasks[parent].task.id.clone();
+        let child = create_and_select_task(&mut app, test_task_draft("Ship build")).await;
+        let child_id = app.store.tasks[child].task.id.clone();
+        let mut conn = pool.acquire().await.unwrap();
+        crate::operations::add_task_to_epic(
+            &mut conn,
+            &app.store.active_workspace,
+            &child_id,
+            &parent_id,
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        app.store.refresh(Some(&parent_id)).await.unwrap();
+        let parent = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == parent_id)
+            .expect("parent epic");
+        app.list.select_task(Some(parent));
+
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == parent_id)
+                .expect("parent epic")
+                .task
+                .is_epic
+        );
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state))
+                if matches!(state.intent, crate::tui::overlay::PickerIntent::EditEpic { .. })
+        ));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("remove all epic children before turning the container off")
+        );
+    }
+
+    #[tokio::test]
     async fn cancelling_schedule_editor_restores_compact_composer_height() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
@@ -7989,6 +8114,11 @@ mod authoring {
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Schedule
+        ));
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Epic
         ));
         app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
         assert!(matches!(

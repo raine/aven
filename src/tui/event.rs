@@ -60,6 +60,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginEditDescription
             | Action::BeginEditProject
             | Action::BeginEditPriority
+            | Action::BeginEditEpic
             | Action::BeginEditAvailability
             | Action::BeginEditDue
             | Action::BeginEditLabels

@@ -13,6 +13,17 @@ pub(crate) fn create_project_picker_name(value: &str) -> Option<&str> {
         .filter(|name| !name.is_empty())
 }
 
+pub(crate) fn epic_picker_items(selected: Option<bool>) -> Vec<PickerItem> {
+    [(true, "Yes"), (false, "No")]
+        .into_iter()
+        .map(|(is_epic, label)| PickerItem {
+            label: label.to_string(),
+            value: is_epic.to_string(),
+            selected: selected == Some(is_epic),
+        })
+        .collect()
+}
+
 impl TuiStore {
     pub(crate) fn status_picker_items(&self, selected: Option<&str>) -> Vec<PickerItem> {
         let selected = selected.unwrap_or_default();
