@@ -21,6 +21,10 @@ fn recurring_lifecycle_message(
 
 impl App {
     pub(in crate::tui) async fn execute(&mut self, action: Action) -> Result<()> {
+        if self.handle_recurring_series_task_action(&action).await? {
+            return Ok(());
+        }
+
         match action {
             Action::Quit => self.should_quit = true,
             Action::CancelOverlay => self.cancel_overlay(),

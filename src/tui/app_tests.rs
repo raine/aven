@@ -487,6 +487,105 @@ async fn recurring_series_detail_opens_hidden_occurrence_and_returns() {
 }
 
 #[tokio::test]
+async fn recurring_series_rows_route_task_commands_to_series_feedback() {
+    let mut app = test_app().await;
+    let (_, series_id) = add_recurring_series(&mut app, "Series command routing").await;
+    app.list
+        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+
+    for (keys, expected) in [
+        (
+            vec![KeyCode::Char('d')],
+            "recurring rows select a series. press enter to open its occurrence before changing status.",
+        ),
+        (
+            vec![KeyCode::Char('x')],
+            "recurring rows select a series. press enter to open its occurrence before changing status.",
+        ),
+        (
+            vec![KeyCode::Char('s')],
+            "recurring rows select a series. press enter to open its occurrence before changing status.",
+        ),
+        (
+            vec![KeyCode::Char(' ')],
+            "recurring rows select series and cannot be marked. press enter to open an occurrence.",
+        ),
+    ] {
+        app.notification = None;
+        for code in keys {
+            app.handle_normal_key(code).await.unwrap();
+        }
+        assert_eq!(toast_message(&app).as_deref(), Some(expected));
+        assert!(app.overlay.is_none());
+    }
+
+    assert_eq!(
+        app.store
+            .recurrence_detail_for_series(&series_id)
+            .await
+            .unwrap()
+            .series
+            .state,
+        aven_core::recurrence::RecurrenceSeriesState::Active
+    );
+}
+
+#[tokio::test]
+async fn recurring_series_rows_copy_series_ref_and_edit_template() {
+    let mut app = test_app().await;
+    add_recurring_series(&mut app, "Series copy and edit").await;
+    app.list
+        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+    let series_ref = app
+        .store
+        .selected_recurrence_series(app.list.selected_task())
+        .unwrap()
+        .series_ref
+        .clone();
+
+    app.handle_normal_key(KeyCode::Char('y')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
+    assert_eq!(
+        crate::tui::platform::clipboard_text_for_test(),
+        Some(series_ref.clone())
+    );
+    assert_eq!(toast_message(&app), Some(format!("copied {series_ref}")));
+
+    app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+    let Some(OverlayState::AddTask(state)) = app.overlay.as_ref() else {
+        panic!("template edit did not open the recurrence composer");
+    };
+    assert!(state.template_schedule.is_some());
+}
+
+#[tokio::test]
+async fn recurring_series_delete_guides_to_confirmed_stop() {
+    let mut app = test_app().await;
+    add_recurring_series(&mut app, "Series lifecycle routing").await;
+    app.list
+        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+
+    app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('D')).await.unwrap();
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some(
+            "recurring rows select a series. use t r s to stop future occurrences with confirmation."
+        )
+    );
+    assert!(app.overlay.is_none());
+
+    app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
+    let Some(OverlayState::Picker(picker)) = app.overlay.as_ref() else {
+        panic!("stop command did not open its confirmation picker");
+    };
+    assert!(matches!(picker.intent, PickerIntent::StopRecurrence { .. }));
+}
+
+#[tokio::test]
 async fn recurring_series_list_and_detail_use_compact_natural_language() {
     let mut app = test_app().await;
     add_recurring_series(&mut app, "Natural recurring detail").await;
