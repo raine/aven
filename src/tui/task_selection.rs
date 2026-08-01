@@ -67,6 +67,20 @@ impl TaskSelection {
         })
     }
 
+    pub(crate) fn for_detail_target(
+        target: TaskListItem,
+        anchor: &TaskListItem,
+        anchor_index: usize,
+    ) -> Self {
+        Self {
+            targets: vec![target],
+            anchor: TaskSelectionAnchor {
+                task_id: anchor.task.id.clone(),
+                index: anchor_index,
+            },
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn from_ids(
         tasks: &[TaskListItem],
@@ -161,6 +175,18 @@ mod tests {
         assert_eq!(selection.anchor_id(), &tasks[1].task.id);
         assert_eq!(selection.anchor_index(), 1);
         assert_eq!(TaskSelection::resolve_single(&tasks, None), None);
+    }
+
+    #[test]
+    fn detail_target_uses_open_task_as_refresh_anchor() {
+        let anchor = task_list_item_with_id("open", "task-open");
+        let target = task_list_item_with_id("related", "task-related");
+
+        let selection = TaskSelection::for_detail_target(target.clone(), &anchor, 3);
+
+        assert_eq!(selection.single_id(), Some(&target.task.id));
+        assert_eq!(selection.anchor_id(), &anchor.task.id);
+        assert_eq!(selection.anchor_index(), 3);
     }
 
     #[test]

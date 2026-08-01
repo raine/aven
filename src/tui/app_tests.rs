@@ -2700,6 +2700,42 @@ mod attachment_paste {
     }
 
     #[tokio::test]
+    async fn focused_attachment_reports_task_commands_as_unavailable() {
+        let (dir, _pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        create_and_select_task(&mut app, test_task_draft("image target")).await;
+        let image = dir.path().join("photo.png");
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
+        app.show_detail(0);
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        finish_attachment_work(&mut app).await;
+        let attachment_id = app.store.tasks[0].attachments[0].attachment_id.clone();
+        if app.detail.is_inactive() {
+            app.show_detail(0);
+        }
+        app.detail
+            .state_mut()
+            .unwrap()
+            .set_focused_target(Some(DetailTargetId::Attachment { attachment_id }));
+
+        app.dispatch_key(key(KeyCode::Char('s')), (100, 30).into())
+            .await
+            .unwrap();
+
+        assert!(app.footer_choice.is_none());
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("leave attachment focus before using that command")
+        );
+        assert!(matches!(
+            app.detail
+                .state()
+                .and_then(|detail| detail.focused_target()),
+            Some(DetailTargetId::Attachment { .. })
+        ));
+    }
+
+    #[tokio::test]
     async fn focused_detail_image_can_be_removed_after_confirmation() {
         let (dir, pool, mut app) = test_app_with_pool().await;
         app.set_add_task_db_path(dir.path().join("test.db"));
@@ -3597,36 +3633,50 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
-    async fn detail_command_overlay_applies_focus_policy() {
+    async fn detail_command_overlay_routes_supported_focused_task_actions() {
         let mut app = test_app().await;
         let selected =
             create_and_select_task(&mut app, test_task_draft("Focused command target")).await;
-        let linked_id = crate::test_support::task_id("palette-linked-task");
+        let selected_id = app.store.tasks[selected].task.id.clone();
+        let linked = create_and_select_task(&mut app, test_task_draft("Linked task")).await;
+        let linked = app.store.tasks[linked].clone();
+        let selected = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == selected_id)
+            .unwrap();
         app.store.tasks[selected].depends_on = vec![crate::query::TaskDependencyLink {
-            task_id: linked_id.clone(),
-            display_ref: "APP-LINK".to_string(),
-            title: "Linked task".to_string(),
-            status: "todo".to_string(),
-            priority: "high".to_string(),
+            task_id: linked.task.id.clone(),
+            display_ref: linked.display_ref.clone(),
+            title: linked.task.title.clone(),
+            status: linked.task.status.as_str().to_string(),
+            priority: linked.task.priority.as_str().to_string(),
             unresolved: true,
         }];
+        app.list.select_task(Some(selected));
         app.show_detail(0);
         app.detail.state_mut().unwrap().focused_target = Some(DetailTargetId::Task {
             section: DetailSection::DependsOn,
-            task_id: linked_id,
+            task_id: linked.task.id.clone(),
         });
 
         app.begin_command().await;
         type_chars(&mut app, "edit-title").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-        assert!(app.overlay.is_none());
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(state))
+                if matches!(
+                    &state.intent,
+                    TextIntent::EditTitle { selection }
+                        if selection.single_id() == Some(&linked.task.id)
+                )
+        ));
         assert!(app.detail.is_active());
-        assert_eq!(
-            toast_message(&app).as_deref(),
-            Some("leave relationship focus before using that command")
-        );
 
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
         app.begin_command().await;
         type_chars(&mut app, "search").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
@@ -7730,6 +7780,17 @@ mod authoring {
 mod detail_mode {
     use super::*;
 
+    fn detail_link(item: &crate::query::TaskListItem) -> crate::query::TaskDependencyLink {
+        crate::query::TaskDependencyLink {
+            task_id: item.task.id.clone(),
+            display_ref: item.display_ref.clone(),
+            title: item.task.title.clone(),
+            status: item.task.status.as_str().to_string(),
+            priority: item.task.priority.as_str().to_string(),
+            unresolved: true,
+        }
+    }
+
     fn detail_navigation_state(
         app: &App,
         task_id: crate::ids::TaskId,
@@ -8255,6 +8316,47 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn focused_disclosure_reports_task_commands_as_unavailable() {
+        let mut app = test_app().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Disclosure target")).await;
+        app.store.tasks[selected].depends_on = (0..4)
+            .map(|index| crate::query::TaskDependencyLink {
+                task_id: crate::test_support::task_id(&format!("disclosure-child-{index}")),
+                display_ref: format!("APP-{index}"),
+                title: format!("Child {index}"),
+                status: "todo".to_string(),
+                priority: "none".to_string(),
+                unresolved: true,
+            })
+            .collect();
+        app.show_detail(0);
+        app.detail
+            .state_mut()
+            .unwrap()
+            .set_focused_target(Some(DetailTargetId::Expand {
+                section: DetailSection::DependsOn,
+            }));
+
+        app.dispatch_key(key(KeyCode::Char('s')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(app.footer_choice.is_none());
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("leave relationship disclosure focus before using that command")
+        );
+        assert!(matches!(
+            app.detail
+                .state()
+                .and_then(|detail| detail.focused_target()),
+            Some(DetailTargetId::Expand {
+                section: DetailSection::DependsOn
+            })
+        ));
+    }
+
+    #[tokio::test]
     async fn rendered_disclosure_rebuilds_focus_and_scroll_from_expanded_document() {
         let mut app = test_app().await;
         let mut draft = test_task_draft("Expanded projection");
@@ -8501,6 +8603,123 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn focused_blocker_routes_status_picker_to_blocker() {
+        let mut app = test_app().await;
+        let task_index = create_and_select_task(&mut app, test_task_draft("Blocked task")).await;
+        let task_id = app.store.tasks[task_index].task.id.clone();
+        let blocker_index = create_and_select_task(&mut app, test_task_draft("Blocker")).await;
+        let blocker = app.store.tasks[blocker_index].clone();
+        let task_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+            .unwrap();
+        app.store.tasks[task_index].depends_on = vec![detail_link(&blocker)];
+        app.list.select_task(Some(task_index));
+        app.show_detail(0);
+        app.detail
+            .state_mut()
+            .unwrap()
+            .set_focused_target(Some(DetailTargetId::Task {
+                section: DetailSection::DependsOn,
+                task_id: blocker.task.id.clone(),
+            }));
+
+        app.dispatch_key(key(KeyCode::Char('s')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            &app.footer_choice,
+            Some(choice)
+                if choice.mode == FooterChoiceMode::Status
+                    && choice.selection.single_id() == Some(&blocker.task.id)
+        ));
+
+        app.footer_choice = None;
+        for code in [KeyCode::Char('t'), KeyCode::Char('U')] {
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        }
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("Open the related task before using that command")
+        );
+    }
+
+    #[tokio::test]
+    async fn focused_blocked_task_routes_status_picker_to_blocked_task() {
+        let mut app = test_app().await;
+        let blocker_index = create_and_select_task(&mut app, test_task_draft("Blocker")).await;
+        let blocker_id = app.store.tasks[blocker_index].task.id.clone();
+        let blocked_index = create_and_select_task(&mut app, test_task_draft("Blocked task")).await;
+        let blocked = app.store.tasks[blocked_index].clone();
+        let blocker_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == blocker_id)
+            .unwrap();
+        app.store.tasks[blocker_index].blocks = vec![detail_link(&blocked)];
+        app.list.select_task(Some(blocker_index));
+        app.show_detail(0);
+        app.detail
+            .state_mut()
+            .unwrap()
+            .set_focused_target(Some(DetailTargetId::Task {
+                section: DetailSection::Blocks,
+                task_id: blocked.task.id.clone(),
+            }));
+
+        app.dispatch_key(key(KeyCode::Char('s')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            &app.footer_choice,
+            Some(choice)
+                if choice.mode == FooterChoiceMode::Status
+                    && choice.selection.single_id() == Some(&blocked.task.id)
+        ));
+    }
+
+    #[tokio::test]
+    async fn focused_epic_parent_routes_status_picker_to_parent() {
+        let mut app = test_app().await;
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let parent = app.store.tasks[parent_index].clone();
+        let child_index = create_and_select_task(&mut app, test_task_draft("Child task")).await;
+        app.store.tasks[child_index].epic_parent = Some(detail_link(&parent));
+        app.list.select_task(Some(child_index));
+        app.show_detail(0);
+        app.detail
+            .state_mut()
+            .unwrap()
+            .set_focused_target(Some(DetailTargetId::Task {
+                section: DetailSection::EpicParent,
+                task_id: parent.task.id.clone(),
+            }));
+
+        app.dispatch_key(key(KeyCode::Char('s')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            &app.footer_choice,
+            Some(choice)
+                if choice.mode == FooterChoiceMode::Status
+                    && choice.selection.single_id() == Some(&parent.task.id)
+        ));
+    }
+
+    #[tokio::test]
     async fn detail_tab_focuses_epic_children_and_j_k_selects_and_opens() {
         let (_dir, pool, mut app) = test_app_with_pool().await;
         let parent_index = create_and_select_task(
@@ -8715,7 +8934,7 @@ mod detail_mode {
     }
 
     #[tokio::test]
-    async fn focused_detail_relationship_shortcut_warns_without_mutating_parent() {
+    async fn focused_detail_missing_relationship_reports_unavailable_without_mutating_parent() {
         let mut app = test_app().await;
         let selected =
             create_and_select_task(&mut app, test_task_draft("Relationship target")).await;
@@ -8744,7 +8963,7 @@ mod detail_mode {
         assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Inbox);
         assert_eq!(
             toast_message(&app).as_deref(),
-            Some("leave relationship focus before using that command")
+            Some("linked task is unavailable")
         );
         assert!(app.overlay.is_none());
         assert!(app.detail.is_active());
@@ -9656,7 +9875,7 @@ mod detail_mode {
     }
 
     #[tokio::test]
-    async fn focused_detail_child_blocks_prefixed_parent_mutations() {
+    async fn focused_detail_child_routes_prefixed_status_to_child() {
         let (_dir, pool, mut app) = test_app_with_pool().await;
         let parent_index = create_and_select_task(
             &mut app,
@@ -9709,21 +9928,10 @@ mod detail_mode {
 
         assert!(app.overlay.is_none());
         assert!(app.detail.is_active());
-        assert_eq!(app.store.tasks[parent_index].task.status, TaskStatus::Inbox);
-        assert_eq!(
-            app.store
-                .tasks
-                .iter()
-                .find(|item| item.task.id == child_id)
-                .unwrap()
-                .task
-                .status,
-            TaskStatus::Inbox
-        );
-        assert_eq!(
-            toast_message(&app).as_deref(),
-            Some("leave epic child focus before using that command")
-        );
+        let parent = app.store.load_task_item(&parent_id).await.unwrap().unwrap();
+        let child = app.store.load_task_item(&child_id).await.unwrap().unwrap();
+        assert_eq!(parent.task.status, TaskStatus::Inbox);
+        assert_eq!(child.task.status, TaskStatus::Done);
     }
 
     #[tokio::test]

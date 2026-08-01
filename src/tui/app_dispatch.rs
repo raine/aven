@@ -1663,6 +1663,14 @@ impl App {
     }
 
     async fn handle_focused_detail_shortcut(&mut self, key: KeyEvent, scroll: u16) -> Result<bool> {
+        let Some(target) = self
+            .detail
+            .state()
+            .and_then(|detail| detail.focused_target())
+            .cloned()
+        else {
+            return Ok(false);
+        };
         if !key.modifiers.is_empty() && key.modifiers != KeyModifiers::SHIFT {
             return Ok(false);
         }
@@ -1673,16 +1681,8 @@ impl App {
                 Ok(true)
             }
             DetailShortcutResolution::Action(action) => {
-                self.pending_shortcut_scroll = 0;
-                if !self.detail_focus_allows_action(action) {
-                    self.set_warning(self.detail_focus_warning());
-                    self.show_detail(scroll);
-                    return Ok(true);
-                }
-                if let Some(detail) = self.detail.state_mut() {
-                    detail.set_scroll(scroll);
-                }
-                self.execute(action).await?;
+                self.execute_focused_detail_action(action, &target, scroll)
+                    .await?;
                 Ok(true)
             }
             DetailShortcutResolution::Prefix => {
@@ -1698,6 +1698,95 @@ impl App {
             }
             DetailShortcutResolution::PassThrough => Ok(false),
         }
+    }
+
+    fn action_supports_related_task(action: Action) -> bool {
+        matches!(
+            action,
+            Action::SetStatus(_)
+                | Action::SetPriority(_)
+                | Action::CyclePriority(_)
+                | Action::CopyShortRef
+                | Action::CopyDurableRef
+                | Action::CopyTaskTitle
+                | Action::CopyTaskDescription
+                | Action::CopyTaskText
+                | Action::CopyTaskNotes
+                | Action::BeginEditTitle
+                | Action::BeginEditDescription
+                | Action::BeginEditProject
+                | Action::BeginEditPriority
+                | Action::BeginEditAvailability
+                | Action::BeginEditDue
+                | Action::BeginEditLabels
+                | Action::Delete
+                | Action::Restore
+                | Action::BeginStatusPicker
+                | Action::BeginAddNote
+                | Action::BeginAddDependency
+        )
+    }
+
+    async fn execute_focused_detail_action(
+        &mut self,
+        action: Action,
+        target: &DetailTargetId,
+        scroll: u16,
+    ) -> Result<()> {
+        self.pending_shortcut_scroll = 0;
+        if let Some(detail) = self.detail.state_mut() {
+            detail.set_scroll(scroll);
+        }
+
+        if matches!(action, Action::Undo | Action::ReturnToLastChange) {
+            self.execute(action).await?;
+            return Ok(());
+        }
+
+        let DetailTargetId::Task { section, task_id } = target else {
+            self.set_warning(self.detail_focus_warning());
+            self.show_detail(scroll);
+            return Ok(());
+        };
+
+        if action == Action::RemoveEpicChild {
+            if *section == DetailSection::EpicChildren {
+                self.execute(action).await?;
+            } else {
+                self.set_warning("This relationship cannot be removed with that command");
+                self.show_detail(scroll);
+            }
+            return Ok(());
+        }
+
+        if !Self::action_supports_related_task(action) {
+            self.set_warning("Open the related task before using that command");
+            self.show_detail(scroll);
+            return Ok(());
+        }
+
+        let Some(anchor_index) = self.list.selected_task() else {
+            self.set_warning("detail task is unavailable");
+            return Ok(());
+        };
+        let Some(anchor) = self.store.tasks.get(anchor_index).cloned() else {
+            self.set_warning("detail task is unavailable");
+            return Ok(());
+        };
+        let Some(item) = self.store.load_task_item(task_id).await? else {
+            self.set_warning("linked task is unavailable");
+            return Ok(());
+        };
+        self.detail_command_selection = Some(
+            crate::tui::task_selection::TaskSelection::for_detail_target(
+                item,
+                &anchor,
+                anchor_index,
+            ),
+        );
+        let result = self.execute(action).await;
+        self.detail_command_selection = None;
+        result
     }
 
     async fn handle_detail_shortcut(
@@ -1749,7 +1838,21 @@ impl App {
         match lookup_command_spec_for(state.context, input) {
             CommandSpecLookup::Found(command) => {
                 self.pending_shortcut.clear();
-                if state.context == crate::tui::event::CommandContext::Detail
+                let focused_target = (state.context
+                    == crate::tui::event::CommandContext::Detail)
+                    .then(|| {
+                        self.detail
+                            .state()
+                            .and_then(|detail| detail.focused_target())
+                            .cloned()
+                    })
+                    .flatten();
+                let routes_to_related_task = matches!(
+                    &focused_target,
+                    Some(DetailTargetId::Task { .. })
+                ) && Self::action_supports_related_task(command.action);
+                if focused_target.is_some()
+                    && !routes_to_related_task
                     && !self.detail_focus_allows_action(command.action)
                 {
                     self.set_warning(self.detail_focus_warning());
@@ -1764,6 +1867,13 @@ impl App {
                         ":{} is disabled: {}",
                         command.name, unavailable.reason
                     ));
+                    return Ok(true);
+                }
+                if routes_to_related_task {
+                    let target = focused_target.as_ref().expect("focused task target");
+                    let scroll = self.detail.state().map_or(0, |detail| detail.scroll());
+                    self.execute_focused_detail_action(command.action, target, scroll)
+                        .await?;
                     return Ok(true);
                 }
                 if command.action.recurrence_kind().is_some() {

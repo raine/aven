@@ -364,7 +364,7 @@ impl App {
     }
 
     pub(super) fn copy_selected_ref(&mut self, kind: TaskRefKind) {
-        let Some(task) = self.store.selected_task(self.list.selected_task()) else {
+        let Some(task) = self.selected_command_task() else {
             self.set_info("no selected task to copy");
             return;
         };
@@ -379,7 +379,7 @@ impl App {
     }
 
     pub(super) fn copy_selected_task_text(&mut self, kind: TaskCopyKind) {
-        let Some(task) = self.store.selected_task(self.list.selected_task()) else {
+        let Some(task) = self.selected_command_task() else {
             self.set_info("no selected task to copy");
             return;
         };
@@ -400,7 +400,7 @@ impl App {
     }
 
     pub(super) fn copy_selected_task_notes(&mut self) {
-        let Some(task) = self.store.selected_task(self.list.selected_task()) else {
+        let Some(task) = self.selected_command_task() else {
             self.set_info("no selected task to copy");
             return;
         };
