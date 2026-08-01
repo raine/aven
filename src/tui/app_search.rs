@@ -181,7 +181,20 @@ impl App {
                 self.clear_live_search_preview();
                 self.accept_search_input(state.input.text).await?;
             }
-            KeyCode::Tab => {
+            KeyCode::Tab if !state.results.is_empty() => {
+                state.selected = (state.selected + 1) % state.results.len();
+                self.overlay = Some(OverlayState::Search(state));
+            }
+            KeyCode::BackTab
+                if !matches!(state.intent, SearchIntent::Navigate) && !state.results.is_empty() =>
+            {
+                state.selected = state
+                    .selected
+                    .checked_sub(1)
+                    .unwrap_or(state.results.len().saturating_sub(1));
+                self.overlay = Some(OverlayState::Search(state));
+            }
+            KeyCode::Tab | KeyCode::BackTab => {
                 self.overlay = Some(OverlayState::Search(state));
             }
             KeyCode::Enter => {
