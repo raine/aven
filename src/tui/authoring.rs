@@ -21,6 +21,7 @@ pub(crate) enum AddTaskStep {
     Priority,
     Labels,
     Schedule,
+    Epic,
     Title,
     AvailableAt,
     Due,
@@ -34,12 +35,13 @@ pub(crate) enum AddTaskStep {
 }
 
 impl AddTaskStep {
-    pub(crate) const ALL: [Self; 15] = [
+    pub(crate) const ALL: [Self; 16] = [
         Self::Project,
         Self::Status,
         Self::Priority,
         Self::Labels,
         Self::Schedule,
+        Self::Epic,
         Self::AvailableAt,
         Self::Due,
         Self::RepeatAt,
@@ -72,6 +74,7 @@ impl AddTaskStep {
                 | Self::Status
                 | Self::Priority
                 | Self::Labels
+                | Self::Epic
                 | Self::Schedule
                 | Self::AvailableAt
                 | Self::Due
@@ -104,12 +107,13 @@ impl AddTaskStep {
     }
 
     pub(crate) fn metadata_next(self, reverse: bool) -> Self {
-        const FIELDS: [AddTaskStep; 12] = [
+        const FIELDS: [AddTaskStep; 13] = [
             AddTaskStep::Project,
             AddTaskStep::Status,
             AddTaskStep::Priority,
             AddTaskStep::Labels,
             AddTaskStep::Schedule,
+            AddTaskStep::Epic,
             AddTaskStep::AvailableAt,
             AddTaskStep::Due,
             AddTaskStep::RepeatAt,
@@ -173,6 +177,7 @@ struct AddTaskDraftState {
     status_origin: InitialStatusOrigin,
     priority: String,
     labels: Vec<String>,
+    is_epic: bool,
     available_at: String,
     due_on: String,
     schedule_input: String,
@@ -200,6 +205,7 @@ impl Default for AddTaskDraftState {
             status_origin: InitialStatusOrigin::UntouchedDefault,
             priority: "none".to_string(),
             labels: Vec::new(),
+            is_epic: false,
             available_at: String::new(),
             due_on: String::new(),
             schedule_input: String::new(),
@@ -232,6 +238,7 @@ pub(crate) struct AddTaskContext {
     pub(crate) status_origin: InitialStatusOrigin,
     pub(crate) priority: String,
     pub(crate) labels: Vec<String>,
+    pub(crate) is_epic: bool,
     pub(crate) available_at: String,
     pub(crate) due_on: String,
     pub(crate) schedule_input: String,
@@ -302,6 +309,7 @@ impl AuthoringState {
             status_origin: InitialStatusOrigin::Explicit,
             priority: series.priority.as_str().to_string(),
             labels: detail.labels.clone(),
+            is_epic: false,
             available_at: String::new(),
             due_on: String::new(),
             schedule_input: crate::schedule_input::format_schedule_input(
@@ -385,6 +393,7 @@ impl AuthoringState {
             status_origin: draft.status_origin,
             priority: draft.priority.clone(),
             labels: draft.labels.clone(),
+            is_epic: draft.is_epic,
             available_at: draft.available_at.clone(),
             due_on: draft.due_on.clone(),
             schedule_input: draft.schedule_input.clone(),
@@ -534,6 +543,14 @@ impl AuthoringState {
         true
     }
 
+    pub(crate) fn apply_add_task_epic(&mut self, is_epic: bool) -> bool {
+        let Some(draft) = self.flow.as_mut() else {
+            return false;
+        };
+        draft.is_epic = is_epic;
+        true
+    }
+
     pub(crate) fn apply_add_task_available_at(&mut self, value: String) -> bool {
         let Some(draft) = self.flow.as_mut() else {
             return false;
@@ -667,6 +684,7 @@ impl AuthoringState {
         draft.status = task.status;
         draft.priority = task.priority;
         draft.labels = task.labels;
+        draft.is_epic = task.is_epic;
         draft.available_at = task.available_at.unwrap_or_default();
         draft.due_on = task.due_on.unwrap_or_default();
         draft.step = AddTaskStep::Title;
@@ -697,7 +715,7 @@ impl AuthoringState {
                 labels: draft.labels,
                 available_at: (!draft.available_at.is_empty()).then_some(draft.available_at),
                 due_on: (!draft.due_on.is_empty()).then_some(draft.due_on),
-                is_epic: false,
+                is_epic: draft.is_epic,
             },
             attachments: draft.attachments,
         }))

@@ -57,6 +57,7 @@ pub(crate) enum Action {
     BeginEditDescription,
     BeginEditProject,
     BeginEditPriority,
+    BeginEditEpic,
     BeginEditAvailability,
     BeginEditDue,
     BeginEditLabels,

@@ -573,6 +573,10 @@ pub(crate) enum PickerIntent {
         selection: TaskSelection,
         mixed: bool,
     },
+    EditEpic {
+        selection: TaskSelection,
+        mixed: bool,
+    },
     FilterLabel,
     FilterPriority,
     ScopeProject,
@@ -887,6 +891,7 @@ pub(crate) struct AddTaskState {
     pub(crate) status_origin: InitialStatusOrigin,
     pub(crate) priority: String,
     pub(crate) labels: Vec<String>,
+    pub(crate) is_epic: bool,
     pub(crate) available_at: LineEdit,
     pub(crate) due_on: LineEdit,
     pub(crate) schedule_input: LineEdit,
@@ -1030,6 +1035,7 @@ impl AddTaskState {
             || self.status != "inbox"
             || self.priority != "none"
             || !self.labels.is_empty()
+            || self.is_epic
             || !self.available_at.text.trim().is_empty()
             || !self.due_on.text.trim().is_empty()
             || !self.attachments.is_empty()

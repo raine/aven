@@ -76,6 +76,7 @@ impl App {
             Action::BeginEditDescription => self.begin_edit_description(),
             Action::BeginEditProject => self.begin_edit_project(),
             Action::BeginEditPriority => self.begin_edit_priority(),
+            Action::BeginEditEpic => self.begin_edit_epic(),
             Action::BeginEditAvailability => self.begin_edit_availability(),
             Action::BeginEditDue => self.begin_edit_due(),
             Action::BeginEditLabels => self.begin_edit_labels(),

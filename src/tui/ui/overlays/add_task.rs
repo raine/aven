@@ -76,10 +76,13 @@ pub(crate) fn add_task_field_at(
                         AddTaskStep::Priority,
                     ][(relative_x as usize * 3 / content.width.max(1) as usize).min(2)],
                 ),
-                1 => match (relative_x as usize * 3 / content.width.max(1) as usize).min(2) {
-                    0 => Some(AddTaskStep::Labels),
-                    _ => Some(AddTaskStep::Schedule),
-                },
+                1 => Some(
+                    [
+                        AddTaskStep::Labels,
+                        AddTaskStep::Schedule,
+                        AddTaskStep::Epic,
+                    ][(relative_x as usize * 3 / content.width.max(1) as usize).min(2)],
+                ),
                 _ => None,
             };
         }
@@ -360,13 +363,14 @@ fn compact_text_field(label: &str, value: &str, active: bool) -> Line<'static> {
     ])
 }
 
-fn metadata_steps() -> [AddTaskStep; 5] {
+fn metadata_steps() -> [AddTaskStep; 6] {
     [
         AddTaskStep::Project,
         AddTaskStep::Status,
         AddTaskStep::Priority,
         AddTaskStep::Labels,
         AddTaskStep::Schedule,
+        AddTaskStep::Epic,
     ]
 }
 
@@ -396,11 +400,17 @@ fn add_task_metadata_lines(state: &AddTaskView, width: u16) -> Vec<Line<'static>
             state.focus,
         ),
         schedule_metadata_field(state),
+        metadata_field(
+            AddTaskStep::Epic,
+            "Epic",
+            if state.is_epic { "yes" } else { "no" },
+            state.focus,
+        ),
     ];
     if width >= 80 {
         return vec![
             metadata_row(owned[..3].to_vec(), width as usize),
-            metadata_schedule_row(owned[3].clone(), owned[4].clone(), width as usize),
+            metadata_row(owned[3..].to_vec(), width as usize),
         ];
     }
     let columns = metadata_columns(width);
@@ -448,6 +458,7 @@ pub(in crate::tui::ui) fn metadata_field(
         AddTaskStep::Status => "^T ",
         AddTaskStep::Priority => "^R ",
         AddTaskStep::Labels => "^L ",
+        AddTaskStep::Epic => "",
         AddTaskStep::Schedule | AddTaskStep::RepeatRule => "   ",
         AddTaskStep::AvailableAt | AddTaskStep::RepeatAt => "^A ",
         AddTaskStep::Due | AddTaskStep::RepeatDue => "^U ",
@@ -515,26 +526,6 @@ fn metadata_row(lines: Vec<Line<'static>>, width: usize) -> Line<'static> {
         .map(|(index, line)| fit_line_to_width(line, base_width + usize::from(index < remainder)))
         .collect();
     join_lines(fitted, METADATA_SEPARATOR)
-}
-
-fn metadata_schedule_row(
-    labels: Line<'static>,
-    schedule: Line<'static>,
-    width: usize,
-) -> Line<'static> {
-    let separator_width = METADATA_SEPARATOR.width();
-    let fields_width = width.saturating_sub(separator_width * 2);
-    let base_width = fields_width / 3;
-    let remainder = fields_width % 3;
-    let first_width = base_width + usize::from(remainder > 0);
-    let schedule_width = width.saturating_sub(first_width + separator_width);
-    join_lines(
-        vec![
-            fit_line_to_width(labels, first_width),
-            fit_line_to_width(schedule, schedule_width),
-        ],
-        METADATA_SEPARATOR,
-    )
 }
 
 fn fit_line_to_width(line: Line<'static>, width: usize) -> Line<'static> {
@@ -1211,6 +1202,15 @@ pub(in crate::tui::ui) fn add_task_hint_line(
             ("^A", "available"),
             ("^U", "due"),
             ("Tab", "next"),
+            ("F1", "help"),
+            ("Esc", "cancel"),
+        ]),
+        AddTaskStep::Epic => dialog_hint_line(&[
+            ("Enter", "toggle"),
+            ("←/→", "field"),
+            ("Tab", "next"),
+            ("^S", "create"),
+            ("^N", "create with AI"),
             ("F1", "help"),
             ("Esc", "cancel"),
         ]),

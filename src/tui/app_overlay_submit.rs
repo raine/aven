@@ -122,6 +122,20 @@ impl App {
             }
         };
         let recurring = state.template_schedule.is_some() || recurrence_schedule.is_some();
+        if state.is_epic && !self.authoring.is_standalone_add_task() {
+            state.focus = AddTaskStep::Epic;
+            state.mode = AddTaskMode::Compose;
+            self.overlay = Some(OverlayState::AddTask(Box::new(state)));
+            self.set_warning("epic children cannot be epic containers");
+            return Ok(());
+        }
+        if recurring && state.is_epic {
+            state.focus = AddTaskStep::Epic;
+            state.mode = AddTaskMode::Compose;
+            self.overlay = Some(OverlayState::AddTask(Box::new(state)));
+            self.set_warning("recurring tasks cannot be epic containers");
+            return Ok(());
+        }
         if recurring
             && !matches!(
                 crate::choices::TaskStatus::parse(&state.status),
@@ -264,7 +278,7 @@ impl App {
             labels: state.labels.clone(),
             available_at,
             due_on,
-            is_epic: false,
+            is_epic: state.is_epic,
         };
         if let Err(error) = self.submit_created_task(draft).await {
             if !crate::tui::store::task_creation_committed(&error) {
@@ -450,6 +464,16 @@ impl App {
                 None => {
                     self.set_warning("no matching priority");
                     self.open_edit_priority_picker_for_selection(selection);
+                }
+            },
+            PickerIntent::EditEpic { selection, mixed } => match values.first() {
+                Some(value) => {
+                    self.submit_edit_epic(selection, mixed, value.clone())
+                        .await?;
+                }
+                None => {
+                    self.set_warning("choose whether this task is an epic container");
+                    self.open_edit_epic_picker(selection);
                 }
             },
             PickerIntent::FilterLabel => self.submit_filter_label(values).await?,

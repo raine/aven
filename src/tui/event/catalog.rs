@@ -1124,6 +1124,22 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::BeginEditPriority,
     ),
     CommandSpec::implemented_in_detail(
+        "edit-epic",
+        "edit selected task epic container state",
+        "Tasks",
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('e'), KeyCode::Char('e')],
+                label: "e e",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('e')],
+                label: "t e e",
+            },
+        ],
+        Action::BeginEditEpic,
+    ),
+    CommandSpec::implemented_in_detail(
         "edit-availability",
         "edit selected task availability",
         "Tasks",

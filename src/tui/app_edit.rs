@@ -646,6 +646,40 @@ impl App {
         );
     }
 
+    pub(super) fn begin_edit_epic(&mut self) {
+        let Some(selection) = self.capture_edit_selection() else {
+            return;
+        };
+        self.open_edit_epic_picker(selection);
+    }
+
+    pub(super) fn open_edit_epic_picker(&mut self, selection: TaskSelection) {
+        let (aggregate, selected) = Self::aggregate_value(&selection, |item| item.task.is_epic);
+        let mut items = crate::tui::store::epic_picker_items(
+            (aggregate == EditAggregate::Uniform).then_some(selected),
+        );
+        if aggregate == EditAggregate::Mixed {
+            items.insert(
+                0,
+                PickerItem {
+                    label: "Keep existing values (current: varies)".to_string(),
+                    value: String::new(),
+                    selected: true,
+                },
+            );
+        }
+        let title = Self::batch_edit_title(&selection, "epic container");
+        self.open_picker_overlay(
+            PickerIntent::EditEpic {
+                selection,
+                mixed: aggregate == EditAggregate::Mixed,
+            },
+            title,
+            items,
+            false,
+        );
+    }
+
     pub(super) fn begin_edit_availability(&mut self) {
         let Some(selection) = self.capture_edit_selection() else {
             return;
@@ -1124,6 +1158,56 @@ impl App {
             });
             app.open_edit_due_overlay(retry_selection, aggregate, value)
         });
+        Ok(())
+    }
+
+    pub(super) async fn submit_edit_epic(
+        &mut self,
+        selection: TaskSelection,
+        mixed: bool,
+        value: String,
+    ) -> Result<()> {
+        if value.is_empty() && mixed {
+            self.set_info(format!(
+                "epic container state unchanged on {} tasks",
+                selection.len()
+            ));
+            return Ok(());
+        }
+        let is_epic = match value.as_str() {
+            "true" => true,
+            "false" => false,
+            _ => {
+                self.set_warning("choose whether this task is an epic container");
+                self.open_edit_epic_picker(selection);
+                return Ok(());
+            }
+        };
+        if is_epic
+            && selection
+                .targets()
+                .iter()
+                .any(|item| item.epic_parent.is_some())
+        {
+            self.set_warning("remove a task from its parent epic before turning its container on");
+            self.open_edit_epic_picker(selection);
+            return Ok(());
+        }
+        match self.store.mutate_epic_selection(&selection, is_epic).await {
+            Ok(result) => self.apply_mutation_result(result),
+            Err(error) => {
+                let committed = crate::tui::store::mutation_committed(&error);
+                let message = format!("{error:#}");
+                if message.contains("epic-has-children") {
+                    self.set_warning("remove all epic children before turning the container off");
+                } else {
+                    self.set_error(message);
+                }
+                if !committed {
+                    self.open_edit_epic_picker(selection);
+                }
+            }
+        }
         Ok(())
     }
 

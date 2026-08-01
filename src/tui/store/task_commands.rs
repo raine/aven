@@ -411,6 +411,60 @@ impl TuiStore {
             .await
     }
 
+    pub(crate) async fn mutate_epic_selection(
+        &mut self,
+        selection: &TaskSelection,
+        is_epic: bool,
+    ) -> Result<MutationMessage> {
+        let updates = selection
+            .ids()
+            .cloned()
+            .map(|task_id| {
+                (
+                    task_id,
+                    TaskUpdate {
+                        is_epic: Some(is_epic),
+                        ..TaskUpdate::default()
+                    },
+                )
+            })
+            .collect();
+        let report = self
+            .database
+            .mutate_tasks(
+                &self.active_workspace,
+                updates,
+                UndoContext::tui_task_mutation(
+                    selection
+                        .is_single()
+                        .then(|| format!("epic container {}", selection.targets()[0].display_ref)),
+                    "epic container state",
+                ),
+            )
+            .await?;
+        let changed = report.changed_count();
+        let state = if is_epic { "yes" } else { "no" };
+        let message = if selection.is_single() {
+            let verb = if changed == 0 { "unchanged" } else { "set" };
+            format!(
+                "{verb} {} epic container={state}",
+                selection.targets()[0].display_ref
+            )
+        } else if changed == 0 {
+            format!(
+                "epic container state unchanged on {} tasks",
+                selection.len()
+            )
+        } else {
+            format!(
+                "set epic container={state} on {changed} {}",
+                task_noun(changed)
+            )
+        };
+        self.refresh_task_selection(selection, report, message, false, false)
+            .await
+    }
+
     pub(crate) async fn mutate_deleted_selection(
         &mut self,
         selection: &TaskSelection,

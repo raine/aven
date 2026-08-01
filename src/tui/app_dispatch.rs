@@ -1408,6 +1408,7 @@ impl App {
                 if state.mode == AddTaskMode::Compose
                     && state.focus.is_metadata()
                     && key.code == KeyCode::Enter
+                    && !key.modifiers.contains(KeyModifiers::CONTROL)
         ) {
             self.overlay = Some(overlay);
             self.open_focused_add_task_control();
