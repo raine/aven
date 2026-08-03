@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wr
 
 use super::truncate::truncate_chars;
 use crate::tui::overlay::dialog_area;
-use crate::tui::theme::{ACCENT, BG_ALT, DEFAULT_BG, FG, FG_MUTED};
+use crate::tui::theme::{ACCENT, BG_ALT, FG, FG_MUTED};
 
 pub(super) struct Dialog<'a> {
     title: &'a str,
@@ -97,16 +97,19 @@ fn right_edge_title(title: Option<Line<'_>>) -> Line<'_> {
 
 pub(super) fn dim_rendered_background(frame: &mut Frame) {
     for cell in &mut frame.buffer_mut().content {
-        cell.modifier.insert(Modifier::DIM);
+        if cell
+            .symbol()
+            .chars()
+            .any(|character| !character.is_whitespace())
+        {
+            cell.modifier.insert(Modifier::DIM);
+        }
         cell.bg = dim_background_color(cell.bg);
     }
 }
 
 fn dim_background_color(color: Color) -> Color {
-    let Color::Rgb(red, green, blue) = (match color {
-        Color::Reset => DEFAULT_BG,
-        color => color,
-    }) else {
+    let Color::Rgb(red, green, blue) = color else {
         return color;
     };
 
@@ -142,12 +145,12 @@ mod tests {
     use crate::tui::theme::FG;
 
     #[test]
-    fn dimming_darkens_rgb_and_default_backgrounds() {
+    fn dimming_darkens_rgb_and_preserves_default_backgrounds() {
         assert_eq!(
             dim_background_color(Color::Rgb(150, 100, 50)),
             Color::Rgb(90, 60, 30)
         );
-        assert_eq!(dim_background_color(Color::Reset), Color::Rgb(10, 11, 10));
+        assert_eq!(dim_background_color(Color::Reset), Color::Reset);
     }
 
     #[test]

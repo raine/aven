@@ -22,10 +22,18 @@ async fn modal_overlay_dims_main_surface_underlay() {
     }));
 
     let buf = render_app_buffer(&mut app, 120, 30);
-    let underlay = &buf[(119, 10)];
+    let blank_underlay = &buf[(119, 10)];
 
-    assert_eq!(underlay.bg, Color::Rgb(10, 11, 10));
-    assert!(underlay.modifier.contains(Modifier::DIM));
+    assert_eq!(blank_underlay.bg, Color::Reset);
+    assert!(!blank_underlay.modifier.contains(Modifier::DIM));
+    assert!(buf.content.iter().any(|cell| {
+        cell.bg == Color::Reset
+            && cell
+                .symbol()
+                .chars()
+                .any(|character| !character.is_whitespace())
+            && cell.modifier.contains(Modifier::DIM)
+    }));
 }
 
 #[tokio::test]
