@@ -3,6 +3,14 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.22 (2026-08-03)
+
+- Blocked tasks are dimmed in lists and Columns, help headings have clearer
+  visual hierarchy, and nested dialogs render with faster, more consistent
+  background dimming.
+- Routine view, scope, filter, ordering, and workspace changes avoid redundant
+  success messages when the updated state is already visible.
+
 ## v0.1.21 (2026-08-01)
 
 - New: Create and edit epics in the TUI, or promote an ordinary task when adding
