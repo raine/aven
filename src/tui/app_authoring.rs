@@ -169,7 +169,6 @@ impl App {
             } else {
                 self.begin_add_task_step();
             }
-            self.set_info(format!("add task status={status}"));
         }
     }
 
@@ -180,7 +179,6 @@ impl App {
             } else {
                 self.begin_add_task_step();
             }
-            self.set_info(format!("add task priority={priority}"));
         }
     }
 

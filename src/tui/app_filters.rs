@@ -4,7 +4,7 @@ use crate::tui::app::App;
 use crate::tui::overlay::{
     HeaderMenuAction, HeaderMenuItem, HeaderMenuKind, OverlayState, PickerIntent,
 };
-use crate::tui::store::{ClosedTaskVisibility, TaskOrder, TaskScope, TaskScopeTarget, TaskView};
+use crate::tui::store::{TaskOrder, TaskScope, TaskScopeTarget, TaskView};
 
 pub(crate) const FILTER_LABEL_TITLE: &str = "Filter: label";
 pub(crate) const FILTER_PRIORITY_TITLE: &str = "Filter: priority";
@@ -73,7 +73,6 @@ impl App {
         let selected = self.store.show_view(view).await?;
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
-        self.set_info("view updated");
         Ok(())
     }
 
@@ -82,7 +81,6 @@ impl App {
         let selected = self.store.show_scope(scope).await?;
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
-        self.set_info("scope updated");
         Ok(())
     }
 
@@ -189,11 +187,10 @@ impl App {
         self.overlay = None;
         match action {
             HeaderMenuAction::Workspace(workspace) => {
-                let (message, selected) = self.store.switch_workspace(workspace).await?;
+                let selected = self.store.switch_workspace(workspace).await?;
                 self.list.clear_last_change();
                 self.clear_navigation_history();
                 self.apply_filter_selection(selected);
-                self.set_success(message);
                 Ok(())
             }
             HeaderMenuAction::WorkspaceScope => self.show_scope(TaskScopeTarget::Workspace).await,
@@ -222,7 +219,6 @@ impl App {
         let selected = self.store.clear_filters().await?;
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
-        self.set_success("filters cleared");
         Ok(())
     }
 
@@ -235,12 +231,6 @@ impl App {
         let selected = self.store.toggle_closed_filter().await?;
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
-        let message = match self.store.view_state.filter_modifiers.closed {
-            ClosedTaskVisibility::Default => "hiding closed tasks",
-            ClosedTaskVisibility::Included => "showing closed tasks",
-            ClosedTaskVisibility::Only => "showing closed tasks only",
-        };
-        self.set_info(message);
         Ok(())
     }
 
@@ -249,15 +239,6 @@ impl App {
         let selected = self.store.toggle_deleted_filter().await?;
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
-        let modifiers = &self.store.view_state.filter_modifiers;
-        let message = if modifiers.deleted_only {
-            "showing deleted tasks only"
-        } else if modifiers.include_deleted {
-            "showing deleted tasks"
-        } else {
-            "hiding deleted tasks"
-        };
-        self.set_info(message);
         Ok(())
     }
 
@@ -284,7 +265,6 @@ impl App {
         let selected = self.store.filter_label(label).await?;
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
-        self.set_success("label filter applied");
         Ok(())
     }
 
@@ -300,7 +280,6 @@ impl App {
         let selected = self.store.filter_priority(priority).await?;
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
-        self.set_success("priority filter applied");
         Ok(())
     }
 
@@ -317,11 +296,10 @@ impl App {
             self.begin_switch_workspace().await?;
             return Ok(());
         };
-        let (message, selected) = self.store.switch_workspace(workspace).await?;
+        let selected = self.store.switch_workspace(workspace).await?;
         self.list.clear_last_change();
         self.clear_navigation_history();
         self.apply_filter_selection(selected);
-        self.set_success(message);
         Ok(())
     }
 }

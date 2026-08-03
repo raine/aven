@@ -444,7 +444,6 @@ impl App {
             .restore_view_state(previous, selected.as_ref())
             .await?;
         self.apply_filter_selection(result.selected);
-        let mut navigation_warning = false;
         if returns_to_series && let Some(anchor) = self.series_detail_return.take() {
             if self
                 .store
@@ -461,13 +460,10 @@ impl App {
                 self.detail.close();
                 self.overlay = None;
                 self.set_warning("recurring series is hidden by the restored filters");
-                navigation_warning = true;
             }
         }
         if let Some(project) = result.fallback_scope {
             self.set_warning(format!("project scope {project} is no longer available"));
-        } else if !navigation_warning {
-            self.set_info("returned to previous navigation state");
         }
         Ok(())
     }
@@ -485,11 +481,6 @@ impl App {
         let selected = self.store.set_order(sort).await?;
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
-        self.set_info(format!(
-            "order {} {}",
-            self.store.sort_label(),
-            self.store.sort_direction_label()
-        ));
         Ok(())
     }
 
@@ -498,11 +489,6 @@ impl App {
         let selected = self.store.reverse_sort().await?;
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
-        self.set_info(format!(
-            "order {} {}",
-            self.store.sort_label(),
-            self.store.sort_direction_label()
-        ));
         Ok(())
     }
 

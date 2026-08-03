@@ -299,10 +299,7 @@ async fn add_task_status_hotkey_selects_direct_status() {
         &app.overlay,
         Some(OverlayState::AddTask(state)) if state.status == "active"
     ));
-    assert_eq!(
-        toast_message(&app).as_deref(),
-        Some("add task status=active")
-    );
+    assert_eq!(toast_message(&app), None);
 
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
@@ -340,10 +337,7 @@ async fn add_task_priority_hotkey_selects_direct_priority() {
         &app.overlay,
         Some(OverlayState::AddTask(state)) if state.priority == "high"
     ));
-    assert_eq!(
-        toast_message(&app).as_deref(),
-        Some("add task priority=high")
-    );
+    assert_eq!(toast_message(&app), None);
 
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 

@@ -117,7 +117,7 @@ async fn order_shortcut_sets_sort() {
     app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
     assert_eq!(app.store.view_state.order, TaskOrder::Priority);
-    assert_eq!(toast_message(&app).as_deref(), Some("order priority asc"));
+    assert_eq!(toast_message(&app), None);
 }
 
 #[tokio::test]
@@ -127,7 +127,7 @@ async fn created_order_shortcut_defaults_to_descending() {
     app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
     assert_eq!(app.store.view_state.order, TaskOrder::Created);
     assert_eq!(app.store.sort_direction_label(), "desc");
-    assert_eq!(toast_message(&app).as_deref(), Some("order created desc"));
+    assert_eq!(toast_message(&app), None);
 }
 
 #[tokio::test]
@@ -136,7 +136,7 @@ async fn order_reverse_shortcut_toggles_direction() {
     app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
     assert_eq!(app.store.sort_direction_label(), "desc");
-    assert_eq!(toast_message(&app).as_deref(), Some("order created desc"));
+    assert_eq!(toast_message(&app), None);
 }
 
 #[tokio::test]
@@ -145,7 +145,7 @@ async fn due_order_shortcut_sets_sort() {
     app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
     assert_eq!(app.store.view_state.order, TaskOrder::DueOn);
-    assert_eq!(toast_message(&app).as_deref(), Some("order due asc"));
+    assert_eq!(toast_message(&app), None);
 }
 
 #[tokio::test]
@@ -188,7 +188,7 @@ async fn sidebar_toggle_shortcut_expands_task_list_and_restores_sidebar_focus() 
 
     assert!(!app.list.sidebar_visible());
     assert_eq!(app.list.focus(), Focus::Tasks);
-    assert_eq!(toast_message(&app).as_deref(), Some("task list expanded"));
+    assert_eq!(toast_message(&app), None);
     let hidden = app.view();
     assert!(!hidden.sidebar_visible);
 
@@ -197,7 +197,7 @@ async fn sidebar_toggle_shortcut_expands_task_list_and_restores_sidebar_focus() 
 
     assert!(app.list.sidebar_visible());
     assert_eq!(app.list.focus(), Focus::Sidebar);
-    assert_eq!(toast_message(&app).as_deref(), Some("sidebar visible"));
+    assert_eq!(toast_message(&app), None);
 }
 
 #[tokio::test]
@@ -277,7 +277,7 @@ async fn tab_reveals_sidebar_when_task_list_is_expanded() {
 
     assert!(app.list.sidebar_visible());
     assert_eq!(app.list.focus(), Focus::Sidebar);
-    assert_eq!(toast_message(&app).as_deref(), Some("sidebar visible"));
+    assert_eq!(toast_message(&app), None);
 }
 
 #[tokio::test]
@@ -287,7 +287,7 @@ async fn implemented_commands_execute_their_flows() {
     app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
     assert_eq!(app.store.view_state.order, TaskOrder::DueOn);
-    assert_eq!(toast_message(&app).as_deref(), Some("order due asc"));
+    assert_eq!(toast_message(&app), None);
 
     app.begin_command().await;
     type_chars(&mut app, "add-project-path").await;

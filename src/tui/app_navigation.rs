@@ -118,18 +118,15 @@ impl App {
     pub(super) fn toggle_focus(&mut self) {
         if self.list.toggle_focus() {
             self.preserve_or_restore_sidebar_selection();
-            self.set_info("sidebar visible");
         }
     }
 
     pub(super) fn toggle_sidebar(&mut self) {
         if self.list.toggle_sidebar() {
             self.preserve_or_restore_sidebar_selection();
-            self.set_info("sidebar visible");
         } else {
             self.overlay = None;
             self.preserve_or_restore_sidebar_selection();
-            self.set_info("task list expanded");
         }
     }
 
@@ -158,9 +155,8 @@ impl App {
                 .and_then(|index| self.store.tasks.get(index))
                 .is_some_and(|item| item.task.is_epic);
         if epic_selected {
-            if let Some(message) = self.store.toggle_selected_epic(selected).await? {
-                self.set_info(message.message);
-                self.list.select_task(message.selected);
+            if let Some(result) = self.store.toggle_selected_epic(selected).await? {
+                self.list.select_task(result.selected);
             }
             return Ok(());
         }
@@ -239,12 +235,6 @@ impl App {
                 detail.select_sibling_task(&target.task_id);
                 detail.reset_task_state(0);
             }
-            let message = if delta > 0 {
-                "selected next task"
-            } else {
-                "selected previous task"
-            };
-            self.set_info(message);
             return Ok(());
         }
         if self
@@ -260,16 +250,10 @@ impl App {
         let next = next_index(current, self.store.tasks.len(), delta, true);
         self.list.select_task(next);
         self.list.focus_tasks();
-        if current != next {
-            if let Some(detail) = self.detail.state_mut() {
-                detail.reset_task_state(0);
-            }
-            let message = if delta > 0 {
-                "selected next task"
-            } else {
-                "selected previous task"
-            };
-            self.set_info(message);
+        if current != next
+            && let Some(detail) = self.detail.state_mut()
+        {
+            detail.reset_task_state(0);
         }
         Ok(())
     }

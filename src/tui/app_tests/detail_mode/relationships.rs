@@ -511,11 +511,13 @@ async fn right_navigation_toggles_selected_epic() {
 
         assert!(app.store.view_state.expanded_epic_ids.contains(&parent_id));
         assert!(app.store.tasks.iter().any(|item| item.task.id == child_id));
+        assert_eq!(toast_message(&app), None);
 
         app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
 
         assert!(app.store.view_state.collapsed_epic_ids.contains(&parent_id));
         assert!(!app.store.tasks.iter().any(|item| item.task.id == child_id));
+        assert_eq!(toast_message(&app), None);
     }
 }
 

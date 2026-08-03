@@ -26,7 +26,7 @@ async fn detail_next_and_previous_task_stay_in_detail() {
     assert_eq!(app.list.selected_task(), Some(second));
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
-    assert_eq!(toast_message(&app).as_deref(), Some("selected next task"));
+    assert_eq!(toast_message(&app), None);
 
     app.dispatch_key(key(KeyCode::Char('[')), (80, 24).into())
         .await
@@ -34,10 +34,7 @@ async fn detail_next_and_previous_task_stay_in_detail() {
     assert_eq!(app.list.selected_task(), Some(first));
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
-    assert_eq!(
-        toast_message(&app).as_deref(),
-        Some("selected previous task")
-    );
+    assert_eq!(toast_message(&app), None);
 }
 
 #[tokio::test]

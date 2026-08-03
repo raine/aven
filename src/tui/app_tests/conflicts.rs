@@ -73,10 +73,7 @@ async fn conflict_next_selects_next_conflicted_task() {
     app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
     assert_eq!(app.list.selected_task(), Some(second));
-    assert_eq!(
-        toast_message(&app).as_deref(),
-        Some("selected next conflict")
-    );
+    assert_eq!(toast_message(&app), None);
 }
 
 #[tokio::test]

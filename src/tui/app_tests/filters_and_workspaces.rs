@@ -31,10 +31,7 @@ async fn back_shortcut_restores_filter_and_project_navigation() {
         TaskScope::Project("mobile-app".to_string())
     );
     assert_eq!(app.store.view_state.filter_modifiers.priority, None);
-    assert_eq!(
-        toast_message(&app).as_deref(),
-        Some("returned to previous navigation state")
-    );
+    assert_eq!(toast_message(&app), None);
 
     app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('[')).await.unwrap();
@@ -129,7 +126,7 @@ async fn done_view_shortcut_keeps_project_scope() {
     assert_eq!(app.store.view_state.view, TaskView::Done);
     assert_eq!(app.store.tasks.len(), 1);
     assert_eq!(app.store.tasks[0].task.title, "Mobile done");
-    assert_eq!(toast_message(&app).as_deref(), Some("view updated"));
+    assert_eq!(toast_message(&app), None);
 }
 
 #[tokio::test]
@@ -164,7 +161,7 @@ async fn filter_shortcuts_apply_label_status_priority_and_deleted() {
         app.store.view_state.filter_modifiers.label.as_deref(),
         Some("backend")
     );
-    assert_eq!(toast_message(&app).as_deref(), Some("label filter applied"));
+    assert_eq!(toast_message(&app), None);
     app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
     app.handle_overlay_key(key(KeyCode::Char('/')))
@@ -176,24 +173,19 @@ async fn filter_shortcuts_apply_label_status_priority_and_deleted() {
         app.store.view_state.filter_modifiers.priority.as_deref(),
         Some("urgent")
     );
+    assert_eq!(toast_message(&app), None);
 
     app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
     assert!(app.store.view_state.filter_modifiers.include_deleted);
     assert!(!app.store.view_state.filter_modifiers.deleted_only);
-    assert_eq!(
-        toast_message(&app).as_deref(),
-        Some("showing deleted tasks")
-    );
+    assert_eq!(toast_message(&app), None);
 
     app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
     assert!(app.store.view_state.filter_modifiers.include_deleted);
     assert!(app.store.view_state.filter_modifiers.deleted_only);
-    assert_eq!(
-        toast_message(&app).as_deref(),
-        Some("showing deleted tasks only")
-    );
+    assert_eq!(toast_message(&app), None);
 }
 
 #[tokio::test]
@@ -372,28 +364,21 @@ async fn switch_workspace_changes_active_workspace() {
 
     app.store.view_state.view = TaskView::Todo;
 
-    let (message, selected) = app
-        .store
-        .switch_workspace("client-work".to_string())
+    app.submit_switch_workspace(vec!["client-work".to_string()])
         .await
         .unwrap();
-    app.apply_filter_selection(selected);
-    app.set_success(message);
 
     assert_eq!(app.store.active_workspace.key, "client-work");
     assert_eq!(app.store.view_state.view, TaskView::Todo);
     assert!(app.store.tasks.is_empty());
     assert!(app.overlay.is_none());
-    assert!(
-        toast_message(&app)
-            .is_some_and(|message| message.contains("switched workspace to client-work"))
-    );
+    assert_eq!(toast_message(&app), None);
 
     reset_default_workspace(&pool).await;
 }
 
 #[tokio::test]
-async fn clear_filters_shortcut_resets_default_view() {
+async fn clear_filters_shortcut_resets_default_view_without_notification() {
     let mut app = test_app().await;
     app.store.view_state.view = TaskView::Todo;
 
@@ -401,8 +386,7 @@ async fn clear_filters_shortcut_resets_default_view() {
     app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
 
     assert_eq!(app.store.view_state.view, TaskView::Todo);
-    assert_eq!(toast_message(&app).as_deref(), Some("filters cleared"));
-    assert_eq!(toast_severity(&app), Some(ToastSeverity::Success));
+    assert_eq!(toast_message(&app), None);
 }
 
 #[tokio::test]
@@ -470,7 +454,7 @@ async fn header_click_opens_scope_menu_and_selects_scope() {
     .await
     .unwrap();
     assert_eq!(app.store.view_state.scope, TaskScope::Workspace);
-    assert_eq!(toast_message(&app).as_deref(), Some("scope updated"));
+    assert_eq!(toast_message(&app), None);
 }
 
 #[tokio::test]
@@ -517,7 +501,7 @@ async fn header_click_opens_view_menu_and_selects_view() {
     .unwrap();
     assert_eq!(app.store.view_state.view, TaskView::Inbox);
     assert!(app.overlay.is_none());
-    assert_eq!(toast_message(&app).as_deref(), Some("view updated"));
+    assert_eq!(toast_message(&app), None);
 }
 
 #[tokio::test]
@@ -569,10 +553,7 @@ async fn header_click_opens_workspace_menu_and_switches_workspace() {
     .unwrap();
     assert_eq!(app.store.active_workspace.key, "client-work");
     assert!(app.overlay.is_none());
-    assert!(
-        toast_message(&app)
-            .is_some_and(|message| message.contains("switched workspace to client-work"))
-    );
+    assert_eq!(toast_message(&app), None);
 
     reset_default_workspace(&pool).await;
 }
@@ -599,7 +580,7 @@ async fn header_metric_click_still_selects_view_directly() {
         .await
         .unwrap();
     assert_eq!(app.store.view_state.view, TaskView::Queue);
-    assert_eq!(toast_message(&app).as_deref(), Some("view updated"));
+    assert_eq!(toast_message(&app), None);
 
     let mut app = test_app().await;
     let inbox_column = (0..140)
@@ -682,7 +663,7 @@ async fn header_click_opens_order_menu_and_selects_order() {
     assert_eq!(app.store.view_state.view, TaskView::Open);
     assert_eq!(app.store.view_state.order, TaskOrder::Project);
     assert!(app.overlay.is_none());
-    assert_eq!(toast_message(&app).as_deref(), Some("order project asc"));
+    assert_eq!(toast_message(&app), None);
 }
 
 #[tokio::test]

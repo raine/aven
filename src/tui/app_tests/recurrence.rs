@@ -920,6 +920,22 @@ async fn recurring_series_lifecycle_filter_reveals_stopped_series() {
 }
 
 #[tokio::test]
+async fn recurring_lifecycle_filter_change_does_not_notify() {
+    let mut app = test_app().await;
+    app.show_view(TaskView::Recurring).await.unwrap();
+
+    app.execute(Action::CycleRecurringLifecycleFilter)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        app.store.view_state.recurring.lifecycle,
+        RecurrenceSeriesLifecycleFilter::Active
+    );
+    assert_eq!(toast_message(&app), None);
+}
+
+#[tokio::test]
 async fn recurrence_pause_resume_journey_preserves_selection_and_occurrence() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
     let (_task_id, series_id) = add_stable_journey_series(&mut app, "Pause resume journey").await;

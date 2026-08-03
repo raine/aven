@@ -5,20 +5,6 @@ use crate::tui::conflict_flow::ConflictResolutionChoice;
 use crate::tui::event::Action;
 use crate::tui::store::TaskView;
 
-fn recurring_lifecycle_message(
-    lifecycle: crate::query::RecurrenceSeriesLifecycleFilter,
-) -> &'static str {
-    match lifecycle {
-        crate::query::RecurrenceSeriesLifecycleFilter::ActiveOrPaused => {
-            "Showing active and paused recurring tasks"
-        }
-        crate::query::RecurrenceSeriesLifecycleFilter::Active => "Showing active recurring tasks",
-        crate::query::RecurrenceSeriesLifecycleFilter::Paused => "Showing paused recurring tasks",
-        crate::query::RecurrenceSeriesLifecycleFilter::Stopped => "Showing stopped recurring tasks",
-        crate::query::RecurrenceSeriesLifecycleFilter::All => "Showing all recurring tasks",
-    }
-}
-
 impl App {
     pub(in crate::tui) async fn execute(&mut self, action: Action) -> Result<()> {
         if self.handle_recurring_series_task_action(&action).await? {
@@ -122,9 +108,6 @@ impl App {
                         .cycle_recurring_lifecycle(selected_id.as_ref())
                         .await?;
                     self.list.select_task(selected);
-                    self.set_info(recurring_lifecycle_message(
-                        self.store.view_state.recurring.lifecycle,
-                    ));
                 } else {
                     self.set_warning("recurring lifecycle filter is available in Recurring Tasks");
                 }
@@ -171,9 +154,8 @@ impl App {
             Action::ClearMarks => self.clear_marks(),
             Action::ToggleEpicExpanded => {
                 let index = self.list.selected_task();
-                if let Some(message) = self.store.toggle_selected_epic(index).await? {
-                    self.set_info(message.message);
-                    self.list.select_task(message.selected);
+                if let Some(result) = self.store.toggle_selected_epic(index).await? {
+                    self.list.select_task(result.selected);
                 } else {
                     self.set_warning("Select an epic in the Epics list");
                 }

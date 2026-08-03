@@ -101,12 +101,6 @@ impl App {
         }
         self.list.select_task(Some(next));
         self.list.focus_tasks();
-        let message = if delta > 0 {
-            "selected next conflict"
-        } else {
-            "selected previous conflict"
-        };
-        self.set_info(message);
     }
 
     pub(super) async fn begin_conflict_resolution(

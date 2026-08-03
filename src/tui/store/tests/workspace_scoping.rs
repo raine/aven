@@ -272,9 +272,8 @@ async fn switch_workspace_refreshes_workspace_scoped_state() {
     store.view_state.filter_modifiers.task_ids = vec![crate::test_support::task_id("task-1")];
     store.view_state.filter_modifiers.include_deleted = true;
 
-    let (message, selected) = store.switch_workspace(other.key.clone()).await.unwrap();
+    let selected = store.switch_workspace(other.key.clone()).await.unwrap();
 
-    assert_eq!(message, "switched workspace to client-work (Client Work)");
     assert!(selected.is_none());
     assert_eq!(store.active_workspace.key, "client-work");
     assert_eq!(store.view_state.scope, TaskScope::Workspace);
