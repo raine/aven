@@ -4,6 +4,8 @@ use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use std::process::Command;
 use std::process::Output;
+#[cfg(target_os = "macos")]
+use std::time::Duration;
 
 #[cfg(target_os = "macos")]
 use anyhow::Context;
@@ -17,6 +19,17 @@ use crate::config::AppConfig;
 const LABEL: &str = "com.raine.aven.daemon";
 #[cfg(target_os = "macos")]
 const DEFAULT_PATH: &str = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+#[cfg(target_os = "macos")]
+const BOOTOUT_POLL_INTERVAL: Duration = Duration::from_millis(100);
+#[cfg(target_os = "macos")]
+const BOOTOUT_POLL_LIMIT: usize = 300;
+#[cfg(target_os = "macos")]
+const BOOTSTRAP_RETRY_DELAYS: [Duration; 4] = [
+    Duration::from_millis(100),
+    Duration::from_millis(200),
+    Duration::from_millis(400),
+    Duration::from_millis(800),
+];
 
 pub struct ServiceInstallArgs {
     pub db_path: PathBuf,
@@ -41,7 +54,7 @@ pub struct ServiceStatus {
     pub program_matches_current: Option<bool>,
 }
 pub fn install(args: ServiceInstallArgs) -> Result<()> {
-    install_with_runner(args, &SystemRunner)
+    install_with_runner(args, &SystemRunner, &SystemSleeper)
 }
 
 pub fn uninstall() -> Result<()> {
@@ -53,7 +66,7 @@ pub fn restart() -> Result<()> {
 }
 
 pub fn repair(args: ServiceRepairArgs) -> Result<()> {
-    repair_with_runner(args, &SystemRunner)
+    repair_with_runner(args, &SystemRunner, &SystemSleeper)
 }
 
 pub fn status_snapshot() -> Result<ServiceStatus> {
@@ -65,7 +78,20 @@ trait LaunchctlRunner {
     fn run(&self, args: &[&str]) -> Result<Output>;
 }
 
+#[cfg(target_os = "macos")]
+trait Sleeper {
+    fn sleep(&self, duration: Duration);
+}
+
 struct SystemRunner;
+struct SystemSleeper;
+
+#[cfg(target_os = "macos")]
+impl Sleeper for SystemSleeper {
+    fn sleep(&self, duration: Duration) {
+        std::thread::sleep(duration);
+    }
+}
 
 #[cfg(target_os = "macos")]
 impl LaunchctlRunner for SystemRunner {
@@ -85,23 +111,26 @@ impl LaunchctlRunner for SystemRunner {
 }
 
 #[cfg(target_os = "macos")]
-fn install_with_runner(args: ServiceInstallArgs, runner: &impl LaunchctlRunner) -> Result<()> {
+fn install_with_runner(
+    args: ServiceInstallArgs,
+    runner: &impl LaunchctlRunner,
+    sleeper: &impl Sleeper,
+) -> Result<()> {
     validate_install_config(&args.config)?;
     let spec = ServiceSpec::from_install_args(args.db_path, args.program)?;
     let plist = render_plist(&spec);
-    if service_is_loaded(runner, &spec)? {
-        run_launchctl(runner, &["bootout", &spec.service_target])?;
-    }
-    write_plist(&spec, &plist)?;
-    run_launchctl(runner, &["enable", &spec.service_target])?;
-    run_launchctl(runner, &["bootstrap", &spec.domain, spec.plist_path_str()?])?;
+    reload_service(runner, sleeper, &spec, &plist)?;
     println!("installed {}", spec.plist_path.display());
     println!("logs {}", spec.log_dir.display());
     Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
-fn install_with_runner(args: ServiceInstallArgs, _runner: &impl LaunchctlRunner) -> Result<()> {
+fn install_with_runner(
+    args: ServiceInstallArgs,
+    _runner: &impl LaunchctlRunner,
+    _sleeper: &SystemSleeper,
+) -> Result<()> {
     let ServiceInstallArgs {
         db_path,
         config,
@@ -154,7 +183,11 @@ fn restart_with_runner(_runner: &impl LaunchctlRunner) -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-fn repair_with_runner(args: ServiceRepairArgs, runner: &impl LaunchctlRunner) -> Result<()> {
+fn repair_with_runner(
+    args: ServiceRepairArgs,
+    runner: &impl LaunchctlRunner,
+    sleeper: &impl Sleeper,
+) -> Result<()> {
     let spec = ServiceSpec::from_install_args(args.db_path, args.program)?;
     if !spec.plist_path.exists() {
         if args.if_installed {
@@ -168,13 +201,7 @@ fn repair_with_runner(args: ServiceRepairArgs, runner: &impl LaunchctlRunner) ->
     }
     validate_install_config(&args.config)?;
     let plist = render_plist(&spec);
-    let loaded = service_is_loaded(runner, &spec)?;
-    if loaded {
-        run_launchctl(runner, &["bootout", &spec.service_target])?;
-    }
-    write_plist(&spec, &plist)?;
-    run_launchctl(runner, &["enable", &spec.service_target])?;
-    run_launchctl(runner, &["bootstrap", &spec.domain, spec.plist_path_str()?])?;
+    reload_service(runner, sleeper, &spec, &plist)?;
     println!(
         "daemon repair installed=yes restarted=yes path={}",
         spec.executable.display()
@@ -183,7 +210,11 @@ fn repair_with_runner(args: ServiceRepairArgs, runner: &impl LaunchctlRunner) ->
 }
 
 #[cfg(not(target_os = "macos"))]
-fn repair_with_runner(args: ServiceRepairArgs, _runner: &impl LaunchctlRunner) -> Result<()> {
+fn repair_with_runner(
+    args: ServiceRepairArgs,
+    _runner: &impl LaunchctlRunner,
+    _sleeper: &SystemSleeper,
+) -> Result<()> {
     let ServiceRepairArgs {
         db_path,
         config,
@@ -378,9 +409,107 @@ fn unescape_xml(value: &str) -> String {
 }
 
 #[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ServicePresence {
+    Loaded,
+    Absent,
+}
+
+#[cfg(target_os = "macos")]
+fn service_presence(runner: &impl LaunchctlRunner, spec: &ServiceSpec) -> Result<ServicePresence> {
+    let args = ["print", spec.service_target.as_str()];
+    let output = runner.run(&args)?;
+    if output.status.success() {
+        return Ok(ServicePresence::Loaded);
+    }
+    if output.status.code() == Some(113) {
+        return Ok(ServicePresence::Absent);
+    }
+    Err(launchctl_failure(&args, &output))
+}
+
+#[cfg(target_os = "macos")]
 fn service_is_loaded(runner: &impl LaunchctlRunner, spec: &ServiceSpec) -> Result<bool> {
-    let output = runner.run(&["print", &spec.service_target])?;
-    Ok(output.status.success())
+    Ok(service_presence(runner, spec)? == ServicePresence::Loaded)
+}
+
+#[cfg(target_os = "macos")]
+fn reload_service(
+    runner: &impl LaunchctlRunner,
+    sleeper: &impl Sleeper,
+    spec: &ServiceSpec,
+    plist: &str,
+) -> Result<()> {
+    let performed_bootout = service_is_loaded(runner, spec)?;
+    if performed_bootout {
+        run_launchctl(runner, &["bootout", &spec.service_target])?;
+        wait_for_service_absence(runner, sleeper, spec)?;
+    }
+    write_plist(spec, plist)?;
+    run_launchctl(runner, &["enable", &spec.service_target])?;
+    bootstrap_service(runner, sleeper, spec, performed_bootout)
+}
+
+#[cfg(target_os = "macos")]
+fn wait_for_service_absence(
+    runner: &impl LaunchctlRunner,
+    sleeper: &impl Sleeper,
+    spec: &ServiceSpec,
+) -> Result<()> {
+    for poll in 0..=BOOTOUT_POLL_LIMIT {
+        if service_presence(runner, spec)? == ServicePresence::Absent {
+            return Ok(());
+        }
+        if poll == BOOTOUT_POLL_LIMIT {
+            break;
+        }
+        sleeper.sleep(BOOTOUT_POLL_INTERVAL);
+    }
+    bail!(
+        "error launchd-teardown-timeout target={} waited_ms={}",
+        spec.service_target,
+        BOOTOUT_POLL_INTERVAL.as_millis() * BOOTOUT_POLL_LIMIT as u128
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn bootstrap_service(
+    runner: &impl LaunchctlRunner,
+    sleeper: &impl Sleeper,
+    spec: &ServiceSpec,
+    performed_bootout: bool,
+) -> Result<()> {
+    let args = ["bootstrap", spec.domain.as_str(), spec.plist_path_str()?];
+    for retry in 0..=BOOTSTRAP_RETRY_DELAYS.len() {
+        let output = runner.run(&args)?;
+        if output.status.success() {
+            return Ok(());
+        }
+        if !performed_bootout || output.status.code() != Some(5) {
+            return Err(launchctl_failure(&args, &output));
+        }
+        if service_presence(runner, spec)? == ServicePresence::Loaded {
+            return Ok(());
+        }
+        let Some(delay) = BOOTSTRAP_RETRY_DELAYS.get(retry) else {
+            return Err(launchctl_failure(&args, &output));
+        };
+        sleeper.sleep(*delay);
+    }
+    unreachable!("bootstrap retry loop returns on every terminal state")
+}
+
+#[cfg(target_os = "macos")]
+fn launchctl_failure(args: &[&str], output: &Output) -> anyhow::Error {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    anyhow::anyhow!(
+        "error launchctl-failed command={} status={} stdout={} stderr={}",
+        args.join(" "),
+        output.status,
+        stdout.trim(),
+        stderr.trim()
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -389,15 +518,7 @@ fn run_launchctl(runner: &impl LaunchctlRunner, args: &[&str]) -> Result<()> {
     if output.status.success() {
         return Ok(());
     }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    bail!(
-        "error launchctl-failed command={} status={} stdout={} stderr={}",
-        args.join(" "),
-        output.status,
-        stdout.trim(),
-        stderr.trim()
-    )
+    Err(launchctl_failure(args, &output))
 }
 
 #[cfg(target_os = "macos")]
@@ -551,19 +672,13 @@ mod tests {
     }
 
     #[test]
-    fn install_uses_expected_launchctl_sequence_when_not_loaded() {
-        let runner = FakeRunner::new(vec![failure(), success(), success()]);
+    fn reload_bootstraps_an_absent_service_without_waiting() {
+        let runner = FakeRunner::new(vec![absent(), success(), success()]);
+        let sleeper = RecordingSleeper::default();
         let spec = test_spec();
-        write_plist(&spec, "old").unwrap();
-        let plist = render_plist(&spec);
-        assert!(!service_is_loaded(&runner, &spec).unwrap());
-        write_plist(&spec, &plist).unwrap();
-        run_launchctl(&runner, &["enable", &spec.service_target]).unwrap();
-        run_launchctl(
-            &runner,
-            &["bootstrap", &spec.domain, spec.plist_path_str().unwrap()],
-        )
-        .unwrap();
+
+        reload_service(&runner, &sleeper, &spec, &render_plist(&spec)).unwrap();
+
         assert_eq!(
             runner.commands(),
             vec![
@@ -571,6 +686,128 @@ mod tests {
                 vec!["enable", "gui/501/com.raine.aven.daemon"],
                 vec!["bootstrap", "gui/501", spec.plist_path_str().unwrap()],
             ]
+        );
+        assert!(sleeper.durations().is_empty());
+    }
+
+    #[test]
+    fn reload_waits_for_bootout_to_release_the_service() {
+        let runner = FakeRunner::new(vec![
+            success(),
+            success(),
+            success(),
+            absent(),
+            success(),
+            success(),
+        ]);
+        let sleeper = RecordingSleeper::default();
+        let spec = test_spec();
+
+        reload_service(&runner, &sleeper, &spec, &render_plist(&spec)).unwrap();
+
+        assert_eq!(
+            runner.commands(),
+            vec![
+                vec!["print", "gui/501/com.raine.aven.daemon"],
+                vec!["bootout", "gui/501/com.raine.aven.daemon"],
+                vec!["print", "gui/501/com.raine.aven.daemon"],
+                vec!["print", "gui/501/com.raine.aven.daemon"],
+                vec!["enable", "gui/501/com.raine.aven.daemon"],
+                vec!["bootstrap", "gui/501", spec.plist_path_str().unwrap()],
+            ]
+        );
+        assert_eq!(sleeper.durations(), vec![BOOTOUT_POLL_INTERVAL]);
+    }
+
+    #[test]
+    fn reload_retries_status_five_after_bootout() {
+        let runner = FakeRunner::new(vec![
+            success(),
+            success(),
+            absent(),
+            success(),
+            failure_with_status(5),
+            absent(),
+            success(),
+        ]);
+        let sleeper = RecordingSleeper::default();
+        let spec = test_spec();
+
+        reload_service(&runner, &sleeper, &spec, &render_plist(&spec)).unwrap();
+
+        assert_eq!(
+            runner
+                .commands()
+                .iter()
+                .filter(|args| args.first().map(String::as_str) == Some("bootstrap"))
+                .count(),
+            2
+        );
+        assert_eq!(sleeper.durations(), vec![BOOTSTRAP_RETRY_DELAYS[0]]);
+    }
+
+    #[test]
+    fn fresh_bootstrap_status_five_fails_without_retrying() {
+        let runner = FakeRunner::new(vec![absent(), success(), failure_with_status(5)]);
+        let sleeper = RecordingSleeper::default();
+        let spec = test_spec();
+
+        let error = reload_service(&runner, &sleeper, &spec, &render_plist(&spec)).unwrap_err();
+
+        assert!(error.to_string().contains("status=exit status: 5"));
+        assert_eq!(
+            runner
+                .commands()
+                .iter()
+                .filter(|args| args.first().map(String::as_str) == Some("bootstrap"))
+                .count(),
+            1
+        );
+        assert!(sleeper.durations().is_empty());
+    }
+
+    #[test]
+    fn reload_bounds_the_bootout_wait() {
+        let mut outputs = vec![success(), success()];
+        outputs.extend(std::iter::repeat_with(success).take(BOOTOUT_POLL_LIMIT + 1));
+        let runner = FakeRunner::new(outputs);
+        let sleeper = RecordingSleeper::default();
+        let spec = test_spec();
+
+        let error = reload_service(&runner, &sleeper, &spec, &render_plist(&spec)).unwrap_err();
+
+        assert!(error.to_string().contains("launchd-teardown-timeout"));
+        assert_eq!(sleeper.durations().len(), BOOTOUT_POLL_LIMIT);
+        assert!(
+            runner
+                .commands()
+                .iter()
+                .all(|args| args.first().map(String::as_str) != Some("bootstrap"))
+        );
+    }
+
+    #[test]
+    fn reload_bounds_status_five_retries() {
+        let mut outputs = vec![success(), success(), absent(), success()];
+        for _ in 0..=BOOTSTRAP_RETRY_DELAYS.len() {
+            outputs.push(failure_with_status(5));
+            outputs.push(absent());
+        }
+        let runner = FakeRunner::new(outputs);
+        let sleeper = RecordingSleeper::default();
+        let spec = test_spec();
+
+        let error = reload_service(&runner, &sleeper, &spec, &render_plist(&spec)).unwrap_err();
+
+        assert!(error.to_string().contains("status=exit status: 5"));
+        assert_eq!(sleeper.durations(), BOOTSTRAP_RETRY_DELAYS);
+        assert_eq!(
+            runner
+                .commands()
+                .iter()
+                .filter(|args| args.first().map(String::as_str) == Some("bootstrap"))
+                .count(),
+            BOOTSTRAP_RETRY_DELAYS.len() + 1
         );
     }
 
@@ -641,6 +878,23 @@ mod tests {
         commands: Mutex<Vec<Vec<String>>>,
     }
 
+    #[derive(Default)]
+    struct RecordingSleeper {
+        durations: Mutex<Vec<Duration>>,
+    }
+
+    impl RecordingSleeper {
+        fn durations(&self) -> Vec<Duration> {
+            self.durations.lock().unwrap().clone()
+        }
+    }
+
+    impl Sleeper for RecordingSleeper {
+        fn sleep(&self, duration: Duration) {
+            self.durations.lock().unwrap().push(duration);
+        }
+    }
+
     impl FakeRunner {
         fn new(mut outputs: Vec<Output>) -> Self {
             outputs.reverse();
@@ -673,11 +927,15 @@ mod tests {
         }
     }
 
-    fn failure() -> Output {
+    fn absent() -> Output {
+        failure_with_status(113)
+    }
+
+    fn failure_with_status(status: i32) -> Output {
         Output {
-            status: ExitStatus::from_raw(1 << 8),
+            status: ExitStatus::from_raw(status << 8),
             stdout: Vec::new(),
-            stderr: b"not loaded".to_vec(),
+            stderr: b"launchctl failure".to_vec(),
         }
     }
 }
