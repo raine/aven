@@ -96,15 +96,24 @@ fn right_edge_title(title: Option<Line<'_>>) -> Line<'_> {
 }
 
 pub(super) fn dim_rendered_background(frame: &mut Frame) {
-    for cell in &mut frame.buffer_mut().content {
-        if cell
-            .symbol()
-            .chars()
-            .any(|character| !character.is_whitespace())
-        {
-            cell.modifier.insert(Modifier::DIM);
+    let area = frame.area();
+    dim_rendered_area(frame, area);
+}
+
+pub(super) fn dim_rendered_area(frame: &mut Frame, area: Rect) {
+    let buffer = frame.buffer_mut();
+    for row in area.top()..area.bottom() {
+        for column in area.left()..area.right() {
+            let cell = &mut buffer[(column, row)];
+            if cell
+                .symbol()
+                .chars()
+                .any(|character| !character.is_whitespace())
+            {
+                cell.modifier.insert(Modifier::DIM);
+            }
+            cell.bg = dim_background_color(cell.bg);
         }
-        cell.bg = dim_background_color(cell.bg);
     }
 }
 

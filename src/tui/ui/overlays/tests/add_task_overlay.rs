@@ -206,6 +206,32 @@ fn nested_schedule_editor_dims_only_its_underlay() {
 }
 
 #[test]
+fn nested_schedule_editor_leaves_the_outer_surface_unchanged() {
+    let background = ratatui::style::Color::Rgb(100, 80, 60);
+    let overlay = add_task_overlay(AddTaskView {
+        mode: Box::new(AddTaskMode::Schedule(schedule_editor(
+            ScheduleEditorMode::Repeat,
+        ))),
+        ..add_task_view()
+    });
+    let backend = TestBackend::new(100, 30);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    terminal
+        .draw(|frame| {
+            let area = frame.area();
+            frame.render_widget(
+                ratatui::widgets::Block::new().style(ratatui::style::Style::new().bg(background)),
+                area,
+            );
+            render_non_help_overlay_content(frame, &overlay);
+        })
+        .unwrap();
+
+    assert_eq!(terminal.backend().buffer()[(0, 0)].bg, background);
+}
+
+#[test]
 fn schedule_editor_keeps_the_composer_compact() {
     let default = overlay_buffer(add_task_overlay(add_task_view()));
     let configured = overlay_buffer(add_task_overlay(AddTaskView {

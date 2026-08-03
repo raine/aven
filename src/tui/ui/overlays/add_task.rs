@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Paragraph, Wrap};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::super::dialog::{Dialog, dialog_hint_line, dim_rendered_background};
+use super::super::dialog::{Dialog, dialog_hint_line, dim_rendered_area};
 use super::super::input::{clipped_input_line, cursor_cell};
 use super::super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use super::super::truncate::truncate_chars;
@@ -178,8 +178,9 @@ pub(in crate::tui::ui) fn render_add_task(frame: &mut Frame, state: &AddTaskView
         "Add task"
     };
     let dialog = Dialog::new(title, 100, height);
-    let content = dialog.render_block(frame);
-    render_add_task_body(frame, state, content);
+    let area = dialog.area(frame);
+    let content = dialog.render_block_at(frame, area);
+    render_add_task_body(frame, state, content, area);
 }
 
 pub(in crate::tui::ui) fn render_add_task_full_frame(frame: &mut Frame, state: &AddTaskView) {
@@ -190,10 +191,10 @@ pub(in crate::tui::ui) fn render_add_task_full_frame(frame: &mut Frame, state: &
         "Add task"
     };
     let content = Dialog::new(title, area.width, area.height).render_block_at(frame, area);
-    render_add_task_body(frame, state, content);
+    render_add_task_body(frame, state, content, area);
 }
 
-fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
+fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect, dialog_area: Rect) {
     let mut lines = add_task_metadata_lines(state, content.width);
     if state.schedule_error.is_some() && state.schedule_validation_requested {
         lines.push(fit_line_to_width(
@@ -241,7 +242,7 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
                 .style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT)),
             content,
         );
-        render_add_task_child(frame, state, content);
+        render_add_task_child(frame, state, content, dialog_area);
         return;
     }
     if state.attachments.items.is_empty() {
@@ -292,7 +293,7 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
         Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT)),
         content,
     );
-    render_add_task_child(frame, state, content);
+    render_add_task_child(frame, state, content, dialog_area);
 }
 
 fn indent_add_task_input(line: Line<'static>) -> Line<'static> {
@@ -788,11 +789,11 @@ fn schedule_editor_input_line(
     Line::from(spans)
 }
 
-fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) {
+fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect, dialog_area: Rect) {
     if matches!(state.mode.as_ref(), AddTaskMode::Compose) {
         return;
     }
-    dim_rendered_background(frame);
+    dim_rendered_area(frame, dialog_area);
 
     if matches!(state.mode.as_ref(), AddTaskMode::ConfirmDiscard) {
         render_confirm(
