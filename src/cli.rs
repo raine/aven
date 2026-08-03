@@ -6,9 +6,10 @@ use std::path::PathBuf;
 use clap::builder::styling::{AnsiColor, Effects, Style, Styles};
 use clap::{ArgGroup, Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
-const HEADING_STYLE: Style = AnsiColor::Blue.on_default().effects(Effects::BOLD);
-const LITERAL_STYLE: Style = AnsiColor::Magenta.on_default();
-const PLACEHOLDER_STYLE: Style = Style::new();
+const ACCENT_STYLE: Style = AnsiColor::Magenta.on_default();
+const HEADING_STYLE: Style = AnsiColor::Magenta.on_default().effects(Effects::BOLD);
+const LITERAL_STYLE: Style = Style::new();
+const PLACEHOLDER_STYLE: Style = Style::new().effects(Effects::DIMMED);
 const DESCRIPTION_STYLE: Style = Style::new();
 
 const STYLES: Styles = Styles::styled()
@@ -93,7 +94,7 @@ fn render_top_level_help(command: &clap::Command) -> String {
     writeln!(
         &mut help,
         "{} aven {} {}",
-        paint("USAGE:", HEADING_STYLE),
+        paint_heading("USAGE:"),
         paint("[OPTIONS]", LITERAL_STYLE),
         paint("<COMMAND>", PLACEHOLDER_STYLE)
     )
@@ -110,7 +111,7 @@ fn render_top_level_help(command: &clap::Command) -> String {
 }
 
 fn render_section(help: &mut String, command: &clap::Command, section: &HelpSection) {
-    writeln!(help, "{}", paint(section.heading, HEADING_STYLE)).unwrap();
+    writeln!(help, "{}", paint_heading(section.heading)).unwrap();
     for name in section.commands {
         let about = command_about(command, name).unwrap_or_default();
         render_row(help, name, &paint(name, LITERAL_STYLE), &about, 13);
@@ -119,7 +120,7 @@ fn render_section(help: &mut String, command: &clap::Command, section: &HelpSect
 }
 
 fn render_help_section(help: &mut String) {
-    writeln!(help, "{}", paint("HELP", HEADING_STYLE)).unwrap();
+    writeln!(help, "{}", paint_heading("HELP")).unwrap();
     render_row(
         help,
         "help",
@@ -131,7 +132,7 @@ fn render_help_section(help: &mut String) {
 }
 
 fn render_options_section(help: &mut String) {
-    writeln!(help, "{}", paint("OPTIONS", HEADING_STYLE)).unwrap();
+    writeln!(help, "{}", paint_heading("OPTIONS")).unwrap();
     render_row(
         help,
         "--db <DB>",
@@ -198,6 +199,14 @@ fn render_row(
         help.push(' ');
     }
     writeln!(help, "{}", paint(description, DESCRIPTION_STYLE)).unwrap();
+}
+
+fn paint_heading(text: &str) -> String {
+    format!(
+        "{} {}",
+        paint("›", ACCENT_STYLE),
+        paint(text, HEADING_STYLE)
+    )
 }
 
 fn paint(text: &str, style: Style) -> String {
