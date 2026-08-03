@@ -556,7 +556,7 @@ fn build_task_list_render_model(
             TaskListRow::Task { task_index } => {
                 let Some(item) = store.tasks.get(*task_index) else {
                     rows.push(TaskListRenderRow::Task(TaskListTaskRow {
-                        style: row_style(false, focus == Focus::Tasks, false, false),
+                        style: row_style(false, focus == Focus::Tasks, false, false, false),
                         cells: blank_task_row_cells(),
                     }));
                     continue;
@@ -564,7 +564,13 @@ fn build_task_list_render_model(
                 let selected = selected_task == Some(*task_index);
                 let marked = marked_task_ids.contains(&item.task.id);
                 let related = epic_selection.highlights_parent(item);
-                let style = row_style(selected, focus == Focus::Tasks, marked, related);
+                let style = row_style(
+                    selected,
+                    focus == Focus::Tasks,
+                    marked,
+                    related,
+                    item.unresolved_blocker_count > 0,
+                );
                 let cells = if projection.view.render_mode == TaskListRenderMode::Epics
                     && item.task.is_epic
                 {
@@ -600,7 +606,7 @@ fn build_task_list_render_model(
             } => {
                 let Some(item) = store.tasks.get(*task_index) else {
                     rows.push(TaskListRenderRow::Task(TaskListTaskRow {
-                        style: row_style(false, focus == Focus::Tasks, false, false),
+                        style: row_style(false, focus == Focus::Tasks, false, false, false),
                         cells: blank_task_row_cells(),
                     }));
                     continue;
@@ -608,7 +614,13 @@ fn build_task_list_render_model(
                 let selected = selected_task == Some(*task_index);
                 let marked = marked_task_ids.contains(&item.task.id);
                 rows.push(TaskListRenderRow::Task(TaskListTaskRow {
-                    style: row_style(selected, focus == Focus::Tasks, marked, false),
+                    style: row_style(
+                        selected,
+                        focus == Focus::Tasks,
+                        marked,
+                        false,
+                        item.unresolved_blocker_count > 0,
+                    ),
                     cells: build_epic_child_row_cells(
                         item,
                         *last,
@@ -899,8 +911,8 @@ fn render_group_row(frame: &mut Frame, label: &str, count: usize, area: Rect) {
     );
 }
 
-fn row_style(selected: bool, focused: bool, marked: bool, related: bool) -> Style {
-    if selected {
+fn row_style(selected: bool, focused: bool, marked: bool, related: bool, blocked: bool) -> Style {
+    let style = if selected {
         if focused { SELECTED } else { SELECTED_INACTIVE }
     } else if related {
         RELATED
@@ -908,6 +920,11 @@ fn row_style(selected: bool, focused: bool, marked: bool, related: bool) -> Styl
         Style::new().bg(BG_ALT)
     } else {
         Style::new().bg(BG)
+    };
+    if blocked && !selected {
+        style.add_modifier(Modifier::DIM)
+    } else {
+        style
     }
 }
 
@@ -1613,7 +1630,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 let column_widths = task_list_column_widths(&columns, frame.area().width);
-                let style = row_style(true, true, false, false);
+                let style = row_style(true, true, false, false, false);
                 let cells = build_task_row_cells(
                     item,
                     TaskTimeContext {
@@ -2320,8 +2337,16 @@ mod tests {
         assert_eq!(line.to_string(), EPIC_MARKER);
         assert_eq!(line.spans[0].style.fg, Some(ACCENT));
         assert!(line.spans[0].style.sub_modifier.contains(Modifier::BOLD));
-        assert_eq!(row_style(false, true, false, true), RELATED);
-        assert_eq!(row_style(true, true, false, true), SELECTED);
+        assert_eq!(row_style(false, true, false, true, false), RELATED);
+        assert_eq!(row_style(true, true, false, true, false), SELECTED);
+    }
+
+    #[test]
+    fn blocked_rows_are_dimmed_unless_selected() {
+        let blocked = row_style(false, true, false, false, true);
+        assert!(blocked.add_modifier.contains(Modifier::DIM));
+
+        assert_eq!(row_style(true, true, false, false, true), SELECTED);
     }
 
     #[test]

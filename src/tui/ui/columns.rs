@@ -154,6 +154,19 @@ impl ColumnLayout {
     }
 }
 
+fn task_card_style(
+    item: &crate::query::TaskListItem,
+    selected: bool,
+    background: ratatui::style::Color,
+) -> Style {
+    let style = Style::new().bg(background);
+    if !selected && (item.task.status.is_terminal() || item.unresolved_blocker_count > 0) {
+        style.add_modifier(Modifier::DIM)
+    } else {
+        style
+    }
+}
+
 pub(super) fn render_columns(
     frame: &mut Frame,
     store: &TuiStore,
@@ -215,10 +228,7 @@ pub(super) fn render_columns(
             } else {
                 BG_ALT
             };
-            let mut style = Style::new().bg(card_bg);
-            if item.task.status.is_terminal() && !selected {
-                style = style.add_modifier(Modifier::DIM);
-            }
+            let style = task_card_style(item, selected, card_bg);
             let card = Rect::new(
                 lane.cards.x,
                 lane.cards.y + visible_row as u16 * CARD_HEIGHT,
@@ -660,6 +670,20 @@ mod tests {
             " × canceled"
         );
         assert_eq!(canceled[1].style.fg, theme::status_style("canceled").fg);
+    }
+
+    #[test]
+    fn blocked_cards_are_dimmed_unless_selected() {
+        let mut task = item(0);
+        task.unresolved_blocker_count = 1;
+
+        let blocked = task_card_style(&task, false, BG_ALT);
+        assert!(blocked.add_modifier.contains(Modifier::DIM));
+        assert!(
+            !task_card_style(&task, true, SELECTED_BG)
+                .add_modifier
+                .contains(Modifier::DIM)
+        );
     }
 
     #[test]
