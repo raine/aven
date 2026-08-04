@@ -592,6 +592,9 @@ impl App {
             ConfirmIntent::PromoteTaskForChild { epic } => {
                 self.open_add_epic_child_search(epic);
             }
+            ConfirmIntent::CreateTaskGist { task_id } => {
+                self.submit_create_task_gist(task_id).await;
+            }
             ConfirmIntent::ClearAvailability { selection } => {
                 self.submit_clear_availability(selection).await?;
             }

@@ -2,8 +2,8 @@ use anyhow::Result;
 use crossterm::event::MouseEvent;
 use ratatui::layout::{Rect, Size};
 
-use crate::tui::app::{App, DetailSection, DetailTargetId};
-use crate::tui::overlay::{OverlayView, TextInputKind};
+use crate::tui::app::{App, DetailSection, DetailTargetId, Notification};
+use crate::tui::overlay::{ConfirmIntent, OverlayState, OverlayView, TextInputKind};
 use crate::tui::ui::{
     DetailRenderContext, attachment_is_locally_previewable, detail_selected_text,
 };
@@ -96,6 +96,83 @@ impl App {
         if let Some(detail) = self.detail.state_mut() {
             detail.update_text_selection(&item.task.id, terminal_size.width, cell);
         }
+    }
+
+    pub(super) async fn copy_selected_task_markdown(&mut self) -> Result<()> {
+        let Some(task_id) = self
+            .selected_command_task()
+            .map(|item| item.task.id.clone())
+        else {
+            self.set_info("no selected task to copy");
+            return Ok(());
+        };
+        let Some(report) = self.store.task_full_report(&task_id).await? else {
+            self.set_warning("task is unavailable");
+            return Ok(());
+        };
+        match crate::tui::platform::copy_to_clipboard(&crate::task_render::task_markdown(&report)) {
+            Ok(()) => self.set_success("copied task markdown"),
+            Err(error) => self.set_error(format!("copy failed: {error}")),
+        }
+        Ok(())
+    }
+
+    pub(super) fn begin_create_task_gist(&mut self) {
+        let Some(item) = self.store.selected_task(self.list.selected_task()) else {
+            self.set_info("no selected task to share");
+            return;
+        };
+        self.overlay = Some(OverlayState::confirm(
+            ConfirmIntent::CreateTaskGist {
+                task_id: item.task.id.clone(),
+            },
+            "Create GitHub gist",
+            "Publish this task as a secret GitHub gist? Anyone with the URL can view it.",
+        ));
+    }
+
+    pub(super) async fn submit_create_task_gist(&mut self, task_id: crate::ids::TaskId) {
+        let report = match self.store.task_full_report(&task_id).await {
+            Ok(Some(report)) => report,
+            Ok(None) => {
+                self.set_warning("task is unavailable");
+                return;
+            }
+            Err(error) => {
+                self.set_error(format!("could not prepare gist: {error:#}"));
+                return;
+            }
+        };
+        let markdown = crate::task_render::task_markdown(&report);
+        let filename = crate::task_render::gist_filename(&report);
+        let description = crate::task_render::gist_description(&report);
+        if self.gist.start(markdown, filename, description) {
+            self.notification = Some(Notification::loading("creating secret gist"));
+        } else {
+            self.set_info("gist creation already in progress");
+        }
+    }
+
+    pub(super) async fn poll_gist_creation(&mut self) -> bool {
+        let Some(result) = self.gist.poll().await else {
+            return false;
+        };
+        if matches!(
+            self.notification,
+            Some(Notification::Loading { ref message, .. }) if message == "creating secret gist"
+        ) {
+            self.notification = None;
+        }
+        match result {
+            Ok(url) => match crate::tui::platform::copy_to_clipboard(&url) {
+                Ok(()) => self.set_success("created secret gist and copied its URL"),
+                Err(error) => self.set_warning(format!(
+                    "created secret gist at {url}; copy failed: {error}"
+                )),
+            },
+            Err(error) => self.set_error(format!("gist creation failed: {error:#}")),
+        }
+        true
     }
 
     pub(super) fn copy_detail_text_selection(&mut self) {

@@ -59,6 +59,8 @@ impl App {
             Action::CopyTaskDescription => self.copy_selected_task_text(TaskCopyKind::Description),
             Action::CopyTaskText => self.copy_selected_task_text(TaskCopyKind::TitleAndDescription),
             Action::CopyTaskNotes => self.copy_selected_task_notes(),
+            Action::CopyTaskMarkdown => self.copy_selected_task_markdown().await?,
+            Action::BeginCreateTaskGist => self.begin_create_task_gist(),
             Action::BeginEditTitle => self.begin_edit_title(),
             Action::BeginEditDescription => self.begin_edit_description(),
             Action::BeginEditProject => self.begin_edit_project(),

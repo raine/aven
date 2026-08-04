@@ -17,8 +17,8 @@ use crate::query::{
 use crate::refs::DisplayRefContext;
 use crate::render::{KvLine, changed_text, print_json_pretty, quote};
 use crate::task_render::{
-    TaskConflictReport, TaskFullReport, TaskLineJson, attachment_metadata_json,
-    print_full_task_report, print_task_line_item, task_full_json, task_line_json_item,
+    TaskLineJson, build_full_task_report, print_full_task_report, print_task_line_item,
+    task_full_json, task_line_json_item,
 };
 use crate::types::Task;
 use crate::workspaces::Workspace;
@@ -330,40 +330,6 @@ fn due_on_display(due_on: Option<&str>) -> String {
         .unwrap_or_default()
 }
 
-async fn build_full_task_report(
-    database: &Database,
-    detail: query::TaskDetail,
-) -> Result<TaskFullReport> {
-    let task = &detail.item.task;
-    let mut conflicts = Vec::with_capacity(detail.conflicts.len());
-    for conflict in &detail.conflicts {
-        let local_value = database
-            .conflict_display_value(&task.workspace_id, &conflict.field, &conflict.local_value)
-            .await?;
-        let remote_value = database
-            .conflict_display_value(&task.workspace_id, &conflict.field, &conflict.remote_value)
-            .await?;
-        conflicts.push(TaskConflictReport {
-            field: conflict.field.clone(),
-            variant_a: conflict.variant_a.clone(),
-            local_value,
-            variant_b: conflict.variant_b.clone(),
-            remote_value,
-        });
-    }
-    let attachments = database
-        .attachment_read_items_by_task(&task.workspace_id, &task.id, true)
-        .await?
-        .into_iter()
-        .map(attachment_metadata_json)
-        .collect();
-    Ok(TaskFullReport {
-        detail,
-        conflicts,
-        attachments,
-    })
-}
-
 pub(crate) async fn cmd_show(
     database: &Database,
     workspace: &Workspace,
@@ -372,7 +338,7 @@ pub(crate) async fn cmd_show(
     let task = database.resolve_task_ref(workspace, &args.task_ref).await?;
     if args.full {
         let detail = database.task_detail(&task).await?;
-        let report = build_full_task_report(database, detail).await?;
+        let report = build_full_task_report(database, workspace, detail).await?;
         if args.json {
             print_json_pretty(&task_full_json(&report))?;
         } else {

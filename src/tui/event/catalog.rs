@@ -1257,6 +1257,29 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::CopyTaskNotes,
     ),
+    CommandSpec::implemented_in_detail(
+        "copy-markdown",
+        "copy selected task as Markdown",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('y'), KeyCode::Char('m')],
+            label: "y m",
+        }],
+        Action::CopyTaskMarkdown,
+    ),
+    CommandSpec::implemented_with_detail_bindings(
+        "create-gist",
+        &["gist"],
+        "create a secret GitHub gist from this task",
+        "Tasks",
+        &[],
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('g')],
+            label: "t g",
+        }],
+        DetailFocusPolicy::ParentTask,
+        Action::BeginCreateTaskGist,
+    ),
     // Priority
     CommandSpec::implemented_in_detail(
         "priority-none",

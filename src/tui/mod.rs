@@ -32,6 +32,7 @@ mod conflict_flow;
 mod detail_selection;
 mod detail_session;
 mod event;
+mod gist_controller;
 mod inline_image_surface;
 mod inline_images;
 mod input;

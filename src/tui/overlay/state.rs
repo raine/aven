@@ -686,6 +686,9 @@ pub(crate) enum ConfirmIntent {
     PromoteTaskForChild {
         epic: EpicContext,
     },
+    CreateTaskGist {
+        task_id: crate::ids::TaskId,
+    },
     ClearAvailability {
         selection: TaskSelection,
     },

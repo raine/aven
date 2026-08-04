@@ -1,6 +1,50 @@
 use super::*;
 
 #[tokio::test]
+async fn task_gist_shortcut_requires_publication_confirmation() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Share detail")).await;
+    let task_id = app.store.tasks[app.list.selected_task().unwrap()]
+        .task
+        .id
+        .clone();
+    app.show_detail(0);
+
+    app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+        .await
+        .unwrap();
+    app.dispatch_key(key(KeyCode::Char('g')), (80, 24).into())
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::Confirm(ConfirmState {
+            intent: ConfirmIntent::CreateTaskGist { task_id: ref confirmed },
+            ..
+        })) if confirmed == &task_id
+    ));
+}
+
+#[tokio::test]
+async fn gist_creation_failure_replaces_loading_notification() {
+    let mut app = test_app().await;
+    app.notification = Some(Notification::loading("creating secret gist"));
+    app.gist.set_test_task(tokio::spawn(async {
+        Err(anyhow::anyhow!("GitHub is unavailable"))
+    }));
+    tokio::task::yield_now().await;
+
+    assert!(app.poll_gist_creation().await);
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("gist creation failed: GitHub is unavailable")
+    );
+    assert_eq!(toast_severity(&app), Some(ToastSeverity::Error));
+    assert!(!app.gist.work_pending());
+}
+
+#[tokio::test]
 async fn q_closes_detail_overlay() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("Detail target")).await;

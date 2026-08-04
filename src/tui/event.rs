@@ -57,6 +57,8 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::CopyTaskDescription
             | Action::CopyTaskText
             | Action::CopyTaskNotes
+            | Action::CopyTaskMarkdown
+            | Action::BeginCreateTaskGist
             | Action::BeginEditTitle
             | Action::BeginEditDescription
             | Action::BeginEditProject
@@ -510,6 +512,25 @@ mod tests {
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('p')]),
             ShortcutLookup::Found(Action::ShowView(TaskView::Upcoming))
+        );
+    }
+
+    #[test]
+    fn resolves_task_sharing_shortcuts() {
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('y'), KeyCode::Char('m')]),
+            ShortcutLookup::Found(Action::CopyTaskMarkdown)
+        );
+        assert_eq!(
+            resolve_shortcut_for(
+                CommandContext::Detail,
+                &[KeyCode::Char('t'), KeyCode::Char('g')],
+            ),
+            ShortcutLookup::Found(Action::BeginCreateTaskGist)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('g')]),
+            ShortcutLookup::Missing
         );
     }
 

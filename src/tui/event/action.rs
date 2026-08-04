@@ -54,6 +54,8 @@ pub(crate) enum Action {
     CopyTaskDescription,
     CopyTaskText,
     CopyTaskNotes,
+    CopyTaskMarkdown,
+    BeginCreateTaskGist,
     BeginEditTitle,
     BeginEditDescription,
     BeginEditProject,

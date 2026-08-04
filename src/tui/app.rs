@@ -6,6 +6,7 @@ use aven_core::db::Database;
 use crate::config::AppConfig;
 use crate::tui::app_intake::IntakeController;
 use crate::tui::authoring::AuthoringState;
+use crate::tui::gist_controller::GistController;
 use crate::tui::inline_image_surface::InlineImageSurface;
 use crate::tui::inline_images::{InlineImageBackend, active_backend_from_env};
 use crate::tui::list_surface::ListSurface;
@@ -188,6 +189,7 @@ pub(crate) struct App {
     pub(super) search: crate::tui::app_search::SearchController,
     pub(super) update: crate::tui::app_update::UpdateController,
     pub(super) sync: SyncController,
+    pub(super) gist: GistController,
     pub(super) changelog: crate::tui::changelog::ChangelogController,
     pub(super) next_refresh_at: Instant,
     pub(crate) last_series_click: Option<SeriesRowClick>,
@@ -254,6 +256,7 @@ impl App {
             search: crate::tui::app_search::SearchController::new(),
             update: crate::tui::app_update::UpdateController::new(config.update.automatic_checks),
             sync: SyncController::new(),
+            gist: GistController::new(),
             changelog: crate::tui::changelog::ChangelogController::new(),
             next_refresh_at,
             last_series_click: None,
