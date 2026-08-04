@@ -20,7 +20,7 @@ use crate::tui::app::Focus;
 use crate::tui::list_surface::ListSurface;
 use crate::tui::markdown::render_markdown_preview;
 use crate::tui::overlay::TextInputView;
-use crate::tui::store::{ClosedTaskVisibility, TaskListRenderMode, TaskView, TuiStore};
+use crate::tui::store::{TaskListRenderMode, TuiStore};
 use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, FG_MUTED, INVERSE_FG, RED, RELATED, SELECTED,
     SELECTED_INACTIVE, YELLOW,
@@ -29,7 +29,7 @@ use crate::tui::widgets::{
     age_style, label_cell, priority_icon, priority_short, status_chip, status_span, title_cell,
 };
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
@@ -100,14 +100,6 @@ struct TaskListTaskRow {
 struct TaskListAreas {
     table_area: Rect,
     preview_area: Rect,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct EmptyTaskPrompt {
-    title: &'static str,
-    detail: &'static str,
-    key: &'static str,
-    action: &'static str,
 }
 
 fn task_list_areas(area: Rect) -> TaskListAreas {
@@ -214,7 +206,14 @@ pub(super) fn render_tasks(
     let TaskListAreas {
         table_area,
         preview_area,
-    } = task_list_areas(area);
+    } = if store.tasks.is_empty() {
+        TaskListAreas {
+            table_area: area,
+            preview_area: Rect::default(),
+        }
+    } else {
+        task_list_areas(area)
+    };
     let marked_task_ids = list.marked_task_ids().clone();
     render_task_list(
         frame,
@@ -225,7 +224,7 @@ pub(super) fn render_tasks(
         inline_title_editor,
         &marked_task_ids,
     );
-    if preview_area.height > 0 {
+    if !store.tasks.is_empty() && preview_area.height > 0 {
         render_task_preview(frame, store, list.selected_task(), preview_area);
     }
 }
@@ -262,7 +261,17 @@ fn render_task_list(
     );
 
     if store.tasks.is_empty() {
-        render_empty_task_list(frame, store, area);
+        let body = Rect::new(
+            area.x,
+            area.y.saturating_add(1),
+            area.width,
+            area.height.saturating_sub(1),
+        );
+        super::empty_state::render_empty_state(
+            frame,
+            body,
+            crate::tui::ui::empty_state::task_empty_state(store),
+        );
         return;
     }
 
@@ -288,222 +297,6 @@ fn render_task_list(
         model.top_scroll,
         area,
     );
-}
-
-fn render_empty_task_list(frame: &mut Frame, store: &TuiStore, area: Rect) {
-    let body = Rect::new(
-        area.x,
-        area.y.saturating_add(1),
-        area.width,
-        area.height.saturating_sub(1),
-    );
-    if body.width == 0 || body.height == 0 {
-        return;
-    }
-
-    let prompt = empty_task_prompt(store);
-    let compact_action = match prompt.key {
-        "a" => "add task",
-        "f c" => "clear filters",
-        "/" => "search",
-        "v q" => "view queue",
-        _ => prompt.action,
-    };
-    let action = if body.width < 28 {
-        compact_action
-    } else {
-        prompt.action
-    };
-    let action_line = Line::from(vec![
-        Span::styled(
-            format!(" {} ", prompt.key),
-            Style::new().fg(FG).bg(BG_ALT).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(format!(" {action}"), Style::new().fg(FG_MUTED)),
-    ]);
-
-    if body.height == 1 {
-        frame.render_widget(
-            Paragraph::new(action_line)
-                .alignment(Alignment::Center)
-                .style(Style::new().bg(BG)),
-            body,
-        );
-        return;
-    }
-
-    let title_line = Line::from(vec![
-        Span::styled(" ◆  ", Style::new().fg(ACCENT)),
-        Span::styled(
-            prompt.title,
-            Style::new().fg(FG).add_modifier(Modifier::BOLD),
-        ),
-    ]);
-    let mut lines = vec![title_line];
-    if body.height >= 3 {
-        lines.push(Line::from(Span::styled(
-            format!("    {}", prompt.detail),
-            Style::new().fg(FG_DIM),
-        )));
-    }
-    if body.height >= 5 {
-        lines.push(Line::from(""));
-    }
-    lines.push(action_line);
-
-    let content_height = lines.len() as u16;
-    let desired_width = [
-        prompt.title.chars().count() + 4,
-        prompt.detail.chars().count() + 4,
-        prompt.key.chars().count() + action.chars().count() + 3,
-    ]
-    .into_iter()
-    .max()
-    .unwrap_or(1)
-    .min(56) as u16;
-    let content = Rect::new(
-        body.x
-            .saturating_add(body.width.saturating_sub(desired_width) / 2),
-        body.y
-            .saturating_add(body.height.saturating_sub(content_height) / 2),
-        body.width.min(desired_width),
-        content_height,
-    );
-    frame.render_widget(
-        Paragraph::new(Text::from(lines)).style(Style::new().bg(BG)),
-        content,
-    );
-}
-
-fn empty_task_prompt(store: &TuiStore) -> EmptyTaskPrompt {
-    if store.view_state.view == TaskView::Search {
-        return EmptyTaskPrompt {
-            title: "No search results",
-            detail: "Try another title, note, or task ID.",
-            key: "/",
-            action: "Search again",
-        };
-    }
-
-    let modifiers = &store.view_state.filter_modifiers;
-    let has_other_filters = modifiers.label.is_some()
-        || modifiers.priority.is_some()
-        || modifiers.include_deleted
-        || modifiers.deleted_only
-        || modifiers.search.is_some();
-    if store.view_state.view == TaskView::Epics && !has_other_filters {
-        match modifiers.closed {
-            ClosedTaskVisibility::Included => {
-                return EmptyTaskPrompt {
-                    title: "No epics",
-                    detail: "There are no open or closed epics in this scope.",
-                    key: "f c",
-                    action: "Reset filters",
-                };
-            }
-            ClosedTaskVisibility::Only => {
-                return EmptyTaskPrompt {
-                    title: "No closed epics",
-                    detail: "Finished and canceled epics will collect here.",
-                    key: "f d",
-                    action: "Show open epics",
-                };
-            }
-            ClosedTaskVisibility::Default => {}
-        }
-    }
-    if has_other_filters || modifiers.closed != ClosedTaskVisibility::Default {
-        return EmptyTaskPrompt {
-            title: "No matching tasks",
-            detail: "This view is narrowed by filters.",
-            key: "f c",
-            action: "Clear filters",
-        };
-    }
-
-    if store.view_state.view == TaskView::Queue
-        && store.counts.open == 0
-        && store.counts.done == 0
-        && store.counts.upcoming == 0
-    {
-        return EmptyTaskPrompt {
-            title: "Ready for your first task",
-            detail: "Tasks you add will appear here.",
-            key: "a",
-            action: "Add a task",
-        };
-    }
-
-    match store.view_state.view {
-        TaskView::Queue => EmptyTaskPrompt {
-            title: "Queue is clear",
-            detail: "Nothing is actionable in this scope.",
-            key: "a",
-            action: "Add a task",
-        },
-        TaskView::Open => EmptyTaskPrompt {
-            title: "No open tasks",
-            detail: "Capture the next thing worth doing.",
-            key: "a",
-            action: "Add a task",
-        },
-        TaskView::Inbox => EmptyTaskPrompt {
-            title: "Inbox is clear",
-            detail: "Capture anything you do not want to lose.",
-            key: "a",
-            action: "Add a task",
-        },
-        TaskView::Active => EmptyTaskPrompt {
-            title: "No tasks in motion",
-            detail: "Choose the next task from your queue.",
-            key: "v q",
-            action: "View queue",
-        },
-        TaskView::Backlog => EmptyTaskPrompt {
-            title: "Backlog is clear",
-            detail: "There are no parked tasks in this scope.",
-            key: "v q",
-            action: "View queue",
-        },
-        TaskView::Todo => EmptyTaskPrompt {
-            title: "No tasks ready to start",
-            detail: "Choose the next task from your queue.",
-            key: "v q",
-            action: "View queue",
-        },
-        TaskView::Done => EmptyTaskPrompt {
-            title: "Nothing completed yet",
-            detail: "Finished tasks will collect here.",
-            key: "v q",
-            action: "View queue",
-        },
-        TaskView::Upcoming => EmptyTaskPrompt {
-            title: "Nothing scheduled",
-            detail: "No tasks are waiting for a future date.",
-            key: "v q",
-            action: "View queue",
-        },
-        TaskView::Conflicts => EmptyTaskPrompt {
-            title: "No conflicts",
-            detail: "Task changes agree across devices.",
-            key: "v q",
-            action: "View queue",
-        },
-        TaskView::Epics => EmptyTaskPrompt {
-            title: "No open epics",
-            detail: "Closed epics are available with the closed filter.",
-            key: "f d",
-            action: "Include closed epics",
-        },
-        TaskView::Columns | TaskView::Recurring | TaskView::RecentActions | TaskView::Search => {
-            EmptyTaskPrompt {
-                title: "No tasks here",
-                detail: "Your queue has the wider view.",
-                key: "v q",
-                action: "View queue",
-            }
-        }
-    }
 }
 
 fn build_task_list_render_model(
@@ -1598,6 +1391,7 @@ mod tests {
     use crate::choices::TaskPriority;
     use crate::operations::TaskDraft;
     use crate::tui::overlay::TextInputKind;
+    use crate::tui::store::{ClosedTaskVisibility, TaskProjectionOrigin, TaskScope, TaskView};
     use crate::tui::test_support::task_list_item;
     use chrono::TimeZone;
     use ratatui::Terminal;
@@ -1727,15 +1521,9 @@ mod tests {
         let rendered = buffer_text(&render_task_list_buffer(&store, 80, 10));
 
         assert!(rendered.contains("TITLE"));
-        assert!(rendered.contains("Ready for your first task"));
-        assert!(rendered.contains("Tasks you add will appear here."));
+        assert!(rendered.contains("No tasks in this workspace"));
+        assert!(rendered.contains("Add the first task to start building your queue."));
         assert!(rendered.contains("Add a task"));
-        let column = |needle| rendered[..rendered.find(needle).unwrap()].chars().count() % 80;
-        assert_eq!(
-            column("Ready for your first task"),
-            column("Tasks you add will appear here."),
-        );
-        assert_eq!(column("Ready for your first task"), column("Add a task"));
     }
 
     #[tokio::test]
@@ -1745,10 +1533,10 @@ mod tests {
 
         let rendered = buffer_text(&render_task_list_buffer(&store, 64, 7));
 
-        assert!(rendered.contains("No matching tasks"));
+        assert!(rendered.contains("No tasks match these filters"));
         assert!(rendered.contains("f c"));
         assert!(rendered.contains("Clear filters"));
-        assert!(!rendered.contains("Ready for your first task"));
+        assert!(!rendered.contains("No tasks in this workspace"));
     }
 
     #[tokio::test]
@@ -1756,17 +1544,99 @@ mod tests {
         let mut store = test_store_with_tasks(Vec::new()).await;
         store.view_state.view = TaskView::Epics;
 
-        let prompt = empty_task_prompt(&store);
+        let state = crate::tui::ui::empty_state::task_empty_state(&store);
 
-        assert_eq!(prompt.title, "No open epics");
-        assert_eq!(prompt.key, "f d");
-        assert_eq!(prompt.action, "Include closed epics");
+        assert_eq!(state.title, "No open epics");
+        assert_eq!(
+            state.action.map(|action| action.action),
+            Some(crate::tui::event::Action::ToggleClosedFilter)
+        );
 
         store.view_state.filter_modifiers.closed = ClosedTaskVisibility::Only;
-        let prompt = empty_task_prompt(&store);
-        assert_eq!(prompt.title, "No closed epics");
-        assert_eq!(prompt.key, "f d");
-        assert_eq!(prompt.action, "Show open epics");
+        let state = crate::tui::ui::empty_state::task_empty_state(&store);
+        assert_eq!(state.title, "No closed epics");
+    }
+
+    #[tokio::test]
+    async fn empty_state_classifies_named_and_specialized_surfaces() {
+        use crate::tui::ui::empty_state::{
+            EmptyStateReason, recent_actions_empty_state, recurrence_empty_state, task_empty_state,
+        };
+
+        let mut store = test_store_with_tasks(Vec::new()).await;
+        let named_views = [
+            TaskView::Queue,
+            TaskView::Columns,
+            TaskView::Open,
+            TaskView::Inbox,
+            TaskView::Active,
+            TaskView::Backlog,
+            TaskView::Todo,
+            TaskView::Done,
+            TaskView::Upcoming,
+            TaskView::Conflicts,
+            TaskView::Epics,
+        ];
+        for view in named_views {
+            store.view_state.view = view;
+            let state = task_empty_state(&store);
+            assert!(!state.title.is_empty(), "missing title for {view:?}");
+            assert!(state.action.is_some(), "missing action for {view:?}");
+        }
+
+        store.view_state.scope = TaskScope::Project("app".to_string());
+        store.view_state.view = TaskView::Queue;
+        assert_eq!(task_empty_state(&store).title, "No tasks in this project");
+
+        store.view_state.scope = TaskScope::Workspace;
+        store.view_state.view = TaskView::Search;
+        store.view_state.projection_origin = TaskProjectionOrigin::SearchPrompt;
+        assert_eq!(task_empty_state(&store).title, "Search tasks");
+
+        store.view_state.projection_origin = TaskProjectionOrigin::Search {
+            query: "missing".to_string(),
+            task_ids: Vec::new(),
+        };
+        assert_eq!(
+            task_empty_state(&store).reason,
+            EmptyStateReason::NoSearchResults
+        );
+
+        store.view_state.projection_origin = TaskProjectionOrigin::NamedView;
+        store.view_state.filter_modifiers.deleted_only = true;
+        assert_eq!(
+            task_empty_state(&store).reason,
+            EmptyStateReason::NoDeletedTasks
+        );
+
+        store.view_state.filter_modifiers = Default::default();
+        store.view_state.view = TaskView::Queue;
+        store.counts.upcoming = 2;
+        assert_eq!(
+            task_empty_state(&store).reason,
+            EmptyStateReason::DeferredTasks
+        );
+
+        store.view_state.view = TaskView::Recurring;
+        store.view_state.recurring.lifecycle =
+            crate::query::RecurrenceSeriesLifecycleFilter::Stopped;
+        assert_eq!(
+            recurrence_empty_state(&store).reason,
+            EmptyStateReason::RecurrenceLifecycle
+        );
+
+        store.view_state.view = TaskView::RecentActions;
+        assert_eq!(
+            recent_actions_empty_state(&store).reason,
+            EmptyStateReason::RecentActions
+        );
+
+        store.fail_next_refresh();
+        store.refresh(None).await.unwrap_err();
+        assert_eq!(
+            recent_actions_empty_state(&store).reason,
+            EmptyStateReason::LoadFailed
+        );
     }
 
     #[tokio::test]
@@ -1777,7 +1647,7 @@ mod tests {
         let header_only = buffer_text(&render_task_list_buffer(&store, 20, 1));
 
         assert!(one_body_row.contains("add task"));
-        assert!(!one_body_row.contains("Ready for your first task"));
+        assert!(!one_body_row.contains("No tasks in this workspace"));
         assert!(!header_only.contains("add task"));
     }
 
@@ -1788,8 +1658,8 @@ mod tests {
         let rendered = buffer_text(&render_task_list_buffer(&store, 80, 7));
 
         assert!(rendered.contains("Ship the release"));
-        assert!(!rendered.contains("Ready for your first task"));
-        assert!(!rendered.contains("Tasks you add will appear here."));
+        assert!(!rendered.contains("No tasks in this workspace"));
+        assert!(!rendered.contains("Add the first task to start building your queue."));
     }
 
     #[tokio::test]

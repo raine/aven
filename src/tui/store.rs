@@ -43,8 +43,8 @@ pub(crate) use task_creation::task_creation_committed;
 pub(crate) use types::{
     ClosedTaskVisibility, ConflictTarget, MainRowSelection, MutationMessage,
     RecurringSeriesViewState, SidebarEntry, SidebarEntryTarget, SyncStatusCheck,
-    TaskFilterModifiers, TaskListRenderMode, TaskOrder, TaskScope, TaskScopeTarget, TaskView,
-    TaskViewState, TuiDatabaseStats, TuiSyncStatus, mutation_committed,
+    TaskFilterModifiers, TaskListRenderMode, TaskOrder, TaskProjectionOrigin, TaskScope,
+    TaskScopeTarget, TaskView, TaskViewState, TuiDatabaseStats, TuiSyncStatus, mutation_committed,
 };
 #[cfg(test)]
 pub(crate) use types::{DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts};
@@ -61,6 +61,7 @@ pub(crate) struct TuiStore {
     pub(crate) task_columns: Vec<crate::config::TaskColumnConfig>,
     pub(crate) columns_preview_visible: bool,
     pub(crate) db_stats: TuiDatabaseStats,
+    refresh_health: RefreshHealth,
     #[cfg(test)]
     fail_next_refresh: Option<RefreshFailureStage>,
     #[cfg(test)]
@@ -73,6 +74,7 @@ struct RefreshRetainedState {
     task_columns: Vec<crate::config::TaskColumnConfig>,
     columns_preview_visible: bool,
     db_stats: TuiDatabaseStats,
+    refresh_health: RefreshHealth,
     #[cfg(test)]
     test_database_dir: Option<std::sync::Arc<tempfile::TempDir>>,
 }
@@ -127,6 +129,13 @@ impl DerefMut for TuiStore {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RefreshHealth {
+    #[default]
+    Healthy,
+    Failed,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RefreshFailureStage {
     Projects,
@@ -147,6 +156,7 @@ impl From<&TuiStore> for RefreshRetainedState {
             task_columns: store.task_columns.clone(),
             columns_preview_visible: store.columns_preview_visible,
             db_stats: store.db_stats.clone(),
+            refresh_health: store.refresh_health,
             #[cfg(test)]
             test_database_dir: store._test_database_dir.clone(),
         }
@@ -162,6 +172,7 @@ impl RefreshRetainedState {
             task_columns: self.task_columns,
             columns_preview_visible: self.columns_preview_visible,
             db_stats: self.db_stats,
+            refresh_health: self.refresh_health,
             #[cfg(test)]
             fail_next_refresh: None,
             #[cfg(test)]
@@ -216,6 +227,7 @@ impl TuiStore {
             task_columns,
             columns_preview_visible: true,
             db_stats: TuiDatabaseStats::default(),
+            refresh_health: RefreshHealth::Healthy,
             #[cfg(test)]
             fail_next_refresh: None,
             #[cfg(test)]
@@ -267,7 +279,7 @@ impl TuiStore {
                 &self.active_workspace.id,
                 crate::query::TaskFilters {
                     include_deleted: true,
-                    task_ids: vec![task_id.clone()],
+                    task_ids: crate::query::TaskIdFilter::Only(vec![task_id.clone()]),
                     ..crate::query::TaskFilters::default()
                 },
                 crate::query::TaskQueryMode::Flat,
@@ -413,9 +425,17 @@ impl TuiStore {
         {
             replacement.fail_next_refresh = fail_next_refresh;
         }
-        let result = replacement
+        let result = match replacement
             .refresh_in_place(selected, recurrence_detail_id.as_ref())
-            .await?;
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                self.refresh_health = RefreshHealth::Failed;
+                return Err(error);
+            }
+        };
+        replacement.refresh_health = RefreshHealth::Healthy;
         #[cfg(test)]
         {
             replacement.fail_next_refresh = None;
@@ -543,6 +563,10 @@ impl TuiStore {
         Ok(())
     }
 
+    pub(crate) fn refresh_health(&self) -> RefreshHealth {
+        self.refresh_health
+    }
+
     pub(crate) fn scope_project(&self) -> Option<&str> {
         match &self.view_state.scope {
             TaskScope::Workspace => None,
@@ -592,7 +616,7 @@ impl TuiStore {
             .list_task_items_from_current_projection(
                 workspace_id,
                 crate::query::TaskFilters {
-                    task_ids: child_ids,
+                    task_ids: crate::query::TaskIdFilter::Only(child_ids),
                     ..crate::query::TaskFilters::default()
                 },
                 crate::query::TaskQueryMode::Flat,

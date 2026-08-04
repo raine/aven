@@ -13,8 +13,8 @@ pub(crate) use self::lookup::{
     CommandCompletion, CommandLookup, CommandSpecLookup, ShortcutLookup, command_cycle_options,
     command_cycle_options_for, complete_command, complete_command_for, key_label, lookup_command,
     lookup_command_spec, lookup_command_spec_for, matching_commands, matching_commands_for,
-    prefix_hint_commands, resolve_shortcut, resolve_shortcut_for, resolve_shortcut_in,
-    resolve_shortcut_in_for, shortcut_label,
+    preferred_shortcut_label, prefix_hint_commands, resolve_shortcut, resolve_shortcut_for,
+    resolve_shortcut_in, resolve_shortcut_in_for, shortcut_label,
 };
 
 #[cfg(test)]

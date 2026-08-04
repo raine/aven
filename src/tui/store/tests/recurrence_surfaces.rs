@@ -154,7 +154,8 @@ async fn paused_projection_leaves_ordinary_views_but_direct_access_remains() {
     assert!(!store.tasks.iter().any(|item| item.task.id == task_id));
 
     store.view_state.view = TaskView::Search;
-    store.view_state.filter_modifiers.task_ids = vec![task_id.clone()];
+    store.view_state.projection_origin =
+        super::super::TaskProjectionOrigin::ExactTasks(vec![task_id.clone()]);
     store.refresh(Some(&task_id)).await.unwrap();
     assert_eq!(store.tasks.len(), 1);
     assert_eq!(store.tasks[0].task.id, task_id);

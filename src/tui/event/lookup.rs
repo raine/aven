@@ -1,6 +1,7 @@
 use crossterm::event::KeyCode;
+use unicode_width::UnicodeWidthStr;
 
-use super::{Action, CommandContext, CommandSpec, KeySequence};
+use super::{Action, CommandContext, CommandLifecycle, CommandSpec, KeySequence};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +60,20 @@ pub(crate) fn shortcut_label(codes: &[KeyCode]) -> String {
         .map(|code| key_label(*code))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+pub(crate) fn preferred_shortcut_label(
+    action: Action,
+    context: CommandContext,
+) -> Option<&'static str> {
+    context
+        .commands()
+        .filter(|command| {
+            command.action == action && command.lifecycle == CommandLifecycle::Implemented
+        })
+        .flat_map(|command| command.keys(context))
+        .min_by_key(|key| (key.codes.len(), UnicodeWidthStr::width(key.label)))
+        .map(|key| key.label)
 }
 
 pub(crate) fn resolve_shortcut(input: &[KeyCode]) -> ShortcutLookup {

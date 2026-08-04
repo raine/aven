@@ -20,8 +20,10 @@ async fn committed_mutation_reports_refresh_failure_without_rolling_back() {
         .unwrap();
     assert_eq!(persisted, "todo");
     assert_eq!(store.tasks[selected].task.status, TaskStatus::Inbox);
+    assert_eq!(store.refresh_health(), RefreshHealth::Failed);
 
     let recovered = store.refresh(Some(&task_id)).await.unwrap();
+    assert_eq!(store.refresh_health(), RefreshHealth::Healthy);
     assert_eq!(recovered, Some(selected));
     assert_eq!(store.tasks[selected].task.status, TaskStatus::Todo);
 }
@@ -58,6 +60,7 @@ async fn late_refresh_failure_preserves_view_and_cached_state() {
     let error = store.show_view(TaskView::Todo).await.unwrap_err();
 
     assert!(error.to_string().contains("Tasks"));
+    assert_eq!(store.refresh_health(), RefreshHealth::Failed);
     assert_eq!(store.view_state, original_view_state);
     assert_eq!(
         store
@@ -96,6 +99,7 @@ async fn late_refresh_failure_preserves_view_and_cached_state() {
     );
 
     store.show_view(TaskView::Todo).await.unwrap();
+    assert_eq!(store.refresh_health(), RefreshHealth::Healthy);
     assert_eq!(store.view_state.view, TaskView::Todo);
     assert!(store.tasks.is_empty());
 }

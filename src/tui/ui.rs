@@ -1,6 +1,7 @@
 mod columns;
 mod detail;
 mod dialog;
+mod empty_state;
 mod footer;
 mod header;
 

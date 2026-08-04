@@ -94,7 +94,10 @@ async fn clear_filters_preserves_view_scope_and_order() {
     store.view_state.order = TaskOrder::Priority;
     store.view_state.direction = SortDirection::Desc;
     store.view_state.filter_modifiers.label = Some("backend".to_string());
-    store.view_state.filter_modifiers.task_ids = vec![crate::test_support::task_id("task-1")];
+    store.view_state.projection_origin =
+        super::super::TaskProjectionOrigin::ExactTasks(vec![crate::test_support::task_id(
+            "task-1",
+        )]);
 
     store.clear_filters().await.unwrap();
 
@@ -106,7 +109,10 @@ async fn clear_filters_preserves_view_scope_and_order() {
     assert_eq!(store.view_state.order, TaskOrder::Priority);
     assert_eq!(store.view_state.direction, SortDirection::Desc);
     assert!(store.view_state.filter_modifiers.label.is_none());
-    assert!(store.view_state.filter_modifiers.task_ids.is_empty());
+    assert_eq!(
+        store.view_state.projection_origin,
+        super::super::TaskProjectionOrigin::NamedView
+    );
 }
 
 #[tokio::test]
@@ -262,6 +268,36 @@ async fn search_view_submitted_search_hides_deleted_ordinary_text_results() {
     assert_eq!(ids, vec![live_id.as_str()]);
     assert!(!ids.contains(&deleted_id.as_str()));
     assert_eq!(store.view_state.view, TaskView::Search);
+}
+
+#[tokio::test]
+async fn search_view_without_query_has_an_empty_prompt_projection() {
+    let mut store = test_store().await;
+    create_search_task(&mut store, "Existing task").await;
+
+    store.show_view(TaskView::Search).await.unwrap();
+
+    assert!(store.tasks.is_empty());
+    assert_eq!(
+        store.view_state.projection_origin,
+        super::super::TaskProjectionOrigin::SearchPrompt
+    );
+}
+
+#[tokio::test]
+async fn search_view_keeps_zero_result_restriction() {
+    let mut store = test_store().await;
+    create_search_task(&mut store, "Visible task").await;
+
+    store.accept_search("missing phrase").await.unwrap();
+
+    assert!(store.tasks.is_empty());
+    assert_eq!(store.view_state.view, TaskView::Search);
+    assert!(matches!(
+        &store.view_state.projection_origin,
+        super::super::TaskProjectionOrigin::Search { query, task_ids }
+            if query == "missing phrase" && task_ids.is_empty()
+    ));
 }
 
 #[tokio::test]

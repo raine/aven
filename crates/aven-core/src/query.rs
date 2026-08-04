@@ -77,8 +77,8 @@ pub use types::{
     RecurrenceReconciliation, RecurrenceSeriesConflict, RecurrenceSeriesDetail,
     RecurrenceSeriesLifecycleFilter, RecurrenceSeriesListItem, RecurrenceSeriesListQuery,
     RecurrenceSeriesSummary, RecurrenceTaskGroup, SidebarCounts, SortDirection,
-    TaskAvailabilityFilter, TaskDependencyLink, TaskFilters, TaskListItem, TaskNote, TaskQueryMode,
-    TaskRecurrenceSummary, TaskSort,
+    TaskAvailabilityFilter, TaskDependencyLink, TaskFilters, TaskIdFilter, TaskListItem, TaskNote,
+    TaskQueryMode, TaskRecurrenceSummary, TaskSort,
 };
 
 impl Database {

@@ -3,9 +3,7 @@ use anyhow::Result;
 use crate::tui::app::{App, Focus, LastChangeReturnState, RecentActionReturnState};
 use crate::tui::navigation::{next_index, next_selectable_sidebar};
 use crate::tui::overlay::{OverlayState, PickerIntent, PickerItem};
-use crate::tui::store::{
-    MainRowSelection, TaskFilterModifiers, TaskScope, TaskView, TaskViewState,
-};
+use crate::tui::store::{MainRowSelection, TaskView, TaskViewState};
 
 impl App {
     pub(super) fn restore_sidebar_selection(&mut self) {
@@ -463,15 +461,7 @@ impl App {
                     .map(|task_id| detail.snapshot(task_id, self.store.view_state.clone()))
             }),
         };
-        self.store.view_state = TaskViewState {
-            scope: TaskScope::Workspace,
-            view: TaskView::Search,
-            filter_modifiers: TaskFilterModifiers {
-                task_ids: vec![task_id.clone()],
-                ..TaskFilterModifiers::default()
-            },
-            ..TaskViewState::default()
-        };
+        self.store.view_state = TaskViewState::for_exact_task(task_id.clone());
         let selected = self.store.refresh(Some(&task_id)).await?;
         let Some(selected) = selected.filter(|index| {
             self.store

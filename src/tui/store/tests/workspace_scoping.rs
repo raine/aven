@@ -269,7 +269,10 @@ async fn switch_workspace_refreshes_workspace_scoped_state() {
     store.show_view(TaskView::Todo).await.unwrap();
     store.view_state.filter_modifiers.label = Some("default-label".to_string());
     store.view_state.filter_modifiers.priority = Some("urgent".to_string());
-    store.view_state.filter_modifiers.task_ids = vec![crate::test_support::task_id("task-1")];
+    store.view_state.projection_origin =
+        super::super::TaskProjectionOrigin::ExactTasks(vec![crate::test_support::task_id(
+            "task-1",
+        )]);
     store.view_state.filter_modifiers.include_deleted = true;
 
     let selected = store.switch_workspace(other.key.clone()).await.unwrap();

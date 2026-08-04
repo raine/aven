@@ -235,8 +235,8 @@ mod tests {
         assert_eq!(launch.view_state.scope, TaskScope::Workspace);
         assert_eq!(launch.view_state.view, TaskView::Search);
         assert_eq!(
-            launch.view_state.filter_modifiers.task_ids,
-            vec![task_id.clone()]
+            launch.view_state.projection_origin,
+            crate::tui::store::TaskProjectionOrigin::ExactTasks(vec![task_id.clone()])
         );
         assert_eq!(launch.startup, TuiStartup::Detail { task_id });
     }

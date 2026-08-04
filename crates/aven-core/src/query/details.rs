@@ -7,8 +7,8 @@ use crate::task_fields::TaskField;
 use crate::types::Task;
 
 use super::{
-    SortDirection, TaskDependencySummary, TaskFilters, TaskListItem, TaskQueryMode, TaskSort,
-    list_task_items_with_display_refs, task_dependency_summary_with_display_refs,
+    SortDirection, TaskDependencySummary, TaskFilters, TaskIdFilter, TaskListItem, TaskQueryMode,
+    TaskSort, list_task_items_with_display_refs, task_dependency_summary_with_display_refs,
 };
 
 #[derive(Debug)]
@@ -50,7 +50,7 @@ pub async fn task_detail_with_display_refs(
         conn,
         &task.workspace_id,
         TaskFilters {
-            task_ids: vec![task.id.clone()],
+            task_ids: TaskIdFilter::Only(vec![task.id.clone()]),
             expand_recurring: true,
             ..TaskFilters::default().include_deleted(task.deleted)
         },

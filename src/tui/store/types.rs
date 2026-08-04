@@ -58,7 +58,7 @@ use std::collections::BTreeSet;
 
 use crate::query::{
     RecurrenceSeriesLifecycleFilter, RecurrenceSeriesListQuery, SortDirection, SyncHistoryStats,
-    TaskAvailabilityFilter, TaskFilters, TaskQueryMode, TaskSort,
+    TaskAvailabilityFilter, TaskFilters, TaskIdFilter, TaskQueryMode, TaskSort,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,14 +112,34 @@ pub(crate) enum MainRowSelection {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) enum TaskProjectionOrigin {
+    #[default]
+    NamedView,
+    SearchPrompt,
+    Search {
+        query: String,
+        task_ids: Vec<crate::ids::TaskId>,
+    },
+    ExactTasks(Vec<crate::ids::TaskId>),
+}
+
+impl TaskProjectionOrigin {
+    pub(crate) fn task_ids(&self) -> Option<&[crate::ids::TaskId]> {
+        match self {
+            Self::NamedView => None,
+            Self::SearchPrompt => Some(&[]),
+            Self::Search { task_ids, .. } | Self::ExactTasks(task_ids) => Some(task_ids),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct TaskFilterModifiers {
     pub(crate) label: Option<String>,
     pub(crate) priority: Option<String>,
     pub(crate) closed: ClosedTaskVisibility,
     pub(crate) include_deleted: bool,
     pub(crate) deleted_only: bool,
-    pub(crate) search: Option<String>,
-    pub(crate) task_ids: Vec<crate::ids::TaskId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +165,7 @@ pub(crate) enum TaskListRenderMode {
 pub(crate) struct TaskViewState {
     pub(crate) scope: TaskScope,
     pub(crate) view: TaskView,
+    pub(crate) projection_origin: TaskProjectionOrigin,
     pub(crate) filter_modifiers: TaskFilterModifiers,
     pub(crate) order: TaskOrder,
     pub(crate) direction: SortDirection,
@@ -158,6 +179,7 @@ impl Default for TaskViewState {
         Self {
             scope: TaskScope::Workspace,
             view: TaskView::Queue,
+            projection_origin: TaskProjectionOrigin::default(),
             filter_modifiers: TaskFilterModifiers::default(),
             order: TaskOrder::Created,
             direction: SortDirection::Asc,
@@ -172,10 +194,7 @@ impl TaskViewState {
     pub(crate) fn for_exact_task(task_id: crate::ids::TaskId) -> Self {
         Self {
             view: TaskView::Search,
-            filter_modifiers: TaskFilterModifiers {
-                task_ids: vec![task_id],
-                ..TaskFilterModifiers::default()
-            },
+            projection_origin: TaskProjectionOrigin::ExactTasks(vec![task_id]),
             ..Self::default()
         }
     }
@@ -186,8 +205,11 @@ impl TaskViewState {
             priority: self.filter_modifiers.priority.clone(),
             include_deleted: self.filter_modifiers.include_deleted,
             deleted_only: self.filter_modifiers.deleted_only,
-            search: self.filter_modifiers.search.clone(),
-            task_ids: self.filter_modifiers.task_ids.clone(),
+            task_ids: self
+                .projection_origin
+                .task_ids()
+                .map(|task_ids| TaskIdFilter::Only(task_ids.to_vec()))
+                .unwrap_or_default(),
             ..TaskFilters::default()
         };
         if let TaskScope::Project(project) = &self.scope {

@@ -349,7 +349,7 @@ pub(crate) async fn cmd_show(
             .list_task_summary_items(
                 &workspace.id,
                 TaskFilters {
-                    task_ids: vec![task.id.clone()],
+                    task_ids: crate::query::TaskIdFilter::Only(vec![task.id.clone()]),
                     include_deleted: true,
                     expand_recurring: true,
                     ..TaskFilters::default()

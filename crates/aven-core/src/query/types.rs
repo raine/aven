@@ -47,6 +47,13 @@ impl SortDirection {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum TaskIdFilter {
+    #[default]
+    Unrestricted,
+    Only(Vec<TaskId>),
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct TaskFilters {
     pub project: Option<String>,
@@ -65,7 +72,7 @@ pub struct TaskFilters {
     pub availability: TaskAvailabilityFilter,
     pub overdue_only: bool,
     pub search: Option<String>,
-    pub task_ids: Vec<TaskId>,
+    pub task_ids: TaskIdFilter,
     pub expand_recurring: bool,
 }
 

@@ -475,11 +475,8 @@ fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
     } else if modifiers.include_deleted {
         parts.push(vec![filter_part("include_deleted")]);
     }
-    if !modifiers.task_ids.is_empty() {
-        parts.push(vec![filter_part(format!(
-            "matches={}",
-            modifiers.task_ids.len()
-        ))]);
+    if let Some(task_ids) = store.view_state.projection_origin.task_ids() {
+        parts.push(vec![filter_part(format!("matches={}", task_ids.len()))]);
     }
     if parts.is_empty() {
         Vec::new()
@@ -587,17 +584,16 @@ mod tests {
         store.view_state = TaskViewState {
             scope: TaskScope::Project("mobile-app".to_string()),
             view: TaskView::Open,
+            projection_origin: crate::tui::store::TaskProjectionOrigin::ExactTasks(vec![
+                crate::test_support::task_id("task-1"),
+                crate::test_support::task_id("task-2"),
+            ]),
             filter_modifiers: TaskFilterModifiers {
                 label: Some("backend".to_string()),
                 priority: Some("urgent".to_string()),
                 closed: crate::tui::store::ClosedTaskVisibility::Included,
                 include_deleted: true,
                 deleted_only: false,
-                search: Some("needle".to_string()),
-                task_ids: vec![
-                    crate::test_support::task_id("task-1"),
-                    crate::test_support::task_id("task-2"),
-                ],
             },
             order: TaskOrder::Priority,
             direction: crate::query::SortDirection::Desc,

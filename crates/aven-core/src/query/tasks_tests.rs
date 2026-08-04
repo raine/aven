@@ -43,6 +43,37 @@ async fn queue_sort_orders_status_then_priority_then_created_at() {
 }
 
 #[tokio::test]
+async fn empty_task_id_restriction_matches_nothing() {
+    let (_temp, mut conn) = test_conn().await;
+    seed_default_project(&mut conn).await;
+    insert_test_task(
+        &mut conn,
+        "0000000000000001",
+        "visible task",
+        "todo",
+        "none",
+        "001",
+    )
+    .await;
+
+    let items = list_task_items_in_workspace(
+        &mut conn,
+        &crate::workspaces::default_workspace_id(),
+        TaskFilters {
+            task_ids: TaskIdFilter::Only(Vec::new()),
+            ..TaskFilters::default()
+        },
+        TaskQueryMode::Flat,
+        TaskSort::Created,
+        SortDirection::Asc,
+    )
+    .await
+    .unwrap();
+
+    assert!(items.is_empty());
+}
+
+#[tokio::test]
 async fn queue_view_hides_done_and_canceled_tasks() {
     let (_temp, mut conn) = test_conn().await;
     seed_default_project(&mut conn).await;

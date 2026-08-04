@@ -7,7 +7,7 @@ use crate::query::{self, SortDirection, TaskSearchQuery};
 
 use super::{
     ClosedTaskVisibility, MainRowSelection, SidebarEntryTarget, TaskFilterModifiers, TaskOrder,
-    TaskScope, TaskScopeTarget, TaskView, TuiStore,
+    TaskProjectionOrigin, TaskScope, TaskScopeTarget, TaskView, TuiStore,
 };
 
 async fn search_preview_with_database(
@@ -68,8 +68,15 @@ impl TuiStore {
         if view == TaskView::Upcoming {
             view_state.direction = SortDirection::Asc;
         }
-        if view != TaskView::Search {
-            view_state.filter_modifiers.task_ids.clear();
+        if view == TaskView::Search
+            && matches!(
+                view_state.projection_origin,
+                TaskProjectionOrigin::NamedView
+            )
+        {
+            view_state.projection_origin = TaskProjectionOrigin::SearchPrompt;
+        } else if view != TaskView::Search {
+            view_state.projection_origin = TaskProjectionOrigin::NamedView;
         }
         Ok(self
             .refresh_with_view_state(view_state, None)
@@ -88,7 +95,11 @@ impl TuiStore {
 
     pub(crate) async fn show_scope(&mut self, target: TaskScopeTarget) -> Result<Option<usize>> {
         let mut view_state = self.view_state.clone();
-        view_state.filter_modifiers.task_ids.clear();
+        view_state.projection_origin = if view_state.view == TaskView::Search {
+            TaskProjectionOrigin::SearchPrompt
+        } else {
+            TaskProjectionOrigin::NamedView
+        };
         view_state.scope = match target {
             TaskScopeTarget::Workspace => TaskScope::Workspace,
             TaskScopeTarget::Project(project) => TaskScope::Project(project),
@@ -102,6 +113,11 @@ impl TuiStore {
     pub(crate) async fn clear_filters(&mut self) -> Result<Option<usize>> {
         let mut view_state = self.view_state.clone();
         view_state.filter_modifiers = TaskFilterModifiers::default();
+        view_state.projection_origin = if view_state.view == TaskView::Search {
+            TaskProjectionOrigin::SearchPrompt
+        } else {
+            TaskProjectionOrigin::NamedView
+        };
         view_state.recurring = super::RecurringSeriesViewState::default();
         Ok(self
             .refresh_with_view_state(view_state, None)
@@ -192,7 +208,7 @@ impl TuiStore {
         let text = input.trim();
         if text.is_empty() {
             let mut view_state = self.view_state.clone();
-            view_state.filter_modifiers.task_ids.clear();
+            view_state.projection_origin = TaskProjectionOrigin::NamedView;
             view_state.view = TaskView::Queue;
             return Ok(self
                 .refresh_with_view_state(view_state, None)
@@ -214,13 +230,14 @@ impl TuiStore {
         let mut view_state = self.view_state.clone();
         view_state.scope = TaskScope::Workspace;
         view_state.view = TaskView::Search;
-        view_state.filter_modifiers = TaskFilterModifiers {
+        view_state.projection_origin = TaskProjectionOrigin::Search {
+            query: text.to_string(),
             task_ids: results
                 .iter()
                 .map(|result| result.item.task.id.clone())
                 .collect(),
-            ..TaskFilterModifiers::default()
         };
+        view_state.filter_modifiers = TaskFilterModifiers::default();
         Ok(self
             .refresh_with_view_state(view_state, None)
             .await?
@@ -268,10 +285,8 @@ impl TuiStore {
         let mut view_state = self.view_state.clone();
         view_state.scope = TaskScope::Workspace;
         view_state.view = TaskView::Search;
-        view_state.filter_modifiers = TaskFilterModifiers {
-            task_ids: vec![task_id.clone()],
-            ..TaskFilterModifiers::default()
-        };
+        view_state.projection_origin = TaskProjectionOrigin::ExactTasks(vec![task_id.clone()]);
+        view_state.filter_modifiers = TaskFilterModifiers::default();
         Ok(self
             .refresh_with_view_state(view_state, Some(&task_id))
             .await?

@@ -178,11 +178,15 @@ pub(super) fn render_columns(
 ) {
     frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
     let board = ColumnBoard::new(&store.task_columns, &store.tasks);
+    let board_has_tasks = board
+        .columns
+        .iter()
+        .any(|column| !column.task_indices.is_empty());
     let layout = ColumnLayout::new(
         area,
         &board,
         table_state.selected(),
-        store.columns_preview_visible,
+        store.columns_preview_visible && board_has_tasks,
     );
     let active_column = table_state
         .selected()
@@ -202,7 +206,7 @@ pub(super) fn render_columns(
         }
         let header = Rect::new(lane.area.x, lane.area.y, lane.area.width, HEADER_HEIGHT);
         render_lane_header(frame, column, lane, active, header);
-        if column.task_indices.is_empty() {
+        if board_has_tasks && column.task_indices.is_empty() {
             frame.render_widget(
                 Paragraph::new("(empty)").style(Style::new().fg(FG_DIM).bg(lane_bg)),
                 lane.cards,
@@ -288,6 +292,22 @@ pub(super) fn render_columns(
                 lane.start + visible_row + 1 == column.task_indices.len(),
             );
         }
+    }
+    if !board_has_tasks {
+        let body = Rect::new(
+            layout.board.x,
+            layout.board.y.saturating_add(HEADER_HEIGHT),
+            layout.board.width,
+            layout.board.height.saturating_sub(HEADER_HEIGHT),
+        );
+        let state = if store.refresh_health() == crate::tui::store::RefreshHealth::Failed
+            || store.tasks.is_empty()
+        {
+            super::empty_state::task_empty_state(store)
+        } else {
+            super::empty_state::column_configuration_empty_state()
+        };
+        super::empty_state::render_empty_state(frame, body, state);
     }
     if layout.preview.height > 0 {
         render_task_preview(frame, store, table_state.selected(), layout.preview);
@@ -585,6 +605,17 @@ mod tests {
             attachments: Vec::new(),
             queue: Default::default(),
         }
+    }
+
+    #[test]
+    fn unmatched_tasks_use_column_configuration_state() {
+        let state = super::super::empty_state::column_configuration_empty_state();
+
+        assert_eq!(state.title, "Tasks do not fit these columns");
+        assert_eq!(
+            state.reason,
+            super::super::empty_state::EmptyStateReason::ColumnConfiguration
+        );
     }
 
     #[test]

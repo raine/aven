@@ -83,7 +83,7 @@ impl TuiStore {
             .list_task_items_from_current_projection(
                 &self.active_workspace.id,
                 crate::query::TaskFilters {
-                    task_ids,
+                    task_ids: crate::query::TaskIdFilter::Only(task_ids),
                     include_deleted: true,
                     ..crate::query::TaskFilters::default()
                 },

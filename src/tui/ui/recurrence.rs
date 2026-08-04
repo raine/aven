@@ -81,7 +81,14 @@ pub(super) fn render_recurrence_series(
     if area.height == 0 || area.width == 0 {
         return;
     }
-    let areas = recurrence_series_areas(area);
+    let areas = if store.recurrence_series.is_empty() {
+        RecurrenceSeriesAreas {
+            table: area,
+            preview: Rect::default(),
+        }
+    } else {
+        recurrence_series_areas(area)
+    };
     let rows = Layout::vertical(vec![Constraint::Length(1); areas.table.height as usize])
         .split(areas.table);
     if rows.is_empty() {
@@ -89,7 +96,16 @@ pub(super) fn render_recurrence_series(
     }
     render_header(frame, rows[0]);
     if store.recurrence_series.is_empty() {
-        render_empty(frame, store, areas.table);
+        let body = Rect {
+            y: areas.table.y.saturating_add(1),
+            height: areas.table.height.saturating_sub(1),
+            ..areas.table
+        };
+        super::empty_state::render_empty_state(
+            frame,
+            body,
+            super::empty_state::recurrence_empty_state(store),
+        );
         return;
     }
     let viewport_rows = rows.len().saturating_sub(1);
@@ -324,38 +340,6 @@ fn columns() -> [Constraint; 5] {
         Constraint::Percentage(24),
         Constraint::Length(10),
     ]
-}
-
-fn render_empty(frame: &mut Frame, store: &TuiStore, area: Rect) {
-    let searched = store.view_state.recurring.search.is_some();
-    let title = if searched {
-        "No recurring series match this search"
-    } else {
-        match store.view_state.recurring.lifecycle {
-            crate::query::RecurrenceSeriesLifecycleFilter::Stopped => "No stopped recurring series",
-            _ => "No recurring series in this scope",
-        }
-    };
-    let content = Rect {
-        y: area.y.saturating_add(1),
-        height: area.height.saturating_sub(1),
-        ..area
-    };
-    frame.render_widget(
-        Paragraph::new(Text::from(vec![
-            Line::from(""),
-            Line::from(vec![Span::styled(
-                format!("  {title}"),
-                Style::new().fg(FG).add_modifier(Modifier::BOLD),
-            )]),
-            Line::from(vec![Span::styled(
-                "  Use f r to change the lifecycle filter.",
-                Style::new().fg(FG_DIM),
-            )]),
-        ]))
-        .style(Style::new().bg(BG)),
-        content,
-    );
 }
 
 fn recurrence_state_style(state: aven_core::recurrence::RecurrenceSeriesState) -> Style {

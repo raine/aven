@@ -14,7 +14,8 @@ use super::fragments;
 use super::hydration::{TaskHydration, build_task_list_items};
 use super::sorting::push_sort;
 use super::{
-    SortDirection, TaskAvailabilityFilter, TaskFilters, TaskListItem, TaskQueryMode, TaskSort,
+    SortDirection, TaskAvailabilityFilter, TaskFilters, TaskIdFilter, TaskListItem, TaskQueryMode,
+    TaskSort,
 };
 
 struct TaskListRead {
@@ -134,7 +135,7 @@ async fn query_task_items(
             && status_filters.iter().all(|status| !status.is_terminal()));
     let limit_in_sql = limit.is_some()
         && mode == TaskQueryMode::Flat
-        && filters.task_ids.is_empty()
+        && matches!(&filters.task_ids, TaskIdFilter::Unrestricted)
         && (expand_recurring || terminal_tasks_excluded);
     if let Some(priority) = filters.priority.as_deref() {
         TaskPriority::parse(priority)?;
@@ -162,7 +163,7 @@ async fn query_task_items(
     push_filter_prefix(&mut query, &mut filters_added);
     query.push("t.workspace_id = ");
     query.push_bind(workspace_id.to_string());
-    if filters.task_ids.is_empty() {
+    if matches!(&filters.task_ids, TaskIdFilter::Unrestricted) {
         push_filter_prefix(&mut query, &mut filters_added);
         query.push(fragments::ordinary_task_clause("t"));
     }
@@ -219,14 +220,21 @@ async fn query_task_items(
         push_filter_prefix(&mut query, &mut filters_added);
         query.push("EXISTS (SELECT 1 FROM conflicts c WHERE c.workspace_id = t.workspace_id AND c.task_id = t.id AND c.resolved = 0)");
     }
-    if !filters.task_ids.is_empty() {
-        push_filter_prefix(&mut query, &mut filters_added);
-        query.push("t.id IN (");
-        let mut separated = query.separated(", ");
-        for task_id in &filters.task_ids {
-            separated.push_bind(task_id);
+    match &filters.task_ids {
+        TaskIdFilter::Unrestricted => {}
+        TaskIdFilter::Only(task_ids) if task_ids.is_empty() => {
+            push_filter_prefix(&mut query, &mut filters_added);
+            query.push("0 = 1");
         }
-        separated.push_unseparated(")");
+        TaskIdFilter::Only(task_ids) => {
+            push_filter_prefix(&mut query, &mut filters_added);
+            query.push("t.id IN (");
+            let mut separated = query.separated(", ");
+            for task_id in task_ids {
+                separated.push_bind(task_id);
+            }
+            separated.push_unseparated(")");
+        }
     }
     if filters.ready_only || filters.blocked_only {
         push_filter_prefix(&mut query, &mut filters_added);
@@ -302,8 +310,7 @@ async fn query_task_items(
     if mode == TaskQueryMode::RankedQueue {
         items.sort_by(|a, b| queue_order((&a.task, a.queue), (&b.task, b.queue)));
     }
-    if !filters.task_ids.is_empty() {
-        let order = filters.task_ids;
+    if let TaskIdFilter::Only(order) = filters.task_ids {
         items.sort_by_key(|item| {
             order
                 .iter()

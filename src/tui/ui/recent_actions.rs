@@ -74,7 +74,11 @@ pub(super) fn render_recent_actions(
         return;
     }
 
-    let [list_area, detail_area] = recent_action_areas(area);
+    let [list_area, detail_area] = if store.recent_actions.is_empty() {
+        [area, Rect::default()]
+    } else {
+        recent_action_areas(area)
+    };
     render_action_list(frame, store, list.table_state_mut(), focus, list_area);
     if detail_area.height > 0 {
         render_action_detail(frame, store, list.selected_task(), detail_area);
@@ -102,7 +106,16 @@ fn render_action_list(
     }
     render_header(frame, rows[0]);
     if store.recent_actions.is_empty() {
-        render_empty(frame, area);
+        let body = Rect {
+            y: area.y.saturating_add(1),
+            height: area.height.saturating_sub(1),
+            ..area
+        };
+        super::empty_state::render_empty_state(
+            frame,
+            body,
+            super::empty_state::recent_actions_empty_state(store),
+        );
         return;
     }
 
@@ -163,29 +176,6 @@ fn render_header(frame: &mut Frame, area: Rect) {
     {
         frame.render_widget(Paragraph::new(label).style(style), cell);
     }
-}
-
-fn render_empty(frame: &mut Frame, area: Rect) {
-    let content = Rect {
-        y: area.y.saturating_add(1),
-        height: area.height.saturating_sub(1),
-        ..area
-    };
-    let text = Text::from(vec![
-        Line::from(""),
-        Line::from(vec![Span::styled(
-            "  No actions in this scope",
-            Style::new().fg(FG).add_modifier(Modifier::BOLD),
-        )]),
-        Line::from(vec![Span::styled(
-            "  Create, edit, label, or note tasks to fill this ledger.",
-            Style::new().fg(FG_DIM),
-        )]),
-    ]);
-    frame.render_widget(
-        Paragraph::new(text).style(Style::new().fg(FG).bg(BG)),
-        content,
-    );
 }
 
 fn render_action_row(

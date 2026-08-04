@@ -458,10 +458,9 @@ async fn direct_task_start_opens_selected_detail_without_history() {
 
     let view_state = TaskViewState {
         view: TaskView::Search,
-        filter_modifiers: crate::tui::store::TaskFilterModifiers {
-            task_ids: vec![task_id.clone()],
-            ..crate::tui::store::TaskFilterModifiers::default()
-        },
+        projection_origin: crate::tui::store::TaskProjectionOrigin::ExactTasks(vec![
+            task_id.clone(),
+        ]),
         ..TaskViewState::default()
     };
     let database = aven_core::db::Database::open(&_dir.path().join("test.db"))

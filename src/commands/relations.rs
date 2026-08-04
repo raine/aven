@@ -108,7 +108,7 @@ pub(crate) async fn cmd_epic(
                 .list_task_items(
                     &workspace.id,
                     TaskFilters {
-                        task_ids: vec![epic.id.clone()],
+                        task_ids: crate::query::TaskIdFilter::Only(vec![epic.id.clone()]),
                         include_deleted: true,
                         ..TaskFilters::default()
                     },
