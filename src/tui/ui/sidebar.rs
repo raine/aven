@@ -196,7 +196,6 @@ pub(super) fn render_sidebar(
                 Some(SidebarEntryTarget::View(TaskView::Active)) => FG_MUTED,
                 Some(SidebarEntryTarget::View(TaskView::Todo)) => FG_DIM,
                 Some(SidebarEntryTarget::View(TaskView::Epics)) => YELLOW,
-                Some(SidebarEntryTarget::View(TaskView::RecentActions)) => ACCENT,
                 _ => FG,
             };
             let label_style = if is_active_view {
