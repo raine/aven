@@ -248,7 +248,7 @@ impl App {
             }
             MouseInput::DetailPress => {
                 if self
-                    .handle_detail_attachment_mouse_click(mouse, terminal_size)
+                    .handle_detail_target_mouse_click(mouse, terminal_size)
                     .await?
                 {
                     return Ok(());
@@ -642,7 +642,7 @@ impl App {
         });
     }
 
-    async fn handle_detail_attachment_mouse_click(
+    async fn handle_detail_target_mouse_click(
         &mut self,
         mouse: MouseEvent,
         terminal_size: Size,
@@ -654,9 +654,19 @@ impl App {
         let Some(context) = self.inline_image_context() else {
             return Ok(false);
         };
-        let hit = self
-            .detail_document_for_query(terminal_size)
-            .and_then(|document| document.target_at_position(mouse.column, mouse.row));
+        let document = self.detail_document_for_query(terminal_size);
+        if let Some(url) = document
+            .as_ref()
+            .and_then(|document| document.link_at_position(mouse.column, mouse.row))
+        {
+            match crate::tui::platform::open_url_in_default_browser(&url) {
+                Ok(()) => self.set_success("opened link in browser"),
+                Err(error) => self.set_error(format!("could not open link: {error}")),
+            }
+            return Ok(true);
+        }
+        let hit =
+            document.and_then(|document| document.target_at_position(mouse.column, mouse.row));
         let Some(hit) = hit else {
             return Ok(false);
         };

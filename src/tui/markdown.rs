@@ -634,6 +634,14 @@ pub(crate) fn render_markdown_with_context(
     render_markdown_internal(input, max_width, context, true)
 }
 
+pub(crate) fn render_markdown_with_context_without_link_urls(
+    input: &str,
+    max_width: usize,
+    context: MarkdownRenderContext,
+) -> Vec<MarkdownBlock> {
+    render_markdown_internal(input, max_width, context, false)
+}
+
 fn render_markdown_internal(
     input: &str,
     max_width: usize,

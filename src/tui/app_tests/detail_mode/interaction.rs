@@ -45,6 +45,34 @@ async fn gist_creation_failure_replaces_loading_notification() {
 }
 
 #[tokio::test]
+async fn clicking_detail_markdown_link_opens_browser() {
+    let mut app = test_app().await;
+    let mut draft = test_task_draft("Linked detail");
+    draft.description = "Read the [Aven guide](https://aven.raine.dev/guide/).".to_string();
+    create_and_select_task(&mut app, draft).await;
+    app.show_detail(0);
+    let terminal_size: ratatui::layout::Size = (100, 30).into();
+    let document = app.detail_document_for_query(terminal_size).unwrap();
+    let (column, row) = (0..terminal_size.height)
+        .flat_map(|row| (0..terminal_size.width).map(move |column| (column, row)))
+        .find(|&(column, row)| document.link_at_position(column, row).is_some())
+        .expect("rendered link target");
+
+    app.dispatch_mouse(click_at(column, row), terminal_size)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        crate::tui::platform::browser_url_for_test().as_deref(),
+        Some("https://aven.raine.dev/guide/")
+    );
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("opened link in browser")
+    );
+}
+
+#[tokio::test]
 async fn q_closes_detail_overlay() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("Detail target")).await;

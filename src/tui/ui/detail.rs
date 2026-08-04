@@ -1,3 +1,4 @@
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Modifier, Style};
@@ -18,7 +19,8 @@ use crate::task_render::{AttachmentMetadataJson, attachment_state_placeholder, h
 use crate::tui::app::{DetailSection, DetailTargetId, WidgetState};
 use crate::tui::detail_selection::{DetailTextSelection, TextCell, text_cell_at_column};
 use crate::tui::markdown::{
-    MarkdownBlock, MarkdownRenderContext, render_markdown, render_markdown_with_context,
+    MarkdownBlock, MarkdownRenderContext, render_markdown_with_context_without_link_urls,
+    render_markdown_without_link_urls,
 };
 use crate::tui::overlay::TextInputView;
 use crate::tui::store::TuiStore;
@@ -187,6 +189,7 @@ struct DetailBodyDocument {
     lines: Vec<Line<'static>>,
     image_placements: Vec<DetailBodyImagePlacement>,
     interactive_rows: Vec<DetailInteractiveRow>,
+    hyperlinks: Vec<DetailHyperlink>,
     selectable_description: Vec<SelectableLine>,
     selectable_text: String,
     section_body_indices: Vec<usize>,
@@ -209,6 +212,14 @@ struct SelectableLine {
     text: String,
     document_start: usize,
     body_index: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DetailHyperlink {
+    url: String,
+    line_index: usize,
+    start_column: usize,
+    end_column: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -242,6 +253,7 @@ pub(crate) struct DetailDocument {
     pending_attachments: Vec<crate::tui::attachment_controller::PendingAttachmentView>,
     inline_title_editor: Option<(String, usize)>,
     model: DetailContentRenderModel,
+    hyperlinks: Vec<DetailHyperlink>,
     selectable: DetailSelectableDocument,
     section_body_indices: Vec<usize>,
     #[cfg(test)]
@@ -388,6 +400,7 @@ impl DetailDocument {
                 .inline_title_editor
                 .map(|editor| (editor.input.clone(), editor.cursor)),
             model,
+            hyperlinks: body.hyperlinks,
             selectable,
             section_body_indices: body.section_body_indices,
             #[cfg(test)]
@@ -508,6 +521,37 @@ impl DetailDocument {
             })
             .cloned()
             .collect()
+    }
+
+    pub(crate) fn link_at_position(&self, column: u16, row: u16) -> Option<String> {
+        let body_y = self
+            .layout
+            .content_area
+            .y
+            .saturating_add(self.sticky_height() as u16);
+        if row < body_y
+            || row
+                >= self
+                    .layout
+                    .content_area
+                    .y
+                    .saturating_add(self.layout.content_area.height)
+            || column < self.layout.content_area.x
+        {
+            return None;
+        }
+        let line_index = self
+            .model
+            .body_start
+            .saturating_add(row.saturating_sub(body_y) as usize);
+        let local_column = column.saturating_sub(self.layout.content_area.x) as usize;
+        self.hyperlinks
+            .iter()
+            .find(|link| {
+                link.line_index == line_index
+                    && (link.start_column..link.end_column).contains(&local_column)
+            })
+            .map(|link| link.url.clone())
     }
 
     pub(crate) fn target_at_position(&self, column: u16, row: u16) -> Option<DetailTargetId> {
@@ -1301,6 +1345,7 @@ fn build_detail_body_document(
     section_body_indices.push(lines.len());
 
     let mut image_placements = Vec::new();
+    let mut hyperlinks = Vec::new();
     let mut selectable_description = Vec::new();
     let mut selectable_text = String::new();
     let description = description_or_placeholder(&item.task.description);
@@ -1311,6 +1356,19 @@ fn build_detail_body_document(
         MarkdownRenderContext,
         inline_images,
     );
+    let rendered_description = blocks
+        .iter()
+        .map(|block| match block {
+            DetailBodyBlock::Line(line) => line.clone(),
+            DetailBodyBlock::Image { placeholder, .. } => placeholder.clone(),
+        })
+        .collect::<Vec<_>>();
+    hyperlinks.extend(markdown_hyperlinks(
+        &description,
+        &rendered_description,
+        lines.len(),
+        2,
+    ));
     for (index, block) in blocks.into_iter().enumerate() {
         let selectable_line = match &block {
             DetailBodyBlock::Line(line) => line.to_string(),
@@ -1386,7 +1444,13 @@ fn build_detail_body_document(
     );
     lines.push(Line::from(""));
     section_body_indices.push(lines.len());
-    extend_detail_note_section(&mut lines, &mut interactive_rows, item, width);
+    extend_detail_note_section(
+        &mut lines,
+        &mut interactive_rows,
+        &mut hyperlinks,
+        item,
+        width,
+    );
     if !item.depends_on.is_empty() || !item.blocks.is_empty() {
         let dependency_start = lines.len();
         extend_dependency_sections(
@@ -1406,6 +1470,7 @@ fn build_detail_body_document(
         lines,
         image_placements,
         interactive_rows,
+        hyperlinks,
         selectable_description,
         selectable_text,
         section_body_indices,
@@ -1560,6 +1625,7 @@ fn detail_section_body_indices(
 fn extend_detail_note_section(
     lines: &mut Vec<Line<'static>>,
     rows: &mut Vec<DetailInteractiveRow>,
+    hyperlinks: &mut Vec<DetailHyperlink>,
     item: &TaskListItem,
     width: usize,
 ) {
@@ -1595,7 +1661,16 @@ fn extend_detail_note_section(
                 ),
                 Span::styled("  you", Style::new().fg(ACCENT)),
             ])];
-            rendered.extend(quoted_block_lines(&note.body, width, Style::new().fg(FG)));
+            let note_lines = quoted_block_lines(&note.body, width, Style::new().fg(FG));
+            let unquoted_note_lines =
+                render_markdown_without_link_urls(&note.body, width.saturating_sub(3).max(1));
+            hyperlinks.extend(markdown_hyperlinks(
+                &note.body,
+                &unquoted_note_lines,
+                lines.len().saturating_add(1),
+                2,
+            ));
+            rendered.extend(note_lines);
             push_interactive_lines(
                 lines,
                 rows,
@@ -2193,9 +2268,85 @@ fn title_line_ranges(title: &str, width: usize) -> Vec<std::ops::Range<usize>> {
     lines
 }
 
+struct ParsedMarkdownLink {
+    label: String,
+    url: String,
+}
+
+fn markdown_links(markdown: &str) -> Vec<ParsedMarkdownLink> {
+    let mut links = Vec::new();
+    let mut current = None;
+    for event in Parser::new(markdown) {
+        match event {
+            Event::Start(Tag::Link { dest_url, .. }) => {
+                current = Some(ParsedMarkdownLink {
+                    label: String::new(),
+                    url: dest_url.to_string(),
+                });
+            }
+            Event::Text(text) | Event::Code(text) => {
+                if let Some(link) = &mut current {
+                    link.label.push_str(&text);
+                }
+            }
+            Event::SoftBreak | Event::HardBreak => {
+                if let Some(link) = &mut current {
+                    link.label.push(' ');
+                }
+            }
+            Event::End(TagEnd::Link) => {
+                if let Some(link) = current.take() {
+                    links.push(link);
+                }
+            }
+            _ => {}
+        }
+    }
+    links
+}
+
+fn markdown_hyperlinks(
+    markdown: &str,
+    lines: &[Line<'static>],
+    line_offset: usize,
+    column_offset: usize,
+) -> Vec<DetailHyperlink> {
+    let links = markdown_links(markdown);
+    let mut placements = Vec::new();
+    let mut link_index = 0;
+    let mut rendered_width = 0usize;
+    for (line_index, line) in lines.iter().enumerate() {
+        let mut column = column_offset;
+        for span in &line.spans {
+            let width = span.content.width();
+            if span.style.add_modifier.contains(Modifier::UNDERLINED)
+                && let Some(link) = links.get(link_index)
+            {
+                if (link.url.starts_with("https://") || link.url.starts_with("http://"))
+                    && width > 0
+                {
+                    placements.push(DetailHyperlink {
+                        url: link.url.clone(),
+                        line_index: line_offset.saturating_add(line_index),
+                        start_column: column,
+                        end_column: column.saturating_add(width),
+                    });
+                }
+                rendered_width = rendered_width.saturating_add(width);
+                if rendered_width >= link.label.width() {
+                    link_index = link_index.saturating_add(1);
+                    rendered_width = 0;
+                }
+            }
+            column = column.saturating_add(width);
+        }
+    }
+    placements
+}
+
 fn quoted_block_lines(body: &str, width: usize, style: Style) -> Vec<Line<'static>> {
     let content_width = width.saturating_sub(3).max(1);
-    render_markdown(body, content_width)
+    render_markdown_without_link_urls(body, content_width)
         .into_iter()
         .map(|line| {
             let mut spans = line_with_base_style(line, style).spans;
@@ -2443,7 +2594,7 @@ fn detail_body_blocks(
     context: MarkdownRenderContext,
     _inline_images: Option<&DetailInlineImageContext>,
 ) -> Vec<DetailBodyBlock> {
-    render_markdown_with_context(body, content_width, context)
+    render_markdown_with_context_without_link_urls(body, content_width, context)
         .into_iter()
         .map(|block| match block {
             MarkdownBlock::Text(line) => DetailBodyBlock::Line(line),
@@ -3601,6 +3752,60 @@ mod tests {
         assert!(rendered.contains("- One item"));
         assert!(rendered.contains("aven show"));
         assert!(!rendered.contains("`aven show`"));
+    }
+
+    #[test]
+    fn detail_markdown_links_hide_destinations_and_have_mouse_targets() {
+        let mut item = detail_test_item();
+        item.task.description =
+            "See the [Aven guide](https://aven.raine.dev/guide/) for details.".to_string();
+        item.notes[0].body = "Review the [task docs](https://aven.raine.dev/tasks/).".to_string();
+        let expanded_sections = BTreeSet::new();
+        let context = detail_query_context(100, 30, 0, &expanded_sections, None);
+        let document = DetailDocument::build(&item, &context);
+        let rendered = document
+            .model
+            .lines
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let link = document.hyperlinks.first().expect("description link");
+        let row = document
+            .layout
+            .content_area
+            .y
+            .saturating_add(document.sticky_height() as u16)
+            .saturating_add(link.line_index.saturating_sub(document.model.body_start) as u16);
+        let column = document
+            .layout
+            .content_area
+            .x
+            .saturating_add(link.start_column as u16);
+
+        assert!(rendered.contains("See the Aven guide for details."));
+        assert!(rendered.contains("Review the task docs."));
+        assert!(!rendered.contains("https://"));
+        assert_eq!(
+            document
+                .hyperlinks
+                .iter()
+                .map(|link| link.url.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                "https://aven.raine.dev/guide/",
+                "https://aven.raine.dev/tasks/",
+            ])
+        );
+        assert_eq!(
+            document.link_at_position(column, row).as_deref(),
+            Some("https://aven.raine.dev/guide/")
+        );
+        assert!(
+            document
+                .link_at_position(column.saturating_sub(1), row)
+                .is_none()
+        );
     }
 
     #[test]
