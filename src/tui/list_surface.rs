@@ -41,13 +41,21 @@ pub(crate) struct RecentActionReturnState {
     pub(crate) table_offset: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NavigationState {
+    pub(crate) view_state: TaskViewState,
+    pub(crate) selected_index: Option<usize>,
+    pub(crate) table_offset: usize,
+}
+
 pub(crate) struct ListSurface {
     sidebar: ListState,
     table: TableState,
     marked_task_ids: BTreeSet<TaskId>,
     focus: Focus,
     sidebar_visible: bool,
-    navigation_history: BoundedHistory<TaskViewState>,
+    navigation_history: BoundedHistory<NavigationState>,
+    forward_navigation_history: BoundedHistory<NavigationState>,
     last_changed_task_id: Option<TaskId>,
     last_change_return: Option<LastChangeReturnState>,
     recent_action_return: Option<RecentActionReturnState>,
@@ -65,6 +73,7 @@ impl ListSurface {
             focus: Focus::Tasks,
             sidebar_visible: true,
             navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),
+            forward_navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),
             last_changed_task_id: None,
             last_change_return: None,
             recent_action_return: None,
@@ -192,16 +201,45 @@ impl ListSurface {
 
     pub(crate) fn push_navigation(&mut self, previous: TaskViewState, current: &TaskViewState) {
         if &previous != current {
+            let previous = self.navigation_state(previous);
             self.navigation_history.push(previous);
+            self.forward_navigation_history.clear();
         }
     }
 
-    pub(crate) fn pop_navigation(&mut self) -> Option<TaskViewState> {
-        self.navigation_history.pop()
+    pub(crate) fn pop_navigation(&mut self, current: TaskViewState) -> Option<NavigationState> {
+        let previous = self.navigation_history.pop()?;
+        let current = self.navigation_state(current);
+        self.forward_navigation_history.push(current);
+        Some(previous)
+    }
+
+    pub(crate) fn pop_forward_navigation(
+        &mut self,
+        current: TaskViewState,
+    ) -> Option<NavigationState> {
+        let next = self.forward_navigation_history.pop()?;
+        let current = self.navigation_state(current);
+        self.navigation_history.push(current);
+        Some(next)
+    }
+
+    fn navigation_state(&self, view_state: TaskViewState) -> NavigationState {
+        NavigationState {
+            view_state,
+            selected_index: self.table.selected(),
+            table_offset: self.table.offset(),
+        }
     }
 
     pub(crate) fn clear_navigation(&mut self) {
         self.navigation_history.clear();
+        self.forward_navigation_history.clear();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn navigation_is_empty(&self) -> bool {
+        self.navigation_history.is_empty()
     }
 
     pub(crate) fn record_changed_task(&mut self, task_id: TaskId) {

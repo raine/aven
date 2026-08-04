@@ -483,7 +483,7 @@ async fn direct_task_start_opens_selected_detail_without_history() {
     assert!(app.store.tasks[0].task.deleted);
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
-    assert!(app.list.pop_navigation().is_none());
+    assert!(app.list.navigation_is_empty());
     assert!(app.detail.state_mut().unwrap().history.pop().is_none());
 
     app.handle_normal_key(KeyCode::Esc).await.unwrap();

@@ -1827,6 +1827,11 @@ impl App {
                 self.navigate_back_from_detail().await?;
                 Ok(true)
             }
+            DetailShortcutResolution::Action(Action::GoForward) => {
+                self.pending_shortcut_scroll = 0;
+                self.navigate_forward_from_detail().await?;
+                Ok(true)
+            }
             DetailShortcutResolution::Action(Action::BeginStatusPicker)
                 if relationship.is_some() =>
             {
@@ -2039,6 +2044,11 @@ impl App {
             DetailShortcutResolution::Action(Action::GoBack) => {
                 self.pending_shortcut_scroll = 0;
                 self.navigate_back_from_detail().await?;
+                Ok(Some(self.overlay.take()))
+            }
+            DetailShortcutResolution::Action(Action::GoForward) => {
+                self.pending_shortcut_scroll = 0;
+                self.navigate_forward_from_detail().await?;
                 Ok(Some(self.overlay.take()))
             }
             DetailShortcutResolution::Action(action) => {

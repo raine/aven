@@ -53,6 +53,98 @@ async fn back_shortcut_reports_empty_history() {
 }
 
 #[tokio::test]
+async fn back_and_forward_shortcuts_round_trip_navigation_state() {
+    let mut app = test_app().await;
+    app.store
+        .create_project("Mobile App".to_string())
+        .await
+        .unwrap();
+    app.show_scope(TaskScopeTarget::Project("mobile-app".to_string()))
+        .await
+        .unwrap();
+    app.submit_filter_priority(vec!["urgent".to_string()])
+        .await
+        .unwrap();
+
+    app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('[')).await.unwrap();
+    assert_eq!(app.store.view_state.filter_modifiers.priority, None);
+
+    app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char(']')).await.unwrap();
+    assert_eq!(
+        app.store.view_state.scope,
+        TaskScope::Project("mobile-app".to_string())
+    );
+    assert_eq!(
+        app.store.view_state.filter_modifiers.priority.as_deref(),
+        Some("urgent")
+    );
+
+    app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('[')).await.unwrap();
+    assert_eq!(app.store.view_state.filter_modifiers.priority, None);
+}
+
+#[tokio::test]
+async fn back_restores_list_selection() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("First")).await;
+    let second = create_and_select_task(&mut app, test_task_draft("Second")).await;
+    let second_id = app.store.tasks[second].task.id.clone();
+    app.list.select_task(Some(second));
+
+    app.submit_filter_priority(vec!["urgent".to_string()])
+        .await
+        .unwrap();
+    assert!(app.list.selected_task().is_none());
+    app.go_back().await.unwrap();
+
+    assert_eq!(
+        app.store.tasks[app.list.selected_task().unwrap()].task.id,
+        second_id
+    );
+}
+
+#[tokio::test]
+async fn fresh_navigation_after_back_clears_forward_history() {
+    let mut app = test_app().await;
+    app.submit_filter_priority(vec!["urgent".to_string()])
+        .await
+        .unwrap();
+    app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('[')).await.unwrap();
+
+    app.submit_filter_priority(vec!["high".to_string()])
+        .await
+        .unwrap();
+    app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char(']')).await.unwrap();
+
+    assert_eq!(
+        app.store.view_state.filter_modifiers.priority.as_deref(),
+        Some("high")
+    );
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("no next navigation state")
+    );
+}
+
+#[tokio::test]
+async fn forward_shortcut_reports_empty_history() {
+    let mut app = test_app().await;
+
+    app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char(']')).await.unwrap();
+
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("no next navigation state")
+    );
+}
+
+#[tokio::test]
 async fn scope_project_shortcut_opens_project_picker() {
     let mut app = test_app().await;
     app.store

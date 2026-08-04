@@ -1,6 +1,96 @@
 use super::*;
 
 #[tokio::test]
+async fn detail_back_and_forward_round_trip_linked_task_state() {
+    let mut app = test_app().await;
+    let parent = create_and_select_task(&mut app, test_task_draft("Parent")).await;
+    let parent_id = app.store.tasks[parent].task.id.clone();
+    let child = create_and_select_task(&mut app, test_task_draft("Child")).await;
+    let child_id = app.store.tasks[child].task.id.clone();
+    let parent = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == parent_id)
+        .unwrap();
+    app.list.select_task(Some(parent));
+    app.show_detail(3);
+
+    app.open_detail_task(&child_id, 3).await;
+    app.detail.state_mut().unwrap().set_scroll(7);
+    app.dispatch_key(key(KeyCode::Char('g')), (80, 24).into())
+        .await
+        .unwrap();
+    app.dispatch_key(key(KeyCode::Char('[')), (80, 24).into())
+        .await
+        .unwrap();
+    assert_eq!(
+        app.store.tasks[app.list.selected_task().unwrap()].task.id,
+        parent_id
+    );
+    assert_eq!(app.detail.state().unwrap().scroll(), 3);
+
+    app.dispatch_key(key(KeyCode::Char('g')), (80, 24).into())
+        .await
+        .unwrap();
+    app.dispatch_key(key(KeyCode::Char(']')), (80, 24).into())
+        .await
+        .unwrap();
+    assert_eq!(
+        app.store.tasks[app.list.selected_task().unwrap()].task.id,
+        child_id
+    );
+    assert_eq!(app.detail.state().unwrap().scroll(), 7);
+}
+
+#[tokio::test]
+async fn empty_detail_forward_keeps_detail_open() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Task")).await;
+    app.show_detail(4);
+
+    app.dispatch_key(key(KeyCode::Char('g')), (80, 24).into())
+        .await
+        .unwrap();
+    app.dispatch_key(key(KeyCode::Char(']')), (80, 24).into())
+        .await
+        .unwrap();
+
+    assert!(app.detail.is_active());
+    assert_eq!(app.detail.state().unwrap().scroll(), 4);
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("no next detail navigation state")
+    );
+}
+
+#[tokio::test]
+async fn fresh_linked_navigation_after_back_clears_detail_forward_history() {
+    let mut app = test_app().await;
+    let parent = create_and_select_task(&mut app, test_task_draft("Parent")).await;
+    let child = create_and_select_task(&mut app, test_task_draft("Child")).await;
+    let child_id = app.store.tasks[child].task.id.clone();
+    let sibling = create_and_select_task(&mut app, test_task_draft("Sibling")).await;
+    let sibling_id = app.store.tasks[sibling].task.id.clone();
+    app.list.select_task(Some(parent));
+    app.show_detail(0);
+    app.open_detail_task(&child_id, 0).await;
+    app.navigate_back_from_detail().await.unwrap();
+
+    app.open_detail_task(&sibling_id, 0).await;
+    app.navigate_forward_from_detail().await.unwrap();
+
+    assert_eq!(
+        app.store.tasks[app.list.selected_task().unwrap()].task.id,
+        sibling_id
+    );
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("no next detail navigation state")
+    );
+}
+
+#[tokio::test]
 async fn detail_back_returns_from_epic_child_to_parent_detail() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
     let (parent_id, child_ids) =

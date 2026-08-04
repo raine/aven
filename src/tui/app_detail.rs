@@ -275,6 +275,13 @@ impl App {
         Ok(())
     }
 
+    pub(super) async fn navigate_forward_from_detail(&mut self) -> Result<()> {
+        if !self.go_forward_in_detail().await? {
+            self.set_info("no next detail navigation state");
+        }
+        Ok(())
+    }
+
     pub(super) async fn open_detail_task(&mut self, task_id: &crate::ids::TaskId, scroll: u16) {
         let current_task_id = self
             .store

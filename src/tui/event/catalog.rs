@@ -535,6 +535,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::GoBack,
     ),
     CommandSpec::implemented_global_in_detail(
+        "forward",
+        "return to the next navigation state",
+        "Navigation",
+        &[KeySequence {
+            codes: &[KeyCode::Char('g'), KeyCode::Char(']')],
+            label: "g ]",
+        }],
+        Action::GoForward,
+    ),
+    CommandSpec::implemented_global_in_detail(
         "return-to-change",
         "select the task most recently changed",
         "Navigation",

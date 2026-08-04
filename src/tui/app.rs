@@ -388,6 +388,14 @@ impl App {
     }
 
     pub(super) async fn go_back_in_detail(&mut self) -> Result<bool> {
+        let current = self
+            .store
+            .selected_task(self.list.selected_task())
+            .and_then(|item| {
+                self.detail.state().map(|detail| {
+                    detail.snapshot(item.task.id.clone(), self.store.view_state.clone())
+                })
+            });
         let mut skipped = false;
         while let Some(previous) = self
             .detail
@@ -414,6 +422,9 @@ impl App {
             self.list.select_task(Some(index));
             self.list.focus_tasks();
             if let Some(detail) = self.detail.state_mut() {
+                if let Some(current) = current.clone() {
+                    detail.push_forward_history(current);
+                }
                 detail.restore_snapshot(&previous);
                 detail.select_sibling_task(&previous.task_id);
             }
@@ -429,12 +440,81 @@ impl App {
         Ok(false)
     }
 
+    pub(super) async fn go_forward_in_detail(&mut self) -> Result<bool> {
+        let current = self
+            .store
+            .selected_task(self.list.selected_task())
+            .and_then(|item| {
+                self.detail.state().map(|detail| {
+                    detail.snapshot(item.task.id.clone(), self.store.view_state.clone())
+                })
+            });
+        let mut skipped = false;
+        while let Some(next) = self
+            .detail
+            .state_mut()
+            .and_then(|detail| detail.pop_forward_history())
+        {
+            let Some(item) = self.store.load_task_item(&next.task_id).await? else {
+                skipped = true;
+                continue;
+            };
+            self.store.view_state = next.view_state.clone();
+            let selected = self.store.refresh(Some(&next.task_id)).await?;
+            let index = if let Some(index) = selected.filter(|&index| {
+                self.store
+                    .tasks
+                    .get(index)
+                    .is_some_and(|item| item.task.id == next.task_id)
+            }) {
+                index
+            } else {
+                self.store.show_exact_task(item);
+                0
+            };
+            self.list.select_task(Some(index));
+            self.list.focus_tasks();
+            if let Some(detail) = self.detail.state_mut() {
+                if let Some(current) = current.clone() {
+                    detail.push_back_history(current);
+                }
+                detail.restore_snapshot(&next);
+                detail.select_sibling_task(&next.task_id);
+            }
+            self.show_detail(next.scroll);
+            if skipped {
+                self.set_warning("some next linked tasks are unavailable");
+            }
+            return Ok(true);
+        }
+        if skipped {
+            self.set_warning("next linked tasks are unavailable");
+        }
+        Ok(false)
+    }
+
+    fn apply_navigation_selection(
+        &mut self,
+        selected: Option<usize>,
+        fallback: Option<usize>,
+        table_offset: usize,
+    ) {
+        let row_count = match self.store.view_state.view {
+            crate::tui::store::TaskView::Recurring => self.store.recurrence_series.len(),
+            crate::tui::store::TaskView::RecentActions => self.store.recent_actions.len(),
+            _ => self.store.tasks.len(),
+        };
+        self.apply_filter_selection(selected.filter(|&index| index < row_count).or(fallback));
+        self.list.set_task_offset(table_offset);
+    }
+
     pub(super) async fn go_back(&mut self) -> Result<()> {
-        let Some(previous) = self.list.pop_navigation() else {
+        let current = self.store.view_state.clone();
+        let Some(previous) = self.list.pop_navigation(current) else {
             self.set_info("no previous navigation state");
             return Ok(());
         };
-        let returns_to_series = previous.view == crate::tui::store::TaskView::Recurring;
+        let returns_to_series = previous.view_state.view == crate::tui::store::TaskView::Recurring;
         let selected = returns_to_series
             .then_some(self.series_detail_return.as_ref())
             .flatten()
@@ -443,9 +523,14 @@ impl App {
             });
         let result = self
             .store
-            .restore_view_state(previous, selected.as_ref())
+            .restore_view_state(previous.view_state, selected.as_ref())
             .await?;
-        self.apply_filter_selection(result.selected);
+        let restored_selected = if returns_to_series && selected.is_some() {
+            result.selected
+        } else {
+            previous.selected_index
+        };
+        self.apply_navigation_selection(restored_selected, result.selected, previous.table_offset);
         if returns_to_series && let Some(anchor) = self.series_detail_return.take() {
             if self
                 .store
@@ -464,6 +549,20 @@ impl App {
                 self.set_warning("recurring series is hidden by the restored filters");
             }
         }
+        if let Some(project) = result.fallback_scope {
+            self.set_warning(format!("project scope {project} is no longer available"));
+        }
+        Ok(())
+    }
+
+    pub(super) async fn go_forward(&mut self) -> Result<()> {
+        let current = self.store.view_state.clone();
+        let Some(next) = self.list.pop_forward_navigation(current) else {
+            self.set_info("no next navigation state");
+            return Ok(());
+        };
+        let result = self.store.restore_view_state(next.view_state, None).await?;
+        self.apply_navigation_selection(next.selected_index, result.selected, next.table_offset);
         if let Some(project) = result.fallback_scope {
             self.set_warning(format!("project scope {project} is no longer available"));
         }

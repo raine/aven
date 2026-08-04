@@ -88,6 +88,7 @@ pub(crate) struct DetailState {
     pub(crate) text_selection: Option<DetailTextSelection>,
     pub(crate) text_dragging: bool,
     pub(crate) history: BoundedHistory<DetailSnapshot>,
+    forward_history: BoundedHistory<DetailSnapshot>,
     sibling_context: Option<DetailSiblingContext>,
     pub(crate) removed_epic_child: Option<RemovedEpicChild>,
 }
@@ -102,6 +103,7 @@ impl DetailState {
             text_selection: None,
             text_dragging: false,
             history: BoundedHistory::new(DETAIL_HISTORY_LIMIT),
+            forward_history: BoundedHistory::new(DETAIL_HISTORY_LIMIT),
             sibling_context: None,
             removed_epic_child: None,
         }
@@ -200,6 +202,7 @@ impl DetailState {
     #[cfg(test)]
     pub(crate) fn push_history(&mut self, previous: DetailSnapshot) {
         self.history.push(previous);
+        self.forward_history.clear();
     }
 
     pub(crate) fn follow_link(
@@ -221,6 +224,7 @@ impl DetailState {
         }
         self.select_sibling_task(linked_task_id);
         self.history.push(previous);
+        self.forward_history.clear();
         self.scroll = 0;
         self.focused_target = None;
         self.hovered_target = None;
@@ -262,6 +266,18 @@ impl DetailState {
         self.history.pop()
     }
 
+    pub(crate) fn push_forward_history(&mut self, snapshot: DetailSnapshot) {
+        self.forward_history.push(snapshot);
+    }
+
+    pub(crate) fn pop_forward_history(&mut self) -> Option<DetailSnapshot> {
+        self.forward_history.pop()
+    }
+
+    pub(crate) fn push_back_history(&mut self, snapshot: DetailSnapshot) {
+        self.history.push(snapshot);
+    }
+
     pub(crate) fn restore_snapshot(&mut self, snapshot: &DetailSnapshot) {
         self.scroll = snapshot.scroll;
         self.focused_target = snapshot.focused_target.clone();
@@ -271,6 +287,7 @@ impl DetailState {
     }
 
     pub(crate) fn reset_task_state(&mut self, scroll: u16) {
+        self.forward_history.clear();
         self.scroll = scroll;
         self.focused_target = None;
         self.hovered_target = None;

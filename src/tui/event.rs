@@ -38,6 +38,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::ToggleDetail
             | Action::ToggleColumnsPreview
             | Action::GoBack
+            | Action::GoForward
             | Action::ReturnToLastChange
             | Action::ToggleHelp
             | Action::ShowWelcome
@@ -643,6 +644,14 @@ mod tests {
     }
 
     #[test]
+    fn normal_context_resolves_forward_shortcut() {
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char(']')]),
+            ShortcutLookup::Found(Action::GoForward)
+        );
+    }
+
+    #[test]
     fn detail_context_resolves_detail_shortcuts() {
         assert_eq!(
             resolve_shortcut_for(CommandContext::Detail, &[KeyCode::Char('e')]),
@@ -666,6 +675,13 @@ mod tests {
                 &[KeyCode::Char('g'), KeyCode::Char('[')]
             ),
             ShortcutLookup::Found(Action::GoBack)
+        );
+        assert_eq!(
+            resolve_shortcut_for(
+                CommandContext::Detail,
+                &[KeyCode::Char('g'), KeyCode::Char(']')]
+            ),
+            ShortcutLookup::Found(Action::GoForward)
         );
         assert_eq!(
             resolve_shortcut_for(
