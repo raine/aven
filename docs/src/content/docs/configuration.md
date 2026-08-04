@@ -1,6 +1,6 @@
 ---
 title: Configuration
-description: Configure storage, routing, sync, daemon wakeups, TUI columns, and agent intake.
+description: Configure storage, routing, sync, update checks, TUI columns, and agent intake.
 ---
 
 aven works without a config file. Add one when defaults are not enough.
@@ -48,6 +48,9 @@ sync:
 
 daemon:
   wake_addr: "127.0.0.1:47631"
+
+update:
+  automatic_checks: true
 
 tui:
   columns:
@@ -173,6 +176,17 @@ daemon:
 Daemon wake addresses must be loopback.
 :::
 
+## Automatic update checks
+
+The TUI checks for releases in the background and shows an update badge when a release is available. Set `automatic_checks` to `false` to disable these automatic checks and notifications:
+
+```yaml
+update:
+  automatic_checks: false
+```
+
+Set `AVEN_NO_UPDATE_CHECK=1` to disable automatic checks for one environment. The environment variable takes precedence over `update.automatic_checks`. `aven update` and the TUI's explicit update command are available with either setting.
+
 ## TUI columns
 
 The Columns view groups Aven's semantic statuses into named lanes. Names and order are presentation settings. Task status values remain `inbox`, `backlog`, `todo`, `active`, `done`, and `canceled` across the CLI, sync, queue, dependencies, and agent workflows.
@@ -221,3 +235,4 @@ Useful environment overrides include:
 | `AVEN_CONFIG_DIR` | Config directory containing `config.yaml` |
 | `AVEN_DB` | SQLite database path |
 | `AVEN_SYNC_SERVER` | Sync server URL |
+| `AVEN_NO_UPDATE_CHECK` | Disable automatic update checks and TUI notifications when set to `1`, `true`, or `yes` |

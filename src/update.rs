@@ -159,17 +159,6 @@ pub(crate) fn client() -> Result<reqwest::Client> {
         .context("build update client")
 }
 
-pub(crate) fn automatic_checks_disabled() -> bool {
-    std::env::var("AVEN_NO_UPDATE_CHECK")
-        .ok()
-        .is_some_and(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes"
-            )
-        })
-}
-
 pub(crate) fn ensure_not_cancelled(cancelled: &Arc<AtomicBool>) -> Result<()> {
     if cancelled.load(Ordering::Relaxed) {
         bail!("update cancelled");

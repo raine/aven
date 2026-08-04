@@ -28,7 +28,27 @@ pub struct AppConfig {
     #[serde(default)]
     pub agent: AgentConfig,
     #[serde(default)]
+    pub update: UpdateConfig,
+    #[serde(default)]
     pub tui: TuiConfig,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct UpdateConfig {
+    #[serde(default = "default_automatic_update_checks")]
+    pub automatic_checks: bool,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            automatic_checks: default_automatic_update_checks(),
+        }
+    }
+}
+
+fn default_automatic_update_checks() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -322,6 +342,10 @@ impl AppConfig {
                 .with_context(|| format!("could not parse {}", path.display()))?
         };
         config.sync.disabled |= sync_disabled_from_env();
+        config.update.automatic_checks = automatic_update_checks_enabled(
+            config.update.automatic_checks,
+            env::var("AVEN_NO_UPDATE_CHECK").ok().as_deref(),
+        );
         config
             .validate()
             .with_context(|| format!("invalid config {}", path.display()))?;
@@ -519,6 +543,10 @@ fn sync_disabled_from_env() -> bool {
     sync_disabled_value(env::var("AVEN_SYNC_DISABLED").ok().as_deref())
 }
 
+fn automatic_update_checks_enabled(configured: bool, disabled_env: Option<&str>) -> bool {
+    configured && !disabled_env_value(disabled_env)
+}
+
 fn ensure_sync_allowed_value(disabled: bool) -> Result<()> {
     if disabled {
         bail!("error sync-disabled hint=\"sync is disabled in this environment\"");
@@ -528,6 +556,15 @@ fn ensure_sync_allowed_value(disabled: bool) -> Result<()> {
 
 fn sync_disabled_value(value: Option<&str>) -> bool {
     matches!(value, Some("1") | Some("true") | Some("yes"))
+}
+
+fn disabled_env_value(value: Option<&str>) -> bool {
+    value.is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes"
+        )
+    })
 }
 
 pub fn write_config(path: &Path, config: &AppConfig) -> Result<()> {
@@ -760,6 +797,25 @@ mod tests {
             .unwrap(),
             PathBuf::from("/tmp/configured.sqlite")
         );
+    }
+
+    #[test]
+    fn update_automatic_checks_parse_from_config() {
+        let disabled: AppConfig =
+            serde_yaml::from_str("update:\n  automatic_checks: false\n").unwrap();
+        let default: AppConfig = serde_yaml::from_str("{}\n").unwrap();
+
+        assert!(!disabled.update.automatic_checks);
+        assert!(default.update.automatic_checks);
+    }
+
+    #[test]
+    fn update_check_environment_disable_takes_precedence() {
+        for value in [Some("1"), Some("true"), Some("YES")] {
+            assert!(!automatic_update_checks_enabled(true, value));
+        }
+        assert!(!automatic_update_checks_enabled(false, None));
+        assert!(automatic_update_checks_enabled(true, Some("false")));
     }
 
     #[test]

@@ -252,7 +252,7 @@ impl App {
             authoring: AuthoringState::default(),
             needs_terminal_clear: false,
             search: crate::tui::app_search::SearchController::new(),
-            update: crate::tui::app_update::UpdateController::new(),
+            update: crate::tui::app_update::UpdateController::new(config.update.automatic_checks),
             sync: SyncController::new(),
             changelog: crate::tui::changelog::ChangelogController::new(),
             next_refresh_at,
@@ -296,6 +296,8 @@ impl App {
         self.store.set_config(config.clone());
         self.store.task_columns = config.tui.columns.clone();
         self.inline_image_backend = active_backend_from_env(config.local.inline_images);
+        self.update
+            .set_automatic_checks(config.update.automatic_checks);
         self.intake.set_config(config);
     }
 

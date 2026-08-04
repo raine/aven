@@ -29,6 +29,7 @@ enum UpdateAvailability {
 
 pub(super) struct UpdateController {
     availability: UpdateAvailability,
+    automatic_checks: bool,
     check: Option<JoinHandle<Result<CheckOutcome>>>,
     check_explicit: bool,
     install: Option<JoinHandle<Result<InstallSuccess>>>,
@@ -63,9 +64,10 @@ fn initial_dismissal() -> Option<update::UpdateDismissal> {
 }
 
 impl UpdateController {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(automatic_checks: bool) -> Self {
         Self {
             availability: initial_availability(),
+            automatic_checks,
             check: None,
             check_explicit: false,
             install: None,
@@ -78,6 +80,7 @@ impl UpdateController {
     pub(super) fn badge(&self) -> Option<UpdateBadgeView> {
         match &self.availability {
             UpdateAvailability::Unknown => None,
+            UpdateAvailability::Available { .. } if !self.automatic_checks => None,
             UpdateAvailability::Available { release, .. }
                 if !self
                     .dismissal
@@ -108,6 +111,10 @@ impl UpdateController {
     pub(super) fn work_pending(&self) -> bool {
         self.check.is_some() || self.install.is_some()
     }
+
+    pub(super) fn set_automatic_checks(&mut self, enabled: bool) {
+        self.automatic_checks = enabled;
+    }
 }
 
 fn update_guidance_copy(plan: &InstallPlan) -> Option<String> {
@@ -120,9 +127,16 @@ fn update_guidance_copy(plan: &InstallPlan) -> Option<String> {
     )
 }
 
+fn should_start_automatic_check(enabled: bool, due: bool) -> bool {
+    enabled && due
+}
+
 impl App {
     pub(crate) fn start_update_check(&mut self) {
-        if update::automatic_checks_disabled() || !update::background_check_due() {
+        if !should_start_automatic_check(
+            self.update.automatic_checks,
+            update::background_check_due(),
+        ) {
             return;
         }
         self.spawn_update_check(false);
@@ -447,8 +461,21 @@ mod tests {
     }
 
     #[test]
+    fn disabled_automatic_updates_suppress_checks_and_badges() {
+        assert!(!should_start_automatic_check(false, true));
+
+        let mut controller = UpdateController::new(false);
+        controller.availability = UpdateAvailability::Available {
+            release: release(2),
+            cached: false,
+        };
+
+        assert!(controller.badge().is_none());
+    }
+
+    #[test]
     fn later_hides_only_the_dismissed_update_badge() {
-        let mut controller = UpdateController::new();
+        let mut controller = UpdateController::new(true);
         controller.availability = UpdateAvailability::Available {
             release: release(2),
             cached: false,
