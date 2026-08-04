@@ -602,6 +602,13 @@ mod tests {
     }
 
     #[test]
+    fn marked_card_keeps_non_color_marker_for_focused_composition() {
+        let markers = card_marker_spans(&item(1), true);
+
+        assert!(markers.iter().any(|span| span.content.contains('●')));
+    }
+
+    #[test]
     fn layout_reserves_preview_and_keeps_selected_card_visible() {
         let config = vec![crate::config::TaskColumnConfig {
             name: "Work".into(),

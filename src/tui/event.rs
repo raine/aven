@@ -2,7 +2,7 @@ mod action;
 mod catalog;
 mod lookup;
 
-pub(crate) use self::action::{Action, SINGLE_TASK_COPY_ACTIONS};
+pub(crate) use self::action::{Action, BulkSupport, SINGLE_TASK_COPY_ACTIONS};
 #[allow(unused_imports)]
 pub(crate) use self::catalog::{
     COMMAND_DOMAINS, COMMANDS, CommandContext, CommandDomain, CommandLifecycle, CommandSpec,
@@ -13,8 +13,8 @@ pub(crate) use self::lookup::{
     CommandCompletion, CommandLookup, CommandSpecLookup, ShortcutLookup, command_cycle_options,
     command_cycle_options_for, complete_command, complete_command_for, key_label, lookup_command,
     lookup_command_spec, lookup_command_spec_for, matching_commands, matching_commands_for,
-    preferred_shortcut_label, prefix_hint_commands, resolve_shortcut, resolve_shortcut_for,
-    resolve_shortcut_in, resolve_shortcut_in_for, shortcut_label,
+    matching_commands_for_bulk, preferred_shortcut_label, prefix_hint_commands, resolve_shortcut,
+    resolve_shortcut_for, resolve_shortcut_in, resolve_shortcut_in_for, shortcut_label,
 };
 
 #[cfg(test)]
@@ -236,6 +236,64 @@ mod tests {
     #[test]
     fn lookup_command_preserves_suffix_ambiguity() {
         assert_eq!(lookup_command(":done"), CommandLookup::Ambiguous);
+    }
+
+    #[test]
+    fn bulk_command_display_prioritizes_batch_actions() {
+        let commands = matching_commands_for_bulk(CommandContext::Normal, "", 3);
+        let first_non_batch = commands
+            .iter()
+            .position(|command| command.bulk_support() != BulkSupport::Batch)
+            .unwrap();
+
+        assert!(first_non_batch > 0);
+        assert!(
+            commands[..first_non_batch]
+                .iter()
+                .all(|command| command.bulk_support() == BulkSupport::Batch)
+        );
+        assert!(
+            commands[first_non_batch..]
+                .iter()
+                .any(|command| command.bulk_support() == BulkSupport::SingleOnly)
+        );
+    }
+
+    #[test]
+    fn bulk_command_display_preserves_typed_lookup_order() {
+        let ordinary = matching_commands_for(CommandContext::Normal, "delete")
+            .into_iter()
+            .map(|command| command.name)
+            .collect::<Vec<_>>();
+        let marked = matching_commands_for_bulk(CommandContext::Normal, "delete", 3)
+            .into_iter()
+            .map(|command| command.name)
+            .collect::<Vec<_>>();
+
+        assert_eq!(marked, ordinary);
+        assert_eq!(lookup_command(":done"), CommandLookup::Ambiguous);
+        assert_eq!(
+            complete_command(":statusin"),
+            CommandCompletion::Completed("status-inbox".to_string())
+        );
+    }
+
+    #[test]
+    fn task_actions_declare_bulk_target_behavior() {
+        assert_eq!(Action::BeginEditProject.bulk_support(), BulkSupport::Batch);
+        assert_eq!(
+            Action::BeginEditTitle.bulk_support(),
+            BulkSupport::SingleOnly
+        );
+        assert_eq!(
+            Action::CopyTaskMarkdown.bulk_support(),
+            BulkSupport::Focused
+        );
+        assert_eq!(Action::ClearMarks.bulk_support(), BulkSupport::MarkControl);
+        assert_eq!(
+            Action::ShowView(TaskView::Open).bulk_support(),
+            BulkSupport::Neutral
+        );
     }
 
     #[test]

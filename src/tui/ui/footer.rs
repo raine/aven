@@ -1,11 +1,16 @@
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
+use unicode_width::UnicodeWidthStr;
+
+use crate::tui::event::Action;
 
 use crate::tui::theme::{self, BG, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, YELLOW};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum FooterMode {
+    Bulk,
     List,
     Columns,
     Detail,
@@ -30,40 +35,131 @@ pub(super) fn footer_bar(
     width: u16,
     marked_task_count: usize,
 ) -> Paragraph<'static> {
-    let mut spans = marked_task_indicator(marked_task_count);
-    let indicator_width = spans
-        .iter()
-        .map(|span| span.content.chars().count() as u16)
-        .sum::<u16>();
-    for (keys, label) in footer_hints(mode, width.saturating_sub(indicator_width)) {
-        spans.extend(key(keys));
-        spans.push(cmd(mode, label));
-    }
-    let hints = Line::from(spans);
-    Paragraph::new(hints)
+    let mode = if marked_task_count > 0 && matches!(mode, FooterMode::List | FooterMode::Columns) {
+        FooterMode::Bulk
+    } else {
+        mode
+    };
+    let spans = if mode == FooterMode::Bulk {
+        visible_bulk_footer_segments(width, marked_task_count)
+            .into_iter()
+            .flat_map(|segment| segment.spans)
+            .collect()
+    } else {
+        let mut spans = if matches!(mode, FooterMode::StatusChoice | FooterMode::PriorityChoice) {
+            marked_task_indicator(marked_task_count)
+        } else {
+            Vec::new()
+        };
+        let indicator_width = spans_width(&spans);
+        for (keys, label) in footer_hints(mode, width.saturating_sub(indicator_width)) {
+            spans.extend(key(keys));
+            spans.push(cmd(mode, label));
+        }
+        spans
+    };
+    let background = if mode == FooterMode::Bulk {
+        BG_PANEL
+    } else {
+        BG
+    };
+    Paragraph::new(Line::from(spans))
         .block(
             Block::new()
                 .borders(Borders::TOP)
                 .border_style(Style::new().fg(BORDER)),
         )
-        .style(Style::new().fg(FG).bg(BG))
+        .style(Style::new().fg(FG).bg(background))
+}
+
+struct BulkFooterSegment {
+    spans: Vec<Span<'static>>,
+    action: Option<Action>,
+}
+
+fn bulk_footer_segments(count: usize) -> Vec<BulkFooterSegment> {
+    vec![
+        BulkFooterSegment {
+            spans: vec![Span::styled(
+                format!(" ● {count} marked  "),
+                Style::new().fg(YELLOW).add_modifier(Modifier::BOLD),
+            )],
+            action: None,
+        },
+        bulk_action_segment(":", "actions", Action::BeginCommand),
+        bulk_action_segment("t C", "clear", Action::ClearMarks),
+        bulk_action_segment("u", "undo", Action::Undo),
+    ]
+}
+
+fn bulk_action_segment(keys: &str, label: &str, action: Action) -> BulkFooterSegment {
+    let mut spans = key(keys);
+    spans.push(Span::styled(format!(" {label}  "), Style::new().fg(FG_DIM)));
+    BulkFooterSegment {
+        spans,
+        action: Some(action),
+    }
+}
+
+fn visible_bulk_footer_segments(width: u16, count: usize) -> Vec<BulkFooterSegment> {
+    let mut used = 0_u16;
+    bulk_footer_segments(count)
+        .into_iter()
+        .filter(|segment| {
+            let segment_width = spans_width(&segment.spans);
+            let visible = used.saturating_add(segment_width) <= width;
+            if visible {
+                used = used.saturating_add(segment_width);
+            }
+            visible
+        })
+        .collect()
+}
+
+fn spans_width(spans: &[Span<'_>]) -> u16 {
+    spans
+        .iter()
+        .map(|span| UnicodeWidthStr::width(span.content.as_ref()) as u16)
+        .sum()
+}
+
+pub(crate) fn bulk_footer_action_at(
+    area: Rect,
+    marked_task_count: usize,
+    column: u16,
+    row: u16,
+) -> Option<Action> {
+    let in_area = column >= area.x
+        && column < area.x.saturating_add(area.width)
+        && row >= area.y
+        && row < area.y.saturating_add(area.height);
+    if marked_task_count == 0 || row != area.y.saturating_add(1) || !in_area {
+        return None;
+    }
+    let mut start = area.x;
+    for segment in visible_bulk_footer_segments(area.width, marked_task_count) {
+        let end = start.saturating_add(spans_width(&segment.spans));
+        if start <= column && column < end {
+            return segment.action;
+        }
+        start = end;
+    }
+    None
 }
 
 fn marked_task_indicator(count: usize) -> Vec<Span<'static>> {
     if count == 0 {
         return Vec::new();
     }
-    let mut spans = vec![Span::styled(
+    vec![Span::styled(
         format!(" ● {count} marked  "),
         Style::new().fg(YELLOW).add_modifier(Modifier::BOLD),
-    )];
-    spans.extend(key("t C"));
-    spans.push(Span::styled(" clear all  ", Style::new().fg(FG_DIM)));
-    spans
+    )]
 }
 
 fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'static str)] {
     match mode {
+        FooterMode::Bulk => &[],
         FooterMode::List if width >= 148 => &[
             ("j/k", "move"),
             ("Enter", "detail"),
@@ -384,7 +480,8 @@ fn cmd(mode: FooterMode, label: &str) -> Span<'static> {
     let style = match mode {
         FooterMode::StatusChoice => theme::status_style(label),
         FooterMode::PriorityChoice => theme::priority_style(label),
-        FooterMode::List
+        FooterMode::Bulk
+        | FooterMode::List
         | FooterMode::Columns
         | FooterMode::Detail
         | FooterMode::DetailDeleted
@@ -446,8 +543,53 @@ mod tests {
         let rendered = buffer_text(terminal.backend());
 
         assert!(rendered.contains("● 3 marked"));
+        assert!(rendered.contains("actions"));
         assert!(rendered.contains("t C"));
-        assert!(rendered.contains("clear all"));
+        assert!(rendered.contains("clear"));
+        assert!(rendered.contains("undo"));
+        assert!(!rendered.contains("detail"));
+    }
+
+    #[test]
+    fn marked_scope_stays_out_of_detail_footer() {
+        let backend = TestBackend::new(100, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| frame.render_widget(footer_bar(FooterMode::Detail, 100, 3), frame.area()))
+            .unwrap();
+        let rendered = buffer_text(terminal.backend());
+
+        assert!(!rendered.contains("marked"));
+        assert!(rendered.contains("scroll"));
+    }
+
+    #[test]
+    fn bulk_footer_actions_share_rendered_hit_ranges() {
+        let area = Rect::new(0, 0, 100, 2);
+        let actions = (0..area.width)
+            .filter_map(|column| bulk_footer_action_at(area, 3, column, 1))
+            .collect::<Vec<_>>();
+
+        assert!(actions.contains(&Action::BeginCommand));
+        assert!(actions.contains(&Action::ClearMarks));
+        assert!(actions.contains(&Action::Undo));
+        assert_eq!(bulk_footer_action_at(area, 3, 5, 0), None);
+    }
+
+    #[test]
+    fn marked_status_choice_keeps_scope_without_conflicting_clear_hint() {
+        let backend = TestBackend::new(100, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(footer_bar(FooterMode::StatusChoice, 100, 3), frame.area())
+            })
+            .unwrap();
+        let rendered = buffer_text(terminal.backend());
+
+        assert!(rendered.contains("● 3 marked"));
+        assert!(rendered.contains("todo"));
+        assert!(!rendered.contains("clear"));
     }
 
     #[test]

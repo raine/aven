@@ -22,6 +22,37 @@ async fn status_shortcut_uses_footer_chooser_for_unmarked_task() {
 }
 
 #[tokio::test]
+async fn command_palette_captures_bulk_scope_and_single_target_limits() {
+    let mut app = test_app().await;
+    let first = create_and_select_task(&mut app, test_task_draft("first")).await;
+    let first_id = app.store.tasks[first].task.id.clone();
+    let second = create_and_select_task(&mut app, test_task_draft("second")).await;
+    let second_id = app.store.tasks[second].task.id.clone();
+    app.list.mark(first_id);
+    app.list.mark(second_id);
+
+    app.begin_command().await;
+
+    let Some(OverlayState::Command { state }) = &app.overlay else {
+        panic!("expected command palette");
+    };
+    assert_eq!(state.marked_task_count, 2);
+    assert!(state.unavailable.iter().any(|override_| {
+        override_.action == crate::tui::event::Action::BeginEditTitle
+            && override_.reason.contains("requires one task")
+    }));
+
+    type_chars(&mut app, "edit-title").await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert!(app.overlay.is_none());
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some(":edit-title is disabled: requires one task when multiple tasks are marked")
+    );
+}
+
+#[tokio::test]
 async fn status_shortcut_uses_footer_chooser_for_marked_tasks_with_undo() {
     let mut app = test_app().await;
     let first = create_and_select_task(&mut app, test_task_draft("first")).await;
@@ -429,6 +460,15 @@ async fn begin_delete_task_confirms_marked_tasks_when_tasks_are_marked() {
     let second = create_and_select_task(&mut app, test_task_draft("second")).await;
     let second_id = app.store.tasks[second].task.id.clone();
     app.list.mark(first_id);
+
+    app.begin_delete_task();
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Confirm(ConfirmState { prompt, .. }))
+            if prompt == "Delete 1 marked task?"
+    ));
+
+    app.overlay = None;
     app.list.mark(second_id);
 
     app.begin_delete_task();

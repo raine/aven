@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Rect, Size};
 
 use std::time::{Duration, Instant};
@@ -304,6 +304,26 @@ impl App {
         }
 
         self.list.expire_task_click(Instant::now());
+
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            && terminal_size.width >= crate::tui::ui::MIN_TUI_WIDTH
+            && terminal_size.height >= crate::tui::ui::MIN_TUI_HEIGHT
+            && self.detail.is_inactive()
+            && self.footer_choice.is_none()
+        {
+            let marked_task_count = self.marked_task_ids_in_view().len();
+            let terminal_area = Rect::new(0, 0, terminal_size.width, terminal_size.height);
+            if let Some(action) = crate::tui::ui::bulk_footer_action_at(
+                crate::tui::ui::footer_area(terminal_area),
+                marked_task_count,
+                mouse.column,
+                mouse.row,
+            ) {
+                self.list.clear_task_click();
+                self.execute(action).await?;
+                return Ok(());
+            }
+        }
 
         let header = ratatui::layout::Rect {
             x: 0,

@@ -1,7 +1,9 @@
 use crossterm::event::KeyCode;
 use unicode_width::UnicodeWidthStr;
 
-use super::{Action, CommandContext, CommandLifecycle, CommandSpec, KeySequence};
+use super::{
+    Action, BulkSupport, CommandContext, CommandLifecycle, CommandSpec, KeySequence,
+};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,6 +150,25 @@ pub(crate) fn matching_commands_for(
         .collect::<Vec<_>>();
     matches.sort_by_key(|(rank, _)| *rank);
     matches.into_iter().map(|(_, command)| command).collect()
+}
+
+pub(crate) fn matching_commands_for_bulk(
+    context: CommandContext,
+    input: &str,
+    marked_task_count: usize,
+) -> Vec<&'static CommandSpec> {
+    let mut matches = matching_commands_for(context, input);
+    if marked_task_count == 0 || !normalize_command_input(input).is_empty() {
+        return matches;
+    }
+    matches.sort_by_key(|command| match command.bulk_support() {
+        BulkSupport::Batch => 0,
+        BulkSupport::MarkControl => 1,
+        BulkSupport::Focused => 2,
+        BulkSupport::Neutral => 3,
+        BulkSupport::SingleOnly => 4,
+    });
+    matches
 }
 
 fn normalize_command_input(input: &str) -> &str {

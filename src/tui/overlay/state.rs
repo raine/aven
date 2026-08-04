@@ -169,6 +169,7 @@ pub(crate) struct CommandState {
     pub(crate) cycle_index: usize,
     pub(crate) highlighted: Option<String>,
     pub(crate) context: CommandContext,
+    pub(crate) marked_task_count: usize,
     pub(crate) target: Option<OverlayTarget>,
     pub(crate) unavailable: Vec<CommandAvailabilityOverride>,
 }
@@ -181,6 +182,7 @@ impl CommandState {
             cycle_index: 0,
             highlighted: None,
             context: CommandContext::Normal,
+            marked_task_count: 0,
             target: None,
             unavailable: Vec::new(),
         }
@@ -194,6 +196,7 @@ impl CommandState {
             cycle_index: 0,
             highlighted: None,
             context: CommandContext::Normal,
+            marked_task_count: 0,
             target: None,
             unavailable: Vec::new(),
         }

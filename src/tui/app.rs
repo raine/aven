@@ -350,8 +350,27 @@ impl App {
         } else {
             crate::tui::event::CommandContext::Normal
         };
+        state.marked_task_count = if self.detail.is_active() {
+            0
+        } else {
+            self.marked_task_ids_in_view().len()
+        };
         state.target = target;
         state.unavailable = unavailable;
+        if state.marked_task_count > 1 {
+            state.unavailable.extend(
+                state
+                    .context
+                    .commands()
+                    .filter(|command| {
+                        command.bulk_support() == crate::tui::event::BulkSupport::SingleOnly
+                    })
+                    .map(|command| crate::tui::overlay::CommandAvailabilityOverride {
+                        action: command.action,
+                        reason: "requires one task when multiple tasks are marked",
+                    }),
+            );
+        }
         self.overlay = Some(OverlayState::Command { state });
     }
 

@@ -27,6 +27,7 @@ pub(crate) use self::sidebar::{sidebar_click_at_for, sidebar_layout_for};
 pub(crate) use self::columns::column_lane_at_position;
 use self::columns::render_columns;
 use self::detail::{render_attachment_preview, render_detail_underlay};
+pub(crate) use self::footer::bulk_footer_action_at;
 use self::footer::{FooterMode, footer_bar};
 use self::header::render_header;
 pub(crate) use self::overlays::recurrence_history_entry_at;
@@ -38,7 +39,9 @@ use self::overlays::{
 };
 use self::recent_actions::render_recent_actions;
 use self::recurrence::{render_recurrence_detail, render_recurrence_series};
-use self::shortcuts::{render_command, render_detail_help, render_help, render_prefix_hints};
+use self::shortcuts::{
+    CommandRenderContext, render_command, render_detail_help, render_help, render_prefix_hints,
+};
 use self::sidebar::{render_sidebar, render_sidebar_overlay};
 use self::task_list::render_tasks;
 pub(crate) use self::task_list::{
@@ -69,7 +72,7 @@ pub(crate) use self::splash::{render_dimmed_onboarding_splash, render_onboarding
 pub(crate) use self::task_list::{task_at_position, task_status_at_position};
 
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Layout};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Paragraph};
@@ -108,7 +111,7 @@ pub(crate) struct ViewState {
     pub(crate) pending_shortcut_scroll: u16,
     pub(crate) copy_description_available: bool,
     pub(crate) copy_notes_available: bool,
-    pub(crate) marked_task_count: usize,
+    pub(crate) visible_marked_task_count: usize,
     pub(crate) footer_choice_mode: Option<FooterChoiceMode>,
     pub(crate) sidebar_visible: bool,
     pub(crate) update_badge: Option<crate::tui::app_update::UpdateBadgeView>,
@@ -177,6 +180,15 @@ fn detail_underlay_scroll(view: &ViewState) -> u16 {
 pub(crate) const MIN_TUI_WIDTH: u16 = 70;
 pub(crate) const MIN_TUI_HEIGHT: u16 = 18;
 
+pub(crate) fn footer_area(terminal: Rect) -> Rect {
+    Rect {
+        x: terminal.x,
+        y: terminal.y.saturating_add(terminal.height.saturating_sub(2)),
+        width: terminal.width,
+        height: terminal.height.min(2),
+    }
+}
+
 pub(crate) fn render(
     frame: &mut Frame,
     store: &TuiStore,
@@ -220,12 +232,13 @@ pub(crate) fn render(
 
     let inner = frame.area();
 
-    let [header, body, footer] = Layout::vertical([
+    let [header, body, _] = Layout::vertical([
         Constraint::Length(2),
         Constraint::Fill(1),
         Constraint::Length(2),
     ])
     .areas(inner);
+    let footer = footer_area(inner);
 
     render_header(frame, store, view.update_badge.as_ref(), header);
     let inline_title_editor = inline_title_editor(view);
@@ -321,7 +334,7 @@ pub(crate) fn render(
         mode => mode,
     };
     frame.render_widget(
-        footer_bar(footer_mode, footer.width, list.marked_task_ids().len()),
+        footer_bar(footer_mode, footer.width, view.visible_marked_task_count),
         footer,
     );
 
@@ -784,6 +797,7 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
             cycle_input,
             highlighted,
             context,
+            marked_task_count,
             unavailable,
         } => render_command(
             frame,
@@ -791,8 +805,11 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
             *cursor,
             cycle_input.as_deref(),
             highlighted.as_deref(),
-            unavailable,
-            *context,
+            CommandRenderContext {
+                unavailable,
+                command_context: *context,
+                marked_task_count: *marked_task_count,
+            },
         ),
         OverlayView::AddTask(state) => self::overlays::render_add_task(frame, state),
         OverlayView::TextInput(state)

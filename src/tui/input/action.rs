@@ -14,6 +14,20 @@ impl App {
             self.set_info("copy action requires one task");
             return Ok(());
         }
+        let marked_task_count = if self.detail.is_active() {
+            0
+        } else {
+            self.marked_task_ids_in_view().len()
+        };
+        if marked_task_count > 1
+            && let Some(label) = action.single_target_label()
+        {
+            self.pending_shortcut.clear();
+            self.set_info(format!(
+                "{label} requires one task · {marked_task_count} tasks marked"
+            ));
+            return Ok(());
+        }
         if self.handle_recurring_series_task_action(&action).await? {
             return Ok(());
         }

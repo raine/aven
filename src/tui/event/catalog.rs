@@ -3,7 +3,7 @@ use crossterm::event::KeyCode;
 use crate::choices::{TaskPriority, TaskStatus};
 use crate::tui::store::{TaskOrder, TaskView};
 
-use super::Action;
+use super::{Action, BulkSupport};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +40,10 @@ pub(crate) struct CommandSpec {
 }
 
 impl CommandSpec {
+    pub(crate) const fn bulk_support(self) -> BulkSupport {
+        self.action.bulk_support()
+    }
+
     pub(crate) const fn implemented(
         name: &'static str,
         description: &'static str,
@@ -174,18 +178,6 @@ impl CommandSpec {
         match context {
             CommandContext::Normal => true,
             CommandContext::Detail => !self.detail_keys.is_empty(),
-        }
-    }
-
-    pub(crate) const fn unavailable(self, reason: &'static str) -> Self {
-        Self {
-            description: reason,
-            action: Action::Disabled {
-                name: self.name,
-                reason,
-            },
-            lifecycle: CommandLifecycle::Disabled { reason },
-            ..self
         }
     }
 

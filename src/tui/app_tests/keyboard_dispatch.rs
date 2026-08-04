@@ -379,6 +379,33 @@ async fn esc_closes_every_overlay_variant() {
 }
 
 #[tokio::test]
+async fn escape_clears_marks_after_detail_and_overlay_precedence() {
+    let mut app = test_app().await;
+    let selected = create_and_select_task(&mut app, test_task_draft("marked")).await;
+    let task_id = app.store.tasks[selected].task.id.clone();
+    app.list.mark(task_id);
+    app.show_detail(0);
+
+    app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+        .await
+        .unwrap();
+    assert!(app.detail.is_inactive());
+    assert_eq!(app.list.marked_task_ids().len(), 1);
+
+    app.begin_command().await;
+    app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+        .await
+        .unwrap();
+    assert!(app.overlay.is_none());
+    assert_eq!(app.list.marked_task_ids().len(), 1);
+
+    app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+        .await
+        .unwrap();
+    assert!(app.list.marked_task_ids().is_empty());
+}
+
+#[tokio::test]
 async fn mark_shortcuts_update_task_marks() {
     let mut app = test_app().await;
     let first = create_and_select_task(&mut app, test_task_draft("first")).await;

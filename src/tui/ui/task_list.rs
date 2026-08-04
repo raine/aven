@@ -2110,6 +2110,16 @@ mod tests {
     }
 
     #[test]
+    fn focused_marked_row_keeps_focus_style_and_mark_glyph() {
+        let item = task_list_item("focused marked");
+        let line = task_ref_cell(&item, true);
+        let style = row_style(true, true, true, false, false);
+
+        assert!(line.to_string().starts_with("●"));
+        assert_eq!(style, SELECTED);
+    }
+
+    #[test]
     fn marked_row_shows_ref_marker() {
         let item = task_list_item("marked");
         let line = task_ref_cell(&item, true);

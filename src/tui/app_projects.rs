@@ -315,10 +315,11 @@ impl App {
         };
         if !self.detail.is_active() && !self.marked_task_ids_in_view().is_empty() {
             let count = selection.len();
+            let noun = if count == 1 { "task" } else { "tasks" };
             self.overlay = Some(OverlayState::confirm(
                 ConfirmIntent::DeleteTasks { selection },
                 DELETE_TASK_TITLE,
-                format!("Delete {count} marked tasks?"),
+                format!("Delete {count} marked {noun}?"),
             ));
             return;
         }

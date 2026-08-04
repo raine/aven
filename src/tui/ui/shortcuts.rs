@@ -10,7 +10,8 @@ use super::input::input_line;
 use super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use crate::tui::app::{DetailSection, DetailTargetId};
 use crate::tui::event::{
-    CommandContext, CommandLifecycle, CommandSpec, matching_commands_for, prefix_hint_commands,
+    BulkSupport, CommandContext, CommandLifecycle, CommandSpec, matching_commands_for_bulk,
+    prefix_hint_commands,
 };
 use crate::tui::theme::{ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, ORANGE, SELECTED_BG};
 
@@ -546,16 +547,30 @@ fn command_line_with_highlight(
     line
 }
 
+pub(super) struct CommandRenderContext<'a> {
+    pub(super) unavailable: &'a [crate::tui::overlay::CommandAvailabilityOverride],
+    pub(super) command_context: CommandContext,
+    pub(super) marked_task_count: usize,
+}
+
 pub(super) fn render_command(
     frame: &mut Frame,
     input: &str,
     cursor: usize,
     cycle_input: Option<&str>,
     highlighted: Option<&str>,
-    unavailable: &[crate::tui::overlay::CommandAvailabilityOverride],
-    context: CommandContext,
+    render_context: CommandRenderContext<'_>,
 ) {
-    let matches = matching_commands_for(context, cycle_input.unwrap_or(input));
+    let CommandRenderContext {
+        unavailable,
+        command_context,
+        marked_task_count,
+    } = render_context;
+    let matches = matching_commands_for_bulk(
+        command_context,
+        cycle_input.unwrap_or(input),
+        marked_task_count,
+    );
     let height = (matches.len().min(8) as u16).saturating_add(3);
 
     let mut lines = vec![input_line(":", input, cursor)];
@@ -564,17 +579,66 @@ pub(super) fn render_command(
             .iter()
             .find(|override_| override_.action == command.action)
             .map(|override_| override_.reason);
-        let display = unavailable_reason.map(|reason| command.unavailable(reason));
-        let command = display.as_ref().unwrap_or(command);
-        let line = if highlighted == Some(command.name) {
-            command_line_with_highlight(command, context, true)
+        let is_highlighted = highlighted == Some(command.name);
+        let mut line = if is_highlighted {
+            command_line_with_highlight(command, command_context, true)
         } else {
-            command_line(command, context)
+            command_line(command, command_context)
         };
+        let annotation = match command.bulk_support() {
+            BulkSupport::Batch if marked_task_count > 0 => {
+                Some(format!(" · {} · ", marked_task_label(marked_task_count)))
+            }
+            BulkSupport::Focused if marked_task_count > 0 => Some(" · focused task · ".to_string()),
+            BulkSupport::SingleOnly | BulkSupport::MarkControl | BulkSupport::Neutral => None,
+            BulkSupport::Batch | BulkSupport::Focused => None,
+        };
+        if let Some(annotation) = annotation {
+            let style = if is_highlighted {
+                Style::new().fg(FG_MUTED).bg(SELECTED_BG)
+            } else {
+                Style::new().fg(FG_MUTED)
+            };
+            let index = line
+                .spans
+                .iter()
+                .position(|span| span.content.as_ref() == command.description)
+                .unwrap_or(line.spans.len());
+            line.spans.insert(index, Span::styled(annotation, style));
+        }
+        if let Some(reason) = unavailable_reason {
+            for span in &mut line.spans {
+                span.style = span.style.fg(FG_DIM);
+            }
+            let style = if is_highlighted {
+                Style::new().fg(FG_DIM).bg(SELECTED_BG)
+            } else {
+                Style::new().fg(FG_DIM)
+            };
+            let index = line
+                .spans
+                .iter()
+                .position(|span| span.content.as_ref() == command.description)
+                .unwrap_or(line.spans.len());
+            line.spans.insert(
+                index,
+                Span::styled(format!(" disabled: {reason} · "), style),
+            );
+        }
         lines.push(line);
     }
 
-    Dialog::new("Command", 72, height).render_text(frame, Text::from(lines));
+    let title = if marked_task_count == 0 {
+        "Command".to_string()
+    } else {
+        format!("Command · {}", marked_task_label(marked_task_count))
+    };
+    Dialog::new(&title, 72, height).render_text(frame, Text::from(lines));
+}
+
+fn marked_task_label(count: usize) -> String {
+    let noun = if count == 1 { "task" } else { "tasks" };
+    format!("{count} marked {noun}")
 }
 
 fn prefix_hint_lines(context: CommandContext, pending: &[String]) -> Vec<Line<'static>> {
@@ -598,32 +662,18 @@ fn prefix_hint_lines_with_availability(
     matches
         .into_iter()
         .map(|(command, _, key_hint)| {
-            let single_task_edit = matches!(
-                command.action,
-                crate::tui::event::Action::BeginEditTitle
-                    | crate::tui::event::Action::BeginEditDescription
-            );
-            let batch_edit = matches!(
-                command.action,
-                crate::tui::event::Action::BeginEditProject
-                    | crate::tui::event::Action::BeginEditPriority
-                    | crate::tui::event::Action::BeginEditEpic
-                    | crate::tui::event::Action::BeginEditAvailability
-                    | crate::tui::event::Action::BeginEditDue
-                    | crate::tui::event::Action::BeginEditLabels
-            );
-            let single_task_copy = command.action.copy_requires_single_task();
-            let copy_mark_limit =
-                single_task_copy && marked_task_count > 0 && context == CommandContext::Normal;
-            let edit_mark_limit = single_task_edit && marked_task_count > 1;
+            let support = command.bulk_support();
+            let copy_mark_limit = command.action.copy_requires_single_task()
+                && marked_task_count > 0
+                && context == CommandContext::Normal;
             let unavailable = matches!(
                 command.action,
                 crate::tui::event::Action::CopyTaskDescription
             ) && !copy_description_available
                 || matches!(command.action, crate::tui::event::Action::CopyTaskNotes)
                     && !copy_notes_available
-                || edit_mark_limit
-                || copy_mark_limit;
+                || copy_mark_limit
+                || support == BulkSupport::SingleOnly && marked_task_count > 1;
             let mut line = command_hint_line(
                 Span::styled(
                     format!(" {:<6} ", key_hint),
@@ -632,19 +682,27 @@ fn prefix_hint_lines_with_availability(
                 command,
                 command_name_width,
             );
-            if copy_mark_limit || edit_mark_limit {
+            if copy_mark_limit {
                 line.spans
                     .push(Span::styled(" · 1 task only", Style::new().fg(FG_DIM)));
-            } else if marked_task_count > 0 && batch_edit {
-                let noun = if marked_task_count == 1 {
-                    "task"
-                } else {
-                    "tasks"
-                };
-                line.spans.push(Span::styled(
-                    format!(" · {marked_task_count} marked {noun}"),
-                    Style::new().fg(FG_MUTED),
-                ));
+            } else {
+                match support {
+                    BulkSupport::SingleOnly if marked_task_count > 1 => line
+                        .spans
+                        .push(Span::styled(" · 1 task only", Style::new().fg(FG_DIM))),
+                    BulkSupport::Batch if marked_task_count > 0 => line.spans.push(Span::styled(
+                        format!(" · {}", marked_task_label(marked_task_count)),
+                        Style::new().fg(FG_MUTED),
+                    )),
+                    BulkSupport::Focused if marked_task_count > 0 => line
+                        .spans
+                        .push(Span::styled(" · focused task", Style::new().fg(FG_MUTED))),
+                    BulkSupport::Batch
+                    | BulkSupport::SingleOnly
+                    | BulkSupport::Focused
+                    | BulkSupport::MarkControl
+                    | BulkSupport::Neutral => {}
+                }
             }
             if unavailable {
                 for span in &mut line.spans {
@@ -667,19 +725,19 @@ pub(super) fn render_prefix_hints(frame: &mut Frame, view: &ViewState) {
         &view.pending_shortcut,
         view.copy_description_available,
         view.copy_notes_available,
-        view.marked_task_count,
+        view.visible_marked_task_count,
     );
     if lines.is_empty() {
         return;
     }
     let visible_rows = prefix_hint_visible_rows(frame.area().height, lines.len());
-    let title = if view.pending_shortcut == ["e"] && view.marked_task_count > 0 {
-        let noun = if view.marked_task_count == 1 {
+    let title = if view.pending_shortcut == ["e"] && view.visible_marked_task_count > 0 {
+        let noun = if view.visible_marked_task_count == 1 {
             "task"
         } else {
             "tasks"
         };
-        format!("Edit · {} marked {noun}", view.marked_task_count)
+        format!("Edit · {} marked {noun}", view.visible_marked_task_count)
     } else {
         format!("{} …", view.pending_shortcut.join(" "))
     };
@@ -775,6 +833,10 @@ mod tests {
     }
 
     fn render_command_overlay(input: &str, cursor: usize) -> String {
+        render_command_overlay_with_marks(input, cursor, 0)
+    }
+
+    fn render_command_overlay_with_marks(input: &str, cursor: usize, marked: usize) -> String {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
@@ -785,8 +847,11 @@ mod tests {
                     cursor,
                     None,
                     None,
-                    &[],
-                    CommandContext::Normal,
+                    CommandRenderContext {
+                        unavailable: &[],
+                        command_context: CommandContext::Normal,
+                        marked_task_count: marked,
+                    },
                 )
             })
             .unwrap();
@@ -809,8 +874,11 @@ mod tests {
                     cursor,
                     cycle_input,
                     highlighted,
-                    &[],
-                    CommandContext::Normal,
+                    CommandRenderContext {
+                        unavailable: &[],
+                        command_context: CommandContext::Normal,
+                        marked_task_count: 0,
+                    },
                 )
             })
             .unwrap();
@@ -1113,6 +1181,21 @@ mod tests {
     }
 
     #[test]
+    fn bulk_command_overlay_shows_target_scope() {
+        let rendered = render_command_overlay_with_marks("edit-project", 12, 3);
+
+        assert!(rendered.contains("Command · 3 marked tasks"));
+        assert!(rendered.contains("3 marked tasks"));
+    }
+
+    #[test]
+    fn bulk_command_overlay_identifies_focused_commands() {
+        let rendered = render_command_overlay_with_marks("copy-markdown", 13, 3);
+
+        assert!(rendered.contains("focused task"));
+    }
+
+    #[test]
     fn command_overlay_highlights_cycled_command_row() {
         let buffer = render_command_buffer("status-todo", 11, Some(":stat"), Some("status-todo"));
         assert!((0..buffer.area.height).any(|row| {
@@ -1368,8 +1451,11 @@ mod tests {
                     "recurrence-pause".len(),
                     None,
                     None,
-                    &unavailable,
-                    CommandContext::Normal,
+                    CommandRenderContext {
+                        unavailable: &unavailable,
+                        command_context: CommandContext::Normal,
+                        marked_task_count: 0,
+                    },
                 )
             })
             .unwrap();

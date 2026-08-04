@@ -6,6 +6,15 @@ use crate::tui::store::{TaskOrder, TaskView};
 #[cfg(test)]
 use super::{ShortcutLookup, resolve_shortcut};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BulkSupport {
+    Batch,
+    SingleOnly,
+    Focused,
+    MarkControl,
+    Neutral,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Action {
@@ -146,6 +155,134 @@ impl Action {
                 | Self::CopyTaskNotes
                 | Self::CopyTaskMarkdown
         )
+    }
+
+    pub(crate) const fn bulk_support(self) -> BulkSupport {
+        match self {
+            Self::MoveColumnLeft
+            | Self::MoveColumnRight
+            | Self::BeginMoveToColumn
+            | Self::SetStatus(_)
+            | Self::SetPriority(_)
+            | Self::CyclePriority(_)
+            | Self::BeginEditProject
+            | Self::BeginEditPriority
+            | Self::BeginEditEpic
+            | Self::BeginEditAvailability
+            | Self::BeginEditDue
+            | Self::BeginEditLabels
+            | Self::Delete
+            | Self::Restore
+            | Self::BeginStatusPicker => BulkSupport::Batch,
+            Self::BeginEditTitle
+            | Self::BeginEditDescription
+            | Self::BeginAddNote
+            | Self::BeginAddDependency
+            | Self::BeginRemoveDependency => BulkSupport::SingleOnly,
+            Self::CopyShortRef
+            | Self::CopyDurableRef
+            | Self::CopyTaskTitle
+            | Self::CopyTaskDescription
+            | Self::CopyTaskText
+            | Self::CopyTaskNotes
+            | Self::CopyTaskMarkdown
+            | Self::BeginCreateTaskGist => BulkSupport::Focused,
+            Self::Undo
+            | Self::ToggleMarkSelected
+            | Self::ToggleMarkAllInView
+            | Self::ClearMarks => BulkSupport::MarkControl,
+            Self::Quit
+            | Self::MoveDown
+            | Self::MoveUp
+            | Self::MoveLeft
+            | Self::MoveRight
+            | Self::PreviousItem
+            | Self::NextItem
+            | Self::First
+            | Self::Last
+            | Self::ToggleFocus
+            | Self::ToggleSidebar
+            | Self::ToggleDetail
+            | Self::ToggleColumnsPreview
+            | Self::GoBack
+            | Self::GoForward
+            | Self::ReturnToLastChange
+            | Self::ToggleHelp
+            | Self::ShowWelcome
+            | Self::BeginSearch
+            | Self::BeginCommand
+            | Self::AcceptSearch
+            | Self::AcceptCommand
+            | Self::CancelOverlay
+            | Self::CancelSearch
+            | Self::CancelCommand
+            | Self::BackspaceSearch
+            | Self::BackspaceCommand
+            | Self::SearchChar(_)
+            | Self::CommandChar(_)
+            | Self::Refresh
+            | Self::SyncNow
+            | Self::SetOrder(_)
+            | Self::ReverseSort
+            | Self::SkipRecurrence
+            | Self::BeginEditRecurrenceTemplate
+            | Self::PauseRecurrence
+            | Self::ResumeRecurrence
+            | Self::StopRecurrence
+            | Self::ShowRecurrenceHistory
+            | Self::ToggleEpicExpanded
+            | Self::BeginAddEpicChild
+            | Self::RemoveEpicChild
+            | Self::BeginRenameProject
+            | Self::BeginDeleteProject
+            | Self::BeginAddTask
+            | Self::BeginAddProject
+            | Self::BeginAddProjectPath
+            | Self::BeginRemoveProjectPath
+            | Self::BeginAddLabel
+            | Self::BeginBrowseLabels
+            | Self::BeginRenameLabel
+            | Self::BeginDeleteLabel
+            | Self::BeginFilterLabel
+            | Self::BeginFilterPriority
+            | Self::BeginScopeProject
+            | Self::BeginSwitchWorkspace
+            | Self::BeginAddWorkspace
+            | Self::BeginRenameWorkspace
+            | Self::ClearFilters
+            | Self::ToggleClosedFilter
+            | Self::ToggleDeletedFilter
+            | Self::CycleRecurringLifecycleFilter
+            | Self::ShowView(_)
+            | Self::ShowWorkspaceScope
+            | Self::BeginConflictList
+            | Self::ShowConflictDetails
+            | Self::NextConflict
+            | Self::PreviousConflict
+            | Self::AcceptConflictLocal
+            | Self::AcceptConflictRemote
+            | Self::BeginManualConflictMerge
+            | Self::ShowConfigStatus
+            | Self::ShowConfigInfo
+            | Self::ShowConfigPaths
+            | Self::ShowDatabaseStats
+            | Self::BeginUpdate
+            | Self::ShowChangelog
+            | Self::BeginConfigInit
+            | Self::Planned { .. }
+            | Self::Disabled { .. }
+            | Self::None => BulkSupport::Neutral,
+        }
+    }
+
+    pub(crate) const fn single_target_label(self) -> Option<&'static str> {
+        match self {
+            Self::BeginEditTitle => Some("title"),
+            Self::BeginEditDescription => Some("description"),
+            Self::BeginAddNote => Some("note"),
+            Self::BeginAddDependency | Self::BeginRemoveDependency => Some("dependency"),
+            _ => None,
+        }
     }
 
     pub(crate) const fn recurrence_kind(

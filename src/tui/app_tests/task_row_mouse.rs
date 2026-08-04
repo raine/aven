@@ -21,6 +21,39 @@ fn status_right_click_event(app: &App, size: (u16, u16), task_index: usize) -> M
     panic!("expected status hit target");
 }
 
+fn bulk_footer_click(
+    action: crate::tui::event::Action,
+    size: (u16, u16),
+    count: usize,
+) -> MouseEvent {
+    let area = crate::tui::ui::footer_area(Rect::new(0, 0, size.0, size.1));
+    let column = (area.x..area.x.saturating_add(area.width))
+        .find(|column| {
+            crate::tui::ui::bulk_footer_action_at(area, count, *column, area.y.saturating_add(1))
+                == Some(action)
+        })
+        .expect("expected bulk footer action");
+    task_row_click(column, area.y.saturating_add(1))
+}
+
+#[tokio::test]
+async fn bulk_footer_mouse_opens_actions_and_clears_marks() {
+    let mut app = test_app().await;
+    let selected = create_and_select_task(&mut app, test_task_draft("marked")).await;
+    let task_id = app.store.tasks[selected].task.id.clone();
+    app.list.mark(task_id);
+    let size = (100, 24);
+
+    let actions = bulk_footer_click(crate::tui::event::Action::BeginCommand, size, 1);
+    app.dispatch_mouse(actions, size.into()).await.unwrap();
+    assert!(matches!(app.overlay, Some(OverlayState::Command { .. })));
+
+    app.overlay = None;
+    let clear = bulk_footer_click(crate::tui::event::Action::ClearMarks, size, 1);
+    app.dispatch_mouse(clear, size.into()).await.unwrap();
+    assert!(app.list.marked_task_ids().is_empty());
+}
+
 #[tokio::test]
 async fn task_row_click_selects_task() {
     let mut app = test_app().await;
