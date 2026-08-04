@@ -7,7 +7,7 @@ use super::super::input::prefixed_input_line;
 use crate::tui::overlay::{
     GENERIC_PICKER_VIEWPORT_ROWS, GENERIC_PICKER_WIDTH, LABEL_PICKER_WIDTH,
     PROJECT_PICKER_VIEWPORT_ROWS, PROJECT_PICKER_WIDTH, PickerItem, PickerKind, PickerMode,
-    PickerView, picker_viewport_start,
+    PickerView, picker_row_count, picker_viewport_start,
 };
 use crate::tui::theme::{self, ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, SELECTED};
 use crate::tui::widgets::priority_icon;
@@ -56,11 +56,19 @@ pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, state: &PickerView) {
             lines.push(Line::from(format!("{marker}{}{check}", item.label)));
         }
     }
+    if state.visible_indices.is_empty()
+        && let Some(label) = picker_empty_label(state.kind)
+    {
+        lines.push(Line::from(Span::styled(label, Style::new().fg(FG_DIM))));
+    }
     lines.push(Line::from(""));
-    lines.push(picker_hint_line(
+    lines.push(picker_hint_line_with_escape(
         state.mode,
         state.multi,
-        priority_picker_submit_label(state.kind).unwrap_or("submit"),
+        priority_picker_submit_label(state.kind)
+            .or_else(|| generic_picker_submit_label(state.kind))
+            .unwrap_or("submit"),
+        matches!(state.kind, PickerKind::SwitchWorkspace),
     ));
     let height = (lines.len() as u16).saturating_add(2);
     Dialog::new(&state.title, GENERIC_PICKER_WIDTH, height).render_text(frame, Text::from(lines));
@@ -78,6 +86,10 @@ fn picker_visible_start(state: &PickerView, viewport_rows: usize) -> usize {
         state.visible_indices.len(),
         viewport_rows,
     )
+}
+
+fn picker_empty_label(kind: PickerKind) -> Option<&'static str> {
+    matches!(kind, PickerKind::SwitchWorkspace).then_some("  no matching workspaces")
 }
 
 pub(in crate::tui::ui) fn priority_picker_line(item: &PickerItem, selected: bool) -> Line<'static> {
@@ -105,8 +117,20 @@ pub(in crate::tui::ui) fn picker_hint_line(
     multi: bool,
     submit_label: &str,
 ) -> Line<'static> {
+    picker_hint_line_with_escape(mode, multi, submit_label, false)
+}
+
+fn picker_hint_line_with_escape(
+    mode: PickerMode,
+    multi: bool,
+    submit_label: &str,
+    filter_escape_cancels: bool,
+) -> Line<'static> {
     let mut items = match mode {
         PickerMode::Navigate => vec![("j/k", "move"), ("/", "filter")],
+        PickerMode::Filter if filter_escape_cancels => {
+            vec![("type", "filter"), ("Up/Down", "move"), ("Esc", "cancel")]
+        }
         PickerMode::Filter => vec![("type", "filter"), ("Up/Down", "move"), ("Esc", "normal")],
     };
     if multi {
@@ -193,12 +217,12 @@ pub(in crate::tui::ui) fn label_picker_line(item: &PickerItem, selected: bool) -
 
 fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'static str) {
     let viewport_rows = PROJECT_PICKER_VIEWPORT_ROWS;
-    let height =
-        (viewport_rows as u16).saturating_add(if matches!(state.mode, PickerMode::Filter) {
-            6
-        } else {
-            5
-        });
+    let list_rows = picker_row_count(state.items.len(), viewport_rows);
+    let height = (list_rows as u16).saturating_add(if matches!(state.mode, PickerMode::Filter) {
+        6
+    } else {
+        5
+    });
     let selected_position = picker_visible_start(state, viewport_rows);
     let mut lines = Vec::new();
     if matches!(state.mode, PickerMode::Filter) {
@@ -230,11 +254,15 @@ fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'
             Style::new().fg(FG_DIM),
         )));
     }
-    while lines.len().saturating_sub(list_start) < viewport_rows {
+    while lines.len().saturating_sub(list_start) < list_rows {
         lines.push(Line::from(""));
     }
     lines.push(Line::from(""));
-    lines.push(project_picker_hint_line(state.mode, submit_label));
+    lines.push(project_picker_hint_line(
+        state.mode,
+        submit_label,
+        state.kind == PickerKind::ScopeProject,
+    ));
     Dialog::new(&state.title, PROJECT_PICKER_WIDTH, height).render_text(frame, Text::from(lines));
 }
 
@@ -247,6 +275,10 @@ pub(in crate::tui::ui) fn project_picker_submit_label(kind: PickerKind) -> Optio
         PickerKind::DeleteProject => Some("delete"),
         _ => None,
     }
+}
+
+fn generic_picker_submit_label(kind: PickerKind) -> Option<&'static str> {
+    matches!(kind, PickerKind::SwitchWorkspace).then_some("switch")
 }
 
 fn priority_picker_submit_label(kind: PickerKind) -> Option<&'static str> {
@@ -290,6 +322,7 @@ pub(in crate::tui::ui) fn project_picker_line(item: &PickerItem, selected: bool)
 pub(in crate::tui::ui) fn project_picker_hint_line(
     mode: PickerMode,
     submit_label: &'static str,
+    filter_escape_cancels: bool,
 ) -> Line<'static> {
-    picker_hint_line(mode, false, submit_label)
+    picker_hint_line_with_escape(mode, false, submit_label, filter_escape_cancels)
 }

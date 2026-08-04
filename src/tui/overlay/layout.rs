@@ -69,8 +69,12 @@ pub(crate) fn dialog_inner_area(area: Rect) -> Rect {
         .inner(area)
 }
 
+pub(crate) fn picker_row_count(visible_count: usize, viewport_rows: usize) -> usize {
+    visible_count.clamp(1, viewport_rows)
+}
+
 pub(crate) fn picker_layout(state: &PickerView, terminal_size: Size) -> PickerLayout {
-    if matches!(
+    let project_picker = matches!(
         state.kind,
         PickerKind::AddTaskProject
             | PickerKind::EditProject
@@ -78,8 +82,24 @@ pub(crate) fn picker_layout(state: &PickerView, terminal_size: Size) -> PickerLa
             | PickerKind::ProjectPathProject
             | PickerKind::RenameProject
             | PickerKind::DeleteProject
-    ) {
-        let height = (PROJECT_PICKER_VIEWPORT_ROWS as u16).saturating_add(6);
+    );
+    let viewport_rows = if project_picker {
+        PROJECT_PICKER_VIEWPORT_ROWS
+    } else {
+        GENERIC_PICKER_VIEWPORT_ROWS
+    };
+    let row_count = if project_picker {
+        state.items.len()
+    } else {
+        state.visible_indices.len()
+    };
+    let list_rows = picker_row_count(row_count, viewport_rows);
+    if project_picker {
+        let height = (list_rows as u16).saturating_add(if state.mode == PickerMode::Filter {
+            6
+        } else {
+            5
+        });
         let area = dialog_area(
             Rect::new(0, 0, terminal_size.width, terminal_size.height),
             PROJECT_PICKER_WIDTH,
@@ -88,16 +108,18 @@ pub(crate) fn picker_layout(state: &PickerView, terminal_size: Size) -> PickerLa
         return PickerLayout {
             area,
             inner: dialog_inner_area(area),
-            list_start: 2,
-            viewport_rows: PROJECT_PICKER_VIEWPORT_ROWS,
-            visible_start: picker_visible_start(state, PROJECT_PICKER_VIEWPORT_ROWS),
+            list_start: if state.mode == PickerMode::Filter {
+                2
+            } else {
+                1
+            },
+            viewport_rows: list_rows,
+            visible_start: picker_visible_start(state, list_rows),
         };
     }
 
-    let visible_count = state.visible_indices.len().max(1);
     let label_picker = state.kind == PickerKind::LabelAdministration;
-    let height = (visible_count.min(GENERIC_PICKER_VIEWPORT_ROWS) as u16)
-        .saturating_add(if label_picker { 7 } else { 6 });
+    let height = (list_rows as u16).saturating_add(if label_picker { 7 } else { 6 });
     let area = dialog_area(
         Rect::new(0, 0, terminal_size.width, terminal_size.height),
         if label_picker {
@@ -206,5 +228,67 @@ pub(crate) fn text_panel_layout(terminal_size: Size, line_count: usize) -> TextP
         area,
         inner: dialog_inner_area(area),
         visible_rows: TEXT_PANEL_VISIBLE_ROWS,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn project_picker_view(item_count: usize, visible_count: usize) -> PickerView {
+        PickerView {
+            kind: PickerKind::ScopeProject,
+            title: "Scope: project".to_string(),
+            filter: String::new(),
+            filter_cursor: 0,
+            items: (0..item_count)
+                .map(|index| super::super::PickerItem {
+                    label: format!("Project {index}"),
+                    value: index.to_string(),
+                    selected: false,
+                })
+                .collect(),
+            selected: 0,
+            scroll: 0,
+            multi: false,
+            mode: PickerMode::Filter,
+            visible_indices: (0..visible_count).collect(),
+        }
+    }
+
+    #[test]
+    fn project_picker_height_tracks_items_up_to_viewport_limit() {
+        let terminal = Size::new(120, 50);
+
+        assert_eq!(
+            picker_layout(&project_picker_view(0, 0), terminal)
+                .area
+                .height,
+            7
+        );
+        assert_eq!(
+            picker_layout(&project_picker_view(7, 7), terminal)
+                .area
+                .height,
+            13
+        );
+        assert_eq!(
+            picker_layout(&project_picker_view(20, 20), terminal)
+                .area
+                .height,
+            16
+        );
+    }
+
+    #[test]
+    fn project_picker_height_stays_stable_while_filtering() {
+        let terminal = Size::new(120, 50);
+
+        let unfiltered = picker_layout(&project_picker_view(7, 7), terminal);
+        let one_match = picker_layout(&project_picker_view(7, 1), terminal);
+        let no_matches = picker_layout(&project_picker_view(7, 0), terminal);
+
+        assert_eq!(one_match.area.height, unfiltered.area.height);
+        assert_eq!(no_matches.area.height, unfiltered.area.height);
     }
 }

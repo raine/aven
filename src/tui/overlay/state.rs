@@ -617,6 +617,10 @@ pub(crate) enum PickerIntent {
 }
 
 impl PickerIntent {
+    pub(crate) fn filter_escape_cancels(&self) -> bool {
+        matches!(self, Self::ScopeProject | Self::SwitchWorkspace)
+    }
+
     pub(crate) fn initial_mode(&self) -> PickerMode {
         match self {
             Self::AddTaskProject
@@ -630,6 +634,7 @@ impl PickerIntent {
             | Self::BrowseLabels
             | Self::RenameLabel
             | Self::DeleteLabel
+            | Self::SwitchWorkspace
             | Self::RenameWorkspace => PickerMode::Filter,
             _ => PickerMode::Navigate,
         }

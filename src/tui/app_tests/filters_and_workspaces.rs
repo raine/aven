@@ -162,6 +162,22 @@ async fn scope_project_shortcut_opens_project_picker() {
 }
 
 #[tokio::test]
+async fn scope_project_escape_cancels_from_filter() {
+    let mut app = test_app().await;
+    app.store
+        .create_project("Mobile App".to_string())
+        .await
+        .unwrap();
+
+    app.begin_scope_project();
+    type_chars(&mut app, "mobile").await;
+    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+    assert!(app.overlay.is_none());
+    assert_eq!(app.store.view_state.scope, TaskScope::Workspace);
+}
+
+#[tokio::test]
 async fn upcoming_view_shortcut_selects_upcoming() {
     let mut app = test_app().await;
 
@@ -406,6 +422,84 @@ async fn workspace_administration_cancellation_reports_the_canceled_flow() {
 }
 
 #[tokio::test]
+async fn switch_workspace_accepts_direct_filtering_and_arrow_navigation() {
+    let mut app = test_app().await;
+    app.store
+        .create_workspace("Client Alpha".to_string())
+        .await
+        .unwrap();
+    app.store
+        .create_workspace("Client Beta".to_string())
+        .await
+        .unwrap();
+
+    app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('w')).await.unwrap();
+    type_chars(&mut app, "client").await;
+
+    let first = match &app.overlay {
+        Some(OverlayState::Picker(state)) => {
+            assert_eq!(state.mode, PickerMode::Filter);
+            assert_eq!(state.filter.as_str(), "client");
+            state.selected
+        }
+        _ => panic!("expected workspace picker"),
+    };
+    app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
+    let expected = match &app.overlay {
+        Some(OverlayState::Picker(state)) => {
+            assert_ne!(state.selected, first);
+            state.items[state.selected].value.clone()
+        }
+        _ => panic!("expected workspace picker"),
+    };
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert_eq!(app.store.active_workspace.key, expected);
+    assert!(app.overlay.is_none());
+}
+
+#[tokio::test]
+async fn switch_workspace_escape_cancels_from_filter() {
+    let mut app = test_app().await;
+    app.store
+        .create_workspace("Client Work".to_string())
+        .await
+        .unwrap();
+
+    app.begin_switch_workspace().await.unwrap();
+    type_chars(&mut app, "client").await;
+    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+    assert!(app.overlay.is_none());
+    assert_eq!(app.store.active_workspace.key, "default");
+}
+
+#[tokio::test]
+async fn switch_workspace_no_match_warns_and_reopens_filter() {
+    let mut app = test_app().await;
+
+    app.begin_switch_workspace().await.unwrap();
+    type_chars(&mut app, "missing").await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("no matching workspace")
+    );
+    assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Picker(PickerState {
+            intent: PickerIntent::SwitchWorkspace,
+            mode: PickerMode::Filter,
+            filter,
+            ..
+        })) if filter.as_str().is_empty()
+    ));
+}
+
+#[tokio::test]
 async fn switch_workspace_shortcut_opens_picker() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
     let mut conn = pool.acquire().await.unwrap();
@@ -419,7 +513,11 @@ async fn switch_workspace_shortcut_opens_picker() {
 
     assert!(matches!(
         &app.overlay,
-        Some(OverlayState::Picker(PickerState { title, .. })) if title == SWITCH_WORKSPACE_TITLE
+        Some(OverlayState::Picker(PickerState {
+            title,
+            mode: PickerMode::Filter,
+            ..
+        })) if title == SWITCH_WORKSPACE_TITLE
     ));
 
     reset_default_workspace(&pool).await;

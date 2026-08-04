@@ -57,6 +57,9 @@ Workspace scope shows tasks across projects. Project scope narrows every view to
 | `g p` | Choose a project scope |
 | `g w` | Switch workspace |
 
+The project and workspace pickers accept typing immediately to filter their
+options. Use `Up` and `Down` to move, `Enter` to choose, and `Esc` to cancel.
+
 The header and sidebar show the active workspace, scope, view, and filters.
 
 ### Search, filter, and order

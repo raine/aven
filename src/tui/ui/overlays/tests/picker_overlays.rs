@@ -36,6 +36,25 @@ fn picker_filter_mode_hints_show_text_entry() {
 }
 
 #[test]
+fn workspace_picker_shows_direct_filter_hints_and_no_match_state() {
+    let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+        kind: PickerKind::SwitchWorkspace,
+        title: "Switch workspace".to_string(),
+        filter: "missing".to_string(),
+        filter_cursor: 7,
+        mode: PickerMode::Filter,
+        ..picker_view()
+    }));
+
+    assert!(rendered.contains("/missing"));
+    assert!(rendered.contains("no matching workspaces"));
+    assert!(rendered.contains("type filter"));
+    assert!(rendered.contains("Up/Down move"));
+    assert!(rendered.contains("Esc cancel"));
+    assert!(rendered.contains("Enter switch"));
+}
+
+#[test]
 fn priority_picker_shows_priority_icons() {
     for (kind, title) in [
         (PickerKind::EditPriority, "Edit task: priority"),
@@ -114,6 +133,18 @@ fn project_picker_uses_structured_columns() {
     assert!(rendered.contains("claude-code"));
     assert!(!rendered.contains("/claude"));
     assert!(rendered.contains("Enter scope"));
+}
+
+#[test]
+fn project_scope_picker_shows_single_escape_cancellation() {
+    let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+        mode: PickerMode::Filter,
+        ..project_picker_view()
+    }));
+
+    assert!(rendered.contains("type filter"));
+    assert!(rendered.contains("Esc cancel"));
+    assert!(!rendered.contains("Esc normal"));
 }
 
 #[test]

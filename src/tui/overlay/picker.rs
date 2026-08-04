@@ -139,6 +139,7 @@ fn handle_picker_filter_key(mut state: PickerState, key: KeyEvent) -> OverlayOut
     }
 
     match key.code {
+        KeyCode::Esc if state.intent.filter_escape_cancels() => OverlayOutcome::Cancelled,
         KeyCode::Esc => {
             state.mode = PickerMode::Navigate;
             OverlayOutcome::None(OverlayState::Picker(state))
