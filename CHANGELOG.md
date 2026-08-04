@@ -3,6 +3,20 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.23 (2026-08-04)
+
+- New: Copy a complete task report as Markdown with `y m`, or publish it as a
+  secret GitHub gist with `t g` and copy the resulting link.
+- New: Click web links in task descriptions and notes to open them in the
+  default browser, while link labels remain compact and readable.
+- New: Navigate forward after going back with `g ]`, with list selection, scroll
+  position, and task detail state preserved.
+- New: Disable automatic release checks and update badges with
+  `update.automatic_checks: false` or `AVEN_NO_UPDATE_CHECK=1`; manual update
+  commands remain available.
+- New: Type immediately in project and workspace pickers to filter options, then
+  use the arrow keys and `Enter` to select one.
+
 ## v0.1.22 (2026-08-03)
 
 - Blocked tasks are dimmed in lists and Columns, help headings have clearer
