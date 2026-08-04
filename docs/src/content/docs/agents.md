@@ -49,7 +49,8 @@ Run `aven prime` automatically when an agent session starts. In Claude Code, add
 }
 ```
 
-With this hook, every new Claude Code session receives aven instructions and live project task context automatically. Other agent environments can use the same pattern: run `aven prime` at session start and include its output in the agent context.
+Other agent environments can use the same pattern: run `aven prime` at session
+start and include its output in the agent context.
 
 ## Project context
 
@@ -76,30 +77,6 @@ Work on APP-7KQ9. Use aven for status and handoff notes.
 ```txt
 Pick a ready docs task and complete it.
 ```
-
-## Connect chat integrations
-
-A chat integration can capture project-scoped tasks without access to a
-repository checkout. Run `aven skill` to print Aven's reusable Markdown guidance
-and include it in the integration's system prompt or tool instructions. Then let
-the integration invoke the CLI with an explicit project and workspace.
-
-A synchronized integration typically:
-
-1. Runs `aven sync` to receive recent project and task data.
-2. Converts the message or transcript into a title and useful description.
-3. Creates the task with `aven add`, capturing the returned reference.
-4. Runs `aven sync` again so the task reaches other devices.
-5. Returns the reference to the person who requested the task.
-
-For example, a private Telegram bot on a small home server can transcribe a
-voice message, map the spoken project name to an Aven project, and pass the
-result to a wrapper implementing that sequence. Use explicit allowlists for
-workspaces and projects, and keep authentication tokens and other secrets out of
-task content.
-
-See [Sync across devices](/sync/) for server and client setup. Use `aven doctor`
-to verify the integration's database, workspace, and project routing.
 
 ## Durable handoff
 
@@ -136,8 +113,6 @@ The open work is grouped by pickability:
 | Active  | Work already in progress                     |
 | Ready   | Open work with dependencies resolved         |
 | Blocked | Open work waiting on unresolved dependencies |
-
-This gives each agent session a current view of what is active, what can be picked up, and what is blocked.
 
 A prime output includes the full skill first. The open-task part looks like this:
 
@@ -176,6 +151,39 @@ aven skill
 
 `aven skill` emits the reusable agent-facing guidance for operating aven. It teaches agents how to use refs, inspect tasks, update status, create follow-up work, leave notes, handle long Markdown, and avoid unsafe task mutations.
 
-`aven prime` includes this skill automatically, so humans usually do not need to run `aven skill` directly. The separate command is useful for debugging or custom agent integrations.
+The separate command is useful for debugging or custom agent integrations.
 
 The source guidance lives in [`src/skill.md`](https://github.com/raine/aven/blob/main/src/skill.md).
+
+## Connect chat integrations
+
+OpenClaw and similar AI assistants can turn chat messages or voice notes into
+Aven tasks. This is useful for recording ideas as they come up, especially when
+you're on the go.
+
+Include the output of `aven skill` in the agent's instructions, then have it call
+`aven add` with an explicit workspace and project. If the agent runs on another
+machine, `aven sync` shares the created tasks with your other devices.
+
+<div class="telegram-voice-demo">
+  <figure class="telegram-voice-demo-light">
+    <img
+      src="/telegram-voice-task-light.webp"
+      alt="Telegram voice message transcribed into an Aven task"
+      width="1179"
+      height="1585"
+      loading="lazy"
+    />
+  </figure>
+  <figure class="telegram-voice-demo-dark">
+    <img
+      src="/telegram-voice-task-dark.webp"
+      alt="Telegram voice message transcribed into an Aven task"
+      width="1179"
+      height="1585"
+      loading="lazy"
+    />
+  </figure>
+</div>
+
+<p class="media-caption">A Telegram voice message is transcribed into a project-scoped Aven task.</p>

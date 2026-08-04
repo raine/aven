@@ -7,8 +7,6 @@ aven stores tasks in a local SQLite database. The TUI is the human interface, an
 
 Every command runs inside one active workspace. Inside that workspace, projects usually map to repositories or directories, and tasks carry status, priority, labels, descriptions, notes, image attachments, refs, and relationships.
 
-The queue is aven's default attention view for open tasks.
-
 ## Workspaces, projects, tasks, and labels
 
 A workspace is a task universe. Use workspaces to isolate personal tasks, work tasks, or any other separate context. Tasks in different workspaces stay separate.

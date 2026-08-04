@@ -223,6 +223,31 @@
   text-align: center;
 }
 
+.telegram-voice-demo {
+  max-width: 24rem;
+  margin: 1.5rem auto;
+}
+
+.telegram-voice-demo figure,
+.telegram-voice-demo .image-zoom-trigger,
+.telegram-voice-demo img {
+  margin: 0;
+}
+
+.telegram-voice-demo img {
+  border-radius: 0.8rem;
+}
+
+.telegram-voice-demo-light,
+.telegram-voice-demo-dark {
+  display: none;
+}
+
+:root[data-theme='light'] .telegram-voice-demo-light,
+:root[data-theme='dark'] .telegram-voice-demo-dark {
+  display: block;
+}
+
 .image-zoom-trigger {
   display: block;
   padding: 0;

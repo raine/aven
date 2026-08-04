@@ -155,7 +155,6 @@ and create another one when those properties need to change.
 
 ## Review history
 
-History shows completed, skipped, and missed dates along with pause periods.
 Open a recurring task and choose **Show history**, or press `t r h`.
 
 ![Aven recurrence history showing completed, skipped, and missed dates plus a pause period](/recurring-history.webp)
