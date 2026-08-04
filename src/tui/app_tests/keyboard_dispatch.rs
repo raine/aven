@@ -385,6 +385,7 @@ async fn escape_clears_marks_after_detail_and_overlay_precedence() {
     let task_id = app.store.tasks[selected].task.id.clone();
     app.list.mark(task_id);
     app.show_detail(0);
+    assert_eq!(app.view().visible_marked_task_count, 0);
 
     app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
         .await

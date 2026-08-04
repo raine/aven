@@ -1334,6 +1334,17 @@ impl App {
         self.list.clear_marks();
     }
 
+    pub(super) fn bulk_scope_marked_task_count(&self) -> usize {
+        if self.detail_command_selection.is_some() || self.detail.is_active() {
+            return 0;
+        }
+        self.store
+            .tasks
+            .iter()
+            .filter(|item| self.list.marked_task_ids().contains(&item.task.id))
+            .count()
+    }
+
     pub(super) fn marked_task_ids_in_view(&self) -> Vec<crate::ids::TaskId> {
         self.store
             .tasks

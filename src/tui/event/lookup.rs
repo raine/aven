@@ -163,10 +163,10 @@ pub(crate) fn matching_commands_for_bulk(
     }
     matches.sort_by_key(|command| match command.bulk_support() {
         BulkSupport::Batch => 0,
-        BulkSupport::MarkControl => 1,
+        BulkSupport::BulkControl => 1,
         BulkSupport::Focused => 2,
-        BulkSupport::Neutral => 3,
-        BulkSupport::SingleOnly => 4,
+        BulkSupport::NotTaskScoped => 3,
+        BulkSupport::SingleOnly(_) => 4,
     });
     matches
 }

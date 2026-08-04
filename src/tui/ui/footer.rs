@@ -4,7 +4,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
-use crate::tui::event::Action;
+use crate::tui::event::{Action, CommandContext};
 
 use crate::tui::theme::{self, BG, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, YELLOW};
 
@@ -86,13 +86,18 @@ fn bulk_footer_segments(count: usize) -> Vec<BulkFooterSegment> {
             )],
             action: None,
         },
-        bulk_action_segment(":", "actions", Action::BeginCommand),
-        bulk_action_segment("t C", "clear", Action::ClearMarks),
-        bulk_action_segment("u", "undo", Action::Undo),
+        bulk_action_segment("actions", Action::BeginCommand),
+        bulk_action_segment("clear", Action::ClearMarks),
+        bulk_action_segment("undo", Action::Undo),
     ]
 }
 
-fn bulk_action_segment(keys: &str, label: &str, action: Action) -> BulkFooterSegment {
+fn bulk_action_segment(label: &str, action: Action) -> BulkFooterSegment {
+    let keys = CommandContext::Normal
+        .commands()
+        .find(|command| command.action == action)
+        .and_then(|command| command.keys(CommandContext::Normal).first())
+        .map_or("", |keys| keys.label);
     let mut spans = key(keys);
     spans.push(Span::styled(format!(" {label}  "), Style::new().fg(FG_DIM)));
     BulkFooterSegment {
@@ -103,17 +108,16 @@ fn bulk_action_segment(keys: &str, label: &str, action: Action) -> BulkFooterSeg
 
 fn visible_bulk_footer_segments(width: u16, count: usize) -> Vec<BulkFooterSegment> {
     let mut used = 0_u16;
-    bulk_footer_segments(count)
-        .into_iter()
-        .filter(|segment| {
-            let segment_width = spans_width(&segment.spans);
-            let visible = used.saturating_add(segment_width) <= width;
-            if visible {
-                used = used.saturating_add(segment_width);
-            }
-            visible
-        })
-        .collect()
+    let mut visible = Vec::new();
+    for segment in bulk_footer_segments(count) {
+        let segment_width = spans_width(&segment.spans);
+        if !visible.is_empty() && used.saturating_add(segment_width) > width {
+            break;
+        }
+        used = used.saturating_add(segment_width);
+        visible.push(segment);
+    }
+    visible
 }
 
 fn spans_width(spans: &[Span<'_>]) -> u16 {

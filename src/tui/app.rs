@@ -350,11 +350,7 @@ impl App {
         } else {
             crate::tui::event::CommandContext::Normal
         };
-        state.marked_task_count = if self.detail.is_active() {
-            0
-        } else {
-            self.marked_task_ids_in_view().len()
-        };
+        state.marked_task_count = self.bulk_scope_marked_task_count();
         state.target = target;
         state.unavailable = unavailable;
         if state.marked_task_count > 1 {
@@ -363,7 +359,10 @@ impl App {
                     .context
                     .commands()
                     .filter(|command| {
-                        command.bulk_support() == crate::tui::event::BulkSupport::SingleOnly
+                        matches!(
+                            command.bulk_support(),
+                            crate::tui::event::BulkSupport::SingleOnly(_)
+                        )
                     })
                     .map(|command| crate::tui::overlay::CommandAvailabilityOverride {
                         action: command.action,

@@ -311,7 +311,7 @@ impl App {
             && self.detail.is_inactive()
             && self.footer_choice.is_none()
         {
-            let marked_task_count = self.marked_task_ids_in_view().len();
+            let marked_task_count = self.bulk_scope_marked_task_count();
             let terminal_area = Rect::new(0, 0, terminal_size.width, terminal_size.height);
             if let Some(action) = crate::tui::ui::bulk_footer_action_at(
                 crate::tui::ui::footer_area(terminal_area),

@@ -7,20 +7,13 @@ use crate::tui::store::TaskView;
 
 impl App {
     pub(in crate::tui) async fn execute(&mut self, action: Action) -> Result<()> {
-        if action.copy_requires_single_task()
-            && !self.detail.is_active()
-            && !self.marked_task_ids_in_view().is_empty()
-        {
+        let marked_task_count = self.bulk_scope_marked_task_count();
+        if action.copy_requires_single_task() && marked_task_count > 0 {
             self.set_info("copy action requires one task");
             return Ok(());
         }
-        let marked_task_count = if self.detail.is_active() {
-            0
-        } else {
-            self.marked_task_ids_in_view().len()
-        };
         if marked_task_count > 1
-            && let Some(label) = action.single_target_label()
+            && let crate::tui::event::BulkSupport::SingleOnly(label) = action.bulk_support()
         {
             self.pending_shortcut.clear();
             self.set_info(format!(

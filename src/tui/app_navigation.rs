@@ -354,8 +354,8 @@ impl App {
         } else if !had_overlay && self.list.focus() == Focus::Sidebar {
             self.list.focus_tasks();
             self.preserve_or_restore_sidebar_selection();
-        } else if !had_overlay && !self.marked_task_ids_in_view().is_empty() {
-            self.list.clear_marks();
+        } else if !had_overlay && !self.list.marked_task_ids().is_empty() {
+            self.clear_marks();
         }
     }
 

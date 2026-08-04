@@ -516,10 +516,12 @@ fn help_command_line(command: &CommandSpec, context: CommandContext) -> Line<'st
     Line::from(spans)
 }
 
+#[cfg(test)]
 fn command_line(command: &CommandSpec, context: CommandContext) -> Line<'static> {
     command_line_with_highlight(command, context, false)
 }
 
+#[cfg(test)]
 fn command_line_with_highlight(
     command: &CommandSpec,
     context: CommandContext,
@@ -536,6 +538,56 @@ fn command_line_with_highlight(
         command,
         18,
     );
+    if highlighted {
+        line.style = line.style.bg(SELECTED_BG);
+        for span in &mut line.spans {
+            span.style = span.style.bg(SELECTED_BG);
+        }
+        line.spans
+            .push(Span::styled(" ".repeat(80), Style::new().bg(SELECTED_BG)));
+    }
+    line
+}
+
+fn command_palette_line(
+    command: &CommandSpec,
+    context: CommandContext,
+    highlighted: bool,
+    annotation: Option<String>,
+    unavailable_reason: Option<&str>,
+) -> Line<'static> {
+    let keys = command
+        .keys(context)
+        .iter()
+        .map(|key| key.label)
+        .collect::<Vec<_>>()
+        .join("/");
+    let mut spans = vec![
+        Span::styled(format!("{keys:<10}"), Style::new().fg(FG_MUTED)),
+        Span::styled(
+            format!(":{:<18}", command.name),
+            command_name_style(command),
+        ),
+    ];
+    if let Some(badge) = lifecycle_badge(command.lifecycle) {
+        spans.push(badge);
+    }
+    if let Some(annotation) = annotation {
+        spans.push(Span::styled(annotation, Style::new().fg(FG_MUTED)));
+    }
+    if let Some(reason) = unavailable_reason {
+        spans.push(Span::styled(
+            format!(" disabled: {reason} · "),
+            Style::new().fg(FG_DIM),
+        ));
+    }
+    spans.push(Span::styled(command.description, Style::new().fg(FG_DIM)));
+    if unavailable_reason.is_some() {
+        for span in &mut spans {
+            span.style = span.style.fg(FG_DIM);
+        }
+    }
+    let mut line = Line::from(spans);
     if highlighted {
         line.style = line.style.bg(SELECTED_BG);
         for span in &mut line.spans {
@@ -580,52 +632,28 @@ pub(super) fn render_command(
             .find(|override_| override_.action == command.action)
             .map(|override_| override_.reason);
         let is_highlighted = highlighted == Some(command.name);
-        let mut line = if is_highlighted {
-            command_line_with_highlight(command, command_context, true)
-        } else {
-            command_line(command, command_context)
-        };
         let annotation = match command.bulk_support() {
             BulkSupport::Batch if marked_task_count > 0 => {
-                Some(format!(" · {} · ", marked_task_label(marked_task_count)))
+                let noun = if marked_task_count == 1 {
+                    "task"
+                } else {
+                    "tasks"
+                };
+                Some(format!(" · {marked_task_count} {noun} · "))
             }
             BulkSupport::Focused if marked_task_count > 0 => Some(" · focused task · ".to_string()),
-            BulkSupport::SingleOnly | BulkSupport::MarkControl | BulkSupport::Neutral => None,
+            BulkSupport::SingleOnly(_) | BulkSupport::BulkControl | BulkSupport::NotTaskScoped => {
+                None
+            }
             BulkSupport::Batch | BulkSupport::Focused => None,
         };
-        if let Some(annotation) = annotation {
-            let style = if is_highlighted {
-                Style::new().fg(FG_MUTED).bg(SELECTED_BG)
-            } else {
-                Style::new().fg(FG_MUTED)
-            };
-            let index = line
-                .spans
-                .iter()
-                .position(|span| span.content.as_ref() == command.description)
-                .unwrap_or(line.spans.len());
-            line.spans.insert(index, Span::styled(annotation, style));
-        }
-        if let Some(reason) = unavailable_reason {
-            for span in &mut line.spans {
-                span.style = span.style.fg(FG_DIM);
-            }
-            let style = if is_highlighted {
-                Style::new().fg(FG_DIM).bg(SELECTED_BG)
-            } else {
-                Style::new().fg(FG_DIM)
-            };
-            let index = line
-                .spans
-                .iter()
-                .position(|span| span.content.as_ref() == command.description)
-                .unwrap_or(line.spans.len());
-            line.spans.insert(
-                index,
-                Span::styled(format!(" disabled: {reason} · "), style),
-            );
-        }
-        lines.push(line);
+        lines.push(command_palette_line(
+            command,
+            command_context,
+            is_highlighted,
+            annotation,
+            unavailable_reason,
+        ));
     }
 
     let title = if marked_task_count == 0 {
@@ -673,7 +701,7 @@ fn prefix_hint_lines_with_availability(
                 || matches!(command.action, crate::tui::event::Action::CopyTaskNotes)
                     && !copy_notes_available
                 || copy_mark_limit
-                || support == BulkSupport::SingleOnly && marked_task_count > 1;
+                || matches!(support, BulkSupport::SingleOnly(_)) && marked_task_count > 1;
             let mut line = command_hint_line(
                 Span::styled(
                     format!(" {:<6} ", key_hint),
@@ -687,7 +715,7 @@ fn prefix_hint_lines_with_availability(
                     .push(Span::styled(" · 1 task only", Style::new().fg(FG_DIM)));
             } else {
                 match support {
-                    BulkSupport::SingleOnly if marked_task_count > 1 => line
+                    BulkSupport::SingleOnly(_) if marked_task_count > 1 => line
                         .spans
                         .push(Span::styled(" · 1 task only", Style::new().fg(FG_DIM))),
                     BulkSupport::Batch if marked_task_count > 0 => line.spans.push(Span::styled(
@@ -698,10 +726,10 @@ fn prefix_hint_lines_with_availability(
                         .spans
                         .push(Span::styled(" · focused task", Style::new().fg(FG_MUTED))),
                     BulkSupport::Batch
-                    | BulkSupport::SingleOnly
+                    | BulkSupport::SingleOnly(_)
                     | BulkSupport::Focused
-                    | BulkSupport::MarkControl
-                    | BulkSupport::Neutral => {}
+                    | BulkSupport::BulkControl
+                    | BulkSupport::NotTaskScoped => {}
                 }
             }
             if unavailable {

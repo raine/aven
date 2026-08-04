@@ -87,12 +87,14 @@ async fn status_shortcut_uses_footer_chooser_for_marked_tasks_with_undo() {
     assert_eq!(status_for(&app, &first_id), TaskStatus::Todo);
     assert_eq!(status_for(&app, &second_id), TaskStatus::Todo);
     assert_eq!(status_for(&app, &third_id), TaskStatus::Inbox);
+    assert_eq!(app.list.marked_task_ids().len(), 2);
 
     app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
 
     assert_eq!(status_for(&app, &first_id), TaskStatus::Inbox);
     assert_eq!(status_for(&app, &second_id), TaskStatus::Inbox);
     assert_eq!(status_for(&app, &third_id), TaskStatus::Inbox);
+    assert_eq!(app.list.marked_task_ids().len(), 2);
 }
 
 #[tokio::test]
@@ -497,6 +499,7 @@ async fn update_deleted_updates_only_marked_tasks() {
     assert!(!app.store.tasks.iter().any(|item| item.task.id == first_id));
     assert!(!app.store.tasks.iter().any(|item| item.task.id == second_id));
     assert!(app.store.tasks.iter().any(|item| item.task.id == third_id));
+    assert!(app.list.marked_task_ids().is_empty());
 }
 
 #[tokio::test]

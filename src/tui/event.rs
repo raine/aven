@@ -255,7 +255,7 @@ mod tests {
         assert!(
             commands[first_non_batch..]
                 .iter()
-                .any(|command| command.bulk_support() == BulkSupport::SingleOnly)
+                .any(|command| matches!(command.bulk_support(), BulkSupport::SingleOnly(_)))
         );
     }
 
@@ -283,16 +283,16 @@ mod tests {
         assert_eq!(Action::BeginEditProject.bulk_support(), BulkSupport::Batch);
         assert_eq!(
             Action::BeginEditTitle.bulk_support(),
-            BulkSupport::SingleOnly
+            BulkSupport::SingleOnly("title")
         );
         assert_eq!(
             Action::CopyTaskMarkdown.bulk_support(),
             BulkSupport::Focused
         );
-        assert_eq!(Action::ClearMarks.bulk_support(), BulkSupport::MarkControl);
+        assert_eq!(Action::ClearMarks.bulk_support(), BulkSupport::BulkControl);
         assert_eq!(
             Action::ShowView(TaskView::Open).bulk_support(),
-            BulkSupport::Neutral
+            BulkSupport::NotTaskScoped
         );
     }
 

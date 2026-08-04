@@ -9,10 +9,10 @@ use super::{ShortcutLookup, resolve_shortcut};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BulkSupport {
     Batch,
-    SingleOnly,
+    SingleOnly(&'static str),
     Focused,
-    MarkControl,
-    Neutral,
+    BulkControl,
+    NotTaskScoped,
 }
 
 #[allow(dead_code)]
@@ -174,11 +174,12 @@ impl Action {
             | Self::Delete
             | Self::Restore
             | Self::BeginStatusPicker => BulkSupport::Batch,
-            Self::BeginEditTitle
-            | Self::BeginEditDescription
-            | Self::BeginAddNote
-            | Self::BeginAddDependency
-            | Self::BeginRemoveDependency => BulkSupport::SingleOnly,
+            Self::BeginEditTitle => BulkSupport::SingleOnly("title"),
+            Self::BeginEditDescription => BulkSupport::SingleOnly("description"),
+            Self::BeginAddNote => BulkSupport::SingleOnly("note"),
+            Self::BeginAddDependency | Self::BeginRemoveDependency => {
+                BulkSupport::SingleOnly("dependency")
+            }
             Self::CopyShortRef
             | Self::CopyDurableRef
             | Self::CopyTaskTitle
@@ -186,11 +187,20 @@ impl Action {
             | Self::CopyTaskText
             | Self::CopyTaskNotes
             | Self::CopyTaskMarkdown
-            | Self::BeginCreateTaskGist => BulkSupport::Focused,
+            | Self::BeginCreateTaskGist
+            | Self::SkipRecurrence
+            | Self::BeginEditRecurrenceTemplate
+            | Self::PauseRecurrence
+            | Self::ResumeRecurrence
+            | Self::StopRecurrence
+            | Self::ShowRecurrenceHistory
+            | Self::ToggleEpicExpanded
+            | Self::BeginAddEpicChild
+            | Self::RemoveEpicChild => BulkSupport::Focused,
             Self::Undo
             | Self::ToggleMarkSelected
             | Self::ToggleMarkAllInView
-            | Self::ClearMarks => BulkSupport::MarkControl,
+            | Self::ClearMarks => BulkSupport::BulkControl,
             Self::Quit
             | Self::MoveDown
             | Self::MoveUp
@@ -224,15 +234,6 @@ impl Action {
             | Self::SyncNow
             | Self::SetOrder(_)
             | Self::ReverseSort
-            | Self::SkipRecurrence
-            | Self::BeginEditRecurrenceTemplate
-            | Self::PauseRecurrence
-            | Self::ResumeRecurrence
-            | Self::StopRecurrence
-            | Self::ShowRecurrenceHistory
-            | Self::ToggleEpicExpanded
-            | Self::BeginAddEpicChild
-            | Self::RemoveEpicChild
             | Self::BeginRenameProject
             | Self::BeginDeleteProject
             | Self::BeginAddTask
@@ -271,17 +272,7 @@ impl Action {
             | Self::BeginConfigInit
             | Self::Planned { .. }
             | Self::Disabled { .. }
-            | Self::None => BulkSupport::Neutral,
-        }
-    }
-
-    pub(crate) const fn single_target_label(self) -> Option<&'static str> {
-        match self {
-            Self::BeginEditTitle => Some("title"),
-            Self::BeginEditDescription => Some("description"),
-            Self::BeginAddNote => Some("note"),
-            Self::BeginAddDependency | Self::BeginRemoveDependency => Some("dependency"),
-            _ => None,
+            | Self::None => BulkSupport::NotTaskScoped,
         }
     }
 
