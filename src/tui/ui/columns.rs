@@ -300,13 +300,7 @@ pub(super) fn render_columns(
             layout.board.width,
             layout.board.height.saturating_sub(HEADER_HEIGHT),
         );
-        let state = if store.refresh_health() == crate::tui::store::RefreshHealth::Failed
-            || store.tasks.is_empty()
-        {
-            super::empty_state::task_empty_state(store)
-        } else {
-            super::empty_state::column_configuration_empty_state()
-        };
+        let state = super::empty_state::column_board_empty_state(store);
         super::empty_state::render_empty_state(frame, body, state);
     }
     if layout.preview.height > 0 {
@@ -605,17 +599,6 @@ mod tests {
             attachments: Vec::new(),
             queue: Default::default(),
         }
-    }
-
-    #[test]
-    fn unmatched_tasks_use_column_configuration_state() {
-        let state = super::super::empty_state::column_configuration_empty_state();
-
-        assert_eq!(state.title, "Tasks do not fit these columns");
-        assert_eq!(
-            state.reason,
-            super::super::empty_state::EmptyStateReason::ColumnConfiguration
-        );
     }
 
     #[test]

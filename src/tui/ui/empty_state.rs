@@ -19,6 +19,7 @@ pub(crate) enum EmptyStateReason {
     LoadFailed,
     EmptyScope,
     NoFilterMatches,
+    SearchPrompt,
     NoSearchResults,
     TaskUnavailable,
     NoDeletedTasks,
@@ -72,10 +73,16 @@ pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
         return load_failed_state();
     }
 
+    let modifiers = &store.view_state.filter_modifiers;
+    let has_narrowing_filters = modifiers.deleted_only
+        || modifiers.label.is_some()
+        || modifiers.priority.is_some()
+        || (modifiers.closed == ClosedTaskVisibility::Only
+            && store.view_state.view != TaskView::Epics);
     match &store.view_state.projection_origin {
         TaskProjectionOrigin::SearchPrompt => {
             return EmptyState::new(
-                EmptyStateReason::NamedView,
+                EmptyStateReason::SearchPrompt,
                 "Search tasks",
                 "Find tasks by title, notes, labels, or ID.",
                 Action::BeginSearch,
@@ -83,7 +90,9 @@ pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
                 "search",
             );
         }
-        TaskProjectionOrigin::Search { .. } => {
+        TaskProjectionOrigin::Search { task_ids, .. }
+            if task_ids.is_empty() || !has_narrowing_filters =>
+        {
             return EmptyState::new(
                 EmptyStateReason::NoSearchResults,
                 "No search results",
@@ -93,7 +102,9 @@ pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
                 "search",
             );
         }
-        TaskProjectionOrigin::ExactTasks(_) => {
+        TaskProjectionOrigin::ExactTasks(task_ids)
+            if task_ids.is_empty() || !has_narrowing_filters =>
+        {
             return EmptyState::new(
                 EmptyStateReason::TaskUnavailable,
                 "Task unavailable",
@@ -103,10 +114,11 @@ pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
                 "queue",
             );
         }
-        TaskProjectionOrigin::NamedView => {}
+        TaskProjectionOrigin::NamedView
+        | TaskProjectionOrigin::Search { .. }
+        | TaskProjectionOrigin::ExactTasks(_) => {}
     }
 
-    let modifiers = &store.view_state.filter_modifiers;
     if modifiers.deleted_only {
         let detail = if modifiers.label.is_some() || modifiers.priority.is_some() {
             "No deleted tasks match the other filters."
@@ -264,7 +276,13 @@ pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
                 "closed filter",
             )
         }
-        TaskView::Recurring | TaskView::RecentActions => unreachable!("separate list surface"),
+        TaskView::Recurring | TaskView::RecentActions => named_state(
+            "Nothing to show",
+            "This view has no rows in the current scope.",
+            Action::ShowView(TaskView::Queue),
+            "View queue",
+            "queue",
+        ),
     }
 }
 
@@ -282,9 +300,12 @@ pub(crate) fn recurrence_empty_state(store: &TuiStore) -> EmptyState {
             "search",
         );
     }
-    if store.view_state.recurring.lifecycle != RecurrenceSeriesLifecycleFilter::ActiveOrPaused {
-        let title = match store.view_state.recurring.lifecycle {
-            RecurrenceSeriesLifecycleFilter::ActiveOrPaused => unreachable!(),
+    let lifecycle = store.view_state.recurring.lifecycle;
+    if lifecycle != RecurrenceSeriesLifecycleFilter::ActiveOrPaused {
+        let title = match lifecycle {
+            RecurrenceSeriesLifecycleFilter::ActiveOrPaused => {
+                "No active or paused recurring series"
+            }
             RecurrenceSeriesLifecycleFilter::Active => "No active recurring series",
             RecurrenceSeriesLifecycleFilter::Paused => "No paused recurring series",
             RecurrenceSeriesLifecycleFilter::Stopped => "No stopped recurring series",
@@ -299,20 +320,14 @@ pub(crate) fn recurrence_empty_state(store: &TuiStore) -> EmptyState {
             "lifecycle filter",
         );
     }
-    let (title, detail) = match store.view_state.scope {
-        TaskScope::Workspace => (
-            "No recurring series in this workspace",
-            "Recurring tasks you create will appear here.",
-        ),
-        TaskScope::Project(_) => (
-            "No recurring series in this project",
-            "Recurring tasks for this project will appear here.",
-        ),
+    let title = match store.view_state.scope {
+        TaskScope::Workspace => "No active or paused recurring series in this workspace",
+        TaskScope::Project(_) => "No active or paused recurring series in this project",
     };
     EmptyState::new(
-        EmptyStateReason::EmptyScope,
+        EmptyStateReason::RecurrenceLifecycle,
         title,
-        detail,
+        "Stopped series are available through the lifecycle filter.",
         Action::BeginAddTask,
         "Add a recurring task",
         "add task",
@@ -337,15 +352,19 @@ pub(crate) fn recent_actions_empty_state(store: &TuiStore) -> EmptyState {
     )
 }
 
-pub(crate) fn column_configuration_empty_state() -> EmptyState {
-    EmptyState::new(
-        EmptyStateReason::ColumnConfiguration,
-        "Tasks do not fit these columns",
-        "The column configuration does not include their statuses.",
-        Action::ShowConfigInfo,
-        "Review configuration",
-        "config",
-    )
+pub(crate) fn column_board_empty_state(store: &TuiStore) -> EmptyState {
+    if store.refresh_health() == RefreshHealth::Failed || store.tasks.is_empty() {
+        task_empty_state(store)
+    } else {
+        EmptyState::new(
+            EmptyStateReason::ColumnConfiguration,
+            "Tasks do not fit these columns",
+            "The column configuration does not include their statuses.",
+            Action::ShowConfigInfo,
+            "Review configuration",
+            "config",
+        )
+    }
 }
 
 pub(crate) fn render_empty_state(frame: &mut Frame, area: Rect, state: EmptyState) {

@@ -282,6 +282,10 @@ async fn switch_workspace_refreshes_workspace_scoped_state() {
     assert_eq!(store.view_state.scope, TaskScope::Workspace);
     assert_eq!(store.view_state.view, TaskView::Todo);
     assert_eq!(
+        store.view_state.projection_origin,
+        super::super::TaskProjectionOrigin::NamedView
+    );
+    assert_eq!(
         store.view_state.filter_modifiers,
         TaskFilterModifiers::default()
     );

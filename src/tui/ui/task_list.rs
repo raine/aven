@@ -1560,7 +1560,8 @@ mod tests {
     #[tokio::test]
     async fn empty_state_classifies_named_and_specialized_surfaces() {
         use crate::tui::ui::empty_state::{
-            EmptyStateReason, recent_actions_empty_state, recurrence_empty_state, task_empty_state,
+            EmptyStateReason, column_board_empty_state, recent_actions_empty_state,
+            recurrence_empty_state, task_empty_state,
         };
 
         let mut store = test_store_with_tasks(Vec::new()).await;
@@ -1602,7 +1603,18 @@ mod tests {
             EmptyStateReason::NoSearchResults
         );
 
+        store.view_state.projection_origin = TaskProjectionOrigin::Search {
+            query: "matched".to_string(),
+            task_ids: vec![crate::test_support::task_id("matched")],
+        };
+        store.view_state.filter_modifiers.label = Some("hidden".to_string());
+        assert_eq!(
+            task_empty_state(&store).reason,
+            EmptyStateReason::NoFilterMatches
+        );
+
         store.view_state.projection_origin = TaskProjectionOrigin::NamedView;
+        store.view_state.filter_modifiers.label = None;
         store.view_state.filter_modifiers.deleted_only = true;
         assert_eq!(
             task_empty_state(&store).reason,
@@ -1630,6 +1642,17 @@ mod tests {
             recent_actions_empty_state(&store).reason,
             EmptyStateReason::RecentActions
         );
+
+        store.tasks.push(task_list_item("Unassigned status"));
+        store.task_columns = vec![crate::config::TaskColumnConfig {
+            name: "Inbox".to_string(),
+            statuses: vec!["inbox".to_string()],
+        }];
+        assert_eq!(
+            column_board_empty_state(&store).reason,
+            EmptyStateReason::ColumnConfiguration
+        );
+        store.tasks.clear();
 
         store.fail_next_refresh();
         store.refresh(None).await.unwrap_err();

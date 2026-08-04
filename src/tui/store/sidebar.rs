@@ -38,8 +38,8 @@ impl TuiStore {
                 "Search",
                 self.view_state
                     .projection_origin
-                    .task_ids()
-                    .map_or(0, |task_ids| task_ids.len()) as i64,
+                    .match_count()
+                    .unwrap_or_default() as i64,
                 TaskView::Search,
             ),
             SidebarEntry {

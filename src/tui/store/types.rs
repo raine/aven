@@ -124,11 +124,20 @@ pub(crate) enum TaskProjectionOrigin {
 }
 
 impl TaskProjectionOrigin {
-    pub(crate) fn task_ids(&self) -> Option<&[crate::ids::TaskId]> {
+    pub(crate) fn task_id_filter(&self) -> TaskIdFilter {
         match self {
-            Self::NamedView => None,
-            Self::SearchPrompt => Some(&[]),
-            Self::Search { task_ids, .. } | Self::ExactTasks(task_ids) => Some(task_ids),
+            Self::NamedView => TaskIdFilter::Unrestricted,
+            Self::SearchPrompt => TaskIdFilter::Only(Vec::new()),
+            Self::Search { task_ids, .. } | Self::ExactTasks(task_ids) => {
+                TaskIdFilter::Only(task_ids.clone())
+            }
+        }
+    }
+
+    pub(crate) fn match_count(&self) -> Option<usize> {
+        match self {
+            Self::NamedView | Self::SearchPrompt => None,
+            Self::Search { task_ids, .. } | Self::ExactTasks(task_ids) => Some(task_ids.len()),
         }
     }
 }
@@ -191,6 +200,14 @@ impl Default for TaskViewState {
 }
 
 impl TaskViewState {
+    pub(crate) fn reset_projection_origin(&mut self) {
+        self.projection_origin = if self.view == TaskView::Search {
+            TaskProjectionOrigin::SearchPrompt
+        } else {
+            TaskProjectionOrigin::NamedView
+        };
+    }
+
     pub(crate) fn for_exact_task(task_id: crate::ids::TaskId) -> Self {
         Self {
             view: TaskView::Search,
@@ -205,11 +222,7 @@ impl TaskViewState {
             priority: self.filter_modifiers.priority.clone(),
             include_deleted: self.filter_modifiers.include_deleted,
             deleted_only: self.filter_modifiers.deleted_only,
-            task_ids: self
-                .projection_origin
-                .task_ids()
-                .map(|task_ids| TaskIdFilter::Only(task_ids.to_vec()))
-                .unwrap_or_default(),
+            task_ids: self.projection_origin.task_id_filter(),
             ..TaskFilters::default()
         };
         if let TaskScope::Project(project) = &self.scope {

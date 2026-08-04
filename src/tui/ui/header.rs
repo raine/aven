@@ -475,8 +475,8 @@ fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
     } else if modifiers.include_deleted {
         parts.push(vec![filter_part("include_deleted")]);
     }
-    if let Some(task_ids) = store.view_state.projection_origin.task_ids() {
-        parts.push(vec![filter_part(format!("matches={}", task_ids.len()))]);
+    if let Some(match_count) = store.view_state.projection_origin.match_count() {
+        parts.push(vec![filter_part(format!("matches={match_count}"))]);
     }
     if parts.is_empty() {
         Vec::new()
@@ -576,6 +576,14 @@ mod tests {
 
     fn spans_text(spans: Vec<Span<'static>>) -> String {
         Line::from(spans).to_string()
+    }
+
+    #[tokio::test]
+    async fn search_prompt_omits_match_count_filter() {
+        let mut store = test_store().await;
+        store.show_view(TaskView::Search).await.unwrap();
+
+        assert!(!spans_text(active_filter_spans(&store)).contains("matches="));
     }
 
     #[tokio::test]

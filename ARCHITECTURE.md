@@ -81,7 +81,7 @@
 
 #### Rendering and lifecycle
 
-- `src/tui/ui.rs` and `src/tui/ui/` render application state without database or filesystem access. `src/tui/ui/empty_state.rs` owns shared list-empty semantics, catalog-backed action hints, and responsive rendering, while each list surface supplies only the filters and scope facts it actually honors. `src/tui/ui/task_list/` owns task-row view models and hit testing.
+- `src/tui/ui.rs` and `src/tui/ui/` render application state without database or filesystem access. `src/tui/ui/empty_state.rs` owns shared list-empty semantics, catalog-backed action hints, and responsive rendering through surface-specific classifiers. `src/tui/ui/task_list/` owns task-row view models and hit testing.
 - `DetailDocument` in `src/tui/ui/detail.rs` owns semantic task-detail geometry shared by rendering and interaction, including wrapping, layout, focus targets for note identities and relationships, selection mapping, scroll bounds, hit testing, and image placement. `WidgetState` retains the document for stable frame queries.
 - `src/tui/app_lifecycle.rs` polls background completion, coordinates image emission after frame draws, and performs orderly shutdown. Attachment detail sections combine committed metadata with app-owned pending and failed preparation state.
 - `src/tui/app_update.rs` coordinates update discovery and a unified Software Update overlay that presents target-release notes, install metadata, actions, progress, and outcomes in one fixed frame. `src/update/` owns release discovery, verification, install classification, and executable replacement. `src/tui/changelog.rs` fetches and caches canonical GitHub `CHANGELOG.md` content shared by the update review and historical changelog reader.

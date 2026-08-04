@@ -95,11 +95,7 @@ impl TuiStore {
 
     pub(crate) async fn show_scope(&mut self, target: TaskScopeTarget) -> Result<Option<usize>> {
         let mut view_state = self.view_state.clone();
-        view_state.projection_origin = if view_state.view == TaskView::Search {
-            TaskProjectionOrigin::SearchPrompt
-        } else {
-            TaskProjectionOrigin::NamedView
-        };
+        view_state.reset_projection_origin();
         view_state.scope = match target {
             TaskScopeTarget::Workspace => TaskScope::Workspace,
             TaskScopeTarget::Project(project) => TaskScope::Project(project),
@@ -113,11 +109,7 @@ impl TuiStore {
     pub(crate) async fn clear_filters(&mut self) -> Result<Option<usize>> {
         let mut view_state = self.view_state.clone();
         view_state.filter_modifiers = TaskFilterModifiers::default();
-        view_state.projection_origin = if view_state.view == TaskView::Search {
-            TaskProjectionOrigin::SearchPrompt
-        } else {
-            TaskProjectionOrigin::NamedView
-        };
+        view_state.reset_projection_origin();
         view_state.recurring = super::RecurringSeriesViewState::default();
         Ok(self
             .refresh_with_view_state(view_state, None)

@@ -65,6 +65,7 @@ impl TuiStore {
         let mut view_state = self.view_state.clone();
         view_state.scope = TaskScope::Workspace;
         view_state.filter_modifiers = TaskFilterModifiers::default();
+        view_state.reset_projection_origin();
         let selected = self
             .refresh_with_workspace_and_view_state(workspace, view_state)
             .await?
