@@ -581,7 +581,7 @@ fn command_palette_line(
     }
     if let Some(reason) = unavailable_reason {
         spans.push(Span::styled(
-            format!(" disabled: {reason} · "),
+            format!("disabled: {reason} · "),
             Style::new().fg(FG_DIM),
         ));
     }

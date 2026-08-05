@@ -39,7 +39,7 @@ async fn command_palette_captures_bulk_scope_and_single_target_limits() {
     assert_eq!(state.marked_task_count, 2);
     assert!(state.unavailable.iter().any(|override_| {
         override_.action == crate::tui::event::Action::BeginEditTitle
-            && override_.reason.contains("requires one task")
+            && override_.reason == "one task only"
     }));
 
     type_chars(&mut app, "edit-title").await;
@@ -48,7 +48,7 @@ async fn command_palette_captures_bulk_scope_and_single_target_limits() {
     assert!(app.overlay.is_none());
     assert_eq!(
         toast_message(&app).as_deref(),
-        Some(":edit-title is disabled: requires one task when multiple tasks are marked")
+        Some(":edit-title is disabled: one task only")
     );
 }
 

@@ -366,7 +366,7 @@ impl App {
                     })
                     .map(|command| crate::tui::overlay::CommandAvailabilityOverride {
                         action: command.action,
-                        reason: "requires one task when multiple tasks are marked",
+                        reason: "one task only",
                     }),
             );
         }
