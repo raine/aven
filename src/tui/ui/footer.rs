@@ -58,18 +58,13 @@ pub(super) fn footer_bar(
         }
         spans
     };
-    let background = if mode == FooterMode::Bulk {
-        BG_PANEL
-    } else {
-        BG
-    };
     Paragraph::new(Line::from(spans))
         .block(
             Block::new()
                 .borders(Borders::TOP)
                 .border_style(Style::new().fg(BORDER)),
         )
-        .style(Style::new().fg(FG).bg(background))
+        .style(Style::new().fg(FG).bg(BG))
 }
 
 struct BulkFooterSegment {
@@ -552,6 +547,23 @@ mod tests {
         assert!(rendered.contains("clear"));
         assert!(rendered.contains("undo"));
         assert!(!rendered.contains("detail"));
+    }
+
+    #[test]
+    fn bulk_footer_keys_keep_standard_keycap_contrast() {
+        let backend = TestBackend::new(100, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| frame.render_widget(footer_bar(FooterMode::List, 100, 3), frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let key_column = (0..100)
+            .find(|&column| buffer[(column, 1)].symbol() == ":")
+            .expect("expected command key");
+
+        assert_eq!(buffer[(key_column, 1)].bg, BG_PANEL);
+        assert_eq!(buffer[(key_column - 1, 1)].bg, BG);
+        assert_eq!(buffer[(key_column + 1, 1)].bg, BG);
     }
 
     #[test]
