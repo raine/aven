@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
 use super::ViewState;
 use super::dialog::Dialog;
@@ -13,7 +13,9 @@ use crate::tui::event::{
     BulkSupport, CommandContext, CommandLifecycle, CommandSpec, matching_commands_for_bulk,
     prefix_hint_commands,
 };
-use crate::tui::theme::{ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, ORANGE, SELECTED_BG};
+use crate::tui::theme::{
+    ACCENT, BG_ALT, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, ORANGE, SELECTED_BG,
+};
 
 struct HelpTopic {
     keys: &'static str,
@@ -552,6 +554,7 @@ fn command_line_with_highlight(
 fn command_palette_line(
     command: &CommandSpec,
     context: CommandContext,
+    command_name_width: usize,
     highlighted: bool,
     annotation: Option<String>,
     unavailable_reason: Option<&str>,
@@ -565,7 +568,7 @@ fn command_palette_line(
     let mut spans = vec![
         Span::styled(format!("{keys:<10}"), Style::new().fg(FG_MUTED)),
         Span::styled(
-            format!(":{:<18}", command.name),
+            format!(":{:<command_name_width$}", command.name),
             command_name_style(command),
         ),
     ];
@@ -633,8 +636,7 @@ pub(super) fn render_command(
         .unwrap_or(0);
     let offset = selected.saturating_sub(7);
     let visible_end = offset.saturating_add(8).min(match_count);
-    let hidden_above = offset;
-    let hidden_below = match_count.saturating_sub(visible_end);
+    let command_name_width = command_name_width(&matches[offset..visible_end]);
     let height = (visible_end.saturating_sub(offset) as u16)
         .saturating_add(3)
         .saturating_add(u16::from(match_count > 0));
@@ -664,20 +666,15 @@ pub(super) fn render_command(
         lines.push(command_palette_line(
             command,
             command_context,
+            command_name_width,
             is_highlighted,
             annotation,
             unavailable_reason,
         ));
     }
     if match_count > 0 {
-        let position = match (hidden_above, hidden_below) {
-            (0, 0) => String::new(),
-            (0, below) => format!(" · {below} more below"),
-            (above, 0) => format!(" · {above} more above"),
-            (above, below) => format!(" · {above} above · {below} below"),
-        };
         lines.push(Line::from(Span::styled(
-            format!("  ↑/↓ browse · Enter run · Tab complete{position}"),
+            "  ↑/↓ browse · Enter run · Tab complete",
             Style::new().fg(FG_MUTED),
         )));
     }
@@ -687,7 +684,47 @@ pub(super) fn render_command(
     } else {
         format!("Command · {}", marked_task_label(marked_task_count))
     };
-    Dialog::new(&title, 72, height).render_text(frame, Text::from(lines));
+    let mut dialog = Dialog::new(&title, 72, height);
+    if match_count > 0 {
+        let position = highlighted.map_or_else(
+            || format!("{match_count} commands"),
+            |_| format!("{}/{match_count}", selected + 1),
+        );
+        dialog = dialog.right_title(Line::from(Span::styled(
+            position,
+            Style::new().fg(FG_MUTED),
+        )));
+    }
+    let content = dialog.render_block(frame);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(BG_ALT)),
+        content,
+    );
+    render_command_scrollbar(frame, content, match_count, offset);
+}
+
+fn render_command_scrollbar(frame: &mut Frame, content: Rect, match_count: usize, offset: usize) {
+    const VISIBLE_COMMANDS: usize = 8;
+    if match_count <= VISIBLE_COMMANDS {
+        return;
+    }
+    let area = Rect {
+        y: content.y.saturating_add(1),
+        height: (match_count.min(VISIBLE_COMMANDS)) as u16,
+        ..content
+    };
+    let position = super::scroll::scrollbar_thumb_position(offset, match_count, VISIBLE_COMMANDS);
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(None)
+        .end_symbol(None)
+        .thumb_symbol("┃")
+        .track_symbol(Some("│"))
+        .thumb_style(Style::new().fg(ACCENT).bg(BG_ALT))
+        .track_style(Style::new().fg(BORDER).bg(BG_ALT));
+    let mut state = ScrollbarState::new(match_count)
+        .position(position)
+        .viewport_content_length(VISIBLE_COMMANDS);
+    frame.render_stateful_widget(scrollbar, area, &mut state);
 }
 
 fn marked_task_label(count: usize) -> String {
@@ -1249,7 +1286,8 @@ mod tests {
         assert!(rendered.contains("↑/↓ browse"));
         assert!(rendered.contains("Enter run"));
         assert!(rendered.contains("Tab complete"));
-        assert!(rendered.contains("more below"));
+        assert!(rendered.contains("commands"));
+        assert!(rendered.contains("│"));
     }
 
     #[test]
@@ -1265,12 +1303,28 @@ mod tests {
         let rendered = buffer_text_from_rows(&buffer);
 
         assert!(rendered.contains(":search"));
-        assert!(rendered.contains("above"));
+        let commands = matching_commands_for_bulk(CommandContext::Normal, "", 0);
+        let position = commands
+            .iter()
+            .position(|command| command.name == "search")
+            .unwrap()
+            + 1;
+        assert!(rendered.contains(&format!("{position}/{}", commands.len())));
+        assert!(rendered.contains("┃"));
         assert!((0..buffer.area.height).any(|row| {
             buffer_row(&buffer, row).contains(":search")
                 && (0..buffer.area.width)
                     .any(|column| buffer[(column, row)].style().bg == Some(SELECTED_BG))
         }));
+    }
+
+    #[test]
+    fn command_overlay_sizes_name_column_for_visible_commands() {
+        let buffer = render_command_buffer("", 0, None, Some("config-init"));
+        let rendered = buffer_text_from_rows(&buffer);
+
+        assert!(rendered.contains(":conflict-manual-merge  resolve with manual value"));
+        assert!(!rendered.contains("mergeresolve"));
     }
 
     #[test]
