@@ -36,6 +36,43 @@ async fn command_overlay_executes_unique_lookup_and_keeps_overlay_on_errors() {
 }
 
 #[tokio::test]
+async fn command_overlay_arrows_browse_and_enter_runs_selection() {
+    let mut app = test_app().await;
+
+    app.begin_command().await;
+    type_chars(&mut app, "wel").await;
+    app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Command { state })
+            if state.input.text == "wel" && state.highlighted.as_deref() == Some("welcome")
+    ));
+
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert!(matches!(app.overlay, Some(OverlayState::Onboarding { .. })));
+}
+
+#[tokio::test]
+async fn command_overlay_arrow_selection_wraps() {
+    let mut app = test_app().await;
+
+    app.begin_command().await;
+    app.handle_overlay_key(key(KeyCode::Up)).await.unwrap();
+    let last = match &app.overlay {
+        Some(OverlayState::Command { state }) => state.highlighted.clone(),
+        overlay => panic!("expected command overlay, got {overlay:?}"),
+    };
+    app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
+
+    assert!(last.is_some());
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Command { state }) if state.highlighted.as_deref() == Some("quit")
+    ));
+}
+
+#[tokio::test]
 async fn command_palette_selects_upcoming_view() {
     let mut app = test_app().await;
 

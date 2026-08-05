@@ -624,13 +624,23 @@ pub(super) fn render_command(
         marked_task_count,
     );
     let match_count = matches.len();
-    let hidden_count = match_count.saturating_sub(8);
-    let height = (match_count.min(8) as u16)
+    let selected = highlighted
+        .and_then(|highlighted| {
+            matches
+                .iter()
+                .position(|command| command.name == highlighted)
+        })
+        .unwrap_or(0);
+    let offset = selected.saturating_sub(7);
+    let visible_end = offset.saturating_add(8).min(match_count);
+    let hidden_above = offset;
+    let hidden_below = match_count.saturating_sub(visible_end);
+    let height = (visible_end.saturating_sub(offset) as u16)
         .saturating_add(3)
-        .saturating_add(u16::from(hidden_count > 0));
+        .saturating_add(u16::from(match_count > 0));
 
     let mut lines = vec![input_line(":", input, cursor)];
-    for command in matches.into_iter().take(8) {
+    for command in matches.into_iter().skip(offset).take(8) {
         let unavailable_reason = unavailable
             .iter()
             .find(|override_| override_.action == command.action)
@@ -659,14 +669,15 @@ pub(super) fn render_command(
             unavailable_reason,
         ));
     }
-    if hidden_count > 0 {
-        let noun = if hidden_count == 1 {
-            "command"
-        } else {
-            "commands"
+    if match_count > 0 {
+        let position = match (hidden_above, hidden_below) {
+            (0, 0) => String::new(),
+            (0, below) => format!(" · {below} more below"),
+            (above, 0) => format!(" · {above} more above"),
+            (above, below) => format!(" · {above} above · {below} below"),
         };
         lines.push(Line::from(Span::styled(
-            format!("  ↓ {hidden_count} more {noun} · type to filter"),
+            format!("  ↑/↓ browse · Enter run · Tab complete{position}"),
             Style::new().fg(FG_MUTED),
         )));
     }
@@ -1232,11 +1243,13 @@ mod tests {
     }
 
     #[test]
-    fn bulk_command_overlay_discloses_hidden_commands() {
+    fn bulk_command_overlay_discloses_navigation_and_hidden_commands() {
         let rendered = render_command_overlay_with_marks("", 0, 3);
 
-        assert!(rendered.contains("more commands"));
-        assert!(rendered.contains("type to filter"));
+        assert!(rendered.contains("↑/↓ browse"));
+        assert!(rendered.contains("Enter run"));
+        assert!(rendered.contains("Tab complete"));
+        assert!(rendered.contains("more below"));
     }
 
     #[test]
@@ -1244,6 +1257,20 @@ mod tests {
         let rendered = render_command_overlay_with_marks("copy-markdown", 13, 3);
 
         assert!(rendered.contains("focused task"));
+    }
+
+    #[test]
+    fn command_overlay_keeps_arrow_selection_visible() {
+        let buffer = render_command_buffer("", 0, None, Some("search"));
+        let rendered = buffer_text_from_rows(&buffer);
+
+        assert!(rendered.contains(":search"));
+        assert!(rendered.contains("above"));
+        assert!((0..buffer.area.height).any(|row| {
+            buffer_row(&buffer, row).contains(":search")
+                && (0..buffer.area.width)
+                    .any(|column| buffer[(column, row)].style().bg == Some(SELECTED_BG))
+        }));
     }
 
     #[test]

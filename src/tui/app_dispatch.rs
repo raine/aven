@@ -9,7 +9,7 @@ use crate::tui::authoring::AddTaskStep;
 use crate::tui::detail_session::DetailTargetActivation;
 use crate::tui::event::{
     Action, CommandCompletion, CommandSpecLookup, DetailFocusPolicy, command_cycle_options_for,
-    complete_command_for, lookup_command_spec_for,
+    complete_command_for, lookup_command_spec_for, matching_commands_for_bulk,
 };
 use crate::tui::input::key::{
     ImagePasteTarget, KeyInput, KeyRouteState, NormalKeyInput, route_key, route_normal_key,
@@ -960,9 +960,17 @@ impl App {
             OverlayState::Command { mut state } => match key.code {
                 KeyCode::Esc => {}
                 KeyCode::Enter => {
+                    if let Some(highlighted) = state.highlighted.clone() {
+                        state.input.text = highlighted;
+                        state.input.cursor = state.input.text.len();
+                    }
                     if !self.accept_command_input(&state).await? {
                         self.overlay = Some(OverlayState::Command { state });
                     }
+                }
+                KeyCode::Down | KeyCode::Up => {
+                    Self::move_command_selection(&mut state, key.code == KeyCode::Up);
+                    self.overlay = Some(OverlayState::Command { state });
                 }
                 KeyCode::Tab | KeyCode::BackTab => {
                     self.complete_command_input(&mut state, key.code == KeyCode::BackTab);
@@ -2184,6 +2192,28 @@ impl App {
                 Ok(false)
             }
         }
+    }
+
+    fn move_command_selection(state: &mut CommandState, reverse: bool) {
+        let input = state.cycle_input.as_deref().unwrap_or(state.input.as_str());
+        let options = matching_commands_for_bulk(state.context, input, state.marked_task_count);
+        if options.is_empty() {
+            state.highlighted = None;
+            return;
+        }
+        let current = state.highlighted.as_deref().and_then(|highlighted| {
+            options
+                .iter()
+                .position(|command| command.name == highlighted)
+        });
+        let selected = match (current, reverse) {
+            (Some(0), true) | (None, true) => options.len() - 1,
+            (Some(index), true) => index - 1,
+            (Some(index), false) if index + 1 == options.len() => 0,
+            (Some(index), false) => index + 1,
+            (None, false) => 0,
+        };
+        state.highlighted = Some(options[selected].name.to_string());
     }
 
     fn complete_command_input(&mut self, state: &mut CommandState, reverse: bool) {
