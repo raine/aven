@@ -384,12 +384,23 @@ pub(crate) fn handle_generic_overlay_key(
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
                 KeyCode::Enter if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    state.create_more = false;
                     OverlayOutcome::Submitted(OverlaySubmit::AddTask(state))
                 }
                 KeyCode::Enter if state.focus == AddTaskStep::Title => {
+                    state.create_more = false;
+                    OverlayOutcome::Submitted(OverlaySubmit::AddTask(state))
+                }
+                KeyCode::Char('g')
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        && state.create_more_available
+                        && !state.recurrence_enabled() =>
+                {
+                    state.create_more = true;
                     OverlayOutcome::Submitted(OverlaySubmit::AddTask(state))
                 }
                 KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    state.create_more = false;
                     OverlayOutcome::Submitted(OverlaySubmit::AddTask(state))
                 }
                 _ => {
@@ -1035,6 +1046,8 @@ mod tests {
             priority: "none".to_string(),
             labels: Vec::new(),
             is_epic: false,
+            create_more: false,
+            create_more_available: true,
             available_at: LineEdit::blank(),
             due_on: LineEdit::blank(),
             schedule_input: LineEdit::blank(),
@@ -1469,6 +1482,17 @@ mod tests {
                 OverlayOutcome::Submitted(OverlaySubmit::AddTask(_))
             ));
         }
+    }
+
+    #[test]
+    fn add_task_ctrl_g_requests_another_task() {
+        let OverlayOutcome::Submitted(OverlaySubmit::AddTask(state)) = handle(
+            ctrl(KeyCode::Char('g')),
+            OverlayState::AddTask(add_task_state(AddTaskStep::Description)),
+        ) else {
+            panic!("expected task submission");
+        };
+        assert!(state.create_more);
     }
 
     #[test]

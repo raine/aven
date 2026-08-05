@@ -178,6 +178,7 @@ struct AddTaskDraftState {
     priority: String,
     labels: Vec<String>,
     is_epic: bool,
+    create_more: bool,
     available_at: String,
     due_on: String,
     schedule_input: String,
@@ -206,6 +207,7 @@ impl Default for AddTaskDraftState {
             priority: "none".to_string(),
             labels: Vec::new(),
             is_epic: false,
+            create_more: false,
             available_at: String::new(),
             due_on: String::new(),
             schedule_input: String::new(),
@@ -239,6 +241,8 @@ pub(crate) struct AddTaskContext {
     pub(crate) priority: String,
     pub(crate) labels: Vec<String>,
     pub(crate) is_epic: bool,
+    pub(crate) create_more: bool,
+    pub(crate) create_more_available: bool,
     pub(crate) available_at: String,
     pub(crate) due_on: String,
     pub(crate) schedule_input: String,
@@ -256,6 +260,7 @@ pub(crate) struct AddTaskContext {
 pub(crate) struct AddTaskSubmissionContext {
     pub(crate) origin: AddTaskOrigin,
     pub(crate) attachments: Vec<PendingTaskAttachment>,
+    pub(crate) create_more: bool,
 }
 
 #[cfg(test)]
@@ -310,6 +315,7 @@ impl AuthoringState {
             priority: series.priority.as_str().to_string(),
             labels: detail.labels.clone(),
             is_epic: false,
+            create_more: false,
             available_at: String::new(),
             due_on: String::new(),
             schedule_input: crate::schedule_input::format_schedule_input(
@@ -362,6 +368,13 @@ impl AuthoringState {
         });
     }
 
+    fn flow_supports_create_more(flow: &AddTaskDraftState) -> bool {
+        matches!(flow.origin, AddTaskOrigin::Standalone)
+            && flow.recurrence_series_id.is_none()
+            && flow.template_schedule.is_none()
+            && matches!(flow.repeat_rule.trim(), "" | "none")
+    }
+
     pub(crate) fn is_standalone_add_task(&self) -> bool {
         matches!(
             self.flow.as_ref().map(|flow| &flow.origin),
@@ -374,6 +387,7 @@ impl AuthoringState {
         Some(AddTaskSubmissionContext {
             origin: flow.origin.clone(),
             attachments: flow.attachments.clone(),
+            create_more: flow.create_more && Self::flow_supports_create_more(flow),
         })
     }
 
@@ -394,6 +408,8 @@ impl AuthoringState {
             priority: draft.priority.clone(),
             labels: draft.labels.clone(),
             is_epic: draft.is_epic,
+            create_more: draft.create_more,
+            create_more_available: Self::flow_supports_create_more(draft),
             available_at: draft.available_at.clone(),
             due_on: draft.due_on.clone(),
             schedule_input: draft.schedule_input.clone(),
@@ -551,6 +567,41 @@ impl AuthoringState {
         true
     }
 
+    pub(crate) fn apply_add_task_create_more(&mut self, enabled: bool) -> bool {
+        let Some(draft) = self.flow.as_mut() else {
+            return false;
+        };
+        draft.create_more = enabled && Self::flow_supports_create_more(draft);
+        true
+    }
+
+    pub(crate) fn reset_after_created_task(&mut self) -> bool {
+        let Some(draft) = self.flow.as_mut() else {
+            return false;
+        };
+        if !draft.create_more || !Self::flow_supports_create_more(draft) {
+            return false;
+        }
+        draft.title.clear();
+        draft.description.clear();
+        draft.is_epic = false;
+        draft.available_at.clear();
+        draft.due_on.clear();
+        draft.schedule_input.clear();
+        draft.recurrence_series_id = None;
+        draft.template_schedule = None;
+        draft.repeat_rule.clear();
+        draft.repeat_at.clear();
+        draft.repeat_due = "same-day".to_string();
+        draft.time_zone.clear();
+        draft.repeat_start_on.clear();
+        draft.schedule_expanded = false;
+        draft.attachments.clear();
+        draft.create_more = false;
+        draft.step = AddTaskStep::Title;
+        true
+    }
+
     pub(crate) fn apply_add_task_available_at(&mut self, value: String) -> bool {
         let Some(draft) = self.flow.as_mut() else {
             return false;
@@ -612,6 +663,9 @@ impl AuthoringState {
         draft.repeat_due = repeat_due;
         draft.time_zone = time_zone;
         draft.repeat_start_on = repeat_start_on;
+        if !matches!(draft.repeat_rule.trim(), "" | "none") || draft.template_schedule.is_some() {
+            draft.create_more = false;
+        }
         draft.schedule_input = crate::schedule_input::format_schedule_input(
             &draft.available_at,
             &draft.due_on,
@@ -1012,6 +1066,63 @@ mod tests {
         let origin = state.cancel_add_task().unwrap();
         assert!(matches!(origin, AddTaskOrigin::EpicChild { .. }));
         assert!(state.is_idle());
+    }
+
+    #[test]
+    fn rapid_entry_reset_retains_context_and_clears_task_fields() {
+        let mut state = AuthoringState::default();
+        state.begin_add_task(None, Some("aven".to_string()));
+        assert!(state.capture_add_task_fields(
+            "First task".to_string(),
+            "Task-specific details".to_string(),
+            AddTaskStep::Description,
+        ));
+        assert!(state.apply_add_task_project(vec!["aven".to_string()]));
+        assert_eq!(
+            state.apply_add_task_status_choice("todo").as_deref(),
+            Some("todo")
+        );
+        assert_eq!(
+            state.apply_add_task_priority_value("high").as_deref(),
+            Some("high")
+        );
+        assert!(state.apply_add_task_labels(vec!["feature".to_string()]));
+        assert!(state.apply_add_task_epic(true));
+        assert!(state.apply_add_task_available_at("tomorrow".to_string()));
+        assert!(state.apply_add_task_due_on("next week".to_string()));
+        let pending = PendingTaskAttachment::new(
+            "ATTACHMENT000001".to_string(),
+            AttachmentAddInput {
+                filename: Some("chart.png".to_string()),
+                alt_text: None,
+                declared_media_type: Some("image/png".to_string()),
+                bytes: vec![1],
+                optimization_policy: ImageOptimizationPolicy::Preserve,
+                dedupe_existing: false,
+            },
+        );
+        assert_eq!(state.add_pending_add_task_attachment(pending), Some(true));
+        assert!(state.apply_add_task_create_more(true));
+
+        assert!(state.reset_after_created_task());
+
+        let context = state.add_task_context().unwrap();
+        assert!(context.title.is_empty());
+        assert!(context.description.is_empty());
+        assert_eq!(context.step, AddTaskStep::Title);
+        assert_eq!(context.project, "aven");
+        assert_eq!(context.status, "todo");
+        assert_eq!(context.status_origin, InitialStatusOrigin::Explicit);
+        assert_eq!(context.priority, "high");
+        assert_eq!(context.labels, vec!["feature".to_string()]);
+        assert!(!context.create_more);
+        assert!(!context.is_epic);
+        assert!(context.available_at.is_empty());
+        assert!(context.due_on.is_empty());
+        assert!(context.schedule_input.is_empty());
+        assert!(context.repeat_rule.is_empty());
+        assert!(!context.schedule_expanded);
+        assert!(!state.add_task_has_pending_attachments());
     }
 
     #[test]

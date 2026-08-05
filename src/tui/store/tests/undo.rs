@@ -294,6 +294,42 @@ async fn undo_restore_redeletes_task() {
 }
 
 #[tokio::test]
+async fn repeated_task_creations_undo_independently() {
+    let (_dir, pool, mut store) = test_store_with_pool().await;
+    let workspace_id = store.active_workspace.id.clone();
+    store
+        .create_task(task_draft("First rapid task"), None)
+        .await
+        .unwrap();
+    store
+        .create_task(task_draft("Second rapid task"), None)
+        .await
+        .unwrap();
+    assert_eq!(pending_undo_count(&pool, &workspace_id).await, 2);
+
+    store.undo_last(None).await.unwrap();
+    let first_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM tasks WHERE title = 'First rapid task'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let second_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM tasks WHERE title = 'Second rapid task'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((first_count, second_count), (1, 0));
+
+    store.undo_last(None).await.unwrap();
+    let first_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM tasks WHERE title = 'First rapid task'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(first_count, 0);
+}
+
+#[tokio::test]
 async fn undo_create_task_removes_local_unsynced_task() {
     let (dir, pool, mut store) = test_store_with_pool().await;
     let (task_id, _) = create_selected_task(&mut store, "Temporary").await;

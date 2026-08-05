@@ -282,6 +282,10 @@ fn ctrl_s() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)
 }
 
+fn ctrl_g() -> KeyEvent {
+    KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)
+}
+
 fn ctrl_e() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL)
 }

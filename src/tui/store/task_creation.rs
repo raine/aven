@@ -17,6 +17,21 @@ struct CreatedTaskMessage {
     selected: Option<usize>,
 }
 
+pub(crate) struct TaskCreationCompletion {
+    pub(crate) message: String,
+    pub(crate) selected: Option<usize>,
+    pub(crate) refresh_error: Option<anyhow::Error>,
+}
+
+impl TaskCreationCompletion {
+    fn into_legacy(self) -> Result<(String, Option<usize>)> {
+        if let Some(error) = self.refresh_error {
+            return Err(committed_error(error));
+        }
+        Ok((self.message, self.selected))
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct TaskCreationCommittedError {
     source: anyhow::Error,
@@ -76,13 +91,27 @@ impl TuiStore {
 
     pub(crate) async fn create_task(
         &mut self,
-        mut draft: TaskDraft,
+        draft: TaskDraft,
         current_selected_index: Option<usize>,
     ) -> Result<(String, Option<usize>)> {
+        self.create_task_completion(draft, current_selected_index)
+            .await?
+            .into_legacy()
+    }
+
+    pub(crate) async fn create_task_completion(
+        &mut self,
+        mut draft: TaskDraft,
+        current_selected_index: Option<usize>,
+    ) -> Result<TaskCreationCompletion> {
         draft.source = TaskSource::Tui;
         if draft.project.is_none() {
             draft.project = self.inferred_add_project().await?;
         }
+        let display_refs = self
+            .database
+            .display_ref_context(&self.active_workspace.id)
+            .await?;
         let outcome = self
             .database
             .create_task_with_options(
@@ -93,11 +122,15 @@ impl TuiStore {
             )
             .await?;
         self.wake_after_mutation();
-        let created = self
-            .finish_task_creation(outcome, Vec::new(), current_selected_index)
-            .await
-            .map_err(committed_error)?;
-        Ok((created.message, created.selected))
+        let message_ref = display_refs.display_ref(&outcome.task);
+        Ok(self
+            .finish_task_creation_completion(
+                outcome,
+                Vec::new(),
+                current_selected_index,
+                message_ref,
+            )
+            .await)
     }
 
     pub(crate) async fn create_task_for_epic(
@@ -145,16 +178,39 @@ impl TuiStore {
 
     pub(crate) async fn create_task_with_attachments(
         &mut self,
-        mut draft: TaskDraft,
+        draft: TaskDraft,
         current_selected_index: Option<usize>,
         blob_dir: &Path,
         lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
         attachments: Vec<PendingTaskAttachment>,
     ) -> Result<(String, Option<usize>)> {
+        self.create_task_with_attachments_completion(
+            draft,
+            current_selected_index,
+            blob_dir,
+            lifecycle_policy,
+            attachments,
+        )
+        .await?
+        .into_legacy()
+    }
+
+    pub(crate) async fn create_task_with_attachments_completion(
+        &mut self,
+        mut draft: TaskDraft,
+        current_selected_index: Option<usize>,
+        blob_dir: &Path,
+        lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
+        attachments: Vec<PendingTaskAttachment>,
+    ) -> Result<TaskCreationCompletion> {
         draft.source = TaskSource::Tui;
         if draft.project.is_none() {
             draft.project = self.inferred_add_project().await?;
         }
+        let display_refs = self
+            .database
+            .display_ref_context(&self.active_workspace.id)
+            .await?;
         let attachment_ids = attachments
             .iter()
             .map(|attachment| attachment.attachment_id.clone())
@@ -179,11 +235,15 @@ impl TuiStore {
             )
             .await?;
         self.wake_after_mutation();
-        let created = self
-            .finish_task_creation(outcome, attachment_ids, current_selected_index)
-            .await
-            .map_err(committed_error)?;
-        Ok((created.message, created.selected))
+        let message_ref = display_refs.display_ref(&outcome.task);
+        Ok(self
+            .finish_task_creation_completion(
+                outcome,
+                attachment_ids,
+                current_selected_index,
+                message_ref,
+            )
+            .await)
     }
 
     pub(crate) async fn create_task_with_attachments_for_epic(
@@ -267,36 +327,40 @@ impl TuiStore {
         })
     }
 
-    async fn finish_task_creation(
+    async fn finish_task_creation_completion(
         &mut self,
         outcome: TaskOutcome,
         _attachment_ids: Vec<String>,
         current_selected_index: Option<usize>,
-    ) -> Result<CreatedTaskMessage> {
+        message_ref: String,
+    ) -> TaskCreationCompletion {
         let previous_id = self
             .selected_task(current_selected_index)
             .map(|item| item.task.id.clone());
         let task_id = outcome.task.id.clone();
-        let display_refs = self
-            .database
-            .display_ref_context(&self.active_workspace.id)
-            .await?;
-        let message_ref = display_refs.display_ref(&outcome.task);
 
-        self.refresh(None).await?;
+        if let Err(error) = self.refresh(None).await {
+            return TaskCreationCompletion {
+                message: format!("created task {message_ref}"),
+                selected: current_selected_index,
+                refresh_error: Some(error),
+            };
+        }
         let created_index = self.tasks.iter().position(|item| item.task.id == task_id);
         if created_index.is_some() {
-            return Ok(CreatedTaskMessage {
+            return TaskCreationCompletion {
                 message: format!("created task {message_ref}"),
                 selected: created_index,
-            });
+                refresh_error: None,
+            };
         }
 
         let restored = self.restored_task_selection(previous_id.as_ref());
-        Ok(CreatedTaskMessage {
+        TaskCreationCompletion {
             message: format!("created task {message_ref} hidden by current filters"),
             selected: restored,
-        })
+            refresh_error: None,
+        }
     }
 
     pub(crate) async fn edit_note(

@@ -31,6 +31,162 @@ async fn add_task_alias_creates_task_after_title() {
 }
 
 #[tokio::test]
+async fn create_more_reopens_blank_composer_with_retained_defaults() {
+    let (_dir, pool, mut app) = test_app_with_pool().await;
+    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+        panic!("expected composer");
+    };
+    state.title = LineEdit::new("First rapid task".to_string());
+    state.description.lines = vec!["First details".to_string()];
+    state.status = "todo".to_string();
+    state.status_origin = crate::tui::authoring::InitialStatusOrigin::Explicit;
+    state.priority = "high".to_string();
+    state.labels = vec!["rapid".to_string()];
+    state.is_epic = true;
+
+    app.handle_overlay_key(ctrl_g()).await.unwrap();
+
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::AddTask(state))
+            if state.focus == AddTaskStep::Title
+                && state.title.text.is_empty()
+                && state.description.lines == vec![String::new()]
+                && state.status == "todo"
+                && state.priority == "high"
+                && state.labels == vec!["rapid".to_string()]
+                && !state.is_epic
+                && !state.create_more
+    ));
+    let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+        panic!("expected repeated composer");
+    };
+    state.title = LineEdit::new("Second rapid task".to_string());
+    app.handle_overlay_key(ctrl_g()).await.unwrap();
+
+    let rows = sqlx::query_as::<_, (String, String, String, String, i64)>(
+        "SELECT t.title, t.description, t.status, t.priority, t.is_epic
+         FROM tasks t WHERE t.title IN ('First rapid task', 'Second rapid task')
+         ORDER BY t.title",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        rows[0],
+        (
+            "First rapid task".to_string(),
+            "First details".to_string(),
+            "todo".to_string(),
+            "high".to_string(),
+            1,
+        )
+    );
+    assert_eq!(
+        rows[1],
+        (
+            "Second rapid task".to_string(),
+            String::new(),
+            "todo".to_string(),
+            "high".to_string(),
+            0,
+        )
+    );
+    for title in ["First rapid task", "Second rapid task"] {
+        let task = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.title == title)
+            .expect("rapid task should be visible");
+        assert_eq!(task.labels, vec!["rapid".to_string()]);
+    }
+    assert!(toast_message(&app).is_some_and(|message| message.starts_with("created task ")));
+
+    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::AddTask(state))
+            if state.mode == crate::tui::overlay::AddTaskMode::ConfirmDiscard
+    ));
+    app.handle_overlay_key(key(KeyCode::Char('y')))
+        .await
+        .unwrap();
+    assert!(app.overlay.is_none());
+}
+
+#[tokio::test]
+async fn create_more_refresh_failure_resets_committed_draft_without_duplication() {
+    let (_dir, pool, mut app) = test_app_with_pool().await;
+    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+        panic!("expected composer");
+    };
+    state.title = LineEdit::new("Committed once".to_string());
+    state.description.lines = vec!["Do not retry".to_string()];
+    app.store.fail_next_refresh();
+
+    app.handle_overlay_key(ctrl_g()).await.unwrap();
+
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::AddTask(state))
+            if state.focus == AddTaskStep::Title
+                && state.title.text.is_empty()
+                && state.description.lines == vec![String::new()]
+                && !state.create_more
+    ));
+    assert!(toast_message(&app).is_some_and(|message| {
+        message.starts_with("created task ") && message.contains("list refresh failed")
+    }));
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM tasks WHERE title = 'Committed once'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn create_more_precommit_failure_preserves_the_exact_draft() {
+    let (_dir, pool, mut app) = test_app_with_pool().await;
+    sqlx::query(
+        "CREATE TRIGGER reject_repeat_undo BEFORE INSERT ON tui_undo_entries
+         BEGIN SELECT RAISE(FAIL, 'injected undo failure'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+        panic!("expected composer");
+    };
+    state.title = LineEdit::new("Retry safely".to_string());
+    state.description.lines = vec!["Preserve this".to_string()];
+    state.priority = "urgent".to_string();
+
+    let error = app.handle_overlay_key(ctrl_g()).await.unwrap_err();
+
+    assert!(error.to_string().contains("injected undo failure"));
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::AddTask(state))
+            if state.title.text == "Retry safely"
+                && state.description.lines == vec!["Preserve this".to_string()]
+                && state.priority == "urgent"
+                && !state.create_more
+    ));
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks WHERE title = 'Retry safely'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
 async fn add_task_every_four_weeks_uses_local_zone_and_recurring_default() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
     app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
@@ -42,6 +198,10 @@ async fn add_task_every_four_weeks_uses_local_zone_and_recurring_default() {
         state.set_repeat_rule("every 4 weeks on Monday and Thursday".to_string());
         (state.time_zone.clone(), state.repeat_start_on.text.clone())
     };
+    assert!(matches!(
+        app.view().overlay,
+        Some(OverlayView::AddTask(state)) if !state.create_more_available
+    ));
     app.handle_overlay_key(ctrl_s()).await.unwrap();
 
     let row = sqlx::query_as::<_, (String, i64, String, String, String)>(
@@ -1763,6 +1923,29 @@ async fn add_task_mouse_opens_metadata_and_focuses_text_fields() {
             if state.focus == AddTaskStep::Schedule
                 && matches!(state.mode, crate::tui::overlay::AddTaskMode::Schedule(_))
     ));
+}
+
+#[tokio::test]
+async fn ctrl_g_creates_and_reopens_the_composer() {
+    let mut app = test_app().await;
+    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    type_chars(&mut app, "First task").await;
+
+    app.dispatch_key(ctrl_g(), (100, 30).into()).await.unwrap();
+
+    assert_eq!(app.store.tasks.len(), 1);
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::AddTask(state))
+            if state.focus == AddTaskStep::Title
+                && state.title.as_str().is_empty()
+                && !state.create_more
+    ));
+
+    type_chars(&mut app, "Second task").await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert_eq!(app.store.tasks.len(), 2);
+    assert!(app.overlay.is_none());
 }
 
 #[tokio::test]

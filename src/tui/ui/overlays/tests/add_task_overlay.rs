@@ -59,6 +59,7 @@ fn add_task_overlay_renders_metadata_fields_and_footer() {
     assert!(rendered.contains("Priority: ● high"));
     assert!(rendered.contains("Labels: none"));
     assert!(rendered.contains("Epic: no"));
+    assert!(!rendered.contains("Create more"));
     assert!(rendered.contains("Schedule: none"));
     assert!(rendered.contains("Title"));
     assert!(rendered.contains("Description"));
@@ -66,16 +67,16 @@ fn add_task_overlay_renders_metadata_fields_and_footer() {
     assert!(rendered.contains("  ship dialogs"));
     assert!(rendered.contains("Optional details, links, or handoff context..."));
     assert!(rendered.contains("Tab next"));
-    assert!(rendered.contains("^N create with AI"));
+    assert!(rendered.contains("^G create more"));
     assert!(rendered.contains("F1 help"));
 }
 
 #[test]
-fn epic_uses_the_third_metadata_column_after_schedule() {
+fn metadata_grid_keeps_three_balanced_columns_above_title() {
     let buffer = overlay_buffer(add_task_overlay(add_task_view()));
     let metadata_row = (0..buffer.area.height)
         .map(|row| buffer_row(&buffer, row))
-        .find(|row| row.contains("Labels: none"))
+        .find(|row| row.contains("Schedule: none"))
         .expect("second metadata row");
 
     let labels = metadata_row.find("Labels:").expect("labels column");
@@ -83,6 +84,11 @@ fn epic_uses_the_third_metadata_column_after_schedule() {
     let epic = metadata_row.find("Epic:").expect("epic column");
     assert!(labels < schedule);
     assert!(schedule < epic);
+    assert!(
+        (0..buffer.area.height)
+            .map(|row| buffer_row(&buffer, row))
+            .any(|row| row.contains("Title"))
+    );
 }
 
 #[test]
@@ -468,7 +474,7 @@ fn add_task_validation_and_help_are_visible() {
     }));
     assert!(help.contains("Composer help"));
     assert!(help.contains("Shift+Tab"));
-    assert!(help.contains("create with AI"));
+    assert!(help.contains("Ctrl-g"));
     assert!(help.contains("one-off Available / Due"));
     assert!(help.contains("Schedule editor"));
     assert!(help.contains("↑/↓ move"));
@@ -536,10 +542,10 @@ fn composer_help_scrolls_with_a_stable_dialog_and_scrollbar() {
 
 #[test]
 fn composer_help_scroll_cap_matches_add_task_layout() {
-    assert_eq!(composer_help_scroll_cap(20, false, false), 9);
-    assert_eq!(composer_help_scroll_cap(20, false, true), 7);
-    assert_eq!(composer_help_scroll_cap(20, true, false), 5);
-    assert_eq!(composer_help_scroll_cap(30, false, false), 4);
+    assert_eq!(composer_help_scroll_cap(20, false, false), 10);
+    assert_eq!(composer_help_scroll_cap(20, false, true), 8);
+    assert_eq!(composer_help_scroll_cap(20, true, false), 6);
+    assert_eq!(composer_help_scroll_cap(30, false, false), 5);
 }
 
 #[test]
@@ -1090,6 +1096,7 @@ fn composer_shows_configured_natural_schedule_without_detail_fields() {
             repeat_at: "09:00".to_string(),
             repeat_due: "none".to_string(),
             repeat_start_on: "2026-08-03".to_string(),
+            create_more_available: false,
             ..add_task_view()
         }),
         100,
@@ -1098,6 +1105,7 @@ fn composer_shows_configured_natural_schedule_without_detail_fields() {
     assert!(rendered.contains("Schedule: daily"));
     assert!(!rendered.contains("Available:"));
     assert!(!rendered.contains("Starts:"));
+    assert!(!rendered.contains("^G create more"));
 }
 
 #[test]

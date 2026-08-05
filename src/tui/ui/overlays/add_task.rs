@@ -107,7 +107,10 @@ pub(crate) fn add_task_field_at(
         return None;
     }
     let title_y = metadata_rows + preview_rows + if has_attachments { 2 } else { 1 };
-    if relative_y == title_y || relative_y == title_y + 1 {
+    if relative_y == title_y {
+        return Some(AddTaskStep::Title);
+    }
+    if relative_y == title_y + 1 {
         return Some(AddTaskStep::Title);
     }
     if relative_y >= title_y + 3 {
@@ -206,7 +209,7 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect, d
         ));
     }
     if content.height <= 10 {
-        if !state.attachments.items.is_empty() && lines.len() + 3 < content.height as usize {
+        if !state.attachments.items.is_empty() && lines.len() + 4 < content.height as usize {
             lines.push(add_task_attachment_line(state, content.width as usize));
         }
         lines.push(compact_text_field(
@@ -235,7 +238,7 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect, d
             state.focus,
             state.status_prefix_active,
             state.priority_prefix_active,
-            !state.schedule_expanded,
+            state.create_more_available,
         ));
         frame.render_widget(
             Paragraph::new(Text::from(lines))
@@ -287,7 +290,7 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect, d
         state.focus,
         state.status_prefix_active,
         state.priority_prefix_active,
-        !state.schedule_expanded,
+        state.create_more_available,
     ));
     frame.render_widget(
         Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT)),
@@ -583,6 +586,10 @@ const COMPOSER_HELP_TOPICS: &[(&str, &str)] = &[
     ("Tab / Shift+Tab", "next / previous; validate edited field"),
     ("Arrows", "move fields or edit the text cursor"),
     ("Enter", "open focused control; create from title"),
+    (
+        "Ctrl-g",
+        "create and retain project, status, priority, and labels",
+    ),
     (
         "Schedule",
         "type naturally; Enter opens the schedule editor",
@@ -1234,7 +1241,7 @@ pub(in crate::tui::ui) fn add_task_hint_line(
             ("Esc", "cancel"),
         ]),
         AddTaskStep::Epic => dialog_hint_line(&[
-            ("Enter", "toggle"),
+            ("Enter/Space", "toggle"),
             ("←/→", "field"),
             ("Tab", "next"),
             ("^S", "create"),
@@ -1265,9 +1272,9 @@ pub(in crate::tui::ui) fn add_task_hint_line(
         ]),
         AddTaskStep::Title if show_repeat_shortcut => dialog_hint_line(&[
             ("Enter", "create"),
+            ("^G", "create more"),
             ("↑/↓", "field"),
             ("Tab", "next"),
-            ("^N", "create with AI"),
             ("F1", "help"),
             ("Esc", "cancel"),
         ]),
@@ -1309,8 +1316,8 @@ pub(in crate::tui::ui) fn add_task_hint_line(
         ]),
         AddTaskStep::Description if show_repeat_shortcut => dialog_hint_line(&[
             ("Ctrl-Enter / ^S", "create"),
+            ("^G", "create more"),
             ("Tab", "next"),
-            ("^N", "create with AI"),
             ("F1", "help"),
             ("Esc", "cancel"),
         ]),

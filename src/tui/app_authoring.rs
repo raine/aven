@@ -31,6 +31,12 @@ impl App {
         };
         self.authoring
             .begin_add_task(active_project, inferred_project);
+        self.apply_default_add_task_recurrence()?;
+        self.begin_add_task_title();
+        Ok(())
+    }
+
+    fn apply_default_add_task_recurrence(&mut self) -> Result<()> {
         let defaults = crate::commands::recurrence_schedule("daily", None, None, None, None)?;
         self.authoring.apply_add_task_recurrence(
             None,
@@ -41,7 +47,6 @@ impl App {
             defaults.timezone.to_string(),
             defaults.start_on.to_string(),
         );
-        self.begin_add_task_title();
         Ok(())
     }
 
@@ -75,6 +80,9 @@ impl App {
             priority: context.priority,
             labels: context.labels,
             is_epic: context.is_epic,
+            create_more: context.create_more,
+            create_more_available: context.create_more_available
+                && !self.intake.view().add_task_only,
             available_at: LineEdit::new(context.available_at),
             due_on: LineEdit::new(context.due_on),
             schedule_input: LineEdit::new(context.schedule_input),
@@ -140,6 +148,8 @@ impl App {
                 .apply_add_task_priority_value(&state.priority);
             self.authoring.apply_add_task_labels(state.labels.clone());
             self.authoring.apply_add_task_epic(state.is_epic);
+            self.authoring
+                .apply_add_task_create_more(state.create_more && state.create_more_available);
             self.authoring
                 .apply_add_task_available_at(state.available_at.text.clone());
             self.authoring
@@ -546,6 +556,48 @@ impl App {
                 }
                 self.authoring.clear();
                 self.set_success(message);
+            }
+            AddTaskOrigin::Standalone if context.create_more => {
+                let completion = if context.attachments.is_empty() {
+                    self.store
+                        .create_task_completion(draft, current_selected)
+                        .await?
+                } else {
+                    let db_path = self
+                        .intake
+                        .db_path()
+                        .ok_or_else(|| anyhow::anyhow!("database path is not available"))?;
+                    let blob_dir = resolve_blob_dir(db_path, self.intake.config())?;
+                    self.store
+                        .create_task_with_attachments_completion(
+                            draft,
+                            current_selected,
+                            &blob_dir,
+                            self.intake.config().local.attachment_lifecycle.policy(),
+                            context.attachments,
+                        )
+                        .await?
+                };
+                self.list.select_task(completion.selected);
+                if completion.refresh_error.is_none() {
+                    self.preserve_or_restore_sidebar_selection();
+                    self.prune_task_marks();
+                    if completion.selected.is_none() {
+                        self.restore_selection_after_mutation();
+                    }
+                }
+                let message = completion.message;
+                let refresh_error = completion.refresh_error;
+                let reset = self.authoring.reset_after_created_task();
+                debug_assert!(reset, "repeat-entry creation retains an active flow");
+                self.apply_default_add_task_recurrence()?;
+                self.begin_add_task_step();
+                if let Some(error) = refresh_error {
+                    self.set_warning(format!("{message}; list refresh failed: {error:#}"));
+                } else {
+                    self.set_success(message);
+                }
+                return Ok(());
             }
             AddTaskOrigin::Standalone => {
                 let result = if context.attachments.is_empty() {

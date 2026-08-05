@@ -1,6 +1,27 @@
 use super::*;
 
 #[tokio::test]
+async fn repeat_entry_creation_reports_committed_refresh_failure_as_completion() {
+    let (_dir, pool, mut store) = test_store_with_pool().await;
+    store.fail_next_refresh();
+
+    let completion = store
+        .create_task_completion(task_draft("Committed repeat task"), None)
+        .await
+        .unwrap();
+
+    assert!(completion.message.starts_with("created task "));
+    assert!(completion.refresh_error.is_some());
+    assert!(store.tasks.is_empty());
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM tasks WHERE title = 'Committed repeat task'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
 async fn committed_mutation_reports_refresh_failure_without_rolling_back() {
     let (_dir, pool, mut store) = test_store_with_pool().await;
     let (task_id, selected) = create_selected_task(&mut store, "Refresh failure").await;

@@ -83,6 +83,7 @@ impl App {
     }
 
     async fn handle_add_task_submit(&mut self, mut state: AddTaskState) -> Result<()> {
+        let create_more = std::mem::take(&mut state.create_more);
         if let Some(error) = state.schedule_error.clone() {
             state.focus = AddTaskStep::Schedule;
             state.schedule_validation_requested = true;
@@ -267,7 +268,9 @@ impl App {
                 }
             }
         };
+        state.create_more = create_more;
         self.capture_add_task_state(&state);
+        state.create_more = false;
         let draft = TaskDraft {
             title: title.to_string(),
             description: state.description.lines.join("\n").trim().to_string(),

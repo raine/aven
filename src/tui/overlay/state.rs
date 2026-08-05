@@ -905,6 +905,8 @@ pub(crate) struct AddTaskState {
     pub(crate) priority: String,
     pub(crate) labels: Vec<String>,
     pub(crate) is_epic: bool,
+    pub(crate) create_more: bool,
+    pub(crate) create_more_available: bool,
     pub(crate) available_at: LineEdit,
     pub(crate) due_on: LineEdit,
     pub(crate) schedule_input: LineEdit,
@@ -1094,6 +1096,9 @@ impl AddTaskState {
 
     pub(crate) fn refresh_repeat_status(&mut self) {
         let enabled = self.recurrence_valid();
+        if enabled {
+            self.create_more = false;
+        }
         match (enabled, self.status_origin) {
             (true, InitialStatusOrigin::UntouchedDefault) if self.status == "inbox" => {
                 self.status = "todo".to_string();

@@ -161,6 +161,8 @@ fn add_task_view() -> AddTaskView {
         priority: "none".to_string(),
         labels: Vec::new(),
         is_epic: false,
+        create_more: false,
+        create_more_available: true,
         available_at: String::new(),
         available_at_cursor: 0,
         due_on: String::new(),
