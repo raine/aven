@@ -761,23 +761,134 @@ async fn table_copy_hotkeys_copy_task_text_and_show_feedback() {
 }
 
 #[tokio::test]
-async fn table_copy_menu_copies_display_ref_and_id() {
+async fn table_copy_menu_copies_selected_refs_with_zero_marks() {
     let mut app = test_app().await;
     let selected = create_and_select_task(&mut app, test_task_draft("Copy target")).await;
-    let display_ref = app.store.tasks[selected].display_ref.clone();
+    let task = app.store.tasks[selected].clone();
 
-    for key_code in ['r', 'i'] {
+    for (key_code, expected) in [
+        ('r', task.display_ref.clone()),
+        ('i', task.task.id.to_string()),
+    ] {
         app.handle_normal_key(KeyCode::Char('y')).await.unwrap();
         app.handle_normal_key(KeyCode::Char(key_code))
             .await
             .unwrap();
 
         assert_eq!(
+            crate::tui::platform::clipboard_text_for_test().as_deref(),
+            Some(expected.as_str())
+        );
+        assert_eq!(
             toast_message(&app).as_deref(),
-            Some(format!("copied {display_ref}").as_str())
+            Some(format!("copied {}", task.display_ref).as_str())
         );
         assert_eq!(toast_severity(&app), Some(ToastSeverity::Success));
     }
+}
+
+#[tokio::test]
+async fn table_copy_menu_uses_one_mark_before_selected_row() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("First")).await;
+    create_and_select_task(&mut app, test_task_draft("Second")).await;
+    let marked = app.store.tasks[0].clone();
+    app.list.select_task(Some(1));
+    app.list.mark(marked.task.id.clone());
+
+    app.copy_selected_ref(TaskRefKind::Short);
+
+    assert_eq!(
+        crate::tui::platform::clipboard_text_for_test().as_deref(),
+        Some(marked.display_ref.as_str())
+    );
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some(format!("copied {}", marked.display_ref).as_str())
+    );
+}
+
+#[tokio::test]
+async fn table_copy_menu_copies_multiple_marked_refs_and_titles_in_visible_order() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("First")).await;
+    create_and_select_task(&mut app, test_task_draft("Second")).await;
+    create_and_select_task(&mut app, test_task_draft("Third")).await;
+    let first = app.store.tasks[0].clone();
+    let third = app.store.tasks[2].clone();
+    app.list.select_task(Some(0));
+    app.list.mark(third.task.id.clone());
+    app.list.mark(first.task.id.clone());
+    app.list.mark(first.task.id.clone());
+
+    app.copy_selected_ref(TaskRefKind::Short);
+
+    assert_eq!(
+        crate::tui::platform::clipboard_text_for_test().as_deref(),
+        Some(format!("{}\n{}", first.display_ref, third.display_ref).as_str())
+    );
+    assert_eq!(toast_message(&app).as_deref(), Some("copied 2 task refs"));
+
+    app.execute(Action::CopyTaskTitle).await.unwrap();
+
+    assert_eq!(
+        crate::tui::platform::clipboard_text_for_test().as_deref(),
+        Some(format!("{}\n{}", first.task.title, third.task.title).as_str())
+    );
+    assert_eq!(toast_message(&app).as_deref(), Some("copied 2 task titles"));
+}
+
+#[tokio::test]
+async fn marked_rows_disable_single_task_copy_actions() {
+    let mut app = test_app().await;
+    let selected = create_copyable_task(&mut app).await;
+    app.list.mark(app.store.tasks[selected].task.id.clone());
+    crate::tui::platform::copy_to_clipboard("unchanged").unwrap();
+
+    for action in [
+        Action::CopyTaskDescription,
+        Action::CopyTaskText,
+        Action::CopyTaskNotes,
+        Action::CopyTaskMarkdown,
+    ] {
+        app.execute(action).await.unwrap();
+
+        assert_eq!(
+            crate::tui::platform::clipboard_text_for_test().as_deref(),
+            Some("unchanged")
+        );
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("copy action requires one task")
+        );
+    }
+
+    app.begin_command().await;
+    let Some(OverlayState::Command { state }) = app.overlay.as_ref() else {
+        panic!("expected command overlay");
+    };
+    for action in [
+        Action::CopyTaskDescription,
+        Action::CopyTaskText,
+        Action::CopyTaskNotes,
+        Action::CopyTaskMarkdown,
+    ] {
+        assert!(state.unavailable.iter().any(|entry| entry.action == action));
+    }
+    assert!(
+        state
+            .unavailable
+            .iter()
+            .all(|entry| entry.action != Action::CopyTaskTitle)
+    );
+
+    app.overlay = None;
+    app.show_detail(0);
+    app.execute(Action::CopyTaskDescription).await.unwrap();
+    assert_eq!(
+        crate::tui::platform::clipboard_text_for_test().as_deref(),
+        Some("First paragraph.\n\n- item")
+    );
 }
 
 #[tokio::test]

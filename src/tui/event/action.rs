@@ -130,7 +130,24 @@ pub(crate) enum Action {
     None,
 }
 
+pub(crate) const SINGLE_TASK_COPY_ACTIONS: [Action; 4] = [
+    Action::CopyTaskDescription,
+    Action::CopyTaskText,
+    Action::CopyTaskNotes,
+    Action::CopyTaskMarkdown,
+];
+
 impl Action {
+    pub(crate) const fn copy_requires_single_task(self) -> bool {
+        matches!(
+            self,
+            Self::CopyTaskDescription
+                | Self::CopyTaskText
+                | Self::CopyTaskNotes
+                | Self::CopyTaskMarkdown
+        )
+    }
+
     pub(crate) const fn recurrence_kind(
         self,
     ) -> Option<crate::tui::app_recurrence::RecurrenceActionKind> {

@@ -612,13 +612,18 @@ fn prefix_hint_lines_with_availability(
                     | crate::tui::event::Action::BeginEditDue
                     | crate::tui::event::Action::BeginEditLabels
             );
+            let single_task_copy = command.action.copy_requires_single_task();
+            let copy_mark_limit =
+                single_task_copy && marked_task_count > 0 && context == CommandContext::Normal;
+            let edit_mark_limit = single_task_edit && marked_task_count > 1;
             let unavailable = matches!(
                 command.action,
                 crate::tui::event::Action::CopyTaskDescription
             ) && !copy_description_available
                 || matches!(command.action, crate::tui::event::Action::CopyTaskNotes)
                     && !copy_notes_available
-                || single_task_edit && marked_task_count > 1;
+                || edit_mark_limit
+                || copy_mark_limit;
             let mut line = command_hint_line(
                 Span::styled(
                     format!(" {:<6} ", key_hint),
@@ -627,7 +632,7 @@ fn prefix_hint_lines_with_availability(
                 command,
                 command_name_width,
             );
-            if marked_task_count > 1 && single_task_edit {
+            if copy_mark_limit || edit_mark_limit {
                 line.spans
                     .push(Span::styled(" · 1 task only", Style::new().fg(FG_DIM)));
             } else if marked_task_count > 0 && batch_edit {
@@ -960,6 +965,39 @@ mod tests {
         );
 
         for command_name in [":copy-description", ":copy-notes"] {
+            let line = lines
+                .iter()
+                .find(|line| line.to_string().contains(command_name))
+                .unwrap();
+            assert!(line.spans.iter().any(|span| span.style.fg != Some(FG_DIM)));
+        }
+    }
+
+    #[test]
+    fn marked_copy_hints_keep_bulk_actions_and_dim_single_task_actions() {
+        let lines = prefix_hint_lines_with_availability(
+            CommandContext::Normal,
+            &["y".to_string()],
+            true,
+            true,
+            2,
+        );
+
+        for command_name in [
+            ":copy-description",
+            ":copy-text",
+            ":copy-notes",
+            ":copy-markdown",
+        ] {
+            let line = lines
+                .iter()
+                .find(|line| line.to_string().contains(command_name))
+                .unwrap();
+            assert!(line.to_string().contains("1 task only"));
+            assert!(line.spans.iter().all(|span| span.style.fg == Some(FG_DIM)));
+        }
+
+        for command_name in [":copy-ref", ":copy-id", ":copy-title"] {
             let line = lines
                 .iter()
                 .find(|line| line.to_string().contains(command_name))

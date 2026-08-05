@@ -6,6 +6,7 @@ use aven_core::db::Database;
 use crate::config::AppConfig;
 use crate::tui::app_intake::IntakeController;
 use crate::tui::authoring::AuthoringState;
+use crate::tui::event::SINGLE_TASK_COPY_ACTIONS;
 use crate::tui::gist_controller::GistController;
 use crate::tui::inline_image_surface::InlineImageSurface;
 use crate::tui::inline_images::{InlineImageBackend, active_backend_from_env};
@@ -310,7 +311,7 @@ impl App {
 
     pub(crate) async fn begin_command(&mut self) {
         self.pending_shortcut.clear();
-        let (target, unavailable) = match self.recurrence_command_context().await {
+        let (target, mut unavailable) = match self.recurrence_command_context().await {
             Ok(context) => context,
             Err(error) => {
                 let target = self.selected_recurrence_target_id().map(|target| {
@@ -335,6 +336,14 @@ impl App {
                 (target, unavailable)
             }
         };
+        if !self.detail.is_active() && !self.marked_task_ids_in_view().is_empty() {
+            unavailable.extend(SINGLE_TASK_COPY_ACTIONS.into_iter().map(|action| {
+                crate::tui::overlay::CommandAvailabilityOverride {
+                    action,
+                    reason: "requires one task",
+                }
+            }));
+        }
         let mut state = crate::tui::overlay::CommandState::blank();
         state.context = if self.detail.is_active() {
             crate::tui::event::CommandContext::Detail

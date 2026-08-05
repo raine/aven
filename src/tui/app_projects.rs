@@ -59,6 +59,25 @@ fn task_notes_for_copy(notes: &[crate::query::TaskNote]) -> String {
         .join("\n\n")
 }
 
+fn task_refs_for_copy(tasks: &[crate::query::TaskListItem], kind: TaskRefKind) -> String {
+    tasks
+        .iter()
+        .map(|task| match kind {
+            TaskRefKind::Short => task.display_ref.as_str(),
+            TaskRefKind::Durable => task.task.id.as_str(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn task_titles_for_copy(tasks: &[crate::query::TaskListItem]) -> String {
+    tasks
+        .iter()
+        .map(|task| task.task.title.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 impl App {
     pub(super) fn begin_add_project(&mut self) {
         self.pending_shortcut.clear();
@@ -364,21 +383,40 @@ impl App {
     }
 
     pub(super) fn copy_selected_ref(&mut self, kind: TaskRefKind) {
-        let Some(task) = self.selected_command_task() else {
+        let Some(selection) = self.resolve_task_selection() else {
             self.set_info("no selected task to copy");
             return;
         };
-        let (value, message_ref) = match kind {
-            TaskRefKind::Short => (task.display_ref.clone(), task.display_ref.clone()),
-            TaskRefKind::Durable => (task.task.id.to_string(), task.display_ref.clone()),
+        let value = task_refs_for_copy(selection.targets(), kind);
+        let success = if selection.is_single() {
+            format!("copied {}", selection.targets()[0].display_ref)
+        } else {
+            format!("copied {} task refs", selection.len())
         };
         match copy_to_clipboard(&value) {
-            Ok(()) => self.set_success(format!("copied {message_ref}")),
+            Ok(()) => self.set_success(success),
             Err(error) => self.set_error(format!("copy failed: {error}")),
         }
     }
 
     pub(super) fn copy_selected_task_text(&mut self, kind: TaskCopyKind) {
+        if kind == TaskCopyKind::Title {
+            let Some(selection) = self.resolve_task_selection() else {
+                self.set_info("no selected task to copy");
+                return;
+            };
+            let success = if selection.is_single() {
+                "copied task title".to_string()
+            } else {
+                format!("copied {} task titles", selection.len())
+            };
+            match copy_to_clipboard(&task_titles_for_copy(selection.targets())) {
+                Ok(()) => self.set_success(success),
+                Err(error) => self.set_error(format!("copy failed: {error}")),
+            }
+            return;
+        }
+
         let Some(task) = self.selected_command_task() else {
             self.set_info("no selected task to copy");
             return;
@@ -389,7 +427,7 @@ impl App {
         }
         let value = task_text_for_copy(&task.task.title, &task.task.description, kind);
         let copied = match kind {
-            TaskCopyKind::Title => "task title",
+            TaskCopyKind::Title => unreachable!("title copies use task selection"),
             TaskCopyKind::Description => "task description",
             TaskCopyKind::TitleAndDescription => "task title and description",
         };

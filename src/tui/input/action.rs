@@ -7,6 +7,13 @@ use crate::tui::store::TaskView;
 
 impl App {
     pub(in crate::tui) async fn execute(&mut self, action: Action) -> Result<()> {
+        if action.copy_requires_single_task()
+            && !self.detail.is_active()
+            && !self.marked_task_ids_in_view().is_empty()
+        {
+            self.set_info("copy action requires one task");
+            return Ok(());
+        }
         if self.handle_recurring_series_task_action(&action).await? {
             return Ok(());
         }

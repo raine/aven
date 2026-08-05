@@ -2,7 +2,7 @@ mod action;
 mod catalog;
 mod lookup;
 
-pub(crate) use self::action::Action;
+pub(crate) use self::action::{Action, SINGLE_TASK_COPY_ACTIONS};
 #[allow(unused_imports)]
 pub(crate) use self::catalog::{
     COMMAND_DOMAINS, COMMANDS, CommandContext, CommandDomain, CommandLifecycle, CommandSpec,
