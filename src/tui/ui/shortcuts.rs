@@ -555,6 +555,7 @@ fn command_palette_line(
     command: &CommandSpec,
     context: CommandContext,
     command_name_width: usize,
+    line_width: usize,
     highlighted: bool,
     annotation: Option<String>,
     unavailable_reason: Option<&str>,
@@ -584,7 +585,13 @@ fn command_palette_line(
             Style::new().fg(FG_DIM),
         ));
     }
-    spans.push(Span::styled(command.description, Style::new().fg(FG_DIM)));
+    let used_width = spans
+        .iter()
+        .map(|span| unicode_width::UnicodeWidthStr::width(span.content.as_ref()))
+        .sum::<usize>();
+    let description =
+        super::truncate::truncate_width(command.description, line_width.saturating_sub(used_width));
+    spans.push(Span::styled(description, Style::new().fg(FG_DIM)));
     if unavailable_reason.is_some() {
         for span in &mut spans {
             span.style = span.style.fg(FG_DIM);
@@ -640,6 +647,24 @@ pub(super) fn render_command(
     let height = (visible_end.saturating_sub(offset) as u16)
         .saturating_add(3)
         .saturating_add(u16::from(match_count > 0));
+    let title = if marked_task_count == 0 {
+        "Command".to_string()
+    } else {
+        format!("Command · {}", marked_task_label(marked_task_count))
+    };
+    let mut dialog = Dialog::new(&title, 72, height);
+    if match_count > 0 {
+        let position = highlighted.map_or_else(
+            || format!("{match_count} commands"),
+            |_| format!("{}/{match_count}", selected + 1),
+        );
+        dialog = dialog.right_title(Line::from(Span::styled(
+            position,
+            Style::new().fg(FG_MUTED),
+        )));
+    }
+    let content = dialog.render_block(frame);
+    let line_width = (content.width as usize).saturating_sub(usize::from(match_count > 8));
 
     let mut lines = vec![input_line(":", input, cursor)];
     for command in matches.into_iter().skip(offset).take(8) {
@@ -667,6 +692,7 @@ pub(super) fn render_command(
             command,
             command_context,
             command_name_width,
+            line_width,
             is_highlighted,
             annotation,
             unavailable_reason,
@@ -679,23 +705,6 @@ pub(super) fn render_command(
         )));
     }
 
-    let title = if marked_task_count == 0 {
-        "Command".to_string()
-    } else {
-        format!("Command · {}", marked_task_label(marked_task_count))
-    };
-    let mut dialog = Dialog::new(&title, 72, height);
-    if match_count > 0 {
-        let position = highlighted.map_or_else(
-            || format!("{match_count} commands"),
-            |_| format!("{}/{match_count}", selected + 1),
-        );
-        dialog = dialog.right_title(Line::from(Span::styled(
-            position,
-            Style::new().fg(FG_MUTED),
-        )));
-    }
-    let content = dialog.render_block(frame);
     frame.render_widget(
         Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(BG_ALT)),
         content,
@@ -1325,6 +1334,15 @@ mod tests {
 
         assert!(rendered.contains(":conflict-manual-merge  resolve with manual value"));
         assert!(!rendered.contains("mergeresolve"));
+    }
+
+    #[test]
+    fn command_overlay_truncates_descriptions_with_an_ellipsis() {
+        let buffer = render_command_buffer("", 0, None, Some("filter-priority"));
+        let rendered = buffer_text_from_rows(&buffer);
+
+        assert!(rendered.contains(":task-child-remove"));
+        assert!(rendered.contains('…'));
     }
 
     #[test]
