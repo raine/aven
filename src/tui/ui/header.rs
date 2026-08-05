@@ -546,7 +546,7 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    async fn test_store() -> TuiStore {
+    async fn test_store() -> (TuiStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
         let pool = crate::test_support::open_db(&db_path).await.unwrap();
@@ -571,7 +571,7 @@ mod tests {
             epics: 0,
             recurring: 0,
         };
-        store
+        (store, dir)
     }
 
     fn spans_text(spans: Vec<Span<'static>>) -> String {
@@ -580,7 +580,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_prompt_omits_match_count_filter() {
-        let mut store = test_store().await;
+        let (mut store, _dir) = test_store().await;
         store.show_view(TaskView::Search).await.unwrap();
 
         assert!(!spans_text(active_filter_spans(&store)).contains("matches="));
@@ -588,7 +588,7 @@ mod tests {
 
     #[tokio::test]
     async fn header_parts_render_scope_view_metrics_filters_and_order() {
-        let mut store = test_store().await;
+        let (mut store, _dir) = test_store().await;
         store.view_state = TaskViewState {
             scope: TaskScope::Project("mobile-app".to_string()),
             view: TaskView::Open,
@@ -639,7 +639,7 @@ mod tests {
 
     #[tokio::test]
     async fn compact_header_omits_order_when_it_does_not_fit() {
-        let mut store = test_store().await;
+        let (mut store, _dir) = test_store().await;
         store.counts = crate::query::SidebarCounts::default();
 
         let rendered = spans_text(header_spans(&store, None, 75));
@@ -649,7 +649,7 @@ mod tests {
 
     #[tokio::test]
     async fn constrained_header_keeps_complete_filter_ahead_of_metrics() {
-        let mut store = test_store().await;
+        let (mut store, _dir) = test_store().await;
         store.view_state.filter_modifiers.label = Some("capture".to_string());
 
         let rendered = spans_text(header_spans(&store, None, 78));
@@ -661,7 +661,7 @@ mod tests {
 
     #[tokio::test]
     async fn constrained_header_adds_only_complete_priority_metrics() {
-        let mut store = test_store().await;
+        let (mut store, _dir) = test_store().await;
         store.view_state.filter_modifiers.label = Some("capture".to_string());
 
         let rendered = spans_text(header_spans(&store, None, 98));
@@ -681,7 +681,7 @@ mod tests {
 
     #[tokio::test]
     async fn sync_indicator_keeps_space_after_complete_left_segment() {
-        let mut store = test_store().await;
+        let (mut store, _dir) = test_store().await;
         store.view_state.view = TaskView::Todo;
         store.sync_status.enabled = true;
         let width = 89;
@@ -703,7 +703,7 @@ mod tests {
 
     #[tokio::test]
     async fn queue_header_shows_ranked_order_without_direction() {
-        let mut store = test_store().await;
+        let (mut store, _dir) = test_store().await;
         store.view_state.view = TaskView::Queue;
         store.view_state.direction = crate::query::SortDirection::Desc;
 
@@ -713,7 +713,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_badge_is_clear_clickable_and_visible_on_narrow_headers() {
-        let store = test_store().await;
+        let (store, _dir) = test_store().await;
         let update = crate::tui::app_update::UpdateBadgeView {
             label: "update available v9.0.0".to_string(),
             restart: false,
@@ -734,7 +734,7 @@ mod tests {
 
     #[tokio::test]
     async fn header_click_targets_follow_rendered_segments() {
-        let mut store = test_store().await;
+        let (mut store, _dir) = test_store().await;
         store.view_state.scope = TaskScope::Project("mobile-app".to_string());
         store.view_state.filter_modifiers.label = Some("capture".to_string());
         let area = Rect::new(7, 4, 157, 2);
