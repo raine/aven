@@ -1,5 +1,6 @@
 mod action;
 mod catalog;
+mod command_catalog;
 mod lookup;
 
 pub(crate) use self::action::{Action, BulkSupport, SINGLE_TASK_COPY_ACTIONS};
@@ -7,6 +8,9 @@ pub(crate) use self::action::{Action, BulkSupport, SINGLE_TASK_COPY_ACTIONS};
 pub(crate) use self::catalog::{
     COMMAND_DOMAINS, COMMANDS, CommandContext, CommandDomain, CommandSpec, DetailFocusPolicy,
     KeySequence,
+};
+pub(crate) use self::command_catalog::{
+    CatalogCommand, CatalogLookup, CommandCatalog, CommandHandler,
 };
 #[allow(unused_imports)]
 pub(crate) use self::lookup::{

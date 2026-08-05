@@ -235,6 +235,8 @@ pub(crate) struct App {
     pub(super) inline_image_backend: InlineImageBackend,
     pub(super) preview_controller: crate::tui::preview_controller::PreviewController,
     pub(super) attachment_controller: crate::tui::attachment_controller::AttachmentController,
+    pub(crate) command_catalog: crate::tui::event::CommandCatalog,
+    pub(super) custom_commands: crate::tui::custom_command_runtime::CustomCommandController,
     #[cfg(test)]
     pub(super) _test_database_dir: Option<tempfile::TempDir>,
 }
@@ -299,6 +301,8 @@ impl App {
             inline_image_backend: active_backend_from_env(config.local.inline_images),
             preview_controller: crate::tui::preview_controller::PreviewController::new(),
             attachment_controller: crate::tui::attachment_controller::AttachmentController::new(),
+            command_catalog: crate::tui::event::CommandCatalog::default(),
+            custom_commands: crate::tui::custom_command_runtime::CustomCommandController::default(),
             #[cfg(test)]
             _test_database_dir: None,
         };
@@ -330,6 +334,7 @@ impl App {
     }
 
     pub(crate) fn set_config(&mut self, config: AppConfig) {
+        self.command_catalog = crate::tui::event::CommandCatalog::new(config.tui.commands.clone());
         self.store.set_config(config.clone());
         self.store.task_columns = config.tui.columns.clone();
         self.inline_image_backend = active_backend_from_env(config.local.inline_images);

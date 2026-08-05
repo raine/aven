@@ -12,6 +12,7 @@ pub(crate) enum CommandLookup {
     Missing,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum CommandSpecLookup {
     Empty,
@@ -148,6 +149,7 @@ pub(crate) fn matching_commands_for(
     matches.into_iter().map(|(_, command)| command).collect()
 }
 
+#[allow(dead_code)]
 pub(crate) fn matching_commands_for_bulk(
     context: CommandContext,
     input: &str,

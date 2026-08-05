@@ -10,7 +10,8 @@ use super::input::input_line;
 use super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use crate::tui::app::{DetailSection, DetailTargetId};
 use crate::tui::event::{
-    BulkSupport, CommandContext, CommandSpec, matching_commands_for_bulk, prefix_hint_commands,
+    BulkSupport, CatalogCommand, CommandCatalog, CommandContext, CommandSpec,
+    matching_commands_for_bulk, prefix_hint_commands,
 };
 use crate::tui::theme::{ACCENT, BG_ALT, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, SELECTED_BG};
 
@@ -475,6 +476,16 @@ fn command_name_width(commands: &[&CommandSpec]) -> usize {
         .saturating_add(2)
 }
 
+fn catalog_command_name_width(commands: &[CatalogCommand<'_>]) -> usize {
+    commands
+        .iter()
+        .map(|command| command.name().len())
+        .max()
+        .unwrap_or(18)
+        .max(18)
+        .saturating_add(2)
+}
+
 fn help_command_line(command: &CommandSpec, context: CommandContext) -> Line<'static> {
     let keys = command
         .keys(context)
@@ -528,7 +539,7 @@ fn command_line_with_highlight(
 }
 
 fn command_palette_line(
-    command: &CommandSpec,
+    command: CatalogCommand<'_>,
     context: CommandContext,
     command_name_width: usize,
     line_width: usize,
@@ -544,7 +555,7 @@ fn command_palette_line(
     let mut spans = vec![
         Span::styled(format!("{keys:<10}"), Style::new().fg(FG_MUTED)),
         Span::styled(
-            format!(":{:<command_name_width$}", command.name),
+            format!(":{:<command_name_width$}", command.name()),
             command_name_style(),
         ),
     ];
@@ -562,7 +573,7 @@ fn command_palette_line(
         .map(|span| unicode_width::UnicodeWidthStr::width(span.content.as_ref()))
         .sum::<usize>();
     let description = crate::tui::text::truncate_width(
-        command.description,
+        command.description(),
         line_width.saturating_sub(used_width),
     );
     spans.push(Span::styled(description, Style::new().fg(FG_DIM)));
@@ -587,6 +598,8 @@ pub(super) struct CommandRenderContext<'a> {
     pub(super) unavailable: &'a [crate::tui::overlay::CommandAvailabilityOverride],
     pub(super) command_context: CommandContext,
     pub(super) marked_task_count: usize,
+    pub(super) catalog: &'a CommandCatalog,
+    pub(super) has_primary_task: bool,
 }
 
 pub(super) fn render_command(
@@ -601,8 +614,10 @@ pub(super) fn render_command(
         unavailable,
         command_context,
         marked_task_count,
+        catalog,
+        has_primary_task,
     } = render_context;
-    let matches = matching_commands_for_bulk(
+    let matches = catalog.matching(
         command_context,
         cycle_input.unwrap_or(input),
         marked_task_count,
@@ -612,12 +627,12 @@ pub(super) fn render_command(
         .and_then(|highlighted| {
             matches
                 .iter()
-                .position(|command| command.name == highlighted)
+                .position(|command| command.name() == highlighted)
         })
         .unwrap_or(0);
     let offset = selected.saturating_sub(7);
     let visible_end = offset.saturating_add(8).min(match_count);
-    let command_name_width = command_name_width(&matches[offset..visible_end]);
+    let command_name_width = catalog_command_name_width(&matches[offset..visible_end]);
     let height = (visible_end.saturating_sub(offset) as u16)
         .saturating_add(3)
         .saturating_add(u16::from(match_count > 0));
@@ -647,11 +662,19 @@ pub(super) fn render_command(
 
     let mut lines = vec![input_line(":", input, cursor)];
     for command in matches.into_iter().skip(offset).take(8) {
-        let unavailable_reason = unavailable
-            .iter()
-            .find(|override_| override_.action == command.action)
-            .map(|override_| override_.reason);
-        let is_highlighted = highlighted == Some(command.name);
+        let unavailable_reason = command
+            .built_in()
+            .and_then(|built_in| {
+                unavailable
+                    .iter()
+                    .find(|override_| override_.action == built_in.action)
+                    .map(|override_| override_.reason)
+            })
+            .or_else(|| {
+                (command.requires_selected_task() && !has_primary_task)
+                    .then_some("requires a selected task")
+            });
+        let is_highlighted = highlighted == Some(command.name());
         let annotation = match command.bulk_support() {
             BulkSupport::Batch if marked_task_count > 0 => {
                 let noun = if marked_task_count == 1 {
@@ -847,7 +870,9 @@ fn prefix_hint_visible_rows(frame_height: u16, line_count: usize) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::event::{COMMANDS, CommandContext, key_label};
+    use crate::tui::event::{
+        COMMANDS, CommandContext, key_label, matching_commands_for_bulk,
+    };
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -930,6 +955,8 @@ mod tests {
                         unavailable: &[],
                         command_context: CommandContext::Normal,
                         marked_task_count: marked,
+                        catalog: &CommandCatalog::default(),
+                        has_primary_task: true,
                     },
                 )
             })
@@ -967,6 +994,8 @@ mod tests {
                         unavailable: &[],
                         command_context: CommandContext::Normal,
                         marked_task_count: 0,
+                        catalog: &CommandCatalog::default(),
+                        has_primary_task: true,
                     },
                 )
             })
@@ -1539,6 +1568,8 @@ mod tests {
                         unavailable: &unavailable,
                         command_context: CommandContext::Normal,
                         marked_task_count: 0,
+                        catalog: &CommandCatalog::default(),
+                        has_primary_task: true,
                     },
                 )
             })

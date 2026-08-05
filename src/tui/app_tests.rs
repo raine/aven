@@ -61,6 +61,9 @@ async fn test_app() -> App {
     app
 }
 
+#[path = "app_tests/custom_commands.rs"]
+mod custom_commands;
+
 #[path = "app_tests/configuration.rs"]
 mod configuration;
 

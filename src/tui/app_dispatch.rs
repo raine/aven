@@ -8,8 +8,7 @@ use crate::tui::app::{App, DetailSection, DetailTargetId, Focus, FooterChoiceMod
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::detail_session::DetailTargetActivation;
 use crate::tui::event::{
-    Action, CommandCompletion, CommandSpecLookup, DetailFocusPolicy, command_cycle_options_for,
-    complete_command_for, lookup_command_spec_for, matching_commands_for_bulk,
+    Action, CatalogLookup, CommandCompletion, CommandHandler, DetailFocusPolicy,
 };
 use crate::tui::input::key::{
     ImagePasteTarget, KeyInput, KeyRouteState, NormalKeyInput, route_key, route_normal_key,
@@ -969,7 +968,7 @@ impl App {
                     }
                 }
                 KeyCode::Down | KeyCode::Up => {
-                    Self::move_command_selection(&mut state, key.code == KeyCode::Up);
+                    self.move_command_selection(&mut state, key.code == KeyCode::Up);
                     self.overlay = Some(OverlayState::Command { state });
                 }
                 KeyCode::Tab | KeyCode::BackTab => {
@@ -2132,9 +2131,27 @@ impl App {
 
     async fn accept_command_input(&mut self, state: &CommandState) -> Result<bool> {
         let input = state.input.as_str();
-        match lookup_command_spec_for(state.context, input) {
-            CommandSpecLookup::Found(command) => {
+        match self.command_catalog.lookup(state.context, input) {
+            CatalogLookup::Found(command) => {
                 self.pending_shortcut.clear();
+                if let CommandHandler::Custom(id) = command.handler() {
+                    if command.requires_selected_task()
+                        && self
+                            .store
+                            .selected_task(self.list.selected_task())
+                            .is_none()
+                    {
+                        self.set_warning(format!(
+                            ":{} is disabled: requires a selected task",
+                            command.name()
+                        ));
+                        return Ok(true);
+                    }
+                    self.execute_custom_command(id, input.trim().trim_start_matches(':'))
+                        .await?;
+                    return Ok(true);
+                }
+                let built_in = command.built_in().expect("built-in command handler");
                 let focused_target = (state.context == crate::tui::event::CommandContext::Detail)
                     .then(|| {
                         self.detail
@@ -2145,10 +2162,10 @@ impl App {
                     .flatten();
                 let routes_to_related_task =
                     matches!(&focused_target, Some(DetailTargetId::Task { .. }))
-                        && Self::action_supports_related_task(command.action);
+                        && Self::action_supports_related_task(built_in.action);
                 if focused_target.is_some()
                     && !routes_to_related_task
-                    && !self.detail_focus_allows_action(command.action)
+                    && !self.detail_focus_allows_action(built_in.action)
                 {
                     self.set_warning(self.detail_focus_warning());
                     return Ok(true);
@@ -2156,47 +2173,49 @@ impl App {
                 if let Some(unavailable) = state
                     .unavailable
                     .iter()
-                    .find(|override_| override_.action == command.action)
+                    .find(|override_| override_.action == built_in.action)
                 {
                     self.set_warning(format!(
                         ":{} is disabled: {}",
-                        command.name, unavailable.reason
+                        built_in.name, unavailable.reason
                     ));
                     return Ok(true);
                 }
                 if routes_to_related_task {
                     let target = focused_target.as_ref().expect("focused task target");
                     let scroll = self.detail.state().map_or(0, |detail| detail.scroll());
-                    self.execute_focused_detail_action(command.action, target, scroll)
+                    self.execute_focused_detail_action(built_in.action, target, scroll)
                         .await?;
                     return Ok(true);
                 }
-                if command.action.recurrence_kind().is_some() {
-                    self.execute_targeted_recurrence_action(state.target.clone(), command.action)
+                if built_in.action.recurrence_kind().is_some() {
+                    self.execute_targeted_recurrence_action(state.target.clone(), built_in.action)
                         .await?;
                 } else {
-                    self.execute(command.action).await?;
+                    self.execute(built_in.action).await?;
                 }
                 Ok(true)
             }
-            CommandSpecLookup::Empty => {
+            CatalogLookup::Empty => {
                 self.set_info("empty command");
                 Ok(false)
             }
-            CommandSpecLookup::Ambiguous => {
+            CatalogLookup::Ambiguous => {
                 self.set_warning(format!("ambiguous command: {}", input.trim()));
                 Ok(false)
             }
-            CommandSpecLookup::Missing => {
+            CatalogLookup::Missing => {
                 self.set_warning(format!("unknown command: {}", input.trim()));
                 Ok(false)
             }
         }
     }
 
-    fn move_command_selection(state: &mut CommandState, reverse: bool) {
+    fn move_command_selection(&self, state: &mut CommandState, reverse: bool) {
         let input = state.cycle_input.as_deref().unwrap_or(state.input.as_str());
-        let options = matching_commands_for_bulk(state.context, input, state.marked_task_count);
+        let options = self
+            .command_catalog
+            .matching(state.context, input, state.marked_task_count);
         if options.is_empty() {
             state.highlighted = None;
             return;
@@ -2204,7 +2223,7 @@ impl App {
         let current = state.highlighted.as_deref().and_then(|highlighted| {
             options
                 .iter()
-                .position(|command| command.name == highlighted)
+                .position(|command| command.name() == highlighted)
         });
         let selected = match (current, reverse) {
             (Some(0), true) | (None, true) => options.len() - 1,
@@ -2213,7 +2232,7 @@ impl App {
             (Some(index), false) => index + 1,
             (None, false) => 0,
         };
-        state.highlighted = Some(options[selected].name.to_string());
+        state.highlighted = Some(options[selected].name().to_string());
     }
 
     fn complete_command_input(&mut self, state: &mut CommandState, reverse: bool) {
@@ -2222,12 +2241,14 @@ impl App {
             .clone()
             .unwrap_or_else(|| state.input.text.clone());
         let options = if cycle_input.trim().trim_start_matches(':').is_empty() {
-            matching_commands_for_bulk(state.context, "", state.marked_task_count)
+            self.command_catalog
+                .matching(state.context, "", state.marked_task_count)
                 .into_iter()
-                .map(|command| command.name)
+                .map(|command| command.name().to_string())
                 .collect()
         } else {
-            command_cycle_options_for(state.context, &cycle_input)
+            self.command_catalog
+                .cycle_options(state.context, &cycle_input)
         };
         if options.len() > 1 {
             state.cycle_index = if state.cycle_input.is_some() {
@@ -2255,7 +2276,10 @@ impl App {
         let highlighted = state.highlighted.clone();
         state.reset_cycle();
         state.highlighted = highlighted;
-        match complete_command_for(state.context, state.input.as_str()) {
+        match self
+            .command_catalog
+            .complete(state.context, state.input.as_str())
+        {
             CommandCompletion::Completed(completion) => {
                 state.input.text = completion;
                 state.input.cursor = state.input.text.len();
@@ -2268,7 +2292,7 @@ impl App {
             )),
             CommandCompletion::Unchanged => {
                 if let Some(completion) = options.first() {
-                    state.input.text = (*completion).to_string();
+                    state.input.text = completion.to_string();
                     state.input.cursor = state.input.text.len();
                     state.highlighted = Some(state.input.text.clone());
                 } else {

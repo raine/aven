@@ -7,6 +7,7 @@ mod app_attachments;
 mod app_authoring;
 mod app_config;
 mod app_conflicts;
+mod app_custom_commands;
 mod app_detail;
 mod app_dispatch;
 mod app_edit;
@@ -29,6 +30,8 @@ mod changelog;
 mod columns;
 mod config_overlay;
 mod conflict_flow;
+mod custom_command;
+mod custom_command_runtime;
 mod detail_selection;
 mod detail_session;
 mod event;
@@ -55,6 +58,12 @@ mod time;
 mod toast;
 mod ui;
 mod widgets;
+
+pub(crate) fn built_in_command_names() -> impl Iterator<Item = &'static str> {
+    event::COMMANDS
+        .iter()
+        .flat_map(|command| std::iter::once(command.name).chain(command.aliases.iter().copied()))
+}
 
 struct TerminalSession {
     terminal: DefaultTerminal,

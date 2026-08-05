@@ -142,6 +142,10 @@ impl App {
                 needs_redraw = true;
             }
 
+            if self.poll_custom_commands().await {
+                needs_redraw = true;
+            }
+
             match self.refresh_if_due().await {
                 Ok(true) => needs_redraw = true,
                 Ok(false) => {}
@@ -406,6 +410,8 @@ impl App {
             },
             inline_images,
             pending_attachments: self.attachment_controller.views(),
+            command_catalog: self.command_catalog.clone(),
+            has_primary_task: selected_task.is_some(),
         }
     }
 

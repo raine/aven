@@ -119,6 +119,8 @@ pub(crate) struct ViewState {
     pub(crate) surface: ViewSurface,
     pub(crate) inline_images: Option<DetailInlineImageContext>,
     pub(crate) pending_attachments: Vec<crate::tui::attachment_controller::PendingAttachmentView>,
+    pub(crate) command_catalog: crate::tui::event::CommandCatalog,
+    pub(crate) has_primary_task: bool,
 }
 
 impl ViewState {
@@ -388,6 +390,8 @@ fn render_surface(
             view.inline_images.as_ref(),
             &view.pending_attachments,
             view.removed_epic_child.as_ref(),
+            &view.command_catalog,
+            view.has_primary_task,
         );
     }
     if !view.pending_shortcut.is_empty() && !add_task_dialog_prefix_active(view) {
@@ -457,7 +461,7 @@ fn render_add_task_surface(frame: &mut Frame, view: &ViewState) {
     }
 }
 
-fn render_add_task_surface_overlay(frame: &mut Frame, _view: &ViewState, overlay: &OverlayView) {
+fn render_add_task_surface_overlay(frame: &mut Frame, view: &ViewState, overlay: &OverlayView) {
     match overlay {
         OverlayView::AddTask(state) => self::overlays::render_add_task_full_frame(frame, state),
         OverlayView::MultilineInput(state)
@@ -472,7 +476,13 @@ fn render_add_task_surface_overlay(frame: &mut Frame, _view: &ViewState, overlay
             if overlay_dims_underlay(overlay, false) {
                 dialog::dim_rendered_background(frame);
             }
-            render_overlay_content(frame, overlay, false);
+            render_overlay_content(
+                frame,
+                overlay,
+                false,
+                &view.command_catalog,
+                view.has_primary_task,
+            );
         }
     }
 }
@@ -777,7 +787,13 @@ fn overlay_dims_underlay(overlay: &OverlayView, inline_title_editor: bool) -> bo
     }
 }
 
-fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title_editor: bool) {
+fn render_overlay_content(
+    frame: &mut Frame,
+    overlay: &OverlayView,
+    inline_title_editor: bool,
+    command_catalog: &crate::tui::event::CommandCatalog,
+    has_primary_task: bool,
+) {
     match overlay {
         OverlayView::Onboarding { .. } => render_onboarding(frame),
         OverlayView::Help { scroll } => render_help(frame, *scroll),
@@ -824,6 +840,8 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
                 unavailable,
                 command_context: *context,
                 marked_task_count: *marked_task_count,
+                catalog: command_catalog,
+                has_primary_task,
             },
         ),
         OverlayView::AddTask(state) => self::overlays::render_add_task(frame, state),
@@ -865,6 +883,8 @@ fn render_overlay(
     inline_images: Option<&DetailInlineImageContext>,
     pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
     removed_epic_child: Option<&crate::tui::app::RemovedEpicChild>,
+    command_catalog: &crate::tui::event::CommandCatalog,
+    has_primary_task: bool,
 ) {
     if let OverlayView::AttachmentPreview { attachment_id, .. } = overlay {
         if let Some(item) = store.selected_task(list.selected_task()) {
@@ -900,5 +920,11 @@ fn render_overlay(
         render_detail_help(frame, *scroll, focused_detail_target);
         return;
     }
-    render_overlay_content(frame, overlay, inline_title_editor);
+    render_overlay_content(
+        frame,
+        overlay,
+        inline_title_editor,
+        command_catalog,
+        has_primary_task,
+    );
 }

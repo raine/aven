@@ -55,14 +55,58 @@ fn default_automatic_update_checks() -> bool {
 pub struct TuiConfig {
     #[serde(default = "default_task_columns")]
     pub columns: Vec<TaskColumnConfig>,
+    #[serde(default)]
+    pub commands: Vec<CustomTuiCommandConfig>,
 }
 
 impl Default for TuiConfig {
     fn default() -> Self {
         Self {
             columns: default_task_columns(),
+            commands: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomTuiCommandConfig {
+    pub name: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    pub description: String,
+    pub program: PathBuf,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub requires: CustomTuiCommandRequirement,
+    #[serde(default)]
+    pub execution: CustomTuiCommandExecution,
+    #[serde(default)]
+    pub on_success: CustomTuiCommandSuccess,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CustomTuiCommandRequirement {
+    None,
+    #[default]
+    SelectedTask,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CustomTuiCommandExecution {
+    Background,
+    #[default]
+    Wait,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CustomTuiCommandSuccess {
+    #[default]
+    Stay,
+    Quit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -382,6 +426,45 @@ impl AppConfig {
         let missing = valid.difference(&assigned).copied().collect::<Vec<_>>();
         if !missing.is_empty() {
             bail!("missing column statuses {}", missing.join(","));
+        }
+
+        let mut command_names = crate::tui::built_in_command_names()
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>();
+        for command in &self.tui.commands {
+            if command.description.trim().is_empty() {
+                bail!(
+                    "custom command {} description must not be blank",
+                    command.name
+                );
+            }
+            if command.program.as_os_str().is_empty()
+                || command.program.to_string_lossy().trim().is_empty()
+            {
+                bail!("custom command {} program must not be blank", command.name);
+            }
+            if command.execution == CustomTuiCommandExecution::Background
+                && command.on_success == CustomTuiCommandSuccess::Quit
+            {
+                bail!(
+                    "custom command {} cannot quit after background execution",
+                    command.name
+                );
+            }
+            for name in std::iter::once(command.name.as_str())
+                .chain(command.aliases.iter().map(String::as_str))
+            {
+                if name.is_empty()
+                    || !name
+                        .chars()
+                        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+                {
+                    bail!("invalid custom command name {name:?}");
+                }
+                if !command_names.insert(name.to_string()) {
+                    bail!("duplicate or built-in custom command name {name}");
+                }
+            }
         }
         Ok(())
     }
@@ -725,6 +808,44 @@ mod tests {
         let no_statuses =
             load_config("tui:\n  columns:\n    - name: Empty\n      statuses: []\n").unwrap_err();
         assert!(format!("{no_statuses:#}").contains("must include at least one status"));
+    }
+
+    #[test]
+    fn custom_tui_commands_deserialize_and_validate() {
+        let config = load_config(
+            "tui:\n  commands:\n    - name: dispatch\n      aliases: [custom-dispatch]\n      description: Dispatch selected task\n      program: ~/bin/dispatch\n      args: [--tmux]\n      requires: selected-task\n      execution: wait\n      on_success: quit\n",
+        )
+        .unwrap();
+        let command = &config.tui.commands[0];
+
+        assert_eq!(command.name, "dispatch");
+        assert_eq!(command.aliases, ["custom-dispatch"]);
+        assert_eq!(command.args, ["--tmux"]);
+        assert_eq!(command.execution, CustomTuiCommandExecution::Wait);
+        assert_eq!(command.on_success, CustomTuiCommandSuccess::Quit);
+    }
+
+    #[test]
+    fn custom_tui_commands_reject_invalid_names_and_collisions() {
+        for yaml in [
+            "tui:\n  commands:\n    - name: ':dispatch'\n      description: Dispatch\n      program: dispatch\n",
+            "tui:\n  commands:\n    - name: quit\n      description: Dispatch\n      program: dispatch\n",
+            "tui:\n  commands:\n    - name: dispatch\n      aliases: [dispatch]\n      description: Dispatch\n      program: dispatch\n",
+            "tui:\n  commands:\n    - name: dispatch\n      aliases: [same]\n      description: Dispatch\n      program: dispatch\n    - name: other\n      aliases: [same]\n      description: Other\n      program: other\n",
+        ] {
+            assert!(load_config(yaml).is_err(), "accepted {yaml}");
+        }
+    }
+
+    #[test]
+    fn custom_tui_commands_reject_blank_fields_and_background_quit() {
+        for yaml in [
+            "tui:\n  commands:\n    - name: dispatch\n      description: '  '\n      program: dispatch\n",
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: ''\n",
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      execution: background\n      on_success: quit\n",
+        ] {
+            assert!(load_config(yaml).is_err(), "accepted {yaml}");
+        }
     }
 
     #[test]
