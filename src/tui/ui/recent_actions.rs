@@ -223,7 +223,9 @@ fn render_action_row(
             Span::styled(" ", row_style),
             Span::styled(
                 action_icon(action),
-                action_style(action).bg(row_style.bg.unwrap_or(BG)),
+                action_style(action)
+                    .bg(row_style.bg.unwrap_or(BG))
+                    .remove_modifier(Modifier::BOLD),
             ),
             Span::styled(" ", row_style),
             Span::styled(
@@ -549,15 +551,23 @@ mod tests {
         }
     }
 
-    fn row_buffer(action: &RecentActionItem, width: u16) -> ratatui::buffer::Buffer {
+    fn row_buffer_with_selection(
+        action: &RecentActionItem,
+        width: u16,
+        selected: bool,
+    ) -> ratatui::buffer::Buffer {
         let backend = TestBackend::new(width, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
-                render_action_row(frame, action, 0, frame.area(), false, false);
+                render_action_row(frame, action, 0, frame.area(), selected, selected);
             })
             .unwrap();
         terminal.backend().buffer().clone()
+    }
+
+    fn row_buffer(action: &RecentActionItem, width: u16) -> ratatui::buffer::Buffer {
+        row_buffer_with_selection(action, width, false)
     }
 
     fn row_text(action: &RecentActionItem, width: u16) -> String {
@@ -566,6 +576,26 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect()
+    }
+
+    #[test]
+    fn selected_action_row_keeps_icon_regular_and_text_bold() {
+        let mut action = action_item("app");
+        action.op_type = op_type::NOTE_DELETE.to_string();
+        action.verb = "delete".to_string();
+        action.accent = "red".to_string();
+
+        let buffer = row_buffer_with_selection(&action, 70, true);
+        let icon = &buffer[(9, 0)];
+        let verb = &buffer[(11, 0)];
+
+        assert_eq!(icon.symbol(), "⌫");
+        assert_eq!(icon.style().fg, Some(RED));
+        assert_eq!(icon.style().bg, SELECTED.bg);
+        assert!(!icon.style().add_modifier.contains(Modifier::BOLD));
+        assert_eq!(verb.symbol(), "d");
+        assert_eq!(verb.style().bg, SELECTED.bg);
+        assert!(verb.style().add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
