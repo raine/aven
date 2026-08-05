@@ -3,6 +3,19 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.24 (2026-08-05)
+
+- New: Press `Ctrl-g` in the task composer to create a task and immediately
+  start another with the same project, status, priority, and labels.
+- Marked tasks open a dedicated bulk-action mode that highlights compatible
+  commands, explains single-task restrictions, and clears all marks with `Esc`.
+- Copy references, durable IDs, or titles for marked tasks as one value per line
+  in their visible list order.
+- Browse command palette results with the arrow keys and `Enter`, cycle the full
+  catalog with `Tab` or `Shift-Tab`, and track your position with a scrollbar.
+- Empty task views explain better why no tasks are shown and suggest relevant
+  actions.
+
 ## v0.1.23 (2026-08-04)
 
 - New: Copy a complete task report as Markdown with `y m`, or publish it as a
