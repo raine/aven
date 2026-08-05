@@ -141,6 +141,7 @@ const CHILD_DETAIL_HELP_TOPICS: &[HelpTopic] = &[
 
 const HELP_DIALOG_MAX_WIDTH: u16 = 112;
 const HELP_DIALOG_MAX_HEIGHT: u16 = 28;
+const COMMAND_DIALOG_MAX_WIDTH: u16 = 112;
 
 fn help_dialog_height(frame_height: u16) -> u16 {
     frame_height.saturating_sub(4).min(HELP_DIALOG_MAX_HEIGHT)
@@ -652,7 +653,12 @@ pub(super) fn render_command(
     } else {
         format!("Command · {}", marked_task_label(marked_task_count))
     };
-    let mut dialog = Dialog::new(&title, 72, height);
+    let dialog_width = frame
+        .area()
+        .width
+        .saturating_sub(2)
+        .min(COMMAND_DIALOG_MAX_WIDTH);
+    let mut dialog = Dialog::new(&title, dialog_width, height);
     if match_count > 0 {
         let position = highlighted.map_or_else(
             || format!("{match_count} commands"),
@@ -964,7 +970,17 @@ mod tests {
         cycle_input: Option<&str>,
         highlighted: Option<&str>,
     ) -> ratatui::buffer::Buffer {
-        let backend = TestBackend::new(100, 30);
+        render_command_buffer_at_width(input, cursor, cycle_input, highlighted, 100)
+    }
+
+    fn render_command_buffer_at_width(
+        input: &str,
+        cursor: usize,
+        cycle_input: Option<&str>,
+        highlighted: Option<&str>,
+        width: u16,
+    ) -> ratatui::buffer::Buffer {
+        let backend = TestBackend::new(width, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
@@ -1337,8 +1353,18 @@ mod tests {
     }
 
     #[test]
+    fn command_overlay_uses_available_width_up_to_its_maximum() {
+        let buffer = render_command_buffer_at_width("", 0, None, None, 120);
+        let corners = dialog_corners(&buffer);
+        let left = corners.iter().map(|(column, _, _)| *column).min().unwrap();
+        let right = corners.iter().map(|(column, _, _)| *column).max().unwrap();
+
+        assert_eq!(right - left + 1, COMMAND_DIALOG_MAX_WIDTH);
+    }
+
+    #[test]
     fn command_overlay_truncates_descriptions_with_an_ellipsis() {
-        let buffer = render_command_buffer("", 0, None, Some("filter-priority"));
+        let buffer = render_command_buffer_at_width("", 0, None, Some("filter-priority"), 72);
         let rendered = buffer_text_from_rows(&buffer);
 
         assert!(rendered.contains(":task-child-remove"));
