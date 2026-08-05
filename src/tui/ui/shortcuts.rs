@@ -1319,7 +1319,7 @@ mod tests {
 
     #[test]
     fn bulk_command_overlay_identifies_focused_commands() {
-        let rendered = render_command_overlay_with_marks("copy-markdown", 13, 3);
+        let rendered = render_command_overlay_with_marks("create-gist", 11, 3);
 
         assert!(rendered.contains("focused task"));
     }

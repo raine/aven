@@ -285,9 +285,10 @@ mod tests {
             Action::BeginEditTitle.bulk_support(),
             BulkSupport::SingleOnly("title")
         );
+        assert_eq!(Action::CopyShortRef.bulk_support(), BulkSupport::Batch);
         assert_eq!(
             Action::CopyTaskMarkdown.bulk_support(),
-            BulkSupport::Focused
+            BulkSupport::SingleOnly("copy")
         );
         assert_eq!(Action::ClearMarks.bulk_support(), BulkSupport::BulkControl);
         assert_eq!(

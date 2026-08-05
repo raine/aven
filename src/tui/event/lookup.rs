@@ -1,9 +1,7 @@
 use crossterm::event::KeyCode;
 use unicode_width::UnicodeWidthStr;
 
-use super::{
-    Action, BulkSupport, CommandContext, CommandLifecycle, CommandSpec, KeySequence,
-};
+use super::{Action, BulkSupport, CommandContext, CommandLifecycle, CommandSpec, KeySequence};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]

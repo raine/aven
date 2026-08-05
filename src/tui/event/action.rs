@@ -180,14 +180,12 @@ impl Action {
             Self::BeginAddDependency | Self::BeginRemoveDependency => {
                 BulkSupport::SingleOnly("dependency")
             }
-            Self::CopyShortRef
-            | Self::CopyDurableRef
-            | Self::CopyTaskTitle
-            | Self::CopyTaskDescription
+            Self::CopyShortRef | Self::CopyDurableRef | Self::CopyTaskTitle => BulkSupport::Batch,
+            Self::CopyTaskDescription
             | Self::CopyTaskText
             | Self::CopyTaskNotes
-            | Self::CopyTaskMarkdown
-            | Self::BeginCreateTaskGist
+            | Self::CopyTaskMarkdown => BulkSupport::SingleOnly("copy"),
+            Self::BeginCreateTaskGist
             | Self::SkipRecurrence
             | Self::BeginEditRecurrenceTemplate
             | Self::PauseRecurrence
