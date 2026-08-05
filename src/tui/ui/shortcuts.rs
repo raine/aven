@@ -564,9 +564,8 @@ fn command_palette_line(
     let keys = command
         .keys(context)
         .iter()
-        .map(|key| key.label)
-        .collect::<Vec<_>>()
-        .join("/");
+        .min_by_key(|key| unicode_width::UnicodeWidthStr::width(key.label))
+        .map_or("", |key| key.label);
     let mut spans = vec![
         Span::styled(format!("{keys:<10}"), Style::new().fg(FG_MUTED)),
         Span::styled(
@@ -686,9 +685,9 @@ pub(super) fn render_command(
                 } else {
                     "tasks"
                 };
-                Some(format!(" · {marked_task_count} {noun} · "))
+                Some(format!("{marked_task_count} {noun} · "))
             }
-            BulkSupport::Focused if marked_task_count > 0 => Some(" · focused task · ".to_string()),
+            BulkSupport::Focused if marked_task_count > 0 => Some("focused task · ".to_string()),
             BulkSupport::SingleOnly(_) | BulkSupport::BulkControl | BulkSupport::NotTaskScoped => {
                 None
             }
@@ -1301,7 +1300,10 @@ mod tests {
         let rendered = render_command_overlay_with_marks("edit-project", 12, 3);
 
         assert!(rendered.contains("Command · 3 marked tasks"));
-        assert!(rendered.contains("3 marked tasks"));
+        assert!(rendered.contains("e j       :edit-project"));
+        assert!(!rendered.contains("/t e j"));
+        assert!(rendered.contains("3 tasks · edit selected task project"));
+        assert!(!rendered.contains(" · 3 tasks"));
     }
 
     #[test]
@@ -1353,12 +1355,12 @@ mod tests {
     }
 
     #[test]
-    fn command_overlay_uses_compact_reverse_tab_label() {
+    fn command_overlay_shows_one_compact_shortcut() {
         let buffer = render_command_buffer("", 0, None, Some("return-to-change"));
         let rendered = buffer_text_from_rows(&buffer);
 
-        assert!(rendered.contains("Tab/S-Tab :focus"));
-        assert!(!rendered.contains("Shift+Tab:focus"));
+        assert!(rendered.contains("Tab       :focus"));
+        assert!(!rendered.contains("Tab/S-Tab"));
     }
 
     #[test]
