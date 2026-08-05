@@ -1353,6 +1353,15 @@ mod tests {
     }
 
     #[test]
+    fn command_overlay_uses_compact_reverse_tab_label() {
+        let buffer = render_command_buffer("", 0, None, Some("return-to-change"));
+        let rendered = buffer_text_from_rows(&buffer);
+
+        assert!(rendered.contains("Tab/S-Tab :focus"));
+        assert!(!rendered.contains("Shift+Tab:focus"));
+    }
+
+    #[test]
     fn command_overlay_uses_available_width_up_to_its_maximum() {
         let buffer = render_command_buffer_at_width("", 0, None, None, 120);
         let corners = dialog_corners(&buffer);

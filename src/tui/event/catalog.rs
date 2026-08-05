@@ -511,7 +511,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             },
             KeySequence {
                 codes: &[KeyCode::BackTab],
-                label: "Shift+Tab",
+                label: "S-Tab",
             },
         ],
         Action::ToggleFocus,
