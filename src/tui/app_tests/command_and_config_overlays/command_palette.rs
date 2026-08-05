@@ -36,6 +36,36 @@ async fn command_overlay_executes_unique_lookup_and_keeps_overlay_on_errors() {
 }
 
 #[tokio::test]
+async fn command_overlay_tab_cycles_without_a_filter() {
+    let expected = crate::tui::event::matching_commands_for_bulk(
+        crate::tui::event::CommandContext::Normal,
+        "",
+        0,
+    )
+    .into_iter()
+    .map(|command| command.name)
+    .collect::<Vec<_>>();
+    let mut app = test_app().await;
+
+    app.begin_command().await;
+    app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Command { state })
+            if state.input.text == expected[0]
+                && state.highlighted.as_deref() == Some(expected[0])
+    ));
+
+    app.handle_overlay_key(key(KeyCode::BackTab)).await.unwrap();
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Command { state })
+            if state.input.text == *expected.last().unwrap()
+                && state.highlighted.as_deref() == expected.last().copied()
+    ));
+}
+
+#[tokio::test]
 async fn command_overlay_arrows_browse_and_enter_runs_selection() {
     let mut app = test_app().await;
 

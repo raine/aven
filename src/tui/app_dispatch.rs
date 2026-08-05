@@ -2221,7 +2221,14 @@ impl App {
             .cycle_input
             .clone()
             .unwrap_or_else(|| state.input.text.clone());
-        let options = command_cycle_options_for(state.context, &cycle_input);
+        let options = if cycle_input.trim().trim_start_matches(':').is_empty() {
+            matching_commands_for_bulk(state.context, "", state.marked_task_count)
+                .into_iter()
+                .map(|command| command.name)
+                .collect()
+        } else {
+            command_cycle_options_for(state.context, &cycle_input)
+        };
         if options.len() > 1 {
             state.cycle_index = if state.cycle_input.is_some() {
                 if reverse {
