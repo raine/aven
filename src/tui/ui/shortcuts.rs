@@ -623,7 +623,11 @@ pub(super) fn render_command(
         cycle_input.unwrap_or(input),
         marked_task_count,
     );
-    let height = (matches.len().min(8) as u16).saturating_add(3);
+    let match_count = matches.len();
+    let hidden_count = match_count.saturating_sub(8);
+    let height = (match_count.min(8) as u16)
+        .saturating_add(3)
+        .saturating_add(u16::from(hidden_count > 0));
 
     let mut lines = vec![input_line(":", input, cursor)];
     for command in matches.into_iter().take(8) {
@@ -654,6 +658,17 @@ pub(super) fn render_command(
             annotation,
             unavailable_reason,
         ));
+    }
+    if hidden_count > 0 {
+        let noun = if hidden_count == 1 {
+            "command"
+        } else {
+            "commands"
+        };
+        lines.push(Line::from(Span::styled(
+            format!("  ↓ {hidden_count} more {noun} · type to filter"),
+            Style::new().fg(FG_MUTED),
+        )));
     }
 
     let title = if marked_task_count == 0 {
@@ -1214,6 +1229,14 @@ mod tests {
 
         assert!(rendered.contains("Command · 3 marked tasks"));
         assert!(rendered.contains("3 marked tasks"));
+    }
+
+    #[test]
+    fn bulk_command_overlay_discloses_hidden_commands() {
+        let rendered = render_command_overlay_with_marks("", 0, 3);
+
+        assert!(rendered.contains("more commands"));
+        assert!(rendered.contains("type to filter"));
     }
 
     #[test]
