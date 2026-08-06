@@ -290,7 +290,7 @@ impl TuiStore {
             view_state.view = TaskView::Open;
         }
         view_state.order = order;
-        if order == TaskOrder::Created {
+        if matches!(order, TaskOrder::Created | TaskOrder::Updated) {
             view_state.direction = SortDirection::Desc;
         }
     }
