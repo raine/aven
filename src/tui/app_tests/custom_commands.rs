@@ -19,6 +19,8 @@ fn config(program: &str, success: CustomTuiCommandSuccess) -> AppConfig {
             .then(|| "/dev/null".to_string())
             .into_iter()
             .collect(),
+        keys: vec![],
+        detail_keys: None,
         requires: CustomTuiCommandRequirement::None,
         execution: CustomTuiCommandExecution::Wait,
         on_success: success,
@@ -34,6 +36,43 @@ async fn poll_until_complete(app: &mut App) {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("custom command did not complete");
+}
+
+#[tokio::test]
+async fn configured_keybinding_executes_custom_command() {
+    let mut app = test_app().await;
+    let mut app_config = config("/usr/bin/tee", CustomTuiCommandSuccess::Stay);
+    app_config.tui.commands[0].keys = vec!["z d".to_string()];
+    app.set_config(app_config);
+
+    app.handle_normal_key(KeyCode::Char('z')).await.unwrap();
+    assert!(!app.pending_shortcut.is_empty());
+    app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+    assert!(app.pending_shortcut.is_empty());
+    assert!(toast_message(&app).unwrap().contains("running :dispatch"));
+
+    poll_until_complete(&mut app).await;
+    assert!(toast_message(&app).unwrap().contains("completed"));
+}
+
+#[tokio::test]
+async fn detail_keybinding_override_executes_custom_command() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Detail task")).await;
+    let mut app_config = config("/usr/bin/tee", CustomTuiCommandSuccess::Stay);
+    app_config.tui.commands[0].keys = vec!["z d".to_string()];
+    app_config.tui.commands[0].detail_keys = Some(vec!["Z".to_string()]);
+    app.set_config(app_config);
+    app.show_detail(0);
+
+    app.dispatch_key(key(KeyCode::Char('Z')), (80, 24).into())
+        .await
+        .unwrap();
+    assert!(toast_message(&app).unwrap().contains("running :dispatch"));
+
+    poll_until_complete(&mut app).await;
+    assert!(app.detail.is_active());
+    assert!(toast_message(&app).unwrap().contains("completed"));
 }
 
 #[tokio::test]

@@ -78,6 +78,10 @@ pub struct CustomTuiCommandConfig {
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
+    pub keys: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail_keys: Option<Vec<String>>,
+    #[serde(default)]
     pub requires: CustomTuiCommandRequirement,
     #[serde(default)]
     pub execution: CustomTuiCommandExecution,
@@ -466,6 +470,7 @@ impl AppConfig {
                 }
             }
         }
+        crate::tui::validate_custom_command_keys(&self.tui.commands)?;
         Ok(())
     }
 
@@ -813,7 +818,7 @@ mod tests {
     #[test]
     fn custom_tui_commands_deserialize_and_validate() {
         let config = load_config(
-            "tui:\n  commands:\n    - name: dispatch\n      aliases: [custom-dispatch]\n      description: Dispatch selected task\n      program: ~/bin/dispatch\n      args: [--tmux]\n      requires: selected-task\n      execution: wait\n      on_success: quit\n",
+            "tui:\n  commands:\n    - name: dispatch\n      aliases: [custom-dispatch]\n      description: Dispatch selected task\n      program: ~/bin/dispatch\n      args: [--tmux]\n      keys: [z d, D]\n      detail_keys: [z D]\n      requires: selected-task\n      execution: wait\n      on_success: quit\n",
         )
         .unwrap();
         let command = &config.tui.commands[0];
@@ -821,6 +826,8 @@ mod tests {
         assert_eq!(command.name, "dispatch");
         assert_eq!(command.aliases, ["custom-dispatch"]);
         assert_eq!(command.args, ["--tmux"]);
+        assert_eq!(command.keys, ["z d", "D"]);
+        assert_eq!(command.detail_keys.as_ref().unwrap(), &["z D".to_string()]);
         assert_eq!(command.execution, CustomTuiCommandExecution::Wait);
         assert_eq!(command.on_success, CustomTuiCommandSuccess::Quit);
     }
@@ -843,6 +850,33 @@ mod tests {
             "tui:\n  commands:\n    - name: dispatch\n      description: '  '\n      program: dispatch\n",
             "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: ''\n",
             "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      execution: background\n      on_success: quit\n",
+        ] {
+            assert!(load_config(yaml).is_err(), "accepted {yaml}");
+        }
+    }
+
+    #[test]
+    fn custom_tui_commands_validate_contextual_keybindings() {
+        let inherited = load_config(
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      keys: [z d]\n",
+        )
+        .unwrap();
+        assert_eq!(inherited.tui.commands[0].detail_keys, None);
+
+        let detail_disabled = load_config(
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      keys: [z d]\n      detail_keys: []\n",
+        )
+        .unwrap();
+        assert_eq!(detail_disabled.tui.commands[0].detail_keys, Some(vec![]));
+
+        for yaml in [
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      keys: [q]\n",
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      keys: ['']\n",
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      keys: [Esc]\n",
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      keys: [z unknown]\n",
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      keys: [z d a b c]\n",
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      keys: [z d]\n      detail_keys: [s]\n",
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      keys: [z d]\n    - name: other\n      description: Other\n      program: other\n      keys: [z d]\n",
         ] {
             assert!(load_config(yaml).is_err(), "accepted {yaml}");
         }

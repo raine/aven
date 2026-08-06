@@ -65,6 +65,12 @@ pub(crate) fn built_in_command_names() -> impl Iterator<Item = &'static str> {
         .flat_map(|command| std::iter::once(command.name).chain(command.aliases.iter().copied()))
 }
 
+pub(crate) fn validate_custom_command_keys(
+    commands: &[crate::config::CustomTuiCommandConfig],
+) -> Result<()> {
+    event::validate_custom_command_keys(commands)
+}
+
 struct TerminalSession {
     terminal: DefaultTerminal,
     keyboard_enhancement: platform::KeyboardEnhancementGuard,

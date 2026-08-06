@@ -26,8 +26,10 @@ tui:
     - name: dispatch
       aliases: [custom-dispatch]
       description: Open the selected task in its tmux workspace
-      program: ~/bin/dispatch.sh
+      program: ~/bin/dispatch-task
       args: []
+      keys: [z d]
+      detail_keys: [z D]
       requires: selected-task
       execution: wait
       on_success: quit
@@ -46,6 +48,8 @@ results.
 | `description` | Yes | | Description shown in palette search results. |
 | `program` | Yes | | Executable path or program name. A leading `~` expands to the home directory. |
 | `args` | No | `[]` | Static arguments passed directly to the executable. |
+| `keys` | No | `[]` | Key sequences available in task lists and inherited by task detail. |
+| `detail_keys` | No | `keys` | Key sequences for task detail. An empty list disables detail bindings. |
 | `requires` | No | `selected-task` | Whether the command needs a selected task. Values are `selected-task` and `none`. |
 | `execution` | No | `wait` | Process supervision mode. Values are `wait` and `background`. |
 | `on_success` | No | `stay` | Aven behavior after success. Values are `stay` and `quit`. |
@@ -58,6 +62,36 @@ combinations when it loads the configuration.
 Aven executes `program` directly and passes `args` without shell evaluation.
 Pipelines, redirection, variable expansion, and other shell behavior belong in
 an executable script.
+
+## Keybindings
+
+Each entry in `keys` is a case-sensitive sequence separated by spaces. For
+example, `keys: [z d, D]` binds both `z` followed by `d` and uppercase `D` in
+task lists. The command palette shows configured bindings, and multi-key
+bindings use the same prefix hints as built-in commands. Keybinding invocation
+sets `command.invoked_as` to the canonical command name.
+
+`detail_keys` controls task-detail bindings. When omitted, detail inherits
+`keys`. Set `detail_keys: []` to make a command list-only, or provide a different
+list to give detail its own bindings.
+
+### Recommended custom namespace
+
+Use `z` as the first key for custom multi-key bindings, such as `z d` for
+dispatch or `z e` for export. Aven reserves the `z` prefix for configured
+commands, so built-in commands do not occupy that namespace. Other unassigned
+keys are accepted, but `z` is the stable choice for avoiding collisions with
+present and future built-ins.
+
+A sequence may contain up to four keys. Each token can be one Unicode character
+or one of these names: `Space`, `Enter`, `Backspace`, `Tab`, `Shift+Tab`,
+`Home`, `End`, `Up`, `Down`, `Left`, `Right`, `PageUp`, `PageDown`, `Delete`,
+`Insert`, and `F1` through `F12`.
+
+Aven rejects exact collisions with built-in or custom bindings in the same
+view. Prefix overlap is supported, so a command can extend an existing prefix.
+`Esc` and `?` are reserved by TUI input handling. `Up`, `Down`, `PageUp`, and
+`PageDown` are reserved after a prefix because they scroll the prefix menu.
 
 ## Task selection
 
@@ -242,13 +276,14 @@ tui:
     - name: dispatch
       aliases: [custom-dispatch]
       description: Open the selected task in a tmux window
-      program: ~/.config/aven/commands/dispatch.sh
+      program: ~/.config/aven/commands/dispatch-task
+      keys: [z d]
       requires: selected-task
       execution: wait
       on_success: quit
 ```
 
-Create `~/.config/aven/commands/dispatch.sh`:
+Create `~/.config/aven/commands/dispatch-task`:
 
 ```bash
 #!/usr/bin/env bash
@@ -270,7 +305,7 @@ tmux new-window \
 Make it executable:
 
 ```sh
-chmod 755 ~/.config/aven/commands/dispatch.sh
+chmod 755 ~/.config/aven/commands/dispatch-task
 ```
 
 Run `:dispatch` from a task list or detail view. `tmux new-window` selects the

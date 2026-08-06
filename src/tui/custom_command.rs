@@ -270,6 +270,8 @@ mod tests {
             description: "dispatch task".to_string(),
             program: PathBuf::from("dispatch-task"),
             args: vec!["--static".to_string(), "literal value".to_string()],
+            keys: vec![],
+            detail_keys: None,
             requires: CustomTuiCommandRequirement::SelectedTask,
             execution: CustomTuiCommandExecution::Wait,
             on_success: CustomTuiCommandSuccess::Quit,

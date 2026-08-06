@@ -11,7 +11,6 @@ use super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use crate::tui::app::{DetailSection, DetailTargetId};
 use crate::tui::event::{
     BulkSupport, CatalogCommand, CommandCatalog, CommandContext, CommandSpec,
-    matching_commands_for_bulk, prefix_hint_commands,
 };
 use crate::tui::theme::{
     ACCENT, BG_ALT, BG_PANEL, BORDER, CUSTOM_COMMAND_NAME, CUSTOM_COMMAND_TAG, FG, FG_DIM, FG_MUTED,
@@ -453,6 +452,7 @@ fn command_name_style() -> Style {
     Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
 }
 
+#[cfg(test)]
 fn command_hint_line(
     leading: Span<'static>,
     command: &CommandSpec,
@@ -469,14 +469,34 @@ fn command_hint_line(
     Line::from(spans)
 }
 
-fn command_name_width(commands: &[&CommandSpec]) -> usize {
-    commands
-        .iter()
-        .map(|command| command.name.len())
-        .max()
-        .unwrap_or(18)
-        .max(18)
-        .saturating_add(2)
+fn catalog_command_hint_line(
+    leading: Span<'static>,
+    command: CatalogCommand<'_>,
+    command_name_width: usize,
+) -> Line<'static> {
+    let name_style = if command.is_custom() {
+        Style::new().fg(CUSTOM_COMMAND_NAME)
+    } else {
+        command_name_style()
+    };
+    let mut spans = vec![
+        leading,
+        Span::styled(
+            format!(":{:<command_name_width$}", command.name()),
+            name_style,
+        ),
+    ];
+    if command.is_custom() {
+        spans.push(Span::styled(
+            " custom ",
+            Style::new().fg(CUSTOM_COMMAND_TAG),
+        ));
+    }
+    spans.push(Span::styled(
+        command.description().to_string(),
+        Style::new().fg(FG_DIM),
+    ));
+    Line::from(spans)
 }
 
 fn catalog_command_name_width(commands: &[CatalogCommand<'_>]) -> usize {
@@ -788,29 +808,54 @@ fn prefix_hint_lines_with_availability(
     copy_notes_available: bool,
     marked_task_count: usize,
 ) -> Vec<Line<'static>> {
-    let matches = prefix_hint_commands(context, pending);
-    let command_name_width = command_name_width(
+    prefix_hint_lines_for_catalog(
+        &CommandCatalog::default(),
+        context,
+        pending,
+        copy_description_available,
+        copy_notes_available,
+        marked_task_count,
+        true,
+    )
+}
+
+fn prefix_hint_lines_for_catalog(
+    catalog: &CommandCatalog,
+    context: CommandContext,
+    pending: &[String],
+    copy_description_available: bool,
+    copy_notes_available: bool,
+    marked_task_count: usize,
+    has_primary_task: bool,
+) -> Vec<Line<'static>> {
+    let matches = catalog.prefix_hints(context, pending);
+    let command_name_width = catalog_command_name_width(
         &matches
             .iter()
-            .map(|(command, _, _)| *command)
+            .map(|(command, _)| *command)
             .collect::<Vec<_>>(),
     );
     matches
         .into_iter()
-        .map(|(command, _, key_hint)| {
+        .map(|(command, key_hint)| {
             let support = command.bulk_support();
-            let copy_mark_limit = command.action.copy_requires_single_task()
+            let built_in_action = command.built_in().map(|command| command.action);
+            let copy_mark_limit = built_in_action
+                .is_some_and(|action| action.copy_requires_single_task())
                 && marked_task_count > 0
                 && context == CommandContext::Normal;
             let unavailable = matches!(
-                command.action,
-                crate::tui::event::Action::CopyTaskDescription
+                built_in_action,
+                Some(crate::tui::event::Action::CopyTaskDescription)
             ) && !copy_description_available
-                || matches!(command.action, crate::tui::event::Action::CopyTaskNotes)
-                    && !copy_notes_available
+                || matches!(
+                    built_in_action,
+                    Some(crate::tui::event::Action::CopyTaskNotes)
+                ) && !copy_notes_available
                 || copy_mark_limit
-                || matches!(support, BulkSupport::SingleOnly(_)) && marked_task_count > 1;
-            let mut line = command_hint_line(
+                || matches!(support, BulkSupport::SingleOnly(_)) && marked_task_count > 1
+                || command.requires_selected_task() && !has_primary_task;
+            let mut line = catalog_command_hint_line(
                 Span::styled(
                     format!(" {:<6} ", key_hint),
                     Style::new().fg(FG_MUTED).bg(BG_PANEL),
@@ -856,12 +901,14 @@ pub(super) fn render_prefix_hints(frame: &mut Frame, view: &ViewState) {
     } else {
         CommandContext::Normal
     };
-    let lines = prefix_hint_lines_with_availability(
+    let lines = prefix_hint_lines_for_catalog(
+        &view.command_catalog,
         context,
         &view.pending_shortcut,
         view.copy_description_available,
         view.copy_notes_available,
         view.visible_marked_task_count,
+        view.has_primary_task,
     );
     if lines.is_empty() {
         return;
@@ -913,6 +960,21 @@ mod tests {
     };
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+
+    fn custom_command_catalog() -> CommandCatalog {
+        CommandCatalog::new(vec![CustomTuiCommandConfig {
+            name: "dispatch".to_string(),
+            aliases: vec![],
+            description: "Open the selected task in tmux".to_string(),
+            program: "/bin/true".into(),
+            args: vec![],
+            keys: vec!["z d".to_string()],
+            detail_keys: None,
+            requires: CustomTuiCommandRequirement::SelectedTask,
+            execution: CustomTuiCommandExecution::Wait,
+            on_success: CustomTuiCommandSuccess::Stay,
+        }])
+    }
 
     fn buffer_text(backend: &TestBackend) -> String {
         backend
@@ -1588,16 +1650,7 @@ mod tests {
 
     #[test]
     fn custom_command_palette_rows_right_align_origin_tag() {
-        let catalog = CommandCatalog::new(vec![CustomTuiCommandConfig {
-            name: "dispatch".to_string(),
-            aliases: vec![],
-            description: "Open the selected task in tmux".to_string(),
-            program: "/bin/true".into(),
-            args: vec![],
-            requires: CustomTuiCommandRequirement::SelectedTask,
-            execution: CustomTuiCommandExecution::Wait,
-            on_success: CustomTuiCommandSuccess::Stay,
-        }]);
+        let catalog = custom_command_catalog();
         let command = catalog
             .matching(CommandContext::Normal, "dispatch", 0)
             .into_iter()
@@ -1617,10 +1670,33 @@ mod tests {
         let rendered = line.to_string();
 
         assert!(rendered.contains(":dispatch"));
+        assert!(rendered.contains("z d"));
         assert!(rendered.ends_with("custom  "));
         assert_eq!(name.style.fg, Some(CUSTOM_COMMAND_NAME));
         assert_eq!(tag.style.fg, Some(CUSTOM_COMMAND_TAG));
         assert_eq!(unicode_width::UnicodeWidthStr::width(rendered.as_str()), 80);
+    }
+
+    #[test]
+    fn custom_command_keybinding_uses_prefix_hint_pipeline() {
+        let lines = prefix_hint_lines_for_catalog(
+            &custom_command_catalog(),
+            CommandContext::Normal,
+            &["z".to_string()],
+            true,
+            true,
+            0,
+            true,
+        );
+        let rendered = lines
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains(":dispatch"));
+        assert!(rendered.contains(" custom "));
+        assert!(rendered.contains(" d "));
     }
 
     #[test]

@@ -1,8 +1,13 @@
+use anyhow::{Result, bail};
+use crossterm::event::KeyCode;
+
 use crate::config::{CustomTuiCommandConfig, CustomTuiCommandRequirement};
 
 use super::{
-    Action, BulkSupport, COMMANDS, CommandContext, CommandLifecycle, CommandSpec, KeySequence,
+    Action, BulkSupport, COMMANDS, CommandContext, CommandSpec, KeySequence, shortcut_label,
 };
+
+const MAX_CUSTOM_KEY_SEQUENCE_LEN: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandHandler {
@@ -10,12 +15,31 @@ pub(crate) enum CommandHandler {
     Custom(usize),
 }
 
+#[derive(Debug, Clone)]
+struct RuntimeKeySequence {
+    codes: Vec<KeyCode>,
+    label: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RuntimeCustomCommand {
+    config: CustomTuiCommandConfig,
+    list_keys: Vec<RuntimeKeySequence>,
+    detail_keys: Vec<RuntimeKeySequence>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CatalogKeySequence<'a> {
+    pub(crate) codes: &'a [KeyCode],
+    pub(crate) label: &'a str,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum CatalogCommand<'a> {
     BuiltIn(&'static CommandSpec),
     Custom {
         id: usize,
-        command: &'a CustomTuiCommandConfig,
+        command: &'a RuntimeCustomCommand,
     },
 }
 
@@ -23,23 +47,27 @@ impl<'a> CatalogCommand<'a> {
     pub(crate) fn name(self) -> &'a str {
         match self {
             Self::BuiltIn(command) => command.name,
-            Self::Custom { command, .. } => &command.name,
+            Self::Custom { command, .. } => &command.config.name,
         }
     }
 
     fn matches_alias(self, input: &str) -> bool {
         match self {
             Self::BuiltIn(command) => command.aliases.contains(&input),
-            Self::Custom { command, .. } => command.aliases.iter().any(|alias| alias == input),
+            Self::Custom { command, .. } => {
+                command.config.aliases.iter().any(|alias| alias == input)
+            }
         }
     }
 
     fn alias_starts_with(self, input: &str) -> bool {
         match self {
             Self::BuiltIn(command) => command.aliases.iter().any(|alias| alias.starts_with(input)),
-            Self::Custom { command, .. } => {
-                command.aliases.iter().any(|alias| alias.starts_with(input))
-            }
+            Self::Custom { command, .. } => command
+                .config
+                .aliases
+                .iter()
+                .any(|alias| alias.starts_with(input)),
         }
     }
 
@@ -50,6 +78,7 @@ impl<'a> CatalogCommand<'a> {
                 .iter()
                 .any(|alias| dashless_eq(alias, input)),
             Self::Custom { command, .. } => command
+                .config
                 .aliases
                 .iter()
                 .any(|alias| dashless_eq(alias, input)),
@@ -63,6 +92,7 @@ impl<'a> CatalogCommand<'a> {
                 .iter()
                 .any(|alias| dashless_starts_with(alias, input)),
             Self::Custom { command, .. } => command
+                .config
                 .aliases
                 .iter()
                 .any(|alias| dashless_starts_with(alias, input)),
@@ -72,7 +102,7 @@ impl<'a> CatalogCommand<'a> {
     pub(crate) fn description(self) -> &'a str {
         match self {
             Self::BuiltIn(command) => command.description,
-            Self::Custom { command, .. } => &command.description,
+            Self::Custom { command, .. } => &command.config.description,
         }
     }
 
@@ -84,24 +114,28 @@ impl<'a> CatalogCommand<'a> {
         }
     }
 
-    pub(crate) fn keys(self, context: CommandContext) -> &'static [KeySequence] {
+    pub(crate) fn keys(self, context: CommandContext) -> Vec<CatalogKeySequence<'a>> {
         match self {
-            Self::BuiltIn(command) => command.keys(context),
-            Self::Custom { .. } => &[],
-        }
-    }
-
-    pub(crate) fn lifecycle(self) -> CommandLifecycle {
-        match self {
-            Self::BuiltIn(command) => command.lifecycle,
-            Self::Custom { .. } => CommandLifecycle::Implemented,
+            Self::BuiltIn(command) => command
+                .keys(context)
+                .iter()
+                .map(catalog_static_key)
+                .collect(),
+            Self::Custom { command, .. } => command
+                .keys(context)
+                .iter()
+                .map(|key| CatalogKeySequence {
+                    codes: &key.codes,
+                    label: &key.label,
+                })
+                .collect(),
         }
     }
 
     pub(crate) fn bulk_support(self) -> BulkSupport {
         match self {
             Self::BuiltIn(command) => command.bulk_support(),
-            Self::Custom { command, .. } => match command.requires {
+            Self::Custom { command, .. } => match command.config.requires {
                 CustomTuiCommandRequirement::None => BulkSupport::NotTaskScoped,
                 CustomTuiCommandRequirement::SelectedTask => BulkSupport::Focused,
             },
@@ -112,7 +146,7 @@ impl<'a> CatalogCommand<'a> {
         matches!(
             self,
             Self::Custom { command, .. }
-                if command.requires == CustomTuiCommandRequirement::SelectedTask
+                if command.config.requires == CustomTuiCommandRequirement::SelectedTask
         )
     }
 
@@ -135,9 +169,35 @@ impl<'a> CatalogCommand<'a> {
     }
 }
 
+impl RuntimeCustomCommand {
+    fn new(config: CustomTuiCommandConfig) -> Self {
+        let list_keys = parse_keys(&config.keys);
+        let detail_keys = parse_keys(config.detail_keys.as_ref().unwrap_or(&config.keys));
+        Self {
+            config,
+            list_keys,
+            detail_keys,
+        }
+    }
+
+    fn keys(&self, context: CommandContext) -> &[RuntimeKeySequence] {
+        match context {
+            CommandContext::Normal => &self.list_keys,
+            CommandContext::Detail => &self.detail_keys,
+        }
+    }
+}
+
+fn catalog_static_key(key: &'static KeySequence) -> CatalogKeySequence<'static> {
+    CatalogKeySequence {
+        codes: key.codes,
+        label: key.label,
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CommandCatalog {
-    custom: Vec<CustomTuiCommandConfig>,
+    custom: Vec<RuntimeCustomCommand>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -148,13 +208,23 @@ pub(crate) enum CatalogLookup<'a> {
     Missing,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CatalogShortcutLookup {
+    Found(CommandHandler),
+    Prefix,
+    Ambiguous(CommandHandler),
+    Missing,
+}
+
 impl CommandCatalog {
     pub(crate) fn new(custom: Vec<CustomTuiCommandConfig>) -> Self {
-        Self { custom }
+        Self {
+            custom: custom.into_iter().map(RuntimeCustomCommand::new).collect(),
+        }
     }
 
     pub(crate) fn custom(&self, id: usize) -> Option<&CustomTuiCommandConfig> {
-        self.custom.get(id)
+        self.custom.get(id).map(|command| &command.config)
     }
 
     pub(crate) fn commands(&self, context: CommandContext) -> Vec<CatalogCommand<'_>> {
@@ -228,6 +298,75 @@ impl CommandCatalog {
         }
     }
 
+    pub(crate) fn resolve_shortcut(
+        &self,
+        context: CommandContext,
+        input: &[KeyCode],
+    ) -> CatalogShortcutLookup {
+        if input.is_empty() {
+            return CatalogShortcutLookup::Missing;
+        }
+        let mut exact = Vec::new();
+        let mut prefix = false;
+        for command in self.commands(context) {
+            for key in command.keys(context) {
+                if key.codes == input {
+                    exact.push(command.handler());
+                } else if key.codes.starts_with(input) {
+                    prefix = true;
+                }
+            }
+        }
+        match (exact.as_slice(), prefix) {
+            ([handler], false) => CatalogShortcutLookup::Found(*handler),
+            ([handler], true) => CatalogShortcutLookup::Ambiguous(*handler),
+            ([handler, ..], _) => CatalogShortcutLookup::Ambiguous(*handler),
+            ([], true) => CatalogShortcutLookup::Prefix,
+            ([], false) => CatalogShortcutLookup::Missing,
+        }
+    }
+
+    pub(crate) fn custom_shortcut_starts_with(
+        &self,
+        context: CommandContext,
+        input: &[KeyCode],
+    ) -> bool {
+        self.custom.iter().any(|command| {
+            command
+                .keys(context)
+                .iter()
+                .any(|key| key.codes.starts_with(input))
+        })
+    }
+
+    pub(crate) fn prefix_hints(
+        &self,
+        context: CommandContext,
+        pending: &[String],
+    ) -> Vec<(CatalogCommand<'_>, String)> {
+        self.commands(context)
+            .into_iter()
+            .flat_map(|command| {
+                command.keys(context).into_iter().filter_map(move |key| {
+                    let labels = key
+                        .codes
+                        .iter()
+                        .map(|code| super::key_label(*code))
+                        .collect::<Vec<_>>();
+                    if labels.len() <= pending.len()
+                        || !labels
+                            .iter()
+                            .zip(pending.iter())
+                            .all(|(actual, expected)| actual == expected)
+                    {
+                        return None;
+                    }
+                    Some((command, labels[pending.len()..].join(" ")))
+                })
+            })
+            .collect()
+    }
+
     pub(crate) fn cycle_options(&self, context: CommandContext, input: &str) -> Vec<String> {
         self.matching(context, input, 0)
             .into_iter()
@@ -265,6 +404,126 @@ impl CommandCatalog {
         } else {
             super::CommandCompletion::Unchanged
         }
+    }
+}
+
+pub(crate) fn validate_custom_command_keys(commands: &[CustomTuiCommandConfig]) -> Result<()> {
+    for context in [CommandContext::Normal, CommandContext::Detail] {
+        let mut assigned = COMMANDS
+            .iter()
+            .filter(|command| command.is_available(context))
+            .flat_map(|command| {
+                command
+                    .keys(context)
+                    .iter()
+                    .map(move |key| (key.codes.to_vec(), format!(":{}", command.name)))
+            })
+            .collect::<Vec<_>>();
+        for command in commands {
+            let configured = match context {
+                CommandContext::Normal => &command.keys,
+                CommandContext::Detail => command.detail_keys.as_ref().unwrap_or(&command.keys),
+            };
+            for configured_key in configured {
+                let codes = parse_key_sequence(configured_key).map_err(|reason| {
+                    anyhow::anyhow!(
+                        "invalid keybinding {configured_key:?} for custom command {}: {reason}",
+                        command.name
+                    )
+                })?;
+                if let Some((_, owner)) = assigned.iter().find(|(existing, _)| *existing == codes) {
+                    bail!(
+                        "custom command {} keybinding {} conflicts with {} in {} view",
+                        command.name,
+                        shortcut_label(&codes),
+                        owner,
+                        match context {
+                            CommandContext::Normal => "list",
+                            CommandContext::Detail => "detail",
+                        }
+                    );
+                }
+                assigned.push((codes, format!(":{}", command.name)));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn parse_keys(keys: &[String]) -> Vec<RuntimeKeySequence> {
+    keys.iter()
+        .map(|key| {
+            let codes = parse_key_sequence(key).expect("validated custom command keybinding");
+            RuntimeKeySequence {
+                label: shortcut_label(&codes),
+                codes,
+            }
+        })
+        .collect()
+}
+
+fn parse_key_sequence(input: &str) -> std::result::Result<Vec<KeyCode>, String> {
+    let tokens = input.split_whitespace().collect::<Vec<_>>();
+    if tokens.is_empty() {
+        return Err("sequence must not be blank".to_string());
+    }
+    if tokens.len() > MAX_CUSTOM_KEY_SEQUENCE_LEN {
+        return Err(format!(
+            "sequence may contain at most {MAX_CUSTOM_KEY_SEQUENCE_LEN} keys"
+        ));
+    }
+    let mut codes = Vec::with_capacity(tokens.len());
+    for token in tokens {
+        let code = parse_key(token).ok_or_else(|| format!("unsupported key {token:?}"))?;
+        if code == KeyCode::Esc || code == KeyCode::Char('?') {
+            return Err(format!(
+                "{} is reserved by TUI input handling",
+                super::key_label(code)
+            ));
+        }
+        if !codes.is_empty()
+            && matches!(
+                code,
+                KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown
+            )
+        {
+            return Err(format!(
+                "{} is reserved while a key prefix is active",
+                super::key_label(code)
+            ));
+        }
+        codes.push(code);
+    }
+    Ok(codes)
+}
+
+fn parse_key(token: &str) -> Option<KeyCode> {
+    if token.chars().count() == 1 {
+        return token.chars().next().map(KeyCode::Char);
+    }
+    match token.to_ascii_lowercase().as_str() {
+        "space" => Some(KeyCode::Char(' ')),
+        "enter" | "return" => Some(KeyCode::Enter),
+        "esc" | "escape" => Some(KeyCode::Esc),
+        "backspace" => Some(KeyCode::Backspace),
+        "tab" => Some(KeyCode::Tab),
+        "shift+tab" | "backtab" => Some(KeyCode::BackTab),
+        "home" => Some(KeyCode::Home),
+        "end" => Some(KeyCode::End),
+        "up" => Some(KeyCode::Up),
+        "down" => Some(KeyCode::Down),
+        "left" => Some(KeyCode::Left),
+        "right" => Some(KeyCode::Right),
+        "pageup" | "page-up" => Some(KeyCode::PageUp),
+        "pagedown" | "page-down" => Some(KeyCode::PageDown),
+        "delete" | "del" => Some(KeyCode::Delete),
+        "insert" | "ins" => Some(KeyCode::Insert),
+        _ => token
+            .strip_prefix('F')
+            .or_else(|| token.strip_prefix('f'))
+            .and_then(|number| number.parse::<u8>().ok())
+            .filter(|number| (1..=12).contains(number))
+            .map(KeyCode::F),
     }
 }
 
@@ -329,10 +588,36 @@ mod tests {
             description: "dispatch selected task".to_string(),
             program: PathBuf::from("dispatch-task"),
             args: vec![],
+            keys: vec!["z d".to_string()],
+            detail_keys: None,
             requires: CustomTuiCommandRequirement::SelectedTask,
             execution: CustomTuiCommandExecution::Wait,
             on_success: CustomTuiCommandSuccess::Quit,
         }
+    }
+
+    #[test]
+    fn parses_case_sensitive_character_and_named_keys() {
+        assert_eq!(
+            parse_key_sequence("g D F12 Shift+Tab").unwrap(),
+            vec![
+                KeyCode::Char('g'),
+                KeyCode::Char('D'),
+                KeyCode::F(12),
+                KeyCode::BackTab,
+            ]
+        );
+        assert_eq!(
+            parse_key_sequence("Space").unwrap(),
+            vec![KeyCode::Char(' ')]
+        );
+    }
+
+    #[test]
+    fn rejects_keys_reserved_by_prefix_handling() {
+        assert!(parse_key_sequence("?").is_err());
+        assert!(parse_key_sequence("g Down").is_err());
+        assert!(parse_key_sequence("g PageUp").is_err());
     }
 
     #[test]
@@ -366,6 +651,47 @@ mod tests {
             catalog
                 .cycle_options(CommandContext::Normal, "custom-d")
                 .contains(&"dispatch".to_string())
+        );
+    }
+
+    #[test]
+    fn custom_keybindings_resolve_in_both_contexts() {
+        let catalog = CommandCatalog::new(vec![custom()]);
+        for context in [CommandContext::Normal, CommandContext::Detail] {
+            assert_eq!(
+                catalog.resolve_shortcut(context, &[KeyCode::Char('z')]),
+                CatalogShortcutLookup::Prefix
+            );
+            assert_eq!(
+                catalog.resolve_shortcut(context, &[KeyCode::Char('z'), KeyCode::Char('d')]),
+                CatalogShortcutLookup::Found(CommandHandler::Custom(0))
+            );
+        }
+    }
+
+    #[test]
+    fn detail_keybindings_override_inherited_keys() {
+        let mut command = custom();
+        command.detail_keys = Some(vec!["Z".to_string()]);
+        let catalog = CommandCatalog::new(vec![command]);
+
+        assert_eq!(
+            catalog.resolve_shortcut(
+                CommandContext::Normal,
+                &[KeyCode::Char('z'), KeyCode::Char('d')]
+            ),
+            CatalogShortcutLookup::Found(CommandHandler::Custom(0))
+        );
+        assert_eq!(
+            catalog.resolve_shortcut(CommandContext::Detail, &[KeyCode::Char('Z')]),
+            CatalogShortcutLookup::Found(CommandHandler::Custom(0))
+        );
+        assert_eq!(
+            catalog.resolve_shortcut(
+                CommandContext::Detail,
+                &[KeyCode::Char('z'), KeyCode::Char('d')]
+            ),
+            CatalogShortcutLookup::Missing
         );
     }
 }

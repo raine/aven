@@ -75,10 +75,12 @@ pub(crate) fn preferred_shortcut_label(
         .map(|key| key.label)
 }
 
+#[allow(dead_code)]
 pub(crate) fn resolve_shortcut(input: &[KeyCode]) -> ShortcutLookup {
     resolve_shortcut_for(CommandContext::Normal, input)
 }
 
+#[allow(dead_code)]
 pub(crate) fn resolve_shortcut_for(context: CommandContext, input: &[KeyCode]) -> ShortcutLookup {
     resolve_shortcut_iter(context.commands(), context, input)
 }
@@ -282,6 +284,7 @@ fn ranked_matches(context: CommandContext, input: &str) -> Vec<(u8, &'static Com
     matches
 }
 
+#[allow(dead_code)]
 pub(crate) fn prefix_hint_commands(
     context: CommandContext,
     pending: &[String],

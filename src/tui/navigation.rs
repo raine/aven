@@ -1,9 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::query::TaskListItem;
-use crate::tui::event::{
-    Action, CommandContext, ShortcutLookup, resolve_shortcut_for, shortcut_label,
-};
 use crate::tui::store::SidebarEntry;
 use crate::tui::ui::{DetailInlineImageContext, detail_scroll_cap_with_images};
 
@@ -98,21 +95,6 @@ pub(crate) fn detail_task_delta(key: KeyEvent) -> Option<isize> {
         KeyCode::Char(']') => Some(1),
         KeyCode::Char('[') => Some(-1),
         _ => None,
-    }
-}
-
-pub(crate) enum DetailShortcut {
-    Action(Action),
-    Prefix,
-    Missing(String),
-}
-
-pub(crate) fn detail_shortcut(sequence: &[KeyCode]) -> DetailShortcut {
-    match resolve_shortcut_for(CommandContext::Detail, sequence) {
-        ShortcutLookup::Found(action) => DetailShortcut::Action(action),
-        ShortcutLookup::Ambiguous(action) if sequence.len() > 1 => DetailShortcut::Action(action),
-        ShortcutLookup::Ambiguous(_) | ShortcutLookup::Prefix => DetailShortcut::Prefix,
-        ShortcutLookup::Missing => DetailShortcut::Missing(shortcut_label(sequence)),
     }
 }
 

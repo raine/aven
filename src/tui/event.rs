@@ -10,7 +10,8 @@ pub(crate) use self::catalog::{
     KeySequence,
 };
 pub(crate) use self::command_catalog::{
-    CatalogCommand, CatalogLookup, CommandCatalog, CommandHandler,
+    CatalogCommand, CatalogLookup, CatalogShortcutLookup, CommandCatalog, CommandHandler,
+    validate_custom_command_keys,
 };
 #[allow(unused_imports)]
 pub(crate) use self::lookup::{
@@ -661,6 +662,22 @@ mod tests {
                 "implemented detail command :{} is not handled",
                 command.name
             );
+        }
+    }
+
+    #[test]
+    fn custom_command_namespace_remains_free_of_built_in_bindings() {
+        for context in [CommandContext::Normal, CommandContext::Detail] {
+            for command in context.commands() {
+                for key in command.keys(context) {
+                    assert_ne!(
+                        key.codes.first(),
+                        Some(&KeyCode::Char('z')),
+                        ":{} occupies the custom command namespace",
+                        command.name
+                    );
+                }
+            }
         }
     }
 

@@ -94,7 +94,9 @@ tui:
     - name: dispatch
       aliases: [custom-dispatch]
       description: "Open the selected task in its tmux workspace"
-      program: "~/bin/dispatch.sh"
+      program: "~/bin/dispatch-task"
+      keys: [z d]
+      detail_keys: [z D]
       requires: selected-task
       execution: wait
       on_success: quit

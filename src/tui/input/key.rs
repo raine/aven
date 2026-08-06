@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::tui::event::Action;
+use crate::tui::event::{Action, CommandCatalog, CommandHandler};
 use crate::tui::shortcut_buffer::{NormalShortcutResolution, ShortcutBuffer};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,7 +80,7 @@ pub(crate) enum NormalKeyInput {
     Overlay(KeyEvent),
     CancelShortcut,
     CancelOverlay,
-    Action(Action),
+    Command(CommandHandler),
     Prefix,
     Missing(String),
 }
@@ -89,6 +89,7 @@ pub(crate) fn route_normal_key(
     shortcut: &ShortcutBuffer,
     code: KeyCode,
     overlay_captures: bool,
+    catalog: &CommandCatalog,
 ) -> NormalKeyTranslation {
     let mut shortcut = shortcut.clone();
     let input = if overlay_captures && (code != KeyCode::Esc || shortcut.is_empty()) {
@@ -100,8 +101,8 @@ pub(crate) fn route_normal_key(
             NormalKeyInput::CancelOverlay
         }
     } else {
-        match shortcut.resolve_normal(code) {
-            NormalShortcutResolution::Action(action) => NormalKeyInput::Action(action),
+        match shortcut.resolve_normal(code, catalog) {
+            NormalShortcutResolution::Command(handler) => NormalKeyInput::Command(handler),
             NormalShortcutResolution::Prefix => NormalKeyInput::Prefix,
             NormalShortcutResolution::Missing(label) => NormalKeyInput::Missing(label),
         }
@@ -194,9 +195,13 @@ mod tests {
     #[test]
     fn normal_shortcut_translation_returns_action_and_next_buffer() {
         let mut shortcut = ShortcutBuffer::default();
-        shortcut.resolve_normal(KeyCode::Char('g'));
-        let translation = route_normal_key(&shortcut, KeyCode::Char('g'), false);
-        assert_eq!(translation.input, NormalKeyInput::Action(Action::First));
+        let catalog = CommandCatalog::default();
+        shortcut.resolve_normal(KeyCode::Char('g'), &catalog);
+        let translation = route_normal_key(&shortcut, KeyCode::Char('g'), false, &catalog);
+        assert_eq!(
+            translation.input,
+            NormalKeyInput::Command(CommandHandler::BuiltIn(Action::First))
+        );
         assert!(translation.shortcut.is_empty());
     }
 

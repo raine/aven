@@ -1,18 +1,21 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::tui::event::{Action, ShortcutLookup, key_label, resolve_shortcut, shortcut_label};
-use crate::tui::navigation::{DetailShortcut, detail_shortcut};
+use crate::tui::event::{
+    CatalogShortcutLookup, CommandCatalog, CommandContext, CommandHandler, key_label,
+    shortcut_label,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum NormalShortcutResolution {
-    Action(Action),
+    Command(CommandHandler),
     Prefix,
     Missing(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DetailShortcutResolution {
-    Action(Action),
+    Action(crate::tui::event::Action),
+    Custom(usize),
     Prefix,
     MissingAfterPrefix(String),
     PassThrough,
@@ -42,27 +45,31 @@ impl ShortcutBuffer {
         self.codes.iter().map(|code| key_label(*code)).collect()
     }
 
-    pub(crate) fn resolve_normal(&mut self, code: KeyCode) -> NormalShortcutResolution {
+    pub(crate) fn resolve_normal(
+        &mut self,
+        code: KeyCode,
+        catalog: &CommandCatalog,
+    ) -> NormalShortcutResolution {
         let had_pending = !self.codes.is_empty();
         let sequence = self.with_code(code);
-        match resolve_shortcut(&sequence) {
-            ShortcutLookup::Found(action) => {
+        match catalog.resolve_shortcut(CommandContext::Normal, &sequence) {
+            CatalogShortcutLookup::Found(handler) => {
                 self.clear();
-                NormalShortcutResolution::Action(action)
+                NormalShortcutResolution::Command(handler)
             }
-            ShortcutLookup::Ambiguous(_) if !had_pending => {
+            CatalogShortcutLookup::Ambiguous(_) if !had_pending => {
                 self.codes = sequence;
                 NormalShortcutResolution::Prefix
             }
-            ShortcutLookup::Ambiguous(action) => {
+            CatalogShortcutLookup::Ambiguous(handler) => {
                 self.clear();
-                NormalShortcutResolution::Action(action)
+                NormalShortcutResolution::Command(handler)
             }
-            ShortcutLookup::Prefix => {
+            CatalogShortcutLookup::Prefix => {
                 self.codes = sequence;
                 NormalShortcutResolution::Prefix
             }
-            ShortcutLookup::Missing => {
+            CatalogShortcutLookup::Missing => {
                 let label = shortcut_label(&sequence);
                 self.clear();
                 NormalShortcutResolution::Missing(label)
@@ -70,27 +77,39 @@ impl ShortcutBuffer {
         }
     }
 
-    pub(crate) fn resolve_detail(&mut self, key: KeyEvent) -> DetailShortcutResolution {
+    pub(crate) fn resolve_detail(
+        &mut self,
+        key: KeyEvent,
+        catalog: &CommandCatalog,
+    ) -> DetailShortcutResolution {
         if !key.modifiers.is_empty() && key.modifiers != KeyModifiers::SHIFT {
             return DetailShortcutResolution::PassThrough;
         }
 
         let had_pending = !self.codes.is_empty();
         let sequence = self.with_code(key.code);
-        match detail_shortcut(&sequence) {
-            DetailShortcut::Action(action) => {
+        match catalog.resolve_shortcut(CommandContext::Detail, &sequence) {
+            CatalogShortcutLookup::Found(handler) => {
                 self.clear();
-                DetailShortcutResolution::Action(action)
+                detail_resolution(handler)
             }
-            DetailShortcut::Prefix => {
+            CatalogShortcutLookup::Ambiguous(_) if !had_pending => {
                 self.codes = sequence;
                 DetailShortcutResolution::Prefix
             }
-            DetailShortcut::Missing(label) if had_pending => {
+            CatalogShortcutLookup::Ambiguous(handler) => {
                 self.clear();
-                DetailShortcutResolution::MissingAfterPrefix(label)
+                detail_resolution(handler)
             }
-            DetailShortcut::Missing(_) => DetailShortcutResolution::PassThrough,
+            CatalogShortcutLookup::Prefix => {
+                self.codes = sequence;
+                DetailShortcutResolution::Prefix
+            }
+            CatalogShortcutLookup::Missing if had_pending => {
+                self.clear();
+                DetailShortcutResolution::MissingAfterPrefix(shortcut_label(&sequence))
+            }
+            CatalogShortcutLookup::Missing => DetailShortcutResolution::PassThrough,
         }
     }
 
@@ -172,6 +191,13 @@ impl ShortcutBuffer {
     }
 }
 
+fn detail_resolution(handler: CommandHandler) -> DetailShortcutResolution {
+    match handler {
+        CommandHandler::BuiltIn(action) => DetailShortcutResolution::Action(action),
+        CommandHandler::Custom(command_id) => DetailShortcutResolution::Custom(command_id),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,7 +206,7 @@ mod tests {
     fn normal_prefix_is_stored_and_rendered() {
         let mut buffer = ShortcutBuffer::default();
         assert_eq!(
-            buffer.resolve_normal(KeyCode::Char('t')),
+            buffer.resolve_normal(KeyCode::Char('t'), &CommandCatalog::default()),
             NormalShortcutResolution::Prefix
         );
         assert_eq!(buffer.labels(), vec!["t".to_string()]);
@@ -189,12 +215,13 @@ mod tests {
     #[test]
     fn normal_missing_clears_and_reports_full_label() {
         let mut buffer = ShortcutBuffer::default();
+        let catalog = CommandCatalog::default();
         assert_eq!(
-            buffer.resolve_normal(KeyCode::Char('t')),
+            buffer.resolve_normal(KeyCode::Char('t'), &catalog),
             NormalShortcutResolution::Prefix
         );
         assert_eq!(
-            buffer.resolve_normal(KeyCode::Char('z')),
+            buffer.resolve_normal(KeyCode::Char('z'), &catalog),
             NormalShortcutResolution::Missing("t z".to_string())
         );
         assert!(buffer.is_empty());
@@ -204,7 +231,10 @@ mod tests {
     fn detail_missing_without_prefix_passes_through() {
         let mut buffer = ShortcutBuffer::default();
         assert_eq!(
-            buffer.resolve_detail(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)),
+            buffer.resolve_detail(
+                KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+                &CommandCatalog::default()
+            ),
             DetailShortcutResolution::PassThrough
         );
     }
@@ -212,12 +242,19 @@ mod tests {
     #[test]
     fn detail_missing_after_prefix_clears_and_warns() {
         let mut buffer = ShortcutBuffer::default();
+        let catalog = CommandCatalog::default();
         assert_eq!(
-            buffer.resolve_detail(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE)),
+            buffer.resolve_detail(
+                KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
+                &catalog
+            ),
             DetailShortcutResolution::Prefix
         );
         assert_eq!(
-            buffer.resolve_detail(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE)),
+            buffer.resolve_detail(
+                KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+                &catalog
+            ),
             DetailShortcutResolution::MissingAfterPrefix("t z".to_string())
         );
         assert!(buffer.is_empty());

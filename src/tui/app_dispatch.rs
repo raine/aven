@@ -907,14 +907,18 @@ impl App {
     }
 
     pub(crate) async fn handle_normal_key(&mut self, code: KeyCode) -> Result<()> {
-        let translation =
-            route_normal_key(&self.pending_shortcut, code, self.overlay_captures_input());
+        let translation = route_normal_key(
+            &self.pending_shortcut,
+            code,
+            self.overlay_captures_input(),
+            &self.command_catalog,
+        );
         self.pending_shortcut = translation.shortcut;
         match translation.input {
             NormalKeyInput::Overlay(key) => self.handle_overlay_key(key).await?,
             NormalKeyInput::CancelShortcut => {}
             NormalKeyInput::CancelOverlay => self.execute(Action::CancelOverlay).await?,
-            NormalKeyInput::Action(action) => self.execute(action).await?,
+            NormalKeyInput::Command(handler) => self.execute_command_handler(handler).await?,
             NormalKeyInput::Prefix => {}
             NormalKeyInput::Missing(label) => {
                 self.set_warning(format!("invalid shortcut: {label}"));
@@ -1199,6 +1203,15 @@ impl App {
                     detail.set_focused_target(None);
                 }
                 self.show_detail(scroll);
+                return Ok(());
+            }
+            if self.pending_shortcut.is_empty()
+                && self.command_catalog.custom_shortcut_starts_with(
+                    crate::tui::event::CommandContext::Detail,
+                    &[key.code],
+                )
+                && self.handle_focused_detail_shortcut(key, scroll).await?
+            {
                 return Ok(());
             }
             if !self.pending_shortcut.is_empty()
@@ -1858,7 +1871,10 @@ impl App {
             return Ok(false);
         }
         let relationship = self.focused_relationship();
-        match self.pending_shortcut.resolve_detail(key) {
+        match self
+            .pending_shortcut
+            .resolve_detail(key, &self.command_catalog)
+        {
             DetailShortcutResolution::Action(Action::GoBack) => {
                 self.pending_shortcut_scroll = 0;
                 self.navigate_back_from_detail().await?;
@@ -1956,6 +1972,12 @@ impl App {
             }
             DetailShortcutResolution::Action(action) => {
                 self.execute_focused_detail_action(action, &target, scroll)
+                    .await?;
+                Ok(true)
+            }
+            DetailShortcutResolution::Custom(command_id) => {
+                self.pending_shortcut_scroll = 0;
+                self.execute_command_handler(CommandHandler::Custom(command_id))
                     .await?;
                 Ok(true)
             }
@@ -2077,7 +2099,10 @@ impl App {
             return Ok(None);
         }
 
-        match self.pending_shortcut.resolve_detail(key) {
+        match self
+            .pending_shortcut
+            .resolve_detail(key, &self.command_catalog)
+        {
             DetailShortcutResolution::Action(Action::GoBack) => {
                 self.pending_shortcut_scroll = 0;
                 self.navigate_back_from_detail().await?;
@@ -2114,6 +2139,15 @@ impl App {
                     detail.set_scroll(scroll);
                 }
                 self.execute(action).await?;
+                Ok(Some(self.overlay.take()))
+            }
+            DetailShortcutResolution::Custom(command_id) => {
+                self.pending_shortcut_scroll = 0;
+                if let Some(detail) = self.detail.state_mut() {
+                    detail.set_scroll(scroll);
+                }
+                self.execute_command_handler(CommandHandler::Custom(command_id))
+                    .await?;
                 Ok(Some(self.overlay.take()))
             }
             DetailShortcutResolution::Prefix => {
