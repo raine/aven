@@ -13,7 +13,10 @@ use crate::tui::event::{
     BulkSupport, CatalogCommand, CommandCatalog, CommandContext, CommandSpec,
     matching_commands_for_bulk, prefix_hint_commands,
 };
-use crate::tui::theme::{ACCENT, BG_ALT, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, SELECTED_BG};
+use crate::tui::theme::{
+    ACCENT, BG_ALT, BG_PANEL, BORDER, CUSTOM_COMMAND_NAME, CUSTOM_COMMAND_TAG, FG, FG_DIM, FG_MUTED,
+    SELECTED_BG,
+};
 
 struct HelpTopic {
     keys: &'static str,
@@ -556,7 +559,13 @@ fn command_palette_line(
         Span::styled(format!("{keys:<10}"), Style::new().fg(FG_MUTED)),
         Span::styled(
             format!(":{:<command_name_width$}", command.name()),
-            command_name_style(),
+            if command.is_custom() {
+                Style::new()
+                    .fg(CUSTOM_COMMAND_NAME)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                command_name_style()
+            },
         ),
     ];
     if let Some(annotation) = annotation {
@@ -572,11 +581,36 @@ fn command_palette_line(
         .iter()
         .map(|span| unicode_width::UnicodeWidthStr::width(span.content.as_ref()))
         .sum::<usize>();
+    let origin_tag = command.is_custom().then_some("custom");
+    let origin_right_padding = usize::from(origin_tag.is_some()) * 2;
+    let origin_width = origin_tag.map_or(0, |tag| {
+        unicode_width::UnicodeWidthStr::width(tag)
+            .saturating_add(2)
+            .saturating_add(origin_right_padding)
+    });
     let description = crate::tui::text::truncate_width(
         command.description(),
-        line_width.saturating_sub(used_width),
+        line_width.saturating_sub(used_width.saturating_add(origin_width)),
     );
     spans.push(Span::styled(description, Style::new().fg(FG_DIM)));
+    if let Some(tag) = origin_tag {
+        let used_width = spans
+            .iter()
+            .map(|span| unicode_width::UnicodeWidthStr::width(span.content.as_ref()))
+            .sum::<usize>();
+        let tag_width = unicode_width::UnicodeWidthStr::width(tag);
+        spans.push(Span::raw(
+            " ".repeat(
+                line_width.saturating_sub(
+                    used_width
+                        .saturating_add(tag_width)
+                        .saturating_add(origin_right_padding),
+                ),
+            ),
+        ));
+        spans.push(Span::styled(tag, Style::new().fg(CUSTOM_COMMAND_TAG)));
+        spans.push(Span::raw(" ".repeat(origin_right_padding)));
+    }
     if unavailable_reason.is_some() {
         for span in &mut spans {
             span.style = span.style.fg(FG_DIM);
@@ -870,6 +904,10 @@ fn prefix_hint_visible_rows(frame_height: u16, line_count: usize) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{
+        CustomTuiCommandConfig, CustomTuiCommandExecution, CustomTuiCommandRequirement,
+        CustomTuiCommandSuccess,
+    };
     use crate::tui::event::{
         COMMANDS, CommandContext, key_label, matching_commands_for_bulk,
     };
@@ -1546,6 +1584,43 @@ mod tests {
     fn help_overlay_shows_scroll_position() {
         let rendered = render_help_overlay(1);
         assert!(rendered.contains("2/"));
+    }
+
+    #[test]
+    fn custom_command_palette_rows_right_align_origin_tag() {
+        let catalog = CommandCatalog::new(vec![CustomTuiCommandConfig {
+            name: "dispatch".to_string(),
+            aliases: vec![],
+            description: "Open the selected task in tmux".to_string(),
+            program: "/bin/true".into(),
+            args: vec![],
+            requires: CustomTuiCommandRequirement::SelectedTask,
+            execution: CustomTuiCommandExecution::Wait,
+            on_success: CustomTuiCommandSuccess::Stay,
+        }]);
+        let command = catalog
+            .matching(CommandContext::Normal, "dispatch", 0)
+            .into_iter()
+            .next()
+            .unwrap();
+        let line = command_palette_line(command, CommandContext::Normal, 20, 80, false, None, None);
+        let name = line
+            .spans
+            .iter()
+            .find(|span| span.content.starts_with(":dispatch"))
+            .unwrap();
+        let tag = line
+            .spans
+            .iter()
+            .find(|span| span.content.as_ref() == "custom")
+            .unwrap();
+        let rendered = line.to_string();
+
+        assert!(rendered.contains(":dispatch"));
+        assert!(rendered.ends_with("custom  "));
+        assert_eq!(name.style.fg, Some(CUSTOM_COMMAND_NAME));
+        assert_eq!(tag.style.fg, Some(CUSTOM_COMMAND_TAG));
+        assert_eq!(unicode_width::UnicodeWidthStr::width(rendered.as_str()), 80);
     }
 
     #[test]

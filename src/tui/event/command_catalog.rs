@@ -129,6 +129,10 @@ impl<'a> CatalogCommand<'a> {
             Self::Custom { .. } => None,
         }
     }
+
+    pub(crate) fn is_custom(self) -> bool {
+        matches!(self, Self::Custom { .. })
+    }
 }
 
 #[derive(Debug, Clone, Default)]
