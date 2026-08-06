@@ -1,0 +1,359 @@
+---
+title: Custom TUI commands
+description: Add local programs to the command palette and receive task context as JSON.
+---
+
+Custom TUI commands connect Aven's command palette to local executables. A
+command can receive the selected task and marked tasks, launch work in another
+program, and optionally close Aven after successful completion.
+
+Common uses include:
+
+- Open a task-specific tmux window or session.
+- Start a coding agent with the selected task context.
+- Send task metadata to a local automation script.
+- Generate a task-specific workspace or report.
+
+Custom commands are local configuration. They are not synced between devices.
+
+## Configure a command
+
+Add commands under `tui.commands` in `config.yaml`:
+
+```yaml
+tui:
+  commands:
+    - name: dispatch
+      aliases: [custom-dispatch]
+      description: Open the selected task in its tmux workspace
+      program: ~/bin/dispatch.sh
+      args: []
+      requires: selected-task
+      execution: wait
+      on_success: quit
+```
+
+Open the command palette with `:`, then run `:dispatch` or
+`:custom-dispatch`. Configured commands carry a `custom` label in palette
+results.
+
+### Configuration fields
+
+| Field | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `name` | Yes | | Canonical palette name without the leading `:`. |
+| `aliases` | No | `[]` | Additional palette names for the same command. |
+| `description` | Yes | | Description shown in palette search results. |
+| `program` | Yes | | Executable path or program name. A leading `~` expands to the home directory. |
+| `args` | No | `[]` | Static arguments passed directly to the executable. |
+| `requires` | No | `selected-task` | Whether the command needs a selected task. Values are `selected-task` and `none`. |
+| `execution` | No | `wait` | Process supervision mode. Values are `wait` and `background`. |
+| `on_success` | No | `stay` | Aven behavior after success. Values are `stay` and `quit`. |
+
+Names and aliases may contain lowercase ASCII letters, digits, and hyphens.
+They must be unique across configured and built-in command names. Aven rejects
+blank descriptions, blank programs, duplicate names, and unsupported lifecycle
+combinations when it loads the configuration.
+
+Aven executes `program` directly and passes `args` without shell evaluation.
+Pipelines, redirection, variable expansion, and other shell behavior belong in
+an executable script.
+
+## Task selection
+
+The JSON input separates one primary task from marked tasks:
+
+- In a task list, the selected task is `selection.primary`.
+- In task detail, the displayed task is `selection.primary`.
+- Marked tasks appear in `selection.marked`.
+- `requires: selected-task` disables the command when no primary task exists.
+- `requires: none` permits a null primary task. An available selection is still
+  included when one exists.
+
+The primary task does not silently change when focus moves to a relationship
+inside task detail.
+
+## JSON input
+
+Aven writes one versioned JSON document to the program's standard input and
+then closes the pipe. Dynamic task data is never interpolated into arguments or
+a shell command.
+
+```json
+{
+  "version": 1,
+  "command": {
+    "name": "dispatch",
+    "invoked_as": "custom-dispatch"
+  },
+  "invocation": {
+    "cwd": "/Users/example/code/project",
+    "tui_pid": 12345
+  },
+  "workspace": {
+    "id": "0000000000000000",
+    "key": "default",
+    "name": "default"
+  },
+  "selection": {
+    "primary": {
+      "ref": "APP-7KQ9",
+      "task": {
+        "id": "7KQ9ABCDE1234567",
+        "title": "Review deployment",
+        "description": "Check the production rollout.",
+        "status": "active",
+        "priority": "high",
+        "source": "tui",
+        "available_at": null,
+        "due_on": "2026-08-10",
+        "deleted": false,
+        "is_epic": false,
+        "created_at": "2026-08-05T10:00:00Z",
+        "updated_at": "2026-08-06T09:30:00Z"
+      },
+      "project": {
+        "id": "0123456789ABCDEF",
+        "key": "app",
+        "prefix": "APP"
+      },
+      "labels": ["release"],
+      "notes": [],
+      "depends_on": [],
+      "blocks": [],
+      "epic_parent": null,
+      "epic_children": [],
+      "recurrence": null,
+      "attachments": []
+    },
+    "marked": []
+  }
+}
+```
+
+### Top-level fields
+
+| Field | Meaning |
+| --- | --- |
+| `version` | Input schema version. The documented schema uses version `1`. |
+| `command.name` | Canonical configured command name. |
+| `command.invoked_as` | Name or alias entered in the palette. |
+| `invocation.cwd` | Aven's working directory, also used as the child working directory. |
+| `invocation.tui_pid` | Process ID of the originating Aven TUI. |
+| `workspace` | Active workspace identity and display name. |
+| `selection.primary` | Complete primary task context or `null`. |
+| `selection.marked` | Complete contexts for marked tasks. |
+
+### Task context fields
+
+Each primary or marked task contains:
+
+- Display ref and durable task ID.
+- Title, description, status, priority, and immutable source.
+- Availability, due date, deletion, and epic state.
+- Creation and update timestamps.
+- Project ID, key, and display prefix.
+- Labels and notes.
+- Dependencies, dependents, epic parent, and epic children.
+- Recurrence identity, schedule, lifecycle, outcome, and projection state when
+  applicable.
+- Attachment metadata, including local availability, without attachment bytes.
+
+Relationship entries contain task ID, display ref, title, status, priority, and
+whether the relationship is unresolved. Attachment entries contain attachment
+ID, media type, byte size, optional filename and alt text, dimensions, creation
+time, and `has_blob`.
+
+The document contains task content needed by local automation. It excludes
+attachment bytes, attachment hashes, sync credentials, authentication tokens,
+and configuration secrets.
+
+## Read JSON in a script
+
+A shell script can read the complete document and use `jq` to select fields:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+input=$(mktemp)
+trap 'rm -f "$input"' EXIT
+cat > "$input"
+
+ref=$(jq -r '.selection.primary.ref' "$input")
+title=$(jq -r '.selection.primary.task.title' "$input")
+printf 'Dispatching %s: %s\n' "$ref" "$title"
+```
+
+Read standard input before starting a long-lived child. Aven closes the input
+pipe after writing the document.
+
+## Execution modes
+
+### Wait
+
+`execution: wait` starts the program asynchronously and keeps the TUI
+responsive while it runs. Aven:
+
+1. Writes the JSON input and closes standard input.
+2. Drains standard output and standard error.
+3. Waits for the process to exit.
+4. Treats exit code zero as success.
+5. Reports a nonzero exit code, signal termination, timeout, or input failure.
+
+A waiting command has a five-minute timeout. Standard output and standard error
+are each limited to 16 KiB. Output is drained rather than displayed. Exceeding
+either limit fails the command.
+
+Use `wait` when Aven must know whether the operation succeeded, especially with
+`on_success: quit`.
+
+### Background
+
+`execution: background` starts the program, sends its JSON input, and returns
+without waiting for process completion. Standard output and standard error are
+discarded. On Unix, the child runs in a separate process group.
+
+Background mode confirms launch and input delivery, not the final outcome of
+the program. It always leaves Aven running. Configuration with
+`execution: background` and `on_success: quit` is invalid.
+
+Use `background` for long-lived programs whose result does not control Aven's
+lifecycle.
+
+## Success policies
+
+| Policy | Behavior |
+| --- | --- |
+| `stay` | Show completion and leave Aven running. This is the default. |
+| `quit` | Perform orderly TUI shutdown after a waiting command exits successfully. |
+
+Failures always leave Aven running and show an error. A failed tmux switch,
+missing executable, nonzero exit, or timeout therefore cannot close the TUI.
+
+## Tmux dispatch example
+
+This command opens a task-specific tmux window and closes Aven only after tmux
+reports success:
+
+```yaml
+tui:
+  commands:
+    - name: dispatch
+      aliases: [custom-dispatch]
+      description: Open the selected task in a tmux window
+      program: ~/.config/aven/commands/dispatch.sh
+      requires: selected-task
+      execution: wait
+      on_success: quit
+```
+
+Create `~/.config/aven/commands/dispatch.sh`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+input=$(mktemp)
+trap 'rm -f "$input"' EXIT
+cat > "$input"
+
+ref=$(jq -r '.selection.primary.ref' "$input")
+title=$(jq -r '.selection.primary.task.title' "$input")
+window="task-${ref##*-}"
+
+tmux new-window \
+  -n "$window" \
+  "printf '%s\\n' $(printf '%q' "$title"); exec ${SHELL:-/bin/sh}"
+```
+
+Make it executable:
+
+```sh
+chmod 755 ~/.config/aven/commands/dispatch.sh
+```
+
+Run `:dispatch` from a task list or detail view. `tmux new-window` selects the
+new window and exits successfully. Aven then shuts down in its original pane.
+If tmux returns an error, Aven remains open and reports the failure.
+
+## Multiple commands and aliases
+
+Commands share one palette catalog with built-in actions:
+
+```yaml
+tui:
+  commands:
+    - name: dispatch
+      aliases: [agent, custom-dispatch]
+      description: Open the selected task in its agent workspace
+      program: ~/bin/dispatch-task
+      execution: wait
+      on_success: quit
+
+    - name: export-context
+      description: Save selected task context locally
+      program: ~/bin/export-task-context
+      requires: selected-task
+      execution: wait
+      on_success: stay
+
+    - name: dashboard
+      description: Open the local dashboard
+      program: ~/bin/open-dashboard
+      requires: none
+      execution: background
+```
+
+Custom names and aliases participate in the same exact matching, prefix
+matching, ambiguity handling, and tab completion as built-in commands.
+
+## Troubleshooting
+
+### The command does not appear
+
+- Confirm it is nested under `tui.commands`.
+- Confirm Aven reads the expected `config.yaml`. `AVEN_CONFIG_DIR` selects an
+  alternate configuration directory.
+- Restart the TUI after editing the configuration.
+- Check for invalid or duplicate names in the startup error.
+- When testing a development worktree, build and run that worktree's binary.
+  Shared Cargo target directories can otherwise contain a binary built from a
+  different branch.
+
+### The command is disabled
+
+A command using `requires: selected-task` needs a task selected in a list or
+displayed in detail. Use `requires: none` only when the program works without a
+primary task.
+
+### Aven remains open
+
+- `on_success: quit` applies only to `execution: wait`.
+- The program must exit with status zero.
+- A background command never requests TUI shutdown.
+
+### The command reports excessive output
+
+Waiting commands may write at most 16 KiB to each of standard output and
+standard error. Write verbose diagnostics to a file or log instead.
+
+### The program needs shell syntax
+
+Aven does not invoke a shell. Put shell syntax in an executable script and set
+`program` to that script. This also keeps task text in JSON rather than shell
+source.
+
+## Security
+
+Custom commands execute local programs with the same operating-system identity
+and inherited environment as Aven. Treat configured programs as trusted code.
+
+Keep these boundaries in scripts:
+
+- Parse stdin as JSON.
+- Quote every value used in shell commands.
+- Do not evaluate task titles, descriptions, notes, labels, or other task text.
+- Prefer direct argv calls over constructing shell command strings.
+- Store scripts in locations writable only by trusted users.
+- Avoid logging the complete JSON document when task content is sensitive.

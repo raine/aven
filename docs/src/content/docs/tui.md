@@ -18,7 +18,7 @@ tasks](/recurring-tasks/) for repeating work.
 
 <p class="media-caption">Queue groups open work across the active workspace. The preview below the list shows details for the selected task.</p>
 
-Use `?` for commands available in the current mode. Use `:` to search the complete command catalog by name or description.
+Use `?` for commands available in the current mode. Use `:` to search the complete command catalog by name or description. [Custom TUI commands](/custom-commands/) can add trusted local programs to this catalog.
 
 ![aven TUI command palette filtering view commands](/command-palette.webp)
 
@@ -310,6 +310,8 @@ The in-app command catalog is the authoritative shortcut reference:
 - [Concepts](/concepts/) defines the task model behind the interface.
 - [Work with agents](/agents/) connects coding agents and chat integrations to
   Aven.
+- [Custom TUI commands](/custom-commands/) documents local programs, JSON task
+  context, and command lifecycle settings.
 - [Command reference](/command-reference/) documents CLI equivalents and input
   grammar.
 - [Configuration](/configuration/) covers workspace routes, project mappings,

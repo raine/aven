@@ -1,6 +1,6 @@
 ---
 title: Configuration
-description: Configure storage, routing, sync, update checks, TUI columns, and agent intake.
+description: Configure storage, routing, sync, update checks, TUI columns and commands, and agent intake.
 ---
 
 aven works without a config file. Add one when defaults are not enough.
@@ -90,6 +90,14 @@ tui:
       statuses: [active]
     - name: "Done"
       statuses: [done, canceled]
+  commands:
+    - name: dispatch
+      aliases: [custom-dispatch]
+      description: "Open the selected task in its tmux workspace"
+      program: "~/bin/dispatch.sh"
+      requires: selected-task
+      execution: wait
+      on_success: quit
 
 agent:
   task_intake:
@@ -239,6 +247,16 @@ Lanes use workflow-specific ordering. Inbox shows the oldest tasks first, Backlo
 Customize lane names, order, and grouping by editing this list. Each fixed status must appear exactly once. Aven rejects empty columns, unknown statuses, duplicates, and incomplete mappings so the board cannot hide tasks accidentally.
 
 The first status in each lane is its movement destination. For example, moving a task into the default Done lane sets its status to `done`. Choosing the lane a task already occupies preserves its existing status, including `canceled` within Done.
+
+## Custom TUI commands
+
+`tui.commands` adds trusted local programs to the TUI command palette. Commands
+receive versioned task and workspace context as JSON on standard input and can
+stay in Aven or request orderly shutdown after successful completion.
+
+See [Custom TUI commands](/custom-commands/) for the full configuration schema,
+JSON input contract, execution modes, tmux example, troubleshooting, and
+security guidance.
 
 ## Agent task intake
 
