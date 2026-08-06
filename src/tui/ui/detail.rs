@@ -172,7 +172,7 @@ enum EpicChildState {
     Removed,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct DetailEpicChild {
     link: crate::query::TaskDependencyLink,
     state: EpicChildState,
@@ -229,22 +229,9 @@ struct DetailSelectableDocument {
     description: Vec<SelectableLine>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DetailRelationshipSnapshot {
-    section: DetailSection,
-    task_id: crate::ids::TaskId,
-    display_ref: String,
-    title: String,
-    status: String,
-    priority: String,
-    unresolved: bool,
-    removed: bool,
-}
-
 #[derive(Debug)]
 pub(crate) struct DetailDocument {
-    task_id: crate::ids::TaskId,
-    relationships: Vec<DetailRelationshipSnapshot>,
+    source: TaskListItem,
     epic_children: Vec<DetailEpicChild>,
     layout: DetailContentLayout,
     scroll: u16,
@@ -315,45 +302,6 @@ fn detail_epic_children(
     children
 }
 
-fn detail_relationship_snapshots(
-    item: &TaskListItem,
-    epic_children: &[DetailEpicChild],
-) -> Vec<DetailRelationshipSnapshot> {
-    let links = item
-        .epic_parent
-        .iter()
-        .map(|link| (DetailSection::EpicParent, link, false))
-        .chain(epic_children.iter().map(|child| {
-            (
-                DetailSection::EpicChildren,
-                &child.link,
-                child.state == EpicChildState::Removed,
-            )
-        }))
-        .chain(
-            item.depends_on
-                .iter()
-                .map(|link| (DetailSection::DependsOn, link, false)),
-        )
-        .chain(
-            item.blocks
-                .iter()
-                .map(|link| (DetailSection::Blocks, link, false)),
-        );
-    links
-        .map(|(section, link, removed)| DetailRelationshipSnapshot {
-            section,
-            task_id: link.task_id.clone(),
-            display_ref: link.display_ref.clone(),
-            title: link.title.clone(),
-            status: link.status.clone(),
-            priority: link.priority.clone(),
-            unresolved: link.unresolved,
-            removed,
-        })
-        .collect()
-}
-
 impl DetailDocument {
     pub(crate) fn build(item: &TaskListItem, context: &DetailRenderContext<'_>) -> Self {
         let layout = context.content_layout();
@@ -388,8 +336,7 @@ impl DetailDocument {
             &body,
         );
         Self {
-            task_id: item.task.id.clone(),
-            relationships: detail_relationship_snapshots(item, &epic_children),
+            source: item.clone(),
             epic_children,
             layout,
             scroll: context.scroll,
@@ -457,12 +404,8 @@ impl DetailDocument {
         item: &TaskListItem,
         context: &DetailRenderContext<'_>,
     ) -> bool {
-        self.task_id == item.task.id
-            && self.relationships
-                == detail_relationship_snapshots(
-                    item,
-                    &detail_epic_children(item, context.removed_epic_child),
-                )
+        self.source == *item
+            && self.epic_children == detail_epic_children(item, context.removed_epic_child)
             && self.layout == context.content_layout()
             && self.scroll == context.scroll
             && self.expanded_sections == *context.expanded_sections
@@ -739,7 +682,7 @@ impl DetailDocument {
     }
 
     pub(crate) fn selected_text(&self, selection: &DetailTextSelection) -> Option<String> {
-        if selection.task_id != self.task_id {
+        if selection.task_id != self.source.task.id {
             return None;
         }
         self.selectable
@@ -4833,6 +4776,14 @@ mod tests {
         };
         let document = DetailDocument::build(&item, &base);
         assert!(document.matches_frame(&item, &base));
+
+        let mut changed_item = item.clone();
+        changed_item.task.status = crate::choices::TaskStatus::Done;
+        assert!(!document.matches_frame(&changed_item, &base));
+
+        changed_item = item.clone();
+        changed_item.notes[0].body = "Updated note".to_string();
+        assert!(!document.matches_frame(&changed_item, &base));
 
         let epic = detail_test_epic_item();
         let epic_document = DetailDocument::build(&epic, &base);

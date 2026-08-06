@@ -921,25 +921,41 @@ async fn recalling_filtered_status_change_returns_from_detail_to_queue_anchor() 
 }
 
 #[tokio::test]
-async fn detail_status_picker_done_keeps_same_task() {
+async fn detail_status_picker_done_refreshes_content_and_metadata() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("Next target")).await;
     let selected = create_and_select_task(&mut app, test_task_draft("Done target")).await;
     let selected_task_id = app.store.tasks[selected].task.id.clone();
     app.show_detail(4);
+    render_app_buffer(&mut app, 120, 40);
 
-    app.dispatch_key(key(KeyCode::Char('s')), (80, 24).into())
+    app.dispatch_key(key(KeyCode::Char('s')), (120, 40).into())
         .await
         .unwrap();
-    app.dispatch_key(key(KeyCode::Char('d')), (80, 24).into())
+    app.dispatch_key(key(KeyCode::Char('d')), (120, 40).into())
         .await
         .unwrap();
 
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
+    assert_eq!(app.detail.state().unwrap().scroll(), 4);
     let selected = app.list.selected_task().unwrap();
     assert_eq!(app.store.tasks[selected].task.id, selected_task_id);
     assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Done);
+
+    let buffer = render_app_buffer(&mut app, 120, 40);
+    let content = (2..12)
+        .flat_map(|row| (0..86).map(move |column| (column, row)))
+        .map(|(column, row)| buffer[(column, row)].symbol())
+        .collect::<String>();
+    let metadata = (2..12)
+        .flat_map(|row| (86..120).map(move |column| (column, row)))
+        .map(|(column, row)| buffer[(column, row)].symbol())
+        .collect::<String>();
+    assert!(content.contains("done"));
+    assert!(!content.contains("inbox"));
+    assert!(metadata.contains("done"));
+    assert!(!metadata.contains("inbox"));
 }
 
 #[tokio::test]

@@ -259,14 +259,14 @@ pub struct RecurrenceReconciliation {
     pub incomplete: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecurrenceTaskGroup {
     pub series_id: RecurrenceSeriesId,
     pub series_ref: String,
     pub counts: RecurrenceCounts,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskListItem {
     pub task: Task,
     pub display_ref: String,
@@ -285,7 +285,7 @@ pub struct TaskListItem {
     pub recurrence_group: Option<RecurrenceTaskGroup>,
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct AttachmentMetadata {
     pub attachment_id: String,
     pub task_id: String,
@@ -305,14 +305,14 @@ pub struct AttachmentMetadata {
     pub has_blob: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskNote {
     pub id: String,
     pub body: String,
     pub created_at: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskDependencyLink {
     pub task_id: TaskId,
     pub display_ref: String,

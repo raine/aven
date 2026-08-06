@@ -7,7 +7,7 @@ use crate::recurrence::{
     RecurrenceSchedule, RecurrenceSeriesId, RecurrenceSeriesState, TimeZoneId,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Task {
     pub id: TaskId,
     pub workspace_id: WorkspaceId,
