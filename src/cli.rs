@@ -1255,6 +1255,30 @@ pub(crate) struct SyncArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn top_level_help_sections_match_visible_commands() {
+        let command = Cli::command();
+        let visible = command
+            .get_subcommands()
+            .filter(|subcommand| !subcommand.is_hide_set())
+            .map(clap::Command::get_name)
+            .collect::<BTreeSet<_>>();
+        let listed = HELP_SECTIONS
+            .iter()
+            .flat_map(|section| section.commands.iter().copied())
+            .collect::<BTreeSet<_>>();
+        let missing = visible.difference(&listed).copied().collect::<Vec<_>>();
+        let invalid = listed.difference(&visible).copied().collect::<Vec<_>>();
+
+        assert!(
+            missing.is_empty() && invalid.is_empty(),
+            "top-level HELP_SECTIONS drifted\nmissing visible commands: {}\nlisted names without visible commands: {}",
+            missing.join(", "),
+            invalid.join(", ")
+        );
+    }
 
     #[test]
     fn visible_subcommands_have_help_descriptions() {
