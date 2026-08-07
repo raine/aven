@@ -295,7 +295,7 @@ impl App {
             last_series_click: None,
             series_detail_return: None,
             inline_images: InlineImageSurface::new(),
-            inline_image_backend: active_backend_from_env(AppConfig::default().local.inline_images),
+            inline_image_backend: active_backend_from_env(config.local.inline_images),
             preview_controller: crate::tui::preview_controller::PreviewController::new(),
             attachment_controller: crate::tui::attachment_controller::AttachmentController::new(),
             #[cfg(test)]
