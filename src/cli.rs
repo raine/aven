@@ -1016,7 +1016,6 @@ pub(crate) enum ConflictSubcommand {
     Resolve {
         task_ref: String,
         field: String,
-        #[arg(long)]
         #[arg(long = "use")]
         use_variant: Option<String>,
         #[arg(long)]
@@ -1321,6 +1320,51 @@ mod tests {
         assert!(matches!(edit.command, Commands::Edit(_)));
         assert!(Cli::try_parse_from(["aven", "edit"]).is_err());
         assert!(Cli::try_parse_from(["aven", "update", "APP-1234"]).is_err());
+    }
+
+    #[test]
+    fn conflict_resolve_parses_use_variant() {
+        let parsed = Cli::try_parse_from([
+            "aven", "conflict", "resolve", "APP-1234", "title", "--use", "remote",
+        ])
+        .unwrap();
+        let Commands::Conflict(ConflictCommand {
+            command:
+                ConflictSubcommand::Resolve {
+                    task_ref,
+                    field,
+                    use_variant,
+                    value,
+                    value_file,
+                    value_stdin,
+                },
+        }) = parsed.command
+        else {
+            panic!("expected conflict resolve command");
+        };
+        assert_eq!(task_ref, "APP-1234");
+        assert_eq!(field, "title");
+        assert_eq!(use_variant.as_deref(), Some("remote"));
+        assert_eq!(value, None);
+        assert_eq!(value_file, None);
+        assert!(!value_stdin);
+
+        assert!(
+            Cli::try_parse_from([
+                "aven",
+                "conflict",
+                "resolve",
+                "APP-1234",
+                "title",
+                "--use-variant",
+                "remote",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["aven", "conflict", "resolve", "APP-1234", "title", "--use",])
+                .is_err()
+        );
     }
 
     #[test]
