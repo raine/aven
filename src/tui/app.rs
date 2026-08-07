@@ -6,6 +6,7 @@ use aven_core::db::Database;
 use crate::config::AppConfig;
 use crate::tui::app_intake::IntakeController;
 use crate::tui::authoring::AuthoringState;
+use crate::tui::detail_session::{DetailSnapshot, DetailState};
 use crate::tui::event::SINGLE_TASK_COPY_ACTIONS;
 use crate::tui::gist_controller::GistController;
 use crate::tui::inline_image_surface::InlineImageSurface;
@@ -29,6 +30,37 @@ pub(super) enum TaskCopyKind {
     Title,
     Description,
     TitleAndDescription,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DetailHistoryDirection {
+    Back,
+    Forward,
+}
+
+impl DetailHistoryDirection {
+    fn pop(self, detail: &mut DetailState) -> Option<DetailSnapshot> {
+        match self {
+            Self::Back => detail.pop_history(),
+            Self::Forward => detail.pop_forward_history(),
+        }
+    }
+
+    fn push_current(self, detail: &mut DetailState, snapshot: DetailSnapshot) {
+        match self {
+            Self::Back => detail.push_forward_history(snapshot),
+            Self::Forward => detail.push_back_history(snapshot),
+        }
+    }
+
+    fn unavailable_message(self, found_target: bool) -> &'static str {
+        match (self, found_target) {
+            (Self::Back, true) => "some previous linked tasks are unavailable",
+            (Self::Back, false) => "previous linked tasks are unavailable",
+            (Self::Forward, true) => "some next linked tasks are unavailable",
+            (Self::Forward, false) => "next linked tasks are unavailable",
+        }
+    }
 }
 
 pub(super) const SEARCH_PREVIEW_LIMIT: usize = 8;
@@ -418,59 +450,16 @@ impl App {
     }
 
     pub(super) async fn go_back_in_detail(&mut self) -> Result<bool> {
-        let current = self
-            .store
-            .selected_task(self.list.selected_task())
-            .and_then(|item| {
-                self.detail.state().map(|detail| {
-                    detail.snapshot(item.task.id.clone(), self.store.view_state.clone())
-                })
-            });
-        let mut skipped = false;
-        while let Some(previous) = self
-            .detail
-            .state_mut()
-            .and_then(|detail| detail.pop_history())
-        {
-            let Some(item) = self.store.load_task_item(&previous.task_id).await? else {
-                skipped = true;
-                continue;
-            };
-            self.store.view_state = previous.view_state.clone();
-            let selected = self.store.refresh(Some(&previous.task_id)).await?;
-            let index = if let Some(index) = selected.filter(|&index| {
-                self.store
-                    .tasks
-                    .get(index)
-                    .is_some_and(|item| item.task.id == previous.task_id)
-            }) {
-                index
-            } else {
-                self.store.show_exact_task(item);
-                0
-            };
-            self.list.select_task(Some(index));
-            self.list.focus_tasks();
-            if let Some(detail) = self.detail.state_mut() {
-                if let Some(current) = current.clone() {
-                    detail.push_forward_history(current);
-                }
-                detail.restore_snapshot(&previous);
-                detail.select_sibling_task(&previous.task_id);
-            }
-            self.show_detail(previous.scroll);
-            if skipped {
-                self.set_warning("some previous linked tasks are unavailable");
-            }
-            return Ok(true);
-        }
-        if skipped {
-            self.set_warning("previous linked tasks are unavailable");
-        }
-        Ok(false)
+        self.navigate_detail_history(DetailHistoryDirection::Back)
+            .await
     }
 
     pub(super) async fn go_forward_in_detail(&mut self) -> Result<bool> {
+        self.navigate_detail_history(DetailHistoryDirection::Forward)
+            .await
+    }
+
+    async fn navigate_detail_history(&mut self, direction: DetailHistoryDirection) -> Result<bool> {
         let current = self
             .store
             .selected_task(self.list.selected_task())
@@ -480,22 +469,22 @@ impl App {
                 })
             });
         let mut skipped = false;
-        while let Some(next) = self
+        while let Some(target) = self
             .detail
             .state_mut()
-            .and_then(|detail| detail.pop_forward_history())
+            .and_then(|detail| direction.pop(detail))
         {
-            let Some(item) = self.store.load_task_item(&next.task_id).await? else {
+            let Some(item) = self.store.load_task_item(&target.task_id).await? else {
                 skipped = true;
                 continue;
             };
-            self.store.view_state = next.view_state.clone();
-            let selected = self.store.refresh(Some(&next.task_id)).await?;
+            self.store.view_state = target.view_state.clone();
+            let selected = self.store.refresh(Some(&target.task_id)).await?;
             let index = if let Some(index) = selected.filter(|&index| {
                 self.store
                     .tasks
                     .get(index)
-                    .is_some_and(|item| item.task.id == next.task_id)
+                    .is_some_and(|item| item.task.id == target.task_id)
             }) {
                 index
             } else {
@@ -506,19 +495,19 @@ impl App {
             self.list.focus_tasks();
             if let Some(detail) = self.detail.state_mut() {
                 if let Some(current) = current.clone() {
-                    detail.push_back_history(current);
+                    direction.push_current(detail, current);
                 }
-                detail.restore_snapshot(&next);
-                detail.select_sibling_task(&next.task_id);
+                detail.restore_snapshot(&target);
+                detail.select_sibling_task(&target.task_id);
             }
-            self.show_detail(next.scroll);
+            self.show_detail(target.scroll);
             if skipped {
-                self.set_warning("some next linked tasks are unavailable");
+                self.set_warning(direction.unavailable_message(true));
             }
             return Ok(true);
         }
         if skipped {
-            self.set_warning("next linked tasks are unavailable");
+            self.set_warning(direction.unavailable_message(false));
         }
         Ok(false)
     }
