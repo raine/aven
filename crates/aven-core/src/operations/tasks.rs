@@ -749,7 +749,7 @@ async fn create_task_with_attachments_and_epic(
                 .await?;
         }
         let mut attachment_change_ids = Vec::with_capacity(prepared.len());
-        let attachment_base = chrono::DateTime::parse_from_rfc3339(&now())?.to_utc();
+        let attachment_base = crate::ids::now_utc();
         for (index, attachment) in prepared.iter().enumerate() {
             let created_at = (attachment_base
                 + chrono::TimeDelta::microseconds(i64::try_from(index)?))

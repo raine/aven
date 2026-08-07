@@ -407,9 +407,7 @@ impl Store {
         series_id: &RecurrenceSeriesId,
     ) -> Result<RecurrenceStateResult, Error> {
         let workspace = self.workspace(workspace_id).await?;
-        let at = chrono::DateTime::parse_from_rfc3339(&crate::ids::now())
-            .map_err(|error| Error::from_internal(error.into()))?
-            .with_timezone(&chrono::Utc);
+        let at = crate::ids::now_utc();
         self.database
             .resume_recurrence_series(&workspace, series_id, at)
             .await

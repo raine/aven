@@ -13,7 +13,7 @@ use crate::db::{
     recurrence_series_from_row, set_entity_field_version, set_field_version,
 };
 use crate::error::CoreError;
-use crate::ids::{TaskId, WorkspaceId, new_id, now};
+use crate::ids::{TaskId, WorkspaceId, new_id, now, now_utc};
 use crate::labels::{resolve_labels_in_workspace, resolve_or_create_labels_in_workspace};
 use crate::mutation::apply_field_value_in_workspace;
 use crate::projects::resolve_or_create_project_in_workspace;
@@ -2231,5 +2231,5 @@ fn format_utc(value: DateTime<Utc>) -> String {
 }
 
 fn utc_now() -> Result<DateTime<Utc>> {
-    Ok(DateTime::parse_from_rfc3339(&now())?.with_timezone(&Utc))
+    Ok(now_utc())
 }

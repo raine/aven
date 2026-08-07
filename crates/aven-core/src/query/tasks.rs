@@ -303,8 +303,7 @@ async fn query_task_items(
     )
     .await?;
     if !expand_recurring {
-        let at =
-            chrono::DateTime::parse_from_rfc3339(&crate::ids::now())?.with_timezone(&chrono::Utc);
+        let at = crate::ids::now_utc();
         items = super::recurrence::group_terminal_task_items(conn, workspace_id, items, at).await?;
     }
     if mode == TaskQueryMode::RankedQueue {

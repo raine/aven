@@ -1,7 +1,7 @@
 use std::fmt;
-use std::process::Command;
 use std::str::FromStr;
 
+use chrono::{DateTime, SecondsFormat, Timelike, Utc};
 use getrandom::fill as fill_random;
 use serde::{Deserialize, Deserializer, Serialize};
 use sqlx::database::Database;
@@ -283,17 +283,14 @@ impl<'row> Decode<'row, Sqlite> for TaskId {
     }
 }
 
+pub fn now_utc() -> DateTime<Utc> {
+    Utc::now()
+        .with_nanosecond(0)
+        .expect("UTC timestamps support second precision")
+}
+
 pub fn now() -> String {
-    let output = Command::new("date")
-        .arg("-u")
-        .arg("+%Y-%m-%dT%H:%M:%SZ")
-        .output();
-    output
-        .ok()
-        .and_then(|out| String::from_utf8(out.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
+    now_utc().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 pub fn new_id() -> String {
@@ -319,6 +316,22 @@ pub fn encode_crockford(bytes: &[u8; 10]) -> String {
 mod tests {
     use super::*;
     use crate::test_support::test_conn;
+
+    #[test]
+    fn timestamps_are_current_utc_values_at_second_precision() {
+        let before = Utc::now() - chrono::Duration::seconds(1);
+        let typed = now_utc();
+        let timestamp = now();
+        let after = Utc::now() + chrono::Duration::seconds(1);
+        let parsed = DateTime::parse_from_rfc3339(&timestamp).unwrap().to_utc();
+
+        assert_eq!(typed.nanosecond(), 0);
+        assert!(typed >= before && typed <= after);
+        assert_eq!(timestamp.len(), 20);
+        assert_eq!(timestamp, parsed.to_rfc3339_opts(SecondsFormat::Secs, true));
+        assert_eq!(parsed.nanosecond(), 0);
+        assert!(parsed >= before && parsed <= after);
+    }
 
     #[test]
     fn workspace_ids_validate_domain_id_shape() {

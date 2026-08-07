@@ -213,8 +213,7 @@ async fn search_task_item_set_with_presentation(
         })
         .collect::<HashMap<_, _>>();
     let grouped = if group_recurring {
-        let at =
-            chrono::DateTime::parse_from_rfc3339(&crate::ids::now())?.with_timezone(&chrono::Utc);
+        let at = crate::ids::now_utc();
         super::recurrence::group_search_task_items(
             conn,
             workspace_id,

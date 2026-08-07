@@ -120,7 +120,7 @@ impl Database {
         &self,
         workspace_id: &WorkspaceId,
     ) -> Result<RecurrenceReconciliation> {
-        let at = DateTime::parse_from_rfc3339(&crate::ids::now())?.with_timezone(&Utc);
+        let at = crate::ids::now_utc();
         self.reconcile_recurrence_reports_at(workspace_id, at).await
     }
 
@@ -154,7 +154,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         query: RecurrenceSeriesListQuery,
     ) -> Result<Vec<RecurrenceSeriesListItem>> {
-        let at = DateTime::parse_from_rfc3339(&crate::ids::now())?.with_timezone(&Utc);
+        let at = crate::ids::now_utc();
         self.list_recurrence_series_view_at(workspace_id, at, query)
             .await
     }
@@ -215,7 +215,7 @@ impl Database {
         &self,
         workspace_id: &WorkspaceId,
     ) -> Result<Vec<RecurrenceSeriesSummary>> {
-        let at = DateTime::parse_from_rfc3339(&crate::ids::now())?.with_timezone(&Utc);
+        let at = crate::ids::now_utc();
         self.list_recurrence_series_at(workspace_id, at).await
     }
 
@@ -224,7 +224,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         series_id: &RecurrenceSeriesId,
     ) -> Result<RecurrenceSeriesDetail> {
-        let at = DateTime::parse_from_rfc3339(&crate::ids::now())?.with_timezone(&Utc);
+        let at = crate::ids::now_utc();
         self.recurrence_series_detail_at(workspace_id, series_id, at)
             .await
     }
@@ -238,7 +238,7 @@ impl Database {
         workspace_id: &WorkspaceId,
         series_id: &RecurrenceSeriesId,
     ) -> Result<RecurrenceSeriesDetail> {
-        let at = DateTime::parse_from_rfc3339(&crate::ids::now())?.with_timezone(&Utc);
+        let at = crate::ids::now_utc();
         self.recurrence_series_detail_at_from_current_projection(workspace_id, series_id, at)
             .await
     }
@@ -250,7 +250,7 @@ impl Database {
         offset: usize,
         limit: usize,
     ) -> Result<RecurrenceHistoryPage> {
-        let at = DateTime::parse_from_rfc3339(&crate::ids::now())?.with_timezone(&Utc);
+        let at = crate::ids::now_utc();
         self.recurrence_history_at(workspace_id, series_id, at, offset, limit)
             .await
     }

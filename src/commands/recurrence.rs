@@ -10,7 +10,7 @@ use aven_core::recurrence::{
     WeekdaySet,
 };
 use aven_core::types::RecurrenceSeries;
-use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, Utc};
+use chrono::{Datelike, NaiveDate, NaiveTime, Utc};
 use serde::Serialize;
 
 use crate::cli::{
@@ -351,7 +351,7 @@ async fn resume(database: &Database, workspace: &Workspace, args: RecurRefArgs) 
         .resolve_recurrence_ref(workspace, &args.series_ref)
         .await?;
     let outcome = database
-        .resume_recurrence_series(workspace, &series.id, utc_now()?)
+        .resume_recurrence_series(workspace, &series.id, aven_core::ids::now_utc())
         .await?;
     print_state_outcome(
         database,
@@ -400,10 +400,6 @@ async fn print_state_outcome(
             .unwrap_or("")
     );
     Ok(())
-}
-
-fn utc_now() -> Result<DateTime<Utc>> {
-    Ok(DateTime::parse_from_rfc3339(&aven_core::ids::now())?.with_timezone(&Utc))
 }
 
 fn print_series_summary(item: &RecurrenceSeriesSummary) {
