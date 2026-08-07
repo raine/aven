@@ -3,6 +3,13 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.25 (2026-08-07)
+
+- Fix: Sorting by updated time shows the most recently updated tasks first by
+  default.
+- Fix: Task details stay in sync after changes, including status and notes,
+  while preserving the scroll position.
+
 ## v0.1.24 (2026-08-05)
 
 - New: Press `Ctrl-g` in the task composer to create a task and immediately
