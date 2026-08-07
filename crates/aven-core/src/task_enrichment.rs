@@ -23,6 +23,7 @@ pub struct TaskEnrichment {
     pub depends_on_by_task: HashMap<TaskId, Vec<TaskDependencyLink>>,
     pub blocks_by_task: HashMap<TaskId, Vec<TaskDependencyLink>>,
     pub epic_children_by_task: HashMap<TaskId, Vec<TaskDependencyLink>>,
+    pub epic_child_dependencies_by_task: HashMap<TaskId, Vec<TaskDependencyLink>>,
     pub epic_parent_by_task: HashMap<TaskId, TaskDependencyLink>,
     pub epic_rollups_by_task: HashMap<TaskId, EpicRollup>,
     pub recurrence_by_task: HashMap<TaskId, TaskRecurrenceSummary>,
@@ -61,6 +62,20 @@ async fn load_task_enrichment_with_detail(
     } else {
         (HashMap::new(), HashMap::new())
     };
+    let epic_children_by_task =
+        epic_children_for_tasks(conn, workspace_id, task_ids, display_refs).await?;
+    let epic_child_dependencies_by_task = if include_detail {
+        let child_ids = epic_children_by_task
+            .values()
+            .flatten()
+            .map(|child| child.task_id.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        dependency_links_for_tasks(conn, workspace_id, &child_ids, false, display_refs).await?
+    } else {
+        HashMap::new()
+    };
     Ok(TaskEnrichment {
         labels_by_task: labels_for_tasks(conn, workspace_id, task_ids).await?,
         notes_by_task,
@@ -89,8 +104,8 @@ async fn load_task_enrichment_with_detail(
             display_refs,
         )
         .await?,
-        epic_children_by_task: epic_children_for_tasks(conn, workspace_id, task_ids, display_refs)
-            .await?,
+        epic_children_by_task,
+        epic_child_dependencies_by_task,
         epic_parent_by_task: epic_parents_for_tasks(conn, workspace_id, task_ids, display_refs)
             .await?,
         epic_rollups_by_task: epic_rollups_for_tasks(conn, workspace_id, task_ids).await?,

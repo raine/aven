@@ -828,7 +828,7 @@ async fn epics_filter_lists_explicit_epics_with_children() {
         "005",
     )
     .await;
-    // An open task with no dependents (should NOT match)
+    // A standalone open blocker
     insert_test_task(
         &mut conn,
         "EP1C000000000006",
@@ -850,6 +850,15 @@ async fn epics_filter_lists_explicit_epics_with_children() {
     sqlx::query(
         "INSERT INTO task_epic_links(workspace_id, child_task_id, epic_task_id, created_at)
          VALUES (?, 'EP1C000000000002', 'EP1C000000000001', '002')",
+    )
+    .bind(&workspace_id)
+    .execute(conn.as_mut())
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO task_dependencies(workspace_id, task_id, depends_on_task_id, created_at)
+         VALUES (?, 'EP1C000000000002', 'EP1C000000000006', '006')",
     )
     .bind(&workspace_id)
     .execute(conn.as_mut())
@@ -905,6 +914,14 @@ async fn epics_filter_lists_explicit_epics_with_children() {
         "APP-EP1C000000000002"
     );
     assert!(items[0].epic_children[0].unresolved);
+    let child_dependencies = items[0]
+        .epic_child_dependencies
+        .get(&items[0].epic_children[0].task_id)
+        .expect("child dependency read model");
+    assert_eq!(child_dependencies.len(), 1);
+    assert_eq!(child_dependencies[0].task_id.as_str(), "EP1C000000000006");
+    assert_eq!(child_dependencies[0].display_ref, "APP-EP1C000000000006");
+    assert!(child_dependencies[0].unresolved);
 }
 
 #[tokio::test]

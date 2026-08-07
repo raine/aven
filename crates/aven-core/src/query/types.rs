@@ -6,6 +6,7 @@ use crate::recurrence::{
 };
 use crate::types::{RecurrenceOccurrence, RecurrenceSeries, Task};
 use serde::Serialize;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskQueryMode {
@@ -291,6 +292,7 @@ pub struct TaskListItem {
     pub depends_on: Vec<TaskDependencyLink>,
     pub blocks: Vec<TaskDependencyLink>,
     pub epic_children: Vec<TaskDependencyLink>,
+    pub epic_child_dependencies: HashMap<TaskId, Vec<TaskDependencyLink>>,
     pub epic_parent: Option<TaskDependencyLink>,
     pub epic_rollup: Option<EpicRollup>,
     pub queue: QueueMeta,

@@ -76,6 +76,16 @@ pub async fn build_task_list_items(
             .epic_children_by_task
             .remove(&task_id)
             .unwrap_or_default();
+        let epic_child_dependencies = epic_children
+            .iter()
+            .filter_map(|child| {
+                enrichment
+                    .epic_child_dependencies_by_task
+                    .get(&child.task_id)
+                    .cloned()
+                    .map(|dependencies| (child.task_id.clone(), dependencies))
+            })
+            .collect();
         let epic_parent = enrichment.epic_parent_by_task.remove(&task_id);
         let epic_rollup = task.is_epic.then(|| {
             let mut rollup = enrichment
@@ -109,6 +119,7 @@ pub async fn build_task_list_items(
             depends_on,
             blocks,
             epic_children,
+            epic_child_dependencies,
             epic_parent,
             epic_rollup,
             queue,

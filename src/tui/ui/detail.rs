@@ -175,6 +175,7 @@ enum EpicChildState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DetailEpicChild {
     link: crate::query::TaskDependencyLink,
+    dependencies: Vec<crate::query::TaskDependencyLink>,
     state: EpicChildState,
 }
 
@@ -280,6 +281,11 @@ fn detail_epic_children(
         .iter()
         .cloned()
         .map(|link| DetailEpicChild {
+            dependencies: item
+                .epic_child_dependencies
+                .get(&link.task_id)
+                .cloned()
+                .unwrap_or_default(),
             link,
             state: EpicChildState::Live,
         })
@@ -295,6 +301,7 @@ fn detail_epic_children(
             position,
             DetailEpicChild {
                 link: removed.child.clone(),
+                dependencies: Vec::new(),
                 state: EpicChildState::Removed,
             },
         );
@@ -1661,7 +1668,8 @@ fn extend_epic_parent_section(
         task_id: parent.task_id.clone(),
     };
     let active = active_target == Some(&target);
-    let rendered = epic_child_tree_item_lines(parent, EpicChildState::Live, true, width, active);
+    let rendered =
+        epic_child_tree_item_lines(parent, &[], EpicChildState::Live, true, width, active);
     push_interactive_lines(lines, rows, target, rendered);
 }
 
@@ -1731,6 +1739,7 @@ fn extend_epic_children_section(
         let is_last = index + 1 == visible && !has_disclosure;
         let rendered = epic_child_tree_item_lines(
             &child.link,
+            &child.dependencies,
             child.state,
             is_last,
             width,
@@ -1784,6 +1793,7 @@ fn disclosure_line(label: &str, active: bool) -> Line<'static> {
 
 fn epic_child_tree_item_lines(
     link: &crate::query::TaskDependencyLink,
+    dependencies: &[crate::query::TaskDependencyLink],
     state: EpicChildState,
     is_last: bool,
     width: usize,
@@ -1828,14 +1838,66 @@ fn epic_child_tree_item_lines(
     } else {
         link.title.clone()
     };
-    dependency_node_lines_with_title_style(
+    let mut lines = dependency_node_lines_with_title_style(
         prefix,
         &title,
         &link.status,
         &link.priority,
         width,
         title_style,
-    )
+    );
+    if !removed && link.unresolved {
+        lines.extend(epic_child_dependency_lines(
+            dependencies,
+            is_last,
+            width,
+            hovered,
+        ));
+    }
+    lines
+}
+
+fn epic_child_dependency_lines(
+    dependencies: &[crate::query::TaskDependencyLink],
+    child_is_last: bool,
+    width: usize,
+    hovered: bool,
+) -> Vec<Line<'static>> {
+    dependencies
+        .iter()
+        .filter(|dependency| dependency.unresolved)
+        .map(|dependency| {
+            let rail = if child_is_last { "   " } else { "│  " };
+            let verbose_prefix = "← blocked by ";
+            let short_prefix = "← ";
+            let prefix = if width
+                >= rail.width() + verbose_prefix.width() + dependency.display_ref.width()
+            {
+                verbose_prefix
+            } else {
+                short_prefix
+            };
+            let rail_style = if hovered {
+                Style::new().fg(BORDER).bg(BG_PANEL)
+            } else {
+                Style::new().fg(BORDER)
+            };
+            let dependency_style = if hovered {
+                Style::new().fg(FG_DIM).bg(BG_PANEL)
+            } else {
+                Style::new().fg(FG_DIM)
+            };
+            let reference_width = width.saturating_sub(rail.width() + prefix.width());
+            Line::from(vec![
+                Span::styled(rail, rail_style),
+                Span::styled(prefix, dependency_style),
+                Span::styled(
+                    truncate_width(&dependency.display_ref, reference_width),
+                    dependency_style,
+                ),
+            ])
+        })
+        .collect()
 }
 
 fn extend_dependency_sections(
@@ -3846,10 +3908,110 @@ mod tests {
         assert!(rendered.contains("Build the first child task"));
         assert!(rendered.contains("└─ APP-DONE"));
         assert!(rendered.contains("Finished child task"));
+        assert!(!rendered.contains("blocked by"));
         assert!(
             rendered.find("CHILD TASKS").unwrap()
                 < rendered.find("Two token refresh requests").unwrap()
         );
+    }
+
+    #[test]
+    fn epic_children_show_shared_blocker_without_changing_membership_tree() {
+        let mut item = detail_test_epic_item();
+        item.epic_children[1].status = "todo".to_string();
+        item.epic_children[1].unresolved = true;
+        let blocker = crate::query::TaskDependencyLink {
+            task_id: crate::test_support::task_id("shared-blocker-id"),
+            display_ref: "APP-BLKR".to_string(),
+            title: "Prepare the shared environment".to_string(),
+            status: "active".to_string(),
+            priority: "urgent".to_string(),
+            unresolved: true,
+        };
+        for child in &item.epic_children {
+            item.epic_child_dependencies
+                .insert(child.task_id.clone(), vec![blocker.clone()]);
+        }
+
+        let lines = detail_content_lines(&item, 80, None)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+        let first_child = lines
+            .iter()
+            .position(|line| line.contains("APP-CHLD"))
+            .unwrap();
+        let second_child = lines
+            .iter()
+            .position(|line| line.contains("APP-DONE"))
+            .unwrap();
+
+        assert_eq!(lines[first_child + 1], "│  ← blocked by APP-BLKR");
+        assert_eq!(lines[second_child + 1], "   ← blocked by APP-BLKR");
+        assert!(first_child < second_child);
+    }
+
+    #[test]
+    fn epic_child_blockers_use_compact_clipped_rows_at_narrow_widths() {
+        let mut item = detail_test_epic_item();
+        let child_id = item.epic_children[0].task_id.clone();
+        item.epic_child_dependencies.insert(
+            child_id,
+            vec![crate::query::TaskDependencyLink {
+                task_id: crate::test_support::task_id("narrow-blocker-id"),
+                display_ref: "APP-BLOCKER-LONG".to_string(),
+                title: "Prepare the environment".to_string(),
+                status: "active".to_string(),
+                priority: "urgent".to_string(),
+                unresolved: true,
+            }],
+        );
+
+        let dependency_lines = detail_content_lines(&item, 18, None)
+            .into_iter()
+            .map(|line| line.to_string())
+            .filter(|line| line.starts_with("│  ←"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(dependency_lines.len(), 1);
+        assert!(dependency_lines[0].starts_with("│  ← APP-BLOCK"));
+        assert!(!dependency_lines[0].contains("blocked by"));
+        assert!(
+            dependency_lines.iter().all(|line| line.width() <= 18),
+            "dependency row exceeded content width: {dependency_lines:?}"
+        );
+    }
+
+    #[test]
+    fn epic_child_dependency_rows_share_the_child_hit_target() {
+        let mut item = detail_test_epic_item();
+        let child_id = item.epic_children[0].task_id.clone();
+        item.epic_child_dependencies.insert(
+            child_id.clone(),
+            vec![crate::query::TaskDependencyLink {
+                task_id: crate::test_support::task_id("hit-blocker-id"),
+                display_ref: "APP-BLKR".to_string(),
+                title: "Prepare the environment".to_string(),
+                status: "active".to_string(),
+                priority: "urgent".to_string(),
+                unresolved: true,
+            }],
+        );
+        let children = detail_epic_children(&item, None);
+        let body = build_detail_body_document(&item, &children, 80, &BTreeSet::new(), None, &[]);
+        let child_row = body
+            .interactive_rows
+            .iter()
+            .find(|row| {
+                row.target
+                    == DetailTargetId::Task {
+                        section: DetailSection::EpicChildren,
+                        task_id: child_id.clone(),
+                    }
+            })
+            .expect("child interaction row");
+
+        assert_eq!(child_row.height, 2);
     }
 
     #[test]
@@ -4966,6 +5128,7 @@ mod tests {
                 unresolved: true,
             }],
             epic_children: Vec::new(),
+            epic_child_dependencies: Default::default(),
             epic_parent: None,
             epic_rollup: None,
             recurrence: None,

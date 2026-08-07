@@ -593,6 +593,7 @@ mod tests {
             depends_on: Vec::new(),
             blocks: Vec::new(),
             epic_children: Vec::new(),
+            epic_child_dependencies: Default::default(),
             epic_parent: None,
             epic_rollup: None,
             recurrence: None,
