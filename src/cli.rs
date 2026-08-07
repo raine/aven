@@ -664,8 +664,11 @@ pub(crate) struct DepCommand {
 
 #[derive(Subcommand)]
 pub(crate) enum DepSubcommand {
+    /// Add a dependency to a task
     Add(DepAddArgs),
+    /// Remove a dependency from a task
     Remove(DepRemoveArgs),
+    /// List a task's dependencies
     List(DepListArgs),
 }
 
@@ -696,8 +699,11 @@ pub(crate) struct EpicCommand {
 
 #[derive(Subcommand)]
 pub(crate) enum EpicSubcommand {
+    /// Add a task to an epic
     Add(EpicAddArgs),
+    /// Remove a task from an epic
     Remove(EpicRemoveArgs),
+    /// List an epic's child tasks
     List(EpicListArgs),
 }
 
@@ -858,13 +864,10 @@ pub(crate) struct LabelCommand {
 
 #[derive(Subcommand)]
 pub(crate) enum LabelSubcommand {
-    Create {
-        name: String,
-    },
+    /// Create a label
+    Create { name: String },
     /// Delete a label
-    Delete {
-        name: String,
-    },
+    Delete { name: String },
     /// List or search labels
     List(LabelListArgs),
 }
@@ -877,6 +880,7 @@ pub(crate) struct ProjectCommand {
 
 #[derive(Subcommand)]
 pub(crate) enum ProjectSubcommand {
+    /// Create a project
     Create {
         name: String,
         #[arg(long)]
@@ -886,12 +890,14 @@ pub(crate) enum ProjectSubcommand {
     Delete { project: String },
     /// List or search projects
     List(ProjectListArgs),
+    /// Rename a project
     Rename {
         project: String,
         new_name: String,
         #[arg(long)]
         prefix: Option<String>,
     },
+    /// Manage project path mappings
     Path {
         #[command(subcommand)]
         command: ProjectPathSubcommand,
@@ -900,8 +906,11 @@ pub(crate) enum ProjectSubcommand {
 
 #[derive(Subcommand)]
 pub(crate) enum ProjectPathSubcommand {
+    /// Add a path mapping to a project
     Add { project: String, path: PathBuf },
+    /// Remove a path mapping from a project
     Remove { project: String, path: PathBuf },
+    /// List project path mappings
     List { project: Option<String> },
 }
 
@@ -921,6 +930,7 @@ pub(crate) struct BackupCommand {
 
 #[derive(Subcommand)]
 pub(crate) enum BackupSubcommand {
+    /// Restore the database from a backup
     Restore(BackupRestoreArgs),
 }
 
@@ -954,8 +964,11 @@ pub(crate) struct DoctorArgs {
 
 #[derive(Subcommand)]
 pub(crate) enum WorkspaceSubcommand {
+    /// List workspaces
     List,
+    /// Create a workspace
     Create { name: String },
+    /// Rename a workspace
     Rename { workspace: String, new_name: String },
 }
 
@@ -967,6 +980,7 @@ pub(crate) struct ConflictCommand {
 
 #[derive(Subcommand)]
 pub(crate) enum ConflictSubcommand {
+    /// List unresolved sync conflicts
     List {
         #[arg(long)]
         project: Option<String>,
@@ -981,16 +995,16 @@ pub(crate) enum ConflictSubcommand {
         #[arg(long, help = "Print machine-readable JSON")]
         json: bool,
     },
-    Diff {
-        task_ref: String,
-        field: String,
-    },
+    /// Show a conflict as a text diff
+    Diff { task_ref: String, field: String },
+    /// Export conflicting values to files
     Export {
         task_ref: String,
         field: String,
         #[arg(long)]
         dir: PathBuf,
     },
+    /// Show conflict details for a task
     Show {
         task_ref: String,
         #[arg(long)]
@@ -998,6 +1012,7 @@ pub(crate) enum ConflictSubcommand {
         #[arg(long, help = "Print machine-readable JSON")]
         json: bool,
     },
+    /// Resolve a sync conflict
     Resolve {
         task_ref: String,
         field: String,
@@ -1123,8 +1138,11 @@ pub(crate) struct TextCommand {
 
 #[derive(Subcommand)]
 pub(crate) enum TextSubcommand {
+    /// Read a long text field
     Get(TextGetArgs),
+    /// Compare a long text field with a file
     Diff(TextDiffArgs),
+    /// Update a long text field safely
     Set(TextSetArgs),
 }
 
@@ -1160,8 +1178,11 @@ pub(crate) struct TextSetArgs {
 
 #[derive(Subcommand)]
 pub(crate) enum ConfigSubcommand {
+    /// Create the local configuration file
     Init,
+    /// Show the local configuration file
     Show,
+    /// Get a configuration value
     Get(ConfigGetArgs),
 }
 
@@ -1184,9 +1205,13 @@ pub(crate) struct DaemonArgs {
 
 #[derive(Subcommand)]
 pub(crate) enum DaemonSubcommand {
+    /// Install the background daemon
     Install(DaemonInstallArgs),
+    /// Uninstall the background daemon
     Uninstall,
+    /// Restart the background daemon
     Restart,
+    /// Repair the background daemon installation
     Repair(DaemonRepairArgs),
 }
 
@@ -1230,6 +1255,35 @@ pub(crate) struct SyncArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visible_subcommands_have_help_descriptions() {
+        fn collect_missing(command: &clap::Command, parent_path: &str, missing: &mut Vec<String>) {
+            for subcommand in command
+                .get_subcommands()
+                .filter(|subcommand| !subcommand.is_hide_set())
+            {
+                let path = format!("{parent_path} {}", subcommand.get_name());
+                let description = subcommand
+                    .get_about()
+                    .map(|about| about.to_string())
+                    .unwrap_or_default();
+                if description.trim().is_empty() {
+                    missing.push(path.clone());
+                }
+                collect_missing(subcommand, &path, missing);
+            }
+        }
+
+        let mut missing = Vec::new();
+        collect_missing(&Cli::command(), "aven", &mut missing);
+
+        assert!(
+            missing.is_empty(),
+            "visible subcommands missing help descriptions: {}",
+            missing.join(", ")
+        );
+    }
 
     #[test]
     fn application_update_and_task_edit_are_distinct_commands() {
