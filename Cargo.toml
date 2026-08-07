@@ -63,4 +63,4 @@ sqlx = { version = "0.9", default-features = false, features = [
 zstd = "0.13"
 
 [patch.crates-io]
-crossterm = { git = "https://github.com/raine/crossterm" }
+crossterm = { git = "https://github.com/raine/crossterm", rev = "f99eeae405e28fa8cb353a6c6e36c493e72891bd" }

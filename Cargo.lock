@@ -972,7 +972,7 @@ checksum = "61803da095bee82a81bb1a452ecc25d3b2f1416d1897eb86430c6159ef717c17"
 [[package]]
 name = "crossterm"
 version = "0.29.0"
-source = "git+https://github.com/raine/crossterm#f99eeae405e28fa8cb353a6c6e36c493e72891bd"
+source = "git+https://github.com/raine/crossterm?rev=f99eeae405e28fa8cb353a6c6e36c493e72891bd#f99eeae405e28fa8cb353a6c6e36c493e72891bd"
 dependencies = [
  "bitflags 2.13.1",
  "crossterm_winapi",
