@@ -150,7 +150,10 @@ pub(crate) async fn workspace_for_id(
         .await?;
     match row {
         Some(row) => Ok(workspace_from_row(row)),
-        None => bail!("error unknown-workspace-id id={workspace_id}"),
+        None => Err(crate::error::CoreError::not_found(format!(
+            "error unknown-workspace-id id={workspace_id}"
+        ))
+        .into()),
     }
 }
 

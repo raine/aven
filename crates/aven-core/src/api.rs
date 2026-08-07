@@ -543,16 +543,18 @@ impl Store {
 
     async fn workspace(&self, workspace_id: &WorkspaceId) -> Result<Workspace, Error> {
         self.database
-            .list_workspaces()
+            .workspace_for_id(workspace_id)
             .await
-            .map_err(Error::from_internal)?
-            .into_iter()
-            .find(|workspace| workspace.id == *workspace_id)
-            .ok_or_else(|| {
-                Error::new(
-                    ErrorCode::NotFound,
-                    format!("workspace not found: {workspace_id}"),
-                )
+            .map_err(|error| {
+                let error = Error::from_internal(error);
+                if error.code == ErrorCode::NotFound {
+                    Error::new(
+                        ErrorCode::NotFound,
+                        format!("workspace not found: {workspace_id}"),
+                    )
+                } else {
+                    error
+                }
             })
     }
 }

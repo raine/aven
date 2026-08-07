@@ -8,7 +8,7 @@ use aven_core::api::{
 };
 use aven_core::choices::{TaskPriority, TaskStatus};
 use aven_core::db::Database;
-use aven_core::ids::TaskId;
+use aven_core::ids::{TaskId, WorkspaceId};
 use aven_core::recurrence::RecurrenceSeriesId;
 use aven_core::sync::wire::{
     MAX_PULL_BATCH, MAX_PUSH_BATCH, SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse,
@@ -109,6 +109,39 @@ async fn consumer_api_creation_and_sync_preserve_api_source() {
     exchange(&first_path, &server).await;
     exchange(&second_path, &server).await;
     assert_eq!(task_source(&second_path, &created.id).await, "api");
+}
+
+#[tokio::test]
+async fn consumer_api_workspace_lookup_is_direct_and_preserves_missing_error() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("workspace-lookup.sqlite");
+    let store = Store::open(&path).await.unwrap();
+    let workspace = store.resolve_workspace("default").await.unwrap();
+    let mut connection = SqliteConnection::connect_with(
+        &SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(false),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO workspaces(id, name, key, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind("invalid-workspace-id")
+    .bind("Unrelated")
+    .bind("unrelated")
+    .bind("2026-08-08T00:00:00Z")
+    .bind("2026-08-08T00:00:00Z")
+    .execute(&mut connection)
+    .await
+    .unwrap();
+
+    assert!(store.list_tasks(&workspace.id).await.unwrap().is_empty());
+
+    let missing_id = WorkspaceId::new();
+    let error = store.list_tasks(&missing_id).await.unwrap_err();
+    assert_eq!(error.code, ErrorCode::NotFound);
+    assert_eq!(error.message, format!("workspace not found: {missing_id}"));
 }
 
 #[tokio::test]
