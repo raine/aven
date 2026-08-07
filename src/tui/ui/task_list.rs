@@ -369,12 +369,16 @@ fn build_task_list_render_model(
                 {
                     build_epic_parent_row_cells(
                         item,
-                        now,
-                        due_order,
+                        TaskTimeContext {
+                            now_seconds: now,
+                            render_mode: TaskListRenderMode::Epics,
+                            due_order,
+                        },
                         store,
                         inline_title_editor.filter(|_| selected),
                         &column_widths,
                         marked,
+                        epic_selection,
                     )
                 } else {
                     build_task_row_cells(
@@ -464,19 +468,15 @@ fn task_list_columns_for_tasks(
         project_column_width(store, narrow)
     };
     let label_width = if epics {
-        if narrow { 14 } else { 20 }
+        if narrow { 18 } else { 24 }
     } else {
         label_column_width_from_task_refs(label_tasks, narrow)
     };
-    let metadata_width = if epics {
-        if narrow { 9 } else { 18 }
-    } else {
-        metadata_column_width_from_task_refs(
-            label_tasks,
-            epic_selection,
-            store.view_state.render_mode() == TaskListRenderMode::Flat,
-        )
-    };
+    let metadata_width = metadata_column_width_from_task_refs(
+        label_tasks,
+        epic_selection,
+        store.view_state.render_mode() == TaskListRenderMode::Flat,
+    );
     let priority_width = priority_column_width(store);
     let ref_width = if epics { 14 } else { 12 };
     [
@@ -677,8 +677,8 @@ fn render_task_header(
         [
             " REF",
             "TITLE",
-            "CHILDREN",
-            "SIGNALS",
+            "SUMMARY",
+            "",
             "PROJECT",
             "STATUS",
             "P",
@@ -890,51 +890,19 @@ fn task_time_cell(
     }
 }
 
-fn epic_progress_cell(rollup: &crate::query::EpicRollup, max_width: usize) -> Line<'static> {
-    if rollup.total == 0 {
-        return Line::from(Span::styled("-", Style::new().fg(FG_MUTED)));
-    }
-    let compact = max_width <= 13;
-    let mut spans = vec![Span::styled(
-        if compact {
-            format!("open {}", rollup.open)
-        } else {
-            format!("{} open", rollup.open)
-        },
-        Style::new().fg(FG).add_modifier(Modifier::BOLD),
-    )];
-    let separator = if compact { " " } else { "  " };
-    if rollup.done > 0 {
-        spans.push(Span::styled(
-            format!("{separator}✓{}", rollup.done),
-            Style::new().fg(ACCENT),
-        ));
-    }
-    if rollup.canceled > 0 {
-        spans.push(Span::styled(
-            format!("{separator}×{}", rollup.canceled),
-            Style::new().fg(RED),
-        ));
-    }
-    Line::from(spans)
-}
-
-fn epic_signals_cell(rollup: &crate::query::EpicRollup, max_width: usize) -> Line<'static> {
-    if rollup.total == 0 {
-        return Line::from(Span::styled("-", Style::new().fg(FG_MUTED)));
-    }
+fn epic_summary_candidate(
+    rollup: &crate::query::EpicRollup,
+    compact: bool,
+    show_done: bool,
+    show_canceled: bool,
+) -> Line<'static> {
+    let mut spans = Vec::new();
     if rollup.open == 0 {
-        return Line::from(Span::styled(
-            if max_width <= 8 {
-                "resolved"
-            } else {
-                "all resolved"
-            },
+        spans.push(Span::styled(
+            if compact { "res" } else { "resolved" },
             Style::new().fg(ACCENT),
         ));
-    }
-    if max_width <= 12 && (rollup.overdue > 0 || rollup.blocked > 0) {
-        let mut spans = Vec::new();
+    } else if rollup.overdue > 0 || rollup.blocked > 0 {
         if rollup.overdue > 0 {
             spans.push(Span::styled(
                 format!("!{}", rollup.overdue),
@@ -943,41 +911,71 @@ fn epic_signals_cell(rollup: &crate::query::EpicRollup, max_width: usize) -> Lin
         }
         if rollup.blocked > 0 {
             if !spans.is_empty() {
-                spans.push(Span::raw("  "));
+                spans.push(Span::raw(" "));
             }
             spans.push(Span::styled(
                 format!("←{}", rollup.blocked),
                 Style::new().fg(YELLOW),
             ));
         }
-        return Line::from(spans);
-    }
-    let mut spans = Vec::new();
-    if rollup.overdue > 0 {
+    } else {
         spans.push(Span::styled(
-            format!("{} late", rollup.overdue),
-            Style::new().fg(RED),
+            if compact {
+                format!("r{}", rollup.ready)
+            } else {
+                format!("{} ready", rollup.ready)
+            },
+            Style::new().fg(if rollup.ready == 0 { YELLOW } else { ACCENT }),
         ));
     }
-    if rollup.blocked > 0 {
-        if !spans.is_empty() {
-            spans.push(Span::raw("  "));
-        }
+
+    spans.push(Span::styled(" · ", Style::new().fg(FG_DIM)));
+    if rollup.open > 0 {
         spans.push(Span::styled(
-            format!("{} blocked", rollup.blocked),
-            Style::new().fg(YELLOW),
+            if compact {
+                format!("o{}", rollup.open)
+            } else {
+                format!("{} open", rollup.open)
+            },
+            Style::new().fg(FG).add_modifier(Modifier::BOLD),
         ));
     }
-    if spans.is_empty() || rollup.ready > 0 && rollup.overdue == 0 {
-        if !spans.is_empty() {
-            spans.push(Span::raw("  "));
-        }
+    let outcome_separator = if rollup.open > 0 { " " } else { "" };
+    if show_done && rollup.done > 0 {
         spans.push(Span::styled(
-            format!("{} ready", rollup.ready),
+            format!("{outcome_separator}✓{}", rollup.done),
             Style::new().fg(ACCENT),
         ));
     }
+    if show_canceled && rollup.canceled > 0 {
+        let separator = if rollup.open > 0 || show_done && rollup.done > 0 {
+            " "
+        } else {
+            ""
+        };
+        spans.push(Span::styled(
+            format!("{separator}×{}", rollup.canceled),
+            Style::new().fg(RED),
+        ));
+    }
     Line::from(spans)
+}
+
+fn epic_summary_cell(rollup: &crate::query::EpicRollup, max_width: usize) -> Line<'static> {
+    if rollup.total == 0 {
+        return Line::from(Span::styled("-", Style::new().fg(FG_MUTED)));
+    }
+
+    let candidates = [
+        epic_summary_candidate(rollup, false, true, true),
+        epic_summary_candidate(rollup, true, true, true),
+        epic_summary_candidate(rollup, true, false, true),
+        epic_summary_candidate(rollup, true, false, false),
+    ];
+    candidates
+        .into_iter()
+        .find(|line| line.width() <= max_width)
+        .unwrap_or_else(|| epic_summary_candidate(rollup, true, false, false))
 }
 
 fn epic_activity_cell(item: &TaskListItem, now_seconds: i64, due_order: bool) -> Line<'static> {
@@ -999,12 +997,12 @@ fn epic_activity_cell(item: &TaskListItem, now_seconds: i64, due_order: bool) ->
 
 fn build_epic_parent_row_cells(
     item: &TaskListItem,
-    now_seconds: i64,
-    due_order: bool,
+    time: TaskTimeContext,
     store: &TuiStore,
     inline_title_editor: Option<&TextInputView>,
     column_widths: &[usize; 8],
     marked: bool,
+    epic_selection: EpicSelectionContext<'_>,
 ) -> Vec<Line<'static>> {
     let title = inline_title_editor
         .map(|editor| inline_title_edit_cell(editor, column_widths[1]))
@@ -1028,28 +1026,23 @@ fn build_epic_parent_row_cells(
             Style::new().fg(FG_MUTED),
         ));
     }
-    let progress = item
+    let summary = item
         .epic_rollup
         .as_ref()
-        .map(|rollup| epic_progress_cell(rollup, column_widths[2]))
-        .unwrap_or_default();
-    let signals = item
-        .epic_rollup
-        .as_ref()
-        .map(|rollup| epic_signals_cell(rollup, column_widths[3]))
+        .map(|rollup| epic_summary_cell(rollup, column_widths[2]))
         .unwrap_or_default();
     vec![
         Line::from(ref_spans),
         title,
-        progress,
-        signals,
+        summary,
+        metadata_cell(item, epic_selection, false),
         project_cell(item, column_widths[4]),
         status_chip(item.task.status.as_str()),
         Line::from(Span::styled(
             priority_icon(item.task.priority.as_str()),
             theme::priority_style(item.task.priority.as_str()).add_modifier(Modifier::BOLD),
         )),
-        epic_activity_cell(item, now_seconds, due_order),
+        epic_activity_cell(item, time.now_seconds, time.due_order),
     ]
 }
 
@@ -1821,12 +1814,12 @@ mod tests {
 
         let rendered = buffer_text(&render_task_list_buffer(&store, 120, 5));
 
-        assert!(rendered.contains("CHILDREN"));
-        assert!(rendered.contains("SIGNALS"));
+        assert!(rendered.contains("SUMMARY"));
+        assert!(!rendered.contains("CHILDREN"));
+        assert!(!rendered.contains("SIGNALS"));
         assert!(rendered.contains("ACT"));
         assert!(rendered.contains("Ship account recovery"));
-        assert!(rendered.contains("3 open  ✓1  ×1"));
-        assert!(rendered.contains("1 late  1 blocked"));
+        assert!(rendered.contains("!1 ←1 · 3 open ✓1 ×1"));
         assert!(!rendered.contains("Verify recovery email"));
 
         let preview = task_preview_lines(&store.tasks[0], 120, 12)
@@ -1847,7 +1840,18 @@ mod tests {
         assert!(rendered.contains("Ship account recovery"));
         assert!(rendered.contains("Verify recovery email"));
         assert!(rendered.contains("active"));
-        assert!(rendered.contains("3 open  ✓1  ×1"));
+        assert!(rendered.contains("!1 ←1 · 3 open ✓1 ×1"));
+    }
+
+    #[tokio::test]
+    async fn epic_summary_keeps_parent_task_metadata_in_its_own_lane() {
+        let mut store = epic_test_store(false).await;
+        store.tasks[0].unresolved_blocker_count = 2;
+
+        let rendered = buffer_text(&render_task_list_buffer(&store, 120, 5));
+
+        assert!(rendered.contains("!1 ←1 · 3 open ✓1 ×1"));
+        assert!(rendered.contains("←2"));
     }
 
     #[tokio::test]
@@ -1856,10 +1860,10 @@ mod tests {
 
         let rendered = buffer_text(&render_task_list_buffer(&store, 64, 4));
 
-        assert!(rendered.contains("CHILDREN"));
-        assert!(rendered.contains("SIGNALS"));
-        assert!(rendered.contains("open 3 ✓1 ×1"));
-        assert!(rendered.contains("!1  ←1"));
+        assert!(rendered.contains("SUMMARY"));
+        assert!(!rendered.contains("CHILDREN"));
+        assert!(!rendered.contains("SIGNALS"));
+        assert!(rendered.contains("!1 ←1 · o3 ✓1 ×1"));
         assert!(rendered.contains("todo"));
         assert!(rendered.contains("APP-"));
     }
@@ -1908,18 +1912,14 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        for cell in [
-            epic_progress_cell(&rollup, 18),
-            epic_signals_cell(&rollup, 18),
-        ] {
-            assert_eq!(cell.to_string(), "-");
-            assert_eq!(cell.spans[0].style.fg, Some(FG_MUTED));
-        }
+        let cell = epic_summary_cell(&rollup, 24);
+        assert_eq!(cell.to_string(), "-");
+        assert_eq!(cell.spans[0].style.fg, Some(FG_MUTED));
         assert!(preview.contains("children none"));
     }
 
     #[test]
-    fn epic_outcome_and_signal_styles_preserve_status_semantics() {
+    fn epic_summary_preserves_outcome_and_signal_semantics() {
         let rollup = crate::query::EpicRollup {
             total: 6,
             open: 3,
@@ -1931,15 +1931,30 @@ mod tests {
             latest_activity_at: String::new(),
         };
 
-        for width in [8, 18] {
-            let progress = epic_progress_cell(&rollup, width);
-            assert_eq!(progress.spans[2].style.fg, Some(RED));
-
-            let signals = epic_signals_cell(&rollup, width);
-            assert!(
-                signals
+        let normal = epic_summary_cell(&rollup, 24);
+        assert_eq!(normal.to_string(), "!1 ←1 · 3 open ✓2 ×1");
+        assert!(normal.width() <= 24);
+        let compact = epic_summary_cell(&rollup, 17);
+        assert_eq!(compact.to_string(), "!1 ←1 · o3 ✓2 ×1");
+        assert!(compact.width() <= 17);
+        for summary in [&normal, &compact] {
+            assert_eq!(
+                summary
                     .spans
                     .iter()
+                    .find(|span| span.content.contains('×'))
+                    .unwrap()
+                    .style
+                    .fg,
+                Some(RED)
+            );
+            assert!(
+                summary
+                    .spans
+                    .iter()
+                    .filter(|span| {
+                        span.content.starts_with('!') || span.content.starts_with('←')
+                    })
                     .all(|span| !span.style.add_modifier.contains(Modifier::BOLD))
             );
         }
@@ -1947,22 +1962,45 @@ mod tests {
         let open_only = crate::query::EpicRollup {
             total: 3,
             open: 3,
+            ready: 3,
             ..crate::query::EpicRollup::default()
         };
-        assert_eq!(epic_progress_cell(&open_only, 18).to_string(), "3 open");
-        assert_eq!(epic_progress_cell(&open_only, 8).to_string(), "open 3");
+        assert_eq!(
+            epic_summary_cell(&open_only, 24).to_string(),
+            "3 ready · 3 open"
+        );
 
         let resolved = crate::query::EpicRollup {
             total: 2,
             done: 2,
             ..crate::query::EpicRollup::default()
         };
+        let resolved = epic_summary_cell(&resolved, 24);
+        assert_eq!(resolved.to_string(), "resolved · ✓2");
         assert!(
-            !epic_signals_cell(&resolved, 18).spans[0]
+            !resolved.spans[0]
                 .style
                 .add_modifier
                 .contains(Modifier::BOLD)
         );
+
+        let canceled = crate::query::EpicRollup {
+            total: 2,
+            canceled: 2,
+            ..crate::query::EpicRollup::default()
+        };
+        let canceled = epic_summary_cell(&canceled, 24);
+        assert_eq!(canceled.to_string(), "resolved · ×2");
+        assert_eq!(canceled.spans[2].style.fg, Some(RED));
+
+        let stalled = crate::query::EpicRollup {
+            total: 3,
+            open: 3,
+            ..crate::query::EpicRollup::default()
+        };
+        let stalled = epic_summary_cell(&stalled, 24);
+        assert_eq!(stalled.to_string(), "0 ready · 3 open");
+        assert_eq!(stalled.spans[0].style.fg, Some(YELLOW));
     }
 
     #[tokio::test]
