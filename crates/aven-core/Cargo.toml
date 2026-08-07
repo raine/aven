@@ -12,24 +12,24 @@ build = "build.rs"
 test-support = []
 
 [dependencies]
-anyhow = "1.0"
-chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
-chrono-tz = "0.10.4"
-flate2 = "1.1"
+anyhow.workspace = true
+chrono = { workspace = true, features = ["serde"] }
+chrono-tz.workspace = true
+flate2.workspace = true
 getrandom = "0.4"
-hex = "0.4"
-image = { version = "=0.25.9", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
-oxipng = { version = "10.1", default-features = false }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-sha2 = "0.11"
-sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
-tempfile = "3.14"
-tar = "0.4"
-tokio = { version = "1.45", features = ["macros", "rt", "sync", "time"] }
-tracing = "0.1"
-url = "2.5"
-zstd = "0.13"
+hex.workspace = true
+image.workspace = true
+oxipng.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+tempfile.workspace = true
+tar.workspace = true
+tokio = { workspace = true, features = ["rt"] }
+tracing.workspace = true
+url.workspace = true
+zstd.workspace = true
 
 [dev-dependencies]
-tempfile = "3.14"
+tempfile.workspace = true
