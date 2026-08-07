@@ -38,27 +38,6 @@ pub(crate) use recurrence::task_recurrence_summaries;
 pub use search::{
     SearchMatchedField, TaskSearchPreviewResultSet, TaskSearchQuery, TaskSearchResult,
 };
-
-pub const MAX_RECURRENCE_HISTORY_LIMIT: usize = 500;
-
-fn validate_search_limit(limit: usize) -> Result<()> {
-    if limit == 0 {
-        bail!("error search-limit-invalid limit=0 min=1 hint=\"pass a limit of 1 or greater\"");
-    }
-    Ok(())
-}
-
-fn validate_recurrence_history_limit(limit: usize) -> Result<()> {
-    if !(1..=MAX_RECURRENCE_HISTORY_LIMIT).contains(&limit) {
-        bail!(
-            "error recurrence-history-limit-invalid limit={} min=1 max={} hint=\"pass a limit between 1 and {}\"",
-            limit,
-            MAX_RECURRENCE_HISTORY_LIMIT,
-            MAX_RECURRENCE_HISTORY_LIMIT
-        );
-    }
-    Ok(())
-}
 pub(crate) use search::{
     search_task_items_in_workspace, search_task_occurrence_items_in_workspace,
     search_task_preview_set_in_workspace,
@@ -80,6 +59,27 @@ pub use types::{
     TaskAvailabilityFilter, TaskDependencyLink, TaskFilters, TaskIdFilter, TaskListItem, TaskNote,
     TaskQueryMode, TaskRecurrenceSummary, TaskSort,
 };
+
+pub const MAX_RECURRENCE_HISTORY_LIMIT: usize = 500;
+
+fn validate_search_limit(limit: usize) -> Result<()> {
+    if limit == 0 {
+        bail!("error search-limit-invalid limit=0 min=1 hint=\"pass a limit of 1 or greater\"");
+    }
+    Ok(())
+}
+
+fn validate_recurrence_history_limit(limit: usize) -> Result<()> {
+    if !(1..=MAX_RECURRENCE_HISTORY_LIMIT).contains(&limit) {
+        bail!(
+            "error recurrence-history-limit-invalid limit={} min=1 max={} hint=\"pass a limit between 1 and {}\"",
+            limit,
+            MAX_RECURRENCE_HISTORY_LIMIT,
+            MAX_RECURRENCE_HISTORY_LIMIT
+        );
+    }
+    Ok(())
+}
 
 impl Database {
     /// Reconciles recurrence projections before a report reads current state.
