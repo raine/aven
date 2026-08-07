@@ -77,6 +77,16 @@ pub async fn build_task_list_items(
             .remove(&task_id)
             .unwrap_or_default();
         let epic_parent = enrichment.epic_parent_by_task.remove(&task_id);
+        let epic_rollup = task.is_epic.then(|| {
+            let mut rollup = enrichment
+                .epic_rollups_by_task
+                .remove(&task_id)
+                .unwrap_or_default();
+            if rollup.latest_activity_at < task.updated_at {
+                rollup.latest_activity_at.clone_from(&task.updated_at);
+            }
+            rollup
+        });
         let recurrence = enrichment.recurrence_by_task.remove(&task_id);
         let queue = queue_meta_on(
             &task,
@@ -100,6 +110,7 @@ pub async fn build_task_list_items(
             blocks,
             epic_children,
             epic_parent,
+            epic_rollup,
             queue,
             recurrence,
             recurrence_group: None,

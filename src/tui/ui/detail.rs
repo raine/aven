@@ -2784,14 +2784,31 @@ fn detail_epic_metadata_lines(
     }
 
     let counts = epic_child_counts(children);
-    let lines = vec![
+    let progress = item.epic_rollup.as_ref().map_or_else(
+        || format!("open={} total={}", counts.open, counts.total),
+        |rollup| {
+            format!(
+                "{} open · {} done · {} canceled",
+                rollup.open, rollup.done, rollup.canceled
+            )
+        },
+    );
+    let mut lines = vec![
         Line::from(""),
         metadata_label("CHILDREN"),
-        Line::from(Span::styled(
-            format!("open={} total={}", counts.open, counts.total),
-            Style::new().fg(FG_DIM),
-        )),
+        Line::from(Span::styled(progress, Style::new().fg(FG_DIM))),
     ];
+    if let Some(rollup) = item.epic_rollup.as_ref()
+        && rollup.total > 0
+    {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "{} overdue · {} blocked · {} ready",
+                rollup.overdue, rollup.blocked, rollup.ready
+            ),
+            Style::new().fg(FG_DIM),
+        )));
+    }
 
     if children.is_empty() {
         return lines
@@ -4017,6 +4034,30 @@ mod tests {
     }
 
     #[test]
+    fn detail_metadata_uses_shared_epic_rollup_semantics() {
+        let mut item = detail_test_epic_item();
+        item.epic_rollup = Some(crate::query::EpicRollup {
+            total: 4,
+            open: 2,
+            done: 1,
+            canceled: 1,
+            blocked: 1,
+            overdue: 1,
+            ready: 1,
+            latest_activity_at: "2026-06-21T00:00:00Z".to_string(),
+        });
+
+        let rendered = detail_metadata_lines(&item, 40)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("CHILDREN\n2 open · 1 done · 1 canceled"));
+        assert!(rendered.contains("1 overdue · 1 blocked · 1 ready"));
+    }
+
+    #[test]
     fn detail_metadata_marks_epics_without_children() {
         let mut item = detail_test_item();
         item.task.is_epic = true;
@@ -4926,6 +4967,7 @@ mod tests {
             }],
             epic_children: Vec::new(),
             epic_parent: None,
+            epic_rollup: None,
             recurrence: None,
             recurrence_group: None,
             attachments: Vec::new(),

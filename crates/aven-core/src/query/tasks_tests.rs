@@ -908,6 +908,110 @@ async fn epics_filter_lists_explicit_epics_with_children() {
 }
 
 #[tokio::test]
+async fn epic_rollups_preserve_child_outcomes_and_attention_signals() {
+    let (_temp, mut conn) = test_conn().await;
+    seed_default_project(&mut conn).await;
+    let workspace_id = crate::workspaces::default_workspace_id();
+    for (id, title, status, updated_at) in [
+        ("R0AA000000000001", "mixed epic", "todo", "001"),
+        ("R0AA000000000002", "empty epic", "todo", "002"),
+        ("R0AA000000000003", "late ready", "active", "003"),
+        ("R0AA000000000004", "blocked child", "todo", "004"),
+        ("R0AA000000000005", "deferred child", "backlog", "005"),
+        ("R0AA000000000006", "done child", "done", "999"),
+        ("R0AA000000000007", "canceled child", "canceled", "007"),
+    ] {
+        insert_test_task(&mut conn, id, title, status, "none", updated_at).await;
+    }
+    sqlx::query(
+        "UPDATE tasks SET is_epic = 1
+         WHERE id IN ('R0AA000000000001', 'R0AA000000000002')",
+    )
+    .execute(conn.as_mut())
+    .await
+    .unwrap();
+    sqlx::query("UPDATE tasks SET due_on = '2000-01-01' WHERE id = 'R0AA000000000003'")
+        .execute(conn.as_mut())
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE tasks SET available_at = '2999-01-01T00:00:00Z'
+         WHERE id = 'R0AA000000000005'",
+    )
+    .execute(conn.as_mut())
+    .await
+    .unwrap();
+    for child_id in [
+        "R0AA000000000003",
+        "R0AA000000000004",
+        "R0AA000000000005",
+        "R0AA000000000006",
+        "R0AA000000000007",
+    ] {
+        sqlx::query(
+            "INSERT INTO task_epic_links(workspace_id, child_task_id, epic_task_id, created_at)
+             VALUES (?, ?, 'R0AA000000000001', '010')",
+        )
+        .bind(&workspace_id)
+        .bind(child_id)
+        .execute(conn.as_mut())
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO task_dependencies(workspace_id, task_id, depends_on_task_id, created_at)
+         VALUES (?, 'R0AA000000000004', 'R0AA000000000003', '011')",
+    )
+    .bind(&workspace_id)
+    .execute(conn.as_mut())
+    .await
+    .unwrap();
+
+    let items = list_task_items_in_workspace(
+        &mut conn,
+        &workspace_id,
+        TaskFilters {
+            epics_only: true,
+            ..TaskFilters::default()
+        },
+        TaskQueryMode::Flat,
+        TaskSort::Created,
+        SortDirection::Asc,
+    )
+    .await
+    .unwrap();
+
+    let mixed = items
+        .iter()
+        .find(|item| item.task.title == "mixed epic")
+        .unwrap()
+        .epic_rollup
+        .as_ref()
+        .unwrap();
+    assert_eq!(mixed.total, 5);
+    assert_eq!(mixed.open, 3);
+    assert_eq!(mixed.done, 1);
+    assert_eq!(mixed.canceled, 1);
+    assert_eq!(mixed.blocked, 1);
+    assert_eq!(mixed.overdue, 1);
+    assert_eq!(mixed.ready, 1);
+    assert_eq!(mixed.latest_activity_at, "999");
+
+    let empty = items
+        .iter()
+        .find(|item| item.task.title == "empty epic")
+        .unwrap()
+        .epic_rollup
+        .as_ref()
+        .unwrap();
+    assert_eq!(empty.total, 0);
+    assert_eq!(empty.open, 0);
+    assert_eq!(empty.done, 0);
+    assert_eq!(empty.canceled, 0);
+    assert_eq!(empty.latest_activity_at, "002");
+}
+
+#[tokio::test]
 async fn availability_transition_updates_queries_queue_band_and_counts() {
     let (_temp, mut conn) = test_conn().await;
     seed_default_project(&mut conn).await;

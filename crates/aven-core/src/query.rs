@@ -51,7 +51,7 @@ pub(crate) use tasks::{
 };
 pub use types::RecentActionTarget;
 pub use types::{
-    AttachmentMetadata, ProjectListItem, RecentActionItem, RecurrenceCounts,
+    AttachmentMetadata, EpicRollup, ProjectListItem, RecentActionItem, RecurrenceCounts,
     RecurrenceHistoryEntry, RecurrenceHistoryKind, RecurrenceHistoryPage, RecurrenceOccurrenceLink,
     RecurrenceReconciliation, RecurrenceSeriesConflict, RecurrenceSeriesDetail,
     RecurrenceSeriesLifecycleFilter, RecurrenceSeriesListItem, RecurrenceSeriesListQuery,

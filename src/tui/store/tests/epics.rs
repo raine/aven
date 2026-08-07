@@ -92,6 +92,19 @@ async fn epics_view_starts_with_parents_collapsed() {
 
     assert!(!store.view_state.expanded_epic_ids.contains(&parent_id));
     assert!(!store.tasks.iter().any(|task| task.task.id == child_id));
+    let rollup = store
+        .tasks
+        .iter()
+        .find(|item| item.task.id == parent_id)
+        .unwrap()
+        .epic_rollup
+        .as_ref()
+        .unwrap();
+    assert_eq!(rollup.total, 1);
+    assert_eq!(rollup.open, 1);
+    assert_eq!(rollup.done, 0);
+    assert_eq!(rollup.canceled, 0);
+    assert_eq!(rollup.ready, 1);
 }
 
 #[tokio::test]

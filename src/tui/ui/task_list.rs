@@ -180,7 +180,7 @@ fn task_list_status_area(
         table_area.width,
         1,
     );
-    Layout::horizontal(columns).areas::<8>(row_area)[5]
+    task_list_cell_content_area(Layout::horizontal(columns).areas::<8>(row_area)[5], 5)
 }
 
 pub(crate) fn task_visual_row(store: &TuiStore, task_index: usize) -> Option<usize> {
@@ -370,11 +370,11 @@ fn build_task_list_render_model(
                     build_epic_parent_row_cells(
                         item,
                         now,
+                        due_order,
                         store,
                         inline_title_editor.filter(|_| selected),
                         &column_widths,
                         marked,
-                        epic_selection,
                     )
                 } else {
                     build_task_row_cells(
@@ -418,6 +418,7 @@ fn build_task_list_render_model(
                         item,
                         *last,
                         now,
+                        due_order,
                         &column_widths,
                         marked,
                         epic_selection,
@@ -456,19 +457,28 @@ fn task_list_columns_for_tasks(
     label_tasks: &[&TaskListItem],
     epic_selection: EpicSelectionContext<'_>,
 ) -> [Constraint; 8] {
-    let project_width = project_column_width(store, narrow);
-    let label_width = label_column_width_from_task_refs(label_tasks, narrow);
-    let metadata_width = metadata_column_width_from_task_refs(
-        label_tasks,
-        epic_selection,
-        store.view_state.render_mode() == TaskListRenderMode::Flat,
-    );
-    let priority_width = priority_column_width(store);
-    let ref_width = if store.view_state.render_mode() == TaskListRenderMode::Epics {
-        14
+    let epics = store.view_state.render_mode() == TaskListRenderMode::Epics;
+    let project_width = if epics && narrow {
+        0
     } else {
-        12
+        project_column_width(store, narrow)
     };
+    let label_width = if epics {
+        if narrow { 14 } else { 20 }
+    } else {
+        label_column_width_from_task_refs(label_tasks, narrow)
+    };
+    let metadata_width = if epics {
+        if narrow { 9 } else { 18 }
+    } else {
+        metadata_column_width_from_task_refs(
+            label_tasks,
+            epic_selection,
+            store.view_state.render_mode() == TaskListRenderMode::Flat,
+        )
+    };
+    let priority_width = priority_column_width(store);
+    let ref_width = if epics { 14 } else { 12 };
     [
         Constraint::Length(ref_width),
         Constraint::Fill(1),
@@ -481,19 +491,26 @@ fn task_list_columns_for_tasks(
     ]
 }
 
+fn task_list_cell_content_area(mut area: Rect, index: usize) -> Rect {
+    if index < 7 {
+        area.width = area.width.saturating_sub(1);
+    }
+    area
+}
+
 fn task_list_column_widths(columns: &[Constraint; 8], width: u16) -> [usize; 8] {
     if width == 0 {
         return [0; 8];
     }
     let cells = Layout::horizontal(*columns).areas::<8>(Rect::new(0, 0, width, 1));
     [
-        cells[0].width as usize,
-        cells[1].width as usize,
-        cells[2].width as usize,
-        cells[3].width as usize,
-        cells[4].width as usize,
-        cells[5].width as usize,
-        cells[6].width as usize,
+        cells[0].width.saturating_sub(1) as usize,
+        cells[1].width.saturating_sub(1) as usize,
+        cells[2].width.saturating_sub(1) as usize,
+        cells[3].width.saturating_sub(1) as usize,
+        cells[4].width.saturating_sub(1) as usize,
+        cells[5].width.saturating_sub(1) as usize,
+        cells[6].width.saturating_sub(1) as usize,
         cells[7].width as usize,
     ]
 }
@@ -652,12 +669,23 @@ fn render_task_header(
         TaskListRenderMode::Queue => "IDLE",
         TaskListRenderMode::Upcoming => "WHEN",
         _ if due_order => "DUE",
+        TaskListRenderMode::Epics => "ACT",
         TaskListRenderMode::Flat if has_deferred_rows => "TIME",
         _ => "AGE",
     };
-    for (index, (area, label)) in cells
-        .into_iter()
-        .zip([
+    let labels = if render_mode == TaskListRenderMode::Epics {
+        [
+            " REF",
+            "TITLE",
+            "CHILDREN",
+            "SIGNALS",
+            "PROJECT",
+            "STATUS",
+            "P",
+            time_header,
+        ]
+    } else {
+        [
             " REF",
             "TITLE",
             "LABELS",
@@ -666,10 +694,11 @@ fn render_task_header(
             "STATUS",
             "P",
             time_header,
-        ])
-        .enumerate()
-    {
-        let label = if index == 2 {
+        ]
+    };
+    for (index, (area, label)) in cells.into_iter().zip(labels).enumerate() {
+        let area = task_list_cell_content_area(area, index);
+        let label = if index == 2 && render_mode != TaskListRenderMode::Epics {
             label_header_cell(label, area.width as usize)
         } else {
             Line::from(label)
@@ -739,7 +768,8 @@ fn render_task_row_cells(
 ) {
     frame.render_widget(Block::new().style(style), area);
     let areas = Layout::horizontal(columns).areas::<8>(area);
-    for (area, value) in areas.into_iter().zip(values) {
+    for (index, (area, value)) in areas.into_iter().zip(values).enumerate() {
+        let area = task_list_cell_content_area(area, index);
         frame.render_widget(Paragraph::new(value.clone()).style(style), area);
     }
 }
@@ -860,16 +890,122 @@ fn task_time_cell(
     }
 }
 
+fn epic_progress_cell(rollup: &crate::query::EpicRollup, max_width: usize) -> Line<'static> {
+    if rollup.total == 0 {
+        return Line::from(Span::styled("-", Style::new().fg(FG_MUTED)));
+    }
+    let compact = max_width <= 13;
+    let mut spans = vec![Span::styled(
+        if compact {
+            format!("open {}", rollup.open)
+        } else {
+            format!("{} open", rollup.open)
+        },
+        Style::new().fg(FG).add_modifier(Modifier::BOLD),
+    )];
+    let separator = if compact { " " } else { "  " };
+    if rollup.done > 0 {
+        spans.push(Span::styled(
+            format!("{separator}✓{}", rollup.done),
+            Style::new().fg(ACCENT),
+        ));
+    }
+    if rollup.canceled > 0 {
+        spans.push(Span::styled(
+            format!("{separator}×{}", rollup.canceled),
+            Style::new().fg(RED),
+        ));
+    }
+    Line::from(spans)
+}
+
+fn epic_signals_cell(rollup: &crate::query::EpicRollup, max_width: usize) -> Line<'static> {
+    if rollup.total == 0 {
+        return Line::from(Span::styled("-", Style::new().fg(FG_MUTED)));
+    }
+    if rollup.open == 0 {
+        return Line::from(Span::styled(
+            if max_width <= 8 {
+                "resolved"
+            } else {
+                "all resolved"
+            },
+            Style::new().fg(ACCENT),
+        ));
+    }
+    if max_width <= 12 && (rollup.overdue > 0 || rollup.blocked > 0) {
+        let mut spans = Vec::new();
+        if rollup.overdue > 0 {
+            spans.push(Span::styled(
+                format!("!{}", rollup.overdue),
+                Style::new().fg(RED),
+            ));
+        }
+        if rollup.blocked > 0 {
+            if !spans.is_empty() {
+                spans.push(Span::raw("  "));
+            }
+            spans.push(Span::styled(
+                format!("←{}", rollup.blocked),
+                Style::new().fg(YELLOW),
+            ));
+        }
+        return Line::from(spans);
+    }
+    let mut spans = Vec::new();
+    if rollup.overdue > 0 {
+        spans.push(Span::styled(
+            format!("{} late", rollup.overdue),
+            Style::new().fg(RED),
+        ));
+    }
+    if rollup.blocked > 0 {
+        if !spans.is_empty() {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled(
+            format!("{} blocked", rollup.blocked),
+            Style::new().fg(YELLOW),
+        ));
+    }
+    if spans.is_empty() || rollup.ready > 0 && rollup.overdue == 0 {
+        if !spans.is_empty() {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled(
+            format!("{} ready", rollup.ready),
+            Style::new().fg(ACCENT),
+        ));
+    }
+    Line::from(spans)
+}
+
+fn epic_activity_cell(item: &TaskListItem, now_seconds: i64, due_order: bool) -> Line<'static> {
+    if due_order {
+        return task_time_cell(item, now_seconds, TaskListRenderMode::Epics, true);
+    }
+    let activity_at = item
+        .epic_rollup
+        .as_ref()
+        .map(|rollup| rollup.latest_activity_at.as_str())
+        .unwrap_or(&item.task.updated_at);
+    Line::from(Span::styled(
+        task_seconds_since(activity_at, now_seconds)
+            .map(compact_age)
+            .unwrap_or_default(),
+        age_style(activity_at, now_seconds),
+    ))
+}
+
 fn build_epic_parent_row_cells(
     item: &TaskListItem,
     now_seconds: i64,
+    due_order: bool,
     store: &TuiStore,
     inline_title_editor: Option<&TextInputView>,
     column_widths: &[usize; 8],
     marked: bool,
-    epic_selection: EpicSelectionContext<'_>,
 ) -> Vec<Line<'static>> {
-    let age_seconds = task_seconds_since(&item.task.created_at, now_seconds);
     let title = inline_title_editor
         .map(|editor| inline_title_edit_cell(editor, column_widths[1]))
         .unwrap_or_else(|| title_cell(item, column_widths[1]));
@@ -892,21 +1028,28 @@ fn build_epic_parent_row_cells(
             Style::new().fg(FG_MUTED),
         ));
     }
+    let progress = item
+        .epic_rollup
+        .as_ref()
+        .map(|rollup| epic_progress_cell(rollup, column_widths[2]))
+        .unwrap_or_default();
+    let signals = item
+        .epic_rollup
+        .as_ref()
+        .map(|rollup| epic_signals_cell(rollup, column_widths[3]))
+        .unwrap_or_default();
     vec![
         Line::from(ref_spans),
         title,
-        label_cell(&item.labels, column_widths[2]),
-        metadata_cell(item, epic_selection, false),
+        progress,
+        signals,
         project_cell(item, column_widths[4]),
         status_chip(item.task.status.as_str()),
         Line::from(Span::styled(
             priority_icon(item.task.priority.as_str()),
             theme::priority_style(item.task.priority.as_str()).add_modifier(Modifier::BOLD),
         )),
-        Line::from(Span::styled(
-            age_seconds.map(compact_age).unwrap_or_default(),
-            age_style(&item.task.created_at, now_seconds),
-        )),
+        epic_activity_cell(item, now_seconds, due_order),
     ]
 }
 
@@ -914,11 +1057,11 @@ fn build_epic_child_row_cells(
     item: &TaskListItem,
     last: bool,
     now_seconds: i64,
+    due_order: bool,
     column_widths: &[usize; 8],
     marked: bool,
     epic_selection: EpicSelectionContext<'_>,
 ) -> Vec<Line<'static>> {
-    let age_seconds = task_seconds_since(&item.task.created_at, now_seconds);
     let branch = if last { "└─" } else { "├─" };
     let ref_prefix = format!("{}{branch} ", if marked { "●" } else { " " });
     let display_ref = truncate_chars(
@@ -933,7 +1076,7 @@ fn build_epic_child_row_cells(
     vec![
         ref_line,
         title_cell(item, column_widths[1]),
-        label_cell(&item.labels, column_widths[2]),
+        Line::default(),
         metadata_cell(item, epic_selection, false),
         project_cell(item, column_widths[4]),
         status_chip(item.task.status.as_str()),
@@ -941,10 +1084,16 @@ fn build_epic_child_row_cells(
             priority_icon(item.task.priority.as_str()),
             theme::priority_style(item.task.priority.as_str()).add_modifier(Modifier::BOLD),
         )),
-        Line::from(Span::styled(
-            age_seconds.map(compact_age).unwrap_or_default(),
-            age_style(&item.task.created_at, now_seconds),
-        )),
+        if due_order {
+            task_time_cell(item, now_seconds, TaskListRenderMode::Epics, true)
+        } else {
+            Line::from(Span::styled(
+                task_seconds_since(&item.task.updated_at, now_seconds)
+                    .map(compact_age)
+                    .unwrap_or_default(),
+                age_style(&item.task.updated_at, now_seconds),
+            ))
+        },
     ]
 }
 
@@ -1220,6 +1369,52 @@ fn timing_preview_lines(item: &TaskListItem, now_seconds: i64, width: usize) -> 
     .collect()
 }
 
+fn epic_rollup_preview_lines(rollup: &crate::query::EpicRollup) -> Vec<Line<'static>> {
+    let progress = if rollup.total == 0 {
+        Line::from(vec![
+            Span::styled("children ", Style::new().fg(FG_DIM)),
+            Span::styled("none", Style::new().fg(YELLOW)),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled("children ", Style::new().fg(FG_DIM)),
+            Span::styled(
+                format!("{} open", rollup.open),
+                Style::new().fg(FG).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!(" · {} done", rollup.done), Style::new().fg(ACCENT)),
+            Span::styled(
+                format!(" · {} canceled", rollup.canceled),
+                Style::new().fg(FG_MUTED),
+            ),
+        ])
+    };
+    let mut lines = vec![progress];
+    if rollup.total > 0 {
+        lines.push(Line::from(vec![
+            Span::styled("signals ", Style::new().fg(FG_DIM)),
+            Span::styled(
+                format!("{} overdue", rollup.overdue),
+                Style::new().fg(if rollup.overdue > 0 { RED } else { FG_MUTED }),
+            ),
+            Span::styled(
+                format!(" · {} blocked", rollup.blocked),
+                Style::new().fg(if rollup.blocked > 0 { YELLOW } else { FG_MUTED }),
+            ),
+            Span::styled(
+                format!(" · {} ready", rollup.ready),
+                Style::new().fg(if rollup.ready > 0 { ACCENT } else { FG_MUTED }),
+            ),
+            Span::styled(" · activity ", Style::new().fg(FG_DIM)),
+            Span::styled(
+                local_timestamp_display(&rollup.latest_activity_at),
+                Style::new().fg(FG_MUTED),
+            ),
+        ]));
+    }
+    lines
+}
+
 fn dependency_preview_lines(item: &TaskListItem) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     if !item.depends_on.is_empty() {
@@ -1314,6 +1509,9 @@ fn task_preview_lines(item: &TaskListItem, width: usize, height: usize) -> Vec<L
         Span::styled(labels, Style::new().fg(FG_MUTED)),
     ]));
     lines.extend(dependency_preview_lines(item));
+    if let Some(rollup) = item.epic_rollup.as_ref() {
+        lines.extend(epic_rollup_preview_lines(rollup));
+    }
     if let Some(parent) = &item.epic_parent {
         lines.push(epic_parent_preview_line(parent));
     }
@@ -1329,7 +1527,11 @@ fn task_preview_lines(item: &TaskListItem, width: usize, height: usize) -> Vec<L
                 Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!("({}/{})", open_child_links.len(), item.epic_children.len()),
+                format!(
+                    "({} open of {})",
+                    open_child_links.len(),
+                    item.epic_children.len()
+                ),
                 Style::new().fg(ACCENT),
             ),
         ]));
@@ -1507,6 +1709,62 @@ mod tests {
         store
     }
 
+    fn epic_parent_and_child() -> (TaskListItem, TaskListItem) {
+        let parent_id = crate::test_support::task_id("epic-parent");
+        let child_id = crate::test_support::task_id("epic-child");
+        let mut parent = task_list_item("Ship account recovery");
+        parent.task.id = parent_id.clone();
+        parent.task.is_epic = true;
+        parent.task.updated_at = "2026-06-20T00:00:00Z".to_string();
+        parent.epic_rollup = Some(crate::query::EpicRollup {
+            total: 5,
+            open: 3,
+            done: 1,
+            canceled: 1,
+            blocked: 1,
+            overdue: 1,
+            ready: 1,
+            latest_activity_at: "2026-06-21T00:00:00Z".to_string(),
+        });
+        parent.epic_children = vec![crate::query::TaskDependencyLink {
+            task_id: child_id.clone(),
+            display_ref: "APP-CHLD".to_string(),
+            title: "Verify recovery email".to_string(),
+            status: "active".to_string(),
+            priority: "none".to_string(),
+            unresolved: true,
+        }];
+
+        let mut child = task_list_item("Verify recovery email");
+        child.task.id = child_id;
+        child.task.status = crate::choices::TaskStatus::Active;
+        child.task.updated_at = "2026-06-21T00:00:00Z".to_string();
+        child.display_ref = "APP-CHLD".to_string();
+        child.epic_parent = Some(crate::query::TaskDependencyLink {
+            task_id: parent_id,
+            display_ref: "APP-EPIC".to_string(),
+            title: "Ship account recovery".to_string(),
+            status: "todo".to_string(),
+            priority: "none".to_string(),
+            unresolved: true,
+        });
+        (parent, child)
+    }
+
+    async fn epic_test_store(expanded: bool) -> TuiStore {
+        let mut store = test_store_with_tasks(Vec::new()).await;
+        let (parent, child) = epic_parent_and_child();
+        if expanded {
+            store
+                .view_state
+                .expanded_epic_ids
+                .insert(parent.task.id.clone());
+        }
+        store.tasks = vec![parent, child];
+        store.view_state.view = TaskView::Epics;
+        store
+    }
+
     fn column_length(column: Constraint) -> u16 {
         match column {
             Constraint::Length(width) => width,
@@ -1555,6 +1813,156 @@ mod tests {
         store.view_state.filter_modifiers.closed = ClosedTaskVisibility::Only;
         let state = crate::tui::ui::empty_state::task_empty_state(&store);
         assert_eq!(state.title, "No closed epics");
+    }
+
+    #[tokio::test]
+    async fn collapsed_epic_rows_show_outcomes_signals_and_subtree_activity() {
+        let store = epic_test_store(false).await;
+
+        let rendered = buffer_text(&render_task_list_buffer(&store, 120, 5));
+
+        assert!(rendered.contains("CHILDREN"));
+        assert!(rendered.contains("SIGNALS"));
+        assert!(rendered.contains("ACT"));
+        assert!(rendered.contains("Ship account recovery"));
+        assert!(rendered.contains("3 open  ✓1  ×1"));
+        assert!(rendered.contains("1 late  1 blocked"));
+        assert!(!rendered.contains("Verify recovery email"));
+
+        let preview = task_preview_lines(&store.tasks[0], 120, 12)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(preview.contains("children 3 open · 1 done · 1 canceled"));
+        assert!(preview.contains("signals 1 overdue · 1 blocked · 1 ready"));
+    }
+
+    #[tokio::test]
+    async fn expanded_epic_rows_keep_child_title_and_status_legible() {
+        let store = epic_test_store(true).await;
+
+        let rendered = buffer_text(&render_task_list_buffer(&store, 120, 5));
+
+        assert!(rendered.contains("Ship account recovery"));
+        assert!(rendered.contains("Verify recovery email"));
+        assert!(rendered.contains("active"));
+        assert!(rendered.contains("3 open  ✓1  ×1"));
+    }
+
+    #[tokio::test]
+    async fn narrow_epic_rows_preserve_rollup_and_core_task_fields() {
+        let store = epic_test_store(false).await;
+
+        let rendered = buffer_text(&render_task_list_buffer(&store, 64, 4));
+
+        assert!(rendered.contains("CHILDREN"));
+        assert!(rendered.contains("SIGNALS"));
+        assert!(rendered.contains("open 3 ✓1 ×1"));
+        assert!(rendered.contains("!1  ←1"));
+        assert!(rendered.contains("todo"));
+        assert!(rendered.contains("APP-"));
+    }
+
+    #[tokio::test]
+    async fn epic_columns_keep_a_blank_gutter_at_normal_and_narrow_widths() {
+        for width in [64, 120] {
+            let store = epic_test_store(false).await;
+            let buffer = render_task_list_buffer(&store, width, 4);
+            let columns = task_list_columns_for_tasks(
+                &store,
+                width < 90,
+                &[&store.tasks[0]],
+                EpicSelectionContext::default(),
+            );
+            let header_cells = Layout::horizontal(columns).areas::<8>(Rect::new(0, 0, width, 1));
+            let row_cells = Layout::horizontal(columns).areas::<8>(Rect::new(0, 1, width, 1));
+
+            for cells in [&header_cells, &row_cells] {
+                for cell in cells.iter().take(7) {
+                    if cell.width > 0 {
+                        assert_eq!(
+                            buffer[(cell.x + cell.width - 1, cell.y)].symbol(),
+                            " ",
+                            "missing gutter at width {width} in {cell:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_epic_row_uses_standard_placeholders() {
+        let mut store = epic_test_store(false).await;
+        store.tasks[0].epic_children.clear();
+        let rollup = crate::query::EpicRollup {
+            latest_activity_at: store.tasks[0].task.updated_at.clone(),
+            ..crate::query::EpicRollup::default()
+        };
+        store.tasks[0].epic_rollup = Some(rollup.clone());
+
+        let preview = task_preview_lines(&store.tasks[0], 100, 12)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        for cell in [
+            epic_progress_cell(&rollup, 18),
+            epic_signals_cell(&rollup, 18),
+        ] {
+            assert_eq!(cell.to_string(), "-");
+            assert_eq!(cell.spans[0].style.fg, Some(FG_MUTED));
+        }
+        assert!(preview.contains("children none"));
+    }
+
+    #[test]
+    fn epic_outcome_and_signal_styles_preserve_status_semantics() {
+        let rollup = crate::query::EpicRollup {
+            total: 6,
+            open: 3,
+            done: 2,
+            canceled: 1,
+            blocked: 1,
+            overdue: 1,
+            ready: 1,
+            latest_activity_at: String::new(),
+        };
+
+        for width in [8, 18] {
+            let progress = epic_progress_cell(&rollup, width);
+            assert_eq!(progress.spans[2].style.fg, Some(RED));
+
+            let signals = epic_signals_cell(&rollup, width);
+            assert!(
+                signals
+                    .spans
+                    .iter()
+                    .all(|span| !span.style.add_modifier.contains(Modifier::BOLD))
+            );
+        }
+
+        let open_only = crate::query::EpicRollup {
+            total: 3,
+            open: 3,
+            ..crate::query::EpicRollup::default()
+        };
+        assert_eq!(epic_progress_cell(&open_only, 18).to_string(), "3 open");
+        assert_eq!(epic_progress_cell(&open_only, 8).to_string(), "open 3");
+
+        let resolved = crate::query::EpicRollup {
+            total: 2,
+            done: 2,
+            ..crate::query::EpicRollup::default()
+        };
+        assert!(
+            !epic_signals_cell(&resolved, 18).spans[0]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
     }
 
     #[tokio::test]
@@ -1901,6 +2309,60 @@ mod tests {
     }
 
     #[test]
+    fn epic_time_column_uses_subtree_activity_and_respects_due_order() {
+        let (mut parent, child) = epic_parent_and_child();
+        let now = chrono::Utc
+            .with_ymd_and_hms(2026, 6, 22, 0, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp();
+        parent.task.due_on = Some("2026-06-23".to_string());
+
+        assert_eq!(epic_activity_cell(&parent, now, false).to_string(), "1d");
+        assert_eq!(
+            epic_activity_cell(&parent, now, true).to_string(),
+            task_time_cell(&parent, now, TaskListRenderMode::Epics, true).to_string()
+        );
+        let child_activity = task_seconds_since(&child.task.updated_at, now)
+            .map(compact_age)
+            .unwrap();
+        assert_eq!(child_activity, "1d");
+    }
+
+    #[test]
+    fn epic_header_switches_between_activity_and_due_semantics() {
+        let columns = [
+            Constraint::Length(14),
+            Constraint::Fill(1),
+            Constraint::Length(20),
+            Constraint::Length(18),
+            Constraint::Length(9),
+            Constraint::Length(10),
+            Constraint::Length(3),
+            Constraint::Length(5),
+        ];
+        for (due_order, expected, absent) in [(false, "ACT", "DUE"), (true, "DUE", "ACT")] {
+            let backend = TestBackend::new(120, 1);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| {
+                    render_task_header(
+                        frame,
+                        frame.area(),
+                        columns,
+                        TaskListRenderMode::Epics,
+                        false,
+                        due_order,
+                    )
+                })
+                .unwrap();
+            let rendered = buffer_text(terminal.backend().buffer());
+            assert!(rendered.contains(expected));
+            assert!(!rendered.contains(absent));
+        }
+    }
+
+    #[test]
     fn metadata_column_width_collapses_without_metadata() {
         let tasks = vec![task_list_item("plain"), task_list_item("also plain")];
 
@@ -2017,6 +2479,37 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn epic_status_hit_testing_tracks_parent_and_expanded_child_rows() {
+        for width in [64, 120] {
+            let collapsed = epic_test_store(false).await;
+            let table_state = TableState::default();
+            let area = Rect::new(0, 0, width, 5);
+            let projection = TaskListProjection::from_table_state(
+                &collapsed,
+                &table_state,
+                area.height.saturating_sub(1) as usize,
+            );
+            let status_area = task_list_status_area(&collapsed, &projection, area, 0);
+            let parent_hit =
+                task_status_at_position(&collapsed, &table_state, area, status_area.x, area.y + 1)
+                    .unwrap();
+            assert_eq!(parent_hit.task_id, collapsed.tasks[0].task.id);
+
+            let expanded = epic_test_store(true).await;
+            let projection = TaskListProjection::from_table_state(
+                &expanded,
+                &table_state,
+                area.height.saturating_sub(1) as usize,
+            );
+            let status_area = task_list_status_area(&expanded, &projection, area, 1);
+            let child_hit =
+                task_status_at_position(&expanded, &table_state, area, status_area.x, area.y + 2)
+                    .unwrap();
+            assert_eq!(child_hit.task_id, expanded.tasks[1].task.id);
+        }
     }
 
     #[tokio::test]
@@ -2481,6 +2974,7 @@ mod tests {
             &item,
             false,
             0,
+            false,
             &[14, 40, 12, 6, 9, 10, 3, 5],
             false,
             EpicSelectionContext::default(),
@@ -2586,7 +3080,7 @@ mod tests {
             .join("\n");
 
         assert!(rendered.contains("CHILD TASKS"));
-        assert!(rendered.contains("(2/2)"));
+        assert!(rendered.contains("(2 open of 2)"));
         assert!(rendered.contains("  ├─ APP-C001"));
         assert!(rendered.contains("first child"));
         assert!(rendered.contains("  └─ APP-C002"));

@@ -266,6 +266,18 @@ pub struct RecurrenceTaskGroup {
     pub counts: RecurrenceCounts,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EpicRollup {
+    pub total: usize,
+    pub open: usize,
+    pub done: usize,
+    pub canceled: usize,
+    pub blocked: usize,
+    pub overdue: usize,
+    pub ready: usize,
+    pub latest_activity_at: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskListItem {
     pub task: Task,
@@ -280,6 +292,7 @@ pub struct TaskListItem {
     pub blocks: Vec<TaskDependencyLink>,
     pub epic_children: Vec<TaskDependencyLink>,
     pub epic_parent: Option<TaskDependencyLink>,
+    pub epic_rollup: Option<EpicRollup>,
     pub queue: QueueMeta,
     pub recurrence: Option<TaskRecurrenceSummary>,
     pub recurrence_group: Option<RecurrenceTaskGroup>,
