@@ -328,31 +328,6 @@ impl Database {
         .await
     }
 
-    pub async fn list_task_items_with_display_refs(
-        &self,
-        workspace_id: &WorkspaceId,
-        filters: TaskFilters,
-        mode: TaskQueryMode,
-        sort: TaskSort,
-        direction: SortDirection,
-        _display_refs: &DisplayRefContext,
-    ) -> Result<Vec<TaskListItem>> {
-        self.reconcile_recurrence_reports(workspace_id).await?;
-        let mut conn = self.acquire_reader().await?;
-        let refreshed_display_refs =
-            DisplayRefContext::for_workspace(&mut conn, workspace_id).await?;
-        list_task_items_with_display_refs(
-            &mut conn,
-            workspace_id,
-            filters,
-            mode,
-            sort,
-            direction,
-            &refreshed_display_refs,
-        )
-        .await
-    }
-
     pub async fn sidebar_counts_for_scope(
         &self,
         workspace_id: &WorkspaceId,

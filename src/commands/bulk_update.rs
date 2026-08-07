@@ -30,15 +30,13 @@ pub(crate) async fn cmd_bulk_update(
     let set_project_key = resolve_bulk_project_mutation(database, &workspace_id, &args).await?;
 
     let filters = bulk_update_filters(&args);
-    let display_refs = database.display_ref_context(&workspace.id).await?;
     let items = database
-        .list_task_items_with_display_refs(
+        .list_task_items(
             &workspace.id,
             filters,
             TaskQueryMode::Flat,
             TaskSort::Updated,
             SortDirection::Desc,
-            &display_refs,
         )
         .await?;
     let matched = items.len();
@@ -69,6 +67,11 @@ pub(crate) async fn cmd_bulk_update(
             outcomes.len()
         );
     }
+    let display_refs = if outcomes.is_empty() {
+        None
+    } else {
+        Some(database.display_ref_context(&workspace.id).await?)
+    };
     let mut outcomes = outcomes.into_iter();
     let mut changed = 0;
     let mut unchanged = 0;
@@ -87,7 +90,12 @@ pub(crate) async fn cmd_bulk_update(
             .next()
             .expect("batch update returns one outcome per changing task");
         changed += 1;
-        print_changed_bulk_update(&display_refs, &outcome.task);
+        print_changed_bulk_update(
+            display_refs
+                .as_ref()
+                .expect("changed bulk updates load display refs"),
+            &outcome.task,
+        );
     }
     if args.dry_run {
         unchanged = matched - would_change;

@@ -1674,6 +1674,27 @@ fn bulk_update_filters_and_removes_label() {
 }
 
 #[test]
+fn bulk_update_reports_updated_project_display_ref() {
+    let env = TestEnv::new();
+    let db = env.db("bulk-update-project-ref.sqlite");
+    ok(env.aven(&db, ["project", "create", "app"]));
+    ok(env.aven(&db, ["project", "create", "ops"]));
+    ok(env.aven(&db, ["add", "move me", "--project", "app"]));
+
+    let updated = ok(env.aven(
+        &db,
+        ["bulk-update", "--project", "app", "--set-project", "ops"],
+    ));
+    let updated_ref = extract_ref(&updated);
+
+    assert!(updated_ref.starts_with("OPS-"), "{updated}");
+    contains_all(
+        &ok(env.aven(&db, ["show", &updated_ref])),
+        &["title=\"move me\""],
+    );
+}
+
+#[test]
 fn bulk_update_rolls_back_when_a_later_task_update_fails() {
     let env = TestEnv::new();
     let db = env.db("bulk-update-atomic.sqlite");
