@@ -36,6 +36,22 @@ fn doctor_reports_default_database_health() {
 }
 
 #[test]
+fn doctor_reports_workspace_resolution_failures() {
+    let env = TestEnv::new();
+    let db = env.db("missing-workspace-doctor.sqlite");
+
+    let output = ok(env.aven(&db, ["--workspace", "missing", "doctor"]));
+
+    contains_all(
+        &output,
+        &[
+            "!! active workspace",
+            "error unknown-workspace input=missing",
+        ],
+    );
+}
+
+#[test]
 fn doctor_reports_configured_paths_and_sync_settings() {
     let env = TestEnv::new();
     let db = env.db("configured-doctor.sqlite");

@@ -763,6 +763,17 @@ fn post_sync_json(url: &str, body: &str) -> (u16, String) {
 }
 
 #[test]
+fn sync_ignores_workspace_selection() {
+    let env = TestEnv::new();
+    let db = env.db("missing-workspace-sync.sqlite");
+
+    let error = fail(env.aven(&db, ["--workspace", "missing", "sync"]));
+
+    contains_all(&error, &["error sync-disabled"]);
+    contains_none(&error, &["unknown-workspace"]);
+}
+
+#[test]
 fn offline_creates_converge() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
