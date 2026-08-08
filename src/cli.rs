@@ -1200,6 +1200,8 @@ pub(crate) enum ConfigSubcommand {
     Show,
     /// Get a configuration value
     Get(ConfigGetArgs),
+    /// Set a configuration value
+    Set(ConfigSetArgs),
 }
 
 #[derive(Args)]
@@ -1207,10 +1209,27 @@ pub(crate) struct ConfigGetArgs {
     pub(crate) key: ConfigKey,
 }
 
+#[derive(Args)]
+pub(crate) struct ConfigSetArgs {
+    pub(crate) key: ConfigKey,
+    /// New value, or null to clear an optional setting
+    pub(crate) value: String,
+}
+
 #[derive(clap::ValueEnum, Clone, Copy)]
 pub(crate) enum ConfigKey {
     #[value(name = "sync.enabled")]
     SyncEnabled,
+    #[value(name = "sync.server_url")]
+    SyncServerUrl,
+    #[value(name = "sync.interval_seconds")]
+    SyncIntervalSeconds,
+    #[value(name = "update.automatic_checks")]
+    UpdateAutomaticChecks,
+    #[value(name = "local.db_path")]
+    LocalDbPath,
+    #[value(name = "local.image_optimization")]
+    LocalImageOptimization,
 }
 
 #[derive(Args)]

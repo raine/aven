@@ -29,6 +29,15 @@ inspect tasks, update status, and leave durable handoff context.
 - Add `--workspace <name-or-key>` when a command must target a specific
   workspace.
 
+## Configuration
+
+Use `aven config get <key>` to read `sync.enabled`, `sync.server_url`,
+`sync.interval_seconds`, `update.automatic_checks`, `local.db_path`, or
+`local.image_optimization`. Optional strings print `null` when unset. Use
+`aven config set <key> <value>` to persist a validated scalar, and pass `null` to
+clear `sync.server_url` or `local.db_path`. Secret settings such as
+`sync.auth_token` are unavailable through these commands.
+
 ## Core commands
 
 ```sh

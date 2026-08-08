@@ -11,6 +11,32 @@ aven config init
 
 aven reads `config.yaml` from `AVEN_CONFIG_DIR` when set, otherwise from `~/.config/aven`.
 
+## Scalar values from scripts and agents
+
+`aven config get` reads these non-secret scalar settings:
+
+| Key | Values |
+| --- | --- |
+| `sync.enabled` | `true` or `false` |
+| `sync.server_url` | JSON-quoted HTTP URL, or `null` when unset |
+| `sync.interval_seconds` | Positive integer, with the default resolved to `30` |
+| `update.automatic_checks` | `true` or `false` |
+| `local.db_path` | JSON-quoted path, or `null` when unset |
+| `local.image_optimization` | `off`, `paste`, or `on` |
+
+```sh
+aven config get sync.server_url
+aven config set sync.enabled true
+aven config set sync.server_url https://sync.example.com
+aven config set local.db_path null
+```
+
+`aven config set <key> <value>` validates the value, updates only that scalar in
+`config.yaml`, and preserves comments and unrelated settings. The write replaces
+the file atomically. Use `null` to clear `sync.server_url` or `local.db_path`.
+Configuration keys containing secrets, including `sync.auth_token`, are not
+available through `config get` or `config set`.
+
 Use `aven doctor` to inspect the active config, database path, workspace, project, sync cursor, daemon wake address, and routing decisions.
 
 ## Config shape

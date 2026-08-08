@@ -941,21 +941,23 @@ aven skill install --agent claude --agent codex
 
 ### `aven config`
 
-Create or inspect the config file.
+Create, inspect, or update the config file.
 
 ```sh
 aven config init
 aven config show
-aven config get sync.enabled
+aven config get <key>
+aven config set <key> <value>
 ```
 
-`config init` creates the default `config.yaml` and fails rather than overwriting an existing file. `config show` prints the resolved config path followed by its stored text. `config get sync.enabled` prints the resolved Boolean value. The config directory comes from `AVEN_CONFIG_DIR` or the platform default.
-
-```sh
-aven config init
-aven config show
-aven config get sync.enabled
-```
+`config init` creates the default `config.yaml` and fails rather than overwriting
+an existing file. `config show` prints the resolved config path followed by its
+stored text. `config get` prints one non-secret scalar value, and `config set`
+validates and atomically updates one scalar while preserving comments and
+unrelated settings. Optional string settings print `null` when unset and accept
+`null` to clear them. See [Configuration](/configuration/#scalar-values-from-scripts-and-agents)
+for the supported keys and value formats. The config directory comes from
+`AVEN_CONFIG_DIR` or the platform default.
 
 ### `aven doctor`
 

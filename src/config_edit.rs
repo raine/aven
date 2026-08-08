@@ -2,11 +2,101 @@ use crate::ids::WorkspaceId;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::config::{AppConfig, write_config_text};
 
 const MANAGED_MARKER: &str = "# aven-managed project path mapping";
+
+pub fn set_scalar(path: &Path, section: &str, key: &str, value: &str) -> Result<()> {
+    let text = if path.exists() {
+        fs::read_to_string(path).with_context(|| format!("could not read {}", path.display()))?
+    } else {
+        String::new()
+    };
+    if !text.trim().is_empty() {
+        serde_yaml::from_str::<AppConfig>(&text)
+            .with_context(|| format!("could not parse {}", path.display()))?
+            .validate()
+            .with_context(|| format!("invalid config {}", path.display()))?;
+    }
+    let text = set_scalar_text(&text, section, key, value)?;
+    write_edited_config(path, text)
+}
+
+fn set_scalar_text(text: &str, section: &str, key: &str, value: &str) -> Result<String> {
+    let mut lines = split_lines(text);
+    if let Some(section_line) = find_top_level_key(&lines, section) {
+        if !is_block_mapping_key(&lines[section_line], section) {
+            bail!("cannot edit {section}.{key}: {section} must use a YAML block mapping");
+        }
+        let section_end = find_section_end(&lines, section_line, 0);
+        let child_indent = mapping_child_indent(&lines, section_line + 1, section_end).unwrap_or(2);
+        if let Some(key_line) =
+            find_child_key(&lines, section_line + 1, section_end, child_indent, key)
+        {
+            let comment = trailing_yaml_comment(&lines[key_line]);
+            let indentation = " ".repeat(child_indent);
+            lines[key_line] = match comment {
+                Some(comment) => format!("{indentation}{key}: {value} {comment}"),
+                None => format!("{indentation}{key}: {value}"),
+            };
+        } else {
+            lines.insert(
+                section_end,
+                format!("{}{key}: {value}", " ".repeat(child_indent)),
+            );
+        }
+    } else {
+        if !lines.is_empty() && !lines.last().is_some_and(|line| line.trim().is_empty()) {
+            lines.push(String::new());
+        }
+        lines.push(format!("{section}:"));
+        lines.push(format!("  {key}: {value}"));
+    }
+    let mut output = lines.join("\n");
+    output.push('\n');
+    Ok(output)
+}
+
+fn is_block_mapping_key(line: &str, key: &str) -> bool {
+    let Some(suffix) = line.trim().strip_prefix(&format!("{key}:")) else {
+        return false;
+    };
+    let suffix = suffix.trim();
+    suffix.is_empty() || suffix.starts_with('#')
+}
+
+fn mapping_child_indent(lines: &[String], start: usize, end: usize) -> Option<usize> {
+    lines[start..end]
+        .iter()
+        .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+        .map(|line| indent_len(line))
+        .filter(|indent| *indent > 0)
+        .min()
+}
+
+fn trailing_yaml_comment(line: &str) -> Option<&str> {
+    let mut quote = None;
+    let mut escaped = false;
+    let bytes = line.as_bytes();
+    for (index, character) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match (quote, character) {
+            (Some('"'), '\\') => escaped = true,
+            (Some(active), current) if active == current => quote = None,
+            (None, '\'' | '"') => quote = Some(character),
+            (None, '#') if index > 0 && bytes[index - 1].is_ascii_whitespace() => {
+                return Some(&line[index..]);
+            }
+            _ => {}
+        }
+    }
+    None
+}
 
 #[derive(Debug, Clone)]
 pub struct ProjectPathMappingEdit<'a> {
@@ -107,8 +197,11 @@ fn read_config_text(path: &Path) -> Result<String> {
 }
 
 fn write_edited_config(path: &Path, text: String) -> Result<()> {
-    serde_yaml::from_str::<AppConfig>(&text)
+    let config = serde_yaml::from_str::<AppConfig>(&text)
         .with_context(|| format!("edited config did not parse for {}", path.display()))?;
+    config
+        .validate()
+        .with_context(|| format!("edited config is invalid for {}", path.display()))?;
     write_config_text(path, text)
 }
 
@@ -358,4 +451,39 @@ fn indent_len(line: &str) -> usize {
 
 fn has_trailing_newline(_text: &str, last_line: Option<&String>) -> bool {
     last_line.is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scalar_edit_preserves_comments_unrelated_settings_and_indentation() {
+        let text = "# config\nsync:\n    enabled: false # explanation\n    auth_token: secret\nproject:\n  overrides: []\n";
+
+        let edited = set_scalar_text(text, "sync", "enabled", "true").unwrap();
+        let edited = set_scalar_text(&edited, "sync", "server_url", "https://example.com").unwrap();
+
+        assert!(edited.contains("# config"));
+        assert!(edited.contains("    enabled: true # explanation"));
+        assert!(edited.contains("    server_url: https://example.com"));
+        assert!(edited.contains("    auth_token: secret"));
+        assert!(edited.contains("project:\n  overrides: []"));
+    }
+
+    #[test]
+    fn scalar_edit_adds_missing_sections() {
+        let edited =
+            set_scalar_text("sync:\n  enabled: false\n", "local", "db_path", "null").unwrap();
+
+        assert!(edited.contains("\nlocal:\n  db_path: null\n"));
+    }
+
+    #[test]
+    fn scalar_edit_rejects_inline_mappings() {
+        let error =
+            set_scalar_text("sync: { enabled: false }\n", "sync", "enabled", "true").unwrap_err();
+
+        assert!(format!("{error:#}").contains("must use a YAML block mapping"));
+    }
 }

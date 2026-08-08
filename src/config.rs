@@ -584,9 +584,22 @@ pub fn write_config_text(path: &Path, text: String) -> Result<()> {
         fs::create_dir_all(parent)
             .with_context(|| format!("could not create {}", parent.display()))?;
     }
+    let permissions = if path.exists() {
+        Some(
+            fs::metadata(path)
+                .with_context(|| format!("could not inspect {}", path.display()))?
+                .permissions(),
+        )
+    } else {
+        None
+    };
     let tmp_path = path.with_extension("yaml.tmp");
     fs::write(&tmp_path, text)
         .with_context(|| format!("could not write {}", tmp_path.display()))?;
+    if let Some(permissions) = permissions {
+        fs::set_permissions(&tmp_path, permissions)
+            .with_context(|| format!("could not preserve permissions for {}", path.display()))?;
+    }
     fs::rename(&tmp_path, path).with_context(|| {
         format!(
             "could not replace {} with {}",
