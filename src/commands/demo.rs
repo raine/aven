@@ -128,6 +128,7 @@ async fn seed_demo(
                         .iter()
                         .map(|label| (*label).to_string())
                         .collect(),
+                    metadata: Vec::new(),
                     available_at: relative_available_at(clock.now, task.available_in_hours)?,
                     due_on: relative_due_on(clock.today, task.due_in_days)?,
                     is_epic: task.is_epic,
@@ -423,6 +424,7 @@ mod tests {
                 .create_task(
                     &workspace,
                     TaskDraft {
+                        metadata: Vec::new(),
                         title: "Temporary demo edit".to_string(),
                         description: String::new(),
                         project: Some("cli".to_string()),

@@ -143,6 +143,10 @@ pub async fn conflict_display_value(
     field: &str,
     value: &str,
 ) -> Result<String> {
+    if field.starts_with("metadata:") {
+        return Ok(crate::metadata::decode_metadata_conflict_value(value)?
+            .unwrap_or_else(|| "<absent>".to_string()));
+    }
     match TaskField::parse(field) {
         Some(TaskField::Project) => display_project_conflict_value(conn, workspace_id, value).await,
         Some(TaskField::IsEpic) => Ok(match value {

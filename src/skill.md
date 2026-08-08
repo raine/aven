@@ -52,10 +52,16 @@ aven list --blocked
 aven list --upcoming
 aven list --overdue
 aven search "auth bug"
-aven search --project app "auth bug"
+aven search --project app --metadata legacy-id=123 "migration"
+aven search --has-metadata customer-id "handoff"
 aven context APP-7KQ9
 aven show APP-7KQ9 --full
 aven add "Fix conflict display" --status todo --priority high --label bug
+aven add "Import legacy task" --metadata legacy-id=123
+aven edit APP-7KQ9 --metadata customer-id=acme-42
+aven edit APP-7KQ9 --remove-metadata customer-id
+aven metadata list
+aven metadata rename legacy-id source-id
 aven add "Test rollout" --available-at tomorrow
 aven add "Submit report" --due "next monday"
 aven add "Add due dates" --epic
@@ -96,6 +102,7 @@ aven recur list
 aven recur show RCR-7KP2
 aven recur history RCR-7KP2
 aven recur edit RCR-7KP2 --title "Future journal" --priority high
+aven recur edit RCR-7KP2 --metadata journal-kind=work
 aven recur skip RCR-7KP2
 aven recur pause RCR-7KP2
 aven recur resume RCR-7KP2
@@ -121,8 +128,9 @@ aven search "daily journal" --expand-recurring
   with `edit <task-ref> --status done`, or skip it with `recur skip`. A canceled
   recurrence occurrence renders as skipped on recurrence surfaces.
 - Series template edits affect future occurrences. Schedule rule, start date,
-  and time zone are fixed for a series. Stop the series and create a replacement
-  to change its calendar lattice.
+  and time zone are fixed for a series. Metadata template edits also affect only
+  future materialized occurrences. Stop the series and create a replacement to
+  change its calendar lattice.
 - Paused occurrences stay addressable by task ref but leave ordinary active
   views. Stopping keeps the current occurrence as the final task unless
   `--skip-current` resolves it immediately.
@@ -153,8 +161,10 @@ aven search "daily journal" --expand-recurring
 - `aven update` checks for a newer release. Direct installations require
   `aven update --yes` before replacing the executable. Package-managed
   installations print the appropriate update guidance.
-- Use `show --full` before decisions that depend on description, labels, notes,
-  deletion state, or conflicts.
+- Use `show --full` before decisions that depend on description, labels, metadata,
+  notes, deletion state, or conflicts. Metadata keys are workspace definitions:
+  renaming one preserves its stable identity and updates how every related value
+  is displayed. Empty metadata values are present values, not removal.
 - Use `context <ref>` when one task snapshot is needed before acting. It gathers
   task fields, description, labels, notes, dependencies, blockers, conflicts,
   current attachment metadata, deletion state, refs, and project metadata.

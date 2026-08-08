@@ -30,6 +30,9 @@ async fn search_preview_with_database(
             TaskSearchQuery {
                 text,
                 project,
+                metadata: Vec::new(),
+                has_metadata: Vec::new(),
+                missing_metadata: Vec::new(),
                 include_deleted: false,
                 limit,
             },
@@ -214,6 +217,9 @@ impl TuiStore {
                 TaskSearchQuery {
                     text: text.to_string(),
                     project: None,
+                    metadata: Vec::new(),
+                    has_metadata: Vec::new(),
+                    missing_metadata: Vec::new(),
                     include_deleted: false,
                     limit: 100,
                 },

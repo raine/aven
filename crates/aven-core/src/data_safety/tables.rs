@@ -98,6 +98,67 @@ pub(super) async fn import_labels(
     Ok(())
 }
 
+pub(super) async fn import_metadata_fields(
+    tx: &mut SqliteConnection,
+    rows: &[super::MetadataFieldRow],
+) -> Result<()> {
+    for row in rows {
+        sqlx::query(
+            "INSERT INTO metadata_fields(id, workspace_id, key, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(&row.id)
+        .bind(&row.workspace_id)
+        .bind(&row.key)
+        .bind(&row.created_at)
+        .bind(&row.updated_at)
+        .execute(&mut *tx)
+        .await?;
+    }
+    Ok(())
+}
+
+pub(super) async fn import_metadata_field_id_aliases(
+    tx: &mut SqliteConnection,
+    rows: &[super::MetadataFieldIdAliasRow],
+) -> Result<()> {
+    for row in rows {
+        sqlx::query(
+            "INSERT INTO metadata_field_id_aliases(
+                 workspace_id, remote_field_id, local_field_id
+             ) VALUES (?, ?, ?)",
+        )
+        .bind(&row.workspace_id)
+        .bind(&row.remote_field_id)
+        .bind(&row.local_field_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    Ok(())
+}
+
+pub(super) async fn import_task_metadata(
+    tx: &mut SqliteConnection,
+    rows: &[super::TaskMetadataRow],
+) -> Result<()> {
+    for row in rows {
+        sqlx::query(
+            "INSERT INTO task_metadata(
+                 workspace_id, task_id, field_id, value, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&row.workspace_id)
+        .bind(&row.task_id)
+        .bind(&row.field_id)
+        .bind(&row.value)
+        .bind(&row.created_at)
+        .bind(&row.updated_at)
+        .execute(&mut *tx)
+        .await?;
+    }
+    Ok(())
+}
+
 pub(super) async fn import_tasks(tx: &mut SqliteConnection, rows: &[super::TaskRow]) -> Result<()> {
     for row in rows {
         let source = crate::choices::TaskSource::parse(&row.source)?;
@@ -284,6 +345,28 @@ pub(super) async fn import_recurrence_series_labels(
         .bind(&row.workspace_id)
         .bind(&row.series_id)
         .bind(&row.label)
+        .execute(&mut *tx)
+        .await?;
+    }
+    Ok(())
+}
+
+pub(super) async fn import_recurrence_series_metadata(
+    tx: &mut SqliteConnection,
+    rows: &[super::RecurrenceSeriesMetadataRow],
+) -> Result<()> {
+    for row in rows {
+        sqlx::query(
+            "INSERT INTO recurrence_series_metadata(
+                 workspace_id, series_id, field_id, value, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&row.workspace_id)
+        .bind(&row.series_id)
+        .bind(&row.field_id)
+        .bind(&row.value)
+        .bind(&row.created_at)
+        .bind(&row.updated_at)
         .execute(&mut *tx)
         .await?;
     }

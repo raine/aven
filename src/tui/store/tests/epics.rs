@@ -34,6 +34,7 @@ async fn epics_view_closed_filter_includes_and_isolates_closed_epics() {
     let (_, open_selected) = store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 is_epic: true,
                 ..task_draft("Open epic")
             },
@@ -44,6 +45,7 @@ async fn epics_view_closed_filter_includes_and_isolates_closed_epics() {
     let (_, closed_selected) = store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 is_epic: true,
                 ..task_draft("Finished epic")
             },
@@ -339,6 +341,7 @@ async fn epic_child_creation_rolls_back_task_when_link_validation_fails() {
         .create_task(
             &store.active_workspace,
             TaskDraft {
+                metadata: Vec::new(),
                 project: Some("parent-project".to_string()),
                 is_epic: true,
                 ..task_draft("Parent epic")
@@ -352,6 +355,7 @@ async fn epic_child_creation_rolls_back_task_when_link_validation_fails() {
         .create_task_for_epic(
             &store.active_workspace,
             TaskDraft {
+                metadata: Vec::new(),
                 project: Some("child-project".to_string()),
                 ..task_draft("Unexpected standalone child")
             },

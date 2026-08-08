@@ -17,6 +17,7 @@ fn at(day: u32, hour: u32) -> DateTime<Utc> {
 
 fn draft(title: &str, start_day: u32) -> RecurrenceSeriesDraft {
     RecurrenceSeriesDraft {
+        metadata: Vec::new(),
         title: title.to_string(),
         description: "recurrence query fixture".to_string(),
         project: "recurrence".to_string(),
@@ -400,6 +401,9 @@ async fn paused_and_archived_tasks_leave_all_open_paths_but_stopped_final_stays_
         &mut conn,
         &workspace.id,
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "paused fixture".to_string(),
             project: None,
             include_deleted: false,
@@ -624,6 +628,9 @@ async fn history_combines_task_outcomes_archived_and_derived_rows() {
         &mut conn,
         &workspace.id,
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "history fixture".to_string(),
             project: None,
             include_deleted: false,
@@ -638,6 +645,9 @@ async fn history_combines_task_outcomes_archived_and_derived_rows() {
         &mut conn,
         &workspace.id,
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "history fixture".to_string(),
             project: None,
             include_deleted: false,

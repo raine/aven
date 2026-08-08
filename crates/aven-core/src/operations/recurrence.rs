@@ -56,6 +56,7 @@ pub struct RecurrenceSeriesDraft {
     pub priority: String,
     pub initial_status: String,
     pub labels: Vec<String>,
+    pub metadata: Vec<crate::metadata::TaskMetadataInput>,
     pub schedule: RecurrenceSchedule,
 }
 
@@ -101,6 +102,8 @@ pub struct RecurrenceTemplateUpdate {
     pub priority: Option<String>,
     pub initial_status: Option<String>,
     pub labels: Option<Vec<String>>,
+    pub set_metadata: Vec<crate::metadata::TaskMetadataInput>,
+    pub remove_metadata: Vec<String>,
     pub available_local_time: Option<Option<NaiveTime>>,
     pub due_policy: Option<RecurrenceDuePolicy>,
 }
@@ -350,6 +353,8 @@ pub async fn create_recurrence_series(
     } else {
         resolve_labels_in_workspace(&mut tx, &workspace.id, &draft.labels).await?
     };
+    let series_metadata =
+        crate::metadata::resolve_metadata_inputs(&mut tx, workspace, &draft.metadata).await?;
     sqlx::query(
         "INSERT INTO recurrence_series(
             workspace_id, id, title, description, project_id, priority, initial_status,
@@ -386,6 +391,21 @@ pub async fn create_recurrence_series(
         .execute(&mut *tx)
         .await?;
     }
+    for value in &series_metadata {
+        sqlx::query(
+            "INSERT INTO recurrence_series_metadata(
+                 workspace_id, series_id, field_id, value, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&workspace.id)
+        .bind(&series_id)
+        .bind(&value.field_id)
+        .bind(&value.value)
+        .bind(&created_at)
+        .bind(&created_at)
+        .execute(&mut *tx)
+        .await?;
+    }
     let create_change_id = append_change(
         &mut tx,
         ChangeEntity::RecurrenceSeries,
@@ -416,6 +436,7 @@ pub async fn create_recurrence_series(
             )
             .set("due_policy", draft.schedule.due_policy.as_str())
             .set("labels", &labels)
+            .set("metadata", &series_metadata)
             .set("state", "active")
             .set("stopped_at", "")
             .set("created_at", &created_at)
@@ -429,6 +450,17 @@ pub async fn create_recurrence_series(
             MutableEntityType::RecurrenceSeries,
             series_id.as_str(),
             field,
+            &create_change_id,
+        )
+        .await?;
+    }
+    for value in &series_metadata {
+        set_entity_field_version(
+            &mut tx,
+            &workspace.id,
+            MutableEntityType::RecurrenceSeries,
+            series_id.as_str(),
+            &format!("metadata:{}", value.field_id),
             &create_change_id,
         )
         .await?;
@@ -478,6 +510,14 @@ pub async fn update_recurrence_template(
 
     let mut tx = begin_immediate(conn).await?;
     let current = load_series(&mut tx, &workspace.id, series_id).await?;
+    crate::metadata::validate_recurrence_metadata_result(
+        &mut tx,
+        &workspace.id,
+        series_id,
+        &update.set_metadata,
+        &update.remove_metadata,
+    )
+    .await?;
     let mut values = Vec::<(&str, String)>::new();
     if let Some(title) = update.title
         && title != current.title
@@ -531,11 +571,28 @@ pub async fn update_recurrence_template(
         current_labels.clone()
     };
     let labels_changed = current_labels != target_labels;
-    if values.is_empty() && !labels_changed {
+    let mut metadata_changed = false;
+    for input in &update.set_metadata {
+        metadata_changed |=
+            crate::metadata::set_recurrence_metadata(&mut tx, workspace, series_id, input).await?;
+    }
+    for key in &update.remove_metadata {
+        metadata_changed |=
+            crate::metadata::remove_recurrence_metadata(&mut tx, workspace, series_id, key).await?;
+    }
+    if values.is_empty() && !labels_changed && !metadata_changed {
         tx.commit().await?;
         return Ok(RecurrenceTemplateUpdateOutcome {
             series: current,
             changed: false,
+        });
+    }
+    if values.is_empty() && !labels_changed {
+        let series = load_series(&mut tx, &workspace.id, series_id).await?;
+        tx.commit().await?;
+        return Ok(RecurrenceTemplateUpdateOutcome {
+            series,
+            changed: true,
         });
     }
 
@@ -1414,9 +1471,10 @@ async fn materialize_occurrence(
     let schedule = series.schedule();
     let slot = slot_values(&schedule, slot_on)?;
     let identity = derive_occurrence_identity(&workspace.id, &series.id, &schedule, slot_on)?;
+    let metadata = load_series_metadata(conn, &workspace.id, &series.id).await?;
     if let Some(existing) = load_occurrence(conn, &workspace.id, &series.id, slot_on).await? {
         verify_materialized_occurrence(
-            conn, workspace, series, labels, &slot, &identity, &existing,
+            conn, workspace, series, labels, &metadata, &slot, &identity, &existing,
         )
         .await?;
         return Ok(existing);
@@ -1450,6 +1508,21 @@ async fn materialize_occurrence(
             .execute(&mut *conn)
             .await?;
     }
+    for value in &metadata {
+        sqlx::query(
+            "INSERT INTO task_metadata(
+                 workspace_id, task_id, field_id, value, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&workspace.id)
+        .bind(&identity.task_id)
+        .bind(&value.field_id)
+        .bind(&value.value)
+        .bind(&identity.created_at)
+        .bind(&identity.updated_at)
+        .execute(&mut *conn)
+        .await?;
+    }
     sqlx::query(
         "INSERT INTO recurrence_occurrences(
             workspace_id, series_id, slot_on, task_id, outcome, resolved_at,
@@ -1463,7 +1536,8 @@ async fn materialize_occurrence(
     .execute(&mut *conn)
     .await?;
 
-    let payload = deterministic_task_payload(workspace, series, labels, &slot, &identity);
+    let payload =
+        deterministic_task_payload(workspace, series, labels, &metadata, &slot, &identity);
     insert_change_with_identity(
         conn,
         IdentifiedChange {
@@ -1529,16 +1603,29 @@ async fn materialize_occurrence(
         )
         .await?;
     }
+    for value in &metadata {
+        set_entity_field_version(
+            conn,
+            &workspace.id,
+            MutableEntityType::Task,
+            identity.task_id.as_str(),
+            &format!("metadata:{}", value.field_id),
+            &identity.field_version_seeds.task,
+        )
+        .await?;
+    }
     load_occurrence(conn, &workspace.id, &series.id, slot_on)
         .await?
         .context("materialized recurrence occurrence missing")
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn verify_materialized_occurrence(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     series: &RecurrenceSeries,
     labels: &[String],
+    metadata: &[crate::metadata::ResolvedMetadataValue],
     slot: &crate::recurrence::RecurrenceSlot,
     identity: &crate::recurrence::RecurrenceOccurrenceIdentity,
     occurrence: &RecurrenceOccurrence,
@@ -1583,6 +1670,26 @@ async fn verify_materialized_occurrence(
             occurrence.slot_on
         ))
     );
+    let stored_metadata: Vec<(crate::ids::MetadataFieldId, String)> = sqlx::query_as(
+        "SELECT field_id, value FROM task_metadata
+         WHERE workspace_id = ? AND task_id = ? ORDER BY field_id",
+    )
+    .bind(&workspace.id)
+    .bind(&identity.task_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut expected_metadata = metadata
+        .iter()
+        .map(|value| (value.field_id.clone(), value.value.clone()))
+        .collect::<Vec<_>>();
+    expected_metadata.sort_by(|left, right| left.0.as_str().cmp(right.0.as_str()));
+    ensure!(
+        stored_metadata == expected_metadata,
+        CoreError::generation_conflict(format!(
+            "error recurrence-generation-conflict slot={} field=metadata",
+            occurrence.slot_on
+        ))
+    );
     for field in TaskField::VERSIONED {
         let version = entity_field_version(
             conn,
@@ -1600,7 +1707,24 @@ async fn verify_materialized_occurrence(
             ))
         );
     }
-    let payload = deterministic_task_payload(workspace, series, labels, slot, identity);
+    for value in metadata {
+        let version = entity_field_version(
+            conn,
+            &workspace.id,
+            MutableEntityType::Task,
+            identity.task_id.as_str(),
+            &format!("metadata:{}", value.field_id),
+        )
+        .await?;
+        ensure!(
+            version.as_deref() == Some(identity.field_version_seeds.task.as_str()),
+            CoreError::generation_conflict(format!(
+                "error recurrence-generation-conflict slot={} field=metadata_versions",
+                occurrence.slot_on
+            ))
+        );
+    }
+    let payload = deterministic_task_payload(workspace, series, labels, metadata, slot, identity);
     insert_change_with_identity(
         conn,
         IdentifiedChange {
@@ -1622,6 +1746,7 @@ fn deterministic_task_payload(
     workspace: &Workspace,
     series: &RecurrenceSeries,
     labels: &[String],
+    metadata: &[crate::metadata::ResolvedMetadataValue],
     slot: &crate::recurrence::RecurrenceSlot,
     identity: &crate::recurrence::RecurrenceOccurrenceIdentity,
 ) -> Value {
@@ -1638,6 +1763,7 @@ fn deterministic_task_payload(
         .set("due_on", slot.due_on.as_deref().unwrap_or(""))
         .set("is_epic", "0")
         .set("labels", labels)
+        .set("metadata", metadata)
         .set("created_at", &identity.created_at)
         .set("updated_at", &identity.updated_at)
         .set("task_change_id", &identity.task_change_id)
@@ -1857,6 +1983,31 @@ async fn load_series_labels(
     .bind(series_id)
     .fetch_all(&mut *conn)
     .await?)
+}
+
+async fn load_series_metadata(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    series_id: &RecurrenceSeriesId,
+) -> Result<Vec<crate::metadata::ResolvedMetadataValue>> {
+    let rows = sqlx::query(
+        "SELECT m.field_id, f.key, m.value
+         FROM recurrence_series_metadata m
+         JOIN metadata_fields f ON f.workspace_id = m.workspace_id AND f.id = m.field_id
+         WHERE m.workspace_id = ? AND m.series_id = ? ORDER BY f.key",
+    )
+    .bind(workspace_id)
+    .bind(series_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| crate::metadata::ResolvedMetadataValue {
+            field_id: row.get("field_id"),
+            key: row.get("key"),
+            value: row.get("value"),
+        })
+        .collect())
 }
 
 async fn load_occurrence(
@@ -2096,9 +2247,10 @@ async fn ensure_successor_untouched(
     );
     let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
     let labels = load_series_labels(conn, workspace_id, &series.id).await?;
+    let metadata = load_series_metadata(conn, workspace_id, &series.id).await?;
     let slot = slot_values(&series.schedule(), occurrence.slot_on)?;
     verify_materialized_occurrence(
-        conn, &workspace, series, &labels, &slot, &identity, occurrence,
+        conn, &workspace, series, &labels, &metadata, &slot, &identity, occurrence,
     )
     .await
     .map_err(|_| anyhow::anyhow!("error recurrence-undo-successor-touched"))?;

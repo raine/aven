@@ -107,6 +107,7 @@ async fn rename_project_updates_view_filters_and_tasks() {
     store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 title: "Rename keeps task".to_string(),
                 project: Some("agent-offload".to_string()),
                 ..task_draft("")
@@ -147,6 +148,7 @@ async fn undo_project_rename_restores_view_filters_and_tasks() {
     store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 title: "Undo rename keeps task".to_string(),
                 project: Some("agent-offload".to_string()),
                 ..task_draft("")

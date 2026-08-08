@@ -3,7 +3,7 @@ use anyhow::Result;
 use chrono::Local;
 use serde::Serialize;
 use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::db::task_from_row;
 use crate::projects::resolve_existing_project_in_workspace;
@@ -12,7 +12,10 @@ use crate::task_enrichment::{epic_parents_for_tasks, labels_for_tasks};
 use crate::types::Task;
 
 use super::hydration::{TaskHydration, build_task_list_items};
-use super::{TaskListItem, validate_search_limit};
+use super::{
+    MetadataFilter, SortDirection, TaskFilters, TaskIdFilter, TaskListItem, TaskQueryMode,
+    TaskSort, validate_search_limit,
+};
 
 mod parser;
 
@@ -37,6 +40,9 @@ const RECENCY_BOOST_CAP: i64 = 12_000;
 pub struct TaskSearchQuery {
     pub text: String,
     pub project: Option<String>,
+    pub metadata: Vec<MetadataFilter>,
+    pub has_metadata: Vec<String>,
+    pub missing_metadata: Vec<String>,
     pub include_deleted: bool,
     pub limit: usize,
 }
@@ -258,7 +264,7 @@ async fn scored_search_documents(
     } else {
         None
     };
-    let documents = load_candidate_search_documents(
+    let mut documents = load_candidate_search_documents(
         conn,
         workspace_id,
         project.as_ref().map(|project| &project.id),
@@ -267,6 +273,37 @@ async fn scored_search_documents(
         display_refs,
     )
     .await?;
+    if !query.metadata.is_empty()
+        || !query.has_metadata.is_empty()
+        || !query.missing_metadata.is_empty()
+    {
+        let task_ids = documents
+            .iter()
+            .map(|document| document.task.id.clone())
+            .collect::<Vec<_>>();
+        let matching = super::tasks::list_task_summary_items_in_workspace(
+            conn,
+            workspace_id,
+            TaskFilters {
+                metadata: query.metadata.clone(),
+                has_metadata: query.has_metadata.clone(),
+                missing_metadata: query.missing_metadata.clone(),
+                include_deleted: true,
+                task_ids: TaskIdFilter::Only(task_ids),
+                expand_recurring: true,
+                ..TaskFilters::default()
+            },
+            TaskQueryMode::Flat,
+            TaskSort::Updated,
+            SortDirection::Desc,
+            None,
+        )
+        .await?
+        .into_iter()
+        .map(|item| item.task.id)
+        .collect::<HashSet<_>>();
+        documents.retain(|document| matching.contains(&document.task.id));
+    }
 
     let now_seconds = crate::queue::now_seconds();
     let mut scored = documents

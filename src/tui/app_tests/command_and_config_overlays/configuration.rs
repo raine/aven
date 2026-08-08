@@ -67,6 +67,7 @@ async fn database_stats_opens_text_panel() {
     create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             title: "Urgent task".to_string(),
             description: String::new(),
             project: None,

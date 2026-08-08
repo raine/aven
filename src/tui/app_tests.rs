@@ -120,6 +120,7 @@ fn test_task_intake_result(title: &str) -> crate::task_intake::TaskIntakeResult 
 
 fn test_task_draft(title: &str) -> TaskDraft {
     TaskDraft {
+        metadata: Vec::new(),
         title: title.to_string(),
         description: String::new(),
         project: None,
@@ -178,6 +179,7 @@ async fn create_epic_with_children(
         .store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 is_epic: true,
                 ..test_task_draft(parent_title)
             },

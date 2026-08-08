@@ -73,6 +73,7 @@ pub(super) async fn create_task(conn: &mut SqliteConnection, change: &ChangeWire
                 .await?;
         }
     }
+    super::metadata::apply_initial_task_values(conn, &workspace_id, &task_id, change).await?;
     let field_version_seed = change
         .payload
         .get("task_field_version_seed")

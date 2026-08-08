@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use anyhow::Result;
 use aven_core::db::Database;
 use aven_core::operations::AttachmentReadItem;
@@ -210,6 +212,16 @@ pub(crate) fn task_markdown(report: &TaskFullReport) -> String {
             output.push_str(&markdown_text(due_on));
         }
         output.push('\n');
+    }
+
+    if !item.metadata.is_empty() {
+        output.push_str("\n## Metadata\n");
+        for metadata in &item.metadata {
+            output.push_str("\n### ");
+            output.push_str(&markdown_heading(&metadata.key));
+            output.push_str("\n\n");
+            markdown_literal_block(&mut output, &metadata.value);
+        }
     }
 
     if !report.conflicts.is_empty() {
@@ -742,6 +754,13 @@ pub(crate) fn print_full_task_report(report: &TaskFullReport) {
         }
         println!("EOF");
     }
+    for metadata in &detail.item.metadata {
+        println!(
+            "metadata field_id={} key={}",
+            metadata.field_id, metadata.key
+        );
+        print_multiline_block("value", &metadata.value);
+    }
     print_attachment_section(&report.attachments);
     print_task_dependency_summary(&detail.dependencies);
     for note in &detail.notes {
@@ -767,6 +786,22 @@ pub(crate) fn task_full_json(report: &TaskFullReport) -> TaskFullJson {
         task: task_line_json_item(&detail.item),
         project_prefix: task.project_prefix.clone(),
         description: task.description.clone(),
+        metadata: detail
+            .item
+            .metadata
+            .iter()
+            .map(|metadata| (metadata.key.clone(), metadata.value.clone()))
+            .collect(),
+        metadata_details: detail
+            .item
+            .metadata
+            .iter()
+            .map(|metadata| MetadataDetailJson {
+                field_id: metadata.field_id.to_string(),
+                key: metadata.key.clone(),
+                value: metadata.value.clone(),
+            })
+            .collect(),
         dependencies: task_dependency_summary_json(&detail.dependencies),
         notes: detail
             .notes
@@ -1036,10 +1071,19 @@ pub(crate) struct TaskFullJson {
     pub(crate) task: TaskLineJson,
     pub(crate) project_prefix: String,
     pub(crate) description: String,
+    pub(crate) metadata: BTreeMap<String, String>,
+    pub(crate) metadata_details: Vec<MetadataDetailJson>,
     pub(crate) dependencies: TaskDependencySummaryJson,
     pub(crate) notes: Vec<TaskNoteJson>,
     pub(crate) conflicts: Vec<TaskConflictReport>,
     pub(crate) attachments: Vec<AttachmentMetadataJson>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct MetadataDetailJson {
+    pub(crate) field_id: String,
+    pub(crate) key: String,
+    pub(crate) value: String,
 }
 
 #[derive(Serialize)]

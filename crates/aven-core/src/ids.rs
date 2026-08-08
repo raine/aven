@@ -21,6 +21,10 @@ pub struct WorkspaceId(String);
 #[serde(transparent)]
 pub struct ProjectId(String);
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
+pub struct MetadataFieldId(String);
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct TaskId(String);
@@ -30,6 +34,9 @@ pub struct InvalidWorkspaceId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InvalidProjectId;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidMetadataFieldId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InvalidTaskId;
@@ -47,6 +54,17 @@ impl WorkspaceId {
 
 #[allow(clippy::new_without_default)]
 impl ProjectId {
+    pub fn new() -> Self {
+        Self(new_id())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[allow(clippy::new_without_default)]
+impl MetadataFieldId {
     pub fn new() -> Self {
         Self(new_id())
     }
@@ -99,6 +117,12 @@ impl fmt::Display for ProjectId {
     }
 }
 
+impl fmt::Display for MetadataFieldId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
 impl fmt::Display for TaskId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)
@@ -117,6 +141,12 @@ impl fmt::Display for InvalidProjectId {
     }
 }
 
+impl fmt::Display for InvalidMetadataFieldId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("metadata field ID must be 16 Crockford Base32 characters")
+    }
+}
+
 impl fmt::Display for InvalidTaskId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("task ID must be 16 Crockford Base32 characters")
@@ -125,6 +155,7 @@ impl fmt::Display for InvalidTaskId {
 
 impl std::error::Error for InvalidWorkspaceId {}
 impl std::error::Error for InvalidProjectId {}
+impl std::error::Error for InvalidMetadataFieldId {}
 impl std::error::Error for InvalidTaskId {}
 
 impl FromStr for WorkspaceId {
@@ -151,6 +182,18 @@ impl FromStr for ProjectId {
     }
 }
 
+impl FromStr for MetadataFieldId {
+    type Err = InvalidMetadataFieldId;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value.len() == 16 && value.bytes().all(|byte| BASE32.contains(&byte)) {
+            Ok(Self(value.to_string()))
+        } else {
+            Err(InvalidMetadataFieldId)
+        }
+    }
+}
+
 impl FromStr for TaskId {
     type Err = InvalidTaskId;
 
@@ -173,6 +216,14 @@ impl TryFrom<String> for WorkspaceId {
 
 impl TryFrom<String> for ProjectId {
     type Error = InvalidProjectId;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        value.parse()
+    }
+}
+
+impl TryFrom<String> for MetadataFieldId {
+    type Error = InvalidMetadataFieldId;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         value.parse()
@@ -209,6 +260,17 @@ impl<'de> Deserialize<'de> for ProjectId {
     }
 }
 
+impl<'de> Deserialize<'de> for MetadataFieldId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 impl<'de> Deserialize<'de> for TaskId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -227,6 +289,12 @@ impl Type<Sqlite> for WorkspaceId {
 }
 
 impl Type<Sqlite> for ProjectId {
+    fn type_info() -> SqliteTypeInfo {
+        <String as Type<Sqlite>>::type_info()
+    }
+}
+
+impl Type<Sqlite> for MetadataFieldId {
     fn type_info() -> SqliteTypeInfo {
         <String as Type<Sqlite>>::type_info()
     }
@@ -256,6 +324,15 @@ impl Encode<'_, Sqlite> for ProjectId {
     }
 }
 
+impl Encode<'_, Sqlite> for MetadataFieldId {
+    fn encode_by_ref(
+        &self,
+        buffer: &mut <Sqlite as Database>::ArgumentBuffer,
+    ) -> Result<IsNull, BoxDynError> {
+        <String as Encode<Sqlite>>::encode_by_ref(&self.0, buffer)
+    }
+}
+
 impl Encode<'_, Sqlite> for TaskId {
     fn encode_by_ref(
         &self,
@@ -272,6 +349,12 @@ impl<'row> Decode<'row, Sqlite> for WorkspaceId {
 }
 
 impl<'row> Decode<'row, Sqlite> for ProjectId {
+    fn decode(value: SqliteValueRef<'row>) -> Result<Self, BoxDynError> {
+        String::decode(value)?.parse().map_err(Into::into)
+    }
+}
+
+impl<'row> Decode<'row, Sqlite> for MetadataFieldId {
     fn decode(value: SqliteValueRef<'row>) -> Result<Self, BoxDynError> {
         String::decode(value)?.parse().map_err(Into::into)
     }

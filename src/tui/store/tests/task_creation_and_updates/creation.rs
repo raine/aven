@@ -10,6 +10,7 @@ async fn create_task_refreshes_and_selects_visible_task() {
     let (message, selected) = store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 title: "Write docs".to_string(),
                 description: "details".to_string(),
                 priority: "high".to_string(),
@@ -213,6 +214,7 @@ async fn update_status_preserving_task_keeps_done_item_in_filtered_view() {
     let _ = store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 title: "Next target".to_string(),
                 status: "todo".to_string(),
                 ..task_draft("")
@@ -224,6 +226,7 @@ async fn update_status_preserving_task_keeps_done_item_in_filtered_view() {
     let (_, selected) = store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 title: "Done target".to_string(),
                 status: "todo".to_string(),
                 ..task_draft("")

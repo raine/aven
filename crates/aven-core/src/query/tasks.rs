@@ -151,6 +151,28 @@ async fn query_task_items(
     } else {
         None
     };
+    let mut metadata = Vec::with_capacity(filters.metadata.len());
+    for filter in &filters.metadata {
+        let field =
+            crate::metadata::find_metadata_field_in_workspace(conn, workspace_id, &filter.key)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("error unknown-metadata-field"))?;
+        metadata.push((field.id, filter.value.clone()));
+    }
+    let mut has_metadata = Vec::with_capacity(filters.has_metadata.len());
+    for key in &filters.has_metadata {
+        let field = crate::metadata::find_metadata_field_in_workspace(conn, workspace_id, key)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("error unknown-metadata-field"))?;
+        has_metadata.push(field.id);
+    }
+    let mut missing_metadata = Vec::with_capacity(filters.missing_metadata.len());
+    for key in &filters.missing_metadata {
+        let field = crate::metadata::find_metadata_field_in_workspace(conn, workspace_id, key)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("error unknown-metadata-field"))?;
+        missing_metadata.push(field.id);
+    }
 
     let mut query = QueryBuilder::<Sqlite>::new(
         "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
@@ -208,6 +230,26 @@ async fn query_task_items(
         query.push_bind(workspace_id);
         query.push(" AND tl.label = ");
         query.push_bind(label);
+        query.push(")");
+    }
+    for (field_id, value) in metadata {
+        push_filter_prefix(&mut query, &mut filters_added);
+        query.push("EXISTS (SELECT 1 FROM task_metadata m WHERE m.workspace_id = t.workspace_id AND m.task_id = t.id AND m.field_id = ");
+        query.push_bind(field_id);
+        query.push(" AND m.value = ");
+        query.push_bind(value);
+        query.push(")");
+    }
+    for field_id in has_metadata {
+        push_filter_prefix(&mut query, &mut filters_added);
+        query.push("EXISTS (SELECT 1 FROM task_metadata m WHERE m.workspace_id = t.workspace_id AND m.task_id = t.id AND m.field_id = ");
+        query.push_bind(field_id);
+        query.push(")");
+    }
+    for field_id in missing_metadata {
+        push_filter_prefix(&mut query, &mut filters_added);
+        query.push("NOT EXISTS (SELECT 1 FROM task_metadata m WHERE m.workspace_id = t.workspace_id AND m.task_id = t.id AND m.field_id = ");
+        query.push_bind(field_id);
         query.push(")");
     }
     push_availability_filter(&mut query, &mut filters_added, filters.availability);

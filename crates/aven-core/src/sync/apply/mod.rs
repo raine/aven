@@ -3,6 +3,7 @@ mod conflict;
 mod dependency;
 mod epic;
 mod label;
+mod metadata;
 mod note;
 mod payload;
 mod project;
@@ -33,6 +34,14 @@ pub async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWir
         op_type::CREATE_PROJECT => project::create_project(conn, change).await?,
         op_type::SET_PROJECT_METADATA => project::set_project_metadata(conn, change).await?,
         op_type::CREATE_LABEL => label::create_label(conn, change).await?,
+        op_type::CREATE_METADATA_FIELD => metadata::create_field(conn, change).await?,
+        op_type::SET_METADATA_FIELD => metadata::set_field(conn, change).await?,
+        op_type::SET_TASK_METADATA => metadata::set_task_value(conn, change).await?,
+        op_type::REMOVE_TASK_METADATA => metadata::remove_task_value(conn, change).await?,
+        op_type::SET_RECURRENCE_METADATA => metadata::set_recurrence_value(conn, change).await?,
+        op_type::REMOVE_RECURRENCE_METADATA => {
+            metadata::remove_recurrence_value(conn, change).await?
+        }
         op_type::SET_LABEL_NAME => label::set_label_name(conn, change).await?,
         op_type::LABEL_RESTORE => label::restore_label(conn, change).await?,
         op_type::CREATE_TASK => task::create_task(conn, change).await?,

@@ -360,6 +360,7 @@ pub struct CreateRecurrenceSeries {
     pub priority: TaskPriority,
     pub initial_status: TaskStatus,
     pub labels: Vec<String>,
+    pub metadata: Vec<MetadataInput>,
     pub schedule: RecurrenceScheduleInput,
 }
 
@@ -372,6 +373,7 @@ impl From<CreateRecurrenceSeries> for core_api::CreateRecurrenceSeries {
             priority: value.priority.into(),
             initial_status: value.initial_status.into(),
             labels: value.labels,
+            metadata: value.metadata.into_iter().map(Into::into).collect(),
             schedule: value.schedule.into(),
         }
     }
@@ -402,6 +404,8 @@ pub struct UpdateRecurrenceTemplate {
     pub priority: Option<TaskPriority>,
     pub initial_status: Option<TaskStatus>,
     pub labels: Option<Vec<String>>,
+    pub set_metadata: Vec<MetadataInput>,
+    pub remove_metadata: Vec<String>,
     pub available_local_time: OptionalLocalTimeUpdate,
     pub due_policy: Option<RecurrenceDuePolicy>,
 }
@@ -415,6 +419,8 @@ impl From<UpdateRecurrenceTemplate> for core_api::UpdateRecurrenceTemplate {
             priority: value.priority.map(Into::into),
             initial_status: value.initial_status.map(Into::into),
             labels: value.labels,
+            set_metadata: value.set_metadata.into_iter().map(Into::into).collect(),
+            remove_metadata: value.remove_metadata,
             available_local_time: value.available_local_time.into(),
             due_policy: value.due_policy.map(Into::into),
         }
@@ -460,12 +466,66 @@ impl From<core_api::WorkspaceRecord> for WorkspaceRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MetadataInput {
+    pub key: String,
+    pub value: String,
+}
+
+impl From<MetadataInput> for core_api::MetadataInput {
+    fn from(value: MetadataInput) -> Self {
+        Self {
+            key: value.key,
+            value: value.value,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MetadataValueRecord {
+    pub field_id: String,
+    pub key: String,
+    pub value: String,
+}
+
+impl From<core_api::MetadataValueRecord> for MetadataValueRecord {
+    fn from(value: core_api::MetadataValueRecord) -> Self {
+        Self {
+            field_id: value.field_id.to_string(),
+            key: value.key,
+            value: value.value,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MetadataFieldRecord {
+    pub id: String,
+    pub workspace_id: String,
+    pub key: String,
+    pub task_count: u64,
+    pub series_count: u64,
+}
+
+impl From<core_api::MetadataFieldRecord> for MetadataFieldRecord {
+    fn from(value: core_api::MetadataFieldRecord) -> Self {
+        Self {
+            id: value.id.to_string(),
+            workspace_id: value.workspace_id.to_string(),
+            key: value.key,
+            task_count: value.task_count as u64,
+            series_count: value.series_count as u64,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct CreateTask {
     pub title: String,
     pub description: String,
     pub project: String,
     pub status: TaskStatus,
     pub priority: TaskPriority,
+    pub metadata: Vec<MetadataInput>,
     pub available_at: Option<String>,
     pub due_on: Option<String>,
 }
@@ -478,6 +538,7 @@ impl From<CreateTask> for core_api::CreateTask {
             project: value.project,
             status: value.status.into(),
             priority: value.priority.into(),
+            metadata: value.metadata.into_iter().map(Into::into).collect(),
             available_at: value.available_at,
             due_on: value.due_on,
         }
@@ -491,6 +552,8 @@ pub struct UpdateTask {
     pub project: Option<String>,
     pub status: Option<TaskStatus>,
     pub priority: Option<TaskPriority>,
+    pub set_metadata: Vec<MetadataInput>,
+    pub remove_metadata: Vec<String>,
     pub available_at: OptionalDateUpdate,
     pub due_on: OptionalDateUpdate,
 }
@@ -503,6 +566,8 @@ impl From<UpdateTask> for core_api::UpdateTask {
             project: value.project,
             status: value.status.map(Into::into),
             priority: value.priority.map(Into::into),
+            set_metadata: value.set_metadata.into_iter().map(Into::into).collect(),
+            remove_metadata: value.remove_metadata,
             available_at: value.available_at.into(),
             due_on: value.due_on.into(),
         }
@@ -524,6 +589,7 @@ pub struct TaskRecord {
     pub updated_at: String,
     pub available_at: Option<String>,
     pub due_on: Option<String>,
+    pub metadata: Vec<MetadataValueRecord>,
 }
 
 impl From<core_api::TaskRecord> for TaskRecord {
@@ -542,6 +608,7 @@ impl From<core_api::TaskRecord> for TaskRecord {
             updated_at: value.updated_at,
             available_at: value.available_at,
             due_on: value.due_on,
+            metadata: value.metadata.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -783,6 +850,7 @@ impl From<core_api::RecurrenceSeriesConflict> for RecurrenceSeriesConflict {
 pub struct RecurrenceSeriesDetail {
     pub series: RecurrenceSeriesRecord,
     pub labels: Vec<String>,
+    pub metadata: Vec<MetadataValueRecord>,
     pub summary: RecurrenceSeriesSummary,
     pub current_occurrence: Option<RecurrenceOccurrenceRecord>,
     pub lifecycle_conflicts: Vec<RecurrenceSeriesConflict>,
@@ -793,6 +861,7 @@ impl From<core_api::RecurrenceSeriesDetail> for RecurrenceSeriesDetail {
         Self {
             series: value.series.into(),
             labels: value.labels,
+            metadata: value.metadata.into_iter().map(Into::into).collect(),
             summary: value.summary.into(),
             current_occurrence: value.current_occurrence.map(Into::into),
             lifecycle_conflicts: value
@@ -1070,6 +1139,33 @@ impl AvenClient {
     pub fn resolve_workspace(&self, name_or_key: String) -> Result<WorkspaceRecord, AvenError> {
         runtime()?
             .block_on(self.store.resolve_workspace(&name_or_key))
+            .map(Into::into)
+            .map_err(Into::into)
+    }
+
+    pub fn list_metadata_fields(
+        &self,
+        workspace_id: String,
+    ) -> Result<Vec<MetadataFieldRecord>, AvenError> {
+        let workspace_id = parse_workspace_id(&workspace_id)?;
+        runtime()?
+            .block_on(self.store.list_metadata_fields(&workspace_id))
+            .map(|values| values.into_iter().map(Into::into).collect())
+            .map_err(Into::into)
+    }
+
+    pub fn rename_metadata_field(
+        &self,
+        workspace_id: String,
+        key: String,
+        new_key: String,
+    ) -> Result<MetadataFieldRecord, AvenError> {
+        let workspace_id = parse_workspace_id(&workspace_id)?;
+        runtime()?
+            .block_on(
+                self.store
+                    .rename_metadata_field(&workspace_id, &key, &new_key),
+            )
             .map(Into::into)
             .map_err(Into::into)
     }

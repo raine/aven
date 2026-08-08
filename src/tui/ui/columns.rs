@@ -565,6 +565,7 @@ mod tests {
 
     fn item(index: usize) -> TaskListItem {
         TaskListItem {
+            metadata: Vec::new(),
             task: crate::types::Task {
                 id: crate::test_support::task_id(&index.to_string()),
                 workspace_id: "0000000000000001".parse().unwrap(),

@@ -314,6 +314,7 @@ pub(crate) fn recurrence_draft(
         priority,
         initial_status: status,
         labels,
+        metadata: Vec::new(),
         schedule,
     }
 }

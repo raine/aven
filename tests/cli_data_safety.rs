@@ -368,7 +368,7 @@ fn recurrence_export_import_round_trips_aggregate_and_occurrence_local_data() {
         ["export", "--output", export_path.to_str().unwrap()],
     ));
     let snapshot: Value = serde_json::from_str(&fs::read_to_string(&export_path).unwrap()).unwrap();
-    assert_eq!(snapshot["version"], 1);
+    assert_eq!(snapshot["version"], 2);
     assert_eq!(
         snapshot["tables"]["recurrence_series"]
             .as_array()
@@ -641,6 +641,8 @@ fn export_command_writes_portable_snapshot() {
             "app",
             "--due",
             "2099-01-01",
+            "--metadata",
+            "legacy-id=42",
         ],
     ));
 
@@ -651,7 +653,7 @@ fn export_command_writes_portable_snapshot() {
     let text = fs::read_to_string(&output_path).unwrap();
     let snapshot: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(snapshot["format"], "aven-export");
-    assert_eq!(snapshot["version"], 1);
+    assert_eq!(snapshot["version"], 2);
 
     let tables = snapshot["tables"].as_object().unwrap();
     assert!(tables.contains_key("workspaces"));
@@ -659,6 +661,9 @@ fn export_command_writes_portable_snapshot() {
     assert!(tables.contains_key("project_paths"));
     assert!(tables.contains_key("project_id_aliases"));
     assert!(tables.contains_key("labels"));
+    assert!(tables.contains_key("metadata_fields"));
+    assert!(tables.contains_key("task_metadata"));
+    assert!(tables.contains_key("recurrence_series_metadata"));
     assert!(tables.contains_key("tasks"));
     assert!(tables.contains_key("notes"));
     assert!(tables.contains_key("changes"));
@@ -672,6 +677,42 @@ fn export_command_writes_portable_snapshot() {
         .find(|task| task["title"] == "exported deadline")
         .unwrap();
     assert_eq!(deadline["due_on"], "2099-01-01");
+    assert_eq!(tables["metadata_fields"].as_array().unwrap().len(), 1);
+    assert_eq!(tables["metadata_fields"][0]["key"], "legacy-id");
+    assert_eq!(tables["task_metadata"].as_array().unwrap().len(), 1);
+    assert_eq!(tables["task_metadata"][0]["value"], "42");
+}
+
+#[test]
+fn import_accepts_v1_snapshots_without_metadata_tables() {
+    let env = TestEnv::new();
+    let db = env.db("import-v1-metadata-defaults.sqlite");
+    let task_ref = extract_ref(&ok(
+        env.aven(&db, ["add", "v1 portable task", "--project", "app"])
+    ));
+    let output_path = env.path("import-v1-metadata-defaults.json");
+    ok(env.aven(&db, ["export", "--output", output_path.to_str().unwrap()]));
+
+    let mut snapshot: Value =
+        serde_json::from_str(&fs::read_to_string(&output_path).unwrap()).unwrap();
+    snapshot["version"] = Value::from(1);
+    let tables = snapshot["tables"].as_object_mut().unwrap();
+    for table in [
+        "metadata_fields",
+        "metadata_field_id_aliases",
+        "task_metadata",
+        "recurrence_series_metadata",
+    ] {
+        tables.remove(table);
+    }
+    fs::write(&output_path, serde_json::to_string(&snapshot).unwrap()).unwrap();
+
+    ok(env.aven(&db, ["import", "--yes", output_path.to_str().unwrap()]));
+    contains_all(
+        &ok(env.aven(&db, ["show", &task_ref, "--full"])),
+        &["v1 portable task"],
+    );
+    assert_eq!(scalar_i64(&db, "SELECT count(*) FROM metadata_fields"), 0);
 }
 
 #[test]
@@ -755,6 +796,17 @@ fn import_replaces_database_and_preserves_identity_meta() {
     ok(env.aven(&db, ["label", "create", "alpha"]));
 
     seed_sample_data(&env, &db);
+    ok(env.aven(
+        &db,
+        [
+            "add",
+            "portable metadata",
+            "--project",
+            "app",
+            "--metadata",
+            "legacy-id=42",
+        ],
+    ));
     let task_count = scalar_i64(&db, "SELECT count(*) FROM tasks");
     let source_local_seq = scalar_i64(&db, "SELECT COALESCE(MAX(local_seq), 0) FROM changes");
     set_meta(&db, "client_id", "target-client-id");
@@ -773,6 +825,13 @@ fn import_replaces_database_and_preserves_identity_meta() {
     contains_all(&output, &["imported path=", "safety_backup="]);
 
     assert_eq!(scalar_i64(&db, "SELECT count(*) FROM tasks"), task_count);
+    assert_eq!(
+        query_string(
+            &db,
+            "SELECT m.value FROM task_metadata m JOIN metadata_fields f ON f.workspace_id = m.workspace_id AND f.id = m.field_id WHERE f.key = 'legacy-id'"
+        ),
+        "42"
+    );
     assert_eq!(
         meta_value(&db, "client_id"),
         Some("target-client-id".to_string())

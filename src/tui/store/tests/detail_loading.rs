@@ -25,6 +25,7 @@ async fn task_full_report_renders_shareable_markdown() {
     let (_, selected) = store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 title: "Share task | safely".to_string(),
                 description: "Explain **why**.\n\n- Keep authored Markdown".to_string(),
                 project: None,

@@ -51,13 +51,13 @@ pub(crate) use tasks::{
 };
 pub use types::RecentActionTarget;
 pub use types::{
-    AttachmentMetadata, EpicRollup, ProjectListItem, RecentActionItem, RecurrenceCounts,
-    RecurrenceHistoryEntry, RecurrenceHistoryKind, RecurrenceHistoryPage, RecurrenceOccurrenceLink,
-    RecurrenceReconciliation, RecurrenceSeriesConflict, RecurrenceSeriesDetail,
-    RecurrenceSeriesLifecycleFilter, RecurrenceSeriesListItem, RecurrenceSeriesListQuery,
-    RecurrenceSeriesSummary, RecurrenceTaskGroup, SidebarCounts, SortDirection,
-    TaskAvailabilityFilter, TaskDependencyLink, TaskFilters, TaskIdFilter, TaskListItem, TaskNote,
-    TaskQueryMode, TaskRecurrenceSummary, TaskSort,
+    AttachmentMetadata, EpicRollup, MetadataFilter, ProjectListItem, RecentActionItem,
+    RecurrenceCounts, RecurrenceHistoryEntry, RecurrenceHistoryKind, RecurrenceHistoryPage,
+    RecurrenceOccurrenceLink, RecurrenceReconciliation, RecurrenceSeriesConflict,
+    RecurrenceSeriesDetail, RecurrenceSeriesLifecycleFilter, RecurrenceSeriesListItem,
+    RecurrenceSeriesListQuery, RecurrenceSeriesSummary, RecurrenceTaskGroup, SidebarCounts,
+    SortDirection, TaskAvailabilityFilter, TaskDependencyLink, TaskFilters, TaskIdFilter,
+    TaskListItem, TaskNote, TaskQueryMode, TaskRecurrenceSummary, TaskSort,
 };
 
 pub const MAX_RECURRENCE_HISTORY_LIMIT: usize = 500;

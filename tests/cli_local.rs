@@ -1695,6 +1695,54 @@ fn bulk_update_reports_updated_project_display_ref() {
 }
 
 #[test]
+fn bulk_update_sets_and_removes_metadata() {
+    let env = TestEnv::new();
+    let db = env.db("bulk-update-metadata.sqlite");
+    let first = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "first metadata",
+            "--project",
+            "app",
+            "--metadata",
+            "legacy-id=1",
+        ],
+    )));
+    let second = extract_ref(&ok(
+        env.aven(&db, ["add", "second metadata", "--project", "app"])
+    ));
+
+    contains_all(
+        &ok(env.aven(&db, ["bulk-update", "--all", "--metadata", "legacy-id=2"])),
+        &["matched=2 changed=2 would_change=2 unchanged=0"],
+    );
+    for task_ref in [&first, &second] {
+        contains_all(
+            &ok(env.aven(&db, ["show", task_ref, "--full"])),
+            &["key=legacy-id", "2"],
+        );
+    }
+    contains_all(
+        &ok(env.aven(&db, ["bulk-update", "--all", "--metadata", "legacy-id=2"])),
+        &["matched=2 changed=0 would_change=0 unchanged=2"],
+    );
+    contains_all(
+        &ok(env.aven(
+            &db,
+            ["bulk-update", "--all", "--remove-metadata", "legacy-id"],
+        )),
+        &["matched=2 changed=2 would_change=2 unchanged=0"],
+    );
+    for task_ref in [&first, &second] {
+        contains_none(
+            &ok(env.aven(&db, ["show", task_ref, "--full"])),
+            &["key=legacy-id"],
+        );
+    }
+}
+
+#[test]
 fn bulk_update_rolls_back_when_a_later_task_update_fails() {
     let env = TestEnv::new();
     let db = env.db("bulk-update-atomic.sqlite");

@@ -9,6 +9,7 @@ pub mod ids;
 pub mod labels;
 pub mod local_state;
 pub mod matching;
+pub mod metadata;
 mod mutation;
 pub mod operations;
 pub mod projects;

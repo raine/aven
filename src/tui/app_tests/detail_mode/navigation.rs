@@ -127,6 +127,7 @@ async fn focused_epic_parent_routes_status_picker_to_parent() {
     let parent_index = create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             is_epic: true,
             ..test_task_draft("Parent epic")
         },

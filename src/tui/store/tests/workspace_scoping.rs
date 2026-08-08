@@ -24,6 +24,7 @@ async fn initial_project_opens_project_view() {
     store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 title: "ops task".to_string(),
                 project: Some("ops".to_string()),
                 ..task_draft("")

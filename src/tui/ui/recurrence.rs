@@ -596,6 +596,7 @@ mod tests {
         RecurrenceSeriesDetail {
             series: series.clone(),
             labels: vec!["release".to_string()],
+            metadata: Vec::new(),
             summary: RecurrenceSeriesSummary {
                 series: series.clone(),
                 series_ref: item.series_ref,

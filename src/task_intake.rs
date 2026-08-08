@@ -58,6 +58,7 @@ impl TaskIntakeResult {
             priority: self.task.priority,
             initial_status: self.task.status,
             labels: self.task.labels,
+            metadata: self.task.metadata,
             schedule,
         })
     }
@@ -347,6 +348,7 @@ pub(crate) async fn parsed_output_to_result_with_database(
             priority,
             source,
             labels,
+            metadata: Vec::new(),
             available_at,
             due_on,
             is_epic: false,

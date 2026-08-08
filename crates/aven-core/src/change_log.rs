@@ -34,6 +34,12 @@ pub mod op_type {
     pub const PROJECT_RECURRENCE_OCCURRENCE: &str = "project_recurrence_occurrence";
     pub const RESOLVE_RECURRENCE_OCCURRENCE: &str = "resolve_recurrence_occurrence";
     pub const SET_RECURRENCE_STATE: &str = "set_recurrence_state";
+    pub const CREATE_METADATA_FIELD: &str = "create_metadata_field";
+    pub const SET_METADATA_FIELD: &str = "set_metadata_field";
+    pub const SET_TASK_METADATA: &str = "set_task_metadata";
+    pub const REMOVE_TASK_METADATA: &str = "remove_task_metadata";
+    pub const SET_RECURRENCE_METADATA: &str = "set_recurrence_metadata";
+    pub const REMOVE_RECURRENCE_METADATA: &str = "remove_recurrence_metadata";
     pub const OPEN_RECURRENCE_PAUSE: &str = "open_recurrence_pause";
     pub const CLOSE_RECURRENCE_PAUSE: &str = "close_recurrence_pause";
     pub const STOP_RECURRENCE_SERIES: &str = "stop_recurrence_series";
@@ -43,6 +49,7 @@ pub enum ChangeEntity {
     Task,
     Project,
     Label,
+    MetadataField,
     #[allow(dead_code)]
     Workspace,
     RecurrenceSeries,
@@ -54,6 +61,7 @@ impl ChangeEntity {
             Self::Task => "task",
             Self::Project => "project",
             Self::Label => "label",
+            Self::MetadataField => "metadata_field",
             Self::Workspace => "workspace",
             Self::RecurrenceSeries => "recurrence_series",
         }

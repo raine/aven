@@ -1,5 +1,5 @@
 use crate::choices::{TaskPriority, TaskSource, TaskStatus};
-use crate::ids::{ProjectId, TaskId, WorkspaceId};
+use crate::ids::{MetadataFieldId, ProjectId, TaskId, WorkspaceId};
 use crate::recurrence::{
     RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceOutcome, RecurrenceProjectionState,
     RecurrenceRule, RecurrenceSchedule, RecurrenceSeriesId, RecurrenceSeriesState, TimeZoneId,
@@ -20,7 +20,7 @@ mod tables;
 use crate::db::{self, Database};
 
 const EXPORT_FORMAT: &str = "aven-export";
-const EXPORT_VERSION: i64 = 1;
+const EXPORT_VERSION: i64 = 2;
 
 #[derive(Debug, Clone)]
 pub struct IntegrityReport {
@@ -54,7 +54,13 @@ pub struct ExportTables {
     pub project_paths: Vec<ProjectPathRow>,
     pub project_id_aliases: Vec<ProjectIdAliasRow>,
     pub labels: Vec<LabelRow>,
+    #[serde(default)]
+    pub metadata_fields: Vec<MetadataFieldRow>,
+    #[serde(default)]
+    pub metadata_field_id_aliases: Vec<MetadataFieldIdAliasRow>,
     pub tasks: Vec<TaskRow>,
+    #[serde(default)]
+    pub task_metadata: Vec<TaskMetadataRow>,
     pub task_labels: Vec<TaskLabelRow>,
     pub notes: Vec<NoteRow>,
     pub task_dependencies: Vec<TaskDependencyRow>,
@@ -67,6 +73,8 @@ pub struct ExportTables {
     pub recurrence_series: Vec<RecurrenceSeriesRow>,
     #[serde(default)]
     pub recurrence_series_labels: Vec<RecurrenceSeriesLabelRow>,
+    #[serde(default)]
+    pub recurrence_series_metadata: Vec<RecurrenceSeriesMetadataRow>,
     #[serde(default)]
     pub recurrence_occurrences: Vec<RecurrenceOccurrenceRow>,
     #[serde(default)]
@@ -118,6 +126,32 @@ pub struct LabelRow {
     pub workspace_id: WorkspaceId,
     pub name: String,
     pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct MetadataFieldRow {
+    pub id: MetadataFieldId,
+    pub workspace_id: WorkspaceId,
+    pub key: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct MetadataFieldIdAliasRow {
+    pub workspace_id: WorkspaceId,
+    pub remote_field_id: MetadataFieldId,
+    pub local_field_id: MetadataFieldId,
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct TaskMetadataRow {
+    pub workspace_id: WorkspaceId,
+    pub task_id: TaskId,
+    pub field_id: MetadataFieldId,
+    pub value: String,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 fn default_task_source() -> String {
@@ -239,6 +273,16 @@ pub struct RecurrenceSeriesLabelRow {
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct RecurrenceSeriesMetadataRow {
+    pub workspace_id: WorkspaceId,
+    pub series_id: RecurrenceSeriesId,
+    pub field_id: MetadataFieldId,
+    pub value: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct RecurrenceOccurrenceRow {
     pub workspace_id: WorkspaceId,
     pub series_id: RecurrenceSeriesId,
@@ -329,7 +373,10 @@ impl Database {
                 project_paths: scan_project_paths(&mut conn).await?,
                 project_id_aliases: scan_project_id_aliases(&mut conn).await?,
                 labels: scan_labels(&mut conn).await?,
+                metadata_fields: scan_metadata_fields(&mut conn).await?,
+                metadata_field_id_aliases: scan_metadata_field_id_aliases(&mut conn).await?,
                 tasks: scan_tasks(&mut conn).await?,
+                task_metadata: scan_task_metadata(&mut conn).await?,
                 task_labels: scan_task_labels(&mut conn).await?,
                 notes: scan_notes(&mut conn).await?,
                 task_dependencies: scan_task_dependencies(&mut conn).await?,
@@ -338,6 +385,7 @@ impl Database {
                 blob_inventory: scan_blob_inventory(&mut conn).await?,
                 recurrence_series: scan_recurrence_series(&mut conn).await?,
                 recurrence_series_labels: scan_recurrence_series_labels(&mut conn).await?,
+                recurrence_series_metadata: scan_recurrence_series_metadata(&mut conn).await?,
                 recurrence_occurrences: scan_recurrence_occurrences(&mut conn).await?,
                 recurrence_pause_intervals: scan_recurrence_pause_intervals(&mut conn).await?,
                 changes: scan_changes(&mut conn).await?,
@@ -466,6 +514,32 @@ async fn scan_labels(conn: &mut SqliteConnection) -> Result<Vec<LabelRow>> {
     tables::scan_rows(conn, "SELECT workspace_id, name, created_at FROM labels").await
 }
 
+async fn scan_metadata_fields(conn: &mut SqliteConnection) -> Result<Vec<MetadataFieldRow>> {
+    tables::scan_rows(
+        conn,
+        "SELECT id, workspace_id, key, created_at, updated_at FROM metadata_fields",
+    )
+    .await
+}
+
+async fn scan_metadata_field_id_aliases(
+    conn: &mut SqliteConnection,
+) -> Result<Vec<MetadataFieldIdAliasRow>> {
+    tables::scan_rows(
+        conn,
+        "SELECT workspace_id, remote_field_id, local_field_id FROM metadata_field_id_aliases",
+    )
+    .await
+}
+
+async fn scan_task_metadata(conn: &mut SqliteConnection) -> Result<Vec<TaskMetadataRow>> {
+    tables::scan_rows(
+        conn,
+        "SELECT workspace_id, task_id, field_id, value, created_at, updated_at FROM task_metadata",
+    )
+    .await
+}
+
 async fn scan_tasks(conn: &mut SqliteConnection) -> Result<Vec<TaskRow>> {
     tables::scan_rows(conn, "SELECT workspace_id, id, title, description, project_id, status, priority, source, created_at, updated_at, queue_activity_at, available_at, due_on, deleted, is_epic FROM tasks").await
 }
@@ -532,6 +606,17 @@ async fn scan_recurrence_series_labels(
     .await
 }
 
+async fn scan_recurrence_series_metadata(
+    conn: &mut SqliteConnection,
+) -> Result<Vec<RecurrenceSeriesMetadataRow>> {
+    tables::scan_rows(
+        conn,
+        "SELECT workspace_id, series_id, field_id, value, created_at, updated_at
+         FROM recurrence_series_metadata",
+    )
+    .await
+}
+
 async fn scan_recurrence_occurrences(
     conn: &mut SqliteConnection,
 ) -> Result<Vec<RecurrenceOccurrenceRow>> {
@@ -576,7 +661,7 @@ async fn ensure_supported_export(_conn: &mut SqliteConnection, export: &AvenExpo
     if export.format != EXPORT_FORMAT {
         bail!("error export-format-unsupported format={}", export.format);
     }
-    if export.version != EXPORT_VERSION {
+    if !matches!(export.version, 1 | EXPORT_VERSION) {
         bail!(
             "error export-version-unsupported version={}",
             export.version
@@ -804,6 +889,121 @@ fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
         }
     }
 
+    let mut metadata_ids = HashSet::new();
+    let mut metadata_keys = HashSet::new();
+    for field in &export.tables.metadata_fields {
+        ensure!(
+            workspace_ids.contains(&field.workspace_id),
+            "error invalid-export-snapshot metadata_field.workspace_id is missing"
+        );
+        let normalized = crate::metadata::normalize_metadata_key(&field.key)?;
+        ensure!(
+            normalized == field.key,
+            "error invalid-export-snapshot metadata field key is noncanonical"
+        );
+        ensure!(
+            metadata_ids.insert((field.workspace_id.clone(), field.id.clone())),
+            "error invalid-export-snapshot metadata field identity is duplicated"
+        );
+        ensure!(
+            metadata_keys.insert((field.workspace_id.clone(), field.key.clone())),
+            "error invalid-export-snapshot metadata field key is duplicated"
+        );
+    }
+    let mut metadata_aliases = HashSet::new();
+    for alias in &export.tables.metadata_field_id_aliases {
+        ensure!(
+            metadata_ids.contains(&(alias.workspace_id.clone(), alias.local_field_id.clone())),
+            "error invalid-export-snapshot metadata alias target is missing"
+        );
+        ensure!(
+            metadata_aliases.insert((alias.workspace_id.clone(), alias.remote_field_id.clone())),
+            "error invalid-export-snapshot metadata alias identity is duplicated"
+        );
+    }
+    let mut task_metadata_keys = HashSet::new();
+    let mut task_metadata_usage: HashMap<(WorkspaceId, TaskId), (usize, usize)> = HashMap::new();
+    for value in &export.tables.task_metadata {
+        ensure!(
+            task_ids
+                .get(&value.workspace_id)
+                .is_some_and(|tasks| tasks.contains(&value.task_id)),
+            "error invalid-export-snapshot task metadata task is missing"
+        );
+        ensure!(
+            metadata_ids.contains(&(value.workspace_id.clone(), value.field_id.clone())),
+            "error invalid-export-snapshot task metadata field is missing"
+        );
+        ensure!(
+            value.value.len() <= crate::metadata::MAX_METADATA_VALUE_BYTES,
+            "error invalid-export-snapshot task metadata value is too large"
+        );
+        ensure!(
+            task_metadata_keys.insert((
+                value.workspace_id.clone(),
+                value.task_id.clone(),
+                value.field_id.clone(),
+            )),
+            "error invalid-export-snapshot task metadata identity is duplicated"
+        );
+        let usage = task_metadata_usage
+            .entry((value.workspace_id.clone(), value.task_id.clone()))
+            .or_default();
+        usage.0 += 1;
+        usage.1 += value.value.len();
+    }
+    ensure!(
+        task_metadata_usage.values().all(|(count, bytes)| {
+            *count <= crate::metadata::MAX_METADATA_VALUES
+                && *bytes <= crate::metadata::MAX_METADATA_TOTAL_BYTES
+        }),
+        "error invalid-export-snapshot task metadata limits exceeded"
+    );
+
+    let series_ids = export
+        .tables
+        .recurrence_series
+        .iter()
+        .map(|series| (series.workspace_id.clone(), series.id.clone()))
+        .collect::<HashSet<_>>();
+    let mut series_metadata_keys = HashSet::new();
+    let mut series_metadata_usage: HashMap<(WorkspaceId, RecurrenceSeriesId), (usize, usize)> =
+        HashMap::new();
+    for value in &export.tables.recurrence_series_metadata {
+        ensure!(
+            series_ids.contains(&(value.workspace_id.clone(), value.series_id.clone())),
+            "error invalid-export-snapshot recurrence metadata series is missing"
+        );
+        ensure!(
+            metadata_ids.contains(&(value.workspace_id.clone(), value.field_id.clone())),
+            "error invalid-export-snapshot recurrence metadata field is missing"
+        );
+        ensure!(
+            value.value.len() <= crate::metadata::MAX_METADATA_VALUE_BYTES,
+            "error invalid-export-snapshot recurrence metadata value is too large"
+        );
+        ensure!(
+            series_metadata_keys.insert((
+                value.workspace_id.clone(),
+                value.series_id.clone(),
+                value.field_id.clone(),
+            )),
+            "error invalid-export-snapshot recurrence metadata identity is duplicated"
+        );
+        let usage = series_metadata_usage
+            .entry((value.workspace_id.clone(), value.series_id.clone()))
+            .or_default();
+        usage.0 += 1;
+        usage.1 += value.value.len();
+    }
+    ensure!(
+        series_metadata_usage.values().all(|(count, bytes)| {
+            *count <= crate::metadata::MAX_METADATA_VALUES
+                && *bytes <= crate::metadata::MAX_METADATA_TOTAL_BYTES
+        }),
+        "error invalid-export-snapshot recurrence metadata limits exceeded"
+    );
+
     if has_recurrence_data(export) {
         validate_recurrence_snapshot(export, &workspace_ids, &project_ids, &label_keys, &task_ids)?;
     }
@@ -814,6 +1014,7 @@ fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
 fn has_recurrence_data(export: &AvenExport) -> bool {
     !export.tables.recurrence_series.is_empty()
         || !export.tables.recurrence_series_labels.is_empty()
+        || !export.tables.recurrence_series_metadata.is_empty()
         || !export.tables.recurrence_occurrences.is_empty()
         || !export.tables.recurrence_pause_intervals.is_empty()
 }
@@ -1342,8 +1543,10 @@ async fn replace_from_export(
     let delete_order = [
         "DELETE FROM recurrence_pause_intervals",
         "DELETE FROM recurrence_occurrences",
+        "DELETE FROM recurrence_series_metadata",
         "DELETE FROM recurrence_series_labels",
         "DELETE FROM recurrence_series",
+        "DELETE FROM task_metadata",
         "DELETE FROM task_attachments",
         "DELETE FROM blob_inventory",
         "DELETE FROM task_epic_links",
@@ -1355,7 +1558,9 @@ async fn replace_from_export(
         "DELETE FROM changes",
         "DELETE FROM project_paths",
         "DELETE FROM project_id_aliases",
+        "DELETE FROM metadata_field_id_aliases",
         "DELETE FROM tasks",
+        "DELETE FROM metadata_fields",
         "DELETE FROM labels",
         "DELETE FROM projects",
         "DELETE FROM workspaces",
@@ -1449,7 +1654,10 @@ async fn replace_from_export(
     tables::import_project_id_aliases(tx, &export.tables.project_id_aliases).await?;
     tables::import_project_paths(tx, &export.tables.project_paths).await?;
     tables::import_labels(tx, &export.tables.labels).await?;
+    tables::import_metadata_fields(tx, &export.tables.metadata_fields).await?;
+    tables::import_metadata_field_id_aliases(tx, &export.tables.metadata_field_id_aliases).await?;
     tables::import_tasks(tx, &export.tables.tasks).await?;
+    tables::import_task_metadata(tx, &export.tables.task_metadata).await?;
     tables::import_task_labels(tx, &export.tables.task_labels).await?;
     tables::import_notes(tx, &export.tables.notes).await?;
     tables::import_task_dependencies(tx, &export.tables.task_dependencies).await?;
@@ -1459,6 +1667,8 @@ async fn replace_from_export(
     if recurrence_data {
         tables::import_recurrence_series(tx, &export.tables.recurrence_series).await?;
         tables::import_recurrence_series_labels(tx, &export.tables.recurrence_series_labels)
+            .await?;
+        tables::import_recurrence_series_metadata(tx, &export.tables.recurrence_series_metadata)
             .await?;
         tables::import_recurrence_occurrences(tx, &export.tables.recurrence_occurrences).await?;
         tables::import_recurrence_pause_intervals(tx, &export.tables.recurrence_pause_intervals)
@@ -1496,6 +1706,82 @@ async fn database_integrity_report_with_connection(
         "SELECT count(*) FROM project_id_aliases a LEFT JOIN projects p ON p.workspace_id = a.workspace_id AND p.id = a.local_project_id WHERE p.id IS NULL",
     )
     .await?);
+    checks.push(count_check(
+        conn,
+        "metadata field workspaces",
+        "SELECT count(*) FROM metadata_fields f LEFT JOIN workspaces w ON w.id = f.workspace_id WHERE w.id IS NULL",
+    )
+    .await?);
+    checks.push(count_check(
+        conn,
+        "metadata aliases",
+        "SELECT count(*) FROM metadata_field_id_aliases a LEFT JOIN metadata_fields f ON f.workspace_id = a.workspace_id AND f.id = a.local_field_id WHERE f.id IS NULL",
+    )
+    .await?);
+    checks.push(count_check(
+        conn,
+        "task metadata tasks",
+        "SELECT count(*) FROM task_metadata m LEFT JOIN tasks t ON t.workspace_id = m.workspace_id AND t.id = m.task_id WHERE t.id IS NULL",
+    )
+    .await?);
+    checks.push(count_check(
+        conn,
+        "task metadata fields",
+        "SELECT count(*) FROM task_metadata m LEFT JOIN metadata_fields f ON f.workspace_id = m.workspace_id AND f.id = m.field_id WHERE f.id IS NULL",
+    )
+    .await?);
+    checks.push(
+        count_check(
+            conn,
+            "task metadata value size",
+            "SELECT count(*) FROM task_metadata WHERE length(CAST(value AS BLOB)) > 4096",
+        )
+        .await?,
+    );
+    checks.push(count_check(
+        conn,
+        "task metadata aggregate limits",
+        "SELECT count(*) FROM (SELECT workspace_id, task_id FROM task_metadata GROUP BY workspace_id, task_id HAVING count(*) > 128 OR sum(length(CAST(value AS BLOB))) > 32768)",
+    )
+    .await?);
+    checks.push(count_check(
+        conn,
+        "recurrence metadata series",
+        "SELECT count(*) FROM recurrence_series_metadata m LEFT JOIN recurrence_series s ON s.workspace_id = m.workspace_id AND s.id = m.series_id WHERE s.id IS NULL",
+    )
+    .await?);
+    checks.push(count_check(
+        conn,
+        "recurrence metadata fields",
+        "SELECT count(*) FROM recurrence_series_metadata m LEFT JOIN metadata_fields f ON f.workspace_id = m.workspace_id AND f.id = m.field_id WHERE f.id IS NULL",
+    )
+    .await?);
+    checks.push(count_check(
+        conn,
+        "recurrence metadata value size",
+        "SELECT count(*) FROM recurrence_series_metadata WHERE length(CAST(value AS BLOB)) > 4096",
+    )
+    .await?);
+    checks.push(count_check(
+        conn,
+        "recurrence metadata aggregate limits",
+        "SELECT count(*) FROM (SELECT workspace_id, series_id FROM recurrence_series_metadata GROUP BY workspace_id, series_id HAVING count(*) > 128 OR sum(length(CAST(value AS BLOB))) > 32768)",
+    )
+    .await?);
+    let invalid_metadata_keys = sqlx::query_scalar::<_, String>("SELECT key FROM metadata_fields")
+        .fetch_all(&mut *conn)
+        .await?
+        .into_iter()
+        .filter(|key| match crate::metadata::normalize_metadata_key(key) {
+            Ok(normalized) => normalized != key.as_str(),
+            Err(_) => true,
+        })
+        .count();
+    checks.push(IntegrityCheck {
+        label: "metadata field keys",
+        ok: invalid_metadata_keys == 0,
+        value: invalid_metadata_keys.to_string(),
+    });
     checks.push(count_check(
         conn,
         "task label tasks",

@@ -559,6 +559,8 @@ async fn recurrence_template_update_restores_series_identity_after_reordering() 
         .update_recurrence_template(
             &edited_series_id,
             aven_core::operations::RecurrenceTemplateUpdate {
+                set_metadata: Vec::new(),
+                remove_metadata: Vec::new(),
                 title: Some("Aardvark series".to_string()),
                 ..Default::default()
             },

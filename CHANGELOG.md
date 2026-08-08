@@ -5,8 +5,17 @@ description: Release notes for aven.
 
 ## Unreleased
 
-- The Epics view now summarizes child completion, ready, blocked, overdue, and
-  recent activity.
+- Add workspace-scoped task metadata with `--metadata KEY=VALUE`, exact and
+  presence filters, bulk updates, field listing and renaming, and full text,
+  JSON, and Markdown detail output. Metadata values are opaque strings, and
+  renaming a field preserves its stable identity without rewriting every task.
+- Metadata syncs across replicas, participates in conflict resolution and undo,
+  survives portable export and import, and can be inherited by future recurring
+  task occurrences. The Rust consumer API and UniFFI facade expose the same
+  detailed metadata records.
+- The Epics view summarizes child completion, ready, blocked, overdue, and
+  recent activity directly in parent rows, with responsive progress such as
+  `1/5 done` and distinct canceled counts.
 - Epic detail views show unresolved blockers beneath affected child tasks.
 
 ## v0.1.25 (2026-08-07)

@@ -472,6 +472,7 @@ async fn detail_edit_chords_open_advertised_editors() {
     create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             title: "Detail target".to_string(),
             description: "existing description".to_string(),
             project: None,
@@ -1014,6 +1015,7 @@ async fn detail_priority_mouse_click_opens_menu_and_returns_to_detail() {
     let selected = create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             priority: "medium".to_string(),
             ..test_task_draft("Priority click target")
         },

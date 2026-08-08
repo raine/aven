@@ -1209,6 +1209,7 @@ async fn automatic_refresh_surfaces_task_when_availability_arrives() {
         .store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 title: "Scheduled refresh task".to_string(),
                 available_at: Some("2999-11-01T04:00:00Z".to_string()),
                 due_on: None,

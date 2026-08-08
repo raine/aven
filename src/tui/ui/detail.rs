@@ -5082,6 +5082,7 @@ mod tests {
 
     fn detail_test_item() -> TaskListItem {
         TaskListItem {
+            metadata: Vec::new(),
             task: crate::types::Task {
                 id: crate::test_support::task_id("7KQ9A1X"),
                 workspace_id: "0000000000000001".parse().unwrap(),

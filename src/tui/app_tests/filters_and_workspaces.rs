@@ -200,6 +200,7 @@ async fn done_view_shortcut_keeps_project_scope() {
             .store
             .create_task(
                 TaskDraft {
+                    metadata: Vec::new(),
                     title: title.to_string(),
                     description: String::new(),
                     project: Some(project.to_string()),
@@ -244,6 +245,7 @@ async fn filter_shortcuts_apply_label_status_priority_and_deleted() {
     create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             title: "Filtered task".to_string(),
             description: String::new(),
             project: None,
@@ -1076,6 +1078,7 @@ async fn picker_row_click_toggles_multi_select_row() {
     create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             labels: vec!["bug".to_string()],
             ..test_task_draft("Labeled target")
         },

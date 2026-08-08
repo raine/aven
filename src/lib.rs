@@ -37,9 +37,9 @@ use cli::{BackupSubcommand, Commands, DaemonSubcommand, InternalSubcommand, Skil
 use commands::{
     cmd_add, cmd_attachment, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context,
     cmd_delete_restore, cmd_demo, cmd_dep, cmd_doctor, cmd_edit, cmd_epic, cmd_export, cmd_import,
-    cmd_internal_demo_snapshot, cmd_internal_natural_add, cmd_label, cmd_list, cmd_note,
-    cmd_note_delete, cmd_prime, cmd_project, cmd_recur, cmd_search, cmd_self_update, cmd_show,
-    cmd_skill, cmd_skill_install, cmd_text, cmd_workspace,
+    cmd_internal_demo_snapshot, cmd_internal_natural_add, cmd_label, cmd_list, cmd_metadata,
+    cmd_note, cmd_note_delete, cmd_prime, cmd_project, cmd_recur, cmd_search, cmd_self_update,
+    cmd_show, cmd_skill, cmd_skill_install, cmd_text, cmd_workspace,
 };
 use sync::{run_server, sync_client};
 use workspaces::resolve_active_workspace_with_database;
@@ -92,6 +92,7 @@ enum DatabaseCommand {
     Export(cli::ExportArgs),
     Import(cli::ImportArgs),
     Label(cli::LabelCommand),
+    Metadata(cli::MetadataCommand),
     List(cli::ListArgs),
     Note(cli::NoteArgs),
     NoteDelete(cli::NoteDeleteArgs),
@@ -133,6 +134,7 @@ impl From<Commands> for CliDispatch {
             Commands::Restore(args) => Self::database(DatabaseCommand::Restore(args)),
             Commands::Text(args) => Self::database(DatabaseCommand::Text(args)),
             Commands::Label(args) => Self::database(DatabaseCommand::Label(args)),
+            Commands::Metadata(args) => Self::database(DatabaseCommand::Metadata(args)),
             Commands::Project(args) => Self::database(DatabaseCommand::Project(args)),
             Commands::Recur(args) => Self::database(DatabaseCommand::Recur(args)),
             Commands::Workspace(args) => Self::database(DatabaseCommand::Workspace(args)),
@@ -339,6 +341,11 @@ async fn dispatch_database(
             let workspace =
                 resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
             cmd_label(&database, &workspace, args).await
+        }
+        DatabaseCommand::Metadata(args) => {
+            let workspace =
+                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+            cmd_metadata(&database, &workspace, args).await
         }
         DatabaseCommand::Project(args) => {
             let workspace =

@@ -45,6 +45,7 @@ async fn create_selected_task(store: &mut TuiStore, title: &str) -> (TaskId, usi
     let (_, selected) = store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 title: title.to_string(),
                 description: String::new(),
                 project: None,
@@ -118,6 +119,7 @@ async fn seed_field_conflict_database(
 
 fn task_draft(title: &str) -> TaskDraft {
     TaskDraft {
+        metadata: Vec::new(),
         title: title.to_string(),
         description: String::new(),
         project: None,
@@ -260,6 +262,7 @@ async fn create_task_in_project(store: &mut TuiStore, title: &str, project_key: 
     let (_, selected) = store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 title: title.to_string(),
                 project: Some(project_key.to_string()),
                 ..task_draft("")

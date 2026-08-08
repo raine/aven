@@ -1,5 +1,6 @@
 use crate::attachments::AttachmentBytesState;
 use crate::ids::{TaskId, WorkspaceId};
+use crate::metadata::TaskMetadataValue;
 use std::collections::{HashMap, HashSet};
 
 use crate::query::fragments;
@@ -17,6 +18,7 @@ pub struct TaskEnrichment {
     pub labels_by_task: HashMap<TaskId, Vec<String>>,
     pub notes_by_task: HashMap<TaskId, Vec<TaskNote>>,
     pub attachments_by_task: HashMap<TaskId, Vec<AttachmentMetadata>>,
+    pub metadata_by_task: HashMap<TaskId, Vec<TaskMetadataValue>>,
     pub conflicted_task_ids: HashSet<TaskId>,
     pub unresolved_blocker_counts_by_task: HashMap<TaskId, i64>,
     pub dependent_counts_by_task: HashMap<TaskId, i64>,
@@ -54,13 +56,14 @@ async fn load_task_enrichment_with_detail(
     display_refs: &DisplayRefContext,
     include_detail: bool,
 ) -> Result<TaskEnrichment> {
-    let (notes_by_task, attachments_by_task) = if include_detail {
+    let (notes_by_task, attachments_by_task, metadata_by_task) = if include_detail {
         (
             notes_for_tasks(conn, workspace_id, task_ids).await?,
             attachments_for_tasks(conn, workspace_id, task_ids).await?,
+            crate::metadata::metadata_by_task_ids(conn, workspace_id, task_ids).await?,
         )
     } else {
-        (HashMap::new(), HashMap::new())
+        (HashMap::new(), HashMap::new(), HashMap::new())
     };
     let epic_children_by_task =
         epic_children_for_tasks(conn, workspace_id, task_ids, display_refs).await?;
@@ -80,6 +83,7 @@ async fn load_task_enrichment_with_detail(
         labels_by_task: labels_for_tasks(conn, workspace_id, task_ids).await?,
         notes_by_task,
         attachments_by_task,
+        metadata_by_task,
         conflicted_task_ids: tasks_with_unresolved_conflicts(conn, workspace_id, task_ids).await?,
         unresolved_blocker_counts_by_task: unresolved_blocker_counts_for_tasks(
             conn,

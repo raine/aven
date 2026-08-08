@@ -6,6 +6,7 @@ async fn update_task_fields_refresh_selected_task() {
     let (_, selected) = store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 title: "Old".to_string(),
                 description: "old body".to_string(),
                 ..task_draft("")
@@ -286,6 +287,7 @@ async fn label_selection_uses_authoritative_labels_after_capture() {
     let (_, selected) = store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 title: "Label race".to_string(),
                 labels: vec!["old".to_string()],
                 ..task_draft("")
@@ -332,6 +334,7 @@ async fn update_labels_adds_and_removes_labels() {
     let (_, selected) = store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 title: "Labels".to_string(),
                 labels: vec!["bug".to_string()],
                 ..task_draft("")

@@ -32,7 +32,7 @@ pub(crate) async fn cmd_recur(
         RecurSubcommand::List(args) => list(database, workspace, args).await,
         RecurSubcommand::Show(args) => show(database, workspace, args).await,
         RecurSubcommand::History(args) => history(database, workspace, args).await,
-        RecurSubcommand::Edit(args) => edit(database, workspace, args).await,
+        RecurSubcommand::Edit(args) => edit(database, workspace, *args).await,
         RecurSubcommand::Skip(args) => skip(database, workspace, args).await,
         RecurSubcommand::Pause(args) => pause(database, workspace, args).await,
         RecurSubcommand::Resume(args) => resume(database, workspace, args).await,
@@ -184,6 +184,13 @@ async fn show(database: &Database, workspace: &Workspace, args: RecurShowArgs) -
         print_series_summary(&detail.summary);
         println!("id={}", detail.series.id);
         println!("project={} labels={}", project.key, detail.labels.join(","));
+        for metadata in &detail.metadata {
+            println!(
+                "metadata field_id={} key={}",
+                metadata.field_id, metadata.key
+            );
+            print_multiline_block("value", &metadata.value);
+        }
         println!(
             "initial_status={} priority={} start_on={} timezone={} available_at={} due={}",
             detail.series.initial_status,
@@ -203,6 +210,12 @@ async fn show(database: &Database, workspace: &Workspace, args: RecurShowArgs) -
             print_multiline_block("description", &detail.series.description);
         }
         for conflict in &detail.lifecycle_conflicts {
+            let local_value = database
+                .conflict_display_value(&workspace.id, &conflict.field, &conflict.local_value)
+                .await?;
+            let remote_value = database
+                .conflict_display_value(&workspace.id, &conflict.field, &conflict.remote_value)
+                .await?;
             println!(
                 "conflict {} field={} variants={},{} lifecycle_blocked=yes",
                 detail.summary.series_ref, conflict.field, conflict.variant_a, conflict.variant_b
@@ -210,12 +223,12 @@ async fn show(database: &Database, workspace: &Workspace, args: RecurShowArgs) -
             println!(
                 "variant {} value={}",
                 conflict.variant_a,
-                quote(&conflict.local_value)
+                quote(&local_value)
             );
             println!(
                 "variant {} value={}",
                 conflict.variant_b,
-                quote(&conflict.remote_value)
+                quote(&remote_value)
             );
         }
     }
@@ -267,6 +280,7 @@ async fn edit(database: &Database, workspace: &Workspace, args: RecurEditArgs) -
         .as_deref()
         .map(parse_due_policy)
         .transpose()?;
+    let metadata = super::tasks::parse_metadata_args(&args.metadata)?;
     let outcome = database
         .update_recurrence_template(
             workspace,
@@ -278,6 +292,8 @@ async fn edit(database: &Database, workspace: &Workspace, args: RecurEditArgs) -
                 priority: args.priority,
                 initial_status: args.status,
                 labels: (!args.label.is_empty()).then_some(args.label),
+                set_metadata: metadata,
+                remove_metadata: args.remove_metadata,
                 available_local_time,
                 due_policy,
             }),
@@ -515,10 +531,18 @@ struct SeriesDetailJson {
     priority: String,
     initial_status: String,
     labels: Vec<String>,
+    metadata: Vec<SeriesMetadataJson>,
     stopped_at: Option<String>,
     created_at: String,
     updated_at: String,
     lifecycle_conflicts: Vec<SeriesConflictJson>,
+}
+
+#[derive(Serialize)]
+struct SeriesMetadataJson {
+    field_id: String,
+    key: String,
+    value: String,
 }
 
 #[derive(Serialize)]
@@ -591,6 +615,15 @@ fn series_detail_json(item: &RecurrenceSeriesDetail, project: &str) -> SeriesDet
         priority: item.series.priority.to_string(),
         initial_status: item.series.initial_status.to_string(),
         labels: item.labels.clone(),
+        metadata: item
+            .metadata
+            .iter()
+            .map(|metadata| SeriesMetadataJson {
+                field_id: metadata.field_id.to_string(),
+                key: metadata.key.clone(),
+                value: metadata.value.clone(),
+            })
+            .collect(),
         stopped_at: item.series.stopped_at.clone(),
         created_at: item.series.created_at.clone(),
         updated_at: item.series.updated_at.clone(),

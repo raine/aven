@@ -248,6 +248,7 @@ mod tests {
     fn draft(title: &str) -> TaskIntakeResult {
         TaskIntakeResult {
             task: crate::operations::TaskDraft {
+                metadata: Vec::new(),
                 title: title.to_string(),
                 description: String::new(),
                 project: None,

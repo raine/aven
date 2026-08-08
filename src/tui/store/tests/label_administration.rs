@@ -15,6 +15,7 @@ async fn label_administration_updates_task_and_series_references_and_undoes() {
     let (_, selected) = store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 title: "Labeled task".to_string(),
                 description: String::new(),
                 project: None,

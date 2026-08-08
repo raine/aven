@@ -78,7 +78,14 @@ pub(super) async fn create_series(conn: &mut SqliteConnection, change: &ChangeWi
             && row.get::<String, _>("created_at") == created_at
             && row.get::<String, _>("updated_at") == updated_at
             && row.get::<i64, _>("deleted") == 0
-            && load_series_labels(conn, &workspace_id, &series_id).await? == labels;
+            && load_series_labels(conn, &workspace_id, &series_id).await? == labels
+            && super::metadata::initial_series_values_match(
+                conn,
+                &workspace_id,
+                &series_id,
+                change,
+            )
+            .await?;
         ensure!(
             equal,
             "error recurrence-generation-conflict series_id={series_id}"
@@ -112,6 +119,7 @@ pub(super) async fn create_series(conn: &mut SqliteConnection, change: &ChangeWi
     .execute(&mut *conn)
     .await?;
     replace_series_labels(conn, &workspace_id, &series_id, &labels).await?;
+    super::metadata::apply_initial_series_values(conn, &workspace_id, &series_id, change).await?;
     for field in SERIES_FIELDS {
         set_entity_field_version(
             conn,
@@ -1168,6 +1176,7 @@ mod tests {
             &mut conn,
             &workspace,
             CreateRecurrenceSeriesParams::new(RecurrenceSeriesDraft {
+                metadata: Vec::new(),
                 title: "sync projection".to_string(),
                 description: String::new(),
                 project: "recurrence".to_string(),

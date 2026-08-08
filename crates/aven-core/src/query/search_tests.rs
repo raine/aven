@@ -14,6 +14,9 @@ async fn task_search_rejects_zero_limit() {
         .search_task_items(
             &workspace.id,
             TaskSearchQuery {
+                metadata: Vec::new(),
+                has_metadata: Vec::new(),
+                missing_metadata: Vec::new(),
                 text: "task".to_string(),
                 project: None,
                 include_deleted: false,
@@ -68,6 +71,9 @@ async fn task_search_preview_includes_epic_parent_display_ref() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "Child task".to_string(),
             project: None,
             include_deleted: false,
@@ -159,6 +165,9 @@ async fn task_search_finds_done_labels_and_notes() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "release cleanup".to_string(),
             project: None,
             include_deleted: false,
@@ -174,6 +183,9 @@ async fn task_search_finds_done_labels_and_notes() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "security".to_string(),
             project: None,
             include_deleted: false,
@@ -189,6 +201,9 @@ async fn task_search_finds_done_labels_and_notes() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "ios auth".to_string(),
             project: None,
             include_deleted: false,
@@ -207,6 +222,9 @@ async fn task_search_finds_done_labels_and_notes() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "pager rotation".to_string(),
             project: None,
             include_deleted: false,
@@ -234,6 +252,9 @@ async fn task_search_finds_done_labels_and_notes() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "\"pager rotation\"".to_string(),
             project: None,
             include_deleted: false,
@@ -261,6 +282,9 @@ async fn task_search_finds_done_labels_and_notes() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "\"pager rotation handoff\"".to_string(),
             project: None,
             include_deleted: false,
@@ -378,6 +402,9 @@ async fn task_search_requires_contiguous_text_matches() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "testing".to_string(),
             project: None,
             include_deleted: false,
@@ -425,6 +452,9 @@ async fn task_search_ranks_refs_and_controls_deleted_results() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "7KQ9".to_string(),
             project: None,
             include_deleted: false,
@@ -440,6 +470,9 @@ async fn task_search_ranks_refs_and_controls_deleted_results() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "/APP-7KQ9".to_string(),
             project: None,
             include_deleted: false,
@@ -456,6 +489,9 @@ async fn task_search_ranks_refs_and_controls_deleted_results() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "deleted needle".to_string(),
             project: None,
             include_deleted: false,
@@ -470,6 +506,9 @@ async fn task_search_ranks_refs_and_controls_deleted_results() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "deleted needle".to_string(),
             project: None,
             include_deleted: true,
@@ -485,6 +524,9 @@ async fn task_search_ranks_refs_and_controls_deleted_results() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "needle".to_string(),
             project: None,
             include_deleted: false,
@@ -507,6 +549,9 @@ async fn task_search_ranks_refs_and_controls_deleted_results() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "9KQ9".to_string(),
             project: None,
             include_deleted: false,
@@ -555,6 +600,9 @@ async fn task_search_accepts_unsafe_query_parser_input() {
             &mut conn,
             &crate::workspaces::default_workspace_id(),
             TaskSearchQuery {
+                metadata: Vec::new(),
+                has_metadata: Vec::new(),
+                missing_metadata: Vec::new(),
                 text: input.to_string(),
                 project: None,
                 include_deleted: false,
@@ -584,6 +632,9 @@ async fn task_search_finds_rows_backfilled_into_fts_index() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "backfilled".to_string(),
             project: None,
             include_deleted: false,
@@ -619,6 +670,9 @@ async fn task_search_uses_fts_candidates_for_common_text() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "visible in".to_string(),
             project: None,
             include_deleted: false,
@@ -647,6 +701,9 @@ async fn task_search_uses_fts_candidates_for_common_text() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "visible in".to_string(),
             project: None,
             include_deleted: false,
@@ -684,6 +741,9 @@ async fn task_search_fts_updates_when_search_text_changes() {
                 &mut conn,
                 &crate::workspaces::default_workspace_id(),
                 TaskSearchQuery {
+                    metadata: Vec::new(),
+                    has_metadata: Vec::new(),
+                    missing_metadata: Vec::new(),
                     text: "orchard".to_string(),
                     project: None,
                     include_deleted: false,
@@ -701,6 +761,9 @@ async fn task_search_fts_updates_when_search_text_changes() {
                 &mut conn,
                 &crate::workspaces::default_workspace_id(),
                 TaskSearchQuery {
+                    metadata: Vec::new(),
+                    has_metadata: Vec::new(),
+                    missing_metadata: Vec::new(),
                     text: "lagoon".to_string(),
                     project: None,
                     include_deleted: false,
@@ -720,6 +783,9 @@ async fn task_search_fts_updates_when_search_text_changes() {
                 &mut conn,
                 &crate::workspaces::default_workspace_id(),
                 TaskSearchQuery {
+                    metadata: Vec::new(),
+                    has_metadata: Vec::new(),
+                    missing_metadata: Vec::new(),
                     text: "garden".to_string(),
                     project: None,
                     include_deleted: false,
@@ -740,6 +806,9 @@ async fn task_search_fts_updates_when_search_text_changes() {
             &mut conn,
             &crate::workspaces::default_workspace_id(),
             TaskSearchQuery {
+                metadata: Vec::new(),
+                has_metadata: Vec::new(),
+                missing_metadata: Vec::new(),
                 text: "garden".to_string(),
                 project: None,
                 include_deleted: false,
@@ -763,6 +832,9 @@ async fn task_search_fts_updates_when_search_text_changes() {
                 &mut conn,
                 &crate::workspaces::default_workspace_id(),
                 TaskSearchQuery {
+                    metadata: Vec::new(),
+                    has_metadata: Vec::new(),
+                    missing_metadata: Vec::new(),
                     text: "harbor".to_string(),
                     project: None,
                     include_deleted: false,
@@ -783,6 +855,9 @@ async fn task_search_fts_updates_when_search_text_changes() {
             &mut conn,
             &crate::workspaces::default_workspace_id(),
             TaskSearchQuery {
+                metadata: Vec::new(),
+                has_metadata: Vec::new(),
+                missing_metadata: Vec::new(),
                 text: "harbor".to_string(),
                 project: None,
                 include_deleted: false,
@@ -799,6 +874,9 @@ async fn task_search_fts_updates_when_search_text_changes() {
                 &mut conn,
                 &crate::workspaces::default_workspace_id(),
                 TaskSearchQuery {
+                    metadata: Vec::new(),
+                    has_metadata: Vec::new(),
+                    missing_metadata: Vec::new(),
                     text: "summit".to_string(),
                     project: None,
                     include_deleted: false,
@@ -821,6 +899,9 @@ async fn task_search_fts_updates_when_search_text_changes() {
                 &mut conn,
                 &crate::workspaces::default_workspace_id(),
                 TaskSearchQuery {
+                    metadata: Vec::new(),
+                    has_metadata: Vec::new(),
+                    missing_metadata: Vec::new(),
                     text: "beacon".to_string(),
                     project: None,
                     include_deleted: false,
@@ -852,6 +933,9 @@ async fn task_search_ref_lane_keeps_glyph_normalization_out_of_text_lanes() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "100king".to_string(),
             project: None,
             include_deleted: false,
@@ -894,6 +978,9 @@ async fn task_search_ref_lane_handles_durable_ids_and_punctuation() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "7KQ9A1X4MV2P8D6R".to_string(),
             project: None,
             include_deleted: false,
@@ -909,6 +996,9 @@ async fn task_search_ref_lane_handles_durable_ids_and_punctuation() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "/APP.7KQ9".to_string(),
             project: None,
             include_deleted: false,
@@ -924,6 +1014,9 @@ async fn task_search_ref_lane_handles_durable_ids_and_punctuation() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "APP 7KQ9".to_string(),
             project: None,
             include_deleted: false,
@@ -939,6 +1032,9 @@ async fn task_search_ref_lane_handles_durable_ids_and_punctuation() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "/WRONG-7KQ9".to_string(),
             project: None,
             include_deleted: false,
@@ -953,6 +1049,9 @@ async fn task_search_ref_lane_handles_durable_ids_and_punctuation() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "9KQ".to_string(),
             project: None,
             include_deleted: false,
@@ -967,6 +1066,9 @@ async fn task_search_ref_lane_handles_durable_ids_and_punctuation() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "needle".to_string(),
             project: None,
             include_deleted: false,
@@ -1046,6 +1148,9 @@ async fn task_search_reranks_title_ref_label_note_and_metadata_evidence() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "orchard".to_string(),
             project: None,
             include_deleted: true,
@@ -1078,6 +1183,9 @@ async fn task_search_reranks_title_ref_label_note_and_metadata_evidence() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "7KQ9".to_string(),
             project: None,
             include_deleted: false,
@@ -1135,6 +1243,9 @@ async fn task_search_reranks_multi_token_proximity_and_field_count() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "auth flow".to_string(),
             project: None,
             include_deleted: false,
@@ -1202,6 +1313,9 @@ async fn task_search_applies_project_scope_to_every_candidate_lane_before_limiti
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "needle".to_string(),
             project: None,
             include_deleted: false,
@@ -1216,6 +1330,9 @@ async fn task_search_applies_project_scope_to_every_candidate_lane_before_limiti
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "needle".to_string(),
             project: Some("app".to_string()),
             include_deleted: false,
@@ -1234,6 +1351,9 @@ async fn task_search_applies_project_scope_to_every_candidate_lane_before_limiti
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "8KQ9".to_string(),
             project: Some("app".to_string()),
             include_deleted: false,
@@ -1267,6 +1387,9 @@ async fn task_search_applies_project_scope_to_every_candidate_lane_before_limiti
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
             text: "scoped".to_string(),
             project: Some("app".to_string()),
             include_deleted: false,

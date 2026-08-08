@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 use aven_core::choices::TaskSource;
 use aven_core::db::Database;
+use aven_core::metadata::TaskMetadataInput;
 use serde::Serialize;
 
 use super::validation::{validate_optional_priority, validate_optional_status, validate_priority};
@@ -11,8 +12,8 @@ use crate::config::AppConfig;
 use crate::input::read_optional_text;
 use crate::operations::{TaskDraft, TaskUpdate};
 use crate::query::{
-    self, SortDirection, TaskAvailabilityFilter, TaskFilters, TaskQueryMode, TaskSearchQuery,
-    TaskSearchResult, TaskSort,
+    self, MetadataFilter, SortDirection, TaskAvailabilityFilter, TaskFilters, TaskQueryMode,
+    TaskSearchQuery, TaskSearchResult, TaskSort,
 };
 use crate::refs::DisplayRefContext;
 use crate::render::{KvLine, changed_text, print_json_pretty, quote};
@@ -23,6 +24,31 @@ use crate::task_render::{
 use crate::types::Task;
 use crate::workspaces::Workspace;
 
+pub(super) fn parse_metadata_args(values: &[String]) -> Result<Vec<TaskMetadataInput>> {
+    values
+        .iter()
+        .map(|input| {
+            let (key, value) = input
+                .split_once('=')
+                .ok_or_else(|| anyhow::anyhow!("error invalid-metadata-assignment"))?;
+            Ok(TaskMetadataInput {
+                key: key.to_string(),
+                value: value.to_string(),
+            })
+        })
+        .collect()
+}
+
+fn metadata_filters(values: &[String]) -> Result<Vec<MetadataFilter>> {
+    Ok(parse_metadata_args(values)?
+        .into_iter()
+        .map(|input| MetadataFilter {
+            key: input.key,
+            value: input.value,
+        })
+        .collect())
+}
+
 pub(crate) async fn cmd_add(
     database: &Database,
     workspace: &Workspace,
@@ -31,6 +57,7 @@ pub(crate) async fn cmd_add(
 ) -> Result<()> {
     validate_priority(&args.priority)?;
     validate_optional_status(args.status.as_deref())?;
+    let metadata = parse_metadata_args(&args.metadata)?;
     let description = read_optional_text(
         args.description,
         args.description_file.as_deref(),
@@ -83,6 +110,7 @@ pub(crate) async fn cmd_add(
                         priority: args.priority,
                         initial_status: args.status.unwrap_or_else(|| "todo".to_string()),
                         labels: args.label,
+                        metadata,
                         schedule,
                     },
                 ),
@@ -105,6 +133,7 @@ pub(crate) async fn cmd_add(
             || args.status.is_some()
             || args.priority != "none"
             || !args.label.is_empty()
+            || !metadata.is_empty()
             || args.available_at.is_some()
             || args.due.is_some()
         {
@@ -166,6 +195,7 @@ pub(crate) async fn cmd_add(
             priority: args.priority,
             source: TaskSource::Cli,
             labels: args.label,
+            metadata,
             available_at: args
                 .available_at
                 .as_deref()
@@ -395,7 +425,7 @@ pub(crate) async fn cmd_list(
             "error list-upcoming-filter-conflict hint=\"combine --upcoming only with project, status, priority, label, or --all\""
         );
     }
-    let filters = list_task_filters(&args);
+    let filters = list_task_filters(&args)?;
     let sort = if args.upcoming {
         TaskSort::AvailableAt
     } else if args.overdue {
@@ -450,6 +480,9 @@ pub(crate) async fn cmd_search(
     let query = TaskSearchQuery {
         text,
         project: args.project,
+        metadata: metadata_filters(&args.metadata)?,
+        has_metadata: args.has_metadata,
+        missing_metadata: args.missing_metadata,
         include_deleted: args.all,
         limit: args.limit,
     };
@@ -526,7 +559,7 @@ fn search_json_item(result: &TaskSearchResult) -> SearchJsonItem {
     }
 }
 
-fn list_task_filters(args: &ListArgs) -> TaskFilters {
+fn list_task_filters(args: &ListArgs) -> Result<TaskFilters> {
     let terminal_status = matches!(args.status.as_deref(), Some("done" | "canceled"));
     let availability = if args.upcoming {
         TaskAvailabilityFilter::Upcoming
@@ -535,7 +568,7 @@ fn list_task_filters(args: &ListArgs) -> TaskFilters {
     } else {
         TaskAvailabilityFilter::Available
     };
-    TaskFilters {
+    Ok(TaskFilters {
         ready_only: args.ready,
         blocked_only: args.blocked,
         epics_only: args.epics,
@@ -545,13 +578,16 @@ fn list_task_filters(args: &ListArgs) -> TaskFilters {
         hide_done: args.open,
         availability,
         label: args.label.clone(),
+        metadata: metadata_filters(&args.metadata)?,
+        has_metadata: args.has_metadata.clone(),
+        missing_metadata: args.missing_metadata.clone(),
         ..TaskFilters::default()
             .with_project(args.project.clone())
             .with_status(args.status.clone())
             .with_priority(args.priority.clone())
             .include_deleted(args.all || args.deleted)
             .deleted_only(args.deleted)
-    }
+    })
 }
 
 fn parse_epic_switch(value: Option<String>) -> Result<Option<bool>> {
@@ -578,6 +614,7 @@ pub(crate) async fn cmd_edit(
     )?;
     validate_optional_status(args.status.as_deref())?;
     validate_optional_priority(args.priority.as_deref())?;
+    let set_metadata = parse_metadata_args(&args.metadata)?;
     if args.available_at.is_some() && args.clear_available_at {
         bail!(
             "error available-at-conflict hint=\"use --available-at or --clear-available-at, not both\""
@@ -622,6 +659,8 @@ pub(crate) async fn cmd_edit(
                 is_epic,
                 add_labels: args.label,
                 remove_labels: args.remove_label,
+                set_metadata,
+                remove_metadata: args.remove_metadata,
                 label_selection: None,
                 create_missing_labels: false,
             },

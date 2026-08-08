@@ -1,5 +1,6 @@
 use crate::attachments::AttachmentBytesState;
 use crate::ids::{TaskId, WorkspaceId};
+use crate::metadata::TaskMetadataValue;
 use crate::queue::QueueMeta;
 use crate::recurrence::{
     RecurrenceOutcome, RecurrenceProjectionState, RecurrenceSeriesId, RecurrenceSeriesState,
@@ -55,6 +56,12 @@ pub enum TaskIdFilter {
     Only(Vec<TaskId>),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetadataFilter {
+    pub key: String,
+    pub value: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct TaskFilters {
     pub project: Option<String>,
@@ -62,6 +69,9 @@ pub struct TaskFilters {
     pub statuses: Vec<String>,
     pub priority: Option<String>,
     pub label: Option<String>,
+    pub metadata: Vec<MetadataFilter>,
+    pub has_metadata: Vec<String>,
+    pub missing_metadata: Vec<String>,
     pub include_deleted: bool,
     pub deleted_only: bool,
     pub hide_done: bool,
@@ -195,6 +205,7 @@ pub struct RecurrenceSeriesConflict {
 pub struct RecurrenceSeriesDetail {
     pub series: RecurrenceSeries,
     pub labels: Vec<String>,
+    pub metadata: Vec<TaskMetadataValue>,
     pub summary: RecurrenceSeriesSummary,
     pub current_occurrence: Option<RecurrenceOccurrence>,
     pub lifecycle_conflicts: Vec<RecurrenceSeriesConflict>,
@@ -286,6 +297,7 @@ pub struct TaskListItem {
     pub labels: Vec<String>,
     pub notes: Vec<TaskNote>,
     pub attachments: Vec<AttachmentMetadata>,
+    pub metadata: Vec<TaskMetadataValue>,
     pub has_conflict: bool,
     pub unresolved_blocker_count: i64,
     pub dependent_count: i64,

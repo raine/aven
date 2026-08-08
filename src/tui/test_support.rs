@@ -4,6 +4,7 @@ use crate::queue::QueueBand;
 
 pub(crate) fn task_list_item(title: &str) -> TaskListItem {
     TaskListItem {
+        metadata: Vec::new(),
         task: crate::types::Task {
             id: crate::test_support::task_id("task-1"),
             workspace_id: "0000000000000001".parse().unwrap(),

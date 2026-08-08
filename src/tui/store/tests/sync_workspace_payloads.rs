@@ -20,6 +20,7 @@ async fn explicit_workspace_payloads_pair_id_and_key() {
         &mut conn,
         &other,
         TaskDraft {
+            metadata: Vec::new(),
             title: "Scoped task".to_string(),
             project: Some("Mobile App".to_string()),
             labels: vec!["Needs Review".to_string()],

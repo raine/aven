@@ -6,6 +6,7 @@ async fn availability_transition_refreshes_tasks_sidebar_and_project_counts() {
     let (message, selected) = store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 title: "Scheduled store task".to_string(),
                 available_at: Some("2999-03-08T05:00:00Z".to_string()),
                 due_on: None,
@@ -160,6 +161,7 @@ async fn project_scope_hides_done_and_canceled_tasks_in_open_view() {
         let (_, selected) = store
             .create_task(
                 TaskDraft {
+                    metadata: Vec::new(),
                     title: title.to_string(),
                     project: Some("mobile-app".to_string()),
                     ..task_draft("")

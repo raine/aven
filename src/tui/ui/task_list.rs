@@ -1674,6 +1674,7 @@ mod tests {
         }
         for item in tasks {
             let draft = TaskDraft {
+                metadata: Vec::new(),
                 title: item.task.title,
                 description: item.task.description,
                 project: None,

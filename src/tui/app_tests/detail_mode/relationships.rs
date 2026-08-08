@@ -6,6 +6,7 @@ async fn epic_detail_add_child_shortcut_opens_contextual_search() {
     let parent_index = create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             is_epic: true,
             ..test_task_draft("Parent epic")
         },
@@ -129,6 +130,7 @@ async fn canceling_new_epic_child_authoring_preserves_list_origin() {
     let parent_index = create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             is_epic: true,
             ..test_task_draft("Parent epic")
         },
@@ -175,6 +177,7 @@ async fn submitting_new_epic_child_uses_owned_origin_and_focuses_child() {
     let parent_index = create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             is_epic: true,
             ..test_task_draft("Parent epic")
         },
@@ -223,6 +226,7 @@ async fn submitting_new_epic_child_from_linked_detail_returns_to_epic() {
     let parent_index = create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             is_epic: true,
             ..test_task_draft("Parent epic")
         },
@@ -290,6 +294,7 @@ async fn canceling_new_epic_child_authoring_returns_to_detail_origin() {
     create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             is_epic: true,
             ..test_task_draft("Parent epic")
         },
@@ -331,6 +336,7 @@ async fn epic_detail_add_child_search_hides_other_projects() {
     let parent_index = create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             is_epic: true,
             ..test_task_draft("Parent needle")
         },
@@ -342,6 +348,7 @@ async fn epic_detail_add_child_search_hides_other_projects() {
     create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             project: Some("other".to_string()),
             ..test_task_draft("Other project needle")
         },
@@ -392,6 +399,7 @@ async fn epic_child_search_applies_result_limit_within_parent_project() {
     let parent_index = create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             is_epic: true,
             ..test_task_draft("Parent epic")
         },
@@ -408,6 +416,7 @@ async fn epic_child_search_applies_result_limit_within_parent_project() {
         create_and_select_task(
             &mut app,
             TaskDraft {
+                metadata: Vec::new(),
                 title: "GitHub".to_string(),
                 project: Some(format!("other-{index}")),
                 ..test_task_draft("")
@@ -446,6 +455,7 @@ async fn epic_child_search_tab_cycles_results() {
     let parent_index = create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             is_epic: true,
             ..test_task_draft("Parent epic")
         },

@@ -13,6 +13,7 @@ use crate::ids::{TaskId, new_id, now};
 use crate::labels::{
     CreatedLabel, resolve_labels_in_workspace, resolve_or_create_labels_in_workspace,
 };
+use crate::metadata::TaskMetadataInput;
 use crate::mutation::{set_task_field, set_task_project};
 use crate::projects::resolve_or_create_project_in_workspace;
 use crate::refs::{DisplayRefContext, get_task_in_workspace};
@@ -31,6 +32,7 @@ pub struct TaskDraft {
     pub priority: String,
     pub source: TaskSource,
     pub labels: Vec<String>,
+    pub metadata: Vec<TaskMetadataInput>,
     pub available_at: Option<String>,
     pub due_on: Option<String>,
     pub is_epic: bool,
@@ -112,6 +114,8 @@ pub struct TaskUpdate {
     pub is_epic: Option<bool>,
     pub add_labels: Vec<String>,
     pub remove_labels: Vec<String>,
+    pub set_metadata: Vec<TaskMetadataInput>,
+    pub remove_metadata: Vec<String>,
     pub label_selection: Option<TaskLabelSelection>,
     pub create_missing_labels: bool,
 }
@@ -873,6 +877,7 @@ fn append_created_label_undo_commands(
 fn validate_task_draft(draft: &TaskDraft) -> Result<()> {
     TaskStatus::parse(&draft.status)?;
     TaskPriority::parse(&draft.priority)?;
+    crate::metadata::validate_metadata_update(&draft.metadata, &[])?;
     if let Some(available_at) = draft.available_at.as_deref() {
         crate::time_validation::validate_available_at_value(available_at)?;
     }
@@ -939,6 +944,9 @@ async fn insert_task(
         .execute(&mut *conn)
         .await?;
     }
+    let metadata =
+        crate::metadata::insert_initial_task_metadata(conn, workspace, &id, &draft.metadata, &ts)
+            .await?;
     let change_id = append_change(
         conn,
         ChangeEntity::Task,
@@ -959,11 +967,21 @@ async fn insert_task(
             .set("due_on", due_on)
             .set("is_epic", if draft.is_epic { "1" } else { "0" })
             .set("labels", &labels)
+            .set("metadata", &metadata)
             .set("created_at", ts),
     )
     .await?;
     for field in TaskField::VERSIONED {
         set_field_version(conn, &id, field.as_str(), &change_id).await?;
+    }
+    for value in &metadata {
+        set_field_version(
+            conn,
+            &id,
+            &format!("metadata:{}", value.field_id),
+            &change_id,
+        )
+        .await?;
     }
     Ok(InsertedTask {
         id,
@@ -1085,6 +1103,25 @@ fn append_task_undo_commands(
             after: after.labels.clone(),
         });
     }
+    let metadata_fields = before
+        .metadata
+        .keys()
+        .chain(after.metadata.keys())
+        .collect::<BTreeSet<_>>();
+    for field_id in metadata_fields {
+        let before_value = before.metadata.get(field_id);
+        let after_value = after.metadata.get(field_id);
+        if before_value != after_value {
+            commands.push(UndoCommand::SetTaskMetadata {
+                task_id: task_id.clone(),
+                field_id: field_id
+                    .parse()
+                    .expect("task snapshots contain valid metadata field IDs"),
+                before: before_value.cloned(),
+                after: after_value.cloned(),
+            });
+        }
+    }
 }
 
 fn cycled_priority(priority: TaskPriority, reverse: bool) -> TaskPriority {
@@ -1129,6 +1166,7 @@ fn materialize_task_update(update: &TaskUpdate, before: &TaskUndoSnapshot) -> Re
 }
 
 fn validate_task_update(update: &TaskUpdate) -> Result<()> {
+    crate::metadata::validate_metadata_update(&update.set_metadata, &update.remove_metadata)?;
     if update.priority.is_some() && update.cycle_priority.is_some() {
         bail!("error invalid-task-update priority and priority cycle are mutually exclusive");
     }
@@ -1241,6 +1279,20 @@ async fn apply_task_update(
         &update.remove_labels,
     )
     .await?;
+    crate::metadata::validate_task_metadata_result(
+        conn,
+        &workspace.id,
+        task_id,
+        &update.set_metadata,
+        &update.remove_metadata,
+    )
+    .await?;
+    for input in &update.set_metadata {
+        changed |= crate::metadata::set_task_metadata(conn, workspace, task_id, input).await?;
+    }
+    for key in &update.remove_metadata {
+        changed |= crate::metadata::remove_task_metadata(conn, workspace, task_id, key).await?;
+    }
     Ok((changed, created_labels))
 }
 

@@ -751,6 +751,7 @@ async fn failed_epic_child_attachment_submission_retains_owned_origin_for_retry(
     let parent_index = create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             is_epic: true,
             ..test_task_draft("Parent epic")
         },
@@ -885,6 +886,7 @@ async fn natural_add_epic_child_uses_authoring_origin() {
     let parent_index = create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             is_epic: true,
             ..test_task_draft("Parent epic")
         },

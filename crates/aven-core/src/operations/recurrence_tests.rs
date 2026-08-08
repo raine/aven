@@ -27,6 +27,7 @@ fn daily_schedule(start_day: u32) -> RecurrenceSchedule {
 
 fn draft(start_day: u32) -> RecurrenceSeriesDraft {
     RecurrenceSeriesDraft {
+        metadata: Vec::new(),
         title: "daily journal".to_string(),
         description: "write one page".to_string(),
         project: "recurrence".to_string(),
@@ -370,6 +371,8 @@ async fn recurrence_params_combine_clock_and_label_creation_policy() {
         &workspace,
         &created.series.id,
         UpdateRecurrenceTemplateParams::new(RecurrenceTemplateUpdate {
+            set_metadata: Vec::new(),
+            remove_metadata: Vec::new(),
             labels: Some(vec!["created-with-update".to_string()]),
             ..RecurrenceTemplateUpdate::default()
         })
@@ -502,9 +505,25 @@ async fn create_rolls_back_series_task_and_changes_on_materialization_failure() 
 #[tokio::test]
 async fn template_edits_apply_only_to_future_occurrences() {
     let (_temp, mut conn, workspace) = setup().await;
-    let created = create_daily(&mut conn, &workspace).await;
+    let mut series_draft = draft(20);
+    series_draft.metadata = vec![crate::metadata::TaskMetadataInput {
+        key: "legacy-id".to_string(),
+        value: "old".to_string(),
+    }];
+    let created = create_recurrence_series(
+        &mut conn,
+        &workspace,
+        CreateRecurrenceSeriesParams::new(series_draft).at(at(20, 12)),
+    )
+    .await
+    .unwrap();
     let original_task_id = created.task.id.clone();
     let update = RecurrenceTemplateUpdate {
+        set_metadata: vec![crate::metadata::TaskMetadataInput {
+            key: "legacy-id".to_string(),
+            value: "new".to_string(),
+        }],
+        remove_metadata: Vec::new(),
         title: Some("future journal".to_string()),
         priority: Some("urgent".to_string()),
         labels: Some(vec!["future".to_string()]),
@@ -524,6 +543,20 @@ async fn template_edits_apply_only_to_future_occurrences() {
         .unwrap();
     assert_eq!(old_task.title, "daily journal");
     assert_eq!(old_task.priority, TaskPriority::High);
+    let old_metadata: (String, String) = sqlx::query_as(
+        "SELECT f.key, m.value FROM task_metadata m
+         JOIN metadata_fields f ON f.workspace_id = m.workspace_id AND f.id = m.field_id
+         WHERE m.workspace_id = ? AND m.task_id = ?",
+    )
+    .bind(&workspace.id)
+    .bind(&original_task_id)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+    assert_eq!(old_metadata, ("legacy-id".to_string(), "old".to_string()));
+    crate::metadata::rename_metadata_field(&mut conn, &workspace, "legacy-id", "external-id")
+        .await
+        .unwrap();
 
     let resolved = resolve(
         &mut conn,
@@ -544,6 +577,20 @@ async fn template_edits_apply_only_to_future_occurrences() {
             .await
             .unwrap();
     assert_eq!(labels, vec!["future"]);
+    let successor_metadata: (String, String) = sqlx::query_as(
+        "SELECT f.key, m.value FROM task_metadata m
+         JOIN metadata_fields f ON f.workspace_id = m.workspace_id AND f.id = m.field_id
+         WHERE m.workspace_id = ? AND m.task_id = ?",
+    )
+    .bind(&workspace.id)
+    .bind(&successor.id)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+    assert_eq!(
+        successor_metadata,
+        ("external-id".to_string(), "new".to_string())
+    );
 }
 
 #[tokio::test]

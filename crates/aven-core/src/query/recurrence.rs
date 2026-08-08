@@ -415,6 +415,25 @@ pub(crate) async fn recurrence_series_detail(
     .bind(series_id)
     .fetch_all(&mut *conn)
     .await?;
+    let metadata = sqlx::query(
+        "SELECT m.field_id, f.key, m.value
+         FROM recurrence_series_metadata m
+         JOIN metadata_fields f
+           ON f.workspace_id = m.workspace_id AND f.id = m.field_id
+         WHERE m.workspace_id = ? AND m.series_id = ?
+         ORDER BY f.key",
+    )
+    .bind(workspace_id)
+    .bind(series_id)
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(|row| crate::metadata::TaskMetadataValue {
+        field_id: row.get("field_id"),
+        key: row.get("key"),
+        value: row.get("value"),
+    })
+    .collect();
     let summary = summaries_for_series(conn, workspace_id, vec![series.clone()], at)
         .await?
         .pop()
@@ -446,6 +465,7 @@ pub(crate) async fn recurrence_series_detail(
     Ok(RecurrenceSeriesDetail {
         series,
         labels,
+        metadata,
         summary,
         current_occurrence,
         lifecycle_conflicts,

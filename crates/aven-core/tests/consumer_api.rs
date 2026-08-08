@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use aven_core::api::{
-    ConflictChoice, ConflictField, CreateRecurrenceSeries, CreateTask, ErrorCode,
+    ConflictChoice, ConflictField, CreateRecurrenceSeries, CreateTask, ErrorCode, MetadataInput,
     OptionalDateUpdate, OptionalLocalTimeUpdate, RecurrenceDuePolicy, RecurrenceFrequency,
     RecurrenceHistoryKind, RecurrenceOutcome, RecurrenceProjectionState, RecurrenceRule,
     RecurrenceScheduleInput, RecurrenceSeriesState, Store, UpdateRecurrenceTemplate, UpdateTask,
@@ -92,6 +92,7 @@ async fn consumer_api_creation_and_sync_preserve_api_source() {
         .create_task(
             &workspace.id,
             CreateTask {
+                metadata: Vec::new(),
                 title: "consumer source".to_string(),
                 description: String::new(),
                 project: "Core".to_string(),
@@ -177,6 +178,10 @@ async fn consumer_api_completes_local_task_and_conflict_flows() {
         .create_task(
             &workspace.id,
             CreateTask {
+                metadata: vec![MetadataInput {
+                    key: "legacy-id".to_string(),
+                    value: "42".to_string(),
+                }],
                 title: "consumer task".to_string(),
                 description: "created through the narrow API".to_string(),
                 project: "Core".to_string(),
@@ -190,6 +195,19 @@ async fn consumer_api_completes_local_task_and_conflict_flows() {
         .unwrap();
     assert_eq!(created.available_at, None);
     assert_eq!(created.due_on.as_deref(), Some("2026-08-01"));
+    assert_eq!(created.metadata.len(), 1);
+    assert_eq!(created.metadata[0].key, "legacy-id");
+    assert_eq!(created.metadata[0].value, "42");
+    let field = first
+        .list_metadata_fields(&workspace.id)
+        .await
+        .unwrap()
+        .remove(0);
+    let renamed = first
+        .rename_metadata_field(&workspace.id, "legacy-id", "external-id")
+        .await
+        .unwrap();
+    assert_eq!(renamed.id, field.id);
 
     let updated = first
         .update_task(
@@ -200,6 +218,10 @@ async fn consumer_api_completes_local_task_and_conflict_flows() {
                 priority: Some(TaskPriority::High),
                 available_at: OptionalDateUpdate::Set("2026-07-20T00:00:00Z".to_string()),
                 due_on: OptionalDateUpdate::Clear,
+                set_metadata: vec![MetadataInput {
+                    key: "external-id".to_string(),
+                    value: String::new(),
+                }],
                 ..UpdateTask::default()
             },
         )
@@ -213,13 +235,18 @@ async fn consumer_api_completes_local_task_and_conflict_flows() {
         Some("2026-07-20T00:00:00Z")
     );
     assert_eq!(updated.task.due_on, None);
+    assert_eq!(updated.task.metadata.len(), 1);
+    assert_eq!(updated.task.metadata[0].key, "external-id");
+    assert_eq!(updated.task.metadata[0].value, "");
     assert_eq!(
         first.fetch_task(&workspace.id, &created.id).await.unwrap(),
         updated.task
     );
+    let mut expected_summary = updated.task.clone();
+    expected_summary.metadata.clear();
     assert_eq!(
         first.list_tasks(&workspace.id).await.unwrap(),
-        vec![updated.task]
+        vec![expected_summary]
     );
 
     let validation = first
@@ -357,6 +384,10 @@ fn daily_series(title: &str) -> CreateRecurrenceSeries {
         priority: TaskPriority::High,
         initial_status: TaskStatus::Todo,
         labels: Vec::new(),
+        metadata: vec![MetadataInput {
+            key: "legacy-id".to_string(),
+            value: "recurring".to_string(),
+        }],
         schedule: RecurrenceScheduleInput {
             rule: RecurrenceRule {
                 frequency: RecurrenceFrequency::Daily,
@@ -451,6 +482,9 @@ async fn consumer_api_owns_recurrence_lifecycle_reports_and_mutation_routing() {
 
     assert_eq!(created.series.state, RecurrenceSeriesState::Active);
     assert_eq!(created.task.status, TaskStatus::Todo);
+    assert_eq!(created.task.metadata.len(), 1);
+    assert_eq!(created.task.metadata[0].key, "legacy-id");
+    assert_eq!(created.task.metadata[0].value, "recurring");
     assert_eq!(created.occurrence.task_id.as_ref(), Some(&created.task.id));
     assert!(created.series_ref.starts_with("RCR-"));
 
@@ -488,6 +522,9 @@ async fn consumer_api_owns_recurrence_lifecycle_reports_and_mutation_routing() {
         .await
         .unwrap();
     assert!(shown.labels.is_empty());
+    assert_eq!(shown.metadata.len(), 1);
+    assert_eq!(shown.metadata[0].key, "legacy-id");
+    assert_eq!(shown.metadata[0].value, "recurring");
     assert_eq!(
         shown.current_occurrence.unwrap().task_id,
         Some(created.task.id.clone())

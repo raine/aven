@@ -6,10 +6,10 @@ use aven_core::sync::ServerSyncPage;
 use aven_core::sync::wire::{SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse};
 use aven_uniffi::{
     AvenClient, AvenError, AvenSyncSession, CreateRecurrenceSeries, CreateTask, ErrorCode,
-    OptionalDateUpdate, OptionalLocalTimeUpdate, RecurrenceDuePolicy, RecurrenceFrequency,
-    RecurrenceHistoryKind, RecurrenceOutcome, RecurrenceProjectionState, RecurrenceRule,
-    RecurrenceScheduleInput, RecurrenceSeriesState, SyncHttpResponse, TaskPriority, TaskStatus,
-    UpdateRecurrenceTemplate, UpdateTask,
+    MetadataInput, OptionalDateUpdate, OptionalLocalTimeUpdate, RecurrenceDuePolicy,
+    RecurrenceFrequency, RecurrenceHistoryKind, RecurrenceOutcome, RecurrenceProjectionState,
+    RecurrenceRule, RecurrenceScheduleInput, RecurrenceSeriesState, SyncHttpResponse, TaskPriority,
+    TaskStatus, UpdateRecurrenceTemplate, UpdateTask,
 };
 
 fn error_parts(error: AvenError) -> (ErrorCode, String) {
@@ -35,6 +35,10 @@ fn local_task_flow_uses_typed_values_and_validates_ids() {
         .create_task(
             workspace.id.clone(),
             CreateTask {
+                metadata: vec![MetadataInput {
+                    key: "legacy-id".to_string(),
+                    value: "42".to_string(),
+                }],
                 title: "prove facade".to_string(),
                 description: "exercise the narrow consumer surface".to_string(),
                 project: "swift-proof".to_string(),
@@ -49,6 +53,21 @@ fn local_task_flow_uses_typed_values_and_validates_ids() {
     assert_eq!(task.priority, TaskPriority::High);
     assert_eq!(task.available_at, None);
     assert_eq!(task.due_on, None);
+    assert_eq!(task.metadata.len(), 1);
+    assert_eq!(task.metadata[0].key, "legacy-id");
+    assert_eq!(task.metadata[0].value, "42");
+    let field = client
+        .list_metadata_fields(workspace.id.clone())
+        .unwrap()
+        .remove(0);
+    let renamed = client
+        .rename_metadata_field(
+            workspace.id.clone(),
+            "legacy-id".to_string(),
+            "external-id".to_string(),
+        )
+        .unwrap();
+    assert_eq!(renamed.id, field.id);
     let output = std::process::Command::new("sqlite3")
         .arg(&database)
         .arg(format!("SELECT source FROM tasks WHERE id = '{}'", task.id))
@@ -73,6 +92,11 @@ fn local_task_flow_uses_typed_values_and_validates_ids() {
                 due_on: OptionalDateUpdate::Set {
                     value: "2026-07-20".to_string(),
                 },
+                set_metadata: vec![MetadataInput {
+                    key: "external-id".to_string(),
+                    value: String::new(),
+                }],
+                remove_metadata: Vec::new(),
             },
         )
         .unwrap();
@@ -84,10 +108,14 @@ fn local_task_flow_uses_typed_values_and_validates_ids() {
         Some("2026-07-19T10:00:00Z")
     );
     assert_eq!(updated.task.due_on.as_deref(), Some("2026-07-20"));
+    assert_eq!(updated.task.metadata.len(), 1);
+    assert_eq!(updated.task.metadata[0].key, "external-id");
+    assert_eq!(updated.task.metadata[0].value, "");
 
     let listed = client.list_tasks(workspace.id.clone()).unwrap();
-    assert_eq!(listed.len(), 1);
-    assert_eq!(listed[0], updated.task);
+    let mut expected_summary = updated.task.clone();
+    expected_summary.metadata.clear();
+    assert_eq!(listed, vec![expected_summary]);
     assert_eq!(
         client.fetch_task(workspace.id.clone(), task.id).unwrap(),
         updated.task
@@ -120,6 +148,10 @@ fn daily_series(title: &str) -> CreateRecurrenceSeries {
         priority: TaskPriority::High,
         initial_status: TaskStatus::Todo,
         labels: Vec::new(),
+        metadata: vec![MetadataInput {
+            key: "legacy-id".to_string(),
+            value: "recurring".to_string(),
+        }],
         schedule: RecurrenceScheduleInput {
             rule: RecurrenceRule {
                 frequency: RecurrenceFrequency::Daily,
@@ -184,6 +216,9 @@ fn recurrence_facade_exposes_lifecycle_history_reports_and_typed_ingress() {
         .create_recurrence_series(workspace.id.clone(), daily_series("facade daily"))
         .unwrap();
     assert_eq!(created.series.state, RecurrenceSeriesState::Active);
+    assert_eq!(created.task.metadata.len(), 1);
+    assert_eq!(created.task.metadata[0].key, "legacy-id");
+    assert_eq!(created.task.metadata[0].value, "recurring");
     assert_eq!(
         created.occurrence.projection_state,
         RecurrenceProjectionState::Projected
@@ -200,6 +235,9 @@ fn recurrence_facade_exposes_lifecycle_history_reports_and_typed_ingress() {
     let shown = client
         .show_recurrence_series(workspace.id.clone(), created.series_ref.clone())
         .unwrap();
+    assert_eq!(shown.metadata.len(), 1);
+    assert_eq!(shown.metadata[0].key, "legacy-id");
+    assert_eq!(shown.metadata[0].value, "recurring");
     assert_eq!(
         shown.current_occurrence.unwrap().task_id,
         Some(created.task.id.clone())
@@ -217,6 +255,8 @@ fn recurrence_facade_exposes_lifecycle_history_reports_and_typed_ingress() {
                     priority: None,
                     initial_status: Some(TaskStatus::Done),
                     labels: None,
+                    set_metadata: Vec::new(),
+                    remove_metadata: Vec::new(),
                     available_local_time: OptionalLocalTimeUpdate::Unchanged,
                     due_policy: None,
                 },
@@ -240,6 +280,8 @@ fn recurrence_facade_exposes_lifecycle_history_reports_and_typed_ingress() {
                 priority: None,
                 initial_status: None,
                 labels: None,
+                set_metadata: Vec::new(),
+                remove_metadata: Vec::new(),
                 available_local_time: OptionalLocalTimeUpdate::Clear,
                 due_policy: Some(RecurrenceDuePolicy::None),
             },

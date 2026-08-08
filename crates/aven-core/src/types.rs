@@ -98,6 +98,7 @@ pub struct RecurrencePauseInterval {
 pub enum MutableEntityType {
     Task,
     RecurrenceSeries,
+    MetadataField,
 }
 
 impl MutableEntityType {
@@ -105,6 +106,7 @@ impl MutableEntityType {
         match self {
             Self::Task => "task",
             Self::RecurrenceSeries => "recurrence_series",
+            Self::MetadataField => "metadata_field",
         }
     }
 
@@ -112,6 +114,7 @@ impl MutableEntityType {
         match value {
             "task" => Ok(Self::Task),
             "recurrence_series" => Ok(Self::RecurrenceSeries),
+            "metadata_field" => Ok(Self::MetadataField),
             _ => anyhow::bail!("invalid mutable entity type: {value}"),
         }
     }

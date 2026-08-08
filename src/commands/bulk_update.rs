@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use anyhow::{Result, bail};
 use aven_core::db::Database;
+use aven_core::metadata::{TaskMetadataInput, TaskMetadataValue};
 
 use super::validation::{validate_optional_priority, validate_optional_status};
 use crate::cli::BulkUpdateArgs;
@@ -27,7 +28,14 @@ pub(crate) async fn cmd_bulk_update(
     let workspace_id = workspace.id.clone();
     let labels = resolve_bulk_label_mutations(database, &workspace_id, &args).await?;
     ensure_disjoint_labels(&labels.add, &labels.remove)?;
-    let set_project_key = resolve_bulk_project_mutation(database, &workspace_id, &args).await?;
+    let set_metadata = super::tasks::parse_metadata_args(&args.metadata)?;
+    ensure_disjoint_metadata(&set_metadata, &args.remove_metadata)?;
+    let mutations = BulkResolvedMutations {
+        labels,
+        set_metadata,
+        remove_metadata: args.remove_metadata.clone(),
+        set_project_key: resolve_bulk_project_mutation(database, &workspace_id, &args).await?,
+    };
 
     let filters = bulk_update_filters(&args);
     let items = database
@@ -40,15 +48,7 @@ pub(crate) async fn cmd_bulk_update(
         )
         .await?;
     let matched = items.len();
-    let planned = plan_bulk_updates(
-        database,
-        &workspace_id,
-        items,
-        &args,
-        &labels,
-        set_project_key.as_deref(),
-    )
-    .await?;
+    let planned = plan_bulk_updates(database, &workspace_id, items, &args, &mutations).await?;
 
     let would_change = planned.iter().filter(|item| item.will_change).count();
     let outcomes = if args.dry_run {
@@ -125,6 +125,8 @@ fn ensure_bulk_update_has_mutation(args: &BulkUpdateArgs) -> Result<()> {
         || args.set_project.is_some()
         || !args.label.is_empty()
         || !args.remove_label.is_empty()
+        || !args.metadata.is_empty()
+        || !args.remove_metadata.is_empty()
     {
         return Ok(());
     }
@@ -142,6 +144,13 @@ fn validate_bulk_update_args(args: &BulkUpdateArgs) -> Result<()> {
 struct BulkLabelMutations {
     add: Vec<String>,
     remove: Vec<String>,
+}
+
+struct BulkResolvedMutations {
+    labels: BulkLabelMutations,
+    set_metadata: Vec<TaskMetadataInput>,
+    remove_metadata: Vec<String>,
+    set_project_key: Option<String>,
 }
 
 struct PlannedBulkUpdate {
@@ -197,13 +206,12 @@ async fn plan_bulk_updates(
     workspace_id: &WorkspaceId,
     items: Vec<query::TaskListItem>,
     args: &BulkUpdateArgs,
-    labels: &BulkLabelMutations,
-    set_project_key: Option<&str>,
+    mutations: &BulkResolvedMutations,
 ) -> Result<Vec<PlannedBulkUpdate>> {
     let mut planned = Vec::with_capacity(items.len());
     for item in items {
-        let update =
-            bulk_update_for_item(&item, args, &labels.add, &labels.remove, set_project_key);
+        let current_metadata = database.task_metadata(workspace_id, &item.task.id).await?;
+        let update = bulk_update_for_item(&item, args, mutations, &current_metadata);
         let will_change = bulk_update_has_changes(&update);
         preflight_bulk_update_item(database, workspace_id, &item, &update).await?;
         planned.push(PlannedBulkUpdate {
@@ -256,6 +264,27 @@ fn ensure_disjoint_labels(add_labels: &[String], remove_labels: &[String]) -> Re
     Ok(())
 }
 
+fn ensure_disjoint_metadata(set: &[TaskMetadataInput], remove: &[String]) -> Result<()> {
+    let mut set_keys = HashSet::new();
+    for input in set {
+        let key = aven_core::metadata::normalize_metadata_key(&input.key)?;
+        if !set_keys.insert(key) {
+            bail!("error duplicate-metadata-key");
+        }
+    }
+    let mut remove_keys = HashSet::new();
+    for input in remove {
+        let key = aven_core::metadata::normalize_metadata_key(input)?;
+        if !remove_keys.insert(key.clone()) {
+            bail!("error duplicate-metadata-key");
+        }
+        if set_keys.contains(&key) {
+            bail!("error bulk-update-metadata-conflict key={key}");
+        }
+    }
+    Ok(())
+}
+
 fn dedup_labels(labels: Vec<String>) -> Vec<String> {
     let mut seen = HashSet::new();
     labels
@@ -267,14 +296,15 @@ fn dedup_labels(labels: Vec<String>) -> Vec<String> {
 fn bulk_update_for_item(
     item: &query::TaskListItem,
     args: &BulkUpdateArgs,
-    add_labels: &[String],
-    remove_labels: &[String],
-    set_project_key: Option<&str>,
+    mutations: &BulkResolvedMutations,
+    current_metadata: &[TaskMetadataValue],
 ) -> TaskUpdate {
     TaskUpdate {
         title: None,
         description: None,
-        project: set_project_key
+        project: mutations
+            .set_project_key
+            .as_deref()
             .filter(|project_key| *project_key != item.task.project_key)
             .map(str::to_string),
         status: args
@@ -292,14 +322,41 @@ fn bulk_update_for_item(
         due_on: None,
         deleted: None,
         is_epic: None,
-        add_labels: add_labels
+        add_labels: mutations
+            .labels
+            .add
             .iter()
             .filter(|label| !item.labels.contains(label))
             .cloned()
             .collect(),
-        remove_labels: remove_labels
+        remove_labels: mutations
+            .labels
+            .remove
             .iter()
             .filter(|label| item.labels.contains(label))
+            .cloned()
+            .collect(),
+        set_metadata: mutations
+            .set_metadata
+            .iter()
+            .filter(|input| {
+                let key = aven_core::metadata::normalize_metadata_key(&input.key)
+                    .expect("bulk metadata keys were validated");
+                current_metadata
+                    .iter()
+                    .find(|metadata| metadata.key == key)
+                    .is_none_or(|metadata| metadata.value != input.value)
+            })
+            .cloned()
+            .collect(),
+        remove_metadata: mutations
+            .remove_metadata
+            .iter()
+            .filter(|input| {
+                let key = aven_core::metadata::normalize_metadata_key(input)
+                    .expect("bulk metadata keys were validated");
+                current_metadata.iter().any(|metadata| metadata.key == key)
+            })
             .cloned()
             .collect(),
         label_selection: None,
@@ -315,6 +372,8 @@ fn bulk_update_has_changes(update: &TaskUpdate) -> bool {
         || update.priority.is_some()
         || !update.add_labels.is_empty()
         || !update.remove_labels.is_empty()
+        || !update.set_metadata.is_empty()
+        || !update.remove_metadata.is_empty()
 }
 
 async fn preflight_bulk_update_item(
@@ -362,6 +421,23 @@ async fn preflight_bulk_update_item(
             "labels",
         )
         .await?;
+    }
+    for key in update
+        .set_metadata
+        .iter()
+        .map(|input| input.key.as_str())
+        .chain(update.remove_metadata.iter().map(String::as_str))
+    {
+        if let Some(field) = database.find_metadata_field(workspace_id, key).await? {
+            ensure_bulk_field_clear(
+                database,
+                workspace_id,
+                &item.display_ref,
+                &item.task.id,
+                &format!("metadata:{}", field.id),
+            )
+            .await?;
+        }
     }
     Ok(())
 }

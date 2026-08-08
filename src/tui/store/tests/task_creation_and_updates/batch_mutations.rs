@@ -236,6 +236,7 @@ async fn update_labels_for_tasks_sets_labels_on_each_marked_task() {
     let (_, first_selected) = store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 title: "First".to_string(),
                 labels: vec!["bug".to_string()],
                 ..task_draft("")
@@ -248,6 +249,7 @@ async fn update_labels_for_tasks_sets_labels_on_each_marked_task() {
     let (_, second_selected) = store
         .create_task(
             TaskDraft {
+                metadata: Vec::new(),
                 title: "Second".to_string(),
                 labels: vec!["docs".to_string()],
                 ..task_draft("")

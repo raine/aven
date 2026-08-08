@@ -11,7 +11,7 @@ use crate::attachments::validation::{
 };
 use crate::change_log::op_type;
 use crate::choices::TaskSource;
-use crate::ids::{BASE32, ProjectId, WorkspaceId};
+use crate::ids::{BASE32, MetadataFieldId, ProjectId, WorkspaceId};
 use crate::recurrence::{
     RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceOutcome, RecurrenceRule,
     RecurrenceSchedule, RecurrenceSeriesId, RecurrenceSeriesState, TimeZoneId, WeekdaySet,
@@ -19,7 +19,7 @@ use crate::recurrence::{
 };
 use crate::task_fields::TaskField;
 
-pub const SYNC_PROTOCOL_VERSION: u32 = 12;
+pub const SYNC_PROTOCOL_VERSION: u32 = 13;
 const MAX_CHANGE_PAYLOAD_BYTES: usize = 64 * 1024;
 pub fn sync_server_url_is_valid(server: &str) -> bool {
     let Ok(url) = url::Url::parse(server) else {
@@ -363,6 +363,39 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             required_string_payload("name", &change.payload)?;
             required_string_payload("created_at", &change.payload)?;
         }
+        op_type::CREATE_METADATA_FIELD => {
+            ensure_entity_type(change, "metadata_field")?;
+            ensure_metadata_field_id("entity_id", &change.entity_id)?;
+            required_workspace_payload(&change.payload)?;
+            validate_metadata_key_payload("key", &change.payload)?;
+            required_timestamp_payload("created_at", &change.payload)?;
+        }
+        op_type::SET_METADATA_FIELD => {
+            ensure_entity_type(change, "metadata_field")?;
+            ensure_metadata_field_id("entity_id", &change.entity_id)?;
+            required_workspace_payload(&change.payload)?;
+            if change.field.as_deref() != Some("key") {
+                bail!("error invalid-sync-change field=key");
+            }
+            validate_metadata_key_payload("key", &change.payload)?;
+            optional_bool_payload("conflict_resolution", &change.payload)?;
+        }
+        op_type::SET_TASK_METADATA | op_type::REMOVE_TASK_METADATA => {
+            ensure_entity_type(change, "task")?;
+            ensure_sync_id("entity_id", &change.entity_id)?;
+            required_workspace_payload(&change.payload)?;
+            let field_id = required_string_payload("field_id", &change.payload)?;
+            ensure_metadata_field_id("field_id", &field_id)?;
+            let expected_field = format!("metadata:{field_id}");
+            if change.field.as_deref() != Some(expected_field.as_str()) {
+                bail!("error invalid-sync-change metadata-field-mismatch");
+            }
+            validate_metadata_key_payload("key", &change.payload)?;
+            optional_bool_payload("conflict_resolution", &change.payload)?;
+            if change.op_type == op_type::SET_TASK_METADATA {
+                validate_metadata_value_payload("value", &change.payload)?;
+            }
+        }
         op_type::CREATE_TASK => {
             ensure_entity_type(change, "task")?;
             ensure_sync_id("entity_id", &change.entity_id)?;
@@ -407,6 +440,7 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
                 validate_sync_task_field_value(TaskField::IsEpic, &is_epic)?;
             }
             optional_string_array_payload("labels", &change.payload)?;
+            validate_metadata_array_payload(&change.payload)?;
             optional_string_payload("created_at", &change.payload)?;
         }
         op_type::SET_FIELD | op_type::RESOLVE_FIELD => {
@@ -541,6 +575,25 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             ensure_sync_id("note_id", &note_id)?;
             required_timestamp_payload("deleted_at", &change.payload)?;
         }
+        op_type::SET_RECURRENCE_METADATA | op_type::REMOVE_RECURRENCE_METADATA => {
+            ensure_entity_type(change, "recurrence_series")?;
+            change
+                .entity_id
+                .parse::<RecurrenceSeriesId>()
+                .map_err(|_| anyhow::anyhow!("error invalid-sync-change entity_id invalid-id"))?;
+            required_workspace_payload(&change.payload)?;
+            let field_id = required_string_payload("field_id", &change.payload)?;
+            ensure_metadata_field_id("field_id", &field_id)?;
+            let expected_field = format!("metadata:{field_id}");
+            if change.field.as_deref() != Some(expected_field.as_str()) {
+                bail!("error invalid-sync-change metadata-field-mismatch");
+            }
+            validate_metadata_key_payload("key", &change.payload)?;
+            optional_bool_payload("conflict_resolution", &change.payload)?;
+            if change.op_type == op_type::SET_RECURRENCE_METADATA {
+                validate_metadata_value_payload("value", &change.payload)?;
+            }
+        }
         op_type::CREATE_RECURRENCE_SERIES => validate_recurrence_create(change)?,
         op_type::UPDATE_RECURRENCE_TEMPLATE => validate_recurrence_template(change)?,
         op_type::PROJECT_RECURRENCE_OCCURRENCE => validate_recurrence_projection(change)?,
@@ -634,6 +687,7 @@ fn validate_recurrence_create(change: &ChangeWire) -> Result<()> {
     }
     recurrence_schedule_payload(&change.payload)?;
     optional_string_array_payload("labels", &change.payload)?;
+    validate_metadata_array_payload(&change.payload)?;
     if required_string_payload("state", &change.payload)? != "active"
         || !required_string_payload("stopped_at", &change.payload)?.is_empty()
     {
@@ -1238,6 +1292,14 @@ fn optional_i64_payload(key: &str, payload: &Value) -> Result<Option<i64>> {
     }
 }
 
+fn optional_bool_payload(key: &str, payload: &Value) -> Result<Option<bool>> {
+    match payload.get(key) {
+        Some(Value::Bool(value)) => Ok(Some(*value)),
+        Some(Value::Null) | None => Ok(None),
+        Some(_) => bail!("error invalid-sync-change payload.{key} invalid"),
+    }
+}
+
 fn string_array_payload(key: &str, payload: &Value) -> Result<Vec<String>> {
     payload
         .get(key)
@@ -1265,6 +1327,66 @@ fn optional_string_array_payload(key: &str, payload: &Value) -> Result<()> {
         Some(Value::Null) | None => Ok(()),
         Some(_) => bail!("error invalid-sync-change payload.{key} invalid"),
     }
+}
+
+fn ensure_metadata_field_id(name: &str, value: &str) -> Result<()> {
+    value
+        .parse::<MetadataFieldId>()
+        .map(|_| ())
+        .map_err(|_| anyhow::anyhow!("error invalid-sync-change {name} invalid-id"))
+}
+
+fn validate_metadata_key_payload(key: &str, payload: &Value) -> Result<String> {
+    let value = required_string_payload(key, payload)?;
+    let normalized = crate::metadata::normalize_metadata_key(&value)
+        .map_err(|_| anyhow::anyhow!("error invalid-sync-change payload.{key} invalid"))?;
+    if normalized != value {
+        bail!("error invalid-sync-change payload.{key} noncanonical");
+    }
+    Ok(value)
+}
+
+fn validate_metadata_value_payload(key: &str, payload: &Value) -> Result<String> {
+    let value = required_string_payload(key, payload)?;
+    if value.len() > crate::metadata::MAX_METADATA_VALUE_BYTES {
+        bail!("error invalid-sync-change payload.{key} too-large");
+    }
+    Ok(value)
+}
+
+fn validate_metadata_array_payload(payload: &Value) -> Result<()> {
+    let Some(values) = payload.get("metadata") else {
+        return Ok(());
+    };
+    let values = values
+        .as_array()
+        .context("error invalid-sync-change payload.metadata invalid")?;
+    if values.len() > crate::metadata::MAX_METADATA_VALUES {
+        bail!("error invalid-sync-change payload.metadata too-many");
+    }
+    let mut ids = HashSet::new();
+    let mut keys = HashSet::new();
+    let mut total_bytes = 0usize;
+    for value in values {
+        let object = value
+            .as_object()
+            .context("error invalid-sync-change payload.metadata invalid")?;
+        let field_id = required_string_payload("field_id", value)?;
+        ensure_metadata_field_id("metadata.field_id", &field_id)?;
+        let key = validate_metadata_key_payload("key", value)?;
+        let metadata_value = validate_metadata_value_payload("value", value)?;
+        if !ids.insert(field_id) || !keys.insert(key) {
+            bail!("error invalid-sync-change payload.metadata duplicate");
+        }
+        if object.len() != 3 {
+            bail!("error invalid-sync-change payload.metadata invalid");
+        }
+        total_bytes = total_bytes.saturating_add(metadata_value.len());
+    }
+    if total_bytes > crate::metadata::MAX_METADATA_TOTAL_BYTES {
+        bail!("error invalid-sync-change payload.metadata too-large");
+    }
+    Ok(())
 }
 
 #[cfg(test)]

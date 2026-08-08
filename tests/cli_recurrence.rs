@@ -265,6 +265,8 @@ fn edit_changes_future_template_without_rewriting_current_occurrence() {
             "none",
             "--label",
             "review",
+            "--metadata",
+            "legacy-id=42",
         ],
     ));
     contains_all(
@@ -272,8 +274,9 @@ fn edit_changes_future_template_without_rewriting_current_occurrence() {
         &[&series_ref, "changed=yes", "title=\"Future journal\""],
     );
 
-    let current = ok(env.aven(&db, ["show", &occurrence_ref]));
+    let current = ok(env.aven(&db, ["show", &occurrence_ref, "--full"]));
     contains_all(&current, &["priority=none", "title=\"Daily journal\""]);
+    contains_none(&current, &["key=legacy-id"]);
 
     ok(env.aven(&db, ["edit", &occurrence_ref, "--status", "done"]));
     let shown: serde_json::Value =
@@ -285,12 +288,20 @@ fn edit_changes_future_template_without_rewriting_current_occurrence() {
     assert_eq!(shown["series"]["available_at"], "10:30");
     assert_eq!(shown["series"]["due"], "none");
     assert_eq!(shown["series"]["labels"][0], "review");
+    assert_eq!(shown["series"]["metadata"][0]["key"], "legacy-id");
+    assert_eq!(shown["series"]["metadata"][0]["value"], "42");
 
     let successor_ref = shown["series"]["current_task_ref"].as_str().unwrap();
-    let successor = ok(env.aven(&db, ["show", successor_ref]));
+    let successor = ok(env.aven(&db, ["show", successor_ref, "--full"]));
     contains_all(
         &successor,
-        &["status=active", "priority=high", "title=\"Future journal\""],
+        &[
+            "status=active",
+            "priority=high",
+            "title=\"Future journal\"",
+            "key=legacy-id",
+            "42",
+        ],
     );
 }
 
@@ -360,6 +371,7 @@ fn history_combines_archived_and_derived_misses() {
             .create_recurrence_series(
                 &workspace,
                 CreateRecurrenceSeriesParams::new(RecurrenceSeriesDraft {
+                    metadata: Vec::new(),
                     title: "Six days behind".to_string(),
                     description: String::new(),
                     project: "default".to_string(),

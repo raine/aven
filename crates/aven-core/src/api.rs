@@ -6,7 +6,8 @@ use chrono::{NaiveDate, NaiveTime, Weekday};
 
 use crate::choices::{TaskPriority, TaskSource, TaskStatus};
 use crate::db::Database;
-use crate::ids::{ProjectId, TaskId, WorkspaceId};
+use crate::ids::{MetadataFieldId, ProjectId, TaskId, WorkspaceId};
+use crate::metadata::{MetadataFieldUsage, TaskMetadataInput, TaskMetadataValue};
 use crate::operations::{
     CreateRecurrenceSeriesParams, RecurrenceSeriesDraft,
     RecurrenceTemplateUpdate as InternalRecurrenceTemplateUpdate, TaskDraft,
@@ -103,6 +104,37 @@ impl Store {
             })
     }
 
+    pub async fn list_metadata_fields(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<Vec<MetadataFieldRecord>, Error> {
+        self.workspace(workspace_id).await?;
+        self.database
+            .list_metadata_fields(workspace_id)
+            .await
+            .map(|fields| fields.into_iter().map(Into::into).collect())
+            .map_err(Error::from_internal)
+    }
+
+    pub async fn rename_metadata_field(
+        &self,
+        workspace_id: &WorkspaceId,
+        key: &str,
+        new_key: &str,
+    ) -> Result<MetadataFieldRecord, Error> {
+        let workspace = self.workspace(workspace_id).await?;
+        let field = self
+            .database
+            .rename_metadata_field(&workspace, key, new_key)
+            .await
+            .map_err(Error::from_internal)?;
+        let fields = self.list_metadata_fields(workspace_id).await?;
+        fields
+            .into_iter()
+            .find(|candidate| candidate.id == field.id)
+            .ok_or_else(|| Error::new(ErrorCode::NotFound, "metadata field not found".to_string()))
+    }
+
     pub async fn create_task(
         &self,
         workspace_id: &WorkspaceId,
@@ -112,7 +144,8 @@ impl Store {
         validate_optional_date("available_at", input.available_at.as_deref())?;
         validate_optional_date("due_on", input.due_on.as_deref())?;
         let workspace = self.workspace(workspace_id).await?;
-        self.database
+        let outcome = self
+            .database
             .create_task(
                 &workspace,
                 TaskDraft {
@@ -123,14 +156,24 @@ impl Store {
                     priority: input.priority.as_str().to_string(),
                     source: TaskSource::Api,
                     labels: Vec::new(),
+                    metadata: input
+                        .metadata
+                        .into_iter()
+                        .map(TaskMetadataInput::from)
+                        .collect(),
                     available_at: input.available_at,
                     due_on: input.due_on,
                     is_epic: false,
                 },
             )
             .await
-            .map(|outcome| TaskRecord::from(outcome.task))
-            .map_err(Error::from_internal)
+            .map_err(Error::from_internal)?;
+        let metadata = self
+            .database
+            .task_metadata(workspace_id, &outcome.task.id)
+            .await
+            .map_err(Error::from_internal)?;
+        Ok(TaskRecord::with_metadata(outcome.task, metadata))
     }
 
     pub async fn update_task(
@@ -146,7 +189,8 @@ impl Store {
         validate_date_update("due_on", &input.due_on)?;
         let workspace = self.workspace(workspace_id).await?;
         self.fetch_task(workspace_id, task_id).await?;
-        self.database
+        let outcome = self
+            .database
             .update_task(
                 &workspace,
                 task_id,
@@ -158,15 +202,26 @@ impl Store {
                     priority: input.priority.map(|priority| priority.as_str().to_string()),
                     available_at: input.available_at.into_internal(),
                     due_on: input.due_on.into_internal(),
+                    set_metadata: input
+                        .set_metadata
+                        .into_iter()
+                        .map(TaskMetadataInput::from)
+                        .collect(),
+                    remove_metadata: input.remove_metadata,
                     ..InternalTaskUpdate::default()
                 },
             )
             .await
-            .map(|outcome| TaskUpdateResult {
-                task: TaskRecord::from(outcome.task),
-                changed: outcome.changed,
-            })
-            .map_err(Error::from_internal)
+            .map_err(Error::from_internal)?;
+        let metadata = self
+            .database
+            .task_metadata(workspace_id, task_id)
+            .await
+            .map_err(Error::from_internal)?;
+        Ok(TaskUpdateResult {
+            task: TaskRecord::with_metadata(outcome.task, metadata),
+            changed: outcome.changed,
+        })
     }
 
     pub async fn list_tasks(&self, workspace_id: &WorkspaceId) -> Result<Vec<TaskRecord>, Error> {
@@ -204,10 +259,16 @@ impl Store {
             .acquire_reader()
             .await
             .map_err(Error::from_internal)?;
-        crate::refs::get_task_in_workspace(&mut connection, &workspace, task_id)
+        let task = crate::refs::get_task_in_workspace(&mut connection, &workspace, task_id)
             .await
-            .map(TaskRecord::from)
-            .map_err(Error::from_internal)
+            .map_err(Error::from_internal)?;
+        drop(connection);
+        let metadata = self
+            .database
+            .task_metadata(workspace_id, task_id)
+            .await
+            .map_err(Error::from_internal)?;
+        Ok(TaskRecord::with_metadata(task, metadata))
     }
 
     pub async fn create_recurrence_series(
@@ -218,7 +279,8 @@ impl Store {
         validate_project(&input.project)?;
         let workspace = self.workspace(workspace_id).await?;
         let schedule = input.schedule.into_internal()?;
-        self.database
+        let outcome = self
+            .database
             .create_recurrence_series(
                 &workspace,
                 CreateRecurrenceSeriesParams::new(RecurrenceSeriesDraft {
@@ -228,17 +290,23 @@ impl Store {
                     priority: input.priority.as_str().to_string(),
                     initial_status: input.initial_status.as_str().to_string(),
                     labels: input.labels,
+                    metadata: input.metadata.into_iter().map(Into::into).collect(),
                     schedule,
                 }),
             )
             .await
-            .map(|outcome| RecurrenceCreateResult {
-                series: RecurrenceSeriesRecord::from(outcome.series),
-                series_ref: outcome.series_ref,
-                occurrence: RecurrenceOccurrenceRecord::from(outcome.occurrence),
-                task: TaskRecord::from(outcome.task),
-            })
-            .map_err(Error::from_internal)
+            .map_err(Error::from_internal)?;
+        let metadata = self
+            .database
+            .task_metadata(workspace_id, &outcome.task.id)
+            .await
+            .map_err(Error::from_internal)?;
+        Ok(RecurrenceCreateResult {
+            series: RecurrenceSeriesRecord::from(outcome.series),
+            series_ref: outcome.series_ref,
+            occurrence: RecurrenceOccurrenceRecord::from(outcome.occurrence),
+            task: TaskRecord::with_metadata(outcome.task, metadata),
+        })
     }
 
     pub async fn update_recurrence_template(
@@ -262,6 +330,8 @@ impl Store {
                     priority: input.priority.map(|value| value.as_str().to_string()),
                     initial_status: input.initial_status.map(|value| value.as_str().to_string()),
                     labels: input.labels,
+                    set_metadata: input.set_metadata.into_iter().map(Into::into).collect(),
+                    remove_metadata: input.remove_metadata,
                     available_local_time: input.available_local_time.into_internal()?,
                     due_policy: input.due_policy,
                 }),
@@ -462,6 +532,7 @@ impl Store {
             .await
             .map_err(Error::from_internal)?
             .into_iter()
+            .filter(|conflict| !conflict.field.starts_with("metadata:"))
             .map(|conflict| {
                 Ok(ConflictSummary {
                     task_id: conflict.task_id,
@@ -490,6 +561,9 @@ impl Store {
             .map_err(Error::from_internal)?;
         let mut conflicts = Vec::with_capacity(details.len());
         for detail in details {
+            if detail.field.starts_with("metadata:") {
+                continue;
+            }
             let field = TaskField::parse_or_unknown(&detail.field).map_err(Error::from_internal)?;
             let local_value = self
                 .database
@@ -641,12 +715,66 @@ impl From<Workspace> for WorkspaceRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetadataFieldRecord {
+    pub id: MetadataFieldId,
+    pub workspace_id: WorkspaceId,
+    pub key: String,
+    pub task_count: usize,
+    pub series_count: usize,
+}
+
+impl From<MetadataFieldUsage> for MetadataFieldRecord {
+    fn from(value: MetadataFieldUsage) -> Self {
+        Self {
+            id: value.field.id,
+            workspace_id: value.field.workspace_id,
+            key: value.field.key,
+            task_count: value.task_count,
+            series_count: value.series_count,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetadataValueRecord {
+    pub field_id: MetadataFieldId,
+    pub key: String,
+    pub value: String,
+}
+
+impl From<TaskMetadataValue> for MetadataValueRecord {
+    fn from(value: TaskMetadataValue) -> Self {
+        Self {
+            field_id: value.field_id,
+            key: value.key,
+            value: value.value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetadataInput {
+    pub key: String,
+    pub value: String,
+}
+
+impl From<MetadataInput> for TaskMetadataInput {
+    fn from(input: MetadataInput) -> Self {
+        Self {
+            key: input.key,
+            value: input.value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateTask {
     pub title: String,
     pub description: String,
     pub project: String,
     pub status: TaskStatus,
     pub priority: TaskPriority,
+    pub metadata: Vec<MetadataInput>,
     pub available_at: Option<String>,
     pub due_on: Option<String>,
 }
@@ -658,6 +786,8 @@ pub struct UpdateTask {
     pub project: Option<String>,
     pub status: Option<TaskStatus>,
     pub priority: Option<TaskPriority>,
+    pub set_metadata: Vec<MetadataInput>,
+    pub remove_metadata: Vec<String>,
     pub available_at: OptionalDateUpdate,
     pub due_on: OptionalDateUpdate,
 }
@@ -785,6 +915,7 @@ pub struct CreateRecurrenceSeries {
     pub priority: TaskPriority,
     pub initial_status: TaskStatus,
     pub labels: Vec<String>,
+    pub metadata: Vec<MetadataInput>,
     pub schedule: RecurrenceScheduleInput,
 }
 
@@ -817,6 +948,8 @@ pub struct UpdateRecurrenceTemplate {
     pub priority: Option<TaskPriority>,
     pub initial_status: Option<TaskStatus>,
     pub labels: Option<Vec<String>>,
+    pub set_metadata: Vec<MetadataInput>,
+    pub remove_metadata: Vec<String>,
     pub available_local_time: OptionalLocalTimeUpdate,
     pub due_policy: Option<RecurrenceDuePolicy>,
 }
@@ -993,6 +1126,7 @@ pub struct RecurrenceSeriesConflict {
 pub struct RecurrenceSeriesDetail {
     pub series: RecurrenceSeriesRecord,
     pub labels: Vec<String>,
+    pub metadata: Vec<MetadataValueRecord>,
     pub summary: RecurrenceSeriesSummary,
     pub current_occurrence: Option<RecurrenceOccurrenceRecord>,
     pub lifecycle_conflicts: Vec<RecurrenceSeriesConflict>,
@@ -1003,6 +1137,7 @@ impl From<InternalRecurrenceSeriesDetail> for RecurrenceSeriesDetail {
         Self {
             series: value.series.into(),
             labels: value.labels,
+            metadata: value.metadata.into_iter().map(Into::into).collect(),
             summary: value.summary.into(),
             current_occurrence: value.current_occurrence.map(Into::into),
             lifecycle_conflicts: value
@@ -1125,6 +1260,7 @@ pub struct TaskRecord {
     pub updated_at: String,
     pub available_at: Option<String>,
     pub due_on: Option<String>,
+    pub metadata: Vec<MetadataValueRecord>,
 }
 
 impl From<Task> for TaskRecord {
@@ -1143,7 +1279,16 @@ impl From<Task> for TaskRecord {
             updated_at: task.updated_at,
             available_at: task.available_at,
             due_on: task.due_on,
+            metadata: Vec::new(),
         }
+    }
+}
+
+impl TaskRecord {
+    fn with_metadata(task: Task, metadata: Vec<TaskMetadataValue>) -> Self {
+        let mut record = Self::from(task);
+        record.metadata = metadata.into_iter().map(Into::into).collect();
+        record
     }
 }
 

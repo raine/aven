@@ -1,5 +1,5 @@
 use crate::ids::{ProjectId, WorkspaceId};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Result, bail, ensure};
 use sqlx::{Row, SqliteConnection};
@@ -91,6 +91,12 @@ pub enum UndoCommand {
         task_id: crate::ids::TaskId,
         before: Vec<String>,
         after: Vec<String>,
+    },
+    SetTaskMetadata {
+        task_id: crate::ids::TaskId,
+        field_id: crate::ids::MetadataFieldId,
+        before: Option<String>,
+        after: Option<String>,
     },
     DeleteCreatedTask {
         task_id: crate::ids::TaskId,
@@ -187,6 +193,8 @@ pub struct TaskUndoSnapshot {
     #[serde(default)]
     pub is_epic: bool,
     pub labels: Vec<String>,
+    #[serde(default)]
+    pub metadata: BTreeMap<String, String>,
 }
 
 pub struct UndoOutcome {
@@ -321,6 +329,16 @@ pub(crate) async fn task_snapshot(
     .await?
     .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
     let labels = task_labels(conn, workspace_id, task_id).await?;
+    let metadata = sqlx::query_as::<_, (String, String)>(
+        "SELECT field_id, value FROM task_metadata
+         WHERE workspace_id = ? AND task_id = ? ORDER BY field_id",
+    )
+    .bind(workspace_id)
+    .bind(task_id)
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .collect();
     Ok(TaskUndoSnapshot {
         title: row.get("title"),
         description: row.get("description"),
@@ -333,6 +351,7 @@ pub(crate) async fn task_snapshot(
         deleted: row.get::<i64, _>("deleted") != 0,
         is_epic: row.get::<i64, _>("is_epic") != 0,
         labels,
+        metadata,
     })
 }
 
@@ -398,6 +417,7 @@ fn undo_payload_has_effect(payload: &UndoPayload) -> bool {
     payload.commands.iter().any(|command| match command {
         UndoCommand::SetTaskField { before, after, .. } => before != after,
         UndoCommand::SetTaskLabels { before, after, .. } => !label_sets_equal(before, after),
+        UndoCommand::SetTaskMetadata { before, after, .. } => before != after,
         UndoCommand::SetProjectMetadata {
             before_key,
             before_name,
@@ -634,6 +654,50 @@ async fn apply_undo_command(
                 &remove_labels,
             )
             .await?;
+            Ok(CommandOutcome {
+                task_id: Some(task_id.clone()),
+                include_deleted: None,
+                project_rename: None,
+                label_rename: None,
+            })
+        }
+        UndoCommand::SetTaskMetadata {
+            task_id,
+            field_id,
+            before,
+            after,
+        } => {
+            let current: Option<String> = sqlx::query_scalar(
+                "SELECT value FROM task_metadata
+                 WHERE workspace_id = ? AND task_id = ? AND field_id = ?",
+            )
+            .bind(workspace_id)
+            .bind(task_id)
+            .bind(field_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+            if current != *after {
+                bail!("error undo-state-changed task_id={task_id} field=metadata");
+            }
+            let field = crate::metadata::metadata_field_by_id(conn, workspace_id, field_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("error metadata-field-not-found"))?;
+            let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
+            if let Some(value) = before {
+                crate::metadata::set_task_metadata(
+                    conn,
+                    &workspace,
+                    task_id,
+                    &crate::metadata::TaskMetadataInput {
+                        key: field.key,
+                        value: value.clone(),
+                    },
+                )
+                .await?;
+            } else {
+                crate::metadata::remove_task_metadata(conn, &workspace, task_id, &field.key)
+                    .await?;
+            }
             Ok(CommandOutcome {
                 task_id: Some(task_id.clone()),
                 include_deleted: None,
@@ -1195,6 +1259,11 @@ async fn hard_delete_created_task(
         .execute(&mut *conn)
         .await?;
     sqlx::query("DELETE FROM task_labels WHERE workspace_id = ? AND task_id = ?")
+        .bind(workspace_id)
+        .bind(task_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM task_metadata WHERE workspace_id = ? AND task_id = ?")
         .bind(workspace_id)
         .bind(task_id)
         .execute(&mut *conn)

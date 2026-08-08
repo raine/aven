@@ -316,6 +316,7 @@ async fn mixed_marked_due_dates_keep_then_set_and_undo_as_one_batch() {
     let first = create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             due_on: Some("2099-01-01".to_string()),
             ..test_task_draft("first")
         },
@@ -408,6 +409,7 @@ async fn clearing_marked_due_dates_requires_confirmation() {
     let first = create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             due_on: Some("2099-01-01".to_string()),
             ..test_task_draft("first clear")
         },
@@ -417,6 +419,7 @@ async fn clearing_marked_due_dates_requires_confirmation() {
     let second = create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             due_on: Some("2099-02-02".to_string()),
             ..test_task_draft("second clear")
         },

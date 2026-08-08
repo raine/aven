@@ -5,7 +5,10 @@ use tracing::info;
 use crate::change_log::op_type;
 use crate::db::{Database, begin_immediate, insert_change, set_field_version};
 use crate::error::CoreError;
-use crate::ids::{TaskId, now};
+use crate::ids::{MetadataFieldId, TaskId, now};
+use crate::metadata::{
+    decode_metadata_conflict_value, encode_metadata_conflict_value, metadata_field_by_id,
+};
 use crate::mutation::{apply_field_value_in_workspace, apply_project_id_in_workspace};
 use crate::projects::{resolve_existing_project_in_workspace, resolve_project_for_stored_value};
 use crate::recurrence::{RecurrenceOutcome, RecurrenceSeriesId, RecurrenceSeriesState};
@@ -298,39 +301,57 @@ async fn resolve_recurrence_conflict(
     })?;
     let local: String = conflict.get("local_value");
     let remote: String = conflict.get("remote_value");
-    if value != local && value != remote {
-        bail!("error invalid-conflict-value value={value}");
-    }
-    if let Some(slot) = field.strip_prefix("outcome:") {
-        resolve_recurrence_outcome_conflict(
+    if let Some(field_id) = field.strip_prefix("metadata:") {
+        let encoded = if value == local || value == remote {
+            value.to_string()
+        } else {
+            encode_metadata_conflict_value(Some(value))?
+        };
+        resolve_recurrence_metadata_conflict(
             &mut tx,
             workspace,
             series_id,
-            slot.parse()?,
-            RecurrenceOutcome::parse(value)?,
+            field,
+            field_id.parse()?,
+            &encoded,
         )
         .await?;
-    } else if field == "state" {
-        resolve_recurrence_state_conflict(
-            &mut tx,
-            workspace,
-            series_id,
-            RecurrenceSeriesState::parse(value)?,
-            &conflict.get::<String, _>("remote_change_id"),
-        )
-        .await?;
-    } else if matches!(
-        field,
-        "title"
-            | "description"
-            | "project"
-            | "priority"
-            | "initial_status"
-            | "available_local_time"
-            | "due_policy"
-            | "labels"
-    ) {
-        resolve_recurrence_template_conflict(&mut tx, workspace, series_id, field, value).await?;
+    } else {
+        if value != local && value != remote {
+            bail!("error invalid-conflict-value value={value}");
+        }
+        if let Some(slot) = field.strip_prefix("outcome:") {
+            resolve_recurrence_outcome_conflict(
+                &mut tx,
+                workspace,
+                series_id,
+                slot.parse()?,
+                RecurrenceOutcome::parse(value)?,
+            )
+            .await?;
+        } else if field == "state" {
+            resolve_recurrence_state_conflict(
+                &mut tx,
+                workspace,
+                series_id,
+                RecurrenceSeriesState::parse(value)?,
+                &conflict.get::<String, _>("remote_change_id"),
+            )
+            .await?;
+        } else if matches!(
+            field,
+            "title"
+                | "description"
+                | "project"
+                | "priority"
+                | "initial_status"
+                | "available_local_time"
+                | "due_policy"
+                | "labels"
+        ) {
+            resolve_recurrence_template_conflict(&mut tx, workspace, series_id, field, value)
+                .await?;
+        }
     }
     sqlx::query("UPDATE conflicts SET resolved = 1 WHERE id = ?")
         .bind(conflict.get::<i64, _>("id"))
@@ -338,6 +359,91 @@ async fn resolve_recurrence_conflict(
         .await?;
     tx.commit().await?;
     Ok(field.to_string())
+}
+
+async fn resolve_recurrence_metadata_conflict(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    series_id: &RecurrenceSeriesId,
+    identity: &str,
+    field_id: MetadataFieldId,
+    encoded: &str,
+) -> Result<()> {
+    let field = metadata_field_by_id(conn, &workspace.id, &field_id)
+        .await?
+        .context("error metadata-field-not-found")?;
+    let value = decode_metadata_conflict_value(encoded)?;
+    let changed_at = now();
+    let (operation, payload) = if let Some(value) = value.as_deref() {
+        sqlx::query(
+            "INSERT INTO recurrence_series_metadata(
+                 workspace_id, series_id, field_id, value, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(workspace_id, series_id, field_id)
+             DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        )
+        .bind(&workspace.id)
+        .bind(series_id)
+        .bind(&field_id)
+        .bind(value)
+        .bind(&changed_at)
+        .bind(&changed_at)
+        .execute(&mut *conn)
+        .await?;
+        (
+            op_type::SET_RECURRENCE_METADATA,
+            crate::change_log::ChangePayload::workspace(workspace)
+                .set("field_id", &field_id)
+                .set("key", &field.key)
+                .set("value", value)
+                .set("conflict_resolution", true)
+                .into_value(),
+        )
+    } else {
+        sqlx::query(
+            "DELETE FROM recurrence_series_metadata
+             WHERE workspace_id = ? AND series_id = ? AND field_id = ?",
+        )
+        .bind(&workspace.id)
+        .bind(series_id)
+        .bind(&field_id)
+        .execute(&mut *conn)
+        .await?;
+        (
+            op_type::REMOVE_RECURRENCE_METADATA,
+            crate::change_log::ChangePayload::workspace(workspace)
+                .set("field_id", &field_id)
+                .set("key", &field.key)
+                .set("conflict_resolution", true)
+                .into_value(),
+        )
+    };
+    sqlx::query("UPDATE recurrence_series SET updated_at = ? WHERE workspace_id = ? AND id = ?")
+        .bind(&changed_at)
+        .bind(&workspace.id)
+        .bind(series_id)
+        .execute(&mut *conn)
+        .await?;
+    let change_id = insert_change(
+        conn,
+        "recurrence_series",
+        series_id.as_str(),
+        Some(identity),
+        operation,
+        payload,
+        None,
+    )
+    .await?;
+    crate::db::set_entity_field_version(
+        conn,
+        &workspace.id,
+        crate::types::MutableEntityType::RecurrenceSeries,
+        series_id.as_str(),
+        identity,
+        &change_id,
+    )
+    .await?;
+    Ok(())
 }
 
 async fn resolve_recurrence_template_conflict(
@@ -772,6 +878,21 @@ async fn resolve_conflict_value(
     resolution: ResolutionValue<'_>,
     tui_summary: Option<&str>,
 ) -> Result<ConflictResolutionOutcome> {
+    if let Some(field_id) = field.strip_prefix("metadata:") {
+        ensure!(
+            tui_summary.is_none(),
+            "error metadata-conflicts-not-supported-in-tui"
+        );
+        return resolve_metadata_conflict_value(
+            conn,
+            workspace,
+            task_id,
+            field,
+            field_id.parse()?,
+            resolution,
+        )
+        .await;
+    }
     let task_field = TaskField::parse_or_unknown(field)?;
     let field = task_field.as_str();
     let mut tx = begin_immediate(conn).await?;
@@ -868,5 +989,123 @@ async fn resolve_conflict_value(
         before,
         after,
         conflict_id,
+    })
+}
+
+async fn resolve_metadata_conflict_value(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    task_id: &TaskId,
+    identity: &str,
+    field_id: MetadataFieldId,
+    resolution: ResolutionValue<'_>,
+) -> Result<ConflictResolutionOutcome> {
+    let mut tx = begin_immediate(conn).await?;
+    let field = metadata_field_by_id(&mut tx, &workspace.id, &field_id)
+        .await?
+        .context("error metadata-field-not-found")?;
+    let conflict = sqlx::query_as::<_, (i64, String, String)>(
+        "SELECT id, local_value, remote_value FROM conflicts
+         WHERE workspace_id = ? AND entity_type = 'task' AND entity_id = ?
+           AND field = ? AND resolved = 0",
+    )
+    .bind(&workspace.id)
+    .bind(task_id)
+    .bind(identity)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| {
+        CoreError::not_found(format!(
+            "error conflict-not-found task_id={task_id} field={identity}"
+        ))
+    })?;
+    let current: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM task_metadata
+         WHERE workspace_id = ? AND task_id = ? AND field_id = ?",
+    )
+    .bind(&workspace.id)
+    .bind(task_id)
+    .bind(&field_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let before = encode_metadata_conflict_value(current.as_deref())?;
+    let encoded = match resolution {
+        ResolutionValue::Choice(ConflictValueChoice::Local) => conflict.1.clone(),
+        ResolutionValue::Choice(ConflictValueChoice::Remote) => conflict.2.clone(),
+        ResolutionValue::Explicit(value) if value == conflict.1 || value == conflict.2 => {
+            value.to_string()
+        }
+        ResolutionValue::Explicit(value) => encode_metadata_conflict_value(Some(value))?,
+    };
+    let value = decode_metadata_conflict_value(&encoded)?;
+    let changed_at = now();
+    let (op, payload) = if let Some(value) = value.as_deref() {
+        sqlx::query(
+            "INSERT INTO task_metadata(
+                 workspace_id, task_id, field_id, value, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(workspace_id, task_id, field_id)
+             DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        )
+        .bind(&workspace.id)
+        .bind(task_id)
+        .bind(&field_id)
+        .bind(value)
+        .bind(&changed_at)
+        .bind(&changed_at)
+        .execute(&mut *tx)
+        .await?;
+        (
+            op_type::SET_TASK_METADATA,
+            crate::change_log::ChangePayload::workspace(workspace)
+                .set("field_id", &field_id)
+                .set("key", &field.key)
+                .set("value", value)
+                .set("conflict_resolution", true)
+                .into_value(),
+        )
+    } else {
+        sqlx::query(
+            "DELETE FROM task_metadata
+             WHERE workspace_id = ? AND task_id = ? AND field_id = ?",
+        )
+        .bind(&workspace.id)
+        .bind(task_id)
+        .bind(&field_id)
+        .execute(&mut *tx)
+        .await?;
+        (
+            op_type::REMOVE_TASK_METADATA,
+            crate::change_log::ChangePayload::workspace(workspace)
+                .set("field_id", &field_id)
+                .set("key", &field.key)
+                .set("conflict_resolution", true)
+                .into_value(),
+        )
+    };
+    sqlx::query("UPDATE tasks SET updated_at = ? WHERE workspace_id = ? AND id = ?")
+        .bind(&changed_at)
+        .bind(&workspace.id)
+        .bind(task_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE conflicts SET resolved = 1 WHERE id = ?")
+        .bind(conflict.0)
+        .execute(&mut *tx)
+        .await?;
+    let change_id =
+        insert_change(&mut tx, "task", task_id, Some(identity), op, payload, None).await?;
+    set_field_version(&mut tx, task_id, identity, &change_id).await?;
+    let task = get_task_in_workspace(&mut tx, workspace, task_id).await?;
+    tx.commit().await?;
+    info!(task_id = %task_id, field_id = %field_id, "metadata conflict resolved");
+    Ok(ConflictResolutionOutcome {
+        outcome: ConflictOutcome {
+            task,
+            field: identity.to_string(),
+        },
+        before,
+        after: encoded,
+        conflict_id: conflict.0,
     })
 }

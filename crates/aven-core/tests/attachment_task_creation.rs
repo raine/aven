@@ -36,6 +36,7 @@ fn attachment(attachment_id: &str, bytes: Vec<u8>) -> TaskAttachmentAddInput {
 
 fn draft(title: &str) -> TaskDraft {
     TaskDraft {
+        metadata: Vec::new(),
         title: title.to_string(),
         description: String::new(),
         project: Some("default".to_string()),

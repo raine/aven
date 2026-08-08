@@ -4,6 +4,7 @@ async fn create_copyable_task(app: &mut App) -> usize {
     let selected = create_and_select_task(
         app,
         TaskDraft {
+            metadata: Vec::new(),
             description: "First paragraph.\n\n- item".to_string(),
             ..test_task_draft("Copy target")
         },
@@ -133,6 +134,7 @@ async fn label_browser_renames_and_safely_deletes_used_labels() {
     create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             labels: vec!["bug-report".to_string()],
             ..test_task_draft("Labeled task")
         },
@@ -288,6 +290,7 @@ async fn edit_description_prefills_and_ctrl_s_updates() {
     create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             description: "first\nsecond".to_string(),
             ..test_task_draft("Description target")
         },
@@ -322,6 +325,7 @@ async fn clean_description_edit_cancels_without_confirmation() {
     create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             description: "existing description".to_string(),
             ..test_task_draft("Description target")
         },
@@ -348,6 +352,7 @@ async fn changed_description_edit_requires_discard_confirmation() {
     create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             description: "existing description".to_string(),
             ..test_task_draft("Description target")
         },
@@ -471,6 +476,7 @@ async fn edit_priority_picker_prefills_current_priority() {
     create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             priority: "high".to_string(),
             ..test_task_draft("Priority target")
         },
@@ -502,6 +508,7 @@ async fn edit_labels_picker_prefills_current_labels_and_removes_unselected() {
     create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             labels: vec!["bug".to_string()],
             ..test_task_draft("Label target")
         },
@@ -640,6 +647,7 @@ async fn edit_description_conflict_preserves_overlay() {
     let selected = create_and_select_task(
         &mut app,
         TaskDraft {
+            metadata: Vec::new(),
             description: "old".to_string(),
             ..test_task_draft("Conflict target")
         },

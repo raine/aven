@@ -760,6 +760,7 @@ impl AuthoringState {
         let description = draft.description.trim().to_string();
         AddTaskTitleSubmit::Create(Box::new(AddTaskCreate {
             draft: TaskDraft {
+                metadata: Vec::new(),
                 title: trimmed.to_string(),
                 description,
                 project: draft.project,
@@ -956,6 +957,7 @@ mod tests {
         assert!(
             state.apply_task_intake_result(crate::task_intake::TaskIntakeResult {
                 task: TaskDraft {
+                    metadata: Vec::new(),
                     title: "Review metrics".to_string(),
                     description: String::new(),
                     project: Some("app".to_string()),
@@ -1004,6 +1006,7 @@ mod tests {
         );
         assert_eq!(state.add_pending_add_task_attachment(pending), Some(true));
         assert!(state.apply_add_task_draft(TaskDraft {
+            metadata: Vec::new(),
             title: "Parsed".to_string(),
             description: "User-authored details".to_string(),
             project: None,

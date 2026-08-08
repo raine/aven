@@ -281,6 +281,8 @@ pub(crate) enum Commands {
     Text(TextCommand),
     /// Manage labels
     Label(LabelCommand),
+    /// Inspect and rename metadata fields
+    Metadata(MetadataCommand),
     /// Manage projects and their paths
     Project(ProjectCommand),
     /// Manage workspaces
@@ -466,6 +468,8 @@ pub(crate) struct AddArgs {
     pub(crate) status: Option<String>,
     #[arg(long)]
     pub(crate) label: Vec<String>,
+    #[arg(long, value_name = "KEY=VALUE")]
+    pub(crate) metadata: Vec<String>,
     #[arg(long, help = "Create the task as an epic container")]
     pub(crate) epic: bool,
     #[arg(
@@ -477,6 +481,7 @@ pub(crate) struct AddArgs {
             "priority",
             "status",
             "label",
+            "metadata",
             "epic",
             "available_at",
             "due",
@@ -530,6 +535,12 @@ pub(crate) struct ListArgs {
     pub(crate) priority: Option<String>,
     #[arg(long)]
     pub(crate) label: Option<String>,
+    #[arg(long, value_name = "KEY=VALUE")]
+    pub(crate) metadata: Vec<String>,
+    #[arg(long, value_name = "KEY")]
+    pub(crate) has_metadata: Vec<String>,
+    #[arg(long, value_name = "KEY")]
+    pub(crate) missing_metadata: Vec<String>,
     #[arg(
         long,
         conflicts_with_all = ["status", "all", "deleted", "upcoming"]
@@ -566,6 +577,12 @@ pub(crate) struct TaskSearchArgs {
     pub(crate) query: Vec<String>,
     #[arg(long, help = "Restrict matches to a project by key or name")]
     pub(crate) project: Option<String>,
+    #[arg(long, value_name = "KEY=VALUE")]
+    pub(crate) metadata: Vec<String>,
+    #[arg(long, value_name = "KEY")]
+    pub(crate) has_metadata: Vec<String>,
+    #[arg(long, value_name = "KEY")]
+    pub(crate) missing_metadata: Vec<String>,
     #[arg(
         long,
         default_value_t = 50,
@@ -596,7 +613,7 @@ pub(crate) enum RecurSubcommand {
     /// Show recurring series history
     History(RecurHistoryArgs),
     /// Edit the template used by future occurrences
-    Edit(RecurEditArgs),
+    Edit(Box<RecurEditArgs>),
     /// Skip the current occurrence
     Skip(RecurRefArgs),
     /// Pause a recurring series
@@ -655,6 +672,10 @@ pub(crate) struct RecurEditArgs {
     pub(crate) priority: Option<String>,
     #[arg(long, value_name = "LABEL")]
     pub(crate) label: Vec<String>,
+    #[arg(long, value_name = "KEY=VALUE")]
+    pub(crate) metadata: Vec<String>,
+    #[arg(long, value_name = "KEY")]
+    pub(crate) remove_metadata: Vec<String>,
     #[arg(long, value_name = "HH:MM|none")]
     pub(crate) repeat_at: Option<String>,
     #[arg(long, value_name = "same-day|none")]
@@ -769,6 +790,10 @@ pub(crate) struct BulkUpdateArgs {
     pub(crate) label: Vec<String>,
     #[arg(long)]
     pub(crate) remove_label: Vec<String>,
+    #[arg(long, value_name = "KEY=VALUE")]
+    pub(crate) metadata: Vec<String>,
+    #[arg(long, value_name = "KEY")]
+    pub(crate) remove_metadata: Vec<String>,
 }
 
 #[derive(Args)]
@@ -816,6 +841,10 @@ pub(crate) struct TaskEditArgs {
     pub(crate) label: Vec<String>,
     #[arg(long)]
     pub(crate) remove_label: Vec<String>,
+    #[arg(long, value_name = "KEY=VALUE")]
+    pub(crate) metadata: Vec<String>,
+    #[arg(long, value_name = "KEY")]
+    pub(crate) remove_metadata: Vec<String>,
 }
 
 #[derive(Args)]
@@ -887,6 +916,29 @@ pub(crate) enum LabelSubcommand {
     Delete { name: String },
     /// List or search labels
     List(LabelListArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct MetadataCommand {
+    #[command(subcommand)]
+    pub(crate) command: MetadataSubcommand,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum MetadataSubcommand {
+    /// List metadata fields and their usage
+    List {
+        #[arg(long, help = "Print machine-readable JSON")]
+        json: bool,
+    },
+    /// Show a metadata field
+    Show {
+        key: String,
+        #[arg(long, help = "Print machine-readable JSON")]
+        json: bool,
+    },
+    /// Rename a metadata field
+    Rename { key: String, new_key: String },
 }
 
 #[derive(Args)]

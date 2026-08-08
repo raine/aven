@@ -8,6 +8,7 @@ mod demo;
 mod demo_data;
 mod doctor;
 mod labels;
+mod metadata;
 mod notes;
 mod prime;
 mod projects;
@@ -29,6 +30,7 @@ pub(crate) use self::data_safety::{cmd_backup, cmd_backup_restore, cmd_export, c
 pub(crate) use self::demo::{cmd_demo, cmd_internal_demo_snapshot};
 pub(crate) use self::doctor::cmd_doctor;
 pub(crate) use self::labels::cmd_label;
+pub(crate) use self::metadata::cmd_metadata;
 pub(crate) use self::notes::{cmd_note, cmd_note_delete};
 pub(crate) use self::prime::run as cmd_prime;
 pub(crate) use self::projects::cmd_project;

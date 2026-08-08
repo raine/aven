@@ -18,6 +18,7 @@ impl TuiStore {
             .await?;
         let mut targets = details
             .into_iter()
+            .filter(|detail| !detail.field.starts_with("metadata:"))
             .map(|detail| ConflictTarget {
                 task_id: item.task.id.clone(),
                 recurrence_series_id: None,
@@ -34,16 +35,21 @@ impl TuiStore {
                 .database
                 .recurrence_series_conflicts(&self.active_workspace, &recurrence.series_id, None)
                 .await?;
-            targets.extend(series_details.into_iter().map(|detail| ConflictTarget {
-                task_id: item.task.id.clone(),
-                recurrence_series_id: Some(recurrence.series_id.clone()),
-                display_ref: recurrence.series_ref.clone(),
-                field: detail.field,
-                variant_a: detail.variant_a,
-                local_value: detail.local_value,
-                variant_b: detail.variant_b,
-                remote_value: detail.remote_value,
-            }));
+            targets.extend(
+                series_details
+                    .into_iter()
+                    .filter(|detail| !detail.field.starts_with("metadata:"))
+                    .map(|detail| ConflictTarget {
+                        task_id: item.task.id.clone(),
+                        recurrence_series_id: Some(recurrence.series_id.clone()),
+                        display_ref: recurrence.series_ref.clone(),
+                        field: detail.field,
+                        variant_a: detail.variant_a,
+                        local_value: detail.local_value,
+                        variant_b: detail.variant_b,
+                        remote_value: detail.remote_value,
+                    }),
+            );
         }
         Ok(Some(targets))
     }
@@ -55,10 +61,9 @@ impl TuiStore {
             .list_conflicts(&self.active_workspace, project.as_deref(), None)
             .await?;
         let mut task_ids = Vec::new();
-        for conflict in conflicts
-            .into_iter()
-            .filter(|conflict| conflict.recurrence_series)
-        {
+        for conflict in conflicts.into_iter().filter(|conflict| {
+            conflict.recurrence_series && !conflict.field.starts_with("metadata:")
+        }) {
             let series_id = conflict.task_id.to_string().parse()?;
             let detail = self
                 .database

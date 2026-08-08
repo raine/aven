@@ -1,5 +1,6 @@
 use aven_core::choices::TaskSource;
 use aven_core::db::Database;
+use aven_core::metadata::TaskMetadataInput;
 use aven_core::operations::{TaskDraft, TaskUpdate};
 use aven_core::sync::SyncSession;
 use aven_core::undo::UndoContext;
@@ -27,6 +28,7 @@ async fn opens_migrates_and_mutates_through_owned_api() {
         .create_task(
             workspace,
             TaskDraft {
+                metadata: Vec::new(),
                 title: "core task".to_string(),
                 description: String::new(),
                 project: Some(project.key),
@@ -105,6 +107,7 @@ async fn tui_task_mutation_uses_one_transaction_for_change_and_undo() {
         .create_task(
             &workspace,
             TaskDraft {
+                metadata: Vec::new(),
                 title: "atomic task".to_string(),
                 description: String::new(),
                 project: Some(project.key),
@@ -172,6 +175,110 @@ async fn tui_task_mutation_uses_one_transaction_for_change_and_undo() {
         .await
         .unwrap();
     assert_eq!(persisted, "todo");
+}
+
+#[tokio::test]
+async fn task_metadata_undo_tracks_field_identity_across_renames() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = Database::open(&directory.path().join("aven.sqlite"))
+        .await
+        .unwrap();
+    let workspace = database.list_workspaces().await.unwrap().remove(0);
+    let project = database
+        .create_project(&workspace, "Core")
+        .await
+        .unwrap()
+        .project;
+    let created = database
+        .create_task(
+            &workspace,
+            TaskDraft {
+                metadata: Vec::new(),
+                title: "metadata undo".to_string(),
+                description: String::new(),
+                project: Some(project.key),
+                status: "inbox".to_string(),
+                priority: "none".to_string(),
+                source: TaskSource::Unknown,
+                labels: Vec::new(),
+                available_at: None,
+                due_on: None,
+                is_epic: false,
+            },
+        )
+        .await
+        .unwrap();
+
+    database
+        .mutate_tasks(
+            &workspace,
+            vec![(
+                created.task.id.clone(),
+                TaskUpdate {
+                    set_metadata: vec![TaskMetadataInput {
+                        key: "legacy-id".to_string(),
+                        value: String::new(),
+                    }],
+                    ..TaskUpdate::default()
+                },
+            )],
+            UndoContext::tui("set metadata"),
+        )
+        .await
+        .unwrap();
+    database
+        .rename_metadata_field(&workspace, "legacy-id", "external-id")
+        .await
+        .unwrap();
+    database.apply_latest_tui_undo(&workspace.id).await.unwrap();
+    assert!(
+        database
+            .task_metadata(&workspace.id, &created.task.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    database
+        .update_task(
+            &workspace,
+            &created.task.id,
+            TaskUpdate {
+                set_metadata: vec![TaskMetadataInput {
+                    key: "external-id".to_string(),
+                    value: String::new(),
+                }],
+                ..TaskUpdate::default()
+            },
+        )
+        .await
+        .unwrap();
+    database
+        .mutate_tasks(
+            &workspace,
+            vec![(
+                created.task.id.clone(),
+                TaskUpdate {
+                    remove_metadata: vec!["external-id".to_string()],
+                    ..TaskUpdate::default()
+                },
+            )],
+            UndoContext::tui("remove metadata"),
+        )
+        .await
+        .unwrap();
+    database
+        .rename_metadata_field(&workspace, "external-id", "final-id")
+        .await
+        .unwrap();
+    database.apply_latest_tui_undo(&workspace.id).await.unwrap();
+    let metadata = database
+        .task_metadata(&workspace.id, &created.task.id)
+        .await
+        .unwrap();
+    assert_eq!(metadata.len(), 1);
+    assert_eq!(metadata[0].key, "final-id");
+    assert_eq!(metadata[0].value, "");
 }
 
 #[tokio::test]
@@ -343,6 +450,7 @@ async fn database_task_field_rolls_back_when_change_logging_fails() {
         .create_task(
             &workspace,
             TaskDraft {
+                metadata: Vec::new(),
                 title: "before".to_string(),
                 description: String::new(),
                 project: Some(project.key),
@@ -398,6 +506,7 @@ async fn task_delete_and_restore_roll_back_when_change_logging_fails() {
         .create_task(
             &workspace,
             TaskDraft {
+                metadata: Vec::new(),
                 title: "atomic deletion".to_string(),
                 description: String::new(),
                 project: Some(project.key),
