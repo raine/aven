@@ -3,6 +3,12 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## Unreleased
+
+- The Epics view now summarizes child completion, ready, blocked, overdue, and
+  recent activity.
+- Epic detail views show unresolved blockers beneath affected child tasks.
+
 ## v0.1.25 (2026-08-07)
 
 - Fix: Sorting by updated time shows the most recently updated tasks first by
