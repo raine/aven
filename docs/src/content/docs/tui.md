@@ -90,6 +90,8 @@ Press `a` to open the task composer. Project, status, priority, labels, availabi
 
 `Enter` opens the focused metadata control, creates from the title, and inserts a newline in the description. `Ctrl-Enter` creates from any field in terminals that report modified Enter keys. `Ctrl-s` is the portable create shortcut.
 
+Press `Ctrl-g` to create the task and immediately start another. The next draft retains the project, status, priority, and labels, while clearing task-specific content such as the title, description, schedule, and attachments. This shortcut applies to standalone, non-repeating tasks.
+
 ### Set a schedule
 
 The **Schedule** field accepts natural expressions such as `tomorrow`,
@@ -183,12 +185,17 @@ The `y` family copies task information from either the list or detail:
 
 | Key | Copies |
 | --- | --- |
-| `y r` | Qualified ref, such as `APP-7KQ9` |
-| `y i` | Durable task id |
+| `y r` | Display ref, such as `APP-7KQ9` |
+| `y i` | Durable task ID |
 | `y t` | Title |
 | `y d` | Description |
 | `y a` | Title and description |
 | `y n` | Notes |
+| `y m` | Complete task report as Markdown |
+
+When tasks are marked, `y r`, `y i`, and `y t` copy one display ref, durable ID, or title per task, separated by newlines in visible list order. Description, combined text, notes, and Markdown report copies are single-task actions and are unavailable while marked-task mode is active.
+
+The Markdown report includes the title, display ref, status, project, priority, labels, scheduling metadata, description, notes, relationships, recurrence details, unresolved conflict variants, and attachment metadata. Attachment files are not included. It also records the durable task ID, workspace, and creation and update times.
 
 In detail, drag across rendered title or description text and press `y` to copy only that selection.
 
@@ -202,6 +209,12 @@ In detail, drag across rendered title or description text and press `y` to copy 
 </div>
 
 <p class="media-caption">Drag across rendered task text and press <code>y</code> to copy the selection.</p>
+
+### Publish a task report as a GitHub gist
+
+From task detail, press `t g` and confirm to publish the complete Markdown task report as a secret GitHub gist. This runs the authenticated GitHub CLI and sends the report's task content to GitHub over the network. A secret gist is unlisted rather than private: anyone with its URL can view it. After GitHub creates the gist, aven copies its URL to the clipboard.
+
+This action requires an installed and authenticated `gh` command. The confirmation appears before any task content is published.
 
 ### Image attachments
 
