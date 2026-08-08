@@ -766,6 +766,12 @@ fn post_sync_json(url: &str, body: &str) -> (u16, String) {
 fn sync_ignores_workspace_selection() {
     let env = TestEnv::new();
     let db = env.db("missing-workspace-sync.sqlite");
+    env.write_config(
+        r#"
+sync:
+  disabled: true
+"#,
+    );
 
     let error = fail(env.aven(&db, ["--workspace", "missing", "sync"]));
 
