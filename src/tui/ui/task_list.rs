@@ -893,7 +893,7 @@ fn task_time_cell(
 fn epic_summary_candidate(
     rollup: &crate::query::EpicRollup,
     compact: bool,
-    show_done: bool,
+    show_done_label: bool,
     show_canceled: bool,
 ) -> Line<'static> {
     let mut spans = Vec::new();
@@ -930,31 +930,19 @@ fn epic_summary_candidate(
     }
 
     spans.push(Span::styled(" · ", Style::new().fg(FG_DIM)));
-    if rollup.open > 0 {
-        spans.push(Span::styled(
-            if compact {
-                format!("o{}", rollup.open)
-            } else {
-                format!("{} open", rollup.open)
-            },
-            Style::new().fg(FG).add_modifier(Modifier::BOLD),
-        ));
-    }
-    let outcome_separator = if rollup.open > 0 { " " } else { "" };
-    if show_done && rollup.done > 0 {
-        spans.push(Span::styled(
-            format!("{outcome_separator}✓{}", rollup.done),
-            Style::new().fg(ACCENT),
-        ));
-    }
-    if show_canceled && rollup.canceled > 0 {
-        let separator = if rollup.open > 0 || show_done && rollup.done > 0 {
-            " "
+    spans.push(Span::styled(
+        if compact {
+            format!("✓{}/{}", rollup.done, rollup.total)
+        } else if show_done_label {
+            format!("{}/{} done", rollup.done, rollup.total)
         } else {
-            ""
-        };
+            format!("{}/{}", rollup.done, rollup.total)
+        },
+        Style::new().fg(FG),
+    ));
+    if show_canceled && rollup.canceled > 0 {
         spans.push(Span::styled(
-            format!("{separator}×{}", rollup.canceled),
+            format!(" ×{}", rollup.canceled),
             Style::new().fg(RED),
         ));
     }
@@ -968,8 +956,8 @@ fn epic_summary_cell(rollup: &crate::query::EpicRollup, max_width: usize) -> Lin
 
     let candidates = [
         epic_summary_candidate(rollup, false, true, true),
-        epic_summary_candidate(rollup, true, true, true),
         epic_summary_candidate(rollup, true, false, true),
+        epic_summary_candidate(rollup, false, true, false),
         epic_summary_candidate(rollup, true, false, false),
     ];
     candidates
@@ -1819,7 +1807,7 @@ mod tests {
         assert!(!rendered.contains("SIGNALS"));
         assert!(rendered.contains("ACT"));
         assert!(rendered.contains("Ship account recovery"));
-        assert!(rendered.contains("!1 ←1 · 3 open ✓1 ×1"));
+        assert!(rendered.contains("!1 ←1 · 1/5 done ×1"));
         assert!(!rendered.contains("Verify recovery email"));
 
         let preview = task_preview_lines(&store.tasks[0], 120, 12)
@@ -1840,7 +1828,7 @@ mod tests {
         assert!(rendered.contains("Ship account recovery"));
         assert!(rendered.contains("Verify recovery email"));
         assert!(rendered.contains("active"));
-        assert!(rendered.contains("!1 ←1 · 3 open ✓1 ×1"));
+        assert!(rendered.contains("!1 ←1 · 1/5 done ×1"));
     }
 
     #[tokio::test]
@@ -1850,7 +1838,7 @@ mod tests {
 
         let rendered = buffer_text(&render_task_list_buffer(&store, 120, 5));
 
-        assert!(rendered.contains("!1 ←1 · 3 open ✓1 ×1"));
+        assert!(rendered.contains("!1 ←1 · 1/5 done ×1"));
         assert!(rendered.contains("←2"));
     }
 
@@ -1863,7 +1851,7 @@ mod tests {
         assert!(rendered.contains("SUMMARY"));
         assert!(!rendered.contains("CHILDREN"));
         assert!(!rendered.contains("SIGNALS"));
-        assert!(rendered.contains("!1 ←1 · o3 ✓1 ×1"));
+        assert!(rendered.contains("!1 ←1 · ✓1/5 ×1"));
         assert!(rendered.contains("todo"));
         assert!(rendered.contains("APP-"));
     }
@@ -1932,10 +1920,10 @@ mod tests {
         };
 
         let normal = epic_summary_cell(&rollup, 24);
-        assert_eq!(normal.to_string(), "!1 ←1 · 3 open ✓2 ×1");
+        assert_eq!(normal.to_string(), "!1 ←1 · 2/6 done ×1");
         assert!(normal.width() <= 24);
         let compact = epic_summary_cell(&rollup, 17);
-        assert_eq!(compact.to_string(), "!1 ←1 · o3 ✓2 ×1");
+        assert_eq!(compact.to_string(), "!1 ←1 · ✓2/6 ×1");
         assert!(compact.width() <= 17);
         for summary in [&normal, &compact] {
             assert_eq!(
@@ -1957,6 +1945,16 @@ mod tests {
                     })
                     .all(|span| !span.style.add_modifier.contains(Modifier::BOLD))
             );
+            assert!(
+                !summary
+                    .spans
+                    .iter()
+                    .find(|span| span.content.contains('/'))
+                    .unwrap()
+                    .style
+                    .add_modifier
+                    .contains(Modifier::BOLD)
+            );
         }
 
         let open_only = crate::query::EpicRollup {
@@ -1967,7 +1965,7 @@ mod tests {
         };
         assert_eq!(
             epic_summary_cell(&open_only, 24).to_string(),
-            "3 ready · 3 open"
+            "3 ready · 0/3 done"
         );
 
         let resolved = crate::query::EpicRollup {
@@ -1976,7 +1974,7 @@ mod tests {
             ..crate::query::EpicRollup::default()
         };
         let resolved = epic_summary_cell(&resolved, 24);
-        assert_eq!(resolved.to_string(), "resolved · ✓2");
+        assert_eq!(resolved.to_string(), "resolved · 2/2 done");
         assert!(
             !resolved.spans[0]
                 .style
@@ -1990,8 +1988,8 @@ mod tests {
             ..crate::query::EpicRollup::default()
         };
         let canceled = epic_summary_cell(&canceled, 24);
-        assert_eq!(canceled.to_string(), "resolved · ×2");
-        assert_eq!(canceled.spans[2].style.fg, Some(RED));
+        assert_eq!(canceled.to_string(), "resolved · 0/2 done ×2");
+        assert_eq!(canceled.spans[3].style.fg, Some(RED));
 
         let stalled = crate::query::EpicRollup {
             total: 3,
@@ -1999,7 +1997,7 @@ mod tests {
             ..crate::query::EpicRollup::default()
         };
         let stalled = epic_summary_cell(&stalled, 24);
-        assert_eq!(stalled.to_string(), "0 ready · 3 open");
+        assert_eq!(stalled.to_string(), "0 ready · 0/3 done");
         assert_eq!(stalled.spans[0].style.fg, Some(YELLOW));
     }
 
