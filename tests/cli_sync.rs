@@ -3,8 +3,8 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::{
-    TestEnv, TestProcess, TestServer, contains_all, contains_none, extract_ref, fail, meta_value,
-    ok, png_bytes, scalar_i64,
+    TestEnv, TestProcess, TestServer, command_with_db, contains_all, contains_none, extract_ref,
+    fail, meta_value, ok, png_bytes, scalar_i64,
 };
 use serde_json::{Value, json};
 
@@ -763,19 +763,38 @@ fn post_sync_json(url: &str, body: &str) -> (u16, String) {
 }
 
 #[test]
+fn sync_environment_disable_overrides_enabled_config() {
+    let env = TestEnv::new();
+    let db = env.db("environment-disabled-sync.sqlite");
+    env.write_config("sync:\n  enabled: true\n");
+    let output = command_with_db(&db)
+        .env("XDG_STATE_HOME", env.state_dir())
+        .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
+        .env("AVEN_SYNC_DISABLED", "true")
+        .env_remove("AVEN_DEV_DB")
+        .env_remove("AVEN_DB")
+        .env_remove("AVEN_SYNC_SERVER")
+        .args(["sync", "--server", "http://127.0.0.1:1"])
+        .output()
+        .expect("run environment-disabled sync");
+
+    contains_all(
+        &fail(output),
+        &[
+            "error sync-disabled",
+            "sync is disabled in this environment",
+        ],
+    );
+}
+
+#[test]
 fn sync_ignores_workspace_selection() {
     let env = TestEnv::new();
     let db = env.db("missing-workspace-sync.sqlite");
-    env.write_config(
-        r#"
-sync:
-  disabled: true
-"#,
-    );
 
     let error = fail(env.aven(&db, ["--workspace", "missing", "sync"]));
 
-    contains_all(&error, &["error sync-disabled"]);
+    contains_all(&error, &["error sync-server-required"]);
     contains_none(&error, &["unknown-workspace"]);
 }
 

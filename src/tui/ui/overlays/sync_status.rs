@@ -182,8 +182,11 @@ fn check_style(check: &SyncStatusCheck) -> Style {
 }
 
 fn reachability(status: &TuiSyncStatus) -> String {
-    if !status.enabled {
+    if !status.runtime_allowed {
         return "sync disabled".to_string();
+    }
+    if !status.enabled {
+        return "sync not enabled".to_string();
     }
     if status.last_error_value().is_some() {
         return "last attempt failed".to_string();

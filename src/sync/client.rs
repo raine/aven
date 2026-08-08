@@ -48,7 +48,7 @@ pub(crate) async fn run_sync_to_completion(
     database: &Database,
     config: &config::AppConfig,
 ) -> Result<SyncRunSummary> {
-    config::ensure_sync_allowed(config)?;
+    config.ensure_sync_allowed()?;
     let server = config::resolve_sync_server(None, config)?;
     let blob_dir = config::resolve_blob_dir(database.path(), config)?;
     let client = SyncHttpClient::new()?;
@@ -91,7 +91,7 @@ pub(crate) async fn sync_client(
     args: SyncArgs,
     config: &config::AppConfig,
 ) -> Result<()> {
-    config::ensure_sync_allowed(config)?;
+    config.ensure_sync_allowed()?;
     let server = config::resolve_sync_server(args.server.as_deref(), config)?;
     let blob_dir = config::resolve_blob_dir(database.path(), config)?;
     let client = SyncHttpClient::new()?;

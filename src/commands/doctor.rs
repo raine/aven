@@ -334,6 +334,14 @@ pub(crate) async fn cmd_doctor(
 
     let sync_section = report.section("Sync");
     sync_section.info("enabled", if config.sync.enabled { "yes" } else { "no" });
+    sync_section.info(
+        "runtime allowed",
+        if config.sync_is_allowed() {
+            "yes"
+        } else {
+            "no"
+        },
+    );
     match sync_server {
         Ok(server) => {
             sync_section.check("server", sync_server_url_is_valid(&server), &server);

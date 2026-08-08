@@ -4,7 +4,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
-use common::{TestEnv, contains_all, contains_none, extract_ref, meta_value, ok, png_bytes};
+use common::{
+    TestEnv, command_with_db, contains_all, contains_none, extract_ref, meta_value, ok, png_bytes,
+};
 use sqlx::ConnectOptions;
 use sqlx::sqlite::SqliteConnectOptions;
 
@@ -86,6 +88,29 @@ daemon:
             "45 seconds",
             &wake_addr,
         ],
+    );
+}
+
+#[test]
+fn doctor_distinguishes_enabled_sync_from_runtime_disable_override() {
+    let env = TestEnv::new();
+    let db = env.db("runtime-disabled-sync.sqlite");
+    env.write_config("sync:\n  enabled: true\n  server_url: http://127.0.0.1:3000\n");
+    let output = command_with_db(&db)
+        .env("XDG_STATE_HOME", env.state_dir())
+        .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
+        .env("AVEN_SYNC_DISABLED", "1")
+        .env_remove("AVEN_DEV_DB")
+        .env_remove("AVEN_DB")
+        .env_remove("AVEN_SYNC_SERVER")
+        .arg("doctor")
+        .output()
+        .expect("run doctor with sync disabled");
+
+    let output = ok(output);
+    contains_all(
+        &output,
+        &["enabled            yes", "runtime allowed    no"],
     );
 }
 

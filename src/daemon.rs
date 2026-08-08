@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use aven_core::db::Database;
 use tokio::net::UdpSocket;
 use tokio::time::{Instant, sleep_until, timeout};
@@ -42,10 +42,7 @@ pub struct DaemonRunArgs {
 }
 
 pub async fn run(args: DaemonRunArgs) -> Result<()> {
-    crate::config::ensure_sync_allowed(&args.config)?;
-    if !args.config.sync.enabled {
-        bail!("error sync-disabled hint=\"set sync.enabled = true in config.yaml\"");
-    }
+    args.config.ensure_automatic_sync_enabled()?;
     let server = args
         .config
         .sync
@@ -262,7 +259,7 @@ async fn sync_once(
 }
 
 pub(crate) fn wake_if_enabled(config: &AppConfig) {
-    if !config.sync.enabled || config.sync.disabled {
+    if !config.automatic_sync_is_enabled() {
         return;
     }
     let Ok(addr) = config.wake_addr() else {
@@ -314,7 +311,7 @@ mod tests {
             .unwrap();
         let mut config = AppConfig::default();
         config.sync.enabled = true;
-        config.sync.disabled = true;
+        config.sync.disable_override = true;
         config.daemon.wake_addr = Some(socket.local_addr().unwrap().to_string());
 
         wake_if_enabled(&config);

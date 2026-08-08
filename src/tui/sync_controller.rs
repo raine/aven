@@ -19,7 +19,7 @@ impl SyncController {
         if self.task.is_some() {
             return Ok(false);
         }
-        config::ensure_sync_allowed(config)?;
+        config.ensure_sync_allowed()?;
         config::resolve_sync_server(None, config)?;
         let database = database.clone();
         let config = config.clone();

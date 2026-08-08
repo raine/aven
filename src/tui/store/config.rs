@@ -65,6 +65,7 @@ impl TuiStore {
         };
         Ok(TuiSyncStatus {
             enabled: config.sync.enabled,
+            runtime_allowed: config.sync_is_allowed(),
             config_error: None,
             configured_server,
             pinned_server,

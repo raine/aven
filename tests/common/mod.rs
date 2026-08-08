@@ -50,7 +50,8 @@ impl TestEnv {
             .env("AVEN_CONFIG_DIR", self.config_dir().join("aven"))
             .env_remove("AVEN_DEV_DB")
             .env_remove("AVEN_DB")
-            .env_remove("AVEN_SYNC_SERVER");
+            .env_remove("AVEN_SYNC_SERVER")
+            .env_remove("AVEN_SYNC_DISABLED");
     }
 
     pub fn free_loopback_addr(&self) -> String {

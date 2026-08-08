@@ -421,6 +421,7 @@ pub(crate) struct TuiDatabaseStats {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TuiSyncStatus {
     pub(crate) enabled: bool,
+    pub(crate) runtime_allowed: bool,
     pub(crate) config_error: Option<String>,
     pub(crate) configured_server: Option<SyncStatusCheck>,
     pub(crate) pinned_server: Option<String>,
@@ -445,6 +446,7 @@ impl Default for TuiSyncStatus {
     fn default() -> Self {
         Self {
             enabled: false,
+            runtime_allowed: true,
             config_error: None,
             configured_server: None,
             pinned_server: None,
@@ -472,6 +474,7 @@ impl TuiSyncStatus {
         self.config_error.is_some()
             || self.last_error_value().is_some()
             || (self.enabled
+                && self.runtime_allowed
                 && (!self
                     .configured_server
                     .as_ref()

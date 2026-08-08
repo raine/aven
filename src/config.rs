@@ -274,8 +274,8 @@ impl Default for TaskIntakeConfig {
 pub struct SyncConfig {
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default)]
-    pub disabled: bool,
+    #[serde(skip)]
+    pub(crate) disable_override: bool,
     pub server_url: Option<String>,
     pub interval_seconds: Option<u64>,
     pub auth_token: Option<String>,
@@ -285,7 +285,7 @@ impl Default for SyncConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            disabled: false,
+            disable_override: false,
             server_url: None,
             interval_seconds: Some(DEFAULT_SYNC_INTERVAL_SECONDS),
             auth_token: None,
@@ -341,7 +341,7 @@ impl AppConfig {
             serde_yaml::from_str(&text)
                 .with_context(|| format!("could not parse {}", path.display()))?
         };
-        config.sync.disabled |= sync_disabled_from_env();
+        config.sync.disable_override |= sync_disabled_from_env();
         config.update.automatic_checks = automatic_update_checks_enabled(
             config.update.automatic_checks,
             env::var("AVEN_NO_UPDATE_CHECK").ok().as_deref(),
@@ -411,6 +411,29 @@ impl AppConfig {
             .as_deref()
             .map(str::trim)
             .filter(|token| !token.is_empty())
+    }
+
+    pub(crate) fn sync_is_allowed(&self) -> bool {
+        !self.sync.disable_override
+    }
+
+    pub(crate) fn automatic_sync_is_enabled(&self) -> bool {
+        self.sync.enabled && self.sync_is_allowed()
+    }
+
+    pub(crate) fn ensure_sync_allowed(&self) -> Result<()> {
+        if !self.sync_is_allowed() {
+            bail!("error sync-disabled hint=\"sync is disabled in this environment\"");
+        }
+        Ok(())
+    }
+
+    pub(crate) fn ensure_automatic_sync_enabled(&self) -> Result<()> {
+        self.ensure_sync_allowed()?;
+        if !self.sync.enabled {
+            bail!("error sync-disabled hint=\"set sync.enabled = true in config.yaml\"");
+        }
+        Ok(())
     }
 
     pub fn wake_addr(&self) -> Result<SocketAddr> {
@@ -535,23 +558,12 @@ pub fn resolve_sync_server(flag: Option<&str>, config: &AppConfig) -> Result<Str
     bail!("error sync-server-required hint=\"pass --server or configure sync.server_url\"")
 }
 
-pub(crate) fn ensure_sync_allowed(config: &AppConfig) -> Result<()> {
-    ensure_sync_allowed_value(config.sync.disabled)
-}
-
 fn sync_disabled_from_env() -> bool {
     sync_disabled_value(env::var("AVEN_SYNC_DISABLED").ok().as_deref())
 }
 
 fn automatic_update_checks_enabled(configured: bool, disabled_env: Option<&str>) -> bool {
     configured && !disabled_env_value(disabled_env)
-}
-
-fn ensure_sync_allowed_value(disabled: bool) -> Result<()> {
-    if disabled {
-        bail!("error sync-disabled hint=\"sync is disabled in this environment\"");
-    }
-    Ok(())
 }
 
 fn sync_disabled_value(value: Option<&str>) -> bool {
@@ -829,18 +841,57 @@ mod tests {
     }
 
     #[test]
+    fn generated_config_includes_sync_opt_in_without_inactive_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+
+        write_default_config(&path).unwrap();
+
+        let text = fs::read_to_string(path).unwrap();
+        assert!(text.contains("sync:\n  enabled: false\n"));
+        assert!(!text.contains("disabled:"));
+    }
+
+    #[test]
+    fn runtime_disable_override_is_not_serialized() {
+        let mut config = AppConfig::default();
+        config.sync.enabled = true;
+        config.sync.disable_override = true;
+
+        let text = serde_yaml::to_string(&config).unwrap();
+
+        assert!(text.contains("enabled: true"));
+        assert!(!text.contains("disabled:"));
+    }
+
+    #[test]
+    fn effective_sync_predicates_distinguish_opt_in_and_override() {
+        let mut disabled = AppConfig::default();
+        disabled.sync.enabled = true;
+        disabled.sync.disable_override = true;
+        let mut enabled = AppConfig::default();
+        enabled.sync.enabled = true;
+        let unconfigured = AppConfig::default();
+
+        assert!(!disabled.automatic_sync_is_enabled());
+        assert!(enabled.automatic_sync_is_enabled());
+        assert!(!unconfigured.automatic_sync_is_enabled());
+        assert!(unconfigured.sync_is_allowed());
+    }
+
+    #[test]
     fn disabled_sync_reports_actionable_error() {
         let mut config = AppConfig::default();
-        config.sync.disabled = true;
-        let error = ensure_sync_allowed(&config).unwrap_err();
+        config.sync.disable_override = true;
+        let error = config.ensure_sync_allowed().unwrap_err();
 
         assert!(format!("{error:#}").contains("sync-disabled"));
         assert!(format!("{error:#}").contains("sync is disabled"));
     }
 
     #[test]
-    fn enabled_sync_is_allowed() {
-        ensure_sync_allowed(&AppConfig::default()).unwrap();
+    fn sync_without_disable_override_is_allowed() {
+        AppConfig::default().ensure_sync_allowed().unwrap();
     }
 
     #[test]

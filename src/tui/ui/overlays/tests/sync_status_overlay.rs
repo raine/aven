@@ -18,6 +18,28 @@ fn sync_status_overlay_renders_key_sections_without_scrollbar() {
 }
 
 #[test]
+fn sync_status_distinguishes_unconfigured_and_runtime_disabled_states() {
+    let unconfigured = TuiSyncStatus::default();
+    let mut runtime_disabled = sync_status();
+    runtime_disabled.runtime_allowed = false;
+
+    let unconfigured_lines = sync_status_lines_for_test(&unconfigured);
+    let disabled_lines = sync_status_lines_for_test(&runtime_disabled);
+
+    assert!(
+        unconfigured_lines
+            .iter()
+            .any(|line| line.to_string().contains("sync not enabled"))
+    );
+    assert!(
+        disabled_lines
+            .iter()
+            .any(|line| line.to_string().contains("sync disabled"))
+    );
+    assert!(!runtime_disabled.has_sync_error());
+}
+
+#[test]
 fn sync_status_lines_style_sections_successes_and_errors() {
     let mut status = sync_status();
     status.last_error = Some("connection refused".to_string());
