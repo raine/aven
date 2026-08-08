@@ -107,11 +107,11 @@ pub struct LocalConfig {
 pub struct AttachmentLifecycleConfig {
     #[serde(default = "default_attachment_grace_days")]
     pub grace_days: u64,
-    #[serde(default = "default_server_attachment_grace_days")]
+    #[serde(default = "default_server_attachment_grace_days", skip_serializing)]
     pub server_grace_days: u64,
     #[serde(default = "default_attachment_quota_bytes")]
     pub quota_bytes: i64,
-    #[serde(default = "default_attachment_quota_bytes")]
+    #[serde(default = "default_attachment_quota_bytes", skip_serializing)]
     pub server_workspace_quota_bytes: i64,
     #[serde(default = "default_preview_quota_bytes")]
     pub preview_quota_bytes: u64,
@@ -567,12 +567,6 @@ fn disabled_env_value(value: Option<&str>) -> bool {
     })
 }
 
-pub fn write_config(path: &Path, config: &AppConfig) -> Result<()> {
-    config.validate()?;
-    let text = serde_yaml::to_string(config)?;
-    write_config_text(path, text)
-}
-
 pub fn write_config_text(path: &Path, text: String) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -597,7 +591,9 @@ pub fn write_default_config(path: &Path) -> Result<()> {
     }
     let mut config = AppConfig::default();
     config.sync.auth_token = Some(String::new());
-    write_config(path, &config)
+    config.validate()?;
+    let text = serde_yaml::to_string(&config)?;
+    write_config_text(path, text)
 }
 
 #[cfg(test)]
@@ -868,6 +864,53 @@ mod tests {
             resolve_blob_dir(&db_path, &config).unwrap(),
             PathBuf::from("/var/aven/blobs")
         );
+    }
+
+    #[test]
+    fn generated_client_config_omits_server_attachment_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+
+        write_default_config(&path).unwrap();
+
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("server_grace_days"));
+        assert!(!text.contains("server_workspace_quota_bytes"));
+        let loaded = AppConfig::load_from_path(&path).unwrap();
+        assert_eq!(
+            loaded.local.attachment_lifecycle.server_grace_days,
+            default_server_attachment_grace_days()
+        );
+        assert_eq!(
+            loaded
+                .local
+                .attachment_lifecycle
+                .server_workspace_quota_bytes,
+            default_attachment_quota_bytes()
+        );
+    }
+
+    #[test]
+    fn server_attachment_settings_remain_loadable_and_configurable() {
+        let config = load_config(
+            "local:\n  attachment_lifecycle:\n    server_grace_days: 12\n    server_workspace_quota_bytes: 345\n",
+        )
+        .unwrap();
+
+        assert_eq!(config.local.attachment_lifecycle.server_grace_days, 12);
+        assert_eq!(
+            config
+                .local
+                .attachment_lifecycle
+                .server_workspace_quota_bytes,
+            345
+        );
+        let policy = config.local.attachment_lifecycle.server_policy();
+        assert_eq!(
+            policy.grace,
+            std::time::Duration::from_secs(12 * 24 * 60 * 60)
+        );
+        assert_eq!(policy.quota_bytes, 345);
     }
 
     #[test]

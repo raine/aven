@@ -1,7 +1,7 @@
 use crossterm::event::KeyCode;
 use unicode_width::UnicodeWidthStr;
 
-use super::{Action, BulkSupport, CommandContext, CommandLifecycle, CommandSpec, KeySequence};
+use super::{Action, BulkSupport, CommandContext, CommandSpec, KeySequence};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,9 +68,7 @@ pub(crate) fn preferred_shortcut_label(
 ) -> Option<&'static str> {
     context
         .commands()
-        .filter(|command| {
-            command.action == action && command.lifecycle == CommandLifecycle::Implemented
-        })
+        .filter(|command| command.action == action)
         .flat_map(|command| command.keys(context))
         .min_by_key(|key| (key.codes.len(), UnicodeWidthStr::width(key.label)))
         .map(|key| key.label)

@@ -1478,12 +1478,26 @@ fn soft_delete_syncs_and_restores() {
 }
 
 #[test]
-fn sync_auth_config_init_includes_placeholder() {
+fn config_init_includes_client_attachment_settings_only() {
     let env = TestEnv::new();
     ok(env.aven_config(["config", "init"]));
 
     let text = std::fs::read_to_string(env.config_file()).expect("read config");
-    contains_all(&text, &["sync:", "auth_token: ''"]);
+    contains_all(
+        &text,
+        &[
+            "sync:",
+            "auth_token: ''",
+            "grace_days:",
+            "quota_bytes:",
+            "preview_quota_bytes:",
+            "maintenance_limit:",
+        ],
+    );
+    contains_none(
+        &text,
+        &["server_grace_days", "server_workspace_quota_bytes"],
+    );
 }
 
 #[test]

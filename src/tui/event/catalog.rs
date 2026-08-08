@@ -5,14 +5,6 @@ use crate::tui::store::{TaskOrder, TaskView};
 
 use super::{Action, BulkSupport};
 
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CommandLifecycle {
-    Implemented,
-    Planned { reason: &'static str },
-    Disabled { reason: &'static str },
-}
-
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct KeySequence {
     pub(crate) codes: &'static [KeyCode],
@@ -36,7 +28,6 @@ pub(crate) struct CommandSpec {
     detail_keys: &'static [KeySequence],
     pub(crate) detail_focus: DetailFocusPolicy,
     pub(crate) action: Action,
-    pub(crate) lifecycle: CommandLifecycle,
 }
 
 impl CommandSpec {
@@ -71,7 +62,6 @@ impl CommandSpec {
             detail_keys: &[],
             detail_focus: DetailFocusPolicy::ParentTask,
             action,
-            lifecycle: CommandLifecycle::Implemented,
         }
     }
 
@@ -163,7 +153,6 @@ impl CommandSpec {
             detail_keys,
             detail_focus,
             action,
-            lifecycle: CommandLifecycle::Implemented,
         }
     }
 
@@ -178,48 +167,6 @@ impl CommandSpec {
         match context {
             CommandContext::Normal => true,
             CommandContext::Detail => !self.detail_keys.is_empty(),
-        }
-    }
-
-    #[allow(dead_code)]
-    const fn planned(
-        name: &'static str,
-        description: &'static str,
-        section: &'static str,
-        keys: &'static [KeySequence],
-        reason: &'static str,
-    ) -> Self {
-        Self {
-            name,
-            aliases: &[],
-            description,
-            section,
-            list_keys: keys,
-            detail_keys: &[],
-            detail_focus: DetailFocusPolicy::ParentTask,
-            action: Action::Planned { name, reason },
-            lifecycle: CommandLifecycle::Planned { reason },
-        }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) const fn disabled(
-        name: &'static str,
-        description: &'static str,
-        section: &'static str,
-        keys: &'static [KeySequence],
-        reason: &'static str,
-    ) -> Self {
-        Self {
-            name,
-            aliases: &[],
-            description,
-            section,
-            list_keys: keys,
-            detail_keys: &[],
-            detail_focus: DetailFocusPolicy::ParentTask,
-            action: Action::Disabled { name, reason },
-            lifecycle: CommandLifecycle::Disabled { reason },
         }
     }
 }

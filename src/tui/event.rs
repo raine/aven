@@ -5,8 +5,8 @@ mod lookup;
 pub(crate) use self::action::{Action, BulkSupport, SINGLE_TASK_COPY_ACTIONS};
 #[allow(unused_imports)]
 pub(crate) use self::catalog::{
-    COMMAND_DOMAINS, COMMANDS, CommandContext, CommandDomain, CommandLifecycle, CommandSpec,
-    DetailFocusPolicy, KeySequence,
+    COMMAND_DOMAINS, COMMANDS, CommandContext, CommandDomain, CommandSpec, DetailFocusPolicy,
+    KeySequence,
 };
 #[allow(unused_imports)]
 pub(crate) use self::lookup::{
@@ -639,48 +639,13 @@ mod tests {
     }
 
     #[test]
-    fn catalog_lifecycle_matches_action_state() {
+    fn catalog_actions_are_handled() {
         for command in COMMANDS {
-            match (command.lifecycle, command.action) {
-                (CommandLifecycle::Implemented, action) => {
-                    assert!(
-                        implemented_action_is_handled(action),
-                        "implemented :{} is not handled",
-                        command.name
-                    );
-                }
-                (
-                    CommandLifecycle::Planned { reason },
-                    Action::Planned {
-                        name,
-                        reason: action_reason,
-                    },
-                ) => {
-                    assert_eq!(name, command.name);
-                    assert_eq!(reason, action_reason);
-                    assert!(
-                        !reason.trim().is_empty(),
-                        ":{} planned reason is empty",
-                        command.name
-                    );
-                }
-                (
-                    CommandLifecycle::Disabled { reason },
-                    Action::Disabled {
-                        name,
-                        reason: action_reason,
-                    },
-                ) => {
-                    assert_eq!(name, command.name);
-                    assert_eq!(reason, action_reason);
-                    assert!(
-                        !reason.trim().is_empty(),
-                        ":{} disabled reason is empty",
-                        command.name
-                    );
-                }
-                _ => panic!("lifecycle/action mismatch for :{}", command.name),
-            }
+            assert!(
+                implemented_action_is_handled(command.action),
+                "catalog action :{} is not handled",
+                command.name
+            );
         }
     }
 
@@ -1020,17 +985,6 @@ mod tests {
     }
 
     #[test]
-    fn project_path_commands_are_implemented() {
-        for name in ["add-project-path", "remove-project-path"] {
-            let command = COMMANDS
-                .iter()
-                .find(|command| command.name == name)
-                .unwrap_or_else(|| panic!("missing command :{name}"));
-            assert_eq!(command.lifecycle, CommandLifecycle::Implemented);
-        }
-    }
-
-    #[test]
     fn required_action_families_are_present() {
         for name in [
             "add-task",
@@ -1333,35 +1287,6 @@ mod tests {
             resolve_shortcut(&[KeyCode::Char('C'), KeyCode::Char('i')]),
             ShortcutLookup::Found(Action::BeginConfigInit)
         );
-    }
-
-    #[test]
-    fn non_executing_lifecycle_shortcuts_resolve_to_catalog_action() {
-        for command in COMMANDS {
-            if !matches!(command.lifecycle, CommandLifecycle::Implemented) {
-                for key in command.keys(CommandContext::Normal) {
-                    assert_eq!(
-                        resolve_shortcut(key.codes),
-                        ShortcutLookup::Found(command.action),
-                        "shortcut {} for :{} resolved incorrectly",
-                        key.label,
-                        command.name
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn non_executing_lifecycle_commands_resolve_to_catalog_action() {
-        for command in COMMANDS {
-            if !matches!(command.lifecycle, CommandLifecycle::Implemented) {
-                assert_eq!(
-                    lookup_command(command.name),
-                    CommandLookup::Found(command.action)
-                );
-            }
-        }
     }
 
     #[test]

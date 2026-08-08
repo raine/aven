@@ -179,12 +179,6 @@ impl App {
             }
             Action::BeginAddEpicChild => self.begin_add_epic_child(),
             Action::RemoveEpicChild => self.remove_selected_epic_child().await?,
-            Action::Planned { name, reason } => {
-                self.set_warning(format!(":{name} is not yet implemented: {reason}"));
-            }
-            Action::Disabled { name, reason } => {
-                self.set_warning(format!(":{name} is disabled: {reason}"));
-            }
             Action::AcceptCommand
             | Action::CancelCommand
             | Action::BackspaceCommand

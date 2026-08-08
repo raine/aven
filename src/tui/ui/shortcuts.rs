@@ -10,12 +10,9 @@ use super::input::input_line;
 use super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use crate::tui::app::{DetailSection, DetailTargetId};
 use crate::tui::event::{
-    BulkSupport, CommandContext, CommandLifecycle, CommandSpec, matching_commands_for_bulk,
-    prefix_hint_commands,
+    BulkSupport, CommandContext, CommandSpec, matching_commands_for_bulk, prefix_hint_commands,
 };
-use crate::tui::theme::{
-    ACCENT, BG_ALT, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, ORANGE, SELECTED_BG,
-};
+use crate::tui::theme::{ACCENT, BG_ALT, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, SELECTED_BG};
 
 struct HelpTopic {
     keys: &'static str,
@@ -448,24 +445,8 @@ pub(crate) fn detail_help_scroll_cap(
         .saturating_sub(visible_rows) as u16
 }
 
-fn command_name_style(command: &CommandSpec) -> Style {
-    match command.lifecycle {
-        CommandLifecycle::Implemented => Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-        CommandLifecycle::Planned { .. } => Style::new().fg(FG_MUTED),
-        CommandLifecycle::Disabled { .. } => Style::new().fg(FG_DIM),
-    }
-}
-
-fn lifecycle_badge(lifecycle: CommandLifecycle) -> Option<Span<'static>> {
-    match lifecycle {
-        CommandLifecycle::Implemented => None,
-        CommandLifecycle::Planned { .. } => {
-            Some(Span::styled(" planned ", Style::new().fg(ORANGE)))
-        }
-        CommandLifecycle::Disabled { .. } => {
-            Some(Span::styled(" disabled ", Style::new().fg(FG_DIM)))
-        }
-    }
+fn command_name_style() -> Style {
+    Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
 }
 
 fn command_hint_line(
@@ -477,12 +458,9 @@ fn command_hint_line(
         leading,
         Span::styled(
             format!(":{:<command_name_width$}", command.name),
-            command_name_style(command),
+            command_name_style(),
         ),
     ];
-    if let Some(badge) = lifecycle_badge(command.lifecycle) {
-        spans.push(badge);
-    }
     spans.push(Span::styled(command.description, Style::new().fg(FG_DIM)));
     Line::from(spans)
 }
@@ -512,9 +490,6 @@ fn help_command_line(command: &CommandSpec, context: CommandContext) -> Line<'st
         format!("{keys:<key_width$}"),
         Style::new().fg(FG_MUTED),
     )];
-    if let Some(badge) = lifecycle_badge(command.lifecycle) {
-        spans.push(badge);
-    }
     spans.push(Span::styled(command.description, Style::new().fg(FG_DIM)));
     Line::from(spans)
 }
@@ -570,12 +545,9 @@ fn command_palette_line(
         Span::styled(format!("{keys:<10}"), Style::new().fg(FG_MUTED)),
         Span::styled(
             format!(":{:<command_name_width$}", command.name),
-            command_name_style(command),
+            command_name_style(),
         ),
     ];
-    if let Some(badge) = lifecycle_badge(command.lifecycle) {
-        spans.push(badge);
-    }
     if let Some(annotation) = annotation {
         spans.push(Span::styled(annotation, Style::new().fg(FG_MUTED)));
     }
@@ -873,7 +845,7 @@ fn prefix_hint_visible_rows(frame_height: u16, line_count: usize) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::event::{COMMANDS, CommandContext, CommandLifecycle, key_label};
+    use crate::tui::event::{COMMANDS, CommandContext, key_label};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -1228,67 +1200,6 @@ mod tests {
     }
 
     #[test]
-    fn command_line_omits_planned_badge_for_project_paths() {
-        let command = COMMANDS
-            .iter()
-            .find(|command| command.name == "add-project-path")
-            .unwrap();
-        let rendered = command_line(command, CommandContext::Normal).to_string();
-        assert!(!rendered.contains("planned"));
-    }
-
-    #[test]
-    fn prefix_hint_lines_omit_planned_badge_for_project_paths() {
-        let rendered = prefix_hint_lines(CommandContext::Normal, &["p".to_string()])
-            .iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(rendered.contains(":add-project-path"));
-        assert!(!rendered.contains("planned"));
-    }
-
-    #[test]
-    fn prefix_hint_lines_show_config_shortcuts_without_planned_badge() {
-        let rendered = prefix_hint_lines(CommandContext::Normal, &["C".to_string()])
-            .iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(rendered.contains(":config-status"));
-        assert!(rendered.contains(":config-show"));
-        assert!(rendered.contains(":config-paths"));
-        assert!(rendered.contains(":database-stats"));
-        assert!(rendered.contains(":config-init"));
-        assert!(!rendered.contains("planned"));
-    }
-
-    #[test]
-    fn command_line_marks_disabled_actions() {
-        let command = CommandSpec::disabled(
-            "disabled-test",
-            "disabled test command",
-            "Test",
-            &[],
-            "test reason",
-        );
-        assert!(
-            command_line(&command, CommandContext::Normal)
-                .to_string()
-                .contains("disabled")
-        );
-    }
-
-    #[test]
-    fn disabled_lifecycle_badge_is_labeled() {
-        let badge = lifecycle_badge(CommandLifecycle::Disabled {
-            reason: "test reason",
-        })
-        .unwrap();
-        assert!(badge.content.contains("disabled"));
-    }
-
-    #[test]
     fn overlay_render_includes_command_title_and_input() {
         let rendered = render_command_overlay("ref", 3);
         assert!(rendered.contains("Command"));
@@ -1604,22 +1515,6 @@ mod tests {
     fn help_overlay_shows_scroll_position() {
         let rendered = render_help_overlay(1);
         assert!(rendered.contains("2/"));
-    }
-
-    #[test]
-    fn command_rows_render_all_lifecycle_badges_from_catalog() {
-        for command in COMMANDS {
-            let rendered = command_line(command, CommandContext::Normal).to_string();
-            assert!(rendered.contains(command.name));
-            match command.lifecycle {
-                CommandLifecycle::Implemented => {
-                    assert!(!rendered.contains("planned"));
-                    assert!(!rendered.contains("disabled"));
-                }
-                CommandLifecycle::Planned { .. } => assert!(rendered.contains("planned")),
-                CommandLifecycle::Disabled { .. } => assert!(rendered.contains("disabled")),
-            }
-        }
     }
 
     #[test]

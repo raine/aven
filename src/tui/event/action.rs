@@ -128,14 +128,6 @@ pub(crate) enum Action {
     ToggleMarkSelected,
     ToggleMarkAllInView,
     ClearMarks,
-    Planned {
-        name: &'static str,
-        reason: &'static str,
-    },
-    Disabled {
-        name: &'static str,
-        reason: &'static str,
-    },
     None,
 }
 
@@ -268,8 +260,6 @@ impl Action {
             | Self::BeginUpdate
             | Self::ShowChangelog
             | Self::BeginConfigInit
-            | Self::Planned { .. }
-            | Self::Disabled { .. }
             | Self::None => BulkSupport::NotTaskScoped,
         }
     }

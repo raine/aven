@@ -112,9 +112,10 @@ fn render_top_level_help(command: &clap::Command) -> String {
 
 fn render_section(help: &mut String, command: &clap::Command, section: &HelpSection) {
     writeln!(help, "{}", paint_heading(section.heading)).unwrap();
+    let width = help_row_width(section.commands.iter().copied());
     for name in section.commands {
         let about = command_about(command, name).unwrap_or_default();
-        render_row(help, name, &paint(name, LITERAL_STYLE), &about, 13);
+        render_row(help, name, &paint(name, LITERAL_STYLE), &about, width);
     }
     writeln!(help).unwrap();
 }
@@ -126,13 +127,19 @@ fn render_help_section(help: &mut String) {
         "help",
         &paint("help", LITERAL_STYLE),
         "Print this message or the help of the given subcommand(s)",
-        13,
+        help_row_width(["help"]),
     );
     writeln!(help).unwrap();
 }
 
 fn render_options_section(help: &mut String) {
     writeln!(help, "{}", paint_heading("OPTIONS")).unwrap();
+    let width = help_row_width([
+        "--db <DB>",
+        "--workspace <WORKSPACE>",
+        "-V, --version",
+        "-h, --help",
+    ]);
     render_row(
         help,
         "--db <DB>",
@@ -142,7 +149,7 @@ fn render_options_section(help: &mut String) {
             paint("<DB>", PLACEHOLDER_STYLE)
         ),
         "Use a specific SQLite database path",
-        27,
+        width,
     );
     render_row(
         help,
@@ -153,7 +160,7 @@ fn render_options_section(help: &mut String) {
             paint("<WORKSPACE>", PLACEHOLDER_STYLE)
         ),
         "Use a specific workspace by name or key",
-        27,
+        width,
     );
     render_row(
         help,
@@ -164,7 +171,7 @@ fn render_options_section(help: &mut String) {
             paint("--version", LITERAL_STYLE)
         ),
         "Print version",
-        27,
+        width,
     );
     render_row(
         help,
@@ -175,7 +182,7 @@ fn render_options_section(help: &mut String) {
             paint("--help", LITERAL_STYLE)
         ),
         "Print help",
-        27,
+        width,
     );
 }
 
@@ -185,6 +192,15 @@ fn command_about(command: &clap::Command, name: &str) -> Option<String> {
         .find(|subcommand| subcommand.get_name() == name)
         .and_then(|subcommand| subcommand.get_about())
         .map(|about| about.to_string())
+}
+
+fn help_row_width<'a>(names: impl IntoIterator<Item = &'a str>) -> usize {
+    names
+        .into_iter()
+        .map(str::len)
+        .max()
+        .unwrap_or_default()
+        .saturating_add(2)
 }
 
 fn render_row(
@@ -1256,6 +1272,25 @@ pub(crate) struct SyncArgs {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn help_rows_align_to_each_section_longest_command() {
+        let commands = ["add", "command-name-that-exceeds-fixed-width"];
+        let width = help_row_width(commands);
+        let mut rendered = String::new();
+
+        for command in commands {
+            render_row(&mut rendered, command, command, "description", width);
+        }
+
+        let rows = rendered.lines().collect::<Vec<_>>();
+        let description_columns = rows
+            .iter()
+            .map(|row| row.find("description").unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(description_columns[0], description_columns[1]);
+        assert!(rows[1].contains("command-name-that-exceeds-fixed-width  description"));
+    }
 
     #[test]
     fn top_level_help_sections_match_visible_commands() {
