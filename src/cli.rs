@@ -338,6 +338,7 @@ pub(crate) enum TuiViewArg {
     Upcoming,
     Conflicts,
     Epics,
+    Recurring,
     RecentActions,
 }
 
@@ -1532,6 +1533,7 @@ mod tests {
             "upcoming",
             "conflicts",
             "epics",
+            "recurring",
             "recent-actions",
         ] {
             assert!(Cli::try_parse_from(["aven", "tui", "--view", view]).is_ok());

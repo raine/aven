@@ -107,6 +107,7 @@ impl From<TuiViewArg> for TaskView {
             TuiViewArg::Upcoming => Self::Upcoming,
             TuiViewArg::Conflicts => Self::Conflicts,
             TuiViewArg::Epics => Self::Epics,
+            TuiViewArg::Recurring => Self::Recurring,
             TuiViewArg::RecentActions => Self::RecentActions,
         }
     }
@@ -204,6 +205,20 @@ mod tests {
             .unwrap();
 
         assert_eq!(launch.view_state.view, TaskView::Upcoming);
+        assert_eq!(launch.startup, TuiStartup::Browse);
+    }
+
+    #[tokio::test]
+    async fn resolves_recurring_browse_view() {
+        let (_temp, database, _conn) = setup().await;
+        let mut input = args();
+        input.view = Some(TuiViewArg::Recurring);
+
+        let launch = TuiLaunch::resolve(&database, &Workspace::default(), input)
+            .await
+            .unwrap();
+
+        assert_eq!(launch.view_state.view, TaskView::Recurring);
         assert_eq!(launch.startup, TuiStartup::Browse);
     }
 
