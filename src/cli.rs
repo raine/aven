@@ -1264,18 +1264,26 @@ mod tests {
             .filter(|subcommand| !subcommand.is_hide_set())
             .map(clap::Command::get_name)
             .collect::<BTreeSet<_>>();
-        let listed = HELP_SECTIONS
+        let listed_entries = HELP_SECTIONS
             .iter()
             .flat_map(|section| section.commands.iter().copied())
-            .collect::<BTreeSet<_>>();
+            .collect::<Vec<_>>();
+        let mut seen = BTreeSet::new();
+        let duplicates = listed_entries
+            .iter()
+            .copied()
+            .filter(|name| !seen.insert(*name))
+            .collect::<Vec<_>>();
+        let listed = listed_entries.into_iter().collect::<BTreeSet<_>>();
         let missing = visible.difference(&listed).copied().collect::<Vec<_>>();
         let invalid = listed.difference(&visible).copied().collect::<Vec<_>>();
 
         assert!(
-            missing.is_empty() && invalid.is_empty(),
-            "top-level HELP_SECTIONS drifted\nmissing visible commands: {}\nlisted names without visible commands: {}",
+            missing.is_empty() && invalid.is_empty() && duplicates.is_empty(),
+            "top-level HELP_SECTIONS drifted\nmissing visible commands: {}\nlisted names without visible commands: {}\nduplicate commands: {}",
             missing.join(", "),
-            invalid.join(", ")
+            invalid.join(", "),
+            duplicates.join(", ")
         );
     }
 
