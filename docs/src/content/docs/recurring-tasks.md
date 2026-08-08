@@ -153,6 +153,8 @@ labels, availability time, and due setting. The repetition pattern, start date,
 and time zone define the schedule and cannot be edited. Stop the recurring task
 and create another one when those properties need to change.
 
+Custom metadata can also belong to the recurring template and is copied into each task created later. Manage template metadata with `aven recur edit --metadata` or `--remove-metadata`; the TUI template editor does not expose custom metadata. See [Task metadata](/task-metadata/#recurring-task-metadata).
+
 ## Review history
 
 Open a recurring task and choose **Show history**, or press `t r h`.
@@ -185,6 +187,7 @@ See [Resolve conflicts](/sync/#resolve-conflicts) for the review workflow.
 
 - [Scheduling tasks](/schedule-tasks/) explains the availability and due-date model
   used by each dated task.
+- [Task metadata](/task-metadata/) explains custom values inherited by dated tasks.
 - [Using the TUI](/tui/) covers navigation, selection, and command discovery.
 - [Sync across devices](/sync/) covers synchronization and conflict handling.
 

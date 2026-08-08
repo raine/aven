@@ -63,6 +63,7 @@ export default defineConfig({
             { label: 'Work with agents', slug: 'agents' },
             { label: 'Sync across devices', slug: 'sync' },
             { label: 'Back up and restore', slug: 'backups' },
+            { label: 'Task metadata', slug: 'task-metadata' },
             { label: 'Tips', slug: 'tips' },
           ],
         },

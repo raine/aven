@@ -52,16 +52,16 @@ aven list --blocked
 aven list --upcoming
 aven list --overdue
 aven search "auth bug"
-aven search --project app --metadata legacy-id=123 "migration"
-aven search --has-metadata customer-id "handoff"
+aven search --project app --metadata source=github "migration"
+aven search --has-metadata review-state "handoff"
 aven context APP-7KQ9
 aven show APP-7KQ9 --full
 aven add "Fix conflict display" --status todo --priority high --label bug
-aven add "Import legacy task" --metadata legacy-id=123
-aven edit APP-7KQ9 --metadata customer-id=acme-42
-aven edit APP-7KQ9 --remove-metadata customer-id
+aven add "Review migration plan" --metadata review-state=pending
+aven edit APP-7KQ9 --metadata effort=large
+aven edit APP-7KQ9 --remove-metadata effort
 aven metadata list
-aven metadata rename legacy-id source-id
+aven metadata rename review-state approval-state
 aven add "Test rollout" --available-at tomorrow
 aven add "Submit report" --due "next monday"
 aven add "Add due dates" --epic

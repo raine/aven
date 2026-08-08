@@ -34,6 +34,10 @@ Valid statuses are `inbox`, `backlog`, `todo`, `active`, `done`, and `canceled`.
 
 Valid priorities are `none`, `low`, `medium`, `high`, and `urgent`.
 
+### Task metadata
+
+Custom task metadata uses repeatable `KEY=VALUE` assignments. Keys are normalized workspace field names, and values are opaque UTF-8 strings. An empty value is present metadata, while `--remove-metadata KEY` removes the value. See [Task metadata](/task-metadata/) for field rules, filtering, recurrence behavior, and sync semantics.
+
 ### Text input
 
 Commands that accept long text provide mutually exclusive inline, file, and standard-input forms. Pass only one source for a field. For example:
@@ -49,7 +53,7 @@ EOF
 
 ### Structured output
 
-The `--json` option is available on `context`, `show`, `list`, `search`, `recur list`, `recur show`, `recur history`, `attachment add`, `attachment list`, `attachment get`, `attachment delete`, `attachment prune`, `dep list`, `epic list`, `prime`, `label list`, `project list`, `conflict list`, `conflict show`, and `doctor`. JSON task objects from `list`, `show`, and `search` include scheduling in `available_at` and `due_on`, epic membership in `is_epic`, `epic_parent`, and `epic_children`, dependency counts in `blocked_by` and `blocks`, conflict state in `has_conflict`, and `created_at` and `updated_at` timestamps. Search results add `score`, `matched_field`, and `snippet` to this task shape. `context --json` and `show --full --json` also expose attachment metadata without bytes, including deleted attachment tombstones. Consumers must inspect each attachment's `deleted` field. An empty `available_at` means immediate availability. An empty `due_on` means no deadline.
+The `--json` option is available on `context`, `show`, `list`, `search`, `recur list`, `recur show`, `recur history`, `attachment add`, `attachment list`, `attachment get`, `attachment delete`, `attachment prune`, `dep list`, `epic list`, `prime`, `label list`, `metadata list`, `metadata show`, `project list`, `conflict list`, `conflict show`, and `doctor`. JSON task objects from `list`, `show`, and `search` include scheduling in `available_at` and `due_on`, epic membership in `is_epic`, `epic_parent`, and `epic_children`, dependency counts in `blocked_by` and `blocks`, conflict state in `has_conflict`, and `created_at` and `updated_at` timestamps. Search results add `score`, `matched_field`, and `snippet` to this task shape. `context --json` and `show --full --json` expose custom task metadata as a key-value object and as detailed records with stable field IDs. They also expose attachment metadata without bytes, including deleted attachment tombstones. Consumers must inspect each attachment's `deleted` field. An empty `available_at` means immediate availability. An empty `due_on` means no deadline.
 
 ## Temporal input
 
@@ -152,6 +156,7 @@ aven add <title> [options]
 | `--time-zone <IANA-zone>` | Interpret scheduled dates and local times in this IANA time zone. Defaults to the device zone. |
 | `--repeat-start-on <YYYY-MM-DD>` | Set the first eligible scheduled date. Defaults to the creation date in the recurring task's time zone. |
 | `--label <label>` | Add a label. Repeat for multiple labels. Labels must already exist. |
+| `--metadata <KEY=VALUE>` | Assign custom task metadata. Repeat for multiple fields. A field is created in the workspace when its key is first used. |
 | `--epic` | Create an epic container. |
 | `--natural` | Parse the title as natural-language task intake using the configured agent command. |
 
@@ -163,9 +168,9 @@ A plain task starts with status `inbox`. A recurring task starts with status
 
 `--natural` can be combined with `--project`, which fixes the project context and
 wins over any project returned by the configured intake command. It cannot be
-combined with a description source, `--status`, `--priority`, `--label`, `--epic`,
-or scheduling flags. Natural intake can infer a title, description, project,
-priority, labels, availability, due date, and recurrence schedule. Ordinary
+combined with a description source, `--status`, `--priority`, `--label`, `--metadata`,
+`--epic`, or scheduling flags. Natural intake can infer a title, description,
+project, priority, labels, availability, due date, and recurrence schedule. Ordinary
 natural intake uses status `inbox` and creates a non-epic task. Recurring natural
 intake uses status `todo`.
 
@@ -173,6 +178,7 @@ The command prints the created task's qualified reference and bare suffix.
 
 ```sh
 aven add "Fix conflict display" --project aven --status todo --priority high --label bug
+aven add "Review migration plan" --metadata source=github --metadata review-state=pending
 aven add "Review launch notes" --available-at "next monday at 9am"
 aven add "Submit expense report" --due "next fri"
 aven add "Add release automation" --epic
@@ -197,6 +203,9 @@ aven list [options]
 | `--status <status>` | Match one status. |
 | `--priority <priority>` | Match one priority. |
 | `--label <label>` | Match one label. |
+| `--metadata <KEY=VALUE>` | Match an exact custom metadata value. Repeat to require multiple values. |
+| `--has-metadata <KEY>` | Match tasks with a value for this metadata field, including an empty string. |
+| `--missing-metadata <KEY>` | Match tasks without a value for this metadata field. |
 | `--open` | Show available, live tasks whose status is not `done` or `canceled`. |
 | `--all` | Include deleted tasks alongside live tasks. |
 | `--deleted` | Show deleted tasks only. Normal filters still apply. |
@@ -221,6 +230,9 @@ Normal lists hide open tasks whose availability time is in the future. They incl
 aven list --status active
 aven list --open
 aven list --open --project aven --label bug --limit 20
+aven list --metadata review-state=pending
+aven list --has-metadata effort
+aven list --missing-metadata release-channel
 aven list --ready
 aven list --upcoming
 aven list --upcoming --project aven --limit 10
@@ -234,13 +246,18 @@ aven list --deleted --json
 Search task references, titles, descriptions, projects, labels, notes, statuses, priorities, and current attachment filenames and alternative text across the active workspace. Pass `--project` to restrict every candidate source to one project before ranking and limiting. Done and canceled tasks participate in normal search. Deleted tasks require `--all`.
 
 ```sh
-aven search <query>... [--project <project>] [--limit <number>] [--all] [--expand-recurring] [--json]
+aven search <query>... [--project <project>] [--metadata <KEY=VALUE>] \
+  [--has-metadata <KEY>] [--missing-metadata <KEY>] \
+  [--limit <number>] [--all] [--expand-recurring] [--json]
 ```
 
 | Argument or option | Description |
 | --- | --- |
 | `<query>...` | One or more search terms. Multiple shell arguments are joined with spaces. |
 | `--project <project>` | Search only the selected project, resolved by key or name in the active workspace. |
+| `--metadata <KEY=VALUE>` | Restrict candidates to an exact custom metadata value. Repeat to require multiple values. |
+| `--has-metadata <KEY>` | Restrict candidates to tasks with a value for this metadata field. |
+| `--missing-metadata <KEY>` | Restrict candidates to tasks without a value for this metadata field. |
 | `--limit <number>` | Maximum result count. Must be at least `1` and defaults to `50`. |
 | `--all` | Include deleted tasks. |
 | `--expand-recurring` | Return each matching dated task instead of grouping past matches by recurring task. |
@@ -251,6 +268,8 @@ Text output identifies the matched field and score and prints a snippet when ava
 ```sh
 aven search "auth bug"
 aven search --project app "auth bug"
+aven search "migration" --metadata source=github
+aven search "handoff" --has-metadata review-state
 aven search APP-7KQ9
 aven search recovery --all --json
 ```
@@ -263,7 +282,7 @@ Print a complete context snapshot for one task.
 aven context <task-ref> [--json]
 ```
 
-The snapshot includes stable identity, display reference, task fields, description, project and workspace metadata, labels, notes, dependencies, dependents, epic membership, recurring-task metadata, deletion state, and unresolved conflicts. It also derives whether the task is blocked, has conflicts, or blocks open work.
+The snapshot includes stable identity, display reference, task fields, description, custom task metadata, project and workspace metadata, labels, notes, dependencies, dependents, epic membership, recurring-task metadata, deletion state, and unresolved conflicts. It also derives whether the task is blocked, has conflicts, or blocks open work.
 
 ```sh
 aven context APP-7KQ9
@@ -280,7 +299,7 @@ aven show <task-ref> [--full] [--json]
 
 | Option | Description |
 | --- | --- |
-| `--full` | Include the description, project prefix, dependency summary, notes, and unresolved conflicts. |
+| `--full` | Include the description, custom metadata, project prefix, dependency summary, notes, and unresolved conflicts. |
 | `--json` | Print JSON. With `--full`, emit the expanded task object. |
 
 The compact form prints the task's main fields and relationships. Use `context` when workspace and project metadata or derived state flags are also needed.
@@ -313,8 +332,8 @@ schedule, time zone, next task reference, and history counts.
 aven recur show <recurring-or-task-ref> [--json]
 ```
 
-Show the schedule, settings used for future tasks, next task, history summary,
-and unresolved state conflicts.
+Show the schedule, settings used for future tasks, template metadata, next task,
+history summary, and unresolved state conflicts.
 
 #### `recur history`
 
@@ -347,6 +366,8 @@ aven recur edit <recurring-or-task-ref> [options]
 | `--status <status>` | Change the starting status used by future tasks. |
 | `--priority <priority>` | Change the priority used by future tasks. |
 | `--label <label>` | Replace future labels. Repeat for multiple labels. |
+| `--metadata <KEY=VALUE>` | Assign metadata to the recurring template used by future tasks. Repeat for multiple fields. |
+| `--remove-metadata <KEY>` | Remove metadata from the recurring template used by future tasks. Repeat for multiple fields. |
 | `--repeat-at <HH:MM\|none>` | Change or clear the future availability time. |
 | `--repeat-due <same-day\|none>` | Change the future due setting. |
 
@@ -495,8 +516,10 @@ aven edit <task-ref> [options]
 | `--epic <on-or-off>` | Set epic state. Accepted true values are `on`, `true`, and `1`; accepted false values are `off`, `false`, and `0`. |
 | `--label <label>` | Add an existing label. Repeat as needed. |
 | `--remove-label <label>` | Remove a label. Repeat as needed. |
+| `--metadata <KEY=VALUE>` | Assign custom metadata. Repeat for multiple fields. An empty value remains present metadata. |
+| `--remove-metadata <KEY>` | Remove custom metadata. Repeat for multiple fields. |
 
-Description sources are mutually exclusive. `--available-at` and `--clear-available-at` are mutually exclusive. `--due` and `--clear-due` are mutually exclusive. Aven reports whether the update changed the task.
+Description sources are mutually exclusive. `--available-at` and `--clear-available-at` are mutually exclusive. `--due` and `--clear-due` are mutually exclusive. The same metadata key cannot appear in both `--metadata` and `--remove-metadata`. Aven reports whether the update changed the task.
 
 A task with epic children cannot have epic state turned off. Epic containers cannot become children of another epic.
 
@@ -508,6 +531,8 @@ aven edit APP-7KQ9 --clear-available-at
 aven edit APP-7KQ9 --due "in 1 month"
 aven edit APP-7KQ9 --clear-due
 aven edit APP-7KQ9 --label docs --remove-label bug
+aven edit APP-7KQ9 --metadata effort=large --metadata review-state=pending
+aven edit APP-7KQ9 --remove-metadata review-state
 aven edit APP-7KQ0 --epic on
 ```
 
@@ -633,13 +658,17 @@ Mutations:
 | `--set-project <project>` | Move tasks to an existing project. |
 | `--label <label>` | Add an existing label. Repeat as needed. |
 | `--remove-label <label>` | Remove a label. Repeat as needed. |
+| `--metadata <KEY=VALUE>` | Assign custom metadata. Repeat for multiple fields. |
+| `--remove-metadata <KEY>` | Remove custom metadata. Repeat for multiple fields. |
 | `--dry-run` | Print the planned result without writing. |
 
-At least one selector and one mutation are required. Selector options combine as an intersection. Availability dates do not limit bulk selection, so future tasks are included when they match. The same label cannot appear in both `--label` and `--remove-label`. Before any write, aven validates the entire selected set and rejects updates to fields with unresolved conflicts. A bulk update commits all selected changes in one transaction, and any task failure rolls back the complete set. Successful output includes one line per task and a matched, changed, unchanged, and dry-run summary.
+At least one selector and one mutation are required. Selector options combine as an intersection. Availability dates do not limit bulk selection, so future tasks are included when they match. The same label cannot appear in both `--label` and `--remove-label`, and the same metadata key cannot appear in both `--metadata` and `--remove-metadata`. Before any write, aven validates the entire selected set and rejects updates to fields with unresolved conflicts. A dry run does not create metadata fields. A bulk update commits all selected changes in one transaction, and any task failure rolls back the complete set. Successful output includes one line per task and a matched, changed, unchanged, and dry-run summary.
 
 ```sh
 aven bulk-update --project aven --status todo --set-priority high --dry-run
+aven bulk-update --project aven --metadata review-state=pending --dry-run
 aven bulk-update --filter-label old --label migrated --remove-label old
+aven bulk-update --all --remove-metadata review-note
 aven bulk-update --all --set-status backlog
 ```
 
@@ -748,6 +777,26 @@ aven label create bug
 aven label list --search bu
 aven label delete bug
 ```
+
+### `aven metadata`
+
+Inspect and rename custom metadata fields in the active workspace. Fields are created automatically when a task or recurring task template first uses a key.
+
+```sh
+aven metadata list [--json]
+aven metadata show <key> [--json]
+aven metadata rename <key> <new-key>
+```
+
+`metadata list` prints every field's key, stable ID, task count, and recurring-template count. `metadata show` prints the same information for one key. `metadata rename` changes the displayed key while preserving the field ID and every related value. The previous key becomes available for a separate field. Metadata fields have no delete command.
+
+```sh
+aven metadata list --json
+aven metadata show review-state
+aven metadata rename review-state approval-state
+```
+
+See [Task metadata](/task-metadata/) for key rules, value semantics, filtering, and recurring task behavior.
 
 ## Sync commands
 
