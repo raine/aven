@@ -1669,7 +1669,7 @@ fn extend_epic_parent_section(
     };
     let active = active_target == Some(&target);
     let rendered =
-        epic_child_tree_item_lines(parent, &[], EpicChildState::Live, true, width, active);
+        epic_child_tree_item_lines(parent, &[], EpicChildState::Live, true, true, width, active);
     push_interactive_lines(lines, rows, target, rendered);
 }
 
@@ -1742,6 +1742,7 @@ fn extend_epic_children_section(
             &child.dependencies,
             child.state,
             is_last,
+            false,
             width,
             active_target == Some(&target),
         );
@@ -1796,6 +1797,7 @@ fn epic_child_tree_item_lines(
     dependencies: &[crate::query::TaskDependencyLink],
     state: EpicChildState,
     is_last: bool,
+    show_epic_marker: bool,
     width: usize,
     hovered: bool,
 ) -> Vec<Line<'static>> {
@@ -1828,11 +1830,22 @@ fn epic_child_tree_item_lines(
     } else {
         Style::new().fg(FG_DIM)
     };
-    let prefix = vec![
-        Span::styled(tree_glyph, tree_style),
+    let mut prefix = vec![Span::styled(tree_glyph, tree_style)];
+    if show_epic_marker {
+        let marker_style = if hovered {
+            Style::new().fg(YELLOW).bg(BG_PANEL)
+        } else {
+            Style::new().fg(YELLOW)
+        };
+        prefix.extend([
+            Span::styled(EPIC_MARKER, marker_style),
+            Span::styled(" ", gap_style),
+        ]);
+    }
+    prefix.extend([
         Span::styled(link.display_ref.clone(), ref_style),
         Span::styled("  ", gap_style),
-    ];
+    ]);
     let title = if removed {
         format!("{}  [removed]", link.title)
     } else {
@@ -3285,7 +3298,17 @@ mod tests {
         let lines = detail_body_lines(&item, 60, None);
 
         assert_eq!(lines[0].to_string(), "EPIC PARENT");
-        assert!(lines[1].to_string().contains("APP-EPIC"));
+        assert!(
+            lines[1]
+                .to_string()
+                .starts_with(&format!("└─ {EPIC_MARKER} APP-EPIC"))
+        );
+        let marker = lines[1]
+            .spans
+            .iter()
+            .find(|span| span.content == EPIC_MARKER)
+            .expect("epic parent marker");
+        assert_eq!(marker.style.fg, Some(YELLOW));
         assert!(
             lines
                 .iter()
