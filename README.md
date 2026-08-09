@@ -1,17 +1,16 @@
 # aven
 
-`aven` is a local-first task manager for power users and agents. It gives you
-one overview across projects, task capture from wherever work appears,
-first-class agent workflows, workspace isolation, and a polished terminal UI.
+`aven` is a local-first task manager for power users and agents. It gives you one overview across
+projects, task capture from wherever work appears, first-class agent workflows, workspace isolation,
+and a polished terminal UI.
 
-It is currently under active development, but already works really well and I
-use it as my daily driver.
+It is currently under active development, but already works really well and I use it as my daily
+driver.
 
 If you've tried aven, feedback is welcome! Please
 [open an issue](https://github.com/raine/aven/issues) to share it.
 
-If you find aven useful, consider sharing it with others who might benefit from
-it.
+If you find aven useful, consider sharing it with others who might benefit from it.
 
 Docs: <https://aven.raine.dev>
 
@@ -19,39 +18,31 @@ Docs: <https://aven.raine.dev>
 
 ## Why aven?
 
-- **Offline-first, repo-independent storage.** Tasks live in a local SQLite
-  database, not in tracked files inside each repo. Task capture and agent
-  updates stay independent from git state, branches, worktrees, and checkouts.
+The CLI is agent-first, while the [power-user TUI](https://aven.raine.dev/tui/) gives humans a
+keyboard-driven path to every action.
 
-- **Optional self-hosted sync.** Keep the local-first workflow and make the same
-  tasks available across devices through a server you control.
+The [queue view](https://aven.raine.dev/concepts/#queue) brings together tasks from every project
+and shows what needs action, what is blocked, and what to focus on next.
 
-- **Projects map to repos.** Each repository becomes a project by default,
-  created on demand when you add its first task.
+Aven keeps tasks in a local SQLite database instead of tracked files inside each project repo. You
+and your agents can capture and update tasks offline, independent of git state, branches, worktrees,
+or checkouts. If you need the same tasks on more than one device, you can
+[sync them through a server you control](https://aven.raine.dev/sync/).
 
-- **Agent-first CLI, human-first TUI.** Agents get token-efficient output,
-  stable refs, and commands for capturing follow-up work, updating tasks, and
-  preserving context from AI coding agents. Humans get a polished,
-  keyboard-first TUI with project views, filters, sorting, task detail, undo,
-  mouse support, and command palette.
+Repositories map to projects by default. Aven creates a project when you add its first task, and
+gives each task a short Jira/Linear-style ID such as `APP-7KQ9`. Aven can generate them without a
+server connection, and the project prefix shows where each task belongs.
 
-- **Unique task IDs.** Short, Jira/Linear-style IDs like `APP-7KQ9` work
-  offline and show each task's project at a glance.
+[Workspaces](https://aven.raine.dev/organize-tasks/#separate-work-with-workspaces) keep personal and
+work tasks in separate views while sharing one database. You can map a directory such as `~/work` to
+a workspace. When you run aven from that directory, it selects the workspace automatically.
 
-- **Workspaces are first class.** Personal and work tasks can share the same
-  database while staying in separate visible task universes. Workspace routes
-  can make a directory such as `~/work` open the matching workspace
-  automatically.
+Markdown descriptions, append-style notes, and
+[image attachments](https://aven.raine.dev/tui/#image-attachments) keep task context available to
+you and your agents. You can capture work through natural-language input, a tmux popup, or
+agent-friendly commands, then schedule it to appear when it needs your attention.
 
-- **Markdown-native tasks.** Tasks carry Markdown descriptions and append-style
-  notes, so context stays with the task.
-
-- **Fast capture from anywhere.** Natural-language task intake, tmux popup
-  capture, scheduling tasks to appear later, and agent-friendly commands make
-  it easy to add tasks and surface them when attention becomes useful.
-
-Inspired by Taskwarrior. See
-[aven and Taskwarrior](https://aven.raine.dev/taskwarrior/).
+Inspired by Taskwarrior. See [aven and Taskwarrior](https://aven.raine.dev/taskwarrior/).
 
 ## Quick start
 
@@ -79,11 +70,9 @@ Or try the demo:
 aven demo
 ```
 
-Every demo run starts from the same sample data, and changes are discarded on
-exit.
+Every demo run starts from the same sample data, and changes are discarded on exit.
 
-See [Getting started](https://aven.raine.dev/getting-started/) for first-run
-usage.
+See [Getting started](https://aven.raine.dev/getting-started/) for first-run usage.
 
 ## Documentation
 
