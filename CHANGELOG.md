@@ -9,48 +9,52 @@ description: Release notes for aven.
   presence filters, bulk updates, field listing and renaming, and full text,
   JSON, and Markdown detail output. Metadata values are opaque strings, and
   renaming a field preserves its stable identity without rewriting every task.
-- Metadata syncs across replicas, participates in conflict resolution and undo,
-  survives portable export and import, and can be inherited by future recurring
-  task occurrences. The Rust consumer API and UniFFI facade expose the same
-  detailed metadata records.
-- The Epics view summarizes child completion, ready, blocked, overdue, and
-  recent activity directly in parent rows, with responsive progress such as
-  `1/5 done` and distinct canceled counts.
-- Epic detail views show unresolved blockers beneath affected child tasks.
+- The [Epics view](/organize-tasks/#group-an-outcome-with-an-epic) summarizes
+  child completion, ready, blocked, overdue, and recent activity directly in
+  parent rows, with responsive progress such as `1/5 done` and distinct canceled
+  counts.
+- Epic detail views show
+  [unresolved blockers](/organize-tasks/#put-work-in-order-with-dependencies)
+  beneath affected child tasks.
 
 ## v0.1.25 (2026-08-07)
 
-- Fix: Sorting by updated time shows the most recently updated tasks first by
-  default.
-- Fix: Task details stay in sync after changes, including status and notes,
-  while preserving the scroll position.
+- Fix: [Sorting](/tui/#search-filter-and-order) by updated time shows the most
+  recently updated tasks first by default.
+- Fix: [Task details](/tui/#task-detail) stay in sync after changes, including
+  status and notes, while preserving the scroll position.
 
 ## v0.1.24 (2026-08-05)
 
-- New: Press `Ctrl-g` in the task composer to create a task and immediately
-  start another with the same project, status, priority, and labels.
-- Marked tasks open a dedicated bulk-action mode that highlights compatible
-  commands, explains single-task restrictions, and clears all marks with `Esc`.
-- Copy references, durable IDs, or titles for marked tasks as one value per line
-  in their visible list order.
-- Browse command palette results with the arrow keys and `Enter`, cycle the full
-  catalog with `Tab` or `Shift-Tab`, and track your position with a scrollbar.
+- New: Press `Ctrl-g` in the [task composer](/tui/#capture-tasks) to create a
+  task and immediately start another with the same project, status, priority,
+  and labels.
+- [Marked tasks](/tui/#mark-and-change-several-tasks) open a dedicated
+  bulk-action mode that highlights compatible commands, explains single-task
+  restrictions, and clears all marks with `Esc`.
+- [Copy references, durable IDs, or titles](/tui/#copy-task-information) for
+  marked tasks as one value per line in their visible list order.
+- Browse [command palette](/tui/#discover-commands) results with the arrow keys
+  and `Enter`, cycle the full catalog with `Tab` or `Shift-Tab`, and track your
+  position with a scrollbar.
 - Empty task views explain better why no tasks are shown and suggest relevant
   actions.
 
 ## v0.1.23 (2026-08-04)
 
-- New: Copy a complete task report as Markdown with `y m`, or publish it as a
-  secret GitHub gist with `t g` and copy the resulting link.
+- New: [Copy a complete task report as Markdown](/tui/#copy-task-information)
+  with `y m`, or
+  [publish it as a secret GitHub gist](/tui/#publish-a-task-report-as-a-github-gist)
+  with `t g` and copy the resulting link.
 - New: Click web links in task descriptions and notes to open them in the
   default browser, while link labels remain compact and readable.
 - New: Navigate forward after going back with `g ]`, with list selection, scroll
   position, and task detail state preserved.
-- New: Disable automatic release checks and update badges with
-  `update.automatic_checks: false` or `AVEN_NO_UPDATE_CHECK=1`; manual update
-  commands remain available.
-- New: Type immediately in project and workspace pickers to filter options, then
-  use the arrow keys and `Enter` to select one.
+- New: [Disable automatic release checks](/configuration/#automatic-update-checks)
+  and update badges with `update.automatic_checks: false` or
+  `AVEN_NO_UPDATE_CHECK=1`; manual update commands remain available.
+- New: Type immediately in [project and workspace pickers](/tui/#scope) to
+  filter options, then use the arrow keys and `Enter` to select one.
 
 ## v0.1.22 (2026-08-03)
 
