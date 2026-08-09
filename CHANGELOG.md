@@ -3,17 +3,12 @@ title: Changelog
 description: Release notes for aven.
 ---
 
-## Unreleased
+## v0.1.26 (2026-08-09)
 
-- Add [workspace-scoped task metadata](/task-metadata/) with
-  `--metadata KEY=VALUE`, exact and presence filters, bulk updates, field listing
-  and renaming, and full text, JSON, and Markdown detail output. Metadata values
-  are opaque strings, and renaming a field preserves its stable identity without
-  rewriting every task.
-- Metadata syncs across replicas, participates in conflict resolution and undo,
-  survives portable export and import, and can be inherited by future recurring
-  task occurrences. The Rust consumer API and UniFFI facade expose the same
-  detailed metadata records.
+- Add [task metadata](/task-metadata/) with `--metadata KEY=VALUE`, exact and
+  presence filters, bulk updates, field listing and renaming, and full text,
+  JSON, and Markdown detail output. Metadata values are opaque strings, and
+  renaming a field preserves its stable identity without rewriting every task.
 - The [Epics view](/organize-tasks/#group-an-outcome-with-an-epic) summarizes
   child completion, ready, blocked, overdue, and recent activity directly in
   parent rows, with responsive progress such as `1/5 done` and distinct canceled
@@ -21,6 +16,10 @@ description: Release notes for aven.
 - Epic detail views show
   [unresolved blockers](/organize-tasks/#put-work-in-order-with-dependencies)
   beneath affected child tasks.
+- Open the Recurring Tasks view directly with `aven tui --view recurring`.
+- Read and update supported non-secret settings with `aven config get` and
+  `aven config set`, including sync, update-check, database-path, and image
+  optimization settings. Updates preserve comments and unrelated settings.
 
 ## v0.1.25 (2026-08-07)
 
@@ -55,7 +54,8 @@ description: Release notes for aven.
   default browser, while link labels remain compact and readable.
 - New: Navigate forward after going back with `g ]`, with list selection, scroll
   position, and task detail state preserved.
-- New: [Disable automatic release checks](/configuration/#automatic-update-checks)
+- New:
+  [Disable automatic release checks](/configuration/#automatic-update-checks)
   and update badges with `update.automatic_checks: false` or
   `AVEN_NO_UPDATE_CHECK=1`; manual update commands remain available.
 - New: Type immediately in [project and workspace pickers](/tui/#scope) to
