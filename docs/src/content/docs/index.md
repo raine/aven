@@ -34,7 +34,7 @@ Task IDs provide stable identity. They can be created offline on different devic
 
 Context stays with the task. Markdown descriptions, notes, and image attachments hold problem statements, decisions, blockers, screenshots, and partial progress.
 
-Workspaces keep personal and work tasks separate, including their queues, IDs, labels, and projects. Workspace routes can make a directory such as `~/work` open the matching workspace automatically. You can also choose a workspace directly in the TUI.
+Workspaces keep personal and work tasks in the same database while separating their queues, IDs, labels, and projects. Workspace routes can make a directory such as `~/work` open the matching workspace automatically. You can also choose a workspace directly in the TUI.
 
 ## Where to go next
 

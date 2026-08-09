@@ -39,7 +39,9 @@ Docs: <https://aven.raine.dev>
   offline and show each task's project at a glance.
 
 - **Workspaces are first class.** Personal and work tasks can share the same
-  tool without sharing the same visible task universe.
+  database while staying in separate visible task universes. Workspace routes
+  can make a directory such as `~/work` open the matching workspace
+  automatically.
 
 - **Markdown-native tasks.** Tasks carry Markdown descriptions and append-style
   notes, so context stays with the task.
