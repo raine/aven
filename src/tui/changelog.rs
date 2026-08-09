@@ -17,20 +17,56 @@ const LOADING_MESSAGE: &str = "## Loading changelog…";
 const UNAVAILABLE_MESSAGE: &str =
     "## Changelog unavailable\n\nAven could not load the changelog from GitHub.";
 const CHANGELOG_URL_PREFIX: &str = "https://raw.githubusercontent.com/raine/aven";
-const CACHE_SCHEMA: u32 = 1;
+const HISTORICAL_CHANGELOG_REF: &str = "main";
+const CACHE_SCHEMA: u32 = 2;
 
 #[derive(Deserialize, Serialize)]
 struct ChangelogCache {
     schema: u32,
+    historical: Option<String>,
+    release: Option<CachedReleaseChangelog>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct CachedReleaseChangelog {
     git_ref: String,
     markdown: String,
+}
+
+impl ChangelogCache {
+    fn empty() -> Self {
+        Self {
+            schema: CACHE_SCHEMA,
+            historical: None,
+            release: None,
+        }
+    }
+
+    fn markdown(&self, git_ref: &str) -> Option<&str> {
+        if git_ref == HISTORICAL_CHANGELOG_REF {
+            self.historical.as_deref()
+        } else {
+            self.release
+                .as_ref()
+                .filter(|cached| cached.git_ref == git_ref)
+                .map(|cached| cached.markdown.as_str())
+        }
+    }
+
+    fn insert(&mut self, git_ref: String, markdown: String) {
+        if git_ref == HISTORICAL_CHANGELOG_REF {
+            self.historical = Some(markdown);
+        } else {
+            self.release = Some(CachedReleaseChangelog { git_ref, markdown });
+        }
+    }
 }
 
 pub(super) struct ChangelogController {
     fetch: Option<JoinHandle<Result<FetchedChangelog>>>,
     fetch_ref: Option<String>,
     visible_ref: Option<String>,
-    cached: Option<(String, String)>,
+    cached: Option<ChangelogCache>,
 }
 
 struct FetchedChangelog {
@@ -55,19 +91,14 @@ impl ChangelogController {
 
 impl App {
     pub(super) fn show_changelog(&mut self) {
-        let git_ref = self.update.changelog_ref();
+        let git_ref = HISTORICAL_CHANGELOG_REF.to_string();
         self.changelog.visible_ref = Some(git_ref.clone());
-        self.load_changelog_cache(&git_ref);
-        if let Some(markdown) = self.cached_changelog(&git_ref) {
-            self.overlay = Some(OverlayState::Changelog(ChangelogState {
-                markdown,
-                scroll: 0,
-            }));
-            return;
-        }
-
+        self.load_changelog_cache();
+        let markdown = self
+            .cached_changelog(&git_ref)
+            .unwrap_or_else(|| LOADING_MESSAGE.to_string());
         self.overlay = Some(OverlayState::Changelog(ChangelogState {
-            markdown: LOADING_MESSAGE.to_string(),
+            markdown,
             scroll: 0,
         }));
         self.start_changelog_fetch(git_ref);
@@ -76,7 +107,7 @@ impl App {
     pub(super) fn show_update_release(&mut self, release: crate::update::Release, cached: bool) {
         let git_ref = release.tag.clone();
         self.changelog.visible_ref = Some(git_ref.clone());
-        self.load_changelog_cache(&git_ref);
+        self.load_changelog_cache();
         let notes = self
             .cached_changelog(&git_ref)
             .map(UpdateNotesState::Ready)
@@ -94,12 +125,12 @@ impl App {
         }
     }
 
-    fn load_changelog_cache(&mut self, git_ref: &str) {
+    fn load_changelog_cache(&mut self) {
         if cache_enabled()
             && self.changelog.cached.is_none()
-            && let Some(cache) = load_cache().filter(|cache| cache.git_ref == git_ref)
+            && let Some(cache) = load_cache()
         {
-            self.changelog.cached = Some((cache.git_ref, cache.markdown));
+            self.changelog.cached = Some(cache);
         }
     }
 
@@ -107,8 +138,8 @@ impl App {
         self.changelog
             .cached
             .as_ref()
-            .filter(|(cached_ref, _)| cached_ref == git_ref)
-            .map(|(_, markdown)| markdown.clone())
+            .and_then(|cache| cache.markdown(git_ref))
+            .map(str::to_string)
     }
 
     fn start_changelog_fetch(&mut self, git_ref: String) {
@@ -141,22 +172,46 @@ impl App {
             .take()
             .expect("finished changelog fetch must exist")
             .await;
-        self.changelog.fetch_ref = None;
-        let (git_ref, markdown) = match result {
-            Ok(Ok(result)) => (result.git_ref, result.markdown),
-            Ok(Err(_)) | Err(_) => (String::new(), UNAVAILABLE_MESSAGE.to_string()),
-        };
-        let visible =
-            git_ref.is_empty() || self.changelog.visible_ref.as_deref() == Some(git_ref.as_str());
-        if !git_ref.is_empty() {
-            if cache_enabled() {
-                save_cache(&ChangelogCache {
-                    schema: CACHE_SCHEMA,
-                    git_ref: git_ref.clone(),
-                    markdown: markdown.clone(),
-                });
+        let requested_ref = self
+            .changelog
+            .fetch_ref
+            .take()
+            .expect("changelog fetch must have a ref");
+        let FetchedChangelog { git_ref, markdown } = match result {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) | Err(_) => {
+                let visible = self.changelog.visible_ref.as_deref() == Some(requested_ref.as_str());
+                if !visible || self.cached_changelog(&requested_ref).is_some() {
+                    return false;
+                }
+                return match self.overlay.as_mut() {
+                    Some(OverlayState::Changelog(state)) => {
+                        state.markdown = UNAVAILABLE_MESSAGE.to_string();
+                        state.scroll = 0;
+                        true
+                    }
+                    Some(OverlayState::Update(UpdateOverlayState::Available {
+                        notes,
+                        scroll,
+                        ..
+                    })) => {
+                        *notes = UpdateNotesState::Failed;
+                        *scroll = 0;
+                        true
+                    }
+                    _ => false,
+                };
             }
-            self.changelog.cached = Some((git_ref.clone(), markdown.clone()));
+        };
+        debug_assert_eq!(git_ref, requested_ref);
+        let visible = self.changelog.visible_ref.as_deref() == Some(git_ref.as_str());
+        let cache = self
+            .changelog
+            .cached
+            .get_or_insert_with(ChangelogCache::empty);
+        cache.insert(git_ref, markdown.clone());
+        if cache_enabled() {
+            save_cache(cache);
         }
         if visible {
             match self.overlay.as_mut() {
@@ -168,11 +223,7 @@ impl App {
                 Some(OverlayState::Update(UpdateOverlayState::Available {
                     notes, scroll, ..
                 })) => {
-                    *notes = if git_ref.is_empty() {
-                        UpdateNotesState::Failed
-                    } else {
-                        UpdateNotesState::Ready(markdown)
-                    };
+                    *notes = UpdateNotesState::Ready(markdown);
                     *scroll = 0;
                     return true;
                 }
@@ -329,6 +380,40 @@ fn parse_changelog(source: Option<&str>) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn historical_changelog_uses_the_default_branch() {
+        assert_eq!(HISTORICAL_CHANGELOG_REF, "main");
+    }
+
+    #[test]
+    fn cache_keeps_historical_and_release_content_independently() {
+        let mut cache = ChangelogCache::empty();
+        cache.insert("main".to_string(), "latest history".to_string());
+        cache.insert("v2.0.0".to_string(), "release notes".to_string());
+
+        assert_eq!(cache.markdown("main"), Some("latest history"));
+        assert_eq!(cache.markdown("v2.0.0"), Some("release notes"));
+
+        cache.insert("v3.0.0".to_string(), "next release".to_string());
+
+        assert_eq!(cache.markdown("main"), Some("latest history"));
+        assert_eq!(cache.markdown("v2.0.0"), None);
+        assert_eq!(cache.markdown("v3.0.0"), Some("next release"));
+    }
+
+    #[test]
+    fn cache_round_trip_preserves_both_content_sources() {
+        let mut cache = ChangelogCache::empty();
+        cache.insert("main".to_string(), "latest history".to_string());
+        cache.insert("v2.0.0".to_string(), "release notes".to_string());
+
+        let json = serde_json::to_string(&cache).unwrap();
+        let restored = serde_json::from_str::<ChangelogCache>(&json).unwrap();
+
+        assert_eq!(restored.markdown("main"), Some("latest history"));
+        assert_eq!(restored.markdown("v2.0.0"), Some("release notes"));
+    }
 
     #[test]
     fn github_changelog_uses_release_content_without_front_matter() {
