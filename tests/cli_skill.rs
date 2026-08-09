@@ -27,12 +27,10 @@ fn skill_install_targets_explicit_agent() {
     contains_all(
         &installed,
         &[
-            "`list`, `show`, and `search` JSON use the same flat task object",
-            "Search adds",
-            "`score`",
-            "`matched_field`",
-            "`snippet`",
-            "dependency, conflict, timestamp, and recurrence state",
+            "# Aven CLI Primer",
+            "aven list --ready",
+            "aven context APP-7KQ9",
+            "aven edit APP-7KQ9 --status active",
         ],
     );
     assert!(!home.join(".codex/skills/aven/SKILL.md").exists());
