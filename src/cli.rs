@@ -46,7 +46,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
     },
     HelpSection {
         heading: "WORKSPACE",
-        commands: &["workspace", "project", "label"],
+        commands: &["workspace", "project", "label", "metadata"],
     },
     HelpSection {
         heading: "SYNC",
