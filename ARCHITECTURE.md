@@ -94,7 +94,7 @@
 1. Local mutations append operation-log rows in `changes`.
 2. Unsynced rows have `server_seq IS NULL`.
 3. `crates/aven-core/src/sync/session.rs` prepares bounded metadata and attachment exchanges. Attachment additions probe server inventory, upload missing content-addressed objects under lifecycle leases, confirm admission, and then send metadata. Missing local objects are downloaded after metadata application. Each round is bounded by object and byte budgets.
-4. `src/sync/client.rs` sends each prepared exchange with Reqwest and returns the HTTP status, relevant headers, and decoded response bytes to the core session. Repeated preparation returns the same outstanding request until the page is accepted or explicitly failed.
+4. `src/sync/client.rs` executes core-owned retry and timeout guidance with Reqwest, replays the outstanding prepared exchange byte-for-byte, and returns the HTTP status, relevant headers, and decoded response bytes to the core session. Repeated preparation returns the same outstanding request until the page is accepted or explicitly failed.
 5. `crates/aven-core/src/sync/wire.rs` owns the protocol version, request limits, cursor validation, response validation, and daemon sync budget constants.
 6. `src/sync/server.rs` owns Axum presentation and authentication, while core sync persistence validates accepted operations and constructs bounded response pages.
 7. The server assigns strictly increasing `server_seq` values to accepted changes, reuses existing values for duplicate pushed change IDs, returns one bounded pull page, and sets `has_more` when rows remain after the page.
@@ -273,7 +273,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 1. Update the prepared exchange and outstanding page contract in `crates/aven-core/src/sync/session.rs`.
 2. Update the wire contract and shared constants in `crates/aven-core/src/sync/wire.rs`.
 3. Keep request preparation, response validation, acknowledgements, and cursor advancement aligned in `crates/aven-core/src/sync/persistence.rs`.
-4. Keep the Reqwest adapter in `src/sync/client.rs` limited to sending prepared requests and returning response bytes.
+4. Keep the Reqwest adapter in `src/sync/client.rs` limited to executing prepared requests and core-owned retry and timeout guidance. Host transports own connection management, cancellable waits, and sleeping, while core owns request classification, retry bounds, backoff, and outstanding request identity.
 5. Keep the Axum handler in `src/sync/server.rs` aligned with core sequence allocation, duplicate push acknowledgements, and bounded pull pages.
 6. Keep remote apply in `crates/aven-core/src/sync/apply/` transaction-safe and cursor-safe.
 7. Keep daemon work in `src/daemon.rs` bounded by `DAEMON_SYNC_PAGE_BUDGET`, with incomplete rounds scheduling follow-up sync.

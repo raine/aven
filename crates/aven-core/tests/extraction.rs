@@ -2,7 +2,7 @@ use aven_core::choices::TaskSource;
 use aven_core::db::Database;
 use aven_core::metadata::TaskMetadataInput;
 use aven_core::operations::{TaskDraft, TaskUpdate};
-use aven_core::sync::SyncSession;
+use aven_core::sync::{SyncHttpHeader, SyncRetryDecision, SyncSession};
 use aven_core::undo::UndoContext;
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{Connection, SqliteConnection};
@@ -568,6 +568,73 @@ async fn task_delete_and_restore_roll_back_when_change_logging_fails() {
                 .unwrap();
         }
     }
+}
+
+#[tokio::test]
+async fn sync_retry_policy_preserves_the_outstanding_request() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = Database::open(&directory.path().join("aven.sqlite"))
+        .await
+        .unwrap();
+    let mut session = SyncSession::start(
+        database,
+        "https://sync.example.test".to_string(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let first = session.prepare_request().await.unwrap().unwrap();
+    assert_eq!(first.timeout.attempt_ms, 30_000);
+    assert_eq!(first.timeout.inactivity_ms, 10_000);
+    assert_eq!(
+        session
+            .register_http_failure(&first.context, 400, &[])
+            .unwrap(),
+        SyncRetryDecision::Stop
+    );
+
+    let retry_after = [SyncHttpHeader {
+        name: "Retry-After".to_string(),
+        value: "2".to_string(),
+    }];
+    assert_eq!(
+        session
+            .register_http_failure(&first.context, 503, &retry_after)
+            .unwrap(),
+        SyncRetryDecision::RetryAfter { delay_ms: 2_000 }
+    );
+    let second = session.prepare_request().await.unwrap().unwrap();
+    assert_eq!(second.method, first.method);
+    assert_eq!(second.url, first.url);
+    assert_eq!(second.headers, first.headers);
+    assert_eq!(second.body, first.body);
+    assert_eq!(second.timeout, first.timeout);
+    assert!(second.context == first.context);
+
+    assert!(matches!(
+        session.register_transport_failure(&first.context).unwrap(),
+        SyncRetryDecision::RetryAfter { delay_ms: 0..=500 }
+    ));
+    assert!(matches!(
+        session.register_transport_failure(&first.context).unwrap(),
+        SyncRetryDecision::RetryAfter {
+            delay_ms: 0..=1_000
+        }
+    ));
+    assert_eq!(
+        session.register_transport_failure(&first.context).unwrap(),
+        SyncRetryDecision::Stop
+    );
+
+    session
+        .fail_request(&first.context, "sync transport failed")
+        .await
+        .unwrap();
+    let status = session.summary();
+    assert_eq!(status.cursor, 0);
+    assert!(session.prepare_request().await.unwrap().is_none());
 }
 
 #[tokio::test]

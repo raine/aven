@@ -10,5 +10,5 @@ pub use persistence::{
 };
 pub use session::{
     PreparedSyncRequest, SyncHttpHeader, SyncHttpResponse, SyncPageOutcome, SyncRequestContext,
-    SyncSession, SyncSessionSummary,
+    SyncRequestTimeout, SyncRetryDecision, SyncSession, SyncSessionSummary,
 };

@@ -1511,6 +1511,36 @@ impl From<core_sync::SyncHttpHeader> for SyncHttpHeader {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct SyncRequestTimeout {
+    pub attempt_ms: u64,
+    pub inactivity_ms: u64,
+}
+
+impl From<core_sync::SyncRequestTimeout> for SyncRequestTimeout {
+    fn from(value: core_sync::SyncRequestTimeout) -> Self {
+        Self {
+            attempt_ms: value.attempt_ms,
+            inactivity_ms: value.inactivity_ms,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum SyncRetryDecision {
+    RetryAfter { delay_ms: u64 },
+    Stop,
+}
+
+impl From<core_sync::SyncRetryDecision> for SyncRetryDecision {
+    fn from(value: core_sync::SyncRetryDecision) -> Self {
+        match value {
+            core_sync::SyncRetryDecision::RetryAfter { delay_ms } => Self::RetryAfter { delay_ms },
+            core_sync::SyncRetryDecision::Stop => Self::Stop,
+        }
+    }
+}
+
 #[derive(uniffi::Object)]
 pub struct SyncRequestContext {
     context: core_sync::SyncRequestContext,
@@ -1522,6 +1552,7 @@ pub struct PreparedSyncRequest {
     pub url: String,
     pub headers: Vec<SyncHttpHeader>,
     pub body: Vec<u8>,
+    pub timeout: SyncRequestTimeout,
     pub context: Arc<SyncRequestContext>,
 }
 
@@ -1532,6 +1563,7 @@ impl From<core_sync::PreparedSyncRequest> for PreparedSyncRequest {
             url: value.url,
             headers: value.headers.into_iter().map(Into::into).collect(),
             body: value.body,
+            timeout: value.timeout.into(),
             context: Arc::new(SyncRequestContext {
                 context: value.context,
             }),
@@ -1672,6 +1704,29 @@ impl AvenSyncSession {
         runtime()?
             .block_on(session.prepare_request())
             .map(|request| request.map(Into::into))
+            .map_err(|error| AvenError::internal(error.to_string()))
+    }
+
+    pub fn register_transport_failure(
+        &self,
+        context: Arc<SyncRequestContext>,
+    ) -> Result<SyncRetryDecision, AvenError> {
+        self.lock()?
+            .register_transport_failure(&context.context)
+            .map(Into::into)
+            .map_err(|error| AvenError::internal(error.to_string()))
+    }
+
+    pub fn register_http_failure(
+        &self,
+        context: Arc<SyncRequestContext>,
+        status: u16,
+        headers: Vec<SyncHttpHeader>,
+    ) -> Result<SyncRetryDecision, AvenError> {
+        let headers = headers.into_iter().map(Into::into).collect::<Vec<_>>();
+        self.lock()?
+            .register_http_failure(&context.context, status, &headers)
+            .map(Into::into)
             .map_err(|error| AvenError::internal(error.to_string()))
     }
 

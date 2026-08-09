@@ -6,6 +6,7 @@ public enum URLSessionTransportError: Error, Equatable, Sendable {
     case nonHTTPResponse
     case invalidStatus(Int)
     case responseTooLarge(limit: Int)
+    case attemptTimedOut
     case cancellationDidNotStart
     case cancellationWasNotObserved
 }
@@ -17,14 +18,48 @@ public struct URLSessionTransport: Sendable {
     private let maxResponseBytes: Int
 
     public init(
-        session: URLSession = .shared,
+        session: URLSession? = nil,
         maxResponseBytes: Int = Self.defaultMaxResponseBytes
     ) {
-        self.session = session
+        if let session {
+            self.session = session
+        } else {
+            let configuration = URLSessionConfiguration.ephemeral
+            self.session = URLSession(
+                configuration: configuration,
+                delegate: NoRedirectURLSessionDelegate(),
+                delegateQueue: nil
+            )
+        }
         self.maxResponseBytes = maxResponseBytes
     }
 
     public func send(_ prepared: PreparedSyncRequest) async throws -> SyncHttpResponse {
+        let attempt = Task {
+            try await sendOnce(prepared)
+        }
+        defer { attempt.cancel() }
+        return try await withTaskCancellationHandler {
+            try await withThrowingTaskGroup(of: SyncHttpResponse.self) { group in
+                group.addTask { try await attempt.value }
+                group.addTask {
+                    try await Task.sleep(
+                        for: .milliseconds(prepared.timeout.attemptMs)
+                    )
+                    throw URLSessionTransportError.attemptTimedOut
+                }
+                guard let response = try await group.next() else {
+                    throw URLSessionTransportError.attemptTimedOut
+                }
+                group.cancelAll()
+                return response
+            }
+        } onCancel: {
+            attempt.cancel()
+        }
+    }
+
+    private func sendOnce(_ prepared: PreparedSyncRequest) async throws -> SyncHttpResponse {
         guard let url = URL(string: prepared.url) else {
             throw URLSessionTransportError.invalidURL
         }
@@ -32,6 +67,7 @@ public struct URLSessionTransport: Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = prepared.method
         request.httpBody = prepared.body
+        request.timeoutInterval = TimeInterval(prepared.timeout.inactivityMs) / 1000
         for header in prepared.headers {
             request.setValue(header.value, forHTTPHeaderField: header.name)
         }
@@ -57,7 +93,12 @@ public struct URLSessionTransport: Sendable {
             body.append(byte)
         }
 
-        let headers = ["content-encoding", "content-length", "content-type"].compactMap { name in
+        let headers = [
+            "content-encoding",
+            "content-length",
+            "content-type",
+            "retry-after",
+        ].compactMap { name in
             response.value(forHTTPHeaderField: name).map {
                 SyncHttpHeader(name: name, value: $0)
             }
@@ -74,6 +115,7 @@ public struct URLSessionTransport: Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = prepared.method
         request.httpBody = prepared.body
+        request.timeoutInterval = TimeInterval(prepared.timeout.inactivityMs) / 1000
         for header in prepared.headers {
             request.setValue(header.value, forHTTPHeaderField: header.name)
         }
@@ -143,13 +185,19 @@ public struct SyncDriver: Sendable {
             requestBodyBytes += prepared.body.count
             let response: SyncHttpResponse
             do {
-                response = try await transport.send(prepared)
+                response = try await sendOutstanding(
+                    prepared,
+                    session: session
+                )
                 responseBodyBytes += response.body.count
             } catch {
+                let message = isCancellation(error)
+                    ? "sync cancelled"
+                    : "sync transport failed"
                 try await worker.run {
                     try session.failRequest(
                         context: prepared.context,
-                        message: "URLSession transport failed"
+                        message: message
                     )
                 }
                 throw error
@@ -180,6 +228,55 @@ public struct SyncDriver: Sendable {
             requestBodyBytes: requestBodyBytes,
             responseBodyBytes: responseBodyBytes
         )
+    }
+
+    private func sendOutstanding(
+        _ prepared: PreparedSyncRequest,
+        session: AvenSyncSession
+    ) async throws -> SyncHttpResponse {
+        while true {
+            let response: SyncHttpResponse
+            do {
+                response = try await transport.send(prepared)
+            } catch {
+                if isCancellation(error) || !isTransientTransport(error) {
+                    throw error
+                }
+                let decision = try await worker.run {
+                    try session.registerTransportFailure(
+                        context: prepared.context
+                    )
+                }
+                switch decision {
+                case let .retryAfter(delayMs):
+                    try await Task.sleep(
+                        for: .milliseconds(Int64(clamping: delayMs))
+                    )
+                    continue
+                case .stop:
+                    throw error
+                }
+            }
+
+            guard !(200 ..< 300).contains(Int(response.status)) else {
+                return response
+            }
+            let decision = try await worker.run {
+                try session.registerHttpFailure(
+                    context: prepared.context,
+                    status: response.status,
+                    headers: response.headers
+                )
+            }
+            switch decision {
+            case let .retryAfter(delayMs):
+                try await Task.sleep(
+                    for: .milliseconds(Int64(clamping: delayMs))
+                )
+            case .stop:
+                return response
+            }
+        }
     }
 
     public func waitForProcessTermination(
@@ -236,7 +333,7 @@ public struct SyncDriver: Sendable {
         try await worker.run {
             try session.failRequest(
                 context: prepared.context,
-                message: "URLSession transport cancelled"
+                message: "sync cancelled"
             )
         }
         failRequestCount += 1
@@ -250,6 +347,48 @@ public struct SyncDriver: Sendable {
             cursorBefore: summaryBefore.cursor,
             cursorAfter: summaryAfter.cursor
         )
+    }
+}
+
+private func isCancellation(_ error: Error) -> Bool {
+    error is CancellationError || (error as? URLError)?.code == .cancelled
+}
+
+private func isTransientTransport(_ error: Error) -> Bool {
+    if case URLSessionTransportError.attemptTimedOut = error {
+        return true
+    }
+    guard let error = error as? URLError else {
+        return false
+    }
+    return switch error.code {
+    case .timedOut,
+         .cannotFindHost,
+         .cannotConnectToHost,
+         .networkConnectionLost,
+         .dnsLookupFailed,
+         .notConnectedToInternet,
+         .internationalRoamingOff,
+         .callIsActive,
+         .dataNotAllowed,
+         .secureConnectionFailed:
+        true
+    default:
+        false
+    }
+}
+
+private final class NoRedirectURLSessionDelegate: NSObject, URLSessionTaskDelegate,
+    @unchecked Sendable
+{
+    func urlSession(
+        _: URLSession,
+        task _: URLSessionTask,
+        willPerformHTTPRedirection _: HTTPURLResponse,
+        newRequest _: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
     }
 }
 

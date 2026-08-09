@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use flate2::write::GzEncoder;
+use getrandom::fill as fill_random;
 
 use super::blob::{
     MissingLocalBlob, attachment_blob_contract, contract_by_hash, missing_counts,
@@ -25,17 +27,38 @@ use crate::ids::{new_id, now};
 
 const GZIP_THRESHOLD: usize = 256;
 const MAX_HTTP_ERROR_DETAIL_BYTES: usize = 1024;
+const MAX_SYNC_ATTEMPTS: u32 = 4;
+const BASE_RETRY_DELAY_MS: u64 = 250;
+const MAX_RETRY_DELAY_MS: u64 = 4_000;
+const MAX_RETRY_AFTER_MS: u64 = 30_000;
+const METADATA_ATTEMPT_TIMEOUT_MS: u64 = 30_000;
+const METADATA_INACTIVITY_TIMEOUT_MS: u64 = 10_000;
+const BLOB_INACTIVITY_TIMEOUT_MS: u64 = 30_000;
+const BLOB_ATTEMPT_BASE_TIMEOUT_MS: u64 = 60_000;
+const BLOB_FLOOR_BYTES_PER_SECOND: u64 = 64 * 1024;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SyncRequestContext {
     session_id: String,
     request: usize,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SyncHttpHeader {
     pub name: String,
     pub value: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SyncRequestTimeout {
+    pub attempt_ms: u64,
+    pub inactivity_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyncRetryDecision {
+    RetryAfter { delay_ms: u64 },
+    Stop,
 }
 
 #[derive(Clone)]
@@ -44,6 +67,7 @@ pub struct PreparedSyncRequest {
     pub url: String,
     pub headers: Vec<SyncHttpHeader>,
     pub body: Vec<u8>,
+    pub timeout: SyncRequestTimeout,
     pub context: SyncRequestContext,
 }
 
@@ -174,6 +198,7 @@ enum RequestKind {
 struct OutstandingRequest {
     prepared: PreparedSyncRequest,
     kind: RequestKind,
+    attempts: u32,
 }
 
 pub struct SyncSession {
@@ -397,11 +422,13 @@ impl SyncSession {
             headers.push(header("authorization", &format!("Bearer {token}")));
         }
         self.request_number += 1;
+        let timeout = request_timeout(&kind);
         let prepared = PreparedSyncRequest {
             method: method.to_string(),
             url: format!("{}{}", self.server, path),
             headers,
             body,
+            timeout,
             context: SyncRequestContext {
                 session_id: self.session_id.clone(),
                 request: self.request_number,
@@ -410,8 +437,54 @@ impl SyncSession {
         self.outstanding = Some(OutstandingRequest {
             prepared: prepared.clone(),
             kind,
+            attempts: 1,
         });
         Ok(Some(prepared))
+    }
+
+    pub fn register_transport_failure(
+        &mut self,
+        context: &SyncRequestContext,
+    ) -> Result<SyncRetryDecision> {
+        self.register_retry(context, None)
+    }
+
+    pub fn register_http_failure(
+        &mut self,
+        context: &SyncRequestContext,
+        status: u16,
+        headers: &[SyncHttpHeader],
+    ) -> Result<SyncRetryDecision> {
+        {
+            let outstanding = self
+                .outstanding
+                .as_ref()
+                .context("no outstanding sync request")?;
+            validate_context(&outstanding.prepared.context, context)?;
+        }
+        if !retryable_http_status(status) {
+            return Ok(SyncRetryDecision::Stop);
+        }
+        let retry_after = retry_after_ms(headers, Utc::now().timestamp());
+        self.register_retry(context, retry_after)
+    }
+
+    fn register_retry(
+        &mut self,
+        context: &SyncRequestContext,
+        retry_after_ms: Option<u64>,
+    ) -> Result<SyncRetryDecision> {
+        let outstanding = self
+            .outstanding
+            .as_mut()
+            .context("no outstanding sync request")?;
+        validate_context(&outstanding.prepared.context, context)?;
+        if outstanding.attempts >= MAX_SYNC_ATTEMPTS {
+            return Ok(SyncRetryDecision::Stop);
+        }
+        let delay_ms = retry_after_ms.unwrap_or_else(|| retry_delay_ms(outstanding.attempts));
+        outstanding.attempts += 1;
+        Ok(SyncRetryDecision::RetryAfter { delay_ms })
     }
 
     pub async fn accept_response(
@@ -688,7 +761,15 @@ impl SyncSession {
             .as_ref()
             .context("no outstanding sync request")?;
         validate_context(&outstanding.prepared.context, context)?;
-        if let RequestKind::Upload { lease_id, .. } = &outstanding.kind {
+        self.fail(error).await
+    }
+
+    pub async fn fail(&mut self, error: impl Into<String>) -> Result<()> {
+        if let Some(OutstandingRequest {
+            kind: RequestKind::Upload { lease_id, .. },
+            ..
+        }) = &self.outstanding
+        {
             self.database.finish_blob_upload(lease_id).await?;
         }
         self.database.record_sync_error(error.into()).await?;
@@ -700,6 +781,79 @@ impl SyncSession {
     pub fn summary(&self) -> SyncSessionSummary {
         self.summary.clone()
     }
+}
+
+fn request_timeout(kind: &RequestKind) -> SyncRequestTimeout {
+    match kind {
+        RequestKind::Missing | RequestKind::Confirm | RequestKind::Metadata { .. } => {
+            SyncRequestTimeout {
+                attempt_ms: METADATA_ATTEMPT_TIMEOUT_MS,
+                inactivity_ms: METADATA_INACTIVITY_TIMEOUT_MS,
+            }
+        }
+        RequestKind::Upload { contract, .. } => blob_request_timeout(contract.byte_size),
+        RequestKind::Download { blob } => blob_request_timeout(blob.byte_size),
+    }
+}
+
+fn blob_request_timeout(byte_size: i64) -> SyncRequestTimeout {
+    let bytes = u64::try_from(byte_size).unwrap_or(0);
+    let transfer_ms = bytes
+        .saturating_mul(1_000)
+        .div_ceil(BLOB_FLOOR_BYTES_PER_SECOND);
+    SyncRequestTimeout {
+        attempt_ms: BLOB_ATTEMPT_BASE_TIMEOUT_MS.saturating_add(transfer_ms),
+        inactivity_ms: BLOB_INACTIVITY_TIMEOUT_MS,
+    }
+}
+
+fn retryable_http_status(status: u16) -> bool {
+    matches!(status, 408 | 425 | 429 | 500 | 502 | 503 | 504)
+}
+
+fn retry_delay_ms(failed_attempts: u32) -> u64 {
+    let mut entropy = [0_u8; 8];
+    if fill_random(&mut entropy).is_err() {
+        entropy = u64::from(failed_attempts).to_le_bytes();
+    }
+    retry_delay_with_entropy(failed_attempts, u64::from_le_bytes(entropy))
+}
+
+fn retry_delay_with_entropy(failed_attempts: u32, entropy: u64) -> u64 {
+    let exponent = failed_attempts.saturating_sub(1).min(16);
+    let cap = BASE_RETRY_DELAY_MS
+        .saturating_mul(1_u64 << exponent)
+        .min(MAX_RETRY_DELAY_MS);
+    entropy % (cap + 1)
+}
+
+fn retry_after_ms(headers: &[SyncHttpHeader], now_unix_seconds: i64) -> Option<u64> {
+    let mut values = headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("retry-after"));
+    let value = values.next()?.value.trim();
+    if values.next().is_some() {
+        return None;
+    }
+    let milliseconds = if let Ok(seconds) = value.parse::<u64>() {
+        seconds.saturating_mul(1_000)
+    } else {
+        let timestamp = parse_http_date(value)?;
+        u64::try_from(timestamp.saturating_sub(now_unix_seconds))
+            .unwrap_or(0)
+            .saturating_mul(1_000)
+    };
+    Some(milliseconds.min(MAX_RETRY_AFTER_MS))
+}
+
+fn parse_http_date(value: &str) -> Option<i64> {
+    if let Ok(value) = DateTime::parse_from_rfc2822(value) {
+        return Some(value.timestamp());
+    }
+    ["%A, %d-%b-%y %H:%M:%S GMT", "%a %b %e %H:%M:%S %Y"]
+        .into_iter()
+        .find_map(|format| NaiveDateTime::parse_from_str(value, format).ok())
+        .map(|value| value.and_utc().timestamp())
 }
 
 fn header(name: &str, value: &str) -> SyncHttpHeader {
@@ -794,4 +948,67 @@ fn gzip_encode(body: &[u8]) -> Result<Vec<u8>> {
         .write_all(body)
         .context("gzip encode sync request body")?;
     encoder.finish().context("finish sync request compression")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_after_accepts_http_forms_and_caps_delays() {
+        let now = 1_445_412_480;
+        for value in [
+            "Wed, 21 Oct 2015 07:28:02 GMT",
+            "Wednesday, 21-Oct-15 07:28:02 GMT",
+            "Wed Oct 21 07:28:02 2015",
+        ] {
+            let headers = [header("retry-after", value)];
+            assert_eq!(retry_after_ms(&headers, now), Some(2_000));
+        }
+        assert_eq!(
+            retry_after_ms(&[header("retry-after", "86400")], now),
+            Some(MAX_RETRY_AFTER_MS)
+        );
+        assert_eq!(
+            retry_after_ms(
+                &[header("retry-after", "1"), header("retry-after", "2")],
+                now
+            ),
+            None
+        );
+        assert_eq!(
+            retry_after_ms(&[header("retry-after", "invalid")], now),
+            None
+        );
+    }
+
+    #[test]
+    fn backoff_uses_full_bounded_jitter() {
+        assert_eq!(retry_delay_with_entropy(1, 0), 0);
+        assert_eq!(retry_delay_with_entropy(1, 250), 250);
+        assert_eq!(retry_delay_with_entropy(2, 500), 500);
+        assert_eq!(retry_delay_with_entropy(3, 1_000), 1_000);
+        assert_eq!(retry_delay_with_entropy(20, 4_000), 4_000);
+        assert_eq!(retry_delay_with_entropy(20, 4_001), 0);
+    }
+
+    #[test]
+    fn blob_timeout_scales_with_transfer_size() {
+        let small = blob_request_timeout(1);
+        let large = blob_request_timeout(64 * 1024 * 1024);
+        assert_eq!(small.inactivity_ms, BLOB_INACTIVITY_TIMEOUT_MS);
+        assert_eq!(large.inactivity_ms, BLOB_INACTIVITY_TIMEOUT_MS);
+        assert!(large.attempt_ms > METADATA_ATTEMPT_TIMEOUT_MS);
+        assert!(large.attempt_ms > small.attempt_ms);
+    }
+
+    #[test]
+    fn retryable_statuses_exclude_deterministic_failures() {
+        for status in [408, 425, 429, 500, 502, 503, 504] {
+            assert!(retryable_http_status(status));
+        }
+        for status in [400, 401, 403, 404, 501, 505, 507] {
+            assert!(!retryable_http_status(status));
+        }
+    }
 }
