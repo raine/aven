@@ -2172,10 +2172,32 @@ fn detail_header_options(
     width: usize,
     inline_title_editor: Option<&TextInputView>,
 ) -> Vec<Line<'static>> {
-    let mut summary_spans = vec![Span::styled(
-        item.display_ref.clone(),
-        Style::new().fg(FG_DIM),
-    )];
+    let mut summary_spans = vec![
+        Span::styled(
+            "● ",
+            Style::new().fg(theme::project_color(&item.task.project_key)),
+        ),
+        Span::styled(
+            item.task.project_key.clone(),
+            Style::new().fg(FG).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" / ", Style::new().fg(FG_DIM)),
+    ];
+    if let Some((project, suffix)) = item.display_ref.split_once('-') {
+        summary_spans.extend([
+            Span::styled(
+                project.to_string(),
+                Style::new().fg(theme::project_color(&item.task.project_key)),
+            ),
+            Span::styled("-", Style::new().fg(FG_DIM)),
+            Span::styled(suffix.to_string(), Style::new().fg(FG_DIM)),
+        ]);
+    } else {
+        summary_spans.push(Span::styled(
+            item.display_ref.clone(),
+            Style::new().fg(FG_DIM),
+        ));
+    }
     if item.task.is_epic {
         summary_spans.extend([
             Span::styled("  ", Style::new().fg(FG_DIM)),
@@ -3234,6 +3256,32 @@ mod tests {
         assert_eq!(rendered[3], "─".repeat(18));
         assert!(rendered[4].contains(&item.display_ref));
         assert!(!rendered.join("\n").contains('…'));
+    }
+
+    #[test]
+    fn detail_header_leads_with_project_context() {
+        let item = detail_test_item();
+
+        let lines = detail_header_options(&item, 60, None);
+        let summary = lines
+            .iter()
+            .find(|line| line.to_string().contains(&item.display_ref))
+            .expect("detail summary");
+
+        assert!(summary.to_string().starts_with("● app / APP-7KQ9A1X"));
+        assert_eq!(
+            summary.spans[0].style.fg,
+            Some(theme::project_color(&item.task.project_key))
+        );
+        let reference_prefix = summary
+            .spans
+            .iter()
+            .find(|span| span.content == item.task.project_prefix.as_str())
+            .expect("task reference prefix");
+        assert_eq!(
+            reference_prefix.style.fg,
+            Some(theme::project_color(&item.task.project_key))
+        );
     }
 
     #[test]
