@@ -3,6 +3,13 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.27 (2026-08-09)
+
+- Task details show the project key and color beside the task reference
+- Parent epic rows in child task details include the epic star marker for easier
+  recognition at a glance.
+- The bundled Aven agent skill heavy trimmed down from useless cruft
+
 ## v0.1.26 (2026-08-09)
 
 - Add [task metadata](/task-metadata/) with `--metadata KEY=VALUE`, exact and
