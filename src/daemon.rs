@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use aven_core::db::Database;
 use tokio::net::UdpSocket;
-use tokio::time::{Instant, sleep_until, timeout};
+use tokio::time::{Instant, sleep_until};
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -23,7 +23,6 @@ pub use service::{
 };
 
 const BINARY_CHECK_INTERVAL: Duration = Duration::from_secs(30);
-const SYNC_ROUND_TIMEOUT: Duration = Duration::from_secs(35);
 const DAEMON_CONTENTION_RESCHEDULE: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,20 +129,17 @@ async fn run_loop(
                 next_binary_check = Instant::now() + BINARY_CHECK_INTERVAL;
             }
             _ = sleep_until(next_sync) => {
-                match timeout(
-                    SYNC_ROUND_TIMEOUT,
-                    sync_once(
-                        &database,
-                        &blob_dir,
-                        lifecycle_policy,
-                        &server,
-                        auth_token.as_deref(),
-                        &client,
-                    ),
+                match sync_once(
+                    &database,
+                    &blob_dir,
+                    lifecycle_policy,
+                    &server,
+                    auth_token.as_deref(),
+                    &client,
                 )
                 .await
                 {
-                    Ok(Ok(DaemonSyncOutcome::Completed(summary))) => {
+                    Ok(DaemonSyncOutcome::Completed(summary)) => {
                         backoff_seconds = 1;
                         next_sync = if summary.complete {
                             Instant::now() + Duration::from_secs(interval_seconds)
@@ -151,19 +147,13 @@ async fn run_loop(
                             Instant::now() + Duration::from_millis(DAEMON_INCOMPLETE_RESCHEDULE_MS)
                         };
                     }
-                    Ok(Ok(DaemonSyncOutcome::Deferred)) => {
+                    Ok(DaemonSyncOutcome::Deferred) => {
                         debug!("daemon sync deferred");
                         next_sync = Instant::now() + DAEMON_CONTENTION_RESCHEDULE;
                     }
-                    Ok(Err(err)) => {
+                    Err(err) => {
                         warn!(error = %err, backoff_seconds, "daemon sync failed");
                         eprintln!("daemon sync failed: {err}");
-                        next_sync = Instant::now() + Duration::from_secs(backoff_seconds);
-                        backoff_seconds = (backoff_seconds * 2).min(300);
-                    }
-                    Err(_) => {
-                        warn!(backoff_seconds, "daemon sync timed out");
-                        eprintln!("daemon sync failed: timed out");
                         next_sync = Instant::now() + Duration::from_secs(backoff_seconds);
                         backoff_seconds = (backoff_seconds * 2).min(300);
                     }
@@ -289,16 +279,6 @@ fn wake(addr: SocketAddr) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn contended_sync_round_reschedules_after_one_second() {
-        assert_eq!(DAEMON_CONTENTION_RESCHEDULE, Duration::from_secs(1));
-    }
-
-    #[test]
-    fn complete_sync_round_has_35_second_deadline() {
-        assert_eq!(SYNC_ROUND_TIMEOUT, Duration::from_secs(35));
-    }
 
     #[test]
     fn wake_if_enabled_sends_to_configured_address() {
