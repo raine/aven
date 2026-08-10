@@ -1,6 +1,7 @@
 use std::fmt;
 use std::net::IpAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::{Result, bail};
 use aven_core::db::Database;
@@ -25,6 +26,8 @@ use super::wire::{
 use crate::cli::ServerArgs;
 use crate::config;
 use crate::signals::shutdown_signal;
+
+const SERVER_BLOB_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
 struct ServerState {
@@ -136,17 +139,46 @@ pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> R
         .layer(RequestDecompressionLayer::new())
         .layer(middleware::from_fn_with_state(state.clone(), verify_auth))
         .layer(CompressionLayer::new())
-        .with_state(state);
+        .with_state(state.clone());
     let listener = TcpListener::bind(args.bind).await?;
     let addr = listener.local_addr()?;
     if scope == BindScope::Public {
         println!("warning public bind enabled; use TLS or a reverse proxy");
     }
     println!("listening url=http://{} scope={}", addr, scope);
-    axum::serve(listener, app)
+    let maintenance = spawn_blob_maintenance(state);
+    let result = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
-        .await?;
+        .await;
+    maintenance.abort();
+    let _ = maintenance.await;
+    result?;
     Ok(())
+}
+
+fn spawn_blob_maintenance(state: ServerState) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(SERVER_BLOB_MAINTENANCE_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            match state
+                .database
+                .maintain_server_blobs(&state.blob_dir, state.lifecycle_policy)
+                .await
+            {
+                Ok(summary) => info!(
+                    examined = summary.examined,
+                    updated = summary.updated,
+                    pruned = summary.pruned,
+                    has_more = summary.has_more,
+                    "attachment maintenance completed"
+                ),
+                Err(err) => warn!(error = %err, "attachment maintenance failed"),
+            }
+        }
+    })
 }
 
 async fn verify_auth(
@@ -172,16 +204,7 @@ async fn sync_handler(
     Json(request): Json<SyncRequest>,
 ) -> Response {
     match handle_sync(state.clone(), request).await {
-        Ok(response) => {
-            if let Err(err) = state
-                .database
-                .maintain_server_blobs(&state.blob_dir, state.lifecycle_policy)
-                .await
-            {
-                warn!(error = %err, "attachment maintenance failed");
-            }
-            Json(response).into_response()
-        }
+        Ok(response) => Json(response).into_response(),
         Err(err) => {
             if err.0.is_server_error() {
                 error!(status = %err.0, error = %err.1, "sync request failed");
@@ -398,6 +421,7 @@ async fn handle_sync(
         returned = persisted.changes.len(),
         cursor,
         has_more = persisted.has_more,
+        blob_prepare_ms = persisted.blob_prepare_ms,
         assign_ms = persisted.assign_ms,
         pull_query_ms = persisted.pull_query_ms,
         "sync request completed"

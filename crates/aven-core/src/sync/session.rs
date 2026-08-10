@@ -9,8 +9,7 @@ use flate2::write::GzEncoder;
 use getrandom::fill as fill_random;
 
 use super::blob::{
-    MissingLocalBlob, attachment_blob_contract, contract_by_hash, missing_counts,
-    unique_blob_contracts,
+    MissingLocalBlob, attachment_blob_contract, contract_by_hash, unique_blob_contracts,
 };
 use super::persistence::{ApplySyncPage, ClientSyncPage};
 use super::planner::{
@@ -214,6 +213,7 @@ pub struct SyncSession {
     active: Option<ActivePage>,
     outstanding: Option<OutstandingRequest>,
     known_server_blobs: HashSet<String>,
+    storage_audited: bool,
     transfer_budget: TransferBudget,
     summary: SyncSessionSummary,
     last_has_more: bool,
@@ -268,6 +268,7 @@ impl SyncSession {
             active: None,
             outstanding: None,
             known_server_blobs: HashSet::new(),
+            storage_audited: false,
             transfer_budget: TransferBudget {
                 objects: MAX_BLOB_TRANSFER_OBJECTS,
                 bytes: MAX_BLOB_TRANSFER_BYTES,
@@ -595,6 +596,7 @@ impl SyncSession {
             RequestKind::Metadata { request_bytes } => {
                 let decoded: SyncResponse =
                     serde_json::from_slice(&response.body).context("decode sync response")?;
+                let pulled_changes = decoded.changes.clone();
                 let active = self.active.as_mut().expect("active sync page");
                 let request = active.page.request.clone();
                 let pending = active.page.pending;
@@ -627,7 +629,30 @@ impl SyncSession {
                         .unwrap_or("none")
                         .to_string();
                 self.summary.apply_ms += apply_ms;
-                let missing = self.database.missing_local_blobs(&self.blob_dir).await?;
+                let missing_page = self
+                    .database
+                    .missing_local_blob_page(MAX_BLOB_TRANSFER_OBJECTS)
+                    .await?;
+                let pulled_contracts = unique_blob_contracts(&pulled_changes)?;
+                let mut missing = missing_page.blobs;
+                if !self.storage_audited {
+                    missing.extend(
+                        self.database
+                            .audit_local_blob_storage(
+                                &self.blob_dir,
+                                self.lifecycle_policy.maintenance_limit,
+                            )
+                            .await?,
+                    );
+                    self.storage_audited = true;
+                }
+                missing.extend(
+                    self.database
+                        .missing_local_blobs_for_contracts(&self.blob_dir, &pulled_contracts)
+                        .await?,
+                );
+                let mut seen = HashSet::new();
+                missing.retain(|blob| seen.insert(blob.sha256.clone()));
                 let objects = missing
                     .iter()
                     .map(|blob| {
@@ -639,7 +664,8 @@ impl SyncSession {
                     })
                     .collect::<Result<Vec<_>>>()?;
                 let plan = plan_transfers(&objects, self.transfer_budget);
-                active.transfer_budget_blocked |= plan.len() < objects.len();
+                active.transfer_budget_blocked |=
+                    missing_page.has_more || plan.len() < objects.len();
                 let planned = plan
                     .iter()
                     .map(|o| o.sha256.as_str())
@@ -701,23 +727,16 @@ impl SyncSession {
         self.last_has_more = active.has_more;
         let local_more = self.database.pending_sync_change_count().await? > 0;
         self.last_local_more = local_more;
-        let downloads = self.database.missing_local_blobs(&self.blob_dir).await?;
-        let download_counts = missing_counts(&downloads);
-        self.summary.blob_download_remaining = download_counts.count as usize;
+        let download_counts = self.database.missing_local_blob_counts().await?;
+        self.summary.blob_download_remaining = usize::try_from(download_counts.count)?;
         self.summary.blob_download_remaining_bytes = download_counts.bytes;
-        let uploads = self
+        let upload_counts = self
             .database
-            .pending_blob_contracts()
-            .await?
-            .into_iter()
-            .filter(|contract| !self.known_server_blobs.contains(&contract.sha256))
-            .collect::<Vec<_>>();
-        self.summary.blob_upload_remaining = uploads.len();
-        self.summary.blob_upload_remaining_bytes = uploads
-            .iter()
-            .map(|c| u64::try_from(c.byte_size).unwrap_or(0))
-            .sum();
-        let complete = !local_more && !active.has_more && downloads.is_empty();
+            .pending_blob_counts(&self.known_server_blobs)
+            .await?;
+        self.summary.blob_upload_remaining = usize::try_from(upload_counts.count)?;
+        self.summary.blob_upload_remaining_bytes = upload_counts.bytes;
+        let complete = !local_more && !active.has_more && download_counts.count == 0;
         self.summary.complete = complete;
         let budget_exhausted = self
             .page_budget
