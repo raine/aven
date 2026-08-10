@@ -79,6 +79,7 @@ public struct PersistenceProof: Sendable {
                     project: "ios-proof",
                     status: .inbox,
                     priority: .none,
+                    metadata: [],
                     availableAt: nil,
                     dueOn: nil
                 )
@@ -100,6 +101,8 @@ public struct PersistenceProof: Sendable {
                     project: "ios-persistence",
                     status: .backlog,
                     priority: .low,
+                    setMetadata: [],
+                    removeMetadata: [],
                     availableAt: .set(value: "2026-07-20T10:30:00Z"),
                     dueOn: .set(value: "2026-07-21")
                 )
@@ -322,6 +325,8 @@ private func update(
             project: nil,
             status: status,
             priority: priority,
+            setMetadata: [],
+            removeMetadata: [],
             availableAt: availableAt,
             dueOn: dueOn
         )

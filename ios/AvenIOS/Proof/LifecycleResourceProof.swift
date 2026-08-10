@@ -144,6 +144,7 @@ public struct LifecycleResourceProof: Sendable {
                             project: "ios-lifecycle-proof",
                             status: .todo,
                             priority: .medium,
+                            metadata: [],
                             availableAt: nil,
                             dueOn: nil
                         )
@@ -170,6 +171,8 @@ public struct LifecycleResourceProof: Sendable {
                             project: nil,
                             status: nil,
                             priority: index.isMultiple(of: 2) ? .high : .medium,
+                            setMetadata: [],
+                            removeMetadata: [],
                             availableAt: .unchanged,
                             dueOn: .unchanged
                         )
@@ -214,6 +217,8 @@ public struct LifecycleResourceProof: Sendable {
                             project: nil,
                             status: index.isMultiple(of: 2) ? .active : .todo,
                             priority: nil,
+                            setMetadata: [],
+                            removeMetadata: [],
                             availableAt: .unchanged,
                             dueOn: .unchanged
                         )
@@ -384,6 +389,7 @@ public struct LifecycleResourceProof: Sendable {
                         project: "ios-lifecycle-proof",
                         status: .todo,
                         priority: .medium,
+                        metadata: [],
                         availableAt: nil,
                         dueOn: nil
                     )
@@ -523,6 +529,7 @@ public struct LifecycleResourceProof: Sendable {
                     project: "ios-lifecycle-proof",
                     status: .todo,
                     priority: .medium,
+                    metadata: [],
                     availableAt: nil,
                     dueOn: nil
                 )

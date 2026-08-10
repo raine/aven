@@ -88,6 +88,7 @@ public struct IOSSyncProof: Sendable {
                     project: Self.project,
                     status: .todo,
                     priority: .high,
+                    metadata: [],
                     availableAt: nil,
                     dueOn: nil
                 )
@@ -201,6 +202,8 @@ public struct IOSSyncProof: Sendable {
                     project: nil,
                     status: nil,
                     priority: nil,
+                    setMetadata: [],
+                    removeMetadata: [],
                     availableAt: .unchanged,
                     dueOn: .unchanged
                 )
