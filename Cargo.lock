@@ -355,6 +355,7 @@ dependencies = [
  "hex",
  "iana-time-zone",
  "image",
+ "libc",
  "mac-notification-sys",
  "notify-rust",
  "oxipng",

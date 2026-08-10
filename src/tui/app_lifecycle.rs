@@ -69,6 +69,7 @@ impl App {
     pub(crate) async fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
         let result = self.run_loop(terminal).await;
+        self.custom_commands.shutdown().await;
         self.attachment_controller.shutdown().await;
         let _ = self.erase_previous_inline_images();
         execute!(
@@ -88,6 +89,7 @@ impl App {
         self.open_add_task_on_start(natural).await?;
         execute!(std::io::stdout(), EnableBracketedPaste)?;
         let result = self.run_loop(terminal).await;
+        self.custom_commands.shutdown().await;
         self.attachment_controller.shutdown().await;
         let _ = self.erase_previous_inline_images();
         execute!(std::io::stdout(), DisableBracketedPaste)?;
@@ -729,6 +731,7 @@ impl App {
             || self.gist.work_pending()
             || self.update.work_pending()
             || self.changelog.work_pending()
+            || self.custom_commands.work_pending()
         {
             timeout = timeout.min(INPUT_POLL_INTERVAL);
         }

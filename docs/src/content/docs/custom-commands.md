@@ -234,24 +234,32 @@ pipe after writing the document.
 `execution: wait` starts the program asynchronously and keeps the TUI
 responsive while it runs. Aven:
 
-1. Writes the JSON input and closes standard input.
-2. Drains standard output and standard error.
-3. Waits for the process to exit.
+1. Delivers JSON input while concurrently draining standard output and standard
+   error.
+2. Closes standard input after delivering the complete document.
+3. Waits for the process and all pipe workers to finish.
 4. Treats exit code zero as success.
 5. Reports a nonzero exit code, signal termination, timeout, or input failure.
 
-A waiting command has a five-minute timeout. Standard output and standard error
-are each limited to 16 KiB. Output is drained rather than displayed. Exceeding
-either limit fails the command.
+A waiting command has one five-minute deadline covering input delivery, output
+draining, process completion, timeout cleanup, and direct-child reaping. Standard
+output and standard error are each limited to 16 KiB. Output is drained rather
+than displayed. Exceeding either limit fails the command. On Unix, timeout and
+orderly TUI shutdown terminate the command's process group, including
+descendants. Other platforms terminate the direct child because Aven does not
+yet provide a platform process-tree primitive there.
 
 Use `wait` when Aven must know whether the operation succeeded, especially with
 `on_success: quit`.
 
 ### Background
 
-`execution: background` starts the program, sends its JSON input, and returns
-without waiting for process completion. Standard output and standard error are
-discarded. On Unix, the child runs in a separate process group.
+`execution: background` starts the program, delivers its complete JSON input
+within a short bounded handoff, closes standard input, and returns without
+waiting for process completion. Standard output and standard error are
+discarded. On Unix, the child runs in a separate process group. A failed or
+timed-out handoff terminates that group, while a successful handoff remains
+independent of TUI shutdown.
 
 Background mode confirms launch and input delivery, not the final outcome of
 the program. It always leaves Aven running. Configuration with
