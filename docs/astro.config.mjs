@@ -64,6 +64,7 @@ export default defineConfig({
             { label: 'Sync across devices', slug: 'sync' },
             { label: 'Back up and restore', slug: 'backups' },
             { label: 'Task metadata', slug: 'task-metadata' },
+            { label: 'Custom TUI commands', slug: 'custom-commands' },
             { label: 'Tips', slug: 'tips' },
           ],
         },
@@ -71,7 +72,6 @@ export default defineConfig({
           label: 'Reference',
           items: [
             { label: 'Command reference', slug: 'command-reference' },
-            { label: 'Custom TUI commands', slug: 'custom-commands' },
             { label: 'Configuration', slug: 'configuration' },
             { label: 'Changelog', slug: 'changelog' },
           ],
