@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 
 use crate::tui::app::App;
-use crate::tui::markdown::render_markdown_without_link_urls;
+use crate::tui::markdown::render_markdown_reflowed_without_link_urls;
 use crate::tui::navigation::scroll_with_delta;
 use crate::tui::overlay::{
     ChangelogState, OverlayState, UpdateActionFocus, UpdateNotesState, UpdateOverlayState,
@@ -265,7 +265,7 @@ pub(crate) fn changelog_scroll_cap(markdown: &str, terminal_size: Size) -> u16 {
     let (width, height) = changelog_dialog_size(terminal_size);
     let content_width = width.saturating_sub(6).max(1) as usize;
     let visible_rows = height.saturating_sub(3) as usize;
-    render_markdown_without_link_urls(markdown, content_width)
+    render_markdown_reflowed_without_link_urls(markdown, content_width)
         .len()
         .saturating_add(2)
         .saturating_sub(visible_rows)
@@ -384,6 +384,18 @@ mod tests {
     #[test]
     fn historical_changelog_uses_the_default_branch() {
         assert_eq!(HISTORICAL_CHANGELOG_REF, "main");
+    }
+
+    #[test]
+    fn repository_changelog_keeps_each_entry_on_one_source_line() {
+        let wrapped_entry = include_str!("../../CHANGELOG.md")
+            .lines()
+            .find(|line| line.starts_with("  "));
+
+        assert!(
+            wrapped_entry.is_none(),
+            "changelog entry is source-wrapped: {wrapped_entry:?}"
+        );
     }
 
     #[test]

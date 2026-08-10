@@ -9,7 +9,7 @@ use unicode_width::UnicodeWidthStr;
 use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use crate::tui::changelog::changelog_dialog_size;
-use crate::tui::markdown::render_markdown_without_link_urls;
+use crate::tui::markdown::render_markdown_reflowed_without_link_urls;
 use crate::tui::overlay::dialog_area;
 use crate::tui::theme::{BG_ALT, BLUE, FG, FG_MUTED};
 
@@ -129,8 +129,10 @@ pub(in crate::tui::ui) fn changelog_lines(
     markdown: &str,
     width: u16,
 ) -> Vec<ratatui::text::Line<'static>> {
-    let mut rendered =
-        render_markdown_without_link_urls(markdown, width.saturating_sub(6).max(1) as usize);
+    let mut rendered = render_markdown_reflowed_without_link_urls(
+        markdown,
+        width.saturating_sub(6).max(1) as usize,
+    );
     for line in &mut rendered {
         let mut spans = Vec::new();
         for span in std::mem::take(&mut line.spans) {
@@ -240,6 +242,23 @@ mod tests {
 
         assert_eq!(rendered, vec!["", "- Read the guide", ""]);
         assert_eq!(changelog_text_area(Rect::new(2, 3, 20, 5)).width, 18);
+    }
+
+    #[test]
+    fn reader_reflows_source_wrapped_entries_to_dialog_width() {
+        let lines = changelog_lines("- alpha beta gamma\n  delta epsilon zeta", 32);
+        let rendered = lines
+            .iter()
+            .map(ratatui::text::Line::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(rendered[1].contains("gamma delta"));
+        assert_eq!(rendered[2].trim(), "epsilon zeta");
+        assert!(
+            rendered[1..rendered.len() - 1]
+                .iter()
+                .all(|line| line.width() <= 26)
+        );
     }
 
     #[test]

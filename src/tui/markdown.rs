@@ -85,12 +85,18 @@ struct MarkdownRenderer {
     heading_level: Option<u8>,
     link_url: Option<String>,
     show_link_urls: bool,
+    reflow_soft_breaks: bool,
     ordinary_image: bool,
     table_state: Option<TableState>,
 }
 
 impl MarkdownRenderer {
-    fn new(max_width: usize, _context: MarkdownRenderContext, show_link_urls: bool) -> Self {
+    fn new(
+        max_width: usize,
+        _context: MarkdownRenderContext,
+        show_link_urls: bool,
+        reflow_soft_breaks: bool,
+    ) -> Self {
         Self {
             max_width,
             blocks: Vec::new(),
@@ -108,6 +114,7 @@ impl MarkdownRenderer {
             heading_level: None,
             link_url: None,
             show_link_urls,
+            reflow_soft_breaks,
             ordinary_image: false,
             table_state: None,
         }
@@ -573,7 +580,15 @@ impl MarkdownRenderer {
     }
 
     fn soft_break(&mut self) {
-        self.break_line_with_indent();
+        if self.reflow_soft_breaks {
+            if self.current_width < self.max_width {
+                self.push_run(" ", self.current_attrs());
+            } else {
+                self.break_line_with_indent();
+            }
+        } else {
+            self.break_line_with_indent();
+        }
     }
 
     fn hard_break(&mut self) {
@@ -623,6 +638,20 @@ pub(crate) fn render_markdown_without_link_urls(
         max_width,
         MarkdownRenderContext,
         false,
+        false,
+    ))
+}
+
+pub(crate) fn render_markdown_reflowed_without_link_urls(
+    input: &str,
+    max_width: usize,
+) -> Vec<Line<'static>> {
+    flatten_markdown_blocks(render_markdown_internal(
+        input,
+        max_width,
+        MarkdownRenderContext,
+        false,
+        true,
     ))
 }
 
@@ -631,7 +660,7 @@ pub(crate) fn render_markdown_with_context(
     max_width: usize,
     context: MarkdownRenderContext,
 ) -> Vec<MarkdownBlock> {
-    render_markdown_internal(input, max_width, context, true)
+    render_markdown_internal(input, max_width, context, true, false)
 }
 
 pub(crate) fn render_markdown_with_context_without_link_urls(
@@ -639,7 +668,7 @@ pub(crate) fn render_markdown_with_context_without_link_urls(
     max_width: usize,
     context: MarkdownRenderContext,
 ) -> Vec<MarkdownBlock> {
-    render_markdown_internal(input, max_width, context, false)
+    render_markdown_internal(input, max_width, context, false, false)
 }
 
 fn render_markdown_internal(
@@ -647,13 +676,19 @@ fn render_markdown_internal(
     max_width: usize,
     context: MarkdownRenderContext,
     show_link_urls: bool,
+    reflow_soft_breaks: bool,
 ) -> Vec<MarkdownBlock> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TABLES);
 
     let parser = Parser::new_ext(input, options);
-    let mut renderer = MarkdownRenderer::new(max_width.max(1), context, show_link_urls);
+    let mut renderer = MarkdownRenderer::new(
+        max_width.max(1),
+        context,
+        show_link_urls,
+        reflow_soft_breaks,
+    );
     for event in parser {
         renderer.handle_event(event);
     }
