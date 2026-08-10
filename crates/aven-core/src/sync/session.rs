@@ -4,14 +4,13 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use flate2::write::GzEncoder;
 use getrandom::fill as fill_random;
 
 use super::blob::{
     MissingLocalBlob, attachment_blob_contract, contract_by_hash, unique_blob_contracts,
 };
-use super::coordination::{self, SyncLockPolicy, SyncSessionLock};
 use super::persistence::{ApplySyncPage, ClientSyncPage};
 use super::planner::{
     PendingChange, TransferBudget, TransferObject, plan_change_prefix, plan_transfers,
@@ -214,13 +213,11 @@ pub struct SyncSession {
     active: Option<ActivePage>,
     outstanding: Option<OutstandingRequest>,
     known_server_blobs: HashSet<String>,
-    storage_audited: bool,
     transfer_budget: TransferBudget,
     summary: SyncSessionSummary,
     last_has_more: bool,
     last_local_more: bool,
     stopped: bool,
-    coordination_lock: Option<SyncSessionLock>,
 }
 
 impl SyncSession {
@@ -230,32 +227,14 @@ impl SyncSession {
         auth_token: Option<String>,
         page_budget: Option<usize>,
     ) -> Result<Self> {
-        Self::start_with_lock_policy(
-            database,
-            server,
-            auth_token,
-            page_budget,
-            SyncLockPolicy::Manual,
-        )
-        .await
-    }
-
-    pub async fn start_with_lock_policy(
-        database: Database,
-        server: String,
-        auth_token: Option<String>,
-        page_budget: Option<usize>,
-        lock_policy: SyncLockPolicy,
-    ) -> Result<Self> {
         let blob_dir = crate::attachments::default_blob_dir(database.path());
-        Self::start_with_attachment_storage_and_lock_policy(
+        Self::start_with_attachment_storage(
             database,
             server,
             auth_token,
             page_budget,
             blob_dir,
             LifecyclePolicy::default(),
-            lock_policy,
         )
         .await
     }
@@ -268,29 +247,6 @@ impl SyncSession {
         blob_dir: PathBuf,
         lifecycle_policy: LifecyclePolicy,
     ) -> Result<Self> {
-        Self::start_with_attachment_storage_and_lock_policy(
-            database,
-            server,
-            auth_token,
-            page_budget,
-            blob_dir,
-            lifecycle_policy,
-            SyncLockPolicy::Manual,
-        )
-        .await
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub async fn start_with_attachment_storage_and_lock_policy(
-        database: Database,
-        server: String,
-        auth_token: Option<String>,
-        page_budget: Option<usize>,
-        blob_dir: PathBuf,
-        lifecycle_policy: LifecyclePolicy,
-        lock_policy: SyncLockPolicy,
-    ) -> Result<Self> {
-        let coordination_lock = coordination::acquire(&database, lock_policy).await?;
         let attempted_at = now();
         database.begin_sync_attempt(attempted_at.clone()).await?;
         if !sync_server_url_is_valid(&server) {
@@ -311,7 +267,6 @@ impl SyncSession {
             active: None,
             outstanding: None,
             known_server_blobs: HashSet::new(),
-            storage_audited: false,
             transfer_budget: TransferBudget {
                 objects: MAX_BLOB_TRANSFER_OBJECTS,
                 bytes: MAX_BLOB_TRANSFER_BYTES,
@@ -340,7 +295,6 @@ impl SyncSession {
             last_has_more: false,
             last_local_more: false,
             stopped: false,
-            coordination_lock,
         })
     }
 
@@ -640,7 +594,6 @@ impl SyncSession {
             RequestKind::Metadata { request_bytes } => {
                 let decoded: SyncResponse =
                     serde_json::from_slice(&response.body).context("decode sync response")?;
-                let pulled_changes = decoded.changes.clone();
                 let active = self.active.as_mut().expect("active sync page");
                 let request = active.page.request.clone();
                 let pending = active.page.pending;
@@ -675,28 +628,9 @@ impl SyncSession {
                 self.summary.apply_ms += apply_ms;
                 let missing_page = self
                     .database
-                    .missing_local_blob_page(MAX_BLOB_TRANSFER_OBJECTS)
+                    .missing_local_blob_page(&self.blob_dir, MAX_BLOB_TRANSFER_OBJECTS)
                     .await?;
-                let pulled_contracts = unique_blob_contracts(&pulled_changes)?;
-                let mut missing = missing_page.blobs;
-                if !self.storage_audited {
-                    missing.extend(
-                        self.database
-                            .audit_local_blob_storage(
-                                &self.blob_dir,
-                                self.lifecycle_policy.maintenance_limit,
-                            )
-                            .await?,
-                    );
-                    self.storage_audited = true;
-                }
-                missing.extend(
-                    self.database
-                        .missing_local_blobs_for_contracts(&self.blob_dir, &pulled_contracts)
-                        .await?,
-                );
-                let mut seen = HashSet::new();
-                missing.retain(|blob| seen.insert(blob.sha256.clone()));
+                let missing = missing_page.blobs;
                 let objects = missing
                     .iter()
                     .map(|blob| {
@@ -797,7 +731,6 @@ impl SyncSession {
 
     fn stop(&mut self) {
         self.stopped = true;
-        self.coordination_lock.take();
     }
 
     fn outcome(&self) -> SyncPageOutcome {
@@ -891,10 +824,8 @@ fn retry_delay_ms(failed_attempts: u32) -> u64 {
 }
 
 fn retry_delay_with_entropy(failed_attempts: u32, entropy: u64) -> u64 {
-    let exponent = failed_attempts.saturating_sub(1).min(16);
-    let cap = BASE_RETRY_DELAY_MS
-        .saturating_mul(1_u64 << exponent)
-        .min(MAX_RETRY_DELAY_MS);
+    let exponent = failed_attempts.saturating_sub(1);
+    let cap = (BASE_RETRY_DELAY_MS * (1_u64 << exponent)).min(MAX_RETRY_DELAY_MS);
     entropy % (cap + 1)
 }
 
@@ -918,13 +849,9 @@ fn retry_after_ms(headers: &[SyncHttpHeader], now_unix_seconds: i64) -> Option<u
 }
 
 fn parse_http_date(value: &str) -> Option<i64> {
-    if let Ok(value) = DateTime::parse_from_rfc2822(value) {
-        return Some(value.timestamp());
-    }
-    ["%A, %d-%b-%y %H:%M:%S GMT", "%a %b %e %H:%M:%S %Y"]
-        .into_iter()
-        .find_map(|format| NaiveDateTime::parse_from_str(value, format).ok())
-        .map(|value| value.and_utc().timestamp())
+    DateTime::parse_from_rfc2822(value)
+        .ok()
+        .map(|value| value.timestamp())
 }
 
 fn header(name: &str, value: &str) -> SyncHttpHeader {
@@ -1028,14 +955,8 @@ mod tests {
     #[test]
     fn retry_after_accepts_http_forms_and_caps_delays() {
         let now = 1_445_412_480;
-        for value in [
-            "Wed, 21 Oct 2015 07:28:02 GMT",
-            "Wednesday, 21-Oct-15 07:28:02 GMT",
-            "Wed Oct 21 07:28:02 2015",
-        ] {
-            let headers = [header("retry-after", value)];
-            assert_eq!(retry_after_ms(&headers, now), Some(2_000));
-        }
+        let headers = [header("retry-after", "Wed, 21 Oct 2015 07:28:02 GMT")];
+        assert_eq!(retry_after_ms(&headers, now), Some(2_000));
         assert_eq!(
             retry_after_ms(&[header("retry-after", "86400")], now),
             Some(MAX_RETRY_AFTER_MS)
@@ -1059,8 +980,6 @@ mod tests {
         assert_eq!(retry_delay_with_entropy(1, 250), 250);
         assert_eq!(retry_delay_with_entropy(2, 500), 500);
         assert_eq!(retry_delay_with_entropy(3, 1_000), 1_000);
-        assert_eq!(retry_delay_with_entropy(20, 4_000), 4_000);
-        assert_eq!(retry_delay_with_entropy(20, 4_001), 0);
     }
 
     #[test]

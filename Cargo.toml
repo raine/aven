@@ -78,7 +78,3 @@ zstd.workspace = true
 
 [patch.crates-io]
 crossterm = { git = "https://github.com/raine/crossterm", rev = "f99eeae405e28fa8cb353a6c6e36c493e72891bd" }
-
-[[bench]]
-name = "sync_scaling"
-harness = false

@@ -367,11 +367,7 @@ private func isTransientTransport(_ error: Error) -> Bool {
          .cannotConnectToHost,
          .networkConnectionLost,
          .dnsLookupFailed,
-         .notConnectedToInternet,
-         .internationalRoamingOff,
-         .callIsActive,
-         .dataNotAllowed,
-         .secureConnectionFailed:
+         .notConnectedToInternet:
         true
     default:
         false

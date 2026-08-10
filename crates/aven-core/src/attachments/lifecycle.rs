@@ -10,7 +10,7 @@ use sqlx::{Row, SqliteConnection};
 
 use crate::attachments::storage::object_path;
 use crate::attachments::validation::validate_sha256;
-use crate::db::{begin_immediate, get_meta, set_meta};
+use crate::db::begin_immediate;
 use crate::ids::new_id;
 
 pub const DEFAULT_LOCAL_GRACE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -67,14 +67,6 @@ pub struct LifecycleReport {
     pub reservations: ByteCount,
     pub quota: ByteCount,
     pub inconsistencies: ByteCount,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct BoundedMaintenanceSummary {
-    pub examined: usize,
-    pub updated: usize,
-    pub pruned: usize,
-    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -489,140 +481,6 @@ pub async fn reconcile_orphan_objects(
         removed.bytes += metadata.len();
     }
     Ok(removed)
-}
-
-pub async fn maintain_tracked_blobs_bounded(
-    conn: &mut SqliteConnection,
-    blob_dir: &Path,
-    policy: LifecyclePolicy,
-    clock: &dyn Clock,
-) -> Result<BoundedMaintenanceSummary> {
-    const CURSOR_KEY: &str = "server_blob_maintenance_cursor";
-
-    let cursor = get_meta(conn, CURSOR_KEY).await?.unwrap_or_default();
-    let rows = sqlx::query(
-        "SELECT sha256, available
-         FROM blob_inventory WHERE sha256 > ?
-         ORDER BY sha256 LIMIT ?",
-    )
-    .bind(&cursor)
-    .bind(i64::try_from(policy.maintenance_limit.saturating_add(1))?)
-    .fetch_all(&mut *conn)
-    .await?;
-    if rows.is_empty() {
-        if !cursor.is_empty() {
-            set_meta(conn, CURSOR_KEY, "").await?;
-        }
-        return Ok(BoundedMaintenanceSummary {
-            has_more: !cursor.is_empty(),
-            ..BoundedMaintenanceSummary::default()
-        });
-    }
-
-    let has_more = rows.len() > policy.maintenance_limit;
-    let now = timestamp(clock.now());
-    let cutoff = cutoff(clock.now(), policy.grace)?;
-    let mut summary = BoundedMaintenanceSummary {
-        has_more,
-        ..BoundedMaintenanceSummary::default()
-    };
-    let live_blob_references = live_blob_references_sql("?");
-    for row in rows.into_iter().take(policy.maintenance_limit) {
-        let sha256: String = row.get("sha256");
-        let available = row.get::<i64, _>("available") != 0;
-        summary.examined += 1;
-        let referenced: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT {live_blob_references}"
-        )))
-        .bind(&sha256)
-        .bind(&sha256)
-        .fetch_one(&mut *conn)
-        .await?;
-        let changed = if referenced {
-            sqlx::query(
-                "INSERT INTO blob_lifecycle(sha256, unreferenced_at) VALUES (?, NULL)
-                 ON CONFLICT(sha256) DO UPDATE SET unreferenced_at = NULL
-                 WHERE blob_lifecycle.unreferenced_at IS NOT NULL",
-            )
-            .bind(&sha256)
-            .execute(&mut *conn)
-            .await?
-            .rows_affected()
-        } else {
-            sqlx::query(
-                "INSERT INTO blob_lifecycle(sha256, unreferenced_at) VALUES (?, ?)
-                 ON CONFLICT(sha256) DO UPDATE SET
-                   unreferenced_at = COALESCE(blob_lifecycle.unreferenced_at, excluded.unreferenced_at)",
-            )
-            .bind(&sha256)
-            .bind(&now)
-            .execute(&mut *conn)
-            .await?
-            .rows_affected()
-        };
-        summary.updated += usize::try_from(changed)?;
-
-        let unreferenced_at: Option<String> =
-            sqlx::query_scalar("SELECT unreferenced_at FROM blob_lifecycle WHERE sha256 = ?")
-                .bind(&sha256)
-                .fetch_one(&mut *conn)
-                .await?;
-        if available
-            && unreferenced_at
-                .as_deref()
-                .is_some_and(|value| value <= cutoff.as_str())
-            && !is_protected(conn, &sha256, &now).await?
-        {
-            let mut tx = begin_immediate(conn).await?;
-            let still_eligible: bool = sqlx::query_scalar(
-                "SELECT EXISTS(
-                   SELECT 1 FROM blob_inventory bi
-                   JOIN blob_lifecycle bl ON bl.sha256 = bi.sha256
-                   WHERE bi.sha256 = ? AND bi.available = 1
-                     AND bl.unreferenced_at IS NOT NULL AND bl.unreferenced_at <= ?
-                 )",
-            )
-            .bind(&sha256)
-            .bind(&cutoff)
-            .fetch_one(&mut *tx)
-            .await?;
-            if !still_eligible || is_protected(&mut tx, &sha256, &now).await? {
-                tx.rollback().await?;
-            } else {
-                let source = object_path(blob_dir, &sha256)?;
-                let trash = trash_dir(blob_dir);
-                fs::create_dir_all(&trash)?;
-                let trashed = trash.join(&sha256);
-                if source.exists() {
-                    fs::rename(&source, &trashed)
-                        .with_context(|| "could not move attachment to trash")?;
-                }
-                if let Err(error) = sqlx::query(
-                    "UPDATE blob_inventory SET available = 0, last_verified_at = ? WHERE sha256 = ?",
-                )
-                .bind(&now)
-                .bind(&sha256)
-                .execute(&mut *tx)
-                .await
-                {
-                    if trashed.exists() {
-                        let _ = fs::rename(&trashed, &source);
-                    }
-                    return Err(error.into());
-                }
-                tx.commit().await?;
-                if trashed.exists() {
-                    fs::remove_file(trashed)?;
-                }
-                summary.pruned += 1;
-            }
-        }
-        set_meta(conn, CURSOR_KEY, &sha256).await?;
-    }
-    if !has_more {
-        set_meta(conn, CURSOR_KEY, "").await?;
-    }
-    Ok(summary)
 }
 
 pub async fn prune(
@@ -1175,41 +1033,6 @@ mod tests {
             .await
             .unwrap();
         assert!(!path.exists());
-    }
-
-    #[tokio::test]
-    async fn tracked_server_maintenance_respects_row_limit() {
-        let temp = tempfile::tempdir().unwrap();
-        let pool = open_db(&temp.path().join("test.sqlite")).await.unwrap();
-        let mut conn = pool.acquire().await.unwrap();
-        for index in 0..3 {
-            let hash = format!("{index:064x}");
-            upsert_inventory_available(&mut conn, &hash, 4, "image/png")
-                .await
-                .unwrap();
-        }
-        let policy = LifecyclePolicy {
-            grace: Duration::ZERO,
-            maintenance_limit: 2,
-            ..LifecyclePolicy::default()
-        };
-        let clock = TestClock::at("2026-07-01T00:00:00Z");
-
-        let first =
-            maintain_tracked_blobs_bounded(&mut conn, &temp.path().join("blobs"), policy, &clock)
-                .await
-                .unwrap();
-        assert_eq!(first.examined, 2);
-        assert_eq!(first.pruned, 2);
-        assert!(first.has_more);
-
-        let second =
-            maintain_tracked_blobs_bounded(&mut conn, &temp.path().join("blobs"), policy, &clock)
-                .await
-                .unwrap();
-        assert_eq!(second.examined, 1);
-        assert_eq!(second.pruned, 1);
-        assert!(!second.has_more);
     }
 
     #[tokio::test]

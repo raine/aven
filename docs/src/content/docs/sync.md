@@ -7,9 +7,6 @@ Sync keeps the same aven tasks available across laptops, agents, and other devic
 
 When you run `aven sync`, local changes are pushed to a self-hosted server and changes from other clients are pulled back down. The server stores the shared operation log; each local database applies that log to its own task store.
 
-See [Sync scaling measurements](/sync-scaling/) for the reproducible synthetic
-benchmark, measured replay thresholds, and snapshot-bootstrap recommendation.
-
 Use [Configuration](/configuration/) for `sync.*` and `daemon.*` settings. See
 [Back up and restore](/backups/) when you need to preserve, move, or recover
 local data.

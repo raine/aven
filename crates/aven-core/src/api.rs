@@ -1370,7 +1370,6 @@ pub enum ErrorCode {
     NotFound,
     OpenConflict,
     GenerationConflict,
-    Busy,
     Database,
     Internal,
 }
@@ -1382,7 +1381,6 @@ impl ErrorCode {
             Self::NotFound => "not_found",
             Self::OpenConflict => "open_conflict",
             Self::GenerationConflict => "generation_conflict",
-            Self::Busy => "busy",
             Self::Database => "database",
             Self::Internal => "internal",
         }
@@ -1405,39 +1403,31 @@ impl Error {
     }
 
     fn from_internal(error: InternalError) -> Self {
-        let code = if error.chain().any(|cause| {
-            cause
-                .downcast_ref::<crate::sync::SyncSessionBusy>()
-                .is_some()
-        }) {
-            ErrorCode::Busy
-        } else {
-            error
-                .chain()
-                .find_map(|cause| cause.downcast_ref::<crate::error::CoreError>())
-                .map(|error| match error.kind() {
-                    crate::error::ErrorKind::Validation => ErrorCode::Validation,
-                    crate::error::ErrorKind::NotFound => ErrorCode::NotFound,
-                    crate::error::ErrorKind::OpenConflict => ErrorCode::OpenConflict,
-                    crate::error::ErrorKind::GenerationConflict => ErrorCode::GenerationConflict,
-                })
-                .unwrap_or_else(|| {
-                    if error
-                        .chain()
-                        .filter_map(|cause| cause.downcast_ref::<sqlx::Error>())
-                        .any(|error| matches!(error, sqlx::Error::RowNotFound))
-                    {
-                        ErrorCode::NotFound
-                    } else if error
-                        .chain()
-                        .any(|cause| cause.downcast_ref::<sqlx::Error>().is_some())
-                    {
-                        ErrorCode::Database
-                    } else {
-                        ErrorCode::Internal
-                    }
-                })
-        };
+        let code = error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<crate::error::CoreError>())
+            .map(|error| match error.kind() {
+                crate::error::ErrorKind::Validation => ErrorCode::Validation,
+                crate::error::ErrorKind::NotFound => ErrorCode::NotFound,
+                crate::error::ErrorKind::OpenConflict => ErrorCode::OpenConflict,
+                crate::error::ErrorKind::GenerationConflict => ErrorCode::GenerationConflict,
+            })
+            .unwrap_or_else(|| {
+                if error
+                    .chain()
+                    .filter_map(|cause| cause.downcast_ref::<sqlx::Error>())
+                    .any(|error| matches!(error, sqlx::Error::RowNotFound))
+                {
+                    ErrorCode::NotFound
+                } else if error
+                    .chain()
+                    .any(|cause| cause.downcast_ref::<sqlx::Error>().is_some())
+                {
+                    ErrorCode::Database
+                } else {
+                    ErrorCode::Internal
+                }
+            });
         Self::new(code, error.to_string())
     }
 }
@@ -1463,7 +1453,6 @@ mod tests {
             ErrorCode::GenerationConflict.as_str(),
             "generation_conflict"
         );
-        assert_eq!(ErrorCode::Busy.as_str(), "busy");
         assert_eq!(ErrorCode::Database.as_str(), "database");
         assert_eq!(ErrorCode::Internal.as_str(), "internal");
         assert_eq!(

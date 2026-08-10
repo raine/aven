@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::Instant;
 
@@ -6,7 +6,9 @@ use anyhow::{Context, Result, bail};
 use sqlx::{QueryBuilder, Sqlite, SqliteConnection};
 
 use super::apply::apply_remote_change;
-use super::wire::{ChangeRow, ChangeWire, PushAck, SyncRequest, SyncResponse};
+use super::wire::{
+    AttachmentAddPayload, ChangeRow, ChangeWire, PushAck, SyncRequest, SyncResponse,
+};
 use crate::change_log::op_type;
 use crate::db::{Database, begin_immediate, get_meta, set_meta};
 
@@ -55,18 +57,6 @@ pub struct ServerSyncResult {
     pub assign_ms: u128,
     pub pull_query_ms: u128,
 }
-
-#[derive(Debug, Clone)]
-struct PreparedServerBlob {
-    workspace_id: String,
-    sha256: String,
-    byte_size: i64,
-    media_type: String,
-    width: i64,
-    height: i64,
-}
-
-type PreparedServerBlobs = HashMap<String, PreparedServerBlob>;
 
 impl Database {
     pub async fn sync_persistence_status(&self) -> Result<SyncPersistenceStatus> {
@@ -118,29 +108,24 @@ impl Database {
     ) -> Result<crate::attachments::lifecycle::ByteCount> {
         let mut conn = self.acquire_reader().await?;
         let known = serde_json::to_string(known_server_blobs)?;
-        let (count, bytes, invalid): (i64, i64, i64) = sqlx::query_as(
+        let (count, bytes): (i64, i64) = sqlx::query_as(
             "WITH known(sha256) AS (
                SELECT value FROM json_each(?)
              ), pending AS (
                SELECT json_extract(payload, '$.workspace_id') AS workspace_id,
                       json_extract(payload, '$.sha256') AS sha256,
-                      MIN(CAST(json_extract(payload, '$.byte_size') AS INTEGER)) AS min_size,
-                      MAX(CAST(json_extract(payload, '$.byte_size') AS INTEGER)) AS max_size
+                      MAX(CAST(json_extract(payload, '$.byte_size') AS INTEGER)) AS byte_size
                FROM changes
                WHERE server_seq IS NULL AND op_type = 'attachment_add'
                GROUP BY workspace_id, sha256
              )
-             SELECT COUNT(*), COALESCE(SUM(max_size), 0),
-                    COALESCE(SUM(min_size != max_size), 0)
+             SELECT COUNT(*), COALESCE(SUM(byte_size), 0)
              FROM pending LEFT JOIN known USING (sha256)
              WHERE known.sha256 IS NULL",
         )
         .bind(known)
         .fetch_one(&mut *conn)
         .await?;
-        if invalid != 0 {
-            bail!("error attachment-pending-size-mismatch");
-        }
         Ok(crate::attachments::lifecycle::ByteCount {
             count: u64::try_from(count)?,
             bytes: u64::try_from(bytes)?,
@@ -223,18 +208,15 @@ impl Database {
             bail!("error attachment-blob-storage-required");
         }
         let blob_prepare_started = Instant::now();
-        let prepared_blobs = if let Some(blob_dir) = blob_dir {
+        if let Some(blob_dir) = blob_dir {
             let mut conn = self.acquire_reader().await?;
-            prepare_server_blobs(&mut conn, blob_dir, &page.request.changes).await?
-        } else {
-            PreparedServerBlobs::new()
-        };
+            prepare_server_blobs(&mut conn, blob_dir, &page.request.changes).await?;
+        }
         let blob_prepare_ms = blob_prepare_started.elapsed().as_millis();
         let mut conn = self.acquire_writer().await?;
         let assign_started = Instant::now();
         let (accepted_count, push_acks) =
-            assign_server_sequences(&mut conn, page.request.changes, blob_dir, &prepared_blobs)
-                .await?;
+            assign_server_sequences(&mut conn, page.request.changes, blob_dir).await?;
         let assign_ms = assign_started.elapsed().as_millis();
         let pull_query_started = Instant::now();
         let (changes, has_more) =
@@ -507,7 +489,6 @@ async fn assign_server_sequences(
     conn: &mut SqliteConnection,
     changes: Vec<ChangeWire>,
     blob_dir: Option<&Path>,
-    prepared_blobs: &PreparedServerBlobs,
 ) -> Result<(i64, Vec<PushAck>)> {
     if changes.is_empty() {
         return Ok((0, Vec::new()));
@@ -527,8 +508,7 @@ async fn assign_server_sequences(
         bail!("error attachment-blob-storage-required");
     }
     if let Some(blob_dir) = blob_dir {
-        ensure_attachment_blobs_admitted(&mut tx, blob_dir, &unassigned_changes, prepared_blobs)
-            .await?;
+        ensure_attachment_blobs_admitted(&mut tx, blob_dir, &unassigned_changes).await?;
     }
     let mut next_server_seq = next_available_server_seq(&mut tx).await?;
     let mut accepted_count = 0_i64;
@@ -542,20 +522,7 @@ async fn assign_server_sequences(
         .await?;
         let server_seq = if let Some(existing_server_seq) = existing_server_seq {
             verify_existing_change(&mut tx, &change).await?;
-            if let Some(server_seq) = existing_server_seq {
-                server_seq
-            } else {
-                let server_seq = next_server_seq;
-                next_server_seq += 1;
-                sqlx::query("UPDATE changes SET server_seq = ? WHERE change_id = ?")
-                    .bind(server_seq)
-                    .bind(&change.change_id)
-                    .execute(&mut *tx)
-                    .await?;
-                apply_server_blob_reference(&mut tx, &change).await?;
-                accepted_count += 1;
-                server_seq
-            }
+            existing_server_seq.context("existing server change missing sequence")?
         } else {
             let server_seq = next_server_seq;
             next_server_seq += 1;
@@ -605,18 +572,7 @@ async fn apply_server_blob_reference(
 ) -> Result<()> {
     match change.op_type.as_str() {
         op_type::ATTACHMENT_ADD => {
-            let workspace_id = change.payload["workspace_id"]
-                .as_str()
-                .context("payload missing workspace_id")?;
-            let attachment_id = change.payload["attachment_id"]
-                .as_str()
-                .context("payload missing attachment_id")?;
-            let sha256 = change.payload["sha256"]
-                .as_str()
-                .context("payload missing sha256")?;
-            let byte_size = change.payload["byte_size"]
-                .as_i64()
-                .context("payload missing byte_size")?;
+            let payload = AttachmentAddPayload::from_change(change)?;
             sqlx::query(
                 "INSERT INTO server_blob_references(
                    workspace_id, attachment_id, task_id, sha256, byte_size, deleted
@@ -625,18 +581,18 @@ async fn apply_server_blob_reference(
                    task_id = excluded.task_id, sha256 = excluded.sha256,
                    byte_size = excluded.byte_size, deleted = 0",
             )
-            .bind(workspace_id)
-            .bind(attachment_id)
+            .bind(&payload.workspace_id)
+            .bind(&payload.attachment_id)
             .bind(&change.entity_id)
-            .bind(sha256)
-            .bind(byte_size)
+            .bind(&payload.sha256)
+            .bind(payload.byte_size)
             .execute(&mut *conn)
             .await?;
             sqlx::query(
                 "DELETE FROM blob_upload_reservations WHERE workspace_id = ? AND sha256 = ?",
             )
-            .bind(workspace_id)
-            .bind(sha256)
+            .bind(&payload.workspace_id)
+            .bind(&payload.sha256)
             .execute(&mut *conn)
             .await?;
         }
@@ -686,10 +642,8 @@ async fn prepare_server_blobs(
     conn: &mut SqliteConnection,
     blob_dir: &Path,
     changes: &[ChangeWire],
-) -> Result<PreparedServerBlobs> {
+) -> Result<()> {
     let assigned_change_ids = load_assigned_change_ids(conn, changes).await?;
-    let mut validated_hashes = HashMap::<String, PreparedServerBlob>::new();
-    let mut prepared = PreparedServerBlobs::new();
     for change in changes {
         if change.op_type != op_type::ATTACHMENT_ADD
             || assigned_change_ids.contains(&change.change_id)
@@ -698,37 +652,9 @@ async fn prepare_server_blobs(
         }
         let contract = super::blob::attachment_blob_contract(change)?
             .context("error attachment-blob-missing")?;
-        let prepared_blob = PreparedServerBlob {
-            workspace_id: contract.workspace_id,
-            sha256: contract.sha256,
-            byte_size: contract.byte_size,
-            media_type: contract.media_type,
-            width: contract.width,
-            height: contract.height,
-        };
-        if let Some(validated) = validated_hashes.get(&prepared_blob.sha256) {
-            if validated.byte_size != prepared_blob.byte_size
-                || validated.media_type != prepared_blob.media_type
-                || validated.width != prepared_blob.width
-                || validated.height != prepared_blob.height
-            {
-                bail!("error blob-inventory-metadata-mismatch");
-            }
-        } else {
-            let contract = super::wire::BlobUploadContract {
-                workspace_id: prepared_blob.workspace_id.clone(),
-                sha256: prepared_blob.sha256.clone(),
-                byte_size: prepared_blob.byte_size,
-                media_type: prepared_blob.media_type.clone(),
-                width: prepared_blob.width,
-                height: prepared_blob.height,
-            };
-            validate_server_blob_before_writer(conn, blob_dir, &contract).await?;
-            validated_hashes.insert(prepared_blob.sha256.clone(), prepared_blob.clone());
-        }
-        prepared.insert(change.change_id.clone(), prepared_blob);
+        validate_server_blob_before_writer(conn, blob_dir, &contract).await?;
     }
-    Ok(prepared)
+    Ok(())
 }
 
 async fn validate_server_blob_before_writer(
@@ -780,7 +706,6 @@ async fn ensure_attachment_blobs_admitted(
     conn: &mut SqliteConnection,
     blob_dir: &Path,
     changes: &[ChangeWire],
-    prepared_blobs: &PreparedServerBlobs,
 ) -> Result<()> {
     for change in changes {
         if change.op_type != op_type::ATTACHMENT_ADD {
@@ -788,18 +713,6 @@ async fn ensure_attachment_blobs_admitted(
         }
         let contract = super::blob::attachment_blob_contract(change)?
             .context("error attachment-blob-missing")?;
-        let Some(prepared) = prepared_blobs.get(&change.change_id) else {
-            bail!("error server-blob-preparation-invariant");
-        };
-        if prepared.workspace_id != contract.workspace_id
-            || prepared.sha256 != contract.sha256
-            || prepared.byte_size != contract.byte_size
-            || prepared.media_type != contract.media_type
-            || prepared.width != contract.width
-            || prepared.height != contract.height
-        {
-            bail!("error server-blob-preparation-invariant");
-        }
         let Some(row) =
             crate::attachments::storage::blob_inventory_row(conn, &contract.sha256).await?
         else {
@@ -1028,12 +941,12 @@ mod tests {
             .await
             .unwrap();
         let page = page_for_contract(&contract);
-        let prepared = {
+        {
             let mut reader = database.acquire_reader().await.unwrap();
             prepare_server_blobs(&mut reader, &blob_dir, &page.request.changes)
                 .await
-                .unwrap()
-        };
+                .unwrap();
+        }
         {
             let mut writer = database.acquire_writer().await.unwrap();
             sqlx::query("DELETE FROM blob_upload_reservations")
@@ -1042,14 +955,9 @@ mod tests {
                 .unwrap();
         }
         let mut writer = database.acquire_writer().await.unwrap();
-        let error = assign_server_sequences(
-            &mut writer,
-            page.request.changes,
-            Some(&blob_dir),
-            &prepared,
-        )
-        .await
-        .unwrap_err();
+        let error = assign_server_sequences(&mut writer, page.request.changes, Some(&blob_dir))
+            .await
+            .unwrap_err();
         assert!(error.to_string().contains("attachment-blob-unreserved"));
         let accepted: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM changes")
             .fetch_one(&mut *writer)

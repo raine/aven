@@ -151,8 +151,8 @@ async fn run_loop(
                             Instant::now() + Duration::from_millis(DAEMON_INCOMPLETE_RESCHEDULE_MS)
                         };
                     }
-                    Ok(Ok(DaemonSyncOutcome::Deferred(busy))) => {
-                        debug!(owner_pid = busy.owner_pid(), "daemon sync deferred");
+                    Ok(Ok(DaemonSyncOutcome::Deferred)) => {
+                        debug!("daemon sync deferred");
                         next_sync = Instant::now() + DAEMON_CONTENTION_RESCHEDULE;
                     }
                     Ok(Err(err)) => {
@@ -227,7 +227,7 @@ async fn sync_once(
     .await?
     {
         DaemonSyncOutcome::Completed(summary) => summary,
-        deferred @ DaemonSyncOutcome::Deferred(_) => return Ok(deferred),
+        deferred @ DaemonSyncOutcome::Deferred => return Ok(deferred),
     };
     if let Err(err) = database
         .prune_attachments(blob_dir, lifecycle_policy, true)
@@ -289,44 +289,6 @@ fn wake(addr: SocketAddr) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[tokio::test]
-    async fn sync_once_defers_contention_without_persistence_or_transport_noise() {
-        let directory = tempfile::tempdir().unwrap();
-        let database = Database::open(&directory.path().join("aven.sqlite"))
-            .await
-            .unwrap();
-        database
-            .record_sync_error("sentinel error".to_string())
-            .await
-            .unwrap();
-        let _active = aven_core::sync::SyncSession::start(
-            database.clone(),
-            "https://sync.example.test".to_string(),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-        let before = database.sync_persistence_status().await.unwrap();
-
-        let outcome = sync_once(
-            &database,
-            directory.path(),
-            aven_core::attachments::LifecyclePolicy::default(),
-            "http://127.0.0.1:1",
-            None,
-            &SyncHttpClient::new().unwrap(),
-        )
-        .await
-        .unwrap();
-
-        let DaemonSyncOutcome::Deferred(busy) = outcome else {
-            panic!("daemon sync must defer during session contention");
-        };
-        assert_eq!(busy.owner_pid(), Some(std::process::id()));
-        assert_eq!(database.sync_persistence_status().await.unwrap(), before);
-    }
 
     #[test]
     fn contended_sync_round_reschedules_after_one_second() {

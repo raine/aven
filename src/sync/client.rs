@@ -6,8 +6,7 @@ use aven_core::attachments::LifecyclePolicy;
 use aven_core::db::Database;
 use aven_core::sync::wire::MAX_BLOB_TRANSFER_BYTES;
 use aven_core::sync::{
-    PreparedSyncRequest, SyncHttpHeader, SyncHttpResponse, SyncLockPolicy, SyncRetryDecision,
-    SyncSession, SyncSessionBusy,
+    PreparedSyncRequest, SyncHttpHeader, SyncHttpResponse, SyncRetryDecision, SyncSession,
 };
 use tracing::info;
 
@@ -27,7 +26,6 @@ impl SyncHttpClient {
             .retry(reqwest::retry::never())
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))
-            .read_timeout(Duration::from_secs(30))
             .build()
             .context("build sync HTTP client")?;
         let id = format!("sc-{}", crate::ids::new_id());
@@ -44,7 +42,7 @@ pub(crate) type SyncSummary = aven_core::sync::SyncSessionSummary;
 #[derive(Debug)]
 pub(crate) enum DaemonSyncOutcome {
     Completed(SyncSummary),
-    Deferred(SyncSessionBusy),
+    Deferred,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +62,7 @@ pub(crate) async fn run_sync_to_completion(
     let server = config::resolve_sync_server(None, config)?;
     let blob_dir = config::resolve_blob_dir(database.path(), config)?;
     let client = SyncHttpClient::new()?;
+    let _guard = super::coordination::acquire(database).await?;
     let mut total = SyncRunSummary {
         pushed: 0,
         pulled: 0,
@@ -107,6 +106,7 @@ pub(crate) async fn sync_client(
     let server = config::resolve_sync_server(args.server.as_deref(), config)?;
     let blob_dir = config::resolve_blob_dir(database.path(), config)?;
     let client = SyncHttpClient::new()?;
+    let _guard = super::coordination::acquire(database).await?;
     loop {
         let summary = run_sync_with_page_budget_using_client_and_policy(
             database,
@@ -154,7 +154,7 @@ pub(crate) async fn run_sync_with_page_budget_using_client_and_policy(
     client: &SyncHttpClient,
     lifecycle_policy: LifecyclePolicy,
 ) -> Result<SyncSummary> {
-    run_sync_with_lock_policy(
+    run_sync_session(
         database,
         blob_dir,
         server,
@@ -162,7 +162,6 @@ pub(crate) async fn run_sync_with_page_budget_using_client_and_policy(
         page_budget,
         client,
         lifecycle_policy,
-        SyncLockPolicy::Manual,
     )
     .await
 }
@@ -176,7 +175,10 @@ pub(crate) async fn try_run_daemon_sync_with_page_budget(
     client: &SyncHttpClient,
     lifecycle_policy: LifecyclePolicy,
 ) -> Result<DaemonSyncOutcome> {
-    match run_sync_with_lock_policy(
+    let Some(_guard) = super::coordination::try_acquire(database)? else {
+        return Ok(DaemonSyncOutcome::Deferred);
+    };
+    run_sync_session(
         database,
         blob_dir,
         server,
@@ -184,20 +186,13 @@ pub(crate) async fn try_run_daemon_sync_with_page_budget(
         Some(page_budget),
         client,
         lifecycle_policy,
-        SyncLockPolicy::Defer,
     )
     .await
-    {
-        Ok(summary) => Ok(DaemonSyncOutcome::Completed(summary)),
-        Err(error) => match error.downcast::<SyncSessionBusy>() {
-            Ok(busy) => Ok(DaemonSyncOutcome::Deferred(busy)),
-            Err(error) => Err(error),
-        },
-    }
+    .map(DaemonSyncOutcome::Completed)
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn run_sync_with_lock_policy(
+async fn run_sync_session(
     database: &Database,
     blob_dir: &Path,
     server: &str,
@@ -205,16 +200,14 @@ async fn run_sync_with_lock_policy(
     page_budget: Option<usize>,
     client: &SyncHttpClient,
     lifecycle_policy: LifecyclePolicy,
-    lock_policy: SyncLockPolicy,
 ) -> Result<SyncSummary> {
-    let mut session = SyncSession::start_with_attachment_storage_and_lock_policy(
+    let mut session = SyncSession::start_with_attachment_storage(
         database.clone(),
         server.to_string(),
         auth_token.map(str::to_string),
         page_budget,
         blob_dir.to_path_buf(),
         lifecycle_policy,
-        lock_policy,
     )
     .await?;
     drive_sync_session(&mut session, server, client).await

@@ -86,7 +86,8 @@ impl Database {
         &self.path
     }
 
-    pub(crate) fn file_identity(&self) -> Option<&Path> {
+    #[doc(hidden)]
+    pub fn file_identity(&self) -> Option<&Path> {
         self.file_identity.as_deref()
     }
 

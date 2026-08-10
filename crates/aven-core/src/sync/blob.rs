@@ -7,15 +7,14 @@ use sqlx::{Row, SqliteConnection};
 use super::wire::{AttachmentAddPayload, BlobUploadContract, ChangeWire};
 use crate::attachments::decode::validate_image;
 use crate::attachments::lifecycle::{
-    BoundedMaintenanceSummary, ByteCount, LifecyclePolicy, SystemClock, acquire_lease,
-    ensure_local_capacity, maintain_tracked_blobs_bounded, release_lease, release_reservation,
-    reserve_upload,
+    ByteCount, LifecyclePolicy, PruneSummary, SystemClock, acquire_lease, ensure_local_capacity,
+    prune, release_lease, release_reservation, reserve_upload,
 };
 use crate::attachments::storage::{
     blob_inventory_row, object_path, sha256_hex, store_validated_blob,
 };
 use crate::change_log::op_type;
-use crate::db::{Database, get_meta, set_meta};
+use crate::db::Database;
 
 #[derive(Debug, Clone)]
 pub(super) struct MissingLocalBlob {
@@ -136,9 +135,13 @@ impl Database {
         release_lease(&mut conn, lease_id).await
     }
 
-    pub(super) async fn missing_local_blob_page(&self, limit: usize) -> Result<MissingBlobPage> {
+    pub(super) async fn missing_local_blob_page(
+        &self,
+        blob_dir: &Path,
+        limit: usize,
+    ) -> Result<MissingBlobPage> {
         let mut conn = self.acquire_reader().await?;
-        missing_local_blob_page(&mut conn, limit).await
+        missing_local_blob_page(&mut conn, blob_dir, limit).await
     }
 
     pub(super) async fn missing_local_blob_counts(&self) -> Result<ByteCount> {
@@ -160,117 +163,6 @@ impl Database {
             count: u64::try_from(count)?,
             bytes: u64::try_from(bytes)?,
         })
-    }
-
-    pub(super) async fn missing_local_blobs_for_contracts(
-        &self,
-        blob_dir: &Path,
-        contracts: &[BlobUploadContract],
-    ) -> Result<Vec<MissingLocalBlob>> {
-        if contracts.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut conn = self.acquire_reader().await?;
-        let mut missing = Vec::new();
-        for contract in contracts {
-            let row = sqlx::query(
-                "SELECT ta.sha256, ta.byte_size, ta.media_type, ta.width, ta.height
-                 FROM task_attachments ta
-                 JOIN tasks t ON t.workspace_id = ta.workspace_id AND t.id = ta.task_id
-                 WHERE ta.workspace_id = ? AND ta.sha256 = ?
-                   AND ta.deleted = 0 AND t.deleted = 0
-                 ORDER BY ta.attachment_id
-                 LIMIT 1",
-            )
-            .bind(&contract.workspace_id)
-            .bind(&contract.sha256)
-            .fetch_optional(&mut *conn)
-            .await?;
-            let Some(row) = row else {
-                continue;
-            };
-            if blob_available(&mut conn, blob_dir, &contract.sha256).await? {
-                continue;
-            }
-            missing.push(MissingLocalBlob {
-                sha256: row.get("sha256"),
-                byte_size: row.get("byte_size"),
-                media_type: row.get("media_type"),
-                width: row.get("width"),
-                height: row.get("height"),
-            });
-        }
-        Ok(missing)
-    }
-
-    pub(super) async fn audit_local_blob_storage(
-        &self,
-        blob_dir: &Path,
-        limit: usize,
-    ) -> Result<Vec<MissingLocalBlob>> {
-        const CURSOR_KEY: &str = "sync_blob_audit_cursor";
-
-        let (cursor, rows) = {
-            let mut conn = self.acquire_reader().await?;
-            let cursor = get_meta(&mut conn, CURSOR_KEY).await?.unwrap_or_default();
-            let rows = sqlx::query(
-                "SELECT ta.sha256, MAX(ta.byte_size) AS byte_size,
-                        MAX(ta.media_type) AS media_type, MAX(ta.width) AS width,
-                        MAX(ta.height) AS height
-                 FROM task_attachments ta
-                 JOIN tasks t ON t.workspace_id = ta.workspace_id AND t.id = ta.task_id
-                 JOIN blob_inventory bi ON bi.sha256 = ta.sha256 AND bi.available = 1
-                 WHERE ta.deleted = 0 AND t.deleted = 0 AND ta.sha256 > ?
-                 GROUP BY ta.sha256 ORDER BY ta.sha256 LIMIT ?",
-            )
-            .bind(&cursor)
-            .bind(i64::try_from(limit.saturating_add(1))?)
-            .fetch_all(&mut *conn)
-            .await?;
-            (cursor, rows)
-        };
-        if rows.is_empty() {
-            if !cursor.is_empty() {
-                let mut conn = self.acquire_writer().await?;
-                set_meta(&mut conn, CURSOR_KEY, "").await?;
-            }
-            return Ok(Vec::new());
-        }
-        let has_more = rows.len() > limit;
-        let mut checked = Vec::new();
-        for row in rows.into_iter().take(limit) {
-            let blob = MissingLocalBlob {
-                sha256: row.get("sha256"),
-                byte_size: row.get("byte_size"),
-                media_type: row.get("media_type"),
-                width: row.get("width"),
-                height: row.get("height"),
-            };
-            let exists = object_path(blob_dir, &blob.sha256)?.exists();
-            checked.push((blob, exists));
-        }
-        let next_cursor = checked
-            .last()
-            .map(|(blob, _)| blob.sha256.clone())
-            .unwrap_or_default();
-        let mut conn = self.acquire_writer().await?;
-        let mut missing = Vec::new();
-        for (blob, existed) in checked {
-            if !existed && !object_path(blob_dir, &blob.sha256)?.exists() {
-                sqlx::query("UPDATE blob_inventory SET available = 0 WHERE sha256 = ?")
-                    .bind(&blob.sha256)
-                    .execute(&mut *conn)
-                    .await?;
-                missing.push(blob);
-            }
-        }
-        set_meta(
-            &mut conn,
-            CURSOR_KEY,
-            if has_more { &next_cursor } else { "" },
-        )
-        .await?;
-        Ok(missing)
     }
 
     pub(super) async fn store_downloaded_blob(
@@ -399,43 +291,50 @@ impl Database {
         &self,
         blob_dir: &Path,
         policy: LifecyclePolicy,
-    ) -> Result<BoundedMaintenanceSummary> {
+    ) -> Result<PruneSummary> {
         let mut conn = self.acquire_writer().await?;
-        maintain_tracked_blobs_bounded(&mut conn, blob_dir, policy, &SystemClock).await
+        prune(&mut conn, blob_dir, policy, true, &SystemClock).await
     }
 }
 
 async fn missing_local_blob_page(
     conn: &mut SqliteConnection,
+    blob_dir: &Path,
     limit: usize,
 ) -> Result<MissingBlobPage> {
     let rows = sqlx::query(
         "SELECT ta.sha256, MAX(ta.byte_size) AS byte_size,
                 MAX(ta.media_type) AS media_type, MAX(ta.width) AS width,
-                MAX(ta.height) AS height
+                MAX(ta.height) AS height, MAX(COALESCE(bi.available, 0)) AS available
          FROM task_attachments ta
          JOIN tasks t ON t.workspace_id = ta.workspace_id AND t.id = ta.task_id
          LEFT JOIN blob_inventory bi ON bi.sha256 = ta.sha256
          WHERE ta.deleted = 0 AND t.deleted = 0
          GROUP BY ta.sha256
-         HAVING MAX(COALESCE(bi.available, 0)) = 0
-         ORDER BY ta.sha256 LIMIT ?",
+         ORDER BY ta.sha256",
     )
-    .bind(i64::try_from(limit.saturating_add(1))?)
     .fetch_all(&mut *conn)
     .await?;
-    let has_more = rows.len() > limit;
-    let blobs = rows
-        .into_iter()
-        .take(limit)
-        .map(|row| MissingLocalBlob {
-            sha256: row.get("sha256"),
+    let mut blobs = Vec::new();
+    for row in rows {
+        let sha256: String = row.get("sha256");
+        let available: i64 = row.get("available");
+        if available != 0 && object_path(blob_dir, &sha256)?.exists() {
+            continue;
+        }
+        blobs.push(MissingLocalBlob {
+            sha256,
             byte_size: row.get("byte_size"),
             media_type: row.get("media_type"),
             width: row.get("width"),
             height: row.get("height"),
-        })
-        .collect();
+        });
+        if blobs.len() > limit {
+            break;
+        }
+    }
+    let has_more = blobs.len() > limit;
+    blobs.truncate(limit);
     Ok(MissingBlobPage { blobs, has_more })
 }
 
@@ -560,7 +459,10 @@ mod tests {
             .unwrap();
         seed_missing_attachments(&database, 3).await;
 
-        let page = database.missing_local_blob_page(2).await.unwrap();
+        let page = database
+            .missing_local_blob_page(&temp.path().join("blobs"), 2)
+            .await
+            .unwrap();
         assert_eq!(page.blobs.len(), 2);
         assert!(page.has_more);
         assert_eq!(

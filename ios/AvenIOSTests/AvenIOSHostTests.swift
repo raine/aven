@@ -159,6 +159,7 @@ final class AvenIOSHostTests: XCTestCase {
             XCTFail("stalled request must time out")
         } catch URLSessionTransportError.attemptTimedOut {}
 
+        try await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(state.capturedRequests.count, 1)
         XCTAssertEqual(state.stopCount, 1)
     }

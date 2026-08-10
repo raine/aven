@@ -169,10 +169,10 @@ fn spawn_blob_maintenance(state: ServerState) -> tokio::task::JoinHandle<()> {
                 .await
             {
                 Ok(summary) => info!(
-                    examined = summary.examined,
-                    updated = summary.updated,
-                    pruned = summary.pruned,
-                    has_more = summary.has_more,
+                    eligible = summary.eligible.count,
+                    eligible_bytes = summary.eligible.bytes,
+                    pruned = summary.pruned.count,
+                    pruned_bytes = summary.pruned.bytes,
                     "attachment maintenance completed"
                 ),
                 Err(err) => warn!(error = %err, "attachment maintenance failed"),

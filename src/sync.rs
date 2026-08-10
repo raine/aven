@@ -1,4 +1,5 @@
 mod client;
+mod coordination;
 mod server;
 pub(crate) use aven_core::sync::wire;
 

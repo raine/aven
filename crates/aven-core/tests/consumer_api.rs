@@ -79,29 +79,6 @@ async fn exchange(client_path: &Path, server: &Database) {
 }
 
 #[tokio::test]
-async fn consumer_api_reports_sync_contention_as_busy() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("busy.sqlite");
-    let first = Store::open(&path).await.unwrap();
-    let second = Store::open(&path).await.unwrap();
-    let _active = first
-        .start_sync_session("https://sync.test".to_string(), None, None)
-        .await
-        .unwrap();
-
-    let error = match second
-        .start_sync_session("https://sync.test".to_string(), None, None)
-        .await
-    {
-        Ok(_) => panic!("contended consumer session must not start"),
-        Err(error) => error,
-    };
-
-    assert_eq!(error.code, ErrorCode::Busy);
-    assert!(error.message.starts_with("error sync-session-busy"));
-}
-
-#[tokio::test]
 async fn consumer_api_creation_and_sync_preserve_api_source() {
     let directory = tempfile::tempdir().unwrap();
     let first_path = directory.path().join("source-first.sqlite");
