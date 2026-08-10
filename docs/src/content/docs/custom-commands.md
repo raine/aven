@@ -3,6 +3,11 @@ title: Custom TUI commands
 description: Add local programs to the command palette and receive task context as JSON.
 ---
 
+:::caution[Experimental feature]
+Custom TUI commands are experimental and may change or be removed in a future
+release.
+:::
+
 Custom TUI commands connect Aven's command palette to local executables. A
 command can receive the selected task and marked tasks, launch work in another
 program, and optionally close Aven after successful completion.
