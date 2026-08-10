@@ -173,15 +173,32 @@ impl Database {
         let mut conn = self.acquire_reader().await?;
         let mut missing = Vec::new();
         for contract in contracts {
-            if !blob_available(&mut conn, blob_dir, &contract.sha256).await? {
-                missing.push(MissingLocalBlob {
-                    sha256: contract.sha256.clone(),
-                    byte_size: contract.byte_size,
-                    media_type: contract.media_type.clone(),
-                    width: Some(contract.width),
-                    height: Some(contract.height),
-                });
+            let row = sqlx::query(
+                "SELECT ta.sha256, ta.byte_size, ta.media_type, ta.width, ta.height
+                 FROM task_attachments ta
+                 JOIN tasks t ON t.workspace_id = ta.workspace_id AND t.id = ta.task_id
+                 WHERE ta.workspace_id = ? AND ta.sha256 = ?
+                   AND ta.deleted = 0 AND t.deleted = 0
+                 ORDER BY ta.attachment_id
+                 LIMIT 1",
+            )
+            .bind(&contract.workspace_id)
+            .bind(&contract.sha256)
+            .fetch_optional(&mut *conn)
+            .await?;
+            let Some(row) = row else {
+                continue;
+            };
+            if blob_available(&mut conn, blob_dir, &contract.sha256).await? {
+                continue;
             }
+            missing.push(MissingLocalBlob {
+                sha256: row.get("sha256"),
+                byte_size: row.get("byte_size"),
+                media_type: row.get("media_type"),
+                width: row.get("width"),
+                height: row.get("height"),
+            });
         }
         Ok(missing)
     }
