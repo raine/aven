@@ -630,6 +630,8 @@ impl SyncSession {
                     .database
                     .missing_local_blob_page(&self.blob_dir, MAX_BLOB_TRANSFER_OBJECTS)
                     .await?;
+                let has_more_missing =
+                    missing_page.total.count > u64::try_from(missing_page.blobs.len())?;
                 let missing = missing_page.blobs;
                 let objects = missing
                     .iter()
@@ -642,8 +644,7 @@ impl SyncSession {
                     })
                     .collect::<Result<Vec<_>>>()?;
                 let plan = plan_transfers(&objects, self.transfer_budget);
-                active.transfer_budget_blocked |=
-                    missing_page.has_more || plan.len() < objects.len();
+                active.transfer_budget_blocked |= has_more_missing || plan.len() < objects.len();
                 let planned = plan
                     .iter()
                     .map(|o| o.sha256.as_str())
@@ -705,7 +706,11 @@ impl SyncSession {
         self.last_has_more = active.has_more;
         let local_more = self.database.pending_sync_change_count().await? > 0;
         self.last_local_more = local_more;
-        let download_counts = self.database.missing_local_blob_counts().await?;
+        let download_counts = self
+            .database
+            .missing_local_blob_page(&self.blob_dir, 0)
+            .await?
+            .total;
         self.summary.blob_download_remaining = usize::try_from(download_counts.count)?;
         self.summary.blob_download_remaining_bytes = download_counts.bytes;
         let upload_counts = self

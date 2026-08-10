@@ -51,7 +51,6 @@ public struct URLSessionTransport: Sendable {
                 guard let response = try await group.next() else {
                     throw URLSessionTransportError.attemptTimedOut
                 }
-                group.cancelAll()
                 return response
             }
         } onCancel: {

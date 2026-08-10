@@ -158,11 +158,7 @@ pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> R
 
 fn spawn_blob_maintenance(state: ServerState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(SERVER_BLOB_MAINTENANCE_INTERVAL);
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        interval.tick().await;
         loop {
-            interval.tick().await;
             match state
                 .database
                 .maintain_server_blobs(&state.blob_dir, state.lifecycle_policy)
@@ -177,6 +173,7 @@ fn spawn_blob_maintenance(state: ServerState) -> tokio::task::JoinHandle<()> {
                 ),
                 Err(err) => warn!(error = %err, "attachment maintenance failed"),
             }
+            tokio::time::sleep(SERVER_BLOB_MAINTENANCE_INTERVAL).await;
         }
     })
 }

@@ -72,7 +72,7 @@ pub(crate) async fn run_sync_to_completion(
     };
 
     loop {
-        let summary = run_sync_with_page_budget_using_client_and_policy(
+        let summary = run_sync_session(
             database,
             &blob_dir,
             &server,
@@ -108,7 +108,7 @@ pub(crate) async fn sync_client(
     let client = SyncHttpClient::new()?;
     let _guard = super::coordination::acquire(database).await?;
     loop {
-        let summary = run_sync_with_page_budget_using_client_and_policy(
+        let summary = run_sync_session(
             database,
             &blob_dir,
             &server,
@@ -143,27 +143,6 @@ pub(crate) async fn sync_client(
         }
     }
     Ok(())
-}
-
-pub(crate) async fn run_sync_with_page_budget_using_client_and_policy(
-    database: &Database,
-    blob_dir: &Path,
-    server: &str,
-    auth_token: Option<&str>,
-    page_budget: Option<usize>,
-    client: &SyncHttpClient,
-    lifecycle_policy: LifecyclePolicy,
-) -> Result<SyncSummary> {
-    run_sync_session(
-        database,
-        blob_dir,
-        server,
-        auth_token,
-        page_budget,
-        client,
-        lifecycle_policy,
-    )
-    .await
 }
 
 pub(crate) async fn try_run_daemon_sync_with_page_budget(
