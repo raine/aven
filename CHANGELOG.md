@@ -3,6 +3,11 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.28 (2026-08-10)
+
+- Sync is more reliable on slow or unstable connections, coordinates daemon and manual operations, and downloads only attachments referenced by live tasks.
+- Fix: The changelog reader (`:changelog`) fetches the latest release notes independently of cached update checks and wraps entries cleanly to the dialog width.
+
 ## v0.1.27 (2026-08-09)
 
 - Task details show the project key and color beside the task reference
