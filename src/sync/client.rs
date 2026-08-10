@@ -6,7 +6,8 @@ use aven_core::attachments::LifecyclePolicy;
 use aven_core::db::Database;
 use aven_core::sync::wire::MAX_BLOB_TRANSFER_BYTES;
 use aven_core::sync::{
-    PreparedSyncRequest, SyncHttpHeader, SyncHttpResponse, SyncRetryDecision, SyncSession,
+    PreparedSyncRequest, SyncHttpHeader, SyncHttpResponse, SyncLockPolicy, SyncRetryDecision,
+    SyncSession, SyncSessionBusy,
 };
 use tracing::info;
 
@@ -39,6 +40,12 @@ impl SyncHttpClient {
 }
 
 pub(crate) type SyncSummary = aven_core::sync::SyncSessionSummary;
+
+#[derive(Debug)]
+pub(crate) enum DaemonSyncOutcome {
+    Completed(SyncSummary),
+    Deferred(SyncSessionBusy),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SyncRunSummary {
@@ -147,13 +154,67 @@ pub(crate) async fn run_sync_with_page_budget_using_client_and_policy(
     client: &SyncHttpClient,
     lifecycle_policy: LifecyclePolicy,
 ) -> Result<SyncSummary> {
-    let mut session = SyncSession::start_with_attachment_storage(
+    run_sync_with_lock_policy(
+        database,
+        blob_dir,
+        server,
+        auth_token,
+        page_budget,
+        client,
+        lifecycle_policy,
+        SyncLockPolicy::Manual,
+    )
+    .await
+}
+
+pub(crate) async fn try_run_daemon_sync_with_page_budget(
+    database: &Database,
+    blob_dir: &Path,
+    server: &str,
+    auth_token: Option<&str>,
+    page_budget: usize,
+    client: &SyncHttpClient,
+    lifecycle_policy: LifecyclePolicy,
+) -> Result<DaemonSyncOutcome> {
+    match run_sync_with_lock_policy(
+        database,
+        blob_dir,
+        server,
+        auth_token,
+        Some(page_budget),
+        client,
+        lifecycle_policy,
+        SyncLockPolicy::Defer,
+    )
+    .await
+    {
+        Ok(summary) => Ok(DaemonSyncOutcome::Completed(summary)),
+        Err(error) => match error.downcast::<SyncSessionBusy>() {
+            Ok(busy) => Ok(DaemonSyncOutcome::Deferred(busy)),
+            Err(error) => Err(error),
+        },
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_sync_with_lock_policy(
+    database: &Database,
+    blob_dir: &Path,
+    server: &str,
+    auth_token: Option<&str>,
+    page_budget: Option<usize>,
+    client: &SyncHttpClient,
+    lifecycle_policy: LifecyclePolicy,
+    lock_policy: SyncLockPolicy,
+) -> Result<SyncSummary> {
+    let mut session = SyncSession::start_with_attachment_storage_and_lock_policy(
         database.clone(),
         server.to_string(),
         auth_token.map(str::to_string),
         page_budget,
         blob_dir.to_path_buf(),
         lifecycle_policy,
+        lock_policy,
     )
     .await?;
     drive_sync_session(&mut session, server, client).await

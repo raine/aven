@@ -101,6 +101,7 @@ sync:
     let env_output = command()
         .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
         .env("AVEN_DB", &env_db)
+        .env_remove("AVEN_SYNC_DISABLED")
         .env("AVEN_SYNC_SERVER", &server_env.url)
         .arg("sync")
         .output()

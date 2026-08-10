@@ -19,6 +19,26 @@ fn error_parts(error: AvenError) -> (ErrorCode, String) {
 }
 
 #[test]
+fn sync_contention_has_a_typed_busy_error() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("busy.sqlite");
+    let first = AvenClient::open(database.to_string_lossy().into_owned()).unwrap();
+    let second = AvenClient::open(database.to_string_lossy().into_owned()).unwrap();
+    let _active = first
+        .start_sync_session("https://sync.test".to_string(), None, None)
+        .unwrap();
+
+    let error = match second.start_sync_session("https://sync.test".to_string(), None, None) {
+        Ok(_) => panic!("contended facade session must not start"),
+        Err(error) => error,
+    };
+    let (code, message) = error_parts(error);
+
+    assert_eq!(code, ErrorCode::Busy);
+    assert!(message.starts_with("error sync-session-busy"));
+}
+
+#[test]
 fn local_task_flow_uses_typed_values_and_validates_ids() {
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("local.sqlite");

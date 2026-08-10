@@ -11,6 +11,7 @@ use getrandom::fill as fill_random;
 use super::blob::{
     MissingLocalBlob, attachment_blob_contract, contract_by_hash, unique_blob_contracts,
 };
+use super::coordination::{self, SyncLockPolicy, SyncSessionLock};
 use super::persistence::{ApplySyncPage, ClientSyncPage};
 use super::planner::{
     PendingChange, TransferBudget, TransferObject, plan_change_prefix, plan_transfers,
@@ -219,6 +220,7 @@ pub struct SyncSession {
     last_has_more: bool,
     last_local_more: bool,
     stopped: bool,
+    coordination_lock: Option<SyncSessionLock>,
 }
 
 impl SyncSession {
@@ -228,14 +230,32 @@ impl SyncSession {
         auth_token: Option<String>,
         page_budget: Option<usize>,
     ) -> Result<Self> {
+        Self::start_with_lock_policy(
+            database,
+            server,
+            auth_token,
+            page_budget,
+            SyncLockPolicy::Manual,
+        )
+        .await
+    }
+
+    pub async fn start_with_lock_policy(
+        database: Database,
+        server: String,
+        auth_token: Option<String>,
+        page_budget: Option<usize>,
+        lock_policy: SyncLockPolicy,
+    ) -> Result<Self> {
         let blob_dir = crate::attachments::default_blob_dir(database.path());
-        Self::start_with_attachment_storage(
+        Self::start_with_attachment_storage_and_lock_policy(
             database,
             server,
             auth_token,
             page_budget,
             blob_dir,
             LifecyclePolicy::default(),
+            lock_policy,
         )
         .await
     }
@@ -248,6 +268,29 @@ impl SyncSession {
         blob_dir: PathBuf,
         lifecycle_policy: LifecyclePolicy,
     ) -> Result<Self> {
+        Self::start_with_attachment_storage_and_lock_policy(
+            database,
+            server,
+            auth_token,
+            page_budget,
+            blob_dir,
+            lifecycle_policy,
+            SyncLockPolicy::Manual,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn start_with_attachment_storage_and_lock_policy(
+        database: Database,
+        server: String,
+        auth_token: Option<String>,
+        page_budget: Option<usize>,
+        blob_dir: PathBuf,
+        lifecycle_policy: LifecyclePolicy,
+        lock_policy: SyncLockPolicy,
+    ) -> Result<Self> {
+        let coordination_lock = coordination::acquire(&database, lock_policy).await?;
         let attempted_at = now();
         database.begin_sync_attempt(attempted_at.clone()).await?;
         if !sync_server_url_is_valid(&server) {
@@ -297,6 +340,7 @@ impl SyncSession {
             last_has_more: false,
             last_local_more: false,
             stopped: false,
+            coordination_lock,
         })
     }
 
@@ -744,8 +788,16 @@ impl SyncSession {
         let transfer_stalled = active.transfer_budget_blocked
             || self.transfer_budget.objects == 0
             || self.transfer_budget.bytes == 0;
-        self.stopped = complete || budget_exhausted || transfer_stalled;
+        let should_stop = complete || budget_exhausted || transfer_stalled;
+        if should_stop {
+            self.stop();
+        }
         Ok(())
+    }
+
+    fn stop(&mut self) {
+        self.stopped = true;
+        self.coordination_lock.take();
     }
 
     fn outcome(&self) -> SyncPageOutcome {
@@ -793,7 +845,7 @@ impl SyncSession {
         }
         self.database.record_sync_error(error.into()).await?;
         self.outstanding = None;
-        self.stopped = true;
+        self.stop();
         Ok(())
     }
 

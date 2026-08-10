@@ -13,8 +13,8 @@ use tracing::{debug, info, warn};
 
 use crate::config::AppConfig;
 use crate::signals::shutdown_signal;
-use crate::sync::SyncHttpClient;
 use crate::sync::wire::{DAEMON_INCOMPLETE_RESCHEDULE_MS, DAEMON_SYNC_PAGE_BUDGET};
+use crate::sync::{DaemonSyncOutcome, SyncHttpClient};
 
 mod service;
 
@@ -24,6 +24,7 @@ pub use service::{
 
 const BINARY_CHECK_INTERVAL: Duration = Duration::from_secs(30);
 const SYNC_ROUND_TIMEOUT: Duration = Duration::from_secs(35);
+const DAEMON_CONTENTION_RESCHEDULE: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BinaryFingerprint {
@@ -142,13 +143,17 @@ async fn run_loop(
                 )
                 .await
                 {
-                    Ok(Ok(summary)) => {
+                    Ok(Ok(DaemonSyncOutcome::Completed(summary))) => {
                         backoff_seconds = 1;
                         next_sync = if summary.complete {
                             Instant::now() + Duration::from_secs(interval_seconds)
                         } else {
                             Instant::now() + Duration::from_millis(DAEMON_INCOMPLETE_RESCHEDULE_MS)
                         };
+                    }
+                    Ok(Ok(DaemonSyncOutcome::Deferred(busy))) => {
+                        debug!(owner_pid = busy.owner_pid(), "daemon sync deferred");
+                        next_sync = Instant::now() + DAEMON_CONTENTION_RESCHEDULE;
                     }
                     Ok(Err(err)) => {
                         warn!(error = %err, backoff_seconds, "daemon sync failed");
@@ -209,17 +214,21 @@ async fn sync_once(
     server: &str,
     auth_token: Option<&str>,
     client: &SyncHttpClient,
-) -> Result<crate::sync::SyncSummary> {
-    let summary = crate::sync::run_sync_with_page_budget_using_client_and_policy(
+) -> Result<DaemonSyncOutcome> {
+    let summary = match crate::sync::try_run_daemon_sync_with_page_budget(
         database,
         blob_dir,
         server,
         auth_token,
-        Some(DAEMON_SYNC_PAGE_BUDGET),
+        DAEMON_SYNC_PAGE_BUDGET,
         client,
         lifecycle_policy,
     )
-    .await?;
+    .await?
+    {
+        DaemonSyncOutcome::Completed(summary) => summary,
+        deferred @ DaemonSyncOutcome::Deferred(_) => return Ok(deferred),
+    };
     if let Err(err) = database
         .prune_attachments(blob_dir, lifecycle_policy, true)
         .await
@@ -255,7 +264,7 @@ async fn sync_once(
         summary.complete,
         summary.pages,
     );
-    Ok(summary)
+    Ok(DaemonSyncOutcome::Completed(summary))
 }
 
 pub(crate) fn wake_if_enabled(config: &AppConfig) {
@@ -280,6 +289,49 @@ fn wake(addr: SocketAddr) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn sync_once_defers_contention_without_persistence_or_transport_noise() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = Database::open(&directory.path().join("aven.sqlite"))
+            .await
+            .unwrap();
+        database
+            .record_sync_error("sentinel error".to_string())
+            .await
+            .unwrap();
+        let _active = aven_core::sync::SyncSession::start(
+            database.clone(),
+            "https://sync.example.test".to_string(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let before = database.sync_persistence_status().await.unwrap();
+
+        let outcome = sync_once(
+            &database,
+            directory.path(),
+            aven_core::attachments::LifecyclePolicy::default(),
+            "http://127.0.0.1:1",
+            None,
+            &SyncHttpClient::new().unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let DaemonSyncOutcome::Deferred(busy) = outcome else {
+            panic!("daemon sync must defer during session contention");
+        };
+        assert_eq!(busy.owner_pid(), Some(std::process::id()));
+        assert_eq!(database.sync_persistence_status().await.unwrap(), before);
+    }
+
+    #[test]
+    fn contended_sync_round_reschedules_after_one_second() {
+        assert_eq!(DAEMON_CONTENTION_RESCHEDULE, Duration::from_secs(1));
+    }
 
     #[test]
     fn complete_sync_round_has_35_second_deadline() {

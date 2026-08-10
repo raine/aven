@@ -35,6 +35,7 @@ pub struct Database {
     pool: SqlitePool,
     writer: Arc<Mutex<()>>,
     path: PathBuf,
+    file_identity: Option<PathBuf>,
 }
 
 pub(crate) struct WriterConnection {
@@ -58,15 +59,35 @@ impl DerefMut for WriterConnection {
 
 impl Database {
     pub async fn open(path: &Path) -> Result<Self> {
+        let connection_input = path.to_string_lossy();
+        let options = SqliteConnectOptions::from_str(&connection_input)?;
+        let storage = database_storage(&connection_input, &options);
+        let pool = open_db(path).await?;
+        let file_identity = match storage {
+            DatabaseStorage::InMemory => None,
+            DatabaseStorage::File => {
+                Some(fs::canonicalize(options.get_filename()).with_context(|| {
+                    format!(
+                        "could not resolve database path {}",
+                        options.get_filename().display()
+                    )
+                })?)
+            }
+        };
         Ok(Self {
-            pool: open_db(path).await?,
+            pool,
             writer: Arc::new(Mutex::new(())),
             path: path.to_path_buf(),
+            file_identity,
         })
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub(crate) fn file_identity(&self) -> Option<&Path> {
+        self.file_identity.as_deref()
     }
 
     pub fn latest_schema_version() -> Option<i64> {
@@ -962,6 +983,26 @@ mod tests {
                 DatabaseStorage::File,
                 "{input}"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn database_retains_canonical_file_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("identity.sqlite");
+        let database = Database::open(&path).await.unwrap();
+
+        assert_eq!(
+            database.file_identity(),
+            Some(fs::canonicalize(&path).unwrap().as_path())
+        );
+    }
+
+    #[tokio::test]
+    async fn in_memory_databases_have_no_file_identity() {
+        for &input in PRIVATE_IN_MEMORY_INPUTS {
+            let database = Database::open(Path::new(input)).await.unwrap();
+            assert_eq!(database.file_identity(), None, "{input}");
         }
     }
 

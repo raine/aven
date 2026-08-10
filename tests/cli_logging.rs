@@ -148,12 +148,18 @@ sync:
     command
         .env("AVEN_CONFIG_DIR", client_env.config_dir().join("aven"))
         .env_remove("AVEN_DB")
+        .env_remove("AVEN_SYNC_DISABLED")
         .env_remove("AVEN_SYNC_SERVER")
         .env("AVEN_LOG", "aven=debug")
         .env("AVEN_LOG_FILE", &client_log)
         .args(["sync"]);
     let output = command.output().expect("run logged sync");
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "sync failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let logs = format!(
         "{}\n{}",
