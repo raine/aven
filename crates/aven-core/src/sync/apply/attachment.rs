@@ -1,19 +1,21 @@
 use anyhow::{Result, bail};
 use sqlx::{Row, SqliteConnection};
 
-use crate::sync::wire::ChangeWire;
+use crate::sync::wire::{AttachmentAddPayload, AttachmentDeletePayload, ChangeWire};
 
-use super::payload::{AttachmentAddPayload, AttachmentDeletePayload};
 use super::shared::task_field_workspace_id_payload;
 
-pub(super) async fn add_attachment(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
+pub(super) async fn add_attachment(
+    conn: &mut SqliteConnection,
+    change: &ChangeWire,
+    payload: &AttachmentAddPayload,
+) -> Result<()> {
     let workspace_id = task_field_workspace_id_payload(conn, change).await?;
     ensure_attachment_task_exists(conn, workspace_id.as_str(), &change.entity_id).await?;
-    let payload = AttachmentAddPayload::from_change(change)?;
     if let Some(row) =
         existing_attachment(conn, workspace_id.as_str(), &payload.attachment_id).await?
     {
-        return ensure_same_attachment(&row, &change.entity_id, &payload);
+        return ensure_same_attachment(&row, &change.entity_id, payload);
     }
 
     sqlx::query(
@@ -40,9 +42,9 @@ pub(super) async fn add_attachment(conn: &mut SqliteConnection, change: &ChangeW
 pub(super) async fn delete_attachment(
     conn: &mut SqliteConnection,
     change: &ChangeWire,
+    payload: &AttachmentDeletePayload,
 ) -> Result<()> {
     let workspace_id = task_field_workspace_id_payload(conn, change).await?;
-    let payload = AttachmentDeletePayload::from_change(change)?;
     let updated = sqlx::query(
         "UPDATE task_attachments
          SET deleted = 1,

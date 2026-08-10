@@ -17,7 +17,7 @@ use sqlx::SqliteConnection;
 use tracing::debug;
 
 use crate::change_log::op_type;
-use crate::sync::wire::ChangeWire;
+use crate::sync::wire::{AttachmentAddPayload, AttachmentDeletePayload, ChangeWire};
 
 pub async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
     debug!(
@@ -58,8 +58,14 @@ pub async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWir
         op_type::EPIC_LINK_REMOVE => epic::remove_epic_link(conn, change).await?,
         op_type::PROJECT_DELETE => project::delete_project(conn, change).await?,
         op_type::LABEL_DELETE => label::delete_label(conn, change).await?,
-        op_type::ATTACHMENT_ADD => attachment::add_attachment(conn, change).await?,
-        op_type::ATTACHMENT_DELETE => attachment::delete_attachment(conn, change).await?,
+        op_type::ATTACHMENT_ADD => {
+            let payload = AttachmentAddPayload::from_change(change)?;
+            attachment::add_attachment(conn, change, &payload).await?
+        }
+        op_type::ATTACHMENT_DELETE => {
+            let payload = AttachmentDeletePayload::from_change(change)?;
+            attachment::delete_attachment(conn, change, &payload).await?
+        }
         op_type::CREATE_RECURRENCE_SERIES => recurrence::create_series(conn, change).await?,
         op_type::UPDATE_RECURRENCE_TEMPLATE => recurrence::update_template(conn, change).await?,
         op_type::PROJECT_RECURRENCE_OCCURRENCE => {
@@ -87,6 +93,49 @@ mod tests {
     use crate::projects::create_project;
     use crate::test_support::test_conn;
     use crate::workspaces::Workspace;
+
+    async fn seed_attachment_task(conn: &mut SqliteConnection) -> Workspace {
+        let workspace = Workspace::default();
+        let project = create_project(conn, &workspace, "app").await.unwrap();
+        sqlx::query(
+            "INSERT INTO tasks(id, workspace_id, title, description, project_id, status, priority, created_at, updated_at)
+             VALUES ('BBBBBBBBBBBBBBBB', ?, 'task', '', ?, 'inbox', 'none', 't', 't')",
+        )
+        .bind(&workspace.id)
+        .bind(project.id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        workspace
+    }
+
+    fn attachment_add_change(workspace: &Workspace) -> ChangeWire {
+        ChangeWire {
+            change_id: "AAAAAAAAAAAAAAA0".to_string(),
+            client_id: "remote".to_string(),
+            local_seq: 1,
+            entity_type: "task".to_string(),
+            entity_id: "BBBBBBBBBBBBBBBB".to_string(),
+            field: Some("attachments".to_string()),
+            op_type: op_type::ATTACHMENT_ADD.to_string(),
+            payload: json!({
+                "workspace_id": workspace.id,
+                "workspace_key": workspace.key,
+                "attachment_id": "7KQ9A1X4MV2P8D6R",
+                "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+                "byte_size": 12,
+                "media_type": "image/png",
+                "filename": "photo.png",
+                "alt_text": null,
+                "width": 320,
+                "height": 240,
+                "created_at": "2026-06-01T00:00:00Z"
+            }),
+            base_version: None,
+            created_at: "2026-06-01T00:00:00Z".to_string(),
+            server_seq: Some(1),
+        }
+    }
 
     #[tokio::test]
     async fn label_administration_changes_preserve_task_references() {
@@ -239,5 +288,58 @@ mod tests {
             .await
             .unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn attachment_apply_rejects_malformed_payload_before_database_writes() {
+        let (_temp, mut conn) = test_conn().await;
+        let workspace = seed_attachment_task(&mut conn).await;
+        let mut change = attachment_add_change(&workspace);
+        change.payload["filename"] = json!("bad/name.png");
+
+        let error = apply_remote_change(&mut conn, &change).await.unwrap_err();
+        assert!(error.to_string().contains("invalid-attachment-filename"));
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM task_attachments")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn attachment_apply_accepts_identical_duplicate() {
+        let (_temp, mut conn) = test_conn().await;
+        let workspace = seed_attachment_task(&mut conn).await;
+        let change = attachment_add_change(&workspace);
+
+        apply_remote_change(&mut conn, &change).await.unwrap();
+        apply_remote_change(&mut conn, &change).await.unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM task_attachments")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn attachment_apply_rejects_conflicting_duplicate_identity() {
+        let (_temp, mut conn) = test_conn().await;
+        let workspace = seed_attachment_task(&mut conn).await;
+        let change = attachment_add_change(&workspace);
+        apply_remote_change(&mut conn, &change).await.unwrap();
+
+        let mut conflicting = change;
+        conflicting.change_id = "AAAAAAAAAAAAAAA1".to_string();
+        conflicting.payload["filename"] = json!("other.png");
+        let error = apply_remote_change(&mut conn, &conflicting)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("attachment-identity-conflict"));
+        let filename: Option<String> = sqlx::query_scalar("SELECT filename FROM task_attachments")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(filename.as_deref(), Some("photo.png"));
     }
 }

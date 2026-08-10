@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use sqlx::{Row, SqliteConnection};
 
-use super::wire::{BlobUploadContract, ChangeWire};
+use super::wire::{AttachmentAddPayload, BlobUploadContract, ChangeWire};
 use crate::attachments::decode::validate_image;
 use crate::attachments::lifecycle::{
     BoundedMaintenanceSummary, ByteCount, LifecyclePolicy, SystemClock, acquire_lease,
@@ -47,13 +47,18 @@ pub(super) fn attachment_blob_contract(change: &ChangeWire) -> Result<Option<Blo
     if change.op_type != op_type::ATTACHMENT_ADD {
         return Ok(None);
     }
+    let payload = AttachmentAddPayload::from_change(change)?;
     Ok(Some(BlobUploadContract {
-        workspace_id: payload_string(change, "workspace_id")?,
-        sha256: payload_string(change, "sha256")?,
-        byte_size: payload_i64(change, "byte_size")?,
-        media_type: payload_string(change, "media_type")?,
-        width: payload_i64(change, "width")?,
-        height: payload_i64(change, "height")?,
+        workspace_id: payload.workspace_id,
+        sha256: payload.sha256,
+        byte_size: payload.byte_size,
+        media_type: payload.media_type,
+        width: payload
+            .width
+            .context("validated attachment payload missing width")?,
+        height: payload
+            .height
+            .context("validated attachment payload missing height")?,
     }))
 }
 
@@ -79,23 +84,6 @@ pub(super) fn contract_by_hash(
         .find(|contract| contract.sha256 == sha256)
         .cloned()
         .context("payload missing attachment blob contract")
-}
-
-fn payload_string(change: &ChangeWire, key: &str) -> Result<String> {
-    change
-        .payload
-        .get(key)
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-        .with_context(|| format!("payload missing {key}"))
-}
-
-fn payload_i64(change: &ChangeWire, key: &str) -> Result<i64> {
-    change
-        .payload
-        .get(key)
-        .and_then(serde_json::Value::as_i64)
-        .with_context(|| format!("payload missing {key}"))
 }
 
 impl Database {
@@ -447,7 +435,71 @@ pub(super) async fn blob_available(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
+
+    fn attachment_change(op_type: &str) -> ChangeWire {
+        ChangeWire {
+            change_id: "AAAAAAAAAAAAAAA0".to_string(),
+            client_id: "client".to_string(),
+            local_seq: 1,
+            entity_type: "task".to_string(),
+            entity_id: "BBBBBBBBBBBBBBBB".to_string(),
+            field: Some("attachments".to_string()),
+            op_type: op_type.to_string(),
+            payload: json!({
+                "workspace_id": "0000000000000000",
+                "workspace_key": "default",
+                "attachment_id": "7KQ9A1X4MV2P8D6R",
+                "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+                "byte_size": 12,
+                "media_type": "image/png",
+                "filename": null,
+                "alt_text": null,
+                "width": 320,
+                "height": 240,
+                "created_at": "2026-06-01T00:00:00Z"
+            }),
+            base_version: None,
+            created_at: "2026-06-01T00:00:00Z".to_string(),
+            server_seq: None,
+        }
+    }
+
+    #[test]
+    fn attachment_blob_contract_uses_typed_add_payload() {
+        let add = attachment_change(op_type::ATTACHMENT_ADD);
+        let contract = attachment_blob_contract(&add).unwrap().unwrap();
+        assert_eq!(contract.workspace_id, "0000000000000000");
+        assert_eq!(
+            contract.sha256,
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+        );
+        assert_eq!(contract.byte_size, 12);
+        assert_eq!(contract.media_type, "image/png");
+        assert_eq!((contract.width, contract.height), (320, 240));
+
+        let mut malformed = add;
+        malformed.payload["sha256"] = json!("invalid");
+        assert!(
+            attachment_blob_contract(&malformed)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid-sha256")
+        );
+
+        assert!(
+            attachment_blob_contract(&attachment_change(op_type::ATTACHMENT_DELETE))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            attachment_blob_contract(&attachment_change(op_type::NOTE_ADD))
+                .unwrap()
+                .is_none()
+        );
+    }
 
     async fn seed_missing_attachments(database: &Database, count: usize) {
         let mut conn = database.acquire_writer().await.unwrap();

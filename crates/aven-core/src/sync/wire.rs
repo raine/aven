@@ -54,6 +54,90 @@ pub struct ChangeWire {
     pub server_seq: Option<i64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct AttachmentAddPayload {
+    pub(crate) workspace_id: String,
+    pub(crate) workspace_key: String,
+    pub(crate) attachment_id: String,
+    pub(crate) sha256: String,
+    pub(crate) byte_size: i64,
+    pub(crate) media_type: String,
+    pub(crate) filename: Option<String>,
+    pub(crate) alt_text: Option<String>,
+    pub(crate) width: Option<i64>,
+    pub(crate) height: Option<i64>,
+    pub(crate) created_at: String,
+}
+
+impl AttachmentAddPayload {
+    pub(crate) fn from_change(change: &ChangeWire) -> Result<Self> {
+        validate_attachment_change_envelope(change, op_type::ATTACHMENT_ADD)?;
+        required_workspace_payload(&change.payload)?;
+        let attachment_id = required_string_payload("attachment_id", &change.payload)?;
+        ensure_sync_id("attachment_id", &attachment_id)?;
+        let sha256 = required_string_payload("sha256", &change.payload)?;
+        validate_sha256_for_sync(&sha256)?;
+        let byte_size = required_i64_payload("byte_size", &change.payload)?;
+        validate_blob_size_for_sync(byte_size)?;
+        let media_type = required_string_payload("media_type", &change.payload)?;
+        map_attachment_validation(validate_media_type(&media_type))?;
+        let filename = optional_string_payload("filename", &change.payload)?;
+        map_attachment_validation(validate_filename(filename.as_deref()))?;
+        let alt_text = optional_string_payload("alt_text", &change.payload)?;
+        map_attachment_validation(validate_alt_text(alt_text.as_deref()))?;
+        let width = optional_i64_payload("width", &change.payload)?;
+        let height = optional_i64_payload("height", &change.payload)?;
+        map_attachment_validation(validate_dimensions(width, height))?;
+        required_timestamp_payload("created_at", &change.payload)?;
+        deserialize_attachment_payload(&change.payload)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct AttachmentDeletePayload {
+    pub(crate) workspace_id: String,
+    pub(crate) workspace_key: String,
+    pub(crate) attachment_id: String,
+    pub(crate) deleted_at: String,
+}
+
+impl AttachmentDeletePayload {
+    pub(crate) fn from_change(change: &ChangeWire) -> Result<Self> {
+        validate_attachment_change_envelope(change, op_type::ATTACHMENT_DELETE)?;
+        required_workspace_payload(&change.payload)?;
+        let attachment_id = required_string_payload("attachment_id", &change.payload)?;
+        ensure_sync_id("attachment_id", &attachment_id)?;
+        required_timestamp_payload("deleted_at", &change.payload)?;
+        deserialize_attachment_payload(&change.payload)
+    }
+}
+
+fn deserialize_attachment_payload<T>(payload: &Value) -> Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    serde_json::from_value(payload.clone())
+        .map_err(|error| anyhow::anyhow!("error invalid-sync-change payload {error}"))
+}
+
+fn validate_attachment_change_envelope(change: &ChangeWire, expected_op_type: &str) -> Result<()> {
+    if change.op_type != expected_op_type {
+        bail!("error invalid-sync-change op_type={}", change.op_type);
+    }
+    ensure_entity_type(change, "task")?;
+    ensure_sync_id("entity_id", &change.entity_id)?;
+    if change.field.as_deref() != Some("attachments") {
+        bail!("error invalid-sync-change field=attachments");
+    }
+    if !change.payload.is_object() {
+        bail!("error invalid-sync-change payload expected-object");
+    }
+    if serde_json::to_vec(&change.payload)?.len() > MAX_CHANGE_PAYLOAD_BYTES {
+        bail!("error invalid-sync-change payload-too-large limit={MAX_CHANGE_PAYLOAD_BYTES}");
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PushAck {
     pub change_id: String,
@@ -603,8 +687,12 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
         }
         op_type::OPEN_RECURRENCE_PAUSE => validate_recurrence_pause(change, true)?,
         op_type::CLOSE_RECURRENCE_PAUSE => validate_recurrence_pause(change, false)?,
-        op_type::ATTACHMENT_ADD => validate_attachment_add_change(change)?,
-        op_type::ATTACHMENT_DELETE => validate_attachment_delete_change(change)?,
+        op_type::ATTACHMENT_ADD => {
+            AttachmentAddPayload::from_change(change)?;
+        }
+        op_type::ATTACHMENT_DELETE => {
+            AttachmentDeletePayload::from_change(change)?;
+        }
         _ => bail!("error invalid-sync-change op_type={}", change.op_type),
     }
     Ok(())
@@ -987,48 +1075,6 @@ fn recurrence_date_payload(key: &str, payload: &Value) -> Result<NaiveDate> {
 fn validate_local_time(value: &str) -> Result<NaiveTime> {
     NaiveTime::parse_from_str(value, "%H:%M:%S")
         .context("error invalid-sync-change recurrence-local-time")
-}
-
-fn validate_attachment_add_change(change: &ChangeWire) -> Result<()> {
-    ensure_entity_type(change, "task")?;
-    ensure_sync_id("entity_id", &change.entity_id)?;
-    ensure_attachment_field(change)?;
-    required_workspace_payload(&change.payload)?;
-    let attachment_id = required_string_payload("attachment_id", &change.payload)?;
-    ensure_sync_id("attachment_id", &attachment_id)?;
-    let sha256 = required_string_payload("sha256", &change.payload)?;
-    validate_sha256_for_sync(&sha256)?;
-    let byte_size = required_i64_payload("byte_size", &change.payload)?;
-    validate_blob_size_for_sync(byte_size)?;
-    let media_type = required_string_payload("media_type", &change.payload)?;
-    map_attachment_validation(validate_media_type(&media_type))?;
-    let filename = optional_string_payload("filename", &change.payload)?;
-    map_attachment_validation(validate_filename(filename.as_deref()))?;
-    let alt_text = optional_string_payload("alt_text", &change.payload)?;
-    map_attachment_validation(validate_alt_text(alt_text.as_deref()))?;
-    let width = optional_i64_payload("width", &change.payload)?;
-    let height = optional_i64_payload("height", &change.payload)?;
-    map_attachment_validation(validate_dimensions(width, height))?;
-    required_timestamp_payload("created_at", &change.payload)?;
-    Ok(())
-}
-
-fn validate_attachment_delete_change(change: &ChangeWire) -> Result<()> {
-    ensure_entity_type(change, "task")?;
-    ensure_sync_id("entity_id", &change.entity_id)?;
-    ensure_attachment_field(change)?;
-    required_workspace_payload(&change.payload)?;
-    let attachment_id = required_string_payload("attachment_id", &change.payload)?;
-    ensure_sync_id("attachment_id", &attachment_id)?;
-    required_timestamp_payload("deleted_at", &change.payload)?;
-    Ok(())
-}
-
-fn ensure_attachment_field(change: &ChangeWire) -> Result<()> {
-    if change.field.as_deref() != Some("attachments") {
-        bail!("error invalid-sync-change field=attachments");
-    }
-    Ok(())
 }
 
 fn validate_sha256_for_sync(value: &str) -> Result<()> {
@@ -1777,5 +1823,136 @@ mod tests {
         change.field = Some("notes".to_string());
         validate_pushed_change(&change)
             .expect("note_add payload built with ChangePayload should be wire-valid");
+    }
+
+    fn attachment_add_payload() -> Value {
+        ChangePayload::workspace(&test_workspace())
+            .set("attachment_id", "7KQ9A1X4MV2P8D6R")
+            .set(
+                "sha256",
+                "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            )
+            .set("byte_size", 12_i64)
+            .set("media_type", "image/png")
+            .set("filename", None::<&str>)
+            .set("alt_text", None::<&str>)
+            .set("width", 320_i64)
+            .set("height", 240_i64)
+            .set("created_at", "2026-06-01T00:00:00Z")
+            .into_value()
+    }
+
+    fn attachment_change(op_type: &str, payload: Value) -> ChangeWire {
+        let mut change = make_change_wire(op_type, "task", "BBBBBBBBBBBBBBBB", payload);
+        change.field = Some("attachments".to_string());
+        change
+    }
+
+    #[test]
+    fn constructed_attachment_payloads_parse_without_json_or_protocol_changes() {
+        let add_value = attachment_add_payload();
+        let add = AttachmentAddPayload::from_change(&attachment_change(
+            op_type::ATTACHMENT_ADD,
+            add_value.clone(),
+        ))
+        .unwrap();
+        assert_eq!(serde_json::to_value(add).unwrap(), add_value);
+
+        let delete_value = ChangePayload::workspace(&test_workspace())
+            .set("attachment_id", "7KQ9A1X4MV2P8D6R")
+            .set("deleted_at", "2026-06-01T00:00:00Z")
+            .into_value();
+        let delete = AttachmentDeletePayload::from_change(&attachment_change(
+            op_type::ATTACHMENT_DELETE,
+            delete_value.clone(),
+        ))
+        .unwrap();
+        assert_eq!(serde_json::to_value(delete).unwrap(), delete_value);
+        assert_eq!(SYNC_PROTOCOL_VERSION, 13);
+    }
+
+    #[test]
+    fn attachment_payloads_accept_extensions_and_missing_optional_text() {
+        let mut payload = attachment_add_payload();
+        let object = payload.as_object_mut().unwrap();
+        object.remove("filename");
+        object.remove("alt_text");
+        object.insert("extension".to_string(), serde_json::json!({ "version": 1 }));
+
+        AttachmentAddPayload::from_change(&attachment_change(op_type::ATTACHMENT_ADD, payload))
+            .unwrap();
+    }
+
+    #[test]
+    fn attachment_payload_authority_rejects_malformed_fields() {
+        let cases = [
+            ("workspace_id", Value::Null, "workspace_id"),
+            (
+                "attachment_id",
+                Value::String("short".to_string()),
+                "attachment_id",
+            ),
+            (
+                "sha256",
+                Value::String("short".to_string()),
+                "invalid-sha256",
+            ),
+            ("byte_size", Value::String("12".to_string()), "byte_size"),
+            ("byte_size", Value::from(-1), "invalid-attachment-size"),
+            (
+                "media_type",
+                Value::String("image/svg+xml".to_string()),
+                "unsupported-attachment-media-type",
+            ),
+            (
+                "filename",
+                Value::String("bad/name.png".to_string()),
+                "invalid-attachment-filename",
+            ),
+            (
+                "alt_text",
+                Value::String("bad\nalt".to_string()),
+                "invalid-attachment-alt-text",
+            ),
+            ("height", Value::Null, "invalid-attachment-dimensions"),
+            ("width", Value::from(0), "invalid-attachment-dimensions"),
+            (
+                "created_at",
+                Value::String("today".to_string()),
+                "invalid-timestamp",
+            ),
+        ];
+        for (key, value, expected) in cases {
+            let mut payload = attachment_add_payload();
+            payload[key] = value;
+            let error = AttachmentAddPayload::from_change(&attachment_change(
+                op_type::ATTACHMENT_ADD,
+                payload,
+            ))
+            .unwrap_err();
+            assert!(
+                error.to_string().contains(expected),
+                "{key} error did not contain {expected}: {error}"
+            );
+        }
+
+        let mut wrong_field = attachment_change(op_type::ATTACHMENT_ADD, attachment_add_payload());
+        wrong_field.field = Some("description".to_string());
+        assert!(
+            AttachmentAddPayload::from_change(&wrong_field)
+                .unwrap_err()
+                .to_string()
+                .contains("field=attachments")
+        );
+
+        let mut invalid_entity =
+            attachment_change(op_type::ATTACHMENT_ADD, attachment_add_payload());
+        invalid_entity.entity_id = "invalid".to_string();
+        assert!(
+            AttachmentAddPayload::from_change(&invalid_entity)
+                .unwrap_err()
+                .to_string()
+                .contains("entity_id")
+        );
     }
 }
