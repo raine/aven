@@ -5,7 +5,9 @@ use ratatui::layout::Position;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::tui::text::char_boundary_at_or_before;
+use crate::tui::text::{
+    char_boundary_at_or_before, char_cells, str_cells, take_leading_cells, take_trailing_cells,
+};
 use crate::tui::theme::{BG_ALT, FG};
 
 pub(in crate::tui::ui) fn input_line(
@@ -47,43 +49,36 @@ pub(in crate::tui::ui) enum InputWidth {
     Clipped(usize),
 }
 
+/// Builds the spans for a single input row, scrolled so the cursor stays
+/// visible. Every budget is counted in terminal cells, not characters, so wide
+/// characters (CJK, emoji) neither overflow the field nor push the cursor out of
+/// view.
 pub(in crate::tui::ui) fn input_cursor_spans(
     input: &str,
     cursor: usize,
     width: InputWidth,
 ) -> Vec<Span<'static>> {
     let cursor = char_boundary_at_or_before(input, cursor);
-    let input_chars = input.chars().count();
+    let cursor_char = input[cursor..].chars().next();
+    let cursor_cells = cursor_char.map_or(1, char_cells);
     let max_width = match width {
-        InputWidth::Full => input_chars.saturating_add(1),
+        InputWidth::Full => str_cells(input).saturating_add(cursor_cells),
         InputWidth::Clipped(width) => width,
     };
-    let Some(cursor_char) = input[cursor..].chars().next() else {
-        let before = input
-            .chars()
-            .skip(input_chars.saturating_sub(max_width.saturating_sub(1)))
-            .collect::<String>();
-        return vec![Span::raw(before), cursor_cell(" ")];
+    let Some(cursor_char) = cursor_char else {
+        let before = take_trailing_cells(input, max_width.saturating_sub(1));
+        return vec![Span::raw(before.to_string()), cursor_cell(" ")];
     };
-    let cursor_end = cursor + cursor_char.len_utf8();
-    let before = &input[..cursor];
-    let after = &input[cursor_end..];
-    let after_chars = after.chars().count();
-    let value_width = input_chars.saturating_add(1).min(max_width);
-    let before_visible = value_width.saturating_sub(1 + after_chars);
-    let before = before
-        .chars()
-        .skip(before.chars().count().saturating_sub(before_visible))
-        .collect::<String>();
+    let after_budget = max_width.saturating_sub(cursor_cells);
+    let after = take_leading_cells(&input[cursor + cursor_char.len_utf8()..], after_budget);
+    let before = take_trailing_cells(
+        &input[..cursor],
+        after_budget.saturating_sub(str_cells(after)),
+    );
     vec![
-        Span::raw(before),
+        Span::raw(before.to_string()),
         cursor_cell(cursor_char.to_string()),
-        Span::raw(
-            after
-                .chars()
-                .take(max_width.saturating_sub(1))
-                .collect::<String>(),
-        ),
+        Span::raw(after.to_string()),
     ]
 }
 
@@ -159,6 +154,31 @@ mod tests {
         assert_eq!(line.spans[0].content.as_ref(), "aé");
         assert_eq!(line.spans[1].content.as_ref(), "z");
         assert_eq!(line.spans[1].style.bg, Some(FG));
+    }
+
+    #[test]
+    fn clipped_input_line_budgets_wide_characters_by_cells() {
+        let line = clipped_input_line("한글입력", "한글입력".len(), 6);
+        assert_eq!(line.spans[0].content.as_ref(), "입력");
+        assert_eq!(line.spans[1].content.as_ref(), " ");
+        assert!(line.width() <= 6);
+    }
+
+    #[test]
+    fn clipped_input_line_keeps_wide_cursor_visible() {
+        let line = clipped_input_line("한글입력", 3, 4);
+        assert_eq!(line.spans[0].content.as_ref(), "");
+        assert_eq!(line.spans[1].content.as_ref(), "글");
+        assert_eq!(line.spans[2].content.as_ref(), "입");
+        assert!(line.width() <= 4);
+    }
+
+    #[test]
+    fn input_line_keeps_full_width_value_unclipped() {
+        let line = input_line("", "한글", 3);
+        assert_eq!(line.spans[0].content.as_ref(), "한");
+        assert_eq!(line.spans[1].content.as_ref(), "글");
+        assert_eq!(line.spans[2].content.as_ref(), "");
     }
 
     #[test]

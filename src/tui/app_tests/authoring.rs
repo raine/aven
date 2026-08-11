@@ -2189,3 +2189,23 @@ async fn add_task_caret_follows_wide_characters() {
     assert_eq!(buffer[(cursor.x - 4, cursor.y)].symbol(), "한");
     assert_eq!(buffer[(cursor.x - 2, cursor.y)].symbol(), "글");
 }
+
+#[tokio::test]
+async fn add_task_title_scrolls_wide_characters_within_the_dialog() {
+    let mut app = test_app().await;
+    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    type_chars(&mut app, &"한".repeat(80)).await;
+
+    let buffer = render_app_buffer(&mut app, 100, 30);
+    let cursor = app.widgets.text_cursor.expect("caret reported");
+    let caret_row = (0..buffer.area.width)
+        .map(|column| buffer[(column, cursor.y)].symbol())
+        .collect::<String>();
+
+    assert!(cursor.x < buffer.area.width, "caret stayed on screen");
+    assert_eq!(buffer[(cursor.x - 2, cursor.y)].symbol(), "한");
+    assert!(
+        caret_row.matches('한').count() < 80,
+        "title scrolled instead of overflowing: {caret_row:?}"
+    );
+}

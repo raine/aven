@@ -56,6 +56,16 @@ pub(crate) fn next_char_is_whitespace(input: &str, index: usize) -> bool {
         .is_some_and(char::is_whitespace)
 }
 
+/// Terminal cells one character occupies. Zero-width characters still claim one
+/// cell so every character stays addressable by the cursor.
+pub(crate) fn char_cells(ch: char) -> usize {
+    ch.width().unwrap_or(0).max(1)
+}
+
+pub(crate) fn str_cells(text: &str) -> usize {
+    text.chars().map(char_cells).sum()
+}
+
 pub(crate) fn cell_width_ranges(line: &str, width: usize) -> Vec<(usize, usize)> {
     if line.is_empty() {
         return vec![(0, 0)];
@@ -65,7 +75,7 @@ pub(crate) fn cell_width_ranges(line: &str, width: usize) -> Vec<(usize, usize)>
     let mut start = 0;
     let mut count = 0;
     for (index, ch) in line.char_indices() {
-        let char_width = ch.width().unwrap_or(0).max(1);
+        let char_width = char_cells(ch);
         if count > 0 && count + char_width > width {
             ranges.push((start, index));
             start = index;
@@ -77,39 +87,46 @@ pub(crate) fn cell_width_ranges(line: &str, width: usize) -> Vec<(usize, usize)>
     ranges
 }
 
-pub(crate) fn char_count_ranges(line: &str, width: usize) -> Vec<(usize, usize)> {
-    let width = width.max(1);
-    let mut boundaries = line
-        .char_indices()
-        .map(|(index, _)| index)
-        .collect::<Vec<_>>();
-    boundaries.push(line.len());
-    let char_count = boundaries.len().saturating_sub(1);
-    if char_count == 0 {
-        return vec![(0, 0)];
-    }
-    (0..char_count)
-        .step_by(width)
-        .map(|start| {
-            let end = start.saturating_add(width).min(char_count);
-            (boundaries[start], boundaries[end])
-        })
-        .collect()
+pub(crate) fn segment_index_at(ranges: &[(usize, usize)], cursor: usize) -> usize {
+    ranges
+        .iter()
+        .position(|(start, end)| cursor < *end || (*start == *end && cursor == *start))
+        .unwrap_or_else(|| ranges.len().saturating_sub(1))
 }
 
-pub(crate) fn char_count_segment_index(line: &str, cursor: usize, width: usize) -> usize {
-    let width = width.max(1);
+pub(crate) fn cell_width_segment_index(line: &str, cursor: usize, width: usize) -> usize {
     let cursor = char_boundary_at_or_before(line, cursor);
-    let cursor_chars = line[..cursor].chars().count();
-    let line_chars = line.chars().count();
-    if line_chars == 0 {
-        return 0;
+    segment_index_at(&cell_width_ranges(line, width), cursor)
+}
+
+/// Longest prefix of `text` that fits in `width` cells. Characters that would
+/// straddle the budget are dropped whole so a wide character never renders as
+/// half a cell.
+pub(crate) fn take_leading_cells(text: &str, width: usize) -> &str {
+    let mut used = 0;
+    for (index, ch) in text.char_indices() {
+        let char_width = char_cells(ch);
+        if used + char_width > width {
+            return &text[..index];
+        }
+        used += char_width;
     }
-    if cursor_chars == line_chars {
-        line_chars.saturating_sub(1) / width
-    } else {
-        cursor_chars / width
+    text
+}
+
+/// Longest suffix of `text` that fits in `width` cells.
+pub(crate) fn take_trailing_cells(text: &str, width: usize) -> &str {
+    let mut used = 0;
+    let mut start = text.len();
+    for (index, ch) in text.char_indices().rev() {
+        let char_width = char_cells(ch);
+        if used + char_width > width {
+            break;
+        }
+        used += char_width;
+        start = index;
     }
+    &text[start..]
 }
 
 #[cfg(test)]
@@ -145,18 +162,27 @@ mod tests {
     }
 
     #[test]
-    fn char_count_ranges_keep_valid_boundaries() {
-        let line = "aé中b";
-        assert_eq!(char_count_ranges(line, 2), vec![(0, 3), (3, 7)]);
-        for (start, end) in char_count_ranges(line, 2) {
-            assert!(line.is_char_boundary(start));
-            assert!(line.is_char_boundary(end));
-        }
+    fn cell_width_ranges_wrap_wide_characters_by_cells() {
+        let line = "한글";
+        assert_eq!(cell_width_ranges(line, 2), vec![(0, 3), (3, 6)]);
+        assert_eq!(cell_width_ranges(line, 4), vec![(0, 6)]);
     }
 
     #[test]
-    fn char_count_segment_index_matches_end_cursor_behavior() {
-        assert_eq!(char_count_segment_index("abcd", 4, 2), 1);
-        assert_eq!(char_count_segment_index("abcd", 2, 2), 1);
+    fn cell_width_segment_index_matches_end_cursor_behavior() {
+        assert_eq!(cell_width_segment_index("abcd", 4, 2), 1);
+        assert_eq!(cell_width_segment_index("abcd", 2, 2), 1);
+        assert_eq!(cell_width_segment_index("한글", "한글".len(), 2), 1);
+        assert_eq!(cell_width_segment_index("한글", 3, 2), 1);
+        assert_eq!(cell_width_segment_index("한글", 0, 2), 0);
+    }
+
+    #[test]
+    fn cell_takes_never_split_wide_characters() {
+        assert_eq!(take_leading_cells("한글", 3), "한");
+        assert_eq!(take_leading_cells("한글", 4), "한글");
+        assert_eq!(take_trailing_cells("한글", 3), "글");
+        assert_eq!(take_trailing_cells("한글", 1), "");
+        assert_eq!(take_trailing_cells("abc", 2), "bc");
     }
 }
