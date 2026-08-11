@@ -8,12 +8,11 @@ Custom TUI commands are experimental and may change or be removed in a future
 release.
 :::
 
-Custom TUI commands connect Aven's command palette to local executables. A
-command can receive the selected task and marked tasks, launch work in another
-program, refresh Aven after a successful mutation, and optionally close Aven
-after successful completion.
+Custom TUI commands run local executables from Aven's command palette. They can
+pass along the selected task and marked tasks, refresh the TUI after changing
+data, or close Aven when the program succeeds.
 
-Common uses include:
+You might use one to:
 
 - Open a task-specific tmux window or session.
 - Start a coding agent with the selected task context.
@@ -66,23 +65,22 @@ results.
 | `detail_keys` | No | `keys` | Key sequences for task detail. An empty list disables detail bindings. |
 | `target` | No | `focused` | Operational target policy. Values are `none`, `focused`, `marked`, and `marked-or-focused`. |
 | `execution` | No | `wait` | Process mode. Values are `wait`, `background`, and `terminal`. |
-| `on_success` | No | `stay` | Aven behavior after success. Values are `stay`, `refresh`, `quit`, and `refresh-and-quit`. |
+| `on_success` | No | `stay` | Behavior after success. Values are `stay`, `refresh`, `quit`, and `refresh-and-quit`. |
 
 Names and aliases may contain lowercase ASCII letters, digits, and hyphens.
-They must be unique across configured and built-in command names. Aven rejects
-blank descriptions, blank programs, unknown command fields, duplicate names,
-and unsupported lifecycle combinations when it loads the configuration.
-Environment names must be nonempty and cannot contain `=` or NUL. Environment
-values cannot contain NUL. A configured working directory must exist and be a
-directory when the command launches.
+Each one must be unique across custom and built-in commands. The config loader
+reports blank descriptions or programs, unknown fields, duplicate names, and
+unsupported lifecycle combinations.
 
-Configured environment values override inherited variables with the same name.
-Aven passes each value directly without interpolation and excludes configured
-values from invocation JSON, diagnostics, and logs.
+Environment variable names cannot be empty or contain `=` or NUL, and values
+cannot contain NUL. At launch, `cwd` must point to an existing directory.
 
-Aven executes `program` directly and passes `args` without shell evaluation.
-Pipelines, redirection, variable expansion, and other shell behavior belong in
-an executable script.
+Commands inherit the current environment, with configured values overriding
+variables of the same name. Values are passed through without interpolation and
+stay out of invocation JSON, diagnostics, and logs.
+
+The program runs directly with the configured `args`. Pipelines, redirection,
+variable expansion, and other shell behavior belong in an executable script.
 
 ## Keybindings
 
@@ -99,20 +97,19 @@ list to give detail its own bindings.
 ### Recommended custom namespace
 
 Use `z` as the first key for custom multi-key bindings, such as `z d` for
-dispatch or `z e` for export. Aven reserves the `z` prefix for configured
-commands, so built-in commands do not occupy that namespace. Other unassigned
-keys are accepted, but `z` is the stable choice for avoiding collisions with
-present and future built-ins.
+dispatch or `z e` for export. The `z` prefix is reserved for configured commands,
+so built-in commands do not use it. Other unassigned keys work too, but `z`
+avoids collisions with present and future built-ins.
 
 A sequence may contain up to four keys. Each token can be one Unicode character
 or one of these names: `Space`, `Enter`, `Backspace`, `Tab`, `Shift+Tab`,
 `Home`, `End`, `Up`, `Down`, `Left`, `Right`, `PageUp`, `PageDown`, `Delete`,
 `Insert`, and `F1` through `F12`.
 
-Aven rejects exact collisions with built-in or custom bindings in the same
-view. Prefix overlap is supported, so a command can extend an existing prefix.
-`Esc` and `?` are reserved by TUI input handling. `Up`, `Down`, `PageUp`, and
-`PageDown` are reserved after a prefix because they scroll the prefix menu.
+Exact collisions with built-in or custom bindings in the same view are invalid.
+Prefix overlap is supported, so a command can extend an existing prefix. `Esc`
+and `?` are reserved by TUI input handling. `Up`, `Down`, `PageUp`, and
+`PageDown` scroll the prefix menu and cannot follow a prefix.
 
 ## Task selection and targets
 
@@ -125,9 +122,10 @@ The `target` policy defines the task identities on which the command operates:
 | `marked` | At least one marked task exists | Marked tasks in visible order |
 | `marked-or-focused` | A mark or primary task exists | Marked tasks when present, otherwise the primary task |
 
-The command palette annotates batch targets with their marked count. A `marked`
-command remains visible without marks and displays `requires one or more marked
-tasks`. Keybindings use the same availability and targeting rules as the palette.
+The palette shows the number of marked targets for batch commands. A `marked`
+command still appears when no tasks are marked, but its disabled reason says
+`requires one or more marked tasks`. Keybindings follow the same availability
+and targeting rules as the palette.
 
 The JSON input keeps raw selection context separate from resolved operational
 targets:
@@ -147,11 +145,11 @@ both fields. Configurations and examples should use `target`.
 
 ## JSON input
 
-Aven builds one versioned JSON document for every invocation. `wait` and
-`background` deliver it through standard input and close the pipe. `terminal`
-sets `AVEN_COMMAND_CONTEXT` to a protected temporary file because the child
-inherits terminal input. Dynamic task data is never interpolated into arguments
-or a shell command.
+Every invocation gets one versioned JSON document. `wait` and `background`
+commands read it from standard input. The input pipe closes after the full
+document is written. `terminal` commands read it from a protected temporary file
+whose path is in `AVEN_COMMAND_CONTEXT`. Task data never appears in arguments or
+a shell command.
 
 ```json
 {
@@ -245,7 +243,7 @@ to a different target set.
 
 ### Task context fields
 
-Each primary or marked task contains:
+Each task in `selection.primary` or `selection.marked` includes:
 
 - Display ref and durable task ID.
 - Title, description, status, priority, and immutable source.
@@ -294,15 +292,14 @@ title=$(jq -r '.selection.primary.task.title' "$input")
 printf 'Dispatching %s: %s\n' "$ref" "$title"
 ```
 
-Read standard input before starting a long-lived child. Aven closes the input
-pipe after writing the document.
+Read standard input before starting a long-lived child. The pipe closes after the
+complete document is written.
 
 ## Execution modes
 
 ### Wait
 
-`execution: wait` starts the program asynchronously and keeps the TUI
-responsive while it runs. Aven:
+`execution: wait` runs the program without blocking the TUI:
 
 1. Delivers JSON input while concurrently draining standard output and standard
    error.
@@ -311,20 +308,23 @@ responsive while it runs. Aven:
 4. Treats exit code zero as success.
 5. Reports a nonzero exit code, signal termination, timeout, or input failure.
 
-A waiting command has one deadline covering input delivery, output draining,
-process completion, timeout cleanup, and direct-child reaping. The default is five
-minutes. Set `timeout_seconds` to a positive value through 86,400 to select a
-command-specific deadline. Aven retains the last 16 KiB of standard output and standard error independently
-while continuing to drain both streams. Output beyond that retention bound does not
-change a successful exit status. For a nonzero exit, Aven shows a sanitized,
-bounded standard-error excerpt and falls back to standard output when standard
-error is empty. On Unix, timeout and orderly TUI shutdown terminate the
-command's process group, including descendants. Other platforms terminate the
-direct child because Aven does not yet provide a platform process-tree primitive
-there.
+One deadline covers the whole operation: input delivery, output draining,
+process completion, timeout cleanup, and reaping the direct child. The default
+is five minutes. Set `timeout_seconds` to a value from 1 through 86,400 to use a
+different deadline.
 
-Use `wait` when Aven must know whether the operation succeeded, especially with
-`on_success: quit`.
+The runner keeps the last 16 KiB from each output stream while it continues
+draining both. Writing more than 16 KiB does not turn a successful command into
+a failure. For a nonzero exit, the error message shows a short, sanitized
+excerpt from standard error, or from standard output when standard error is
+empty.
+
+On Unix, a timeout or orderly TUI shutdown terminates the command's process
+group, including descendants. Other platforms terminate only the direct child;
+process-tree cleanup is unavailable there.
+
+Use `wait` when the TUI needs to know whether the program succeeded, especially
+with `on_success: quit`.
 
 ### Background
 
@@ -336,21 +336,21 @@ Unix, the child runs in a separate process group. A failed or
 timed-out handoff terminates that group, while a successful handoff remains
 independent of TUI shutdown.
 
-Background mode confirms launch and input delivery, not the final outcome of
-the program. It always leaves Aven running. Background execution requires
-`on_success: stay`; `refresh`, `quit`, and `refresh-and-quit` are invalid because
-Aven does not observe process completion.
+Background mode confirms launch and input delivery, not the final outcome. The
+TUI stays open, so background commands require `on_success: stay`. The
+`refresh`, `quit`, and `refresh-and-quit` policies are invalid because process
+completion is not observed.
 
-Use `background` for long-lived programs whose result does not control Aven's
+Use `background` for long-lived programs whose result does not control the TUI
 lifecycle.
 
 ### Terminal
 
-`execution: terminal` suspends Aven and gives the child inherited terminal input,
-output, and error streams. It is intended for editors, pagers, fuzzy finders,
-interactive agents, and other full-screen terminal programs. Aven still executes
-`program` and `args` directly, applies the configured `cwd` and static
-environment, and waits for the child to exit.
+`execution: terminal` suspends the TUI and gives the child the terminal's input,
+output, and error streams. Use it for editors, pagers, fuzzy finders, interactive
+agents, and other full-screen programs. The command runs directly with its
+configured arguments, working directory, and environment. The TUI waits for it
+to exit.
 
 Terminal commands receive JSON through the file named by
 `AVEN_COMMAND_CONTEXT`:
@@ -360,28 +360,25 @@ context=${AVEN_COMMAND_CONTEXT:?AVEN_COMMAND_CONTEXT is required}
 ref=$(jq -r '.selection.primary.ref' "$context")
 ```
 
-The context file is flushed and closed before launch. On Unix it has owner-only
-permissions. It remains available while the child runs and is removed after
-Aven restores the terminal. Aven does not include its path in diagnostics or
-logs.
+The context file is flushed and closed before launch. On Unix, it has owner-only
+permissions. It stays in place until the child exits, then is removed after the
+terminal is restored. Diagnostics and logs never include the path.
 
-The default terminal timeout is unlimited. A configured `timeout_seconds`
-terminates the child process tree on Unix, waits for cleanup, restores Aven, and
-reports a timeout. Platforms without the Unix process-group implementation
-terminate the direct child.
+Terminal commands have no timeout by default. When `timeout_seconds` is set, a
+timeout terminates the process tree on Unix, waits for cleanup, restores the TUI,
+and reports the error. Other platforms terminate the direct child.
 
-Aven restores raw mode, the alternate screen, keyboard enhancements, mouse and
-bracketed-paste state, cursor state, inline images, and a complete redraw before
-applying `stay`, `refresh`, `quit`, or `refresh-and-quit`. Child output is not
-captured for diagnostics. It remains in terminal scrollback according to the
-terminal emulator's behavior.
+The terminal is restored before the success policy runs. Restoration covers raw
+mode, the alternate screen, keyboard enhancements, mouse and bracketed-paste
+state, cursor state, and inline images, followed by a full redraw. Child output
+is not captured. Whether it remains in scrollback depends on the terminal
+emulator.
 
-The Linux terminal path uses a foreground process group for the child. In the
-verified Kitty environment, Ctrl-C reaches the child without terminating Aven,
-a child exit after Ctrl-C is reported as a nonzero status, and terminal-size
-changes reach the child's TTY. Aven redraws at the changed size when the child
-exits. Foreground process-group behavior has not been verified on every Unix
-terminal.
+On Linux with Kitty, terminal commands use a foreground process group. Ctrl-C
+reaches the child without terminating the TUI, and an interrupted child reports
+a nonzero status when it exits. Terminal-size changes reach the child's TTY, and
+the TUI redraws at the new size afterward. Runtime coverage for this behavior is
+limited to Linux with Kitty.
 
 ## Success policies
 
@@ -392,14 +389,14 @@ terminal.
 | `quit` | Perform orderly TUI shutdown after a waiting or terminal command exits successfully. |
 | `refresh-and-quit` | Refresh application state, then perform orderly TUI shutdown. |
 
-Refresh uses Aven's normal committed-projection path. It retains the active view,
-filters, and list selection by task identity where possible. Detail remains bound
-to its displayed task while that task is available, and marks are reconciled
-against the refreshed projection.
+Refresh follows the normal committed-projection path. It keeps the active view
+and filters, and restores list selection by task identity when possible. Detail
+stays bound to the displayed task while that task is available. Marks are
+reconciled against the refreshed projection.
 
-A child failure never refreshes or closes Aven. If the child succeeds but a
-requested refresh fails, Aven remains open and shows a bounded refresh error.
-A refresh failure also prevents `refresh-and-quit` from shutting down.
+A child failure does not refresh or close the TUI. If the child succeeds but the
+refresh fails, the TUI stays open and shows a bounded error. A failed refresh
+also prevents `refresh-and-quit` from shutting down.
 
 ## Tmux dispatch example
 
@@ -445,8 +442,8 @@ chmod 755 ~/.config/aven/commands/dispatch-task
 ```
 
 Run `:dispatch` from a task list or detail view. `tmux new-window` selects the
-new window and exits successfully. Aven then shuts down in its original pane.
-If tmux returns an error, Aven remains open and reports the failure.
+new window and exits successfully. The original Aven pane then shuts down. If
+tmux returns an error, the TUI stays open and shows the failure.
 
 ## Multiple commands and aliases
 
@@ -500,7 +497,7 @@ needs a selected list task or displayed detail task. `target: marked` needs at
 least one mark. `target: marked-or-focused` needs either one. Use `target: none`
 only when the program operates without task targets.
 
-### Aven remains open
+### The TUI remains open
 
 - `quit` and `refresh-and-quit` apply to `execution: wait` and
   `execution: terminal`.
@@ -510,21 +507,21 @@ only when the program operates without task targets.
 
 ### A failure has no diagnostic excerpt
 
-Aven uses standard error for nonzero-exit diagnostics and falls back to standard
-output only when standard error is empty. Have the program write its concise
-failure reason to one of those streams before exiting. Successful command output
-is ignored.
+For a nonzero exit, diagnostics use standard error and fall back to standard
+output only when standard error is empty. The program should write a concise
+failure reason to one of those streams before it exits. Output from successful
+commands is ignored.
 
 ### The program needs shell syntax
 
-Aven does not invoke a shell. Put shell syntax in an executable script and set
-`program` to that script. This also keeps task text in JSON rather than shell
-source.
+Custom commands do not run through a shell. Put shell syntax in an executable
+script and set `program` to that script. This keeps task text in JSON instead of
+shell source.
 
 ## Security
 
-Custom commands execute local programs with the same operating-system identity
-and inherited environment as Aven. Treat configured programs as trusted code.
+Custom commands run with the same operating-system identity and inherited
+environment as the TUI. Treat configured programs as trusted code.
 
 Keep these boundaries in scripts:
 
@@ -533,7 +530,8 @@ Keep these boundaries in scripts:
 - Quote every value used in shell commands.
 - Do not evaluate task titles, descriptions, notes, labels, or other task text.
 - Keep secrets in config-level static environment overrides, never in task data.
-- Avoid printing configured environment values because Aven can display bounded child diagnostics.
+- Avoid printing configured environment values. Bounded child diagnostics may
+  display them.
 - Prefer direct argv calls over constructing shell command strings.
 - Store scripts in locations writable only by trusted users.
 - Avoid logging the complete JSON document when task content is sensitive.
