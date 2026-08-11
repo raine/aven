@@ -4,7 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 
-use super::truncate::truncate_chars;
+use super::truncate::truncate_width;
 use crate::tui::overlay::dialog_area;
 use crate::tui::theme::{ACCENT, BG_ALT, FG, FG_MUTED};
 
@@ -77,7 +77,7 @@ fn overlay_block(title: &str, width: u16) -> Block<'_> {
 }
 
 fn edge_title(title: &str, width: u16) -> Line<'_> {
-    let title = truncate_chars(title, width.saturating_sub(5) as usize);
+    let title = truncate_width(title, width.saturating_sub(5) as usize);
     Line::from(vec![
         Span::styled("─ ", Style::new().fg(ACCENT)),
         Span::raw(title),

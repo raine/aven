@@ -8,7 +8,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use super::super::dialog::{Dialog, dialog_hint_line, dim_rendered_area};
 use super::super::input::{clipped_input_line, cursor_cell};
 use super::super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
-use super::super::truncate::truncate_chars;
+use super::super::truncate::truncate_width;
 use super::confirm::render_confirm;
 use super::multiline::add_task_description_input_line;
 use super::picker::{
@@ -1345,28 +1345,28 @@ pub(in crate::tui::ui) fn add_task_metadata_title(
     if width < 60 {
         return Line::from(vec![
             Span::styled(" status: ", Style::new().fg(FG_MUTED)),
-            Span::styled(truncate_chars(status, 8), status_style),
+            Span::styled(truncate_width(status, 8), status_style),
             Span::styled(" · ", Style::new().fg(FG_DIM)),
             Span::styled("prio: ", Style::new().fg(FG_MUTED)),
-            Span::styled(truncate_chars(priority, 6), priority_style),
+            Span::styled(truncate_width(priority, 6), priority_style),
         ]);
     }
     let value_width = (width as usize).saturating_sub(44).max(6) / 4;
     Line::from(vec![
         Span::styled(" project: ", Style::new().fg(FG_MUTED)),
         Span::styled(
-            truncate_chars(project, value_width),
+            truncate_width(project, value_width),
             Style::new().fg(theme::project_color(project)),
         ),
         Span::styled(" · ", Style::new().fg(FG_DIM)),
         Span::styled("status: ", Style::new().fg(FG_MUTED)),
-        Span::styled(truncate_chars(status, value_width), status_style),
+        Span::styled(truncate_width(status, value_width), status_style),
         Span::styled(" · ", Style::new().fg(FG_DIM)),
         Span::styled("prio: ", Style::new().fg(FG_MUTED)),
-        Span::styled(truncate_chars(priority, value_width), priority_style),
+        Span::styled(truncate_width(priority, value_width), priority_style),
         Span::styled(" · ", Style::new().fg(FG_DIM)),
         Span::styled("labels: ", Style::new().fg(FG_MUTED)),
-        Span::styled(truncate_chars(&labels, value_width), label_style),
+        Span::styled(truncate_width(&labels, value_width), label_style),
     ])
 }
 

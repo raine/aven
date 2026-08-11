@@ -8,7 +8,7 @@ use super::super::dialog::Dialog;
 use super::super::input::{cursor_cell, input_line};
 use super::super::task_display::labels_display;
 use super::super::task_list::EPIC_MARKER;
-use super::super::truncate::truncate_chars;
+use super::super::truncate::truncate_width;
 use crate::query::SearchMatchedField;
 use crate::queue::{now_seconds, unix_seconds};
 use crate::tui::overlay::{SearchKind, SearchResultItem};
@@ -206,7 +206,7 @@ fn result_line(
     let marker = if selected { "▸" } else { " " };
     if result.create_new {
         let title_width = width.saturating_sub(2).max(8);
-        let title = truncate_chars(&result.title, title_width);
+        let title = truncate_width(&result.title, title_width);
         let used_width = 2 + title.chars().count();
         let mut spans = vec![Span::styled(format!("{marker} "), style)];
         spans.extend(title_spans(&title, input, result.matched_field, style));
@@ -221,7 +221,7 @@ fn result_line(
     let title_width = width
         .saturating_sub(ref_width + 4 + epic_marker_width)
         .max(8);
-    let title = truncate_chars(&result.title, title_width);
+    let title = truncate_width(&result.title, title_width);
     let used_width = 2 + ref_width + 1 + title.chars().count() + epic_marker_width;
     let mut spans = vec![Span::styled(format!("{marker} "), style)];
     spans.extend(result_ref_spans(result, ref_width, style));
@@ -242,7 +242,7 @@ fn result_line(
 }
 
 fn result_ref_spans(result: &SearchResultItem, width: usize, style: Style) -> Vec<Span<'static>> {
-    let display_ref = truncate_chars(&result.display_ref, width);
+    let display_ref = truncate_width(&result.display_ref, width);
     let bg = style.bg.unwrap_or(BG);
     if let Some((project, suffix)) = display_ref.split_once('-') {
         let used_width = project.chars().count() + 1 + suffix.chars().count();
@@ -379,7 +379,7 @@ fn result_meta_line(
 }
 
 fn padded_meta_line(value: &str, style: Style, width: usize) -> Line<'static> {
-    let value = truncate_chars(value, width);
+    let value = truncate_width(value, width);
     let padding = width.saturating_sub(value.chars().count());
     Line::from(vec![
         Span::styled(value, style),
@@ -399,7 +399,7 @@ fn truncate_spans_to_width(spans: &mut Vec<Span<'static>>, width: usize) {
         let content_width = spans[index].content.chars().count();
         if used + content_width > width {
             let remaining = width.saturating_sub(used);
-            spans[index].content = truncate_chars(&spans[index].content, remaining).into();
+            spans[index].content = truncate_width(&spans[index].content, remaining).into();
             spans.truncate(index + 1);
             return;
         }

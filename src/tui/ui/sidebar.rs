@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState};
 use unicode_width::UnicodeWidthStr;
 
-use super::truncate::truncate_chars;
+use super::truncate::truncate_width;
 use crate::choices::TaskPriority;
 use crate::tui::app::Focus;
 use crate::tui::list_surface::ListSurface;
@@ -348,7 +348,7 @@ fn sidebar_entry_line(
     let count = entry.count.to_string();
     let reserved_width = marker_cell.width() + count.width() + 1;
     let label_width = width.saturating_sub(reserved_width);
-    let label = truncate_chars(label, label_width);
+    let label = truncate_width(label, label_width);
     let used_width = marker_cell.width() + label.width() + count.width();
     let spacer_width = width.saturating_sub(used_width).max(1);
     let count_style = if active {
