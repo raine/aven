@@ -10,7 +10,8 @@ release.
 
 Custom TUI commands connect Aven's command palette to local executables. A
 command can receive the selected task and marked tasks, launch work in another
-program, and optionally close Aven after successful completion.
+program, refresh Aven after a successful mutation, and optionally close Aven
+after successful completion.
 
 Common uses include:
 
@@ -57,7 +58,7 @@ results.
 | `detail_keys` | No | `keys` | Key sequences for task detail. An empty list disables detail bindings. |
 | `target` | No | `focused` | Operational target policy. Values are `none`, `focused`, `marked`, and `marked-or-focused`. |
 | `execution` | No | `wait` | Process supervision mode. Values are `wait` and `background`. |
-| `on_success` | No | `stay` | Aven behavior after success. Values are `stay` and `quit`. |
+| `on_success` | No | `stay` | Aven behavior after success. Values are `stay`, `refresh`, `quit`, and `refresh-and-quit`. |
 
 Names and aliases may contain lowercase ASCII letters, digits, and hyphens.
 They must be unique across configured and built-in command names. Aven rejects
@@ -297,8 +298,9 @@ timed-out handoff terminates that group, while a successful handoff remains
 independent of TUI shutdown.
 
 Background mode confirms launch and input delivery, not the final outcome of
-the program. It always leaves Aven running. Configuration with
-`execution: background` and `on_success: quit` is invalid.
+the program. It always leaves Aven running. Background execution requires
+`on_success: stay`; `refresh`, `quit`, and `refresh-and-quit` are invalid because
+Aven does not observe process completion.
 
 Use `background` for long-lived programs whose result does not control Aven's
 lifecycle.
@@ -307,11 +309,19 @@ lifecycle.
 
 | Policy | Behavior |
 | --- | --- |
-| `stay` | Show completion and leave Aven running. This is the default. |
+| `stay` | Show completion and retain the current projection. This is the default. |
+| `refresh` | Refresh the active workspace projection, preserve navigation where valid, then show completion. |
 | `quit` | Perform orderly TUI shutdown after a waiting command exits successfully. |
+| `refresh-and-quit` | Refresh application state, then perform orderly TUI shutdown. |
 
-Failures always leave Aven running and show an error. A failed tmux switch,
-missing executable, nonzero exit, or timeout therefore cannot close the TUI.
+Refresh uses Aven's normal committed-projection path. It retains the active view,
+filters, and list selection by task identity where possible. Detail remains bound
+to its displayed task while that task is available, and marks are reconciled
+against the refreshed projection.
+
+A child failure never refreshes or closes Aven. If the child succeeds but a
+requested refresh fails, Aven remains open and shows a bounded refresh error.
+A refresh failure also prevents `refresh-and-quit` from shutting down.
 
 ## Tmux dispatch example
 
@@ -414,9 +424,10 @@ only when the program operates without task targets.
 
 ### Aven remains open
 
-- `on_success: quit` applies only to `execution: wait`.
+- `quit` and `refresh-and-quit` apply only to `execution: wait`.
 - The program must exit with status zero.
-- A background command never requests TUI shutdown.
+- `refresh-and-quit` requires both child success and a successful refresh.
+- A background command uses `on_success: stay` and never requests TUI shutdown.
 
 ### A failure has no diagnostic excerpt
 

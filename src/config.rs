@@ -176,11 +176,13 @@ pub enum CustomTuiCommandExecution {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum CustomTuiCommandSuccess {
     #[default]
     Stay,
+    Refresh,
     Quit,
+    RefreshAndQuit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -518,10 +520,10 @@ impl AppConfig {
                 bail!("custom command {} program must not be blank", command.name);
             }
             if command.execution == CustomTuiCommandExecution::Background
-                && command.on_success == CustomTuiCommandSuccess::Quit
+                && command.on_success != CustomTuiCommandSuccess::Stay
             {
                 bail!(
-                    "custom command {} cannot quit after background execution",
+                    "custom command {} background execution requires on_success: stay",
                     command.name
                 );
             }
@@ -968,14 +970,41 @@ mod tests {
     }
 
     #[test]
-    fn custom_tui_commands_reject_blank_fields_and_background_quit() {
+    fn custom_tui_command_success_policies_deserialize() {
+        for (value, expected) in [
+            ("stay", CustomTuiCommandSuccess::Stay),
+            ("refresh", CustomTuiCommandSuccess::Refresh),
+            ("quit", CustomTuiCommandSuccess::Quit),
+            ("refresh-and-quit", CustomTuiCommandSuccess::RefreshAndQuit),
+        ] {
+            let yaml = format!(
+                "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      on_success: {value}\n"
+            );
+            let config = load_config(&yaml).unwrap();
+            assert_eq!(config.tui.commands[0].on_success, expected, "{value}");
+        }
+    }
+
+    #[test]
+    fn custom_tui_commands_reject_blank_fields_and_non_stay_background_policies() {
         for yaml in [
             "tui:\n  commands:\n    - name: dispatch\n      description: '  '\n      program: dispatch\n",
             "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: ''\n",
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      execution: background\n      on_success: refresh\n",
             "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      execution: background\n      on_success: quit\n",
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      execution: background\n      on_success: refresh-and-quit\n",
         ] {
             assert!(load_config(yaml).is_err(), "accepted {yaml}");
         }
+
+        let stay = load_config(
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      execution: background\n      on_success: stay\n",
+        )
+        .unwrap();
+        assert_eq!(
+            stay.tui.commands[0].on_success,
+            CustomTuiCommandSuccess::Stay
+        );
     }
 
     #[test]

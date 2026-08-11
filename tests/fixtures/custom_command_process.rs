@@ -38,6 +38,17 @@ fn main() {
             std::io::stdin().read_to_string(&mut millis).unwrap();
             std::thread::sleep(Duration::from_millis(millis.parse().unwrap()));
         }
+        "delayed-exit" => {
+            let millis = args.next().expect("delay").parse().unwrap();
+            let status = args.next().expect("exit status").parse().unwrap();
+            let diagnostic = args.next().unwrap_or_default();
+            std::io::copy(&mut std::io::stdin(), &mut std::io::sink()).unwrap();
+            std::thread::sleep(Duration::from_millis(millis));
+            if !diagnostic.is_empty() {
+                writeln!(std::io::stderr(), "{diagnostic}").unwrap();
+            }
+            std::process::exit(status);
+        }
         "copy-stdin" => {
             let path = args.next().expect("output path");
             let mut input = Vec::new();

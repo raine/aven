@@ -4,6 +4,9 @@ use crate::config::{CustomTuiCommandExecution, CustomTuiCommandSuccess};
 use crate::tui::app::{App, Notification};
 use crate::tui::custom_command::{plan_invocation, resolve_command_targets};
 use crate::tui::event::CommandHandler;
+use crate::tui::toast::ToastSeverity;
+
+pub(crate) const REFRESH_ERROR_CHAR_LIMIT: usize = 512;
 
 impl App {
     pub(super) async fn execute_command_handler(&mut self, handler: CommandHandler) -> Result<()> {
@@ -74,18 +77,87 @@ impl App {
         if completions.is_empty() {
             return false;
         }
+        let prior_error = self.notification.as_ref().and_then(|notification| {
+            matches!(
+                notification,
+                Notification::Toast { toast, .. } if toast.severity == ToastSeverity::Error
+            )
+            .then(|| notification.clone())
+        });
+        let mut completion_info = None;
+        let mut completion_error = None;
         for completion in completions {
             match completion.result {
-                Ok(()) => {
-                    if completion.on_success == CustomTuiCommandSuccess::Quit {
-                        self.should_quit = true;
-                    } else {
-                        self.set_info(format!("custom command :{} completed", completion.name));
-                    }
+                Err(error) => {
+                    completion_error.get_or_insert(error);
                 }
-                Err(error) => self.set_error(error),
+                Ok(()) => match completion.on_success {
+                    CustomTuiCommandSuccess::Stay => {
+                        completion_info = Some(completion_message(&completion.name));
+                    }
+                    CustomTuiCommandSuccess::Refresh => match self.refresh().await {
+                        Ok(()) => completion_info = Some(completion_message(&completion.name)),
+                        Err(error) => {
+                            completion_error.get_or_insert_with(|| {
+                                refresh_error_message(&completion.name, &error)
+                            });
+                        }
+                    },
+                    CustomTuiCommandSuccess::Quit => self.should_quit = true,
+                    CustomTuiCommandSuccess::RefreshAndQuit => match self.refresh().await {
+                        Ok(()) => self.should_quit = true,
+                        Err(error) => {
+                            completion_error.get_or_insert_with(|| {
+                                refresh_error_message(&completion.name, &error)
+                            });
+                        }
+                    },
+                },
             }
+        }
+        if let Some(error) = completion_error {
+            self.set_error(error);
+        } else if let Some(error) = prior_error {
+            self.notification = Some(error);
+        } else if let Some(info) = completion_info {
+            self.set_info(info);
         }
         true
     }
+}
+
+fn completion_message(name: &str) -> String {
+    format!("custom command :{name} completed")
+}
+
+pub(crate) fn refresh_error_message(name: &str, error: &anyhow::Error) -> String {
+    format!(
+        ":{name} completed, but Aven could not refresh: {}",
+        bounded_refresh_error(error)
+    )
+}
+
+fn bounded_refresh_error(error: &anyhow::Error) -> String {
+    let reason = format!("{error:#}")
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if reason.chars().count() <= REFRESH_ERROR_CHAR_LIMIT {
+        return reason;
+    }
+    let mut bounded = reason
+        .chars()
+        .take(REFRESH_ERROR_CHAR_LIMIT.saturating_sub(1))
+        .collect::<String>();
+    bounded.push('…');
+    bounded
 }

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::config::{
@@ -53,6 +53,52 @@ async fn poll_until_complete(app: &mut App) {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("custom command did not complete");
+}
+
+async fn external_database(app: &App) -> aven_core::db::Database {
+    let path = app
+        ._test_database_dir
+        .as_ref()
+        .expect("test database directory")
+        .path()
+        .join("test.db");
+    aven_core::db::Database::open(&path).await.unwrap()
+}
+
+fn add_command(
+    config: &mut AppConfig,
+    name: &str,
+    program: &Path,
+    args: &[&str],
+    success: CustomTuiCommandSuccess,
+) {
+    config.tui.commands.push(CustomTuiCommandConfig {
+        name: name.to_string(),
+        aliases: vec![],
+        description: format!("run {name}"),
+        program: program.to_path_buf(),
+        args: args.iter().map(|arg| (*arg).to_string()).collect(),
+        keys: vec![],
+        detail_keys: None,
+        target: CustomTuiCommandTarget::None,
+        execution: CustomTuiCommandExecution::Wait,
+        on_success: success,
+    });
+}
+
+fn compile_process_fixture() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let source =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/custom_command_process.rs");
+    let executable = dir.path().join("custom-command-process");
+    let status = std::process::Command::new("rustc")
+        .args(["--edition=2024", "-o"])
+        .arg(&executable)
+        .arg(source)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    (dir, executable)
 }
 
 #[tokio::test]
@@ -130,6 +176,327 @@ async fn successful_stay_policy_leaves_app_open() {
     assert!(!app.should_quit);
     assert_eq!(toast_severity(&app), Some(ToastSeverity::Info));
     assert!(toast_message(&app).unwrap().contains("completed"));
+}
+
+#[tokio::test]
+async fn stay_policy_retains_the_current_projection_after_external_mutation() {
+    let mut app = test_app().await;
+    let selected = create_and_select_task(&mut app, test_task_draft("Before stay")).await;
+    let task_id = app.store.tasks[selected].task.id.clone();
+    app.set_config(config("/usr/bin/tee", CustomTuiCommandSuccess::Stay));
+
+    app.execute_custom_command(0, "dispatch").await.unwrap();
+    external_database(&app)
+        .await
+        .update_task(
+            &app.store.active_workspace,
+            &task_id,
+            crate::operations::TaskUpdate {
+                title: Some("After stay".to_string()),
+                ..crate::operations::TaskUpdate::default()
+            },
+        )
+        .await
+        .unwrap();
+    poll_until_complete(&mut app).await;
+
+    assert_eq!(app.store.tasks[selected].task.title, "Before stay");
+    assert!(!app.should_quit);
+}
+
+#[tokio::test]
+async fn refresh_policy_updates_projection_and_preserves_navigation_identity() {
+    let mut app = test_app().await;
+    let mut first_draft = test_task_draft("Alpha");
+    first_draft.priority = "high".to_string();
+    let first = create_and_select_task(&mut app, first_draft).await;
+    let first_id = app.store.tasks[first].task.id.clone();
+    let mut selected_draft = test_task_draft("Zulu");
+    selected_draft.priority = "high".to_string();
+    let selected = create_and_select_task(&mut app, selected_draft).await;
+    let selected_id = app.store.tasks[selected].task.id.clone();
+    app.store.view_state.view = TaskView::Inbox;
+    app.store.view_state.order = TaskOrder::Title;
+    app.store.view_state.filter_modifiers.priority = Some("high".to_string());
+    app.refresh().await.unwrap();
+    let selected = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == selected_id)
+        .unwrap();
+    app.list.select_task(Some(selected));
+    app.list.mark(first_id.clone());
+    app.list.mark(selected_id.clone());
+    app.show_detail(0);
+    let view_state = app.store.view_state.clone();
+    app.set_config(config("/usr/bin/tee", CustomTuiCommandSuccess::Refresh));
+
+    app.execute_custom_command(0, "dispatch").await.unwrap();
+    external_database(&app)
+        .await
+        .update_task(
+            &app.store.active_workspace,
+            &selected_id,
+            crate::operations::TaskUpdate {
+                title: Some("Aardvark".to_string()),
+                ..crate::operations::TaskUpdate::default()
+            },
+        )
+        .await
+        .unwrap();
+    poll_until_complete(&mut app).await;
+
+    let selected = app.store.selected_task(app.list.selected_task()).unwrap();
+    assert_eq!(selected.task.id, selected_id);
+    assert_eq!(selected.task.title, "Aardvark");
+    assert!(app.detail.is_active());
+    assert_eq!(app.store.view_state, view_state);
+    assert!(app.list.marked_task_ids().contains(&first_id));
+    assert!(app.list.marked_task_ids().contains(&selected_id));
+    assert_eq!(toast_severity(&app), Some(ToastSeverity::Info));
+}
+
+#[tokio::test]
+async fn refresh_policy_reconciles_a_task_that_leaves_the_active_view() {
+    let mut app = test_app().await;
+    let disappearing = create_and_select_task(&mut app, test_task_draft("Leaves inbox")).await;
+    let disappearing_id = app.store.tasks[disappearing].task.id.clone();
+    create_and_select_task(&mut app, test_task_draft("Remains in inbox")).await;
+    app.store.view_state.view = TaskView::Inbox;
+    app.refresh().await.unwrap();
+    let disappearing = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == disappearing_id)
+        .unwrap();
+    app.list.select_task(Some(disappearing));
+    app.list.mark(disappearing_id.clone());
+    app.set_config(config("/usr/bin/tee", CustomTuiCommandSuccess::Refresh));
+
+    app.execute_custom_command(0, "dispatch").await.unwrap();
+    external_database(&app)
+        .await
+        .update_task(
+            &app.store.active_workspace,
+            &disappearing_id,
+            crate::operations::TaskUpdate {
+                status: Some("done".to_string()),
+                ..crate::operations::TaskUpdate::default()
+            },
+        )
+        .await
+        .unwrap();
+    poll_until_complete(&mut app).await;
+
+    assert!(
+        app.store
+            .tasks
+            .iter()
+            .all(|item| item.task.id != disappearing_id)
+    );
+    assert!(!app.list.marked_task_ids().contains(&disappearing_id));
+    assert!(app.store.selected_task(app.list.selected_task()).is_some());
+}
+
+#[tokio::test]
+async fn refresh_failure_leaves_app_open_with_bounded_useful_error() {
+    let mut app = test_app().await;
+    let selected = create_and_select_task(&mut app, test_task_draft("Before failure")).await;
+    let task_id = app.store.tasks[selected].task.id.clone();
+    app.set_config(config("/usr/bin/tee", CustomTuiCommandSuccess::Refresh));
+
+    app.execute_custom_command(0, "dispatch").await.unwrap();
+    external_database(&app)
+        .await
+        .update_task(
+            &app.store.active_workspace,
+            &task_id,
+            crate::operations::TaskUpdate {
+                title: Some("After failure".to_string()),
+                ..crate::operations::TaskUpdate::default()
+            },
+        )
+        .await
+        .unwrap();
+    app.store.fail_next_refresh();
+    poll_until_complete(&mut app).await;
+
+    assert!(!app.should_quit);
+    assert_eq!(app.store.tasks[selected].task.title, "Before failure");
+    assert_eq!(toast_severity(&app), Some(ToastSeverity::Error));
+    let message = toast_message(&app).unwrap();
+    assert!(
+        message.starts_with(":dispatch completed, but Aven could not refresh: ")
+            && message.contains("injected refresh failure"),
+        "{message}"
+    );
+}
+
+#[tokio::test]
+async fn refresh_and_quit_requires_a_successful_refresh() {
+    let mut successful = test_app().await;
+    successful.set_config(config(
+        "/usr/bin/tee",
+        CustomTuiCommandSuccess::RefreshAndQuit,
+    ));
+    successful
+        .execute_custom_command(0, "dispatch")
+        .await
+        .unwrap();
+    poll_until_complete(&mut successful).await;
+    assert!(successful.should_quit);
+
+    let mut failed = test_app().await;
+    failed.set_config(config(
+        "/usr/bin/tee",
+        CustomTuiCommandSuccess::RefreshAndQuit,
+    ));
+    failed.execute_custom_command(0, "dispatch").await.unwrap();
+    failed.store.fail_next_refresh();
+    poll_until_complete(&mut failed).await;
+    assert!(!failed.should_quit);
+    assert_eq!(toast_severity(&failed), Some(ToastSeverity::Error));
+}
+
+#[tokio::test]
+async fn nonzero_exit_never_refreshes_or_quits() {
+    let mut app = test_app().await;
+    let selected = create_and_select_task(&mut app, test_task_draft("Before nonzero")).await;
+    let task_id = app.store.tasks[selected].task.id.clone();
+    app.set_config(config(
+        "/usr/bin/false",
+        CustomTuiCommandSuccess::RefreshAndQuit,
+    ));
+
+    app.execute_custom_command(0, "dispatch").await.unwrap();
+    external_database(&app)
+        .await
+        .update_task(
+            &app.store.active_workspace,
+            &task_id,
+            crate::operations::TaskUpdate {
+                title: Some("After nonzero".to_string()),
+                ..crate::operations::TaskUpdate::default()
+            },
+        )
+        .await
+        .unwrap();
+    poll_until_complete(&mut app).await;
+
+    assert!(!app.should_quit);
+    assert_eq!(app.store.tasks[selected].task.title, "Before nonzero");
+    assert_eq!(toast_severity(&app), Some(ToastSeverity::Error));
+    assert!(toast_message(&app).unwrap().contains("exited with status"));
+}
+
+#[tokio::test]
+async fn out_of_order_completions_apply_effects_and_preserve_error_notification() {
+    let mut app = test_app().await;
+    let selected =
+        create_and_select_task(&mut app, test_task_draft("Before ordered effects")).await;
+    let task_id = app.store.tasks[selected].task.id.clone();
+    let (_fixture_dir, fixture) = compile_process_fixture();
+    let mut app_config = AppConfig::default();
+    add_command(
+        &mut app_config,
+        "slow-stay",
+        &fixture,
+        &["delayed-exit", "600", "0"],
+        CustomTuiCommandSuccess::Stay,
+    );
+    add_command(
+        &mut app_config,
+        "medium-refresh",
+        &fixture,
+        &["delayed-exit", "300", "0"],
+        CustomTuiCommandSuccess::Refresh,
+    );
+    add_command(
+        &mut app_config,
+        "fast-failure",
+        &fixture,
+        &["delayed-exit", "50", "9", "fixture failure"],
+        CustomTuiCommandSuccess::RefreshAndQuit,
+    );
+    app.set_config(app_config);
+
+    external_database(&app)
+        .await
+        .update_task(
+            &app.store.active_workspace,
+            &task_id,
+            crate::operations::TaskUpdate {
+                title: Some("After ordered effects".to_string()),
+                ..crate::operations::TaskUpdate::default()
+            },
+        )
+        .await
+        .unwrap();
+    app.execute_custom_command(0, "slow-stay").await.unwrap();
+    app.execute_custom_command(1, "medium-refresh")
+        .await
+        .unwrap();
+    app.execute_custom_command(2, "fast-failure").await.unwrap();
+
+    let failure = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if app.poll_custom_commands().await
+                && toast_message(&app).is_some_and(|message| message.contains("fast-failure"))
+            {
+                break toast_message(&app).unwrap();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("fast command did not complete");
+    assert!(!app.should_quit);
+    assert_eq!(
+        app.store.tasks[selected].task.title,
+        "Before ordered effects"
+    );
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            app.poll_custom_commands().await;
+            if app.store.tasks[selected].task.title == "After ordered effects" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("refresh command did not complete");
+    assert_eq!(toast_message(&app).as_deref(), Some(failure.as_str()));
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while app.custom_commands.work_pending() {
+            app.poll_custom_commands().await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("stay command did not complete");
+    assert_eq!(toast_message(&app).as_deref(), Some(failure.as_str()));
+    assert!(!app.should_quit);
+}
+
+#[test]
+fn refresh_errors_are_sanitized_and_bounded() {
+    let reason = format!("{}\n\u{1b}[31m", "x".repeat(600));
+    let error = anyhow::anyhow!(reason);
+    let message = crate::tui::app_custom_commands::refresh_error_message("dispatch", &error);
+    let rendered_reason = message.split_once(": ").unwrap().1;
+
+    assert!(
+        rendered_reason.chars().count()
+            <= crate::tui::app_custom_commands::REFRESH_ERROR_CHAR_LIMIT
+    );
+    assert!(!rendered_reason.contains('\n'));
+    assert!(!rendered_reason.contains('\u{1b}'));
+    assert!(rendered_reason.ends_with('…'));
 }
 
 #[tokio::test]
