@@ -47,6 +47,42 @@ fn main() {
         "copy-stdin-null" => {
             std::io::copy(&mut std::io::stdin(), &mut std::io::sink()).unwrap();
         }
+        "failure-stderr" => {
+            std::io::stderr()
+                .write_all(b"first stderr line\nuseful stderr reason\n")
+                .unwrap();
+            std::process::exit(7);
+        }
+        "failure-stdout" => {
+            std::io::stdout()
+                .write_all(b"stdout fallback reason\n")
+                .unwrap();
+            std::process::exit(8);
+        }
+        "failure-empty" => std::process::exit(12),
+        "failure-invalid-utf8" => {
+            std::io::stderr()
+                .write_all(b"invalid byte: \xff reason\n")
+                .unwrap();
+            std::process::exit(9);
+        }
+        "failure-unsafe" => {
+            std::io::stderr()
+                .write_all(b"\x1b[31mred\x1b[0m\x07\r\n\x1b]0;secret title\x07safe\n")
+                .unwrap();
+            std::process::exit(10);
+        }
+        "failure-large" => {
+            std::io::stderr().write_all(&vec![b'x'; 64 * 1024]).unwrap();
+            std::io::stderr()
+                .write_all(b"\nlarge output tail reason\n")
+                .unwrap();
+            std::process::exit(11);
+        }
+        "success-large" => {
+            std::io::stdout().write_all(&vec![b'o'; 64 * 1024]).unwrap();
+            std::io::stderr().write_all(&vec![b'e'; 64 * 1024]).unwrap();
+        }
         "record-pid-and-sleep" => {
             let path = args.next().expect("PID file");
             std::io::copy(&mut std::io::stdin(), &mut std::io::sink()).unwrap();

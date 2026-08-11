@@ -7,11 +7,15 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::process::{Child, Command};
 use tokio::sync::watch;
 use tokio::task::{JoinError, JoinHandle};
+use unicode_width::UnicodeWidthChar;
 
 use crate::config::{CustomTuiCommandExecution, CustomTuiCommandSuccess};
 use crate::tui::custom_command::CustomCommandInvocation;
 
 const OUTPUT_LIMIT: usize = 16 * 1024;
+const DIAGNOSTIC_LINE_LIMIT: usize = 2;
+const DIAGNOSTIC_CHAR_LIMIT: usize = 512;
+const DIAGNOSTIC_WIDTH_LIMIT: usize = 512;
 const WAIT_TIMEOUT: Duration = Duration::from_secs(300);
 const BACKGROUND_INPUT_TIMEOUT: Duration = Duration::from_secs(5);
 const TERMINATION_GRACE: Duration = Duration::from_millis(500);
@@ -300,6 +304,18 @@ async fn run_waiting(
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
+struct CapturedOutput {
+    bytes: Vec<u8>,
+    truncated: bool,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct CommandOutput {
+    stdout: CapturedOutput,
+    stderr: CapturedOutput,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum StopReason {
     Timeout,
@@ -422,11 +438,28 @@ async fn supervise_waiting(
         && let Ok(status) = &status_result
         && !status.success()
     {
-        let error = if let Some(code) = status.code() {
+        let diagnostic = match (&stdout_result, &stderr_result) {
+            (Ok(stdout), Ok(stderr)) => diagnostic_excerpt(&CommandOutput {
+                stdout: CapturedOutput {
+                    bytes: stdout.bytes.clone(),
+                    truncated: stdout.truncated,
+                },
+                stderr: CapturedOutput {
+                    bytes: stderr.bytes.clone(),
+                    truncated: stderr.truncated,
+                },
+            }),
+            _ => None,
+        };
+        let mut error = if let Some(code) = status.code() {
             format!("custom command :{name} exited with status {code}")
         } else {
             format!("custom command :{name} terminated without an exit code")
         };
+        if let Some(diagnostic) = diagnostic {
+            error.push_str(": ");
+            error.push_str(&diagnostic);
+        }
         return Err(with_cleanup(error, cleanup.as_ref()));
     }
     if stop_reason == Some(StopReason::Timeout) {
@@ -447,24 +480,12 @@ async fn supervise_waiting(
             cleanup.as_ref(),
         ));
     }
-    let stdout_truncated = stdout_result.map_err(|error| {
-        with_cleanup(
-            format!("custom command stdout read failed: {error}"),
-            cleanup.as_ref(),
-        )
-    })?;
-    let stderr_truncated = stderr_result.map_err(|error| {
-        with_cleanup(
-            format!("custom command stderr read failed: {error}"),
-            cleanup.as_ref(),
-        )
-    })?;
-    if stdout_truncated || stderr_truncated {
-        return Err(with_cleanup(
-            format!("custom command :{name} output exceeded {OUTPUT_LIMIT} bytes"),
-            cleanup.as_ref(),
-        ));
-    }
+    let _output = CommandOutput {
+        stdout: stdout_result
+            .map_err(|error| with_cleanup(stream_read_error("stdout", &error), cleanup.as_ref()))?,
+        stderr: stderr_result
+            .map_err(|error| with_cleanup(stream_read_error("stderr", &error), cleanup.as_ref()))?,
+    };
     Ok(())
 }
 
@@ -508,19 +529,177 @@ async fn write_input(mut stdin: impl AsyncWrite + Unpin, input: &[u8]) -> io::Re
     stdin.shutdown().await
 }
 
-async fn read_bounded(mut reader: impl AsyncRead + Unpin) -> io::Result<bool> {
+async fn read_bounded(mut reader: impl AsyncRead + Unpin) -> io::Result<CapturedOutput> {
     let mut retained = Vec::new();
     let mut truncated = false;
     let mut buffer = [0_u8; 4096];
     loop {
         let read = reader.read(&mut buffer).await?;
         if read == 0 {
-            return Ok(truncated);
+            return Ok(CapturedOutput {
+                bytes: retained,
+                truncated,
+            });
         }
-        let remaining = OUTPUT_LIMIT.saturating_sub(retained.len());
-        retained.extend_from_slice(&buffer[..read.min(remaining)]);
-        truncated |= read > remaining;
+        let would_truncate = retained.len().saturating_add(read) > OUTPUT_LIMIT;
+        retain_tail(&mut retained, &buffer[..read]);
+        truncated |= would_truncate;
     }
+}
+
+fn retain_tail(retained: &mut Vec<u8>, bytes: &[u8]) {
+    if bytes.len() >= OUTPUT_LIMIT {
+        retained.clear();
+        retained.extend_from_slice(&bytes[bytes.len() - OUTPUT_LIMIT..]);
+        return;
+    }
+    let overflow = retained
+        .len()
+        .saturating_add(bytes.len())
+        .saturating_sub(OUTPUT_LIMIT);
+    if overflow > 0 {
+        retained.drain(..overflow);
+    }
+    retained.extend_from_slice(bytes);
+}
+
+fn diagnostic_excerpt(output: &CommandOutput) -> Option<String> {
+    let selected = if sanitized_lines(&output.stderr.bytes).is_empty() {
+        &output.stdout
+    } else {
+        &output.stderr
+    };
+    let mut lines = sanitized_lines(&selected.bytes);
+    if selected.truncated
+        && !selected.bytes.starts_with(b"\n")
+        && !selected.bytes.starts_with(b"\r")
+        && lines.len() > 1
+    {
+        lines.remove(0);
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    let joined = lines
+        .into_iter()
+        .take(DIAGNOSTIC_LINE_LIMIT)
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let prefix = if selected.truncated { "… " } else { "" };
+    Some(bound_diagnostic(
+        &format!("{prefix}{joined}"),
+        DIAGNOSTIC_CHAR_LIMIT,
+        DIAGNOSTIC_WIDTH_LIMIT,
+    ))
+}
+
+fn sanitized_lines(bytes: &[u8]) -> Vec<String> {
+    strip_terminal_sequences(&String::from_utf8_lossy(bytes))
+        .lines()
+        .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+fn bound_diagnostic(value: &str, max_chars: usize, max_width: usize) -> String {
+    let char_count = value.chars().count();
+    let display_width = value
+        .chars()
+        .map(|character| UnicodeWidthChar::width(character).unwrap_or(0))
+        .sum::<usize>();
+    if char_count <= max_chars && display_width <= max_width {
+        return value.to_string();
+    }
+    let content_chars = max_chars.saturating_sub(1);
+    let content_width = max_width.saturating_sub(1);
+    let mut bounded = String::new();
+    let mut chars = 0_usize;
+    let mut width = 0_usize;
+    for character in value.chars() {
+        let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
+        if chars == content_chars || width.saturating_add(character_width) > content_width {
+            break;
+        }
+        bounded.push(character);
+        chars += 1;
+        width += character_width;
+    }
+    if max_chars > 0 && max_width > 0 {
+        bounded.push('…');
+    }
+    bounded
+}
+
+fn strip_terminal_sequences(value: &str) -> String {
+    #[derive(Clone, Copy)]
+    enum State {
+        Text,
+        Escape,
+        Csi,
+        Osc,
+        StringEscape,
+        EscapeIntermediate,
+    }
+
+    let mut output = String::new();
+    let mut state = State::Text;
+    for character in value.chars() {
+        state = match state {
+            State::Text => match character {
+                '\u{1b}' => State::Escape,
+                '\n' => {
+                    output.push('\n');
+                    State::Text
+                }
+                '\t' => {
+                    output.push(' ');
+                    State::Text
+                }
+                character if character.is_control() => State::Text,
+                character => {
+                    output.push(character);
+                    State::Text
+                }
+            },
+            State::Escape => match character {
+                '[' => State::Csi,
+                ']' | 'P' | 'X' | '^' | '_' => State::Osc,
+                '\u{20}'..='\u{2f}' => State::EscapeIntermediate,
+                _ => State::Text,
+            },
+            State::Csi => {
+                if ('\u{40}'..='\u{7e}').contains(&character) {
+                    State::Text
+                } else {
+                    State::Csi
+                }
+            }
+            State::Osc => match character {
+                '\u{7}' => State::Text,
+                '\u{1b}' => State::StringEscape,
+                _ => State::Osc,
+            },
+            State::StringEscape => {
+                if character == '\\' {
+                    State::Text
+                } else {
+                    State::Osc
+                }
+            }
+            State::EscapeIntermediate => {
+                if ('\u{30}'..='\u{7e}').contains(&character) {
+                    State::Text
+                } else {
+                    State::EscapeIntermediate
+                }
+            }
+        };
+    }
+    output
+}
+
+fn stream_read_error(stream: &str, error: &io::Error) -> String {
+    format!("custom command {stream} read failed: {error}")
 }
 
 fn stdin_unavailable() -> io::Error {
@@ -708,8 +887,189 @@ mod tests {
             )
             .unwrap();
 
+        assert!(completion(&mut controller).await.result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn nonzero_exit_includes_stderr_diagnostic() {
+        let _test_guard = PROCESS_TEST_LOCK.lock().await;
+        let (_dir, fixture) = compile_fixture();
+        let mut controller = CustomCommandController::default();
+        controller
+            .launch(fixture_invocation(
+                &fixture,
+                "failure-stderr",
+                Vec::new(),
+                CustomTuiCommandExecution::Wait,
+            ))
+            .unwrap();
+
         let result = completion(&mut controller).await.result.unwrap_err();
-        assert!(result.contains("output exceeded"), "{result}");
+        assert_eq!(
+            result,
+            "custom command :dispatch exited with status 7: first stderr line | useful stderr reason"
+        );
+    }
+
+    #[tokio::test]
+    async fn nonzero_exit_uses_stdout_when_stderr_is_empty() {
+        let _test_guard = PROCESS_TEST_LOCK.lock().await;
+        let (_dir, fixture) = compile_fixture();
+        let mut controller = CustomCommandController::default();
+        controller
+            .launch(fixture_invocation(
+                &fixture,
+                "failure-stdout",
+                Vec::new(),
+                CustomTuiCommandExecution::Wait,
+            ))
+            .unwrap();
+
+        let result = completion(&mut controller).await.result.unwrap_err();
+        assert_eq!(
+            result,
+            "custom command :dispatch exited with status 8: stdout fallback reason"
+        );
+    }
+
+    #[tokio::test]
+    async fn failure_does_not_include_input_unless_child_echoes_it() {
+        let _test_guard = PROCESS_TEST_LOCK.lock().await;
+        let (_dir, fixture) = compile_fixture();
+        let input = br#"{"secret":"task JSON marker"}"#.to_vec();
+        let mut controller = CustomCommandController::default();
+        controller
+            .launch(fixture_invocation(
+                &fixture,
+                "failure-empty",
+                input,
+                CustomTuiCommandExecution::Wait,
+            ))
+            .unwrap();
+
+        let result = completion(&mut controller).await.result.unwrap_err();
+        assert_eq!(result, "custom command :dispatch exited with status 12");
+        assert!(!result.contains("task JSON marker"));
+    }
+
+    #[tokio::test]
+    async fn bounded_reader_retains_only_the_tail() {
+        let bytes = vec![b'h'; OUTPUT_LIMIT + 1024];
+        let captured = read_bounded(bytes.as_slice()).await.unwrap();
+
+        assert_eq!(captured.bytes.len(), OUTPUT_LIMIT);
+        assert!(captured.truncated);
+        assert_eq!(captured.bytes, bytes[1024..]);
+    }
+
+    #[tokio::test]
+    async fn output_above_retention_limit_is_drained_and_successful() {
+        let _test_guard = PROCESS_TEST_LOCK.lock().await;
+        let (_dir, fixture) = compile_fixture();
+        let mut controller = CustomCommandController::default();
+        controller
+            .launch_with_timeouts(
+                fixture_invocation(
+                    &fixture,
+                    "success-large",
+                    Vec::new(),
+                    CustomTuiCommandExecution::Wait,
+                ),
+                Duration::from_secs(2),
+                Duration::from_secs(1),
+            )
+            .unwrap();
+
+        assert!(completion(&mut controller).await.result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn large_failure_retains_tail_and_marks_truncation() {
+        let _test_guard = PROCESS_TEST_LOCK.lock().await;
+        let (_dir, fixture) = compile_fixture();
+        let mut controller = CustomCommandController::default();
+        controller
+            .launch(fixture_invocation(
+                &fixture,
+                "failure-large",
+                Vec::new(),
+                CustomTuiCommandExecution::Wait,
+            ))
+            .unwrap();
+
+        let result = completion(&mut controller).await.result.unwrap_err();
+        assert!(result.contains(": … "), "{result}");
+        assert!(result.contains("large output tail reason"), "{result}");
+        assert!(result.chars().count() <= 560, "{result}");
+    }
+
+    #[test]
+    fn diagnostics_render_invalid_utf8_lossily() {
+        let output = CommandOutput {
+            stdout: CapturedOutput {
+                bytes: Vec::new(),
+                truncated: false,
+            },
+            stderr: CapturedOutput {
+                bytes: b"invalid byte: \xff reason".to_vec(),
+                truncated: false,
+            },
+        };
+
+        assert_eq!(
+            diagnostic_excerpt(&output).as_deref(),
+            Some("invalid byte: � reason")
+        );
+    }
+
+    #[test]
+    fn diagnostics_remove_ansi_and_unsafe_controls() {
+        let output = CommandOutput {
+            stdout: CapturedOutput {
+                bytes: Vec::new(),
+                truncated: false,
+            },
+            stderr: CapturedOutput {
+                bytes: b"\x1b[31mred\x1b[0m\x07\r\n\x1b]0;secret title\x07safe\n".to_vec(),
+                truncated: false,
+            },
+        };
+
+        assert_eq!(diagnostic_excerpt(&output).as_deref(), Some("red | safe"));
+    }
+
+    #[test]
+    fn diagnostics_bound_characters_and_display_width() {
+        let output = CommandOutput {
+            stdout: CapturedOutput {
+                bytes: Vec::new(),
+                truncated: false,
+            },
+            stderr: CapturedOutput {
+                bytes: "界".repeat(600).into_bytes(),
+                truncated: false,
+            },
+        };
+
+        let excerpt = diagnostic_excerpt(&output).unwrap();
+        assert!(excerpt.chars().count() <= DIAGNOSTIC_CHAR_LIMIT);
+        assert!(
+            excerpt
+                .chars()
+                .map(|character| UnicodeWidthChar::width(character).unwrap_or(0))
+                .sum::<usize>()
+                <= DIAGNOSTIC_WIDTH_LIMIT
+        );
+        assert!(excerpt.ends_with('…'));
+    }
+
+    #[test]
+    fn read_failure_names_the_affected_stream_without_output() {
+        let error = io::Error::other("fixture read failure");
+        assert_eq!(
+            stream_read_error("stderr", &error),
+            "custom command stderr read failed: fixture read failure"
+        );
     }
 
     #[tokio::test]

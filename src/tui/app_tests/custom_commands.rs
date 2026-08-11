@@ -99,7 +99,7 @@ async fn failed_waiting_command_leaves_app_open_with_error() {
 
     assert!(!app.should_quit);
     assert_eq!(toast_severity(&app), Some(ToastSeverity::Error));
-    assert!(toast_message(&app).unwrap().contains("custom command"));
+    assert!(toast_message(&app).unwrap().contains(":dispatch"));
 }
 
 #[tokio::test]

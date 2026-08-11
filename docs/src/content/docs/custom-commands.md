@@ -242,12 +242,15 @@ responsive while it runs. Aven:
 5. Reports a nonzero exit code, signal termination, timeout, or input failure.
 
 A waiting command has one five-minute deadline covering input delivery, output
-draining, process completion, timeout cleanup, and direct-child reaping. Standard
-output and standard error are each limited to 16 KiB. Output is drained rather
-than displayed. Exceeding either limit fails the command. On Unix, timeout and
-orderly TUI shutdown terminate the command's process group, including
-descendants. Other platforms terminate the direct child because Aven does not
-yet provide a platform process-tree primitive there.
+draining, process completion, timeout cleanup, and direct-child reaping. Aven
+retains the last 16 KiB of standard output and standard error independently
+while continuing to drain both streams. Output beyond that retention bound does not
+change a successful exit status. For a nonzero exit, Aven shows a sanitized,
+bounded standard-error excerpt and falls back to standard output when standard
+error is empty. On Unix, timeout and orderly TUI shutdown terminate the
+command's process group, including descendants. Other platforms terminate the
+direct child because Aven does not yet provide a platform process-tree primitive
+there.
 
 Use `wait` when Aven must know whether the operation succeeded, especially with
 `on_success: quit`.
@@ -381,10 +384,12 @@ primary task.
 - The program must exit with status zero.
 - A background command never requests TUI shutdown.
 
-### The command reports excessive output
+### A failure has no diagnostic excerpt
 
-Waiting commands may write at most 16 KiB to each of standard output and
-standard error. Write verbose diagnostics to a file or log instead.
+Aven uses standard error for nonzero-exit diagnostics and falls back to standard
+output only when standard error is empty. Have the program write its concise
+failure reason to one of those streams before exiting. Successful command output
+is ignored.
 
 ### The program needs shell syntax
 
