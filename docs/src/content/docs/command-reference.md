@@ -113,19 +113,25 @@ aven list --overdue
 | `weekly` | Every week on the start date's weekday. |
 | `fortnightly` | Every two weeks on the start date's weekday. |
 | `monthly` | The start date's day number every month. |
+| `yearly` | The start date's month and day every year. |
 | `weekly on mon,wed,fri` | The selected weekdays every week. |
+| `every N days` | Every N days from the start date. |
 | `every N weeks` | Every N weeks on the start date's weekday. |
 | `every N weeks on mon,thu` | The selected weekdays every N weeks. |
+| `every N months` | The start date's day number every N months. |
+| `every N years` | The start date's month and day every N years. |
 
 Explicit weekdays use the canonical abbreviations `mon`, `tue`, `wed`, `thu`,
 `fri`, `sat`, and `sun`, listed in Monday-to-Sunday order. `N` must be a
 positive whole number. Weeks begin on Monday.
 
 Monthly schedules use the final day of shorter months. A schedule starting on
-January 31 runs on February 28 or 29, then March 31.
+January 31 runs on February 28 or 29, then March 31. Yearly schedules starting
+on February 29 use February 28 outside leap years.
 
 The TUI schedule field also accepts friendly forms such as `every day`, `every
-Friday`, `Fridays`, `every month`, and `every 3 weeks on Monday and Thursday`.
+Friday`, `Fridays`, `every month`, `every year`, `annually`, `every 3 days`,
+and `every 3 weeks on Monday and Thursday`.
 See [Recurring tasks](/recurring-tasks/) for creation workflows and schedule
 behavior.
 

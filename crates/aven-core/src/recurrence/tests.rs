@@ -54,8 +54,28 @@ fn rules_reject_values_outside_the_fixed_schedule_lattice() {
     );
     assert!(RecurrenceRule::weekly_on([]).is_err());
     assert!(RecurrenceRule::new(RecurrenceFrequency::Weekly, 1, WeekdaySet::default()).is_err());
-    assert!(RecurrenceRule::new(RecurrenceFrequency::Daily, 2, WeekdaySet::default(),).is_err());
-    assert!(RecurrenceRule::new(RecurrenceFrequency::Monthly, 2, WeekdaySet::default()).is_err());
+    assert!(RecurrenceRule::new(RecurrenceFrequency::Daily, 0, WeekdaySet::default()).is_err());
+    assert!(RecurrenceRule::new(RecurrenceFrequency::Monthly, 0, WeekdaySet::default()).is_err());
+    assert!(RecurrenceRule::new(RecurrenceFrequency::Yearly, 0, WeekdaySet::default()).is_err());
+    assert!(RecurrenceRule::new(RecurrenceFrequency::Daily, 2, WeekdaySet::default()).is_ok());
+    assert!(RecurrenceRule::new(RecurrenceFrequency::Monthly, 2, WeekdaySet::default()).is_ok());
+    assert!(RecurrenceRule::new(RecurrenceFrequency::Yearly, 2, WeekdaySet::default()).is_ok());
+    assert!(
+        RecurrenceRule::new(
+            RecurrenceFrequency::Daily,
+            1,
+            WeekdaySet::from_weekdays([Weekday::Mon]),
+        )
+        .is_err()
+    );
+    assert!(
+        RecurrenceRule::new(
+            RecurrenceFrequency::Yearly,
+            1,
+            WeekdaySet::from_weekdays([Weekday::Mon]),
+        )
+        .is_err()
+    );
     assert!(
         RecurrenceRule::new(
             RecurrenceFrequency::Monthly,
@@ -113,6 +133,84 @@ fn daily_and_weekday_iteration_crosses_leap_dates() {
             date(2026, 7, 21),
             date(2026, 7, 22),
         ]
+    );
+}
+
+#[test]
+fn day_intervals_anchor_on_the_start_date() {
+    let every_third = schedule(
+        RecurrenceRule::every_n_days(3).unwrap(),
+        "UTC",
+        date(2026, 8, 10),
+        None,
+        RecurrenceDuePolicy::SameDay,
+    );
+    assert_eq!(
+        every_third
+            .slots_on_or_after(date(2026, 8, 10))
+            .take(3)
+            .collect::<Vec<_>>(),
+        vec![date(2026, 8, 10), date(2026, 8, 13), date(2026, 8, 16)]
+    );
+    assert_eq!(
+        every_third.slots_on_or_after(date(2026, 8, 11)).next(),
+        Some(date(2026, 8, 13))
+    );
+}
+
+#[test]
+fn month_intervals_anchor_on_the_start_month_and_clamp_days() {
+    let quarterly = schedule(
+        RecurrenceRule::every_n_months(3).unwrap(),
+        "UTC",
+        date(2026, 1, 31),
+        None,
+        RecurrenceDuePolicy::SameDay,
+    );
+    assert_eq!(
+        quarterly
+            .slots_on_or_after(quarterly.start_on)
+            .take(4)
+            .collect::<Vec<_>>(),
+        vec![
+            date(2026, 1, 31),
+            date(2026, 4, 30),
+            date(2026, 7, 31),
+            date(2026, 10, 31),
+        ]
+    );
+}
+
+#[test]
+fn yearly_iteration_clamps_leap_anchors_without_drifting() {
+    let yearly = schedule(
+        RecurrenceRule::yearly(),
+        "UTC",
+        date(2028, 2, 29),
+        None,
+        RecurrenceDuePolicy::SameDay,
+    );
+    assert_eq!(
+        yearly
+            .slots_on_or_after(yearly.start_on)
+            .take(3)
+            .collect::<Vec<_>>(),
+        vec![date(2028, 2, 29), date(2029, 2, 28), date(2030, 2, 28)]
+    );
+
+    let biennial = schedule(
+        RecurrenceRule::every_n_years(2).unwrap(),
+        "UTC",
+        date(2026, 8, 11),
+        None,
+        RecurrenceDuePolicy::SameDay,
+    );
+    assert_eq!(
+        biennial
+            .slots_on_or_after(biennial.start_on)
+            .take(3)
+            .collect::<Vec<_>>(),
+        vec![date(2026, 8, 11), date(2028, 8, 11), date(2030, 8, 11)]
     );
 }
 

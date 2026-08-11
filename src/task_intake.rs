@@ -193,7 +193,7 @@ Rules:\n\
 - Set due_on only for a one-off deadline or day by which work should be complete. Use date expressions without times.\n\
 - Keep available_at and due_on independent when the input states both.\n\
 - Set repeat only for clear recurrence intent such as daily, every Friday, or every Monday and Thursday. Ambiguous timing remains one-off.\n\
-- Use natural repeat rules such as daily, weekdays, monthly, fortnightly, every Friday, every 3 weeks, or every 4 weeks on Monday and Thursday.\n\
+- Use natural repeat rules such as daily, weekdays, monthly, yearly, fortnightly, every Friday, every 3 days, every 3 weeks, every 2 months, or every 4 weeks on Monday and Thursday.\n\
 - For recurrence, omit available_at and due_on. Set repeat_at only for a stated recurring availability time, repeat_due only for an explicit same-day or no-due policy, time_zone only for an explicit IANA zone, and repeat_start_on only for an explicit YYYY-MM-DD start date.\n\
 - Recurrence defaults are no availability time, same-day due, the local time zone, and today in that zone.\n\
 - Omit optional fields when they do not apply.\n\

@@ -948,8 +948,12 @@ async fn load_task_display_refs(
 
 fn rule_label(frequency: String, interval: u32, weekdays: String) -> String {
     match (frequency.as_str(), interval, weekdays.as_str()) {
-        ("daily", _, _) => "daily".to_string(),
-        ("monthly", _, _) => "monthly".to_string(),
+        ("daily", 1, _) => "daily".to_string(),
+        ("daily", interval, _) => format!("every {interval} days"),
+        ("monthly", 1, _) => "monthly".to_string(),
+        ("monthly", interval, _) => format!("every {interval} months"),
+        ("yearly", 1, _) => "yearly".to_string(),
+        ("yearly", interval, _) => format!("every {interval} years"),
         ("weekly", 1, "mon,tue,wed,thu,fri") => "weekdays".to_string(),
         ("weekly", 1, days) => format!("weekly on {days}"),
         ("weekly", interval, days) => format!("every {interval} weeks on {days}"),

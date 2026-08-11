@@ -49,16 +49,24 @@ and start date. The schedule uses your device's time zone.
 | Weekly | `every Friday` |
 | Every two weeks | `fortnightly` |
 | Selected weekdays | `every Monday and Thursday` |
+| Every N days | `every 3 days` |
 | Every N weeks | `every 3 weeks` |
 | Selected days every N weeks | `every 3 weeks on Monday and Thursday` |
 | Monthly | `every month` |
+| Every N months | `every 2 months` |
+| Yearly | `yearly` or `annually` |
+| Every N years | `every 2 years` |
 
 Weeks begin on Monday. A weekly or fortnightly schedule without an explicit
 weekday uses the start date's weekday.
 
 Monthly schedules keep their original day number. When a month is shorter, Aven
 uses its last day without changing the schedule. A task that starts on January
-31 returns on February 28 or 29, then March 31.
+31 returns on February 28 or 29, then March 31. Yearly schedules keep their
+original month and day; a task that starts on February 29 returns on February
+28 outside leap years.
+
+Day-based schedules such as `every 3 days` count from the start date.
 
 ## Choose when tasks become available and due
 
