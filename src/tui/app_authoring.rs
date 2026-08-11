@@ -116,8 +116,12 @@ impl App {
         let Some(context) = self.authoring.add_task_context() else {
             return;
         };
-        self.needs_terminal_clear = true;
-        match edit_text_externally(context.description.clone(), "description.md") {
+        self.prepare_terminal_transition();
+        match edit_text_externally(
+            context.description.clone(),
+            "description.md",
+            self.terminal_mouse_capture,
+        ) {
             Ok(value) => {
                 self.authoring.capture_add_task_fields(
                     context.title,

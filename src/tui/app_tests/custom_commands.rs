@@ -6,7 +6,45 @@ use crate::config::{
     CustomTuiCommandTarget,
 };
 
+use crate::tui::platform::TerminalTransition;
+use crate::tui::terminal_command::TerminalProcessRunner;
+
 use super::*;
+
+#[derive(Default)]
+struct FakeTerminalTransition {
+    suspended: usize,
+    restored: usize,
+}
+
+impl TerminalTransition for FakeTerminalTransition {
+    fn suspend(&mut self) -> anyhow::Result<()> {
+        self.suspended += 1;
+        Ok(())
+    }
+
+    fn restore(&mut self) -> anyhow::Result<()> {
+        self.restored += 1;
+        Ok(())
+    }
+}
+
+struct SuccessfulTerminalRunner;
+
+impl TerminalProcessRunner for SuccessfulTerminalRunner {
+    fn run<'a>(
+        &'a mut self,
+        invocation: &'a crate::tui::custom_command::CustomCommandInvocation,
+        context_path: &'a Path,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::result::Result<(), String>> + 'a>>
+    {
+        assert_eq!(invocation.execution, CustomTuiCommandExecution::Terminal);
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(context_path).unwrap()).unwrap();
+        assert_eq!(json["version"], 1);
+        Box::pin(async { Ok(()) })
+    }
+}
 
 fn config(program: &str, success: CustomTuiCommandSuccess) -> AppConfig {
     let mut config = AppConfig::default();
@@ -105,6 +143,42 @@ fn compile_process_fixture() -> (tempfile::TempDir, PathBuf) {
         .unwrap();
     assert!(status.success());
     (dir, executable)
+}
+
+#[tokio::test]
+async fn terminal_success_policies_run_after_restoration() {
+    for (policy, should_quit) in [
+        (CustomTuiCommandSuccess::Stay, false),
+        (CustomTuiCommandSuccess::Refresh, false),
+        (CustomTuiCommandSuccess::Quit, true),
+        (CustomTuiCommandSuccess::RefreshAndQuit, true),
+    ] {
+        let mut app = test_app().await;
+        let mut app_config = config("terminal-fixture", policy);
+        app_config.tui.commands[0].execution = CustomTuiCommandExecution::Terminal;
+        app.set_config(app_config);
+
+        app.execute_custom_command(0, "dispatch").await.unwrap();
+        assert!(app.pending_terminal_command.is_some());
+        assert!(!app.custom_commands.work_pending());
+        assert!(!app.should_quit);
+
+        let mut transition = FakeTerminalTransition::default();
+        assert!(
+            app.execute_pending_terminal_command_with(
+                &mut transition,
+                &mut SuccessfulTerminalRunner,
+            )
+            .await
+        );
+
+        assert_eq!(transition.suspended, 1);
+        assert_eq!(transition.restored, 1);
+        assert_eq!(app.should_quit, should_quit, "{policy:?}");
+        if !should_quit {
+            assert!(matches!(app.notification, Some(Notification::Toast { .. })));
+        }
+    }
 }
 
 #[tokio::test]

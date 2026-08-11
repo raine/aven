@@ -4,6 +4,10 @@ use crate::config::{CustomTuiCommandExecution, CustomTuiCommandSuccess};
 use crate::tui::app::{App, Notification};
 use crate::tui::custom_command::{plan_invocation, resolve_command_targets};
 use crate::tui::event::CommandHandler;
+use crate::tui::platform::TerminalTransition;
+use crate::tui::terminal_command::{
+    SystemTerminalProcessRunner, TerminalProcessRunner, execute_terminal_invocation_with,
+};
 use crate::tui::toast::ToastSeverity;
 
 pub(crate) const REFRESH_ERROR_CHAR_LIMIT: usize = 512;
@@ -56,21 +60,81 @@ impl App {
             &targets,
             &self.custom_command_planning,
         )?;
-        if let Err(error) = self.custom_commands.launch(invocation) {
-            self.set_error(format!("{error:#}"));
-            return Ok(());
-        }
         self.overlay = None;
         match command.execution {
             CustomTuiCommandExecution::Background => {
+                if let Err(error) = self.custom_commands.launch(invocation) {
+                    self.set_error(format!("{error:#}"));
+                    return Ok(());
+                }
                 self.set_info(format!("launched :{}", command.name));
             }
             CustomTuiCommandExecution::Wait => {
+                if let Err(error) = self.custom_commands.launch(invocation) {
+                    self.set_error(format!("{error:#}"));
+                    return Ok(());
+                }
                 self.notification =
                     Some(Notification::loading(format!("running :{}", command.name)));
             }
+            CustomTuiCommandExecution::Terminal => {
+                self.notification =
+                    Some(Notification::loading(format!("opening :{}", command.name)));
+                self.pending_terminal_command = Some(invocation);
+            }
         }
         Ok(())
+    }
+
+    pub(super) async fn execute_pending_terminal_command<T: TerminalTransition>(
+        &mut self,
+        transition: &mut T,
+    ) -> bool {
+        self.execute_pending_terminal_command_with(transition, &mut SystemTerminalProcessRunner)
+            .await
+    }
+
+    pub(super) async fn execute_pending_terminal_command_with<
+        T: TerminalTransition,
+        R: TerminalProcessRunner,
+    >(
+        &mut self,
+        transition: &mut T,
+        runner: &mut R,
+    ) -> bool {
+        let Some(invocation) = self.pending_terminal_command.take() else {
+            return false;
+        };
+        let name = invocation.name.clone();
+        let on_success = invocation.on_success;
+        let result = execute_terminal_invocation_with(transition, &invocation, runner).await;
+        self.apply_custom_command_result(&name, on_success, result)
+            .await;
+        true
+    }
+
+    async fn apply_custom_command_result(
+        &mut self,
+        name: &str,
+        on_success: CustomTuiCommandSuccess,
+        result: std::result::Result<(), String>,
+    ) {
+        let Err(error) = result else {
+            match on_success {
+                CustomTuiCommandSuccess::Stay => self.set_info(completion_message(name)),
+                CustomTuiCommandSuccess::Refresh => match self.refresh().await {
+                    Ok(()) => self.set_info(completion_message(name)),
+                    Err(error) => self.set_error(refresh_error_message(name, &error)),
+                },
+                CustomTuiCommandSuccess::Quit => self.should_quit = true,
+                CustomTuiCommandSuccess::RefreshAndQuit => match self.refresh().await {
+                    Ok(()) => self.should_quit = true,
+                    Err(error) => self.set_error(refresh_error_message(name, &error)),
+                },
+            }
+            return;
+        };
+        self.set_error(error);
     }
 
     pub(super) async fn poll_custom_commands(&mut self) -> bool {

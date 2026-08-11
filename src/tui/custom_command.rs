@@ -20,7 +20,7 @@ pub(crate) struct CustomCommandInvocation {
     pub(crate) args: Vec<String>,
     pub(crate) cwd: PathBuf,
     pub(crate) env: BTreeMap<OsString, OsString>,
-    pub(crate) timeout: Duration,
+    pub(crate) timeout: Option<Duration>,
     pub(crate) stdin_json: Vec<u8>,
     pub(crate) execution: CustomTuiCommandExecution,
     pub(crate) on_success: CustomTuiCommandSuccess,
@@ -149,11 +149,14 @@ pub(crate) fn plan_invocation(
             .iter()
             .map(|(name, value)| (OsString::from(name), OsString::from(value)))
             .collect(),
-        timeout: Duration::from_secs(
-            command
-                .timeout_seconds
-                .unwrap_or(crate::config::DEFAULT_CUSTOM_COMMAND_TIMEOUT_SECONDS),
-        ),
+        timeout: command
+            .timeout_seconds
+            .map(Duration::from_secs)
+            .or_else(|| {
+                (command.execution != CustomTuiCommandExecution::Terminal).then(|| {
+                    Duration::from_secs(crate::config::DEFAULT_CUSTOM_COMMAND_TIMEOUT_SECONDS)
+                })
+            }),
         stdin_json,
         execution: command.execution,
         on_success: command.on_success,
@@ -619,7 +622,7 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&invocation.stdin_json).unwrap();
 
         assert_eq!(invocation.cwd, origin);
-        assert_eq!(invocation.timeout, Duration::from_secs(30));
+        assert_eq!(invocation.timeout, Some(Duration::from_secs(30)));
         assert_eq!(
             invocation.env.get(&OsString::from("EXPORT_PROFILE")),
             Some(&OsString::from("secret-marker"))
@@ -679,11 +682,46 @@ mod tests {
         assert!(invocation.env.is_empty());
         assert_eq!(
             invocation.timeout,
-            Duration::from_secs(crate::config::DEFAULT_CUSTOM_COMMAND_TIMEOUT_SECONDS)
+            Some(Duration::from_secs(
+                crate::config::DEFAULT_CUSTOM_COMMAND_TIMEOUT_SECONDS
+            ))
         );
         for field in ["aven_exe", "config_dir", "db_path", "blob_dir"] {
             assert!(json["invocation"][field].is_null(), "{field}");
         }
+    }
+
+    #[test]
+    fn terminal_timeout_defaults_to_unlimited_and_honors_configuration() {
+        let mut command = command();
+        command.target = CustomTuiCommandTarget::None;
+        command.execution = CustomTuiCommandExecution::Terminal;
+        let targets = resolve_command_targets(command.target, None, &[]).unwrap();
+
+        let invocation = plan_invocation(
+            &command,
+            "dispatch",
+            &Workspace::default(),
+            None,
+            &[],
+            &targets,
+            &planning(),
+        )
+        .unwrap();
+        assert_eq!(invocation.timeout, None);
+
+        command.timeout_seconds = Some(45);
+        let invocation = plan_invocation(
+            &command,
+            "dispatch",
+            &Workspace::default(),
+            None,
+            &[],
+            &targets,
+            &planning(),
+        )
+        .unwrap();
+        assert_eq!(invocation.timeout, Some(Duration::from_secs(45)));
     }
 
     #[test]

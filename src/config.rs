@@ -192,6 +192,7 @@ pub enum CustomTuiCommandExecution {
     Background,
     #[default]
     Wait,
+    Terminal,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -956,6 +957,19 @@ mod tests {
         assert_eq!(command.target, CustomTuiCommandTarget::Focused);
         assert_eq!(command.execution, CustomTuiCommandExecution::Wait);
         assert_eq!(command.on_success, CustomTuiCommandSuccess::Quit);
+
+        let terminal = load_config(
+            "tui:\n  commands:\n    - name: agent\n      description: Interactive agent\n      program: agent\n      execution: terminal\n      on_success: refresh-and-quit\n",
+        )
+        .unwrap();
+        assert_eq!(
+            terminal.tui.commands[0].execution,
+            CustomTuiCommandExecution::Terminal
+        );
+        assert_eq!(
+            terminal.tui.commands[0].on_success,
+            CustomTuiCommandSuccess::RefreshAndQuit
+        );
     }
 
     #[test]

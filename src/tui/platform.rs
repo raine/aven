@@ -345,11 +345,15 @@ impl Drop for KeyboardEnhancementGuard {
 }
 
 #[cfg(not(test))]
-pub(crate) fn edit_text_externally(value: String, filename: &str) -> Result<String> {
+pub(crate) fn edit_text_externally(
+    value: String,
+    filename: &str,
+    mouse_capture: bool,
+) -> Result<String> {
     let path = temp_editor_path(filename)?;
     fs::write(&path, value)?;
-    let result =
-        run_external_editor(&path).and_then(|()| fs::read_to_string(&path).map_err(Into::into));
+    let result = run_external_editor(&path, mouse_capture)
+        .and_then(|()| fs::read_to_string(&path).map_err(Into::into));
     let _ = fs::remove_file(&path);
     if let Some(parent) = path.parent() {
         let _ = fs::remove_dir(parent);
@@ -358,7 +362,11 @@ pub(crate) fn edit_text_externally(value: String, filename: &str) -> Result<Stri
 }
 
 #[cfg(test)]
-pub(crate) fn edit_text_externally(value: String, _filename: &str) -> Result<String> {
+pub(crate) fn edit_text_externally(
+    value: String,
+    _filename: &str,
+    _mouse_capture: bool,
+) -> Result<String> {
     Ok(format!("{value} from editor"))
 }
 
@@ -375,11 +383,11 @@ fn temp_editor_path(filename: &str) -> io::Result<std::path::PathBuf> {
 }
 
 #[cfg(not(test))]
-fn run_external_editor(path: &std::path::Path) -> Result<()> {
-    let restore = suspend_terminal()?;
-    let status = external_editor_command(path).status();
-    restore()?;
-    let status = status?;
+fn run_external_editor(path: &std::path::Path, mouse_capture: bool) -> Result<()> {
+    let mut transition = SystemTerminalTransition::new(mouse_capture);
+    let status = run_while_terminal_suspended(&mut transition, || {
+        external_editor_command(path).status().map_err(Into::into)
+    })?;
     if !status.success() {
         anyhow::bail!("editor exited with {status}");
     }
@@ -394,31 +402,167 @@ fn external_editor_command(path: &std::path::Path) -> ProcessCommand {
         .arg("exec ${VISUAL:-${EDITOR:-vi}} \"$1\"")
         .arg("sh")
         .arg(path);
+    configure_terminal_child_signals(&mut command);
     command
 }
 
+#[cfg(unix)]
+pub(crate) fn configure_terminal_child_signals(command: &mut ProcessCommand) {
+    use std::os::unix::process::CommandExt;
+
+    unsafe {
+        command.pre_exec(|| {
+            let mut signals = std::mem::MaybeUninit::<libc::sigset_t>::uninit();
+            if libc::sigemptyset(signals.as_mut_ptr()) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let result =
+                libc::pthread_sigmask(libc::SIG_SETMASK, signals.as_ptr(), std::ptr::null_mut());
+            if result == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::from_raw_os_error(result))
+            }
+        });
+    }
+}
+
+#[cfg(not(unix))]
+pub(crate) fn configure_terminal_child_signals(_command: &mut ProcessCommand) {}
+
+pub(crate) trait TerminalTransition {
+    fn suspend(&mut self) -> Result<()>;
+    fn restore(&mut self) -> Result<()>;
+}
+
+pub(crate) struct SuspendedTerminal<'a, T: TerminalTransition> {
+    transition: &'a mut T,
+    restore_attempted: bool,
+}
+
+impl<'a, T: TerminalTransition> SuspendedTerminal<'a, T> {
+    pub(crate) fn suspend(transition: &'a mut T) -> Result<Self> {
+        if let Err(error) = transition.suspend() {
+            let restore_error = transition.restore().err();
+            return match restore_error {
+                Some(restore_error) => Err(error.context(format!(
+                    "terminal restoration after suspension failure also failed: {restore_error:#}"
+                ))),
+                None => Err(error),
+            };
+        }
+        Ok(Self {
+            transition,
+            restore_attempted: false,
+        })
+    }
+
+    pub(crate) fn restore(&mut self) -> Result<()> {
+        if self.restore_attempted {
+            return Ok(());
+        }
+        self.restore_attempted = true;
+        self.transition.restore()
+    }
+}
+
+impl<T: TerminalTransition> Drop for SuspendedTerminal<'_, T> {
+    fn drop(&mut self) {
+        if !self.restore_attempted {
+            self.restore_attempted = true;
+            let _ = self.transition.restore();
+        }
+    }
+}
+
+fn run_while_terminal_suspended<T, F, R>(transition: &mut T, operation: F) -> Result<R>
+where
+    T: TerminalTransition,
+    F: FnOnce() -> Result<R>,
+{
+    let mut suspended = SuspendedTerminal::suspend(transition)?;
+    let result = operation();
+    suspended.restore()?;
+    result
+}
+
+pub(crate) struct SystemTerminalTransition {
+    keyboard_mode: Option<KeyboardEnhancementMode>,
+    mouse_capture: bool,
+    bracketed_paste: bool,
+}
+
+impl SystemTerminalTransition {
+    pub(crate) fn new(mouse_capture: bool) -> Self {
+        Self {
+            keyboard_mode: None,
+            mouse_capture,
+            bracketed_paste: true,
+        }
+    }
+}
+
 #[cfg(not(test))]
-fn suspend_terminal() -> Result<impl FnOnce() -> Result<()>> {
-    let keyboard_mode = {
-        let mut state = keyboard_enhancement()?;
-        let mode = state.mode;
-        state
-            .disable(&mut io::stdout())
-            .context("suspend terminal keyboard enhancements")?;
-        mode
-    };
-    disable_raw_mode()?;
-    crossterm::execute!(io::stdout(), LeaveAlternateScreen)?;
-    Ok(move || {
+impl TerminalTransition for SystemTerminalTransition {
+    fn suspend(&mut self) -> Result<()> {
+        use crossterm::cursor::Show;
+        use crossterm::event::{DisableBracketedPaste, DisableMouseCapture};
+
+        self.keyboard_mode = {
+            let mut state = keyboard_enhancement()?;
+            let mode = state.mode;
+            state
+                .disable(&mut io::stdout())
+                .context("suspend terminal keyboard enhancements")?;
+            mode
+        };
+        let mut stdout = io::stdout();
+        if self.bracketed_paste {
+            crossterm::execute!(stdout, DisableBracketedPaste)?;
+        }
+        if self.mouse_capture {
+            crossterm::execute!(stdout, DisableMouseCapture)?;
+        }
+        crossterm::execute!(stdout, Show, LeaveAlternateScreen)?;
+        stdout.flush()?;
+        disable_raw_mode()?;
+        Ok(())
+    }
+
+    fn restore(&mut self) -> Result<()> {
+        use crossterm::cursor::Hide;
+        use crossterm::event::{EnableBracketedPaste, EnableMouseCapture};
+
         crossterm::execute!(io::stdout(), EnterAlternateScreen)?;
         enable_raw_mode()?;
-        if let Some(mode) = keyboard_mode {
+        if let Some(mode) = self.keyboard_mode.take() {
             keyboard_enhancement()?
                 .enable(mode, &mut io::stdout())
                 .context("resume terminal keyboard enhancements")?;
         }
+        let mut stdout = io::stdout();
+        if self.bracketed_paste {
+            crossterm::execute!(stdout, EnableBracketedPaste)?;
+        }
+        if self.mouse_capture {
+            crossterm::execute!(stdout, EnableMouseCapture)?;
+        }
+        crossterm::execute!(stdout, Hide)?;
+        stdout.flush()?;
         Ok(())
-    })
+    }
+}
+
+#[cfg(test)]
+impl TerminalTransition for SystemTerminalTransition {
+    fn suspend(&mut self) -> Result<()> {
+        let _ = (self.keyboard_mode, self.mouse_capture, self.bracketed_paste);
+        Ok(())
+    }
+
+    fn restore(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -824,6 +968,37 @@ pub(crate) fn clipboard_text_for_test() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct FakeEditorTransition {
+        suspended: usize,
+        restored: usize,
+    }
+
+    impl TerminalTransition for FakeEditorTransition {
+        fn suspend(&mut self) -> Result<()> {
+            self.suspended += 1;
+            Ok(())
+        }
+
+        fn restore(&mut self) -> Result<()> {
+            self.restored += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn external_editor_operation_restores_terminal_after_success_and_failure() {
+        for result in [Ok("edited"), Err(anyhow::anyhow!("editor failed"))] {
+            let mut transition = FakeEditorTransition::default();
+            let failed = result.is_err();
+            let actual = run_while_terminal_suspended(&mut transition, || result);
+
+            assert_eq!(actual.is_err(), failed);
+            assert_eq!(transition.suspended, 1);
+            assert_eq!(transition.restored, 1);
+        }
+    }
 
     #[test]
     fn selects_platform_default_image_viewer_commands() {

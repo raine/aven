@@ -238,6 +238,9 @@ pub(crate) struct App {
     pub(crate) command_catalog: crate::tui::event::CommandCatalog,
     pub(super) custom_command_planning: crate::tui::custom_command::CustomCommandPlanningContext,
     pub(super) custom_commands: crate::tui::custom_command_runtime::CustomCommandController,
+    pub(super) pending_terminal_command:
+        Option<crate::tui::custom_command::CustomCommandInvocation>,
+    pub(super) terminal_mouse_capture: bool,
     #[cfg(test)]
     pub(super) _test_database_dir: Option<tempfile::TempDir>,
 }
@@ -319,6 +322,8 @@ impl App {
             command_catalog: crate::tui::event::CommandCatalog::default(),
             custom_command_planning,
             custom_commands: crate::tui::custom_command_runtime::CustomCommandController::default(),
+            pending_terminal_command: None,
+            terminal_mouse_capture: false,
             #[cfg(test)]
             _test_database_dir: None,
         };

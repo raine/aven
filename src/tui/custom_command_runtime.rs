@@ -93,7 +93,9 @@ impl CustomCommandController {
         &mut self,
         invocation: CustomCommandInvocation,
     ) -> Result<CustomCommandInvocationId> {
-        let wait_timeout = invocation.timeout;
+        let wait_timeout = invocation
+            .timeout
+            .context("noninteractive custom command is missing its operation timeout")?;
         self.launch_with_timeouts(invocation, wait_timeout, BACKGROUND_INPUT_TIMEOUT)
     }
 
@@ -103,6 +105,9 @@ impl CustomCommandController {
         wait_timeout: Duration,
         background_input_timeout: Duration,
     ) -> Result<CustomCommandInvocationId> {
+        if invocation.execution == CustomTuiCommandExecution::Terminal {
+            bail!("terminal custom commands require the terminal execution flow");
+        }
         validate_working_directory(&invocation)?;
         let mut command = Command::new(&invocation.program);
         command
@@ -117,6 +122,7 @@ impl CustomCommandController {
             CustomTuiCommandExecution::Wait => {
                 command.stdout(Stdio::piped()).stderr(Stdio::piped());
             }
+            CustomTuiCommandExecution::Terminal => unreachable!("validated above"),
         }
         #[cfg(unix)]
         command.process_group(0);
@@ -156,6 +162,7 @@ impl CustomCommandController {
                 cancel_receiver,
                 phase_sender,
             )),
+            CustomTuiCommandExecution::Terminal => unreachable!("validated above"),
         };
         self.pending.push(PendingInvocation {
             id,
@@ -205,7 +212,7 @@ impl CustomCommandController {
     }
 }
 
-fn validate_working_directory(invocation: &CustomCommandInvocation) -> Result<()> {
+pub(crate) fn validate_working_directory(invocation: &CustomCommandInvocation) -> Result<()> {
     let metadata = match std::fs::metadata(&invocation.cwd) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -748,23 +755,34 @@ fn with_cleanup(message: String, cleanup: Option<&anyhow::Error>) -> String {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct ProcessIdentity {
+pub(crate) struct ProcessIdentity {
     pid: u32,
 }
 
 impl ProcessIdentity {
-    fn from_child(child: &Child) -> Result<Self> {
+    pub(crate) fn from_child(child: &Child) -> Result<Self> {
         let pid = child.id().context("custom command PID unavailable")?;
         Ok(Self { pid })
+    }
+
+    pub(crate) fn pid(self) -> u32 {
+        self.pid
     }
 }
 
 #[cfg(unix)]
-async fn terminate_and_reap(child: &mut Child, process: ProcessIdentity) -> Result<()> {
+pub(crate) async fn terminate_and_reap(child: &mut Child, process: ProcessIdentity) -> Result<()> {
     signal_process_group(process, libc::SIGTERM)
         .context("terminate custom command process group")?;
     tokio::time::sleep(TERMINATION_GRACE).await;
+    let child_reaped = child
+        .try_wait()
+        .context("inspect custom command after termination")?
+        .is_some();
     signal_process_group(process, libc::SIGKILL).context("kill custom command process group")?;
+    if child_reaped {
+        return Ok(());
+    }
     child
         .wait()
         .await
@@ -773,7 +791,7 @@ async fn terminate_and_reap(child: &mut Child, process: ProcessIdentity) -> Resu
 }
 
 #[cfg(not(unix))]
-async fn terminate_and_reap(child: &mut Child, _process: ProcessIdentity) -> Result<()> {
+pub(crate) async fn terminate_and_reap(child: &mut Child, _process: ProcessIdentity) -> Result<()> {
     child
         .start_kill()
         .context("terminate custom command process")?;
@@ -829,7 +847,9 @@ mod tests {
             args,
             cwd: std::env::current_dir().unwrap(),
             env: Default::default(),
-            timeout: Duration::from_secs(crate::config::DEFAULT_CUSTOM_COMMAND_TIMEOUT_SECONDS),
+            timeout: Some(Duration::from_secs(
+                crate::config::DEFAULT_CUSTOM_COMMAND_TIMEOUT_SECONDS,
+            )),
             stdin_json: input,
             execution,
             on_success,
@@ -1180,7 +1200,7 @@ mod tests {
         for (mode, input, pid_file) in cases {
             let mut command =
                 fixture_invocation(&fixture, mode, input, CustomTuiCommandExecution::Wait);
-            command.timeout = Duration::from_millis(100);
+            command.timeout = Some(Duration::from_millis(100));
             if let Some(pid_file) = &pid_file {
                 command.args.push(pid_file.to_string_lossy().into_owned());
             }
@@ -1423,7 +1443,7 @@ mod tests {
             CustomTuiCommandExecution::Background,
         );
         command.args.push(output.to_string_lossy().into_owned());
-        command.timeout = Duration::from_nanos(1);
+        command.timeout = Some(Duration::from_nanos(1));
         let mut controller = CustomCommandController::default();
         controller.launch(command).unwrap();
 

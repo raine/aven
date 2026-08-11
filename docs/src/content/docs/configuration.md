@@ -253,8 +253,9 @@ The first status in each lane is its movement destination. For example, moving a
 ## Custom TUI commands
 
 `tui.commands` adds trusted local programs to the TUI command palette. Commands
-receive versioned task and workspace context as JSON on standard input and can
-stay in Aven or request orderly shutdown after successful completion.
+receive versioned task and workspace context as JSON through standard input or a
+protected terminal-mode context file. They can stay in Aven, refresh application
+state, or request orderly shutdown after successful completion.
 
 See [Custom TUI commands](/custom-commands/) for the full configuration schema,
 JSON input contract, execution modes, tmux example, troubleshooting, and

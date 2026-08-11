@@ -1398,10 +1398,14 @@ impl App {
 
 impl App {
     pub(super) fn open_description_external_editor(&mut self, state: MultilineInputState) {
-        self.needs_terminal_clear = true;
+        self.prepare_terminal_transition();
         let intent = state.intent.clone();
         let baseline = state.baseline_value();
-        match edit_text_externally(state.lines.join("\n"), "description.md") {
+        match edit_text_externally(
+            state.lines.join("\n"),
+            "description.md",
+            self.terminal_mouse_capture,
+        ) {
             Ok(value) => {
                 self.overlay = Some(description_overlay_from_value(intent, value, baseline))
             }

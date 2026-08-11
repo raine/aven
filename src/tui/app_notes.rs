@@ -9,12 +9,16 @@ pub(crate) const DELETE_NOTE_TITLE: &str = "Delete note";
 
 impl App {
     pub(super) fn open_note_external_editor(&mut self, state: MultilineInputState) {
-        self.needs_terminal_clear = true;
+        self.prepare_terminal_transition();
         let intent = state.intent.clone();
         let title = state.title.clone();
         let prompt = state.prompt.clone();
         let baseline = state.baseline_value();
-        match edit_text_externally(state.lines.join("\n"), "note.md") {
+        match edit_text_externally(
+            state.lines.join("\n"),
+            "note.md",
+            self.terminal_mouse_capture,
+        ) {
             Ok(value) => {
                 self.overlay = Some(OverlayState::multiline_input_with_baseline(
                     intent, title, prompt, value, baseline,

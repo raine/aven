@@ -60,12 +60,12 @@ results.
 | `program` | Yes | | Executable path or program name. A leading `~` expands to the home directory. |
 | `cwd` | No | Aven's invocation directory | Child working directory. A leading `~` expands to the home directory, and relative paths resolve from Aven's invocation directory. |
 | `env` | No | `{}` | Static environment overrides added to Aven's inherited environment. |
-| `timeout_seconds` | No | `300` for `wait` | Complete waiting-operation deadline from 1 through 86,400 seconds. Background input handoff keeps its fixed short deadline. |
+| `timeout_seconds` | No | `300` for `wait`, unlimited for `terminal` | Complete operation deadline from 1 through 86,400 seconds. Background input handoff keeps its fixed short deadline. |
 | `args` | No | `[]` | Static arguments passed directly to the executable. |
 | `keys` | No | `[]` | Key sequences available in task lists and inherited by task detail. |
 | `detail_keys` | No | `keys` | Key sequences for task detail. An empty list disables detail bindings. |
 | `target` | No | `focused` | Operational target policy. Values are `none`, `focused`, `marked`, and `marked-or-focused`. |
-| `execution` | No | `wait` | Process supervision mode. Values are `wait` and `background`. |
+| `execution` | No | `wait` | Process mode. Values are `wait`, `background`, and `terminal`. |
 | `on_success` | No | `stay` | Aven behavior after success. Values are `stay`, `refresh`, `quit`, and `refresh-and-quit`. |
 
 Names and aliases may contain lowercase ASCII letters, digits, and hyphens.
@@ -147,9 +147,11 @@ both fields. Configurations and examples should use `target`.
 
 ## JSON input
 
-Aven writes one versioned JSON document to the program's standard input and
-then closes the pipe. Dynamic task data is never interpolated into arguments or
-a shell command.
+Aven builds one versioned JSON document for every invocation. `wait` and
+`background` deliver it through standard input and close the pipe. `terminal`
+sets `AVEN_COMMAND_CONTEXT` to a protected temporary file because the child
+inherits terminal input. Dynamic task data is never interpolated into arguments
+or a shell command.
 
 ```json
 {
@@ -342,13 +344,52 @@ Aven does not observe process completion.
 Use `background` for long-lived programs whose result does not control Aven's
 lifecycle.
 
+### Terminal
+
+`execution: terminal` suspends Aven and gives the child inherited terminal input,
+output, and error streams. It is intended for editors, pagers, fuzzy finders,
+interactive agents, and other full-screen terminal programs. Aven still executes
+`program` and `args` directly, applies the configured `cwd` and static
+environment, and waits for the child to exit.
+
+Terminal commands receive JSON through the file named by
+`AVEN_COMMAND_CONTEXT`:
+
+```bash
+context=${AVEN_COMMAND_CONTEXT:?AVEN_COMMAND_CONTEXT is required}
+ref=$(jq -r '.selection.primary.ref' "$context")
+```
+
+The context file is flushed and closed before launch. On Unix it has owner-only
+permissions. It remains available while the child runs and is removed after
+Aven restores the terminal. Aven does not include its path in diagnostics or
+logs.
+
+The default terminal timeout is unlimited. A configured `timeout_seconds`
+terminates the child process tree on Unix, waits for cleanup, restores Aven, and
+reports a timeout. Platforms without the Unix process-group implementation
+terminate the direct child.
+
+Aven restores raw mode, the alternate screen, keyboard enhancements, mouse and
+bracketed-paste state, cursor state, inline images, and a complete redraw before
+applying `stay`, `refresh`, `quit`, or `refresh-and-quit`. Child output is not
+captured for diagnostics. It remains in terminal scrollback according to the
+terminal emulator's behavior.
+
+The Linux terminal path uses a foreground process group for the child. In the
+verified Kitty environment, Ctrl-C reaches the child without terminating Aven,
+a child exit after Ctrl-C is reported as a nonzero status, and terminal-size
+changes reach the child's TTY. Aven redraws at the changed size when the child
+exits. Foreground process-group behavior has not been verified on every Unix
+terminal.
+
 ## Success policies
 
 | Policy | Behavior |
 | --- | --- |
 | `stay` | Show completion and retain the current projection. This is the default. |
 | `refresh` | Refresh the active workspace projection, preserve navigation where valid, then show completion. |
-| `quit` | Perform orderly TUI shutdown after a waiting command exits successfully. |
+| `quit` | Perform orderly TUI shutdown after a waiting or terminal command exits successfully. |
 | `refresh-and-quit` | Refresh application state, then perform orderly TUI shutdown. |
 
 Refresh uses Aven's normal committed-projection path. It retains the active view,
@@ -461,7 +502,8 @@ only when the program operates without task targets.
 
 ### Aven remains open
 
-- `quit` and `refresh-and-quit` apply only to `execution: wait`.
+- `quit` and `refresh-and-quit` apply to `execution: wait` and
+  `execution: terminal`.
 - The program must exit with status zero.
 - `refresh-and-quit` requires both child success and a successful refresh.
 - A background command uses `on_success: stay` and never requests TUI shutdown.
@@ -486,7 +528,8 @@ and inherited environment as Aven. Treat configured programs as trusted code.
 
 Keep these boundaries in scripts:
 
-- Parse stdin as JSON.
+- Parse the delivered context as JSON, from standard input for `wait` and
+  `background` or from `AVEN_COMMAND_CONTEXT` for `terminal`.
 - Quote every value used in shell commands.
 - Do not evaluate task titles, descriptions, notes, labels, or other task text.
 - Keep secrets in config-level static environment overrides, never in task data.

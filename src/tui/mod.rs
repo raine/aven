@@ -50,6 +50,7 @@ mod shortcut_buffer;
 mod store;
 mod sync_controller;
 mod task_selection;
+mod terminal_command;
 #[cfg(test)]
 pub(crate) mod test_support;
 mod text;

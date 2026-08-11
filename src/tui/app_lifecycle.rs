@@ -25,6 +25,7 @@ use crate::tui::inline_image_surface::InlineImageSurface;
 use crate::tui::inline_images::InlineImageBackend;
 use crate::tui::overlay::OverlayView::AddTask;
 use crate::tui::overlay::{OverlayState, OverlayView};
+use crate::tui::platform::SystemTerminalTransition;
 use crate::tui::preview_controller::PreviewKey;
 use crate::tui::store::{MainRowSelection, TaskView};
 use crate::tui::ui::{self, ViewState, ViewSurface};
@@ -67,6 +68,7 @@ impl App {
     }
 
     pub(crate) async fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
+        self.terminal_mouse_capture = true;
         execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
         let result = self.run_loop(terminal).await;
         self.custom_commands.shutdown().await;
@@ -167,6 +169,19 @@ impl App {
                 self.park_terminal_cursor(terminal);
             }
 
+            if self.pending_terminal_command.is_some() {
+                self.prepare_terminal_transition();
+                std::io::stdout().flush()?;
+                let mut transition = SystemTerminalTransition::new(self.terminal_mouse_capture);
+                self.execute_pending_terminal_command(&mut transition).await;
+                if !self.should_quit {
+                    terminal.clear()?;
+                    self.needs_terminal_clear = false;
+                    needs_redraw = true;
+                    continue;
+                }
+            }
+
             let timeout = self.next_poll_timeout();
             if pending_event.is_some() || event::poll(timeout)? {
                 let input = if let Some(input) = pending_event.take() {
@@ -223,6 +238,12 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    pub(super) fn prepare_terminal_transition(&mut self) {
+        self.preview_controller.set_desired([]);
+        let _ = self.erase_previous_inline_images();
+        self.needs_terminal_clear = true;
     }
 
     fn render_inline_images_after_draw(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
