@@ -613,15 +613,13 @@ fn bound_diagnostic(value: &str, max_chars: usize, max_width: usize) -> String {
     let content_chars = max_chars.saturating_sub(1);
     let content_width = max_width.saturating_sub(1);
     let mut bounded = String::new();
-    let mut chars = 0_usize;
     let mut width = 0_usize;
-    for character in value.chars() {
+    for (chars, character) in value.chars().enumerate() {
         let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
         if chars == content_chars || width.saturating_add(character_width) > content_width {
             break;
         }
         bounded.push(character);
-        chars += 1;
         width += character_width;
     }
     if max_chars > 0 && max_width > 0 {

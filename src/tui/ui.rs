@@ -113,6 +113,7 @@ pub(crate) struct ViewState {
     pub(crate) copy_description_available: bool,
     pub(crate) copy_notes_available: bool,
     pub(crate) visible_marked_task_count: usize,
+    pub(crate) custom_command_marked_task_count: usize,
     pub(crate) footer_choice_mode: Option<FooterChoiceMode>,
     pub(crate) sidebar_visible: bool,
     pub(crate) update_badge: Option<crate::tui::app_update::UpdateBadgeView>,
@@ -829,6 +830,7 @@ fn render_overlay_content(
             highlighted,
             context,
             marked_task_count,
+            custom_command_marked_task_count,
             unavailable,
         } => render_command(
             frame,
@@ -840,6 +842,7 @@ fn render_overlay_content(
                 unavailable,
                 command_context: *context,
                 marked_task_count: *marked_task_count,
+                custom_command_marked_task_count: *custom_command_marked_task_count,
                 catalog: command_catalog,
                 has_primary_task,
             },

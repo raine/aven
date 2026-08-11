@@ -402,6 +402,7 @@ impl App {
                 .is_some_and(|task| !task.task.description.is_empty()),
             copy_notes_available: selected_task.is_some_and(|task| !task.notes.is_empty()),
             visible_marked_task_count: self.bulk_scope_marked_task_count(),
+            custom_command_marked_task_count: self.marked_task_ids_in_view().len(),
             footer_choice_mode: self.footer_choice.as_ref().map(|choice| choice.mode),
             sidebar_visible: self.list.sidebar_visible(),
             update_badge: self.update.badge(),

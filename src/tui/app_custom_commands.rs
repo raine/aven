@@ -1,10 +1,8 @@
 use anyhow::{Context, Result};
 
-use crate::config::{
-    CustomTuiCommandExecution, CustomTuiCommandRequirement, CustomTuiCommandSuccess,
-};
+use crate::config::{CustomTuiCommandExecution, CustomTuiCommandSuccess};
 use crate::tui::app::{App, Notification};
-use crate::tui::custom_command::plan_invocation;
+use crate::tui::custom_command::{plan_invocation, resolve_command_targets};
 use crate::tui::event::CommandHandler;
 
 impl App {
@@ -34,21 +32,25 @@ impl App {
             .cloned()
             .context("custom command disappeared from the catalog")?;
         let primary = self.store.selected_task(self.list.selected_task());
-        if command.requires == CustomTuiCommandRequirement::SelectedTask && primary.is_none() {
-            self.set_warning(format!(":{} requires a selected task", command.name));
-            return Ok(());
-        }
         let marked_ids = self.marked_task_ids_in_view();
         let marked = marked_ids
             .iter()
             .filter_map(|id| self.store.tasks.iter().find(|item| item.task.id == *id))
             .collect::<Vec<_>>();
+        let targets = match resolve_command_targets(command.target, primary, &marked) {
+            Ok(targets) => targets,
+            Err(reason) => {
+                self.set_warning(format!(":{} is disabled: {reason}", command.name));
+                return Ok(());
+            }
+        };
         let invocation = plan_invocation(
             &command,
             invoked_as,
             &self.store.active_workspace,
             primary,
             &marked,
+            &targets,
         )?;
         if let Err(error) = self.custom_commands.launch(invocation) {
             self.set_error(format!("{error:#}"));

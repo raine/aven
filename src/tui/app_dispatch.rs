@@ -2169,18 +2169,6 @@ impl App {
             CatalogLookup::Found(command) => {
                 self.pending_shortcut.clear();
                 if let CommandHandler::Custom(id) = command.handler() {
-                    if command.requires_selected_task()
-                        && self
-                            .store
-                            .selected_task(self.list.selected_task())
-                            .is_none()
-                    {
-                        self.set_warning(format!(
-                            ":{} is disabled: requires a selected task",
-                            command.name()
-                        ));
-                        return Ok(true);
-                    }
                     self.execute_custom_command(id, input.trim().trim_start_matches(':'))
                         .await?;
                     return Ok(true);

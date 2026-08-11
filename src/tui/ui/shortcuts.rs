@@ -8,13 +8,12 @@ use super::ViewState;
 use super::dialog::Dialog;
 use super::input::input_line;
 use super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
+use crate::config::CustomTuiCommandTarget;
 use crate::tui::app::{DetailSection, DetailTargetId};
-use crate::tui::event::{
-    BulkSupport, CatalogCommand, CommandCatalog, CommandContext, CommandSpec,
-};
+use crate::tui::event::{BulkSupport, CatalogCommand, CommandCatalog, CommandContext, CommandSpec};
 use crate::tui::theme::{
-    ACCENT, BG_ALT, BG_PANEL, BORDER, CUSTOM_COMMAND_NAME, CUSTOM_COMMAND_TAG, FG, FG_DIM, FG_MUTED,
-    SELECTED_BG,
+    ACCENT, BG_ALT, BG_PANEL, BORDER, CUSTOM_COMMAND_NAME, CUSTOM_COMMAND_TAG, FG, FG_DIM,
+    FG_MUTED, SELECTED_BG,
 };
 
 struct HelpTopic {
@@ -652,6 +651,7 @@ pub(super) struct CommandRenderContext<'a> {
     pub(super) unavailable: &'a [crate::tui::overlay::CommandAvailabilityOverride],
     pub(super) command_context: CommandContext,
     pub(super) marked_task_count: usize,
+    pub(super) custom_command_marked_task_count: usize,
     pub(super) catalog: &'a CommandCatalog,
     pub(super) has_primary_task: bool,
 }
@@ -668,6 +668,7 @@ pub(super) fn render_command(
         unavailable,
         command_context,
         marked_task_count,
+        custom_command_marked_task_count,
         catalog,
         has_primary_task,
     } = render_context;
@@ -716,6 +717,11 @@ pub(super) fn render_command(
 
     let mut lines = vec![input_line(":", input, cursor)];
     for command in matches.into_iter().skip(offset).take(8) {
+        let target_marked_task_count = if command.is_custom() {
+            custom_command_marked_task_count
+        } else {
+            marked_task_count
+        };
         let unavailable_reason = command
             .built_in()
             .and_then(|built_in| {
@@ -724,25 +730,39 @@ pub(super) fn render_command(
                     .find(|override_| override_.action == built_in.action)
                     .map(|override_| override_.reason)
             })
-            .or_else(|| {
-                (command.requires_selected_task() && !has_primary_task)
-                    .then_some("requires a selected task")
-            });
+            .or_else(|| command.unavailable_reason(has_primary_task, target_marked_task_count));
         let is_highlighted = highlighted == Some(command.name());
-        let annotation = match command.bulk_support() {
-            BulkSupport::Batch if marked_task_count > 0 => {
-                let noun = if marked_task_count == 1 {
-                    "task"
-                } else {
-                    "tasks"
-                };
-                Some(format!("{marked_task_count} {noun} · "))
+        let marked_annotation = || {
+            let noun = if target_marked_task_count == 1 {
+                "task"
+            } else {
+                "tasks"
+            };
+            format!("{target_marked_task_count} {noun} · ")
+        };
+        let annotation = match command.custom_target() {
+            Some(CustomTuiCommandTarget::Marked | CustomTuiCommandTarget::MarkedOrFocused)
+                if target_marked_task_count > 0 =>
+            {
+                Some(marked_annotation())
             }
-            BulkSupport::Focused if marked_task_count > 0 => Some("focused task · ".to_string()),
-            BulkSupport::SingleOnly(_) | BulkSupport::BulkControl | BulkSupport::NotTaskScoped => {
-                None
+            Some(CustomTuiCommandTarget::MarkedOrFocused) if has_primary_task => {
+                Some("focused task · ".to_string())
             }
-            BulkSupport::Batch | BulkSupport::Focused => None,
+            Some(CustomTuiCommandTarget::Focused) if target_marked_task_count > 0 => {
+                Some("focused task · ".to_string())
+            }
+            _ => match command.bulk_support() {
+                BulkSupport::Batch if target_marked_task_count > 0 => Some(marked_annotation()),
+                BulkSupport::Focused if target_marked_task_count > 0 => {
+                    Some("focused task · ".to_string())
+                }
+                BulkSupport::Batch
+                | BulkSupport::SingleOnly(_)
+                | BulkSupport::Focused
+                | BulkSupport::BulkControl
+                | BulkSupport::NotTaskScoped => None,
+            },
         };
         lines.push(command_palette_line(
             command,
@@ -797,6 +817,15 @@ fn marked_task_label(count: usize) -> String {
     format!("{count} marked {noun}")
 }
 
+#[derive(Clone, Copy)]
+struct PrefixHintAvailability {
+    copy_description: bool,
+    copy_notes: bool,
+    marked_task_count: usize,
+    custom_command_marked_task_count: usize,
+    has_primary_task: bool,
+}
+
 fn prefix_hint_lines(context: CommandContext, pending: &[String]) -> Vec<Line<'static>> {
     prefix_hint_lines_with_availability(context, pending, true, true, 0)
 }
@@ -812,10 +841,13 @@ fn prefix_hint_lines_with_availability(
         &CommandCatalog::default(),
         context,
         pending,
-        copy_description_available,
-        copy_notes_available,
-        marked_task_count,
-        true,
+        PrefixHintAvailability {
+            copy_description: copy_description_available,
+            copy_notes: copy_notes_available,
+            marked_task_count,
+            custom_command_marked_task_count: marked_task_count,
+            has_primary_task: true,
+        },
     )
 }
 
@@ -823,11 +855,15 @@ fn prefix_hint_lines_for_catalog(
     catalog: &CommandCatalog,
     context: CommandContext,
     pending: &[String],
-    copy_description_available: bool,
-    copy_notes_available: bool,
-    marked_task_count: usize,
-    has_primary_task: bool,
+    availability: PrefixHintAvailability,
 ) -> Vec<Line<'static>> {
+    let PrefixHintAvailability {
+        copy_description: copy_description_available,
+        copy_notes: copy_notes_available,
+        marked_task_count,
+        custom_command_marked_task_count,
+        has_primary_task,
+    } = availability;
     let matches = catalog.prefix_hints(context, pending);
     let command_name_width = catalog_command_name_width(
         &matches
@@ -838,6 +874,11 @@ fn prefix_hint_lines_for_catalog(
     matches
         .into_iter()
         .map(|(command, key_hint)| {
+            let target_marked_task_count = if command.is_custom() {
+                custom_command_marked_task_count
+            } else {
+                marked_task_count
+            };
             let support = command.bulk_support();
             let built_in_action = command.built_in().map(|command| command.action);
             let copy_mark_limit = built_in_action
@@ -853,8 +894,10 @@ fn prefix_hint_lines_for_catalog(
                     Some(crate::tui::event::Action::CopyTaskNotes)
                 ) && !copy_notes_available
                 || copy_mark_limit
-                || matches!(support, BulkSupport::SingleOnly(_)) && marked_task_count > 1
-                || command.requires_selected_task() && !has_primary_task;
+                || matches!(support, BulkSupport::SingleOnly(_)) && target_marked_task_count > 1
+                || command
+                    .unavailable_reason(has_primary_task, target_marked_task_count)
+                    .is_some();
             let mut line = catalog_command_hint_line(
                 Span::styled(
                     format!(" {:<6} ", key_hint),
@@ -866,16 +909,32 @@ fn prefix_hint_lines_for_catalog(
             if copy_mark_limit {
                 line.spans
                     .push(Span::styled(" · 1 task only", Style::new().fg(FG_DIM)));
+            } else if matches!(
+                command.custom_target(),
+                Some(CustomTuiCommandTarget::Marked | CustomTuiCommandTarget::MarkedOrFocused)
+            ) && target_marked_task_count > 0
+            {
+                line.spans.push(Span::styled(
+                    format!(" · {}", marked_task_label(target_marked_task_count)),
+                    Style::new().fg(FG_MUTED),
+                ));
+            } else if command.custom_target() == Some(CustomTuiCommandTarget::MarkedOrFocused)
+                && has_primary_task
+            {
+                line.spans
+                    .push(Span::styled(" · focused task", Style::new().fg(FG_MUTED)));
             } else {
                 match support {
-                    BulkSupport::SingleOnly(_) if marked_task_count > 1 => line
+                    BulkSupport::SingleOnly(_) if target_marked_task_count > 1 => line
                         .spans
                         .push(Span::styled(" · 1 task only", Style::new().fg(FG_DIM))),
-                    BulkSupport::Batch if marked_task_count > 0 => line.spans.push(Span::styled(
-                        format!(" · {}", marked_task_label(marked_task_count)),
-                        Style::new().fg(FG_MUTED),
-                    )),
-                    BulkSupport::Focused if marked_task_count > 0 => line
+                    BulkSupport::Batch if target_marked_task_count > 0 => {
+                        line.spans.push(Span::styled(
+                            format!(" · {}", marked_task_label(target_marked_task_count)),
+                            Style::new().fg(FG_MUTED),
+                        ));
+                    }
+                    BulkSupport::Focused if target_marked_task_count > 0 => line
                         .spans
                         .push(Span::styled(" · focused task", Style::new().fg(FG_MUTED))),
                     BulkSupport::Batch
@@ -905,10 +964,13 @@ pub(super) fn render_prefix_hints(frame: &mut Frame, view: &ViewState) {
         &view.command_catalog,
         context,
         &view.pending_shortcut,
-        view.copy_description_available,
-        view.copy_notes_available,
-        view.visible_marked_task_count,
-        view.has_primary_task,
+        PrefixHintAvailability {
+            copy_description: view.copy_description_available,
+            copy_notes: view.copy_notes_available,
+            marked_task_count: view.visible_marked_task_count,
+            custom_command_marked_task_count: view.custom_command_marked_task_count,
+            has_primary_task: view.has_primary_task,
+        },
     );
     if lines.is_empty() {
         return;
@@ -952,12 +1014,10 @@ fn prefix_hint_visible_rows(frame_height: u16, line_count: usize) -> u16 {
 mod tests {
     use super::*;
     use crate::config::{
-        CustomTuiCommandConfig, CustomTuiCommandExecution, CustomTuiCommandRequirement,
-        CustomTuiCommandSuccess,
+        CustomTuiCommandConfig, CustomTuiCommandExecution, CustomTuiCommandSuccess,
+        CustomTuiCommandTarget,
     };
-    use crate::tui::event::{
-        COMMANDS, CommandContext, key_label, matching_commands_for_bulk,
-    };
+    use crate::tui::event::{COMMANDS, CommandContext, key_label, matching_commands_for_bulk};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -970,7 +1030,7 @@ mod tests {
             args: vec![],
             keys: vec!["z d".to_string()],
             detail_keys: None,
-            requires: CustomTuiCommandRequirement::SelectedTask,
+            target: CustomTuiCommandTarget::Focused,
             execution: CustomTuiCommandExecution::Wait,
             on_success: CustomTuiCommandSuccess::Stay,
         }])
@@ -1055,8 +1115,46 @@ mod tests {
                         unavailable: &[],
                         command_context: CommandContext::Normal,
                         marked_task_count: marked,
+                        custom_command_marked_task_count: marked,
                         catalog: &CommandCatalog::default(),
                         has_primary_task: true,
+                    },
+                )
+            })
+            .unwrap();
+        buffer_text(terminal.backend())
+    }
+
+    fn render_custom_command_overlay(
+        target: CustomTuiCommandTarget,
+        marked: usize,
+        has_primary_task: bool,
+        context: CommandContext,
+    ) -> String {
+        let mut command = custom_command_catalog().custom(0).unwrap().clone();
+        command.target = target;
+        let catalog = CommandCatalog::new(vec![command]);
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                render_command(
+                    frame,
+                    "dispatch",
+                    "dispatch".len(),
+                    None,
+                    None,
+                    CommandRenderContext {
+                        unavailable: &[],
+                        command_context: context,
+                        marked_task_count: if context == CommandContext::Detail {
+                            0
+                        } else {
+                            marked
+                        },
+                        custom_command_marked_task_count: marked,
+                        catalog: &catalog,
+                        has_primary_task,
                     },
                 )
             })
@@ -1094,6 +1192,7 @@ mod tests {
                         unavailable: &[],
                         command_context: CommandContext::Normal,
                         marked_task_count: 0,
+                        custom_command_marked_task_count: 0,
                         catalog: &CommandCatalog::default(),
                         has_primary_task: true,
                     },
@@ -1683,10 +1782,13 @@ mod tests {
             &custom_command_catalog(),
             CommandContext::Normal,
             &["z".to_string()],
-            true,
-            true,
-            0,
-            true,
+            PrefixHintAvailability {
+                copy_description: true,
+                copy_notes: true,
+                marked_task_count: 0,
+                custom_command_marked_task_count: 0,
+                has_primary_task: true,
+            },
         );
         let rendered = lines
             .iter()
@@ -1697,6 +1799,43 @@ mod tests {
         assert!(rendered.contains(":dispatch"));
         assert!(rendered.contains(" custom "));
         assert!(rendered.contains(" d "));
+    }
+
+    #[test]
+    fn custom_target_palette_annotations_match_availability_in_list_and_detail() {
+        let mark_only = render_custom_command_overlay(
+            CustomTuiCommandTarget::Marked,
+            0,
+            true,
+            CommandContext::Normal,
+        );
+        assert!(mark_only.contains("disabled: requires one or more marked tasks"));
+
+        let marked = render_custom_command_overlay(
+            CustomTuiCommandTarget::Marked,
+            2,
+            true,
+            CommandContext::Detail,
+        );
+        assert!(marked.contains("2 tasks"));
+        assert!(!marked.contains("disabled:"));
+
+        let fallback = render_custom_command_overlay(
+            CustomTuiCommandTarget::MarkedOrFocused,
+            0,
+            true,
+            CommandContext::Detail,
+        );
+        assert!(fallback.contains("focused task"));
+
+        let preferred = render_custom_command_overlay(
+            CustomTuiCommandTarget::MarkedOrFocused,
+            1,
+            true,
+            CommandContext::Normal,
+        );
+        assert!(preferred.contains("1 task"));
+        assert!(!preferred.contains("focused task"));
     }
 
     #[test]
@@ -1719,6 +1858,7 @@ mod tests {
                         unavailable: &unavailable,
                         command_context: CommandContext::Normal,
                         marked_task_count: 0,
+                        custom_command_marked_task_count: 0,
                         catalog: &CommandCatalog::default(),
                         has_primary_task: true,
                     },

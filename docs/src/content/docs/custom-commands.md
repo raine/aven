@@ -35,7 +35,7 @@ tui:
       args: []
       keys: [z d]
       detail_keys: [z D]
-      requires: selected-task
+      target: focused
       execution: wait
       on_success: quit
 ```
@@ -55,7 +55,7 @@ results.
 | `args` | No | `[]` | Static arguments passed directly to the executable. |
 | `keys` | No | `[]` | Key sequences available in task lists and inherited by task detail. |
 | `detail_keys` | No | `keys` | Key sequences for task detail. An empty list disables detail bindings. |
-| `requires` | No | `selected-task` | Whether the command needs a selected task. Values are `selected-task` and `none`. |
+| `target` | No | `focused` | Operational target policy. Values are `none`, `focused`, `marked`, and `marked-or-focused`. |
 | `execution` | No | `wait` | Process supervision mode. Values are `wait` and `background`. |
 | `on_success` | No | `stay` | Aven behavior after success. Values are `stay` and `quit`. |
 
@@ -98,19 +98,36 @@ view. Prefix overlap is supported, so a command can extend an existing prefix.
 `Esc` and `?` are reserved by TUI input handling. `Up`, `Down`, `PageUp`, and
 `PageDown` are reserved after a prefix because they scroll the prefix menu.
 
-## Task selection
+## Task selection and targets
 
-The JSON input separates one primary task from marked tasks:
+The `target` policy defines the task identities on which the command operates:
+
+| Policy | Availability | Resolved targets |
+| --- | --- | --- |
+| `none` | Always | Empty |
+| `focused` | A primary task exists | The primary task |
+| `marked` | At least one marked task exists | Marked tasks in visible order |
+| `marked-or-focused` | A mark or primary task exists | Marked tasks when present, otherwise the primary task |
+
+The command palette annotates batch targets with their marked count. A `marked`
+command remains visible without marks and displays `requires one or more marked
+tasks`. Keybindings use the same availability and targeting rules as the palette.
+
+The JSON input keeps raw selection context separate from resolved operational
+targets:
 
 - In a task list, the selected task is `selection.primary`.
 - In task detail, the displayed task is `selection.primary`.
-- Marked tasks appear in `selection.marked`.
-- `requires: selected-task` disables the command when no primary task exists.
-- `requires: none` permits a null primary task. An available selection is still
-  included when one exists.
+- Marked tasks appear in `selection.marked` in visible order.
+- `targeting.targets` contains the resolved IDs and refs for the configured
+  policy.
 
-The primary task does not silently change when focus moves to a relationship
-inside task detail.
+The primary task does not change when focus moves to a relationship inside task
+detail. Marks remain available to custom commands in task detail.
+
+For configuration compatibility, `requires: none` maps to `target: none`, and
+`requires: selected-task` maps to `target: focused`. A command cannot supply
+both fields. Configurations and examples should use `target`.
 
 ## JSON input
 
@@ -133,6 +150,13 @@ a shell command.
     "id": "0000000000000000",
     "key": "default",
     "name": "default"
+  },
+  "targeting": {
+    "policy": "focused",
+    "resolved_from": "focused",
+    "targets": [
+      { "id": "7KQ9ABCDE1234567", "ref": "APP-7KQ9" }
+    ]
   },
   "selection": {
     "primary": {
@@ -180,8 +204,16 @@ a shell command.
 | `invocation.cwd` | Aven's working directory, also used as the child working directory. |
 | `invocation.tui_pid` | Process ID of the originating Aven TUI. |
 | `workspace` | Active workspace identity and display name. |
+| `targeting.policy` | Configured target policy. |
+| `targeting.resolved_from` | Resolution source: `none`, `focused`, or `marked`. |
+| `targeting.targets` | Ordered durable IDs and display refs for operational targets. |
 | `selection.primary` | Complete primary task context or `null`. |
 | `selection.marked` | Complete contexts for marked tasks. |
+
+Use `targeting.targets` to decide what the command operates on. Match each target
+ID or ref against `selection.primary` and `selection.marked` to find its complete
+context. Raw selection remains available even when the configured policy resolves
+to a different target set.
 
 ### Task context fields
 
@@ -294,7 +326,7 @@ tui:
       description: Open the selected task in a tmux window
       program: ~/.config/aven/commands/dispatch-task
       keys: [z d]
-      requires: selected-task
+      target: focused
       execution: wait
       on_success: quit
 ```
@@ -339,20 +371,21 @@ tui:
       aliases: [agent, custom-dispatch]
       description: Open the selected task in its agent workspace
       program: ~/bin/dispatch-task
+      target: focused
       execution: wait
       on_success: quit
 
     - name: export-context
       description: Save selected task context locally
       program: ~/bin/export-task-context
-      requires: selected-task
+      target: focused
       execution: wait
       on_success: stay
 
     - name: dashboard
       description: Open the local dashboard
       program: ~/bin/open-dashboard
-      requires: none
+      target: none
       execution: background
 ```
 
@@ -374,9 +407,10 @@ matching, ambiguity handling, and tab completion as built-in commands.
 
 ### The command is disabled
 
-A command using `requires: selected-task` needs a task selected in a list or
-displayed in detail. Use `requires: none` only when the program works without a
-primary task.
+The palette shows the target requirement that is missing. `target: focused`
+needs a selected list task or displayed detail task. `target: marked` needs at
+least one mark. `target: marked-or-focused` needs either one. Use `target: none`
+only when the program operates without task targets.
 
 ### Aven remains open
 

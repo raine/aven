@@ -389,6 +389,7 @@ impl App {
             crate::tui::event::CommandContext::Normal
         };
         state.marked_task_count = self.bulk_scope_marked_task_count();
+        state.custom_command_marked_task_count = self.marked_task_ids_in_view().len();
         state.target = target;
         state.unavailable = unavailable;
         if state.marked_task_count > 1 {

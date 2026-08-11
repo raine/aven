@@ -3,7 +3,10 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde::Serialize;
 
-use crate::config::{CustomTuiCommandConfig, CustomTuiCommandExecution, CustomTuiCommandSuccess};
+use crate::config::{
+    CustomTuiCommandConfig, CustomTuiCommandExecution, CustomTuiCommandSuccess,
+    CustomTuiCommandTarget,
+};
 use crate::query::{AttachmentMetadata, TaskDependencyLink, TaskListItem, TaskNote};
 use crate::workspaces::Workspace;
 
@@ -18,12 +21,60 @@ pub(crate) struct CustomCommandInvocation {
     pub(crate) on_success: CustomTuiCommandSuccess,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum TargetSource {
+    None,
+    Focused,
+    Marked,
+}
+
+#[derive(Debug)]
+pub(crate) struct ResolvedCommandTargets<'a> {
+    pub(crate) policy: CustomTuiCommandTarget,
+    pub(crate) resolved_from: TargetSource,
+    pub(crate) tasks: Vec<&'a TaskListItem>,
+}
+
+pub(crate) fn resolve_command_targets<'a>(
+    policy: CustomTuiCommandTarget,
+    primary: Option<&'a TaskListItem>,
+    marked: &[&'a TaskListItem],
+) -> std::result::Result<ResolvedCommandTargets<'a>, &'static str> {
+    let (resolved_from, tasks) = match policy {
+        CustomTuiCommandTarget::None => (TargetSource::None, Vec::new()),
+        CustomTuiCommandTarget::Focused => (
+            TargetSource::Focused,
+            vec![primary.ok_or("requires a focused task")?],
+        ),
+        CustomTuiCommandTarget::Marked => {
+            if marked.is_empty() {
+                return Err("requires one or more marked tasks");
+            }
+            (TargetSource::Marked, marked.to_vec())
+        }
+        CustomTuiCommandTarget::MarkedOrFocused if !marked.is_empty() => {
+            (TargetSource::Marked, marked.to_vec())
+        }
+        CustomTuiCommandTarget::MarkedOrFocused => (
+            TargetSource::Focused,
+            vec![primary.ok_or("requires a marked or focused task")?],
+        ),
+    };
+    Ok(ResolvedCommandTargets {
+        policy,
+        resolved_from,
+        tasks,
+    })
+}
+
 pub(crate) fn plan_invocation(
     command: &CustomTuiCommandConfig,
     invoked_as: &str,
     workspace: &Workspace,
     primary: Option<&TaskListItem>,
     marked: &[&TaskListItem],
+    targets: &ResolvedCommandTargets<'_>,
 ) -> Result<CustomCommandInvocation> {
     let cwd = std::env::current_dir().context("could not determine current directory")?;
     let cwd_text = cwd.to_string_lossy();
@@ -41,6 +92,15 @@ pub(crate) fn plan_invocation(
             id: workspace.id.to_string(),
             key: &workspace.key,
             name: &workspace.name,
+        },
+        targeting: TargetingContext {
+            policy: targets.policy,
+            resolved_from: targets.resolved_from,
+            targets: targets
+                .tasks
+                .iter()
+                .map(|item| target_identity(item))
+                .collect(),
         },
         selection: SelectionContext {
             primary: primary.map(task_context),
@@ -66,6 +126,7 @@ struct CommandInput<'a> {
     command: CommandIdentity<'a>,
     invocation: InvocationContext<'a>,
     workspace: WorkspaceContext<'a>,
+    targeting: TargetingContext<'a>,
     selection: SelectionContext<'a>,
 }
 
@@ -86,6 +147,19 @@ struct WorkspaceContext<'a> {
     id: String,
     key: &'a str,
     name: &'a str,
+}
+
+#[derive(Serialize)]
+struct TargetingContext<'a> {
+    policy: CustomTuiCommandTarget,
+    resolved_from: TargetSource,
+    targets: Vec<TargetIdentity<'a>>,
+}
+
+#[derive(Serialize)]
+struct TargetIdentity<'a> {
+    id: String,
+    r#ref: &'a str,
 }
 
 #[derive(Serialize)]
@@ -174,6 +248,13 @@ struct AttachmentContext<'a> {
     has_blob: bool,
 }
 
+fn target_identity(item: &TaskListItem) -> TargetIdentity<'_> {
+    TargetIdentity {
+        id: item.task.id.to_string(),
+        r#ref: &item.display_ref,
+    }
+}
+
 fn task_context(item: &TaskListItem) -> TaskContext<'_> {
     TaskContext {
         r#ref: &item.display_ref,
@@ -259,9 +340,7 @@ fn attachment_context(attachment: &AttachmentMetadata) -> AttachmentContext<'_> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{
-        CustomTuiCommandExecution, CustomTuiCommandRequirement, CustomTuiCommandSuccess,
-    };
+    use crate::config::{CustomTuiCommandExecution, CustomTuiCommandSuccess};
 
     fn command() -> CustomTuiCommandConfig {
         CustomTuiCommandConfig {
@@ -272,7 +351,7 @@ mod tests {
             args: vec!["--static".to_string(), "literal value".to_string()],
             keys: vec![],
             detail_keys: None,
-            requires: CustomTuiCommandRequirement::SelectedTask,
+            target: CustomTuiCommandTarget::Focused,
             execution: CustomTuiCommandExecution::Wait,
             on_success: CustomTuiCommandSuccess::Quit,
         }
@@ -304,12 +383,16 @@ mod tests {
             bytes_state: crate::attachments::AttachmentBytesState::Present,
             has_blob: true,
         });
+        let targets =
+            resolve_command_targets(CustomTuiCommandTarget::Focused, Some(&task), &[&task])
+                .unwrap();
         let invocation = plan_invocation(
             &command(),
             "custom-dispatch",
             &Workspace::default(),
             Some(&task),
             &[&task],
+            &targets,
         )
         .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&invocation.stdin_json).unwrap();
@@ -322,6 +405,10 @@ mod tests {
             task.task.title
         );
         assert_eq!(json["selection"]["marked"].as_array().unwrap().len(), 1);
+        assert_eq!(json["targeting"]["policy"], "focused");
+        assert_eq!(json["targeting"]["resolved_from"], "focused");
+        assert_eq!(json["targeting"]["targets"][0]["id"], task.task.id.as_str());
+        assert_eq!(json["targeting"]["targets"][0]["ref"], task.display_ref);
         assert_eq!(invocation.args, ["--static", "literal value"]);
         let encoded = String::from_utf8(invocation.stdin_json).unwrap();
         assert!(!encoded.contains("secret-hash"));
@@ -330,10 +417,109 @@ mod tests {
 
     #[test]
     fn invocation_without_selection_uses_null_primary() {
-        let invocation =
-            plan_invocation(&command(), "dispatch", &Workspace::default(), None, &[]).unwrap();
+        let mut command = command();
+        command.target = CustomTuiCommandTarget::None;
+        let targets = resolve_command_targets(command.target, None, &[]).unwrap();
+        let invocation = plan_invocation(
+            &command,
+            "dispatch",
+            &Workspace::default(),
+            None,
+            &[],
+            &targets,
+        )
+        .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&invocation.stdin_json).unwrap();
 
         assert!(json["selection"]["primary"].is_null());
+        assert_eq!(json["targeting"]["policy"], "none");
+        assert_eq!(json["targeting"]["resolved_from"], "none");
+        assert_eq!(json["targeting"]["targets"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn target_policies_resolve_availability_and_precedence() {
+        let primary = crate::tui::test_support::task_list_item("primary");
+        let first = crate::tui::test_support::task_list_item("first marked");
+        let second = crate::tui::test_support::task_list_item("second marked");
+        let marked = [&first, &second];
+
+        let none = resolve_command_targets(CustomTuiCommandTarget::None, None, &[]).unwrap();
+        assert_eq!(none.resolved_from, TargetSource::None);
+        assert!(none.tasks.is_empty());
+
+        let focused =
+            resolve_command_targets(CustomTuiCommandTarget::Focused, Some(&primary), &marked)
+                .unwrap();
+        assert_eq!(focused.resolved_from, TargetSource::Focused);
+        assert_eq!(focused.tasks[0].task.id, primary.task.id);
+        assert!(resolve_command_targets(CustomTuiCommandTarget::Focused, None, &marked).is_err());
+
+        let marked_targets =
+            resolve_command_targets(CustomTuiCommandTarget::Marked, Some(&primary), &marked)
+                .unwrap();
+        assert_eq!(marked_targets.resolved_from, TargetSource::Marked);
+        assert_eq!(marked_targets.tasks[0].task.id, first.task.id);
+        assert_eq!(marked_targets.tasks[1].task.id, second.task.id);
+        assert!(
+            resolve_command_targets(CustomTuiCommandTarget::Marked, Some(&primary), &[]).is_err()
+        );
+
+        let fallback =
+            resolve_command_targets(CustomTuiCommandTarget::MarkedOrFocused, Some(&primary), &[])
+                .unwrap();
+        assert_eq!(fallback.resolved_from, TargetSource::Focused);
+        assert_eq!(fallback.tasks[0].task.id, primary.task.id);
+
+        let preferred = resolve_command_targets(
+            CustomTuiCommandTarget::MarkedOrFocused,
+            Some(&primary),
+            &marked,
+        )
+        .unwrap();
+        assert_eq!(preferred.resolved_from, TargetSource::Marked);
+        assert_eq!(preferred.tasks.len(), 2);
+        assert!(
+            resolve_command_targets(CustomTuiCommandTarget::MarkedOrFocused, None, &[]).is_err()
+        );
+    }
+
+    #[test]
+    fn marked_target_json_preserves_projection_order_and_raw_selection() {
+        let primary = crate::tui::test_support::task_list_item("primary");
+        let first = crate::tui::test_support::task_list_item("first marked");
+        let second = crate::tui::test_support::task_list_item("second marked");
+        let marked = [&first, &second];
+        let targets =
+            resolve_command_targets(CustomTuiCommandTarget::Marked, Some(&primary), &marked)
+                .unwrap();
+        let mut command = command();
+        command.target = CustomTuiCommandTarget::Marked;
+
+        let invocation = plan_invocation(
+            &command,
+            "dispatch",
+            &Workspace::default(),
+            Some(&primary),
+            &marked,
+            &targets,
+        )
+        .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&invocation.stdin_json).unwrap();
+
+        assert_eq!(
+            json["selection"]["primary"]["task"]["id"],
+            primary.task.id.as_str()
+        );
+        assert_eq!(json["selection"]["marked"].as_array().unwrap().len(), 2);
+        assert_eq!(json["targeting"]["resolved_from"], "marked");
+        assert_eq!(
+            json["targeting"]["targets"][0]["id"],
+            first.task.id.as_str()
+        );
+        assert_eq!(
+            json["targeting"]["targets"][1]["id"],
+            second.task.id.as_str()
+        );
     }
 }

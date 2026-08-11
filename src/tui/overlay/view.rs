@@ -97,6 +97,7 @@ pub(crate) enum OverlayView {
         highlighted: Option<String>,
         context: crate::tui::event::CommandContext,
         marked_task_count: usize,
+        custom_command_marked_task_count: usize,
         unavailable: Vec<super::state::CommandAvailabilityOverride>,
     },
     AddTask(Box<AddTaskView>),
@@ -425,6 +426,7 @@ impl From<&OverlayState> for OverlayView {
                 highlighted: state.highlighted.clone(),
                 context: state.context,
                 marked_task_count: state.marked_task_count,
+                custom_command_marked_task_count: state.custom_command_marked_task_count,
                 unavailable: state.unavailable.clone(),
             },
             AddTask(state) => Self::AddTask(Box::new(AddTaskView {

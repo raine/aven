@@ -1,7 +1,7 @@
 use anyhow::{Result, bail};
 use crossterm::event::KeyCode;
 
-use crate::config::{CustomTuiCommandConfig, CustomTuiCommandRequirement};
+use crate::config::{CustomTuiCommandConfig, CustomTuiCommandTarget};
 
 use super::{
     Action, BulkSupport, COMMANDS, CommandContext, CommandSpec, KeySequence, shortcut_label,
@@ -135,19 +135,43 @@ impl<'a> CatalogCommand<'a> {
     pub(crate) fn bulk_support(self) -> BulkSupport {
         match self {
             Self::BuiltIn(command) => command.bulk_support(),
-            Self::Custom { command, .. } => match command.config.requires {
-                CustomTuiCommandRequirement::None => BulkSupport::NotTaskScoped,
-                CustomTuiCommandRequirement::SelectedTask => BulkSupport::Focused,
+            Self::Custom { command, .. } => match command.config.target {
+                CustomTuiCommandTarget::None => BulkSupport::NotTaskScoped,
+                CustomTuiCommandTarget::Focused => BulkSupport::Focused,
+                CustomTuiCommandTarget::Marked | CustomTuiCommandTarget::MarkedOrFocused => {
+                    BulkSupport::Batch
+                }
             },
         }
     }
 
-    pub(crate) fn requires_selected_task(self) -> bool {
-        matches!(
-            self,
-            Self::Custom { command, .. }
-                if command.config.requires == CustomTuiCommandRequirement::SelectedTask
-        )
+    pub(crate) fn custom_target(self) -> Option<CustomTuiCommandTarget> {
+        match self {
+            Self::BuiltIn(_) => None,
+            Self::Custom { command, .. } => Some(command.config.target),
+        }
+    }
+
+    pub(crate) fn unavailable_reason(
+        self,
+        has_primary_task: bool,
+        marked_task_count: usize,
+    ) -> Option<&'static str> {
+        match self.custom_target()? {
+            CustomTuiCommandTarget::None => None,
+            CustomTuiCommandTarget::Focused if !has_primary_task => Some("requires a focused task"),
+            CustomTuiCommandTarget::Marked if marked_task_count == 0 => {
+                Some("requires one or more marked tasks")
+            }
+            CustomTuiCommandTarget::MarkedOrFocused
+                if marked_task_count == 0 && !has_primary_task =>
+            {
+                Some("requires a marked or focused task")
+            }
+            CustomTuiCommandTarget::Focused
+            | CustomTuiCommandTarget::Marked
+            | CustomTuiCommandTarget::MarkedOrFocused => None,
+        }
     }
 
     pub(crate) fn handler(self) -> CommandHandler {
@@ -590,7 +614,7 @@ mod tests {
             args: vec![],
             keys: vec!["z d".to_string()],
             detail_keys: None,
-            requires: CustomTuiCommandRequirement::SelectedTask,
+            target: CustomTuiCommandTarget::Focused,
             execution: CustomTuiCommandExecution::Wait,
             on_success: CustomTuiCommandSuccess::Quit,
         }
@@ -667,6 +691,61 @@ mod tests {
                 CatalogShortcutLookup::Found(CommandHandler::Custom(0))
             );
         }
+    }
+
+    #[test]
+    fn custom_target_policies_drive_scope_availability_and_shortcut_resolution() {
+        let mut commands = Vec::new();
+        for (index, target) in [
+            CustomTuiCommandTarget::None,
+            CustomTuiCommandTarget::Focused,
+            CustomTuiCommandTarget::Marked,
+            CustomTuiCommandTarget::MarkedOrFocused,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut command = custom();
+            command.name = format!("command-{index}");
+            command.aliases.clear();
+            command.keys = vec![format!("z {index}")];
+            command.target = target;
+            commands.push(command);
+        }
+        let catalog = CommandCatalog::new(commands);
+        let commands = catalog
+            .commands(CommandContext::Normal)
+            .into_iter()
+            .filter(|command| command.is_custom())
+            .collect::<Vec<_>>();
+
+        assert_eq!(commands[0].bulk_support(), BulkSupport::NotTaskScoped);
+        assert_eq!(commands[1].bulk_support(), BulkSupport::Focused);
+        assert_eq!(commands[2].bulk_support(), BulkSupport::Batch);
+        assert_eq!(commands[3].bulk_support(), BulkSupport::Batch);
+        assert_eq!(commands[0].unavailable_reason(false, 0), None);
+        assert_eq!(
+            commands[1].unavailable_reason(false, 0),
+            Some("requires a focused task")
+        );
+        assert_eq!(
+            commands[2].unavailable_reason(true, 0),
+            Some("requires one or more marked tasks")
+        );
+        assert_eq!(commands[2].unavailable_reason(false, 1), None);
+        assert_eq!(
+            commands[3].unavailable_reason(false, 0),
+            Some("requires a marked or focused task")
+        );
+        assert_eq!(commands[3].unavailable_reason(true, 0), None);
+        assert_eq!(commands[3].unavailable_reason(false, 1), None);
+        assert_eq!(
+            catalog.resolve_shortcut(
+                CommandContext::Normal,
+                &[KeyCode::Char('z'), KeyCode::Char('2')]
+            ),
+            CatalogShortcutLookup::Found(CommandHandler::Custom(2))
+        );
     }
 
     #[test]

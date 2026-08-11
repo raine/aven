@@ -68,7 +68,7 @@ impl Default for TuiConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CustomTuiCommandConfig {
     pub name: String,
     #[serde(default)]
@@ -81,20 +81,90 @@ pub struct CustomTuiCommandConfig {
     pub keys: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail_keys: Option<Vec<String>>,
-    #[serde(default)]
-    pub requires: CustomTuiCommandRequirement,
+    pub target: CustomTuiCommandTarget,
     #[serde(default)]
     pub execution: CustomTuiCommandExecution,
     #[serde(default)]
     pub on_success: CustomTuiCommandSuccess,
 }
 
+#[derive(Debug, Deserialize)]
+struct CustomTuiCommandConfigInput {
+    name: String,
+    #[serde(default)]
+    aliases: Vec<String>,
+    description: String,
+    program: PathBuf,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    keys: Vec<String>,
+    #[serde(default)]
+    detail_keys: Option<Vec<String>>,
+    target: Option<CustomTuiCommandTarget>,
+    requires: Option<CustomTuiCommandRequirement>,
+    #[serde(default)]
+    execution: CustomTuiCommandExecution,
+    #[serde(default)]
+    on_success: CustomTuiCommandSuccess,
+}
+
+impl<'de> Deserialize<'de> for CustomTuiCommandConfig {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let input = CustomTuiCommandConfigInput::deserialize(deserializer)?;
+        if input.target.is_some() && input.requires.is_some() {
+            return Err(serde::de::Error::custom(
+                "custom command cannot supply both target and requires",
+            ));
+        }
+        let target = input.target.unwrap_or_else(|| {
+            input
+                .requires
+                .map(CustomTuiCommandRequirement::target)
+                .unwrap_or_default()
+        });
+        Ok(Self {
+            name: input.name,
+            aliases: input.aliases,
+            description: input.description,
+            program: input.program,
+            args: input.args,
+            keys: input.keys,
+            detail_keys: input.detail_keys,
+            target,
+            execution: input.execution,
+            on_success: input.on_success,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum CustomTuiCommandRequirement {
+pub enum CustomTuiCommandTarget {
     None,
     #[default]
+    Focused,
+    Marked,
+    MarkedOrFocused,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum CustomTuiCommandRequirement {
+    None,
     SelectedTask,
+}
+
+impl CustomTuiCommandRequirement {
+    fn target(self) -> CustomTuiCommandTarget {
+        match self {
+            Self::None => CustomTuiCommandTarget::None,
+            Self::SelectedTask => CustomTuiCommandTarget::Focused,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -828,8 +898,61 @@ mod tests {
         assert_eq!(command.args, ["--tmux"]);
         assert_eq!(command.keys, ["z d", "D"]);
         assert_eq!(command.detail_keys.as_ref().unwrap(), &["z D".to_string()]);
+        assert_eq!(command.target, CustomTuiCommandTarget::Focused);
         assert_eq!(command.execution, CustomTuiCommandExecution::Wait);
         assert_eq!(command.on_success, CustomTuiCommandSuccess::Quit);
+    }
+
+    #[test]
+    fn custom_tui_command_target_policies_and_legacy_requirements_are_compatible() {
+        for (field, expected) in [
+            ("target: none", CustomTuiCommandTarget::None),
+            ("target: focused", CustomTuiCommandTarget::Focused),
+            ("target: marked", CustomTuiCommandTarget::Marked),
+            (
+                "target: marked-or-focused",
+                CustomTuiCommandTarget::MarkedOrFocused,
+            ),
+            ("requires: none", CustomTuiCommandTarget::None),
+            ("requires: selected-task", CustomTuiCommandTarget::Focused),
+        ] {
+            let yaml = format!(
+                "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      {field}\n"
+            );
+            let config = load_config(&yaml).unwrap();
+            assert_eq!(config.tui.commands[0].target, expected, "{field}");
+        }
+
+        let defaulted = load_config(
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n",
+        )
+        .unwrap();
+        assert_eq!(
+            defaulted.tui.commands[0].target,
+            CustomTuiCommandTarget::Focused
+        );
+    }
+
+    #[test]
+    fn custom_tui_commands_reject_target_with_legacy_requires() {
+        let error = load_config(
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      target: marked\n      requires: selected-task\n",
+        )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("cannot supply both target and requires"));
+    }
+
+    #[test]
+    fn custom_tui_commands_serialize_target_policy() {
+        let config = load_config(
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      requires: none\n",
+        )
+        .unwrap();
+        let yaml = serde_yaml::to_string(&config).unwrap();
+
+        assert!(yaml.contains("target: none"));
+        assert!(!yaml.contains("requires:"));
     }
 
     #[test]
