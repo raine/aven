@@ -33,6 +33,11 @@ tui:
       aliases: [custom-dispatch]
       description: Open the selected task in its tmux workspace
       program: ~/bin/dispatch-task
+      cwd: ~/code/release-tools
+      env:
+        EXPORT_PROFILE: staging
+        NO_COLOR: "1"
+      timeout_seconds: 30
       args: []
       keys: [z d]
       detail_keys: [z D]
@@ -53,6 +58,9 @@ results.
 | `aliases` | No | `[]` | Additional palette names for the same command. |
 | `description` | Yes | | Description shown in palette search results. |
 | `program` | Yes | | Executable path or program name. A leading `~` expands to the home directory. |
+| `cwd` | No | Aven's invocation directory | Child working directory. A leading `~` expands to the home directory, and relative paths resolve from Aven's invocation directory. |
+| `env` | No | `{}` | Static environment overrides added to Aven's inherited environment. |
+| `timeout_seconds` | No | `300` for `wait` | Complete waiting-operation deadline from 1 through 86,400 seconds. Background input handoff keeps its fixed short deadline. |
 | `args` | No | `[]` | Static arguments passed directly to the executable. |
 | `keys` | No | `[]` | Key sequences available in task lists and inherited by task detail. |
 | `detail_keys` | No | `keys` | Key sequences for task detail. An empty list disables detail bindings. |
@@ -62,8 +70,15 @@ results.
 
 Names and aliases may contain lowercase ASCII letters, digits, and hyphens.
 They must be unique across configured and built-in command names. Aven rejects
-blank descriptions, blank programs, duplicate names, and unsupported lifecycle
-combinations when it loads the configuration.
+blank descriptions, blank programs, unknown command fields, duplicate names,
+and unsupported lifecycle combinations when it loads the configuration.
+Environment names must be nonempty and cannot contain `=` or NUL. Environment
+values cannot contain NUL. A configured working directory must exist and be a
+directory when the command launches.
+
+Configured environment values override inherited variables with the same name.
+Aven passes each value directly without interpolation and excludes configured
+values from invocation JSON, diagnostics, and logs.
 
 Aven executes `program` directly and passes `args` without shell evaluation.
 Pipelines, redirection, variable expansion, and other shell behavior belong in
@@ -144,8 +159,13 @@ a shell command.
     "invoked_as": "custom-dispatch"
   },
   "invocation": {
-    "cwd": "/Users/example/code/project",
-    "tui_pid": 12345
+    "cwd": "/Users/example/code/release-tools",
+    "origin_cwd": "/Users/example/code/project",
+    "tui_pid": 12345,
+    "aven_exe": "/Users/example/bin/aven",
+    "config_dir": "/Users/example/.config/aven",
+    "db_path": "/Users/example/.local/state/aven/db.sqlite",
+    "blob_dir": "/Users/example/.local/state/aven/db.sqlite.blobs"
   },
   "workspace": {
     "id": "0000000000000000",
@@ -202,8 +222,13 @@ a shell command.
 | `version` | Input schema version. The documented schema uses version `1`. |
 | `command.name` | Canonical configured command name. |
 | `command.invoked_as` | Name or alias entered in the palette. |
-| `invocation.cwd` | Aven's working directory, also used as the child working directory. |
+| `invocation.cwd` | Effective child working directory after command-specific resolution. |
+| `invocation.origin_cwd` | Aven's invocation working directory before a command-specific override. |
 | `invocation.tui_pid` | Process ID of the originating Aven TUI. |
+| `invocation.aven_exe` | Running Aven executable path, or `null` when the platform cannot resolve it. |
+| `invocation.config_dir` | Resolved active configuration directory, or `null` when unavailable. |
+| `invocation.db_path` | Active file database path, or `null` when unavailable. |
+| `invocation.blob_dir` | Active local attachment blob directory, or `null` when unavailable. |
 | `workspace` | Active workspace identity and display name. |
 | `targeting.policy` | Configured target policy. |
 | `targeting.resolved_from` | Resolution source: `none`, `focused`, or `marked`. |
@@ -238,7 +263,17 @@ time, and `has_blob`.
 
 The document contains task content needed by local automation. It excludes
 attachment bytes, attachment hashes, sync credentials, authentication tokens,
-and configuration secrets.
+and configuration secrets. Invocation paths are local metadata sent only to the
+configured program. A command can use explicit CLI flags to call the same Aven
+executable and database:
+
+```bash
+aven_exe=$(jq -r '.invocation.aven_exe' "$input")
+db_path=$(jq -r '.invocation.db_path' "$input")
+"$aven_exe" --db "$db_path" show "$ref" --json
+```
+
+Check for `null` before using a platform path.
 
 ## Read JSON in a script
 
@@ -274,9 +309,10 @@ responsive while it runs. Aven:
 4. Treats exit code zero as success.
 5. Reports a nonzero exit code, signal termination, timeout, or input failure.
 
-A waiting command has one five-minute deadline covering input delivery, output
-draining, process completion, timeout cleanup, and direct-child reaping. Aven
-retains the last 16 KiB of standard output and standard error independently
+A waiting command has one deadline covering input delivery, output draining,
+process completion, timeout cleanup, and direct-child reaping. The default is five
+minutes. Set `timeout_seconds` to a positive value through 86,400 to select a
+command-specific deadline. Aven retains the last 16 KiB of standard output and standard error independently
 while continuing to drain both streams. Output beyond that retention bound does not
 change a successful exit status. For a nonzero exit, Aven shows a sanitized,
 bounded standard-error excerpt and falls back to standard output when standard
@@ -292,8 +328,9 @@ Use `wait` when Aven must know whether the operation succeeded, especially with
 
 `execution: background` starts the program, delivers its complete JSON input
 within a short bounded handoff, closes standard input, and returns without
-waiting for process completion. Standard output and standard error are
-discarded. On Unix, the child runs in a separate process group. A failed or
+waiting for process completion. `timeout_seconds` does not replace this fixed
+input-handoff deadline. Standard output and standard error are discarded. On
+Unix, the child runs in a separate process group. A failed or
 timed-out handoff terminates that group, while a successful handoff remains
 independent of TUI shutdown.
 
@@ -452,6 +489,8 @@ Keep these boundaries in scripts:
 - Parse stdin as JSON.
 - Quote every value used in shell commands.
 - Do not evaluate task titles, descriptions, notes, labels, or other task text.
+- Keep secrets in config-level static environment overrides, never in task data.
+- Avoid printing configured environment values because Aven can display bounded child diagnostics.
 - Prefer direct argv calls over constructing shell command strings.
 - Store scripts in locations writable only by trusted users.
 - Avoid logging the complete JSON document when task content is sensitive.

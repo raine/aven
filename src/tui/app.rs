@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use aven_core::db::Database;
 
 use crate::config::AppConfig;
@@ -236,6 +236,7 @@ pub(crate) struct App {
     pub(super) preview_controller: crate::tui::preview_controller::PreviewController,
     pub(super) attachment_controller: crate::tui::attachment_controller::AttachmentController,
     pub(crate) command_catalog: crate::tui::event::CommandCatalog,
+    pub(super) custom_command_planning: crate::tui::custom_command::CustomCommandPlanningContext,
     pub(super) custom_commands: crate::tui::custom_command_runtime::CustomCommandController,
     #[cfg(test)]
     pub(super) _test_database_dir: Option<tempfile::TempDir>,
@@ -271,6 +272,20 @@ impl App {
 
     fn new_with_store(store: TuiStore) -> Result<Self> {
         let config = store.config().clone();
+        let origin_cwd =
+            std::env::current_dir().context("could not determine current directory")?;
+        let blob_dir = crate::config::resolve_blob_dir(store.database_path(), &config).ok();
+        let custom_command_planning = crate::tui::custom_command::CustomCommandPlanningContext {
+            origin_cwd,
+            home_dir: dirs::home_dir(),
+            tui_pid: std::process::id(),
+            aven_exe: std::env::current_exe().ok(),
+            config_dir: crate::config::config_dir_path().ok(),
+            db_path: store
+                .database_file_identity()
+                .map(std::path::Path::to_path_buf),
+            blob_dir,
+        };
         let next_refresh_at = store.last_refresh + crate::tui::app_lifecycle::REFRESH_INTERVAL;
         let has_tasks = store.main_row_count() > 0;
         let mut app = Self {
@@ -302,6 +317,7 @@ impl App {
             preview_controller: crate::tui::preview_controller::PreviewController::new(),
             attachment_controller: crate::tui::attachment_controller::AttachmentController::new(),
             command_catalog: crate::tui::event::CommandCatalog::default(),
+            custom_command_planning,
             custom_commands: crate::tui::custom_command_runtime::CustomCommandController::default(),
             #[cfg(test)]
             _test_database_dir: None,
@@ -335,6 +351,8 @@ impl App {
 
     pub(crate) fn set_config(&mut self, config: AppConfig) {
         self.command_catalog = crate::tui::event::CommandCatalog::new(config.tui.commands.clone());
+        self.custom_command_planning.blob_dir =
+            crate::config::resolve_blob_dir(self.store.database_path(), &config).ok();
         self.store.set_config(config.clone());
         self.store.task_columns = config.tui.columns.clone();
         self.inline_image_backend = active_backend_from_env(config.local.inline_images);

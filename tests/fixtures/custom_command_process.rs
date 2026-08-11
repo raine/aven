@@ -58,6 +58,14 @@ fn main() {
         "copy-stdin-null" => {
             std::io::copy(&mut std::io::stdin(), &mut std::io::sink()).unwrap();
         }
+        "capture-settings" => {
+            let path = args.next().expect("output path");
+            let variable = args.next().expect("environment variable name");
+            std::io::copy(&mut std::io::stdin(), &mut std::io::sink()).unwrap();
+            let cwd = std::env::current_dir().unwrap();
+            let value = std::env::var(variable).expect("environment variable value");
+            std::fs::write(path, format!("{}\n{value}\n", cwd.display())).unwrap();
+        }
         "failure-stderr" => {
             std::io::stderr()
                 .write_all(b"first stderr line\nuseful stderr reason\n")

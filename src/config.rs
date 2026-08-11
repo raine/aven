@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::net::SocketAddr;
@@ -12,6 +13,8 @@ use crate::ids::WorkspaceId;
 const APP_DIR: &str = "aven";
 const DEFAULT_WAKE_ADDR: &str = "127.0.0.1:47631";
 const DEFAULT_SYNC_INTERVAL_SECONDS: u64 = 30;
+pub(crate) const DEFAULT_CUSTOM_COMMAND_TIMEOUT_SECONDS: u64 = 300;
+pub(crate) const MAX_CUSTOM_COMMAND_TIMEOUT_SECONDS: u64 = 86_400;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -75,6 +78,12 @@ pub struct CustomTuiCommandConfig {
     pub aliases: Vec<String>,
     pub description: String,
     pub program: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<u64>,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
@@ -89,12 +98,19 @@ pub struct CustomTuiCommandConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CustomTuiCommandConfigInput {
     name: String,
     #[serde(default)]
     aliases: Vec<String>,
     description: String,
     program: PathBuf,
+    #[serde(default)]
+    cwd: Option<PathBuf>,
+    #[serde(default)]
+    env: BTreeMap<String, String>,
+    #[serde(default)]
+    timeout_seconds: Option<u64>,
     #[serde(default)]
     args: Vec<String>,
     #[serde(default)]
@@ -131,6 +147,9 @@ impl<'de> Deserialize<'de> for CustomTuiCommandConfig {
             aliases: input.aliases,
             description: input.description,
             program: input.program,
+            cwd: input.cwd,
+            env: input.env,
+            timeout_seconds: input.timeout_seconds,
             args: input.args,
             keys: input.keys,
             detail_keys: input.detail_keys,
@@ -519,6 +538,36 @@ impl AppConfig {
             {
                 bail!("custom command {} program must not be blank", command.name);
             }
+            if command
+                .cwd
+                .as_ref()
+                .is_some_and(|cwd| cwd.as_os_str().is_empty())
+            {
+                bail!("custom command {} cwd must not be blank", command.name);
+            }
+            for (name, value) in &command.env {
+                if name.is_empty() || name.contains('=') || name.contains('\0') {
+                    bail!(
+                        "custom command {} has invalid environment variable name {name:?}",
+                        command.name
+                    );
+                }
+                if value.contains('\0') {
+                    bail!(
+                        "custom command {} environment variable {name:?} contains a NUL byte",
+                        command.name
+                    );
+                }
+            }
+            if let Some(timeout_seconds) = command.timeout_seconds
+                && !(1..=MAX_CUSTOM_COMMAND_TIMEOUT_SECONDS).contains(&timeout_seconds)
+            {
+                bail!(
+                    "custom command {} timeout_seconds must be between 1 and {}",
+                    command.name,
+                    MAX_CUSTOM_COMMAND_TIMEOUT_SECONDS
+                );
+            }
             if command.execution == CustomTuiCommandExecution::Background
                 && command.on_success != CustomTuiCommandSuccess::Stay
             {
@@ -612,11 +661,15 @@ impl AppConfig {
 }
 
 pub fn expand_tilde(path: &Path) -> Result<PathBuf> {
+    expand_tilde_from(path, dirs::home_dir().as_deref())
+}
+
+pub(crate) fn expand_tilde_from(path: &Path, home: Option<&Path>) -> Result<PathBuf> {
     let mut components = path.components();
     if !matches!(components.next(), Some(Component::Normal(component)) if component == "~") {
         return Ok(path.to_path_buf());
     }
-    let home = dirs::home_dir().context("could not find home directory")?;
+    let home = home.context("could not find home directory")?;
     Ok(home.join(components.as_path()))
 }
 
@@ -903,6 +956,90 @@ mod tests {
         assert_eq!(command.target, CustomTuiCommandTarget::Focused);
         assert_eq!(command.execution, CustomTuiCommandExecution::Wait);
         assert_eq!(command.on_success, CustomTuiCommandSuccess::Quit);
+    }
+
+    #[test]
+    fn custom_tui_command_static_execution_settings_deserialize_with_compatible_defaults() {
+        let configured = load_config(
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      cwd: ~/code/tools\n      env:\n        PROFILE: staging\n        NO_COLOR: '1'\n      timeout_seconds: 30\n",
+        )
+        .unwrap();
+        let command = &configured.tui.commands[0];
+        assert_eq!(command.cwd.as_deref(), Some(Path::new("~/code/tools")));
+        assert_eq!(command.env["PROFILE"], "staging");
+        assert_eq!(command.env["NO_COLOR"], "1");
+        assert_eq!(command.timeout_seconds, Some(30));
+
+        let defaulted = load_config(
+            "tui:\n  commands:\n    - name: defaulted\n      description: Defaulted\n      program: dispatch\n",
+        )
+        .unwrap();
+        let command = &defaulted.tui.commands[0];
+        assert_eq!(command.cwd, None);
+        assert!(command.env.is_empty());
+        assert_eq!(command.timeout_seconds, None);
+    }
+
+    #[test]
+    fn custom_tui_commands_validate_timeout_bounds() {
+        for value in [0, MAX_CUSTOM_COMMAND_TIMEOUT_SECONDS + 1] {
+            let yaml = format!(
+                "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      timeout_seconds: {value}\n"
+            );
+            let error = load_config(&yaml).unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains("timeout_seconds must be between 1 and 86400"));
+        }
+
+        let yaml = format!(
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      execution: background\n      timeout_seconds: {}\n",
+            MAX_CUSTOM_COMMAND_TIMEOUT_SECONDS
+        );
+        assert!(load_config(&yaml).is_ok());
+    }
+
+    #[test]
+    fn custom_tui_commands_reject_invalid_environment_without_exposing_values() {
+        for (environment, expected) in [
+            ("        '': value\n", "invalid environment variable name"),
+            (
+                "        BAD=NAME: value\n",
+                "invalid environment variable name",
+            ),
+            (
+                "        \"BAD\\u0000NAME\": value\n",
+                "invalid environment variable name",
+            ),
+            (
+                "        SAFE_NAME: \"secret-marker\\u0000suffix\"\n",
+                "environment variable \"SAFE_NAME\" contains a NUL byte",
+            ),
+        ] {
+            let yaml = format!(
+                "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      env:\n{environment}"
+            );
+            let error = load_config(&yaml).unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains(expected), "{message}");
+            assert!(!message.contains("secret-marker"), "{message}");
+            assert!(!message.contains("suffix"), "{message}");
+        }
+    }
+
+    #[test]
+    fn custom_tui_commands_reject_unknown_fields_with_the_typo_location() {
+        let error = load_config(
+            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      timeot_seconds: 30\n",
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+
+        assert!(
+            message.contains("unknown field `timeot_seconds`"),
+            "{message}"
+        );
+        assert!(message.contains("tui.commands[0]"), "{message}");
+        assert!(message.contains("line 6"), "{message}");
     }
 
     #[test]

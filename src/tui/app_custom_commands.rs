@@ -54,6 +54,7 @@ impl App {
             primary,
             &marked,
             &targets,
+            &self.custom_command_planning,
         )?;
         if let Err(error) = self.custom_commands.launch(invocation) {
             self.set_error(format!("{error:#}"));

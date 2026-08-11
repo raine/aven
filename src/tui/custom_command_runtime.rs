@@ -2,7 +2,7 @@ use std::io;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::process::{Child, Command};
 use tokio::sync::watch;
@@ -16,7 +16,6 @@ const OUTPUT_LIMIT: usize = 16 * 1024;
 const DIAGNOSTIC_LINE_LIMIT: usize = 2;
 const DIAGNOSTIC_CHAR_LIMIT: usize = 512;
 const DIAGNOSTIC_WIDTH_LIMIT: usize = 512;
-const WAIT_TIMEOUT: Duration = Duration::from_secs(300);
 const BACKGROUND_INPUT_TIMEOUT: Duration = Duration::from_secs(5);
 const TERMINATION_GRACE: Duration = Duration::from_millis(500);
 const IO_CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
@@ -94,7 +93,8 @@ impl CustomCommandController {
         &mut self,
         invocation: CustomCommandInvocation,
     ) -> Result<CustomCommandInvocationId> {
-        self.launch_with_timeouts(invocation, WAIT_TIMEOUT, BACKGROUND_INPUT_TIMEOUT)
+        let wait_timeout = invocation.timeout;
+        self.launch_with_timeouts(invocation, wait_timeout, BACKGROUND_INPUT_TIMEOUT)
     }
 
     fn launch_with_timeouts(
@@ -103,10 +103,12 @@ impl CustomCommandController {
         wait_timeout: Duration,
         background_input_timeout: Duration,
     ) -> Result<CustomCommandInvocationId> {
+        validate_working_directory(&invocation)?;
         let mut command = Command::new(&invocation.program);
         command
             .args(&invocation.args)
             .current_dir(&invocation.cwd)
+            .envs(&invocation.env)
             .stdin(Stdio::piped());
         match invocation.execution {
             CustomTuiCommandExecution::Background => {
@@ -121,9 +123,10 @@ impl CustomCommandController {
         command.kill_on_drop(invocation.execution == CustomTuiCommandExecution::Wait);
         let child = command.spawn().with_context(|| {
             format!(
-                "could not start custom command {} ({})",
+                "could not start custom command {} ({}) in {}",
                 invocation.name,
-                invocation.program.display()
+                invocation.program.display(),
+                invocation.cwd.display()
             )
         })?;
         let process = ProcessIdentity::from_child(&child)
@@ -200,6 +203,36 @@ impl CustomCommandController {
             let _ = join_completion(pending).await;
         }
     }
+}
+
+fn validate_working_directory(invocation: &CustomCommandInvocation) -> Result<()> {
+    let metadata = match std::fs::metadata(&invocation.cwd) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            bail!(
+                "custom command :{} working directory does not exist: {}",
+                invocation.name,
+                invocation.cwd.display()
+            );
+        }
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "could not inspect custom command :{} working directory {}",
+                    invocation.name,
+                    invocation.cwd.display()
+                )
+            });
+        }
+    };
+    if !metadata.is_dir() {
+        bail!(
+            "custom command :{} working directory is not a directory: {}",
+            invocation.name,
+            invocation.cwd.display()
+        );
+    }
+    Ok(())
 }
 
 async fn join_completion(mut pending: PendingInvocation) -> CustomCommandCompletion {
@@ -795,6 +828,8 @@ mod tests {
             program,
             args,
             cwd: std::env::current_dir().unwrap(),
+            env: Default::default(),
+            timeout: Duration::from_secs(crate::config::DEFAULT_CUSTOM_COMMAND_TIMEOUT_SECONDS),
             stdin_json: input,
             execution,
             on_success,
@@ -1095,6 +1130,130 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn planned_cwd_and_environment_override_reach_the_child() {
+        let _test_guard = PROCESS_TEST_LOCK.lock().await;
+        let (_dir, fixture) = compile_fixture();
+        let state = tempfile::tempdir().unwrap();
+        let cwd = state.path().join("working-directory");
+        std::fs::create_dir(&cwd).unwrap();
+        let output = state.path().join("settings.txt");
+        let mut command = fixture_invocation(
+            &fixture,
+            "capture-settings",
+            Vec::new(),
+            CustomTuiCommandExecution::Wait,
+        );
+        command.args.push(output.to_string_lossy().into_owned());
+        command.args.push("AVEN_FIXTURE_PROFILE".to_string());
+        command.cwd = cwd.clone();
+        command
+            .env
+            .insert("AVEN_FIXTURE_PROFILE".into(), "configured-override".into());
+        let mut controller = CustomCommandController::default();
+        controller.launch(command).unwrap();
+
+        assert!(completion(&mut controller).await.result.is_ok());
+        assert_eq!(
+            std::fs::read_to_string(output).unwrap(),
+            format!(
+                "{}\nconfigured-override\n",
+                cwd.canonicalize().unwrap().display()
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_timeout_bounds_input_output_and_wait_phases() {
+        let _test_guard = PROCESS_TEST_LOCK.lock().await;
+        let (_dir, fixture) = compile_fixture();
+        let state = tempfile::tempdir().unwrap();
+        let cases = [
+            ("never-read", vec![b'i'; 256 * 1024], None),
+            (
+                "descendant-holds-stdout",
+                Vec::new(),
+                Some(state.path().join("descendant.pid")),
+            ),
+            ("hold-output", Vec::new(), None),
+        ];
+
+        for (mode, input, pid_file) in cases {
+            let mut command =
+                fixture_invocation(&fixture, mode, input, CustomTuiCommandExecution::Wait);
+            command.timeout = Duration::from_millis(100);
+            if let Some(pid_file) = &pid_file {
+                command.args.push(pid_file.to_string_lossy().into_owned());
+            }
+            let mut controller = CustomCommandController::default();
+            let started = Instant::now();
+            controller.launch(command).unwrap();
+
+            let result = completion(&mut controller).await.result.unwrap_err();
+            assert!(result.contains("timed out"), "{mode}: {result}");
+            assert!(started.elapsed() < Duration::from_secs(2), "{mode}");
+            if let Some(pid_file) = pid_file {
+                let pid = std::fs::read_to_string(pid_file)
+                    .unwrap()
+                    .trim()
+                    .parse::<i32>()
+                    .unwrap();
+                assert_process_stopped(pid).await;
+            }
+        }
+    }
+
+    #[test]
+    fn spawn_errors_do_not_expose_planned_environment_values() {
+        let state = tempfile::tempdir().unwrap();
+        let mut command = invocation(
+            state.path().join("missing-program"),
+            Vec::new(),
+            Vec::new(),
+            CustomTuiCommandExecution::Wait,
+            CustomTuiCommandSuccess::Stay,
+        );
+        command
+            .env
+            .insert("ACCESS_TOKEN".into(), "secret-marker".into());
+        let mut controller = CustomCommandController::default();
+
+        let error = controller.launch(command).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("could not start custom command"));
+        assert!(!message.contains("secret-marker"), "{message}");
+    }
+
+    #[test]
+    fn missing_and_non_directory_working_directories_fail_before_spawn() {
+        let state = tempfile::tempdir().unwrap();
+        let file = state.path().join("file");
+        std::fs::write(&file, b"fixture").unwrap();
+
+        for (cwd, expected) in [
+            (state.path().join("missing"), "does not exist"),
+            (file, "is not a directory"),
+        ] {
+            let mut command = invocation(
+                PathBuf::from("unused-program"),
+                Vec::new(),
+                Vec::new(),
+                CustomTuiCommandExecution::Wait,
+                CustomTuiCommandSuccess::Stay,
+            );
+            command.cwd = cwd;
+            command
+                .env
+                .insert("ACCESS_TOKEN".into(), "secret-marker".into());
+            let mut controller = CustomCommandController::default();
+
+            let error = controller.launch(command).unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains(expected), "{message}");
+            assert!(!message.contains("secret-marker"), "{message}");
+        }
+    }
+
+    #[tokio::test]
     async fn waiting_command_reports_closed_stdin_as_input_failure() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
         let (_dir, fixture) = compile_fixture();
@@ -1251,7 +1410,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn background_command_reports_complete_input_handoff() {
+    async fn background_command_ignores_completion_timeout_and_reports_complete_input_handoff() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
         let (_dir, fixture) = compile_fixture();
         let state = tempfile::tempdir().unwrap();
@@ -1264,6 +1423,7 @@ mod tests {
             CustomTuiCommandExecution::Background,
         );
         command.args.push(output.to_string_lossy().into_owned());
+        command.timeout = Duration::from_nanos(1);
         let mut controller = CustomCommandController::default();
         controller.launch(command).unwrap();
 

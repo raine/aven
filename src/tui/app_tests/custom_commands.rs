@@ -15,6 +15,9 @@ fn config(program: &str, success: CustomTuiCommandSuccess) -> AppConfig {
         aliases: vec!["custom-dispatch".to_string()],
         description: "dispatch selected task".to_string(),
         program: PathBuf::from(program),
+        cwd: None,
+        env: Default::default(),
+        timeout_seconds: None,
         args: (program == "/usr/bin/tee")
             .then(|| "/dev/null".to_string())
             .into_iter()
@@ -77,6 +80,9 @@ fn add_command(
         aliases: vec![],
         description: format!("run {name}"),
         program: program.to_path_buf(),
+        cwd: None,
+        env: Default::default(),
+        timeout_seconds: None,
         args: args.iter().map(|arg| (*arg).to_string()).collect(),
         keys: vec![],
         detail_keys: None,
@@ -99,6 +105,55 @@ fn compile_process_fixture() -> (tempfile::TempDir, PathBuf) {
         .unwrap();
     assert!(status.success());
     (dir, executable)
+}
+
+#[tokio::test]
+async fn app_projects_active_invocation_paths_and_excludes_environment_values() {
+    let mut app = test_app().await;
+    let capture_dir = tempfile::tempdir().unwrap();
+    let capture = capture_dir.path().join("context.json");
+    let mut app_config = capture_config(&capture, CustomTuiCommandTarget::None, vec![]);
+    app_config.tui.commands[0]
+        .env
+        .insert("ACCESS_TOKEN".to_string(), "secret-marker".to_string());
+    app.set_config(app_config);
+
+    app.execute_custom_command(0, "dispatch").await.unwrap();
+    poll_until_complete(&mut app).await;
+
+    let json = captured_json(&capture);
+    let invocation = &json["invocation"];
+    assert_eq!(invocation["tui_pid"], std::process::id());
+    assert_eq!(
+        invocation["origin_cwd"],
+        app.custom_command_planning.origin_cwd.to_str().unwrap()
+    );
+    assert_eq!(
+        invocation["cwd"],
+        app.custom_command_planning.origin_cwd.to_str().unwrap()
+    );
+    for (field, path) in [
+        ("aven_exe", app.custom_command_planning.aven_exe.as_ref()),
+        (
+            "config_dir",
+            app.custom_command_planning.config_dir.as_ref(),
+        ),
+        ("db_path", app.custom_command_planning.db_path.as_ref()),
+        ("blob_dir", app.custom_command_planning.blob_dir.as_ref()),
+    ] {
+        let path = path.expect("active application path");
+        let expected = if path.is_absolute() {
+            path.clone()
+        } else {
+            app.custom_command_planning.origin_cwd.join(path)
+        };
+        assert_eq!(invocation[field], expected.to_str().unwrap(), "{field}");
+    }
+    assert!(
+        !std::fs::read_to_string(capture)
+            .unwrap()
+            .contains("secret-marker")
+    );
 }
 
 #[tokio::test]

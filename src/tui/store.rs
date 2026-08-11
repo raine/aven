@@ -115,6 +115,16 @@ impl Clone for ProjectionCloneSentinel {
     }
 }
 
+impl TuiStore {
+    pub(crate) fn database_path(&self) -> &std::path::Path {
+        self.database.path()
+    }
+
+    pub(crate) fn database_file_identity(&self) -> Option<&std::path::Path> {
+        self.database.file_identity()
+    }
+}
+
 impl Deref for TuiStore {
     type Target = TuiProjection;
 
