@@ -196,6 +196,17 @@ pub(crate) fn render(
     list: &mut ListSurface,
     view: &ViewState,
 ) {
+    render_surface(frame, store, widgets, list, view);
+    widgets.text_cursor = self::input::text_cursor_position(frame.buffer_mut());
+}
+
+fn render_surface(
+    frame: &mut Frame,
+    store: &TuiStore,
+    widgets: &mut WidgetState,
+    list: &mut ListSurface,
+    view: &ViewState,
+) {
     widgets.inline_image_placements.clear();
     frame.render_widget(Block::new().style(Style::new().bg(BG)), frame.area());
 

@@ -4746,10 +4746,7 @@ mod tests {
             }],
             interactive_rows: Vec::new(),
         };
-        let mut widgets = WidgetState {
-            inline_image_placements: Vec::new(),
-            detail_document: None,
-        };
+        let mut widgets = WidgetState::default();
         let backend = TestBackend::new(20, 5);
         let mut terminal = Terminal::new(backend).unwrap();
 
@@ -4929,10 +4926,7 @@ mod tests {
         item.task.description = String::new();
         item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
         let context = DetailInlineImageContext::default();
-        let mut widgets = WidgetState {
-            inline_image_placements: Vec::new(),
-            detail_document: None,
-        };
+        let mut widgets = WidgetState::default();
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
 

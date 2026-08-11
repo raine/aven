@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 
-use ratatui::style::Style;
+use ratatui::buffer::Buffer;
+use ratatui::layout::Position;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::tui::text::char_boundary_at_or_before;
@@ -85,8 +87,33 @@ pub(in crate::tui::ui) fn input_cursor_spans(
     ]
 }
 
+/// Style of the drawn cursor cell. [`text_cursor_position`] locates the caret by
+/// this exact foreground/background pair, so nothing else may use it.
+pub(in crate::tui::ui) const CURSOR_STYLE: Style = Style::new().fg(BG_ALT).bg(FG);
+
 pub(in crate::tui::ui) fn cursor_cell(content: impl Into<Cow<'static, str>>) -> Span<'static> {
-    Span::styled(content, Style::new().fg(BG_ALT).bg(FG))
+    Span::styled(content, CURSOR_STYLE)
+}
+
+/// Finds the drawn cursor cell in a rendered frame so the caller can park the
+/// real terminal cursor there.
+///
+/// The TUI paints its own cursor instead of using the terminal cursor, which
+/// leaves the terminal cursor wherever the last buffer diff happened. Input
+/// method editors (Korean, Japanese, Chinese) draw their in-progress
+/// composition at the terminal cursor, so without this the preedit text appears
+/// somewhere unrelated to the field being typed into.
+///
+/// Cursor cells dimmed by a stacked dialog are ignored: only the caret of the
+/// topmost, active input qualifies.
+pub(crate) fn text_cursor_position(buffer: &Buffer) -> Option<Position> {
+    let index = buffer.content().iter().position(|cell| {
+        Some(cell.fg) == CURSOR_STYLE.fg
+            && Some(cell.bg) == CURSOR_STYLE.bg
+            && !cell.modifier.contains(Modifier::DIM)
+    })?;
+    let (x, y) = buffer.pos_of(index);
+    Some(Position { x, y })
 }
 
 #[cfg(test)]

@@ -2162,3 +2162,30 @@ async fn add_note_flow_creates_note_for_selected_task() {
     assert!(app.overlay.is_none());
     assert!(toast_message(&app).is_some_and(|message| message.starts_with("added note ")));
 }
+
+#[tokio::test]
+async fn add_task_reports_title_caret_to_terminal_cursor() {
+    let mut app = test_app().await;
+    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    type_chars(&mut app, "ab").await;
+
+    let buffer = render_app_buffer(&mut app, 120, 30);
+    let cursor = app.widgets.text_cursor.expect("caret reported");
+
+    assert_eq!(buffer[(cursor.x, cursor.y)].symbol(), " ");
+    assert_eq!(buffer[(cursor.x - 2, cursor.y)].symbol(), "a");
+    assert_eq!(buffer[(cursor.x - 1, cursor.y)].symbol(), "b");
+}
+
+#[tokio::test]
+async fn add_task_caret_follows_wide_characters() {
+    let mut app = test_app().await;
+    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    type_chars(&mut app, "한글").await;
+
+    let buffer = render_app_buffer(&mut app, 120, 30);
+    let cursor = app.widgets.text_cursor.expect("caret reported");
+
+    assert_eq!(buffer[(cursor.x - 4, cursor.y)].symbol(), "한");
+    assert_eq!(buffer[(cursor.x - 2, cursor.y)].symbol(), "글");
+}
