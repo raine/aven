@@ -651,6 +651,28 @@ pub(crate) fn validate_metadata_update(set: &[TaskMetadataInput], remove: &[Stri
     Ok(())
 }
 
+fn validate_metadata_result_limits(
+    existing: impl IntoIterator<Item = (String, String)>,
+    set: &[TaskMetadataInput],
+    remove: &[String],
+) -> Result<()> {
+    let mut values = existing.into_iter().collect::<HashMap<_, _>>();
+    for key in remove {
+        values.remove(&normalize_metadata_key(key)?);
+    }
+    for input in set {
+        values.insert(normalize_metadata_key(&input.key)?, input.value.clone());
+    }
+    if values.len() > MAX_METADATA_VALUES {
+        bail!("error too-many-metadata-values limit={MAX_METADATA_VALUES}");
+    }
+    let total_bytes = values.values().map(String::len).sum::<usize>();
+    if total_bytes > MAX_METADATA_TOTAL_BYTES {
+        bail!("error metadata-values-too-large limit={MAX_METADATA_TOTAL_BYTES}");
+    }
+    Ok(())
+}
+
 pub(crate) async fn validate_recurrence_metadata_result(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
@@ -668,24 +690,12 @@ pub(crate) async fn validate_recurrence_metadata_result(
     .bind(series_id)
     .fetch_all(&mut *conn)
     .await?;
-    let mut values = rows
-        .into_iter()
-        .map(|row| (row.get::<String, _>("key"), row.get::<String, _>("value")))
-        .collect::<HashMap<_, _>>();
-    for key in remove {
-        values.remove(&normalize_metadata_key(key)?);
-    }
-    for input in set {
-        values.insert(normalize_metadata_key(&input.key)?, input.value.clone());
-    }
-    if values.len() > MAX_METADATA_VALUES {
-        bail!("error too-many-metadata-values limit={MAX_METADATA_VALUES}");
-    }
-    let total_bytes = values.values().map(String::len).sum::<usize>();
-    if total_bytes > MAX_METADATA_TOTAL_BYTES {
-        bail!("error metadata-values-too-large limit={MAX_METADATA_TOTAL_BYTES}");
-    }
-    Ok(())
+    validate_metadata_result_limits(
+        rows.into_iter()
+            .map(|row| (row.get::<String, _>("key"), row.get::<String, _>("value"))),
+        set,
+        remove,
+    )
 }
 
 pub(crate) async fn validate_task_metadata_result(
@@ -705,24 +715,12 @@ pub(crate) async fn validate_task_metadata_result(
     .bind(task_id)
     .fetch_all(&mut *conn)
     .await?;
-    let mut values = rows
-        .into_iter()
-        .map(|row| (row.get::<String, _>("key"), row.get::<String, _>("value")))
-        .collect::<HashMap<_, _>>();
-    for key in remove {
-        values.remove(&normalize_metadata_key(key)?);
-    }
-    for input in set {
-        values.insert(normalize_metadata_key(&input.key)?, input.value.clone());
-    }
-    if values.len() > MAX_METADATA_VALUES {
-        bail!("error too-many-metadata-values limit={MAX_METADATA_VALUES}");
-    }
-    let total_bytes = values.values().map(String::len).sum::<usize>();
-    if total_bytes > MAX_METADATA_TOTAL_BYTES {
-        bail!("error metadata-values-too-large limit={MAX_METADATA_TOTAL_BYTES}");
-    }
-    Ok(())
+    validate_metadata_result_limits(
+        rows.into_iter()
+            .map(|row| (row.get::<String, _>("key"), row.get::<String, _>("value"))),
+        set,
+        remove,
+    )
 }
 
 pub(crate) async fn resolve_metadata_inputs(
@@ -882,6 +880,69 @@ mod tests {
         assert!(normalize_metadata_key("1source").is_err());
         assert!(normalize_metadata_key("source id").is_err());
         assert!(normalize_metadata_key("aven.internal").is_err());
+    }
+
+    #[test]
+    fn metadata_result_limits_include_existing_value_bytes() {
+        let mut existing = (0..7)
+            .map(|index| (format!("key_{index}"), "x".repeat(MAX_METADATA_VALUE_BYTES)))
+            .collect::<Vec<_>>();
+        existing.push((
+            "key_7".to_string(),
+            "x".repeat(MAX_METADATA_VALUE_BYTES - 1),
+        ));
+        let set = [TaskMetadataInput {
+            key: "key_8".to_string(),
+            value: "é".to_string(),
+        }];
+
+        let error = validate_metadata_result_limits(existing, &set, &[]).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            format!("error metadata-values-too-large limit={MAX_METADATA_TOTAL_BYTES}")
+        );
+    }
+
+    #[test]
+    fn metadata_result_limits_apply_removals_before_sets() {
+        let existing = (0..8)
+            .map(|index| (format!("key_{index}"), "x".repeat(MAX_METADATA_VALUE_BYTES)))
+            .collect::<Vec<_>>();
+        let set = [TaskMetadataInput {
+            key: "replacement".to_string(),
+            value: "y".repeat(MAX_METADATA_VALUE_BYTES),
+        }];
+
+        validate_metadata_result_limits(existing, &set, &[" KEY_0 ".to_string()]).unwrap();
+    }
+
+    #[test]
+    fn metadata_result_limits_distinguish_replacement_from_insertion_at_count_limit() {
+        let existing = (0..MAX_METADATA_VALUES)
+            .map(|index| {
+                (
+                    format!("key_{index}"),
+                    "x".repeat(MAX_METADATA_TOTAL_BYTES / MAX_METADATA_VALUES),
+                )
+            })
+            .collect::<Vec<_>>();
+        let replacement = [TaskMetadataInput {
+            key: "KEY_0".to_string(),
+            value: "replacement".to_string(),
+        }];
+        validate_metadata_result_limits(existing.clone(), &replacement, &[]).unwrap();
+
+        let insertion = [TaskMetadataInput {
+            key: "extra".to_string(),
+            value: "x".to_string(),
+        }];
+        let error = validate_metadata_result_limits(existing, &insertion, &[]).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            format!("error too-many-metadata-values limit={MAX_METADATA_VALUES}")
+        );
     }
 
     #[tokio::test]
