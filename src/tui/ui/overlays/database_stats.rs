@@ -292,13 +292,7 @@ fn two_column_line(left: Option<&Line<'static>>, right: Option<&Line<'static>>) 
 }
 
 fn line_width(line: Option<&Line<'static>>) -> usize {
-    line.map(|line| {
-        line.spans
-            .iter()
-            .map(|span| span.content.chars().count())
-            .sum()
-    })
-    .unwrap_or(0)
+    line.map_or(0, Line::width)
 }
 
 const LABEL_WIDTH: usize = 14;
@@ -360,5 +354,17 @@ fn format_bytes(bytes: i64) -> String {
         format!("{:.1} KiB", bytes as f64 / KIB as f64)
     } else {
         format!("{bytes} B")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn line_width_counts_wide_value_cells() {
+        let line = Line::from(vec![Span::raw("name          "), Span::raw("한글")]);
+
+        assert_eq!(line_width(Some(&line)), 18);
     }
 }

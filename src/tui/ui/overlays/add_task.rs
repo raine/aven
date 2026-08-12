@@ -3,12 +3,12 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Paragraph, Wrap};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthStr;
 
 use super::super::dialog::{Dialog, dialog_hint_line, dim_rendered_area};
 use super::super::input::{clipped_input_line, cursor_cell};
 use super::super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
-use super::super::truncate::truncate_width;
+use super::super::truncate::truncate_line_width;
 use super::confirm::render_confirm;
 use super::multiline::add_task_description_input_line;
 use super::picker::{
@@ -23,7 +23,7 @@ use crate::tui::overlay::{
     ScheduleEditorMode, ScheduleEditorState, TAG_COMBOBOX_VIEWPORT_ROWS, TagComboboxView,
     tag_combobox_completion, tag_combobox_matches, visible_picker_indices,
 };
-use crate::tui::text::cell_width_ranges;
+use crate::tui::text::{cell_width_ranges, truncate_width};
 use crate::tui::theme::{self, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, SELECTED};
 use crate::tui::widgets::{priority_short, status_span};
 
@@ -533,42 +533,14 @@ fn metadata_row(lines: Vec<Line<'static>>, width: usize) -> Line<'static> {
 }
 
 fn fit_line_to_width(line: Line<'static>, width: usize) -> Line<'static> {
-    if line.width() <= width {
-        let padding = width.saturating_sub(line.width());
+    let line_width = line.width();
+    if line_width <= width {
+        let padding = width.saturating_sub(line_width);
         let mut spans = line.spans;
         spans.push(Span::raw(" ".repeat(padding)));
         return Line::from(spans);
     }
-    if width == 0 {
-        return Line::default();
-    }
-
-    let content_width = width.saturating_sub(1);
-    let mut remaining = content_width;
-    let mut spans = Vec::new();
-    let mut ellipsis_style = Style::new().fg(FG_DIM);
-    for span in line.spans {
-        ellipsis_style = span.style;
-        let mut content = String::new();
-        let mut truncated = false;
-        for ch in span.content.chars() {
-            let char_width = ch.width().unwrap_or(0);
-            if char_width > remaining {
-                truncated = true;
-                break;
-            }
-            content.push(ch);
-            remaining = remaining.saturating_sub(char_width);
-        }
-        if !content.is_empty() {
-            spans.push(Span::styled(content, span.style));
-        }
-        if truncated || remaining == 0 {
-            break;
-        }
-    }
-    spans.push(Span::styled("…", ellipsis_style));
-    Line::from(spans)
+    truncate_line_width(line, width, Style::new().fg(FG_DIM))
 }
 
 fn join_lines(lines: Vec<Line<'static>>, separator: &'static str) -> Line<'static> {

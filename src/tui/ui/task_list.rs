@@ -13,7 +13,6 @@ pub(crate) use self::hit_test::TaskListHit;
 use super::input::clipped_input_line;
 use super::task_display::{description_or_placeholder, labels_display};
 use super::timestamps::local_timestamp_display;
-use super::truncate::truncate_width;
 use crate::query::{TaskListItem, TaskSort};
 use crate::queue::{now_seconds, unix_seconds};
 use crate::tui::app::Focus;
@@ -21,6 +20,7 @@ use crate::tui::list_surface::ListSurface;
 use crate::tui::markdown::render_markdown_preview;
 use crate::tui::overlay::TextInputView;
 use crate::tui::store::{TaskListRenderMode, TuiStore};
+use crate::tui::text::truncate_width;
 use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, FG_MUTED, INVERSE_FG, RED, RELATED, SELECTED,
     SELECTED_INACTIVE, YELLOW,
@@ -35,6 +35,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
     Block, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, TableState,
 };
+use unicode_width::UnicodeWidthStr;
 
 pub(super) const EPIC_MARKER: &str = "\u{f04ce}";
 const EPIC_CHILD_MARKER: &str = "↳";
@@ -557,7 +558,7 @@ fn project_column_width(store: &TuiStore, narrow: bool) -> u16 {
     store
         .tasks
         .iter()
-        .map(|item| item.task.project_key.chars().count() as u16 + 2)
+        .map(|item| item.task.project_key.width() as u16 + 2)
         .max()
         .unwrap_or(9)
         .max(9)
@@ -593,12 +594,12 @@ fn label_column_width_from_task_refs(tasks: &[&TaskListItem], narrow: bool) -> u
         .iter()
         .filter(|item| !item.labels.is_empty())
         .map(|item| {
-            let first = item.labels.first().map_or(0, |label| label.chars().count());
+            let first = item.labels.first().map_or(0, |label| label.width());
             let more = item.labels.len().saturating_sub(1);
             let summary_width = if more == 0 {
                 first
             } else {
-                first + more.to_string().chars().count() + 2
+                first + more.to_string().len() + 2
             };
             summary_width as u16 + 2
         })
@@ -708,7 +709,7 @@ fn render_task_header(
 }
 
 fn label_header_cell(label: &str, max_width: usize) -> Line<'static> {
-    let label_width = label.chars().count();
+    let label_width = label.width();
     if label_width >= max_width {
         return Line::from(label.to_string());
     }
@@ -1047,7 +1048,7 @@ fn build_epic_child_row_cells(
     let ref_prefix = format!("{}{branch} ", if marked { "●" } else { " " });
     let display_ref = truncate_width(
         &item.display_ref,
-        column_widths[0].saturating_sub(ref_prefix.chars().count() + 1),
+        column_widths[0].saturating_sub(ref_prefix.width() + 1),
     );
     let ref_line = Line::from(vec![
         Span::styled(ref_prefix, Style::new().fg(FG_DIM)),
@@ -2184,6 +2185,22 @@ mod tests {
         task.labels = vec!["search".to_string(), "ux".to_string()];
 
         assert_eq!(label_column_width_from_tasks(&[task], false), 11);
+    }
+
+    #[test]
+    fn label_column_width_counts_wide_label_cells() {
+        let mut task = task_list_item("labeled");
+        task.labels = vec!["한글".to_string()];
+
+        assert_eq!(label_column_width_from_tasks(&[task], false), 6);
+    }
+
+    #[tokio::test]
+    async fn project_column_width_counts_wide_key_cells() {
+        let mut store = test_store_with_tasks(vec![task_list_item("task")]).await;
+        store.tasks[0].task.project_key = "프로젝트".to_string();
+
+        assert_eq!(project_column_width(&store, false), 10);
     }
 
     #[test]

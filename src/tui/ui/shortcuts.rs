@@ -561,8 +561,10 @@ fn command_palette_line(
         .iter()
         .map(|span| unicode_width::UnicodeWidthStr::width(span.content.as_ref()))
         .sum::<usize>();
-    let description =
-        super::truncate::truncate_width(command.description, line_width.saturating_sub(used_width));
+    let description = crate::tui::text::truncate_width(
+        command.description,
+        line_width.saturating_sub(used_width),
+    );
     spans.push(Span::styled(description, Style::new().fg(FG_DIM)));
     if unavailable_reason.is_some() {
         for span in &mut spans {

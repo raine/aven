@@ -1,8 +1,10 @@
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
 
 use crate::query::TaskListItem;
 use crate::queue::unix_seconds;
+use crate::tui::text::truncate_width;
 use crate::tui::theme::{self, FG, FG_DIM, FG_MUTED, GREEN, ORANGE, RED};
 
 pub(crate) fn priority_icon(priority: &str) -> &'static str {
@@ -84,7 +86,7 @@ pub(crate) fn title_cell(item: &TaskListItem, max_width: usize) -> Line<'static>
     } else {
         Style::new().fg(FG)
     };
-    let marker_width = marker.chars().count();
+    let marker_width = marker.width();
     let title_width = content_width.saturating_sub(marker_width);
     let title_text = if let Some(group) = item.recurrence_group.as_ref() {
         format!(
@@ -101,7 +103,7 @@ pub(crate) fn title_cell(item: &TaskListItem, max_width: usize) -> Line<'static>
     } else {
         item.task.title.clone()
     };
-    let title = truncate_title(&title_text, title_width);
+    let title = truncate_width(&title_text, title_width);
     Line::from(vec![
         Span::styled(marker, Style::new().fg(ORANGE)),
         Span::styled(title, title_style),
@@ -113,7 +115,7 @@ pub(crate) fn label_cell(labels: &[String], max_width: usize) -> Line<'static> {
         return Line::from("");
     }
     let text = label_summary_text(labels);
-    let text_width = text.chars().count();
+    let text_width = text.width();
     if text.is_empty() || text_width > max_width {
         return Line::from("");
     }
@@ -139,22 +141,6 @@ fn label_summary_text(labels: &[String]) -> String {
     } else {
         format!("{first} +{more}")
     }
-}
-
-fn truncate_title(title: &str, max_width: usize) -> String {
-    let title_len = title.chars().count();
-    if title_len <= max_width {
-        return title.to_string();
-    }
-    if max_width == 0 {
-        return String::new();
-    }
-    if max_width == 1 {
-        return "…".to_string();
-    }
-    let mut truncated = title.chars().take(max_width - 1).collect::<String>();
-    truncated.push('…');
-    truncated
 }
 
 #[cfg(test)]
@@ -210,5 +196,23 @@ mod tests {
         let rendered = title_cell(&item, 12).to_string();
 
         assert_eq!(rendered, "A very lon…");
+    }
+
+    #[test]
+    fn title_cell_truncates_wide_titles_by_cells() {
+        let item = task_list_item("한글입력");
+        let line = title_cell(&item, 6);
+
+        assert_eq!(line.to_string(), "한글…");
+        assert!(line.width() <= 6);
+    }
+
+    #[test]
+    fn label_cell_sizes_wide_labels_by_cells() {
+        let labels = vec!["한글".to_string()];
+        let line = label_cell(&labels, 4);
+
+        assert_eq!(line.to_string(), "한글");
+        assert_eq!(line.width(), 4);
     }
 }

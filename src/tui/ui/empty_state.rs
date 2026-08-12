@@ -12,7 +12,7 @@ use crate::tui::store::{
 };
 use crate::tui::theme::{ACCENT, BG, BG_ALT, FG, FG_DIM, FG_MUTED, RED};
 
-use super::truncate::truncate_width;
+use crate::tui::text::truncate_width;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EmptyStateReason {

@@ -13,7 +13,7 @@ use super::scroll::{clamp_scroll_start, scrollbar_thumb_position};
 use super::task_display::{description_or_placeholder, labels_display};
 use super::task_list::EPIC_MARKER;
 use super::timestamps::local_timestamp_display;
-use super::truncate::truncate_width;
+use super::truncate::truncate_line_width;
 use crate::query::TaskListItem;
 use crate::task_render::{AttachmentMetadataJson, attachment_state_placeholder, human_file_size};
 use crate::tui::app::{DetailSection, DetailTargetId, WidgetState};
@@ -24,6 +24,7 @@ use crate::tui::markdown::{
 };
 use crate::tui::overlay::TextInputView;
 use crate::tui::store::TuiStore;
+use crate::tui::text::truncate_width;
 use crate::tui::theme::{
     self, ACCENT, BG, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, INVERSE_FG, ORANGE, RED, YELLOW,
 };
@@ -2593,39 +2594,7 @@ fn attachment_detail_line(
 }
 
 fn truncate_styled_line(line: Line<'static>, max_width: usize) -> Line<'static> {
-    use unicode_width::UnicodeWidthChar;
-
-    if UnicodeWidthStr::width(line.to_string().as_str()) <= max_width {
-        return line;
-    }
-    if max_width == 0 {
-        return Line::default();
-    }
-
-    let target_width = max_width - 1;
-    let mut used_width = 0;
-    let mut truncated = Vec::new();
-    let mut ellipsis_style = Style::default();
-    'spans: for span in line.spans {
-        let mut content = String::new();
-        ellipsis_style = span.style;
-        for character in span.content.chars() {
-            let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
-            if used_width + character_width > target_width {
-                if !content.is_empty() {
-                    truncated.push(Span::styled(content, span.style));
-                }
-                break 'spans;
-            }
-            content.push(character);
-            used_width += character_width;
-        }
-        if !content.is_empty() {
-            truncated.push(Span::styled(content, span.style));
-        }
-    }
-    truncated.push(Span::styled("…", ellipsis_style));
-    Line::from(truncated)
+    truncate_line_width(line, max_width, Style::default())
 }
 
 fn detail_body_blocks(

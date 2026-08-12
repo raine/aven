@@ -1,7 +1,7 @@
 use ratatui::layout::{Constraint, Flex, Layout, Rect, Size};
 use ratatui::widgets::{Block, Borders, Padding};
 
-use crate::tui::text::cell_width_ranges;
+use crate::tui::text::{cell_width_ranges, str_cells};
 
 use super::{PickerKind, PickerMode, PickerView, TagComboboxView, picker_viewport_start};
 
@@ -177,7 +177,7 @@ pub(crate) fn confirm_layout(terminal_size: Size, prompt: &str) -> ConfirmLayout
 }
 
 pub(crate) fn confirm_width(frame_width: u16, prompt: &str) -> u16 {
-    let prompt_width = prompt.chars().count().saturating_add(4) as u16;
+    let prompt_width = str_cells(prompt).saturating_add(4).min(u16::MAX as usize) as u16;
     prompt_width
         .clamp(32, 80)
         .min(frame_width.saturating_sub(4).max(32))
@@ -290,5 +290,10 @@ mod tests {
 
         assert_eq!(one_match.area.height, unfiltered.area.height);
         assert_eq!(no_matches.area.height, unfiltered.area.height);
+    }
+
+    #[test]
+    fn confirm_width_counts_wide_prompt_cells() {
+        assert_eq!(confirm_width(120, &"한".repeat(20)), 44);
     }
 }

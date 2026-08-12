@@ -5,13 +5,13 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState};
 use unicode_width::UnicodeWidthStr;
 
-use super::truncate::truncate_width;
 use crate::choices::TaskPriority;
 use crate::tui::app::Focus;
 use crate::tui::list_surface::ListSurface;
 use crate::tui::store::{
     SidebarEntry, SidebarEntryTarget, TaskScope, TaskScopeTarget, TaskView, TuiStore,
 };
+use crate::tui::text::truncate_width;
 use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, FG_MUTED, PINK, RED, SELECTED_BG,
     SELECTED_INACTIVE, YELLOW,
@@ -371,7 +371,7 @@ fn filter_item(icon: &str, label: &str, count: i64, color: Color, width: u16) ->
         format!("{icon}  ")
     };
     let count_width = if count > 0 { 2 } else { 1 };
-    let label_width = (width as usize).saturating_sub(icon_cell.chars().count() + count_width + 2);
+    let label_width = (width as usize).saturating_sub(icon_cell.width() + count_width + 2);
     ListItem::new(Line::from(vec![
         Span::styled(icon_cell, Style::new().fg(color)),
         Span::styled(format!("{label:<label_width$}"), Style::new().fg(FG_MUTED)),

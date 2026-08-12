@@ -99,8 +99,9 @@ pub(in crate::tui::ui) fn cursor_cell(content: impl Into<Cow<'static, str>>) -> 
 /// composition at the terminal cursor, so without this the preedit text appears
 /// somewhere unrelated to the field being typed into.
 ///
-/// Cursor cells dimmed by a stacked dialog are ignored: only the caret of the
-/// topmost, active input qualifies.
+/// Cursor cells covered by a stacked dialog no longer retain this exact style:
+/// dialog dimming changes their modifiers or colors, so only the topmost active
+/// input qualifies.
 pub(crate) fn text_cursor_position(buffer: &Buffer) -> Option<Position> {
     let index = buffer.content().iter().position(|cell| {
         Some(cell.fg) == CURSOR_STYLE.fg

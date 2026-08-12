@@ -4,8 +4,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 
-use super::truncate::truncate_width;
 use crate::tui::overlay::dialog_area;
+use crate::tui::text::truncate_width;
 use crate::tui::theme::{ACCENT, BG_ALT, FG, FG_MUTED};
 
 pub(super) struct Dialog<'a> {

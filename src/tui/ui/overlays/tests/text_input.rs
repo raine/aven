@@ -161,6 +161,19 @@ fn project_path_input_marks_truncated_side() {
 }
 
 #[test]
+fn project_path_input_marks_wide_text_by_cell_position() {
+    let input = "한글입력경로";
+
+    let end = project_path_input_line(input, input.len(), 8);
+    assert_eq!(end.spans.first().unwrap().content.as_ref(), "…");
+    assert!(end.width() <= 8);
+
+    let start = project_path_input_line(input, 0, 8);
+    assert_eq!(start.spans.last().unwrap().content.as_ref(), "…");
+    assert!(start.width() <= 8);
+}
+
+#[test]
 fn project_path_input_uses_wide_labeled_dialog() {
     let input = "/Users/raine/code/aven__worktrees/fix-item-20-project-paths/nested/project-paths";
     let rendered = render_overlay_view(OverlayView::TextInput(TextInputView {

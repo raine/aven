@@ -97,6 +97,20 @@ fn picker_viewport_uses_scroll_position() {
 }
 
 #[test]
+fn label_picker_aligns_wide_labels_by_cells() {
+    let item = PickerItem {
+        label: "한글  2 tasks  3 recurring series".to_string(),
+        value: "한글".to_string(),
+        selected: false,
+    };
+
+    let line = super::picker::label_picker_line(&item, false);
+
+    assert_eq!(line.spans[1].width(), 30);
+    assert_eq!(line.width(), 58);
+}
+
+#[test]
 fn project_creation_suggestion_keeps_stable_prefix_color() {
     let suggestion = |name: &str| PickerItem {
         label: format!("+ Create project \"{name}\""),

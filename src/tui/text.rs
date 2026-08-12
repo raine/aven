@@ -1,4 +1,4 @@
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub(crate) fn normalize_pasted_newlines(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
@@ -66,6 +66,34 @@ pub(crate) fn str_cells(text: &str) -> usize {
     text.chars().map(char_cells).sum()
 }
 
+/// Truncates text to a terminal-cell budget and reserves one cell for an
+/// ellipsis when truncation is required.
+pub(crate) fn truncate_width(value: &str, max_width: usize) -> String {
+    if value.width() <= max_width {
+        return value.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width == 1 {
+        return "…".to_string();
+    }
+    let prefix = take_leading_display_cells(value, max_width - 1);
+    format!("{prefix}…")
+}
+
+pub(crate) fn take_leading_display_cells(text: &str, width: usize) -> &str {
+    let mut used = 0;
+    for (index, ch) in text.char_indices() {
+        let char_width = ch.width().unwrap_or(0);
+        if used + char_width > width {
+            return &text[..index];
+        }
+        used += char_width;
+    }
+    text
+}
+
 pub(crate) fn cell_width_ranges(line: &str, width: usize) -> Vec<(usize, usize)> {
     if line.is_empty() {
         return vec![(0, 0)];
@@ -92,11 +120,6 @@ pub(crate) fn segment_index_at(ranges: &[(usize, usize)], cursor: usize) -> usiz
         .iter()
         .position(|(start, end)| cursor < *end || (*start == *end && cursor == *start))
         .unwrap_or_else(|| ranges.len().saturating_sub(1))
-}
-
-pub(crate) fn cell_width_segment_index(line: &str, cursor: usize, width: usize) -> usize {
-    let cursor = char_boundary_at_or_before(line, cursor);
-    segment_index_at(&cell_width_ranges(line, width), cursor)
 }
 
 /// Longest prefix of `text` that fits in `width` cells. Characters that would
@@ -169,12 +192,15 @@ mod tests {
     }
 
     #[test]
-    fn cell_width_segment_index_matches_end_cursor_behavior() {
-        assert_eq!(cell_width_segment_index("abcd", 4, 2), 1);
-        assert_eq!(cell_width_segment_index("abcd", 2, 2), 1);
-        assert_eq!(cell_width_segment_index("한글", "한글".len(), 2), 1);
-        assert_eq!(cell_width_segment_index("한글", 3, 2), 1);
-        assert_eq!(cell_width_segment_index("한글", 0, 2), 0);
+    fn segment_index_matches_end_cursor_behavior() {
+        let ascii = cell_width_ranges("abcd", 2);
+        assert_eq!(segment_index_at(&ascii, 4), 1);
+        assert_eq!(segment_index_at(&ascii, 2), 1);
+
+        let wide = cell_width_ranges("한글", 2);
+        assert_eq!(segment_index_at(&wide, "한글".len()), 1);
+        assert_eq!(segment_index_at(&wide, 3), 1);
+        assert_eq!(segment_index_at(&wide, 0), 0);
     }
 
     #[test]
@@ -184,5 +210,14 @@ mod tests {
         assert_eq!(take_trailing_cells("한글", 3), "글");
         assert_eq!(take_trailing_cells("한글", 1), "");
         assert_eq!(take_trailing_cells("abc", 2), "bc");
+    }
+
+    #[test]
+    fn truncate_width_reserves_ellipsis_by_display_cells() {
+        assert_eq!(truncate_width("abcdef", 4), "abc…");
+        assert_eq!(truncate_width("漢字漢字", 5), "漢字…");
+        assert_eq!(truncate_width("aあb", 3), "a…");
+        assert_eq!(truncate_width("abc", 0), "");
+        assert_eq!(truncate_width("abc", 1), "…");
     }
 }

@@ -33,6 +33,11 @@ fn toast_tone(severity: ToastSeverity) -> ToastTone {
     }
 }
 
+fn toast_width(content: &Line<'_>, frame_width: u16) -> u16 {
+    let content_width = content.width().min(u16::MAX as usize) as u16;
+    content_width.clamp(20, frame_width.saturating_sub(5))
+}
+
 pub(super) fn render_toast(frame: &mut Frame, toast: &Toast) {
     let tone = toast_tone(toast.severity);
     let fill = BG_PANEL;
@@ -56,10 +61,7 @@ pub(super) fn render_toast(frame: &mut Frame, toast: &Toast) {
         Span::styled("", Style::new().fg(fill).bg(BG)),
     ]);
     let content = Line::from(spans);
-    let chrome_width = if toast.icon { 7 } else { 5 };
-    let width = (toast.message.chars().count() as u16)
-        .saturating_add(chrome_width)
-        .clamp(20, frame.area().width.saturating_sub(5));
+    let width = toast_width(&content, frame.area().width);
     let height = 1.min(frame.area().height);
     let x = frame.area().right().saturating_sub(width.saturating_add(3));
     let y = frame
@@ -152,5 +154,11 @@ mod tests {
         let rendered = buffer_text(terminal.backend());
         assert!(rendered.contains("⠋ adding task with LLM"));
         assert!(!rendered.contains("• ⠋ adding task with LLM"));
+    }
+
+    #[test]
+    fn toast_width_counts_wide_content_cells() {
+        assert_eq!(toast_width(&Line::from("한글"), 80), 20);
+        assert_eq!(toast_width(&Line::from("한".repeat(12)), 80), 24);
     }
 }

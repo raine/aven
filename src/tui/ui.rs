@@ -76,6 +76,7 @@ use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Paragraph};
+use unicode_width::UnicodeWidthStr;
 
 use crate::tui::app::{Focus, FooterChoiceMode, WidgetState};
 use crate::tui::list_surface::ListSurface;
@@ -570,7 +571,9 @@ fn render_header_menu(frame: &mut Frame, state: &HeaderMenuView) {
         state
             .items
             .iter()
-            .map(|item| project_prefix_and_name(&item.label).map_or(0, |(prefix, _)| prefix.len()))
+            .map(|item| {
+                project_prefix_and_name(&item.label).map_or(0, |(prefix, _)| prefix.width())
+            })
             .max()
             .unwrap_or(0)
     } else {
@@ -665,9 +668,10 @@ fn header_menu_line(
     if matches!(kind, HeaderMenuKind::Scope)
         && let Some((prefix, name)) = project_prefix_and_name(label)
     {
+        let padding = prefix_width.saturating_sub(prefix.width());
         spans.extend([
             Span::styled(
-                format!("{prefix:<prefix_width$}"),
+                format!("{prefix}{}", " ".repeat(padding)),
                 row_style
                     .fg(crate::tui::theme::project_color(name))
                     .add_modifier(Modifier::BOLD),

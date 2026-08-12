@@ -12,7 +12,7 @@ use crate::tui::overlay::{
     ConfirmView, MultilineInputKind, MultilineInputMode, MultilineInputView,
 };
 use crate::tui::text::{
-    cell_width_ranges, cell_width_segment_index, char_boundary_at_or_before, segment_index_at,
+    cell_width_ranges, char_boundary_at_or_before, segment_index_at, str_cells,
 };
 use crate::tui::theme::{FG, FG_DIM, FG_MUTED};
 
@@ -151,9 +151,29 @@ pub(in crate::tui::ui) fn description_visual_row_count(
     state
         .lines
         .iter()
-        .map(|line| cell_width_ranges(line, line_width).len())
+        .enumerate()
+        .map(|(row, line)| {
+            let cursor = (row == state.row).then(|| char_boundary_at_or_before(line, state.column));
+            editor_cell_width_ranges(line, cursor, line_width).len()
+        })
         .sum::<usize>()
         .max(1)
+}
+
+fn editor_cell_width_ranges(
+    line: &str,
+    cursor: Option<usize>,
+    width: usize,
+) -> Vec<(usize, usize)> {
+    let mut ranges = cell_width_ranges(line, width);
+    if cursor == Some(line.len())
+        && ranges
+            .last()
+            .is_some_and(|(start, end)| str_cells(&line[*start..*end]) >= width.max(1))
+    {
+        ranges.push((line.len(), line.len()));
+    }
+    ranges
 }
 
 pub(in crate::tui::ui) fn description_editor_lines(
@@ -164,10 +184,10 @@ pub(in crate::tui::ui) fn description_editor_lines(
     let mut cursor_row = 0;
     let show_placeholder = state.lines.len() == 1 && state.lines[0].is_empty();
     for (row_index, line) in state.lines.iter().enumerate() {
-        let ranges = cell_width_ranges(line, line_width);
         if row_index == state.row {
             let cursor = char_boundary_at_or_before(line, state.column);
-            let cursor_segment = cell_width_segment_index(line, cursor, line_width);
+            let ranges = editor_cell_width_ranges(line, Some(cursor), line_width);
+            let cursor_segment = segment_index_at(&ranges, cursor);
             cursor_row = lines.len().saturating_add(cursor_segment);
             for (range_index, (start, end)) in ranges.into_iter().enumerate() {
                 if range_index == cursor_segment {
@@ -181,7 +201,7 @@ pub(in crate::tui::ui) fn description_editor_lines(
                 }
             }
         } else {
-            for (start, end) in ranges {
+            for (start, end) in cell_width_ranges(line, line_width) {
                 lines.push(Line::from(line[start..end].to_string()));
             }
         }
@@ -300,9 +320,9 @@ fn render_tail_viewport_multiline(
         .skip(start)
         .take(visible_rows)
     {
-        let ranges = cell_width_ranges(line, line_width);
         let cursor =
             (row_index == state.row).then(|| char_boundary_at_or_before(line, state.column));
+        let ranges = editor_cell_width_ranges(line, cursor, line_width);
         let cursor_segment = cursor.map(|cursor| segment_index_at(&ranges, cursor));
         for (range_index, (range_start, range_end)) in ranges.into_iter().enumerate() {
             let segment_cursor = cursor

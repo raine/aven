@@ -1,4 +1,5 @@
 use super::*;
+use crate::tui::ui::overlays::multiline::description_visual_row_count;
 
 #[test]
 fn overlay_render_includes_multiline_submit_hints() {
@@ -110,6 +111,28 @@ fn edit_description_cursor_row_tracks_wrapped_segment() {
     let (lines, cursor_row) = description_editor_lines(&state, 4);
     assert_eq!(lines.len(), 3);
     assert_eq!(cursor_row, 2);
+}
+
+#[test]
+fn edit_description_wraps_end_caret_after_exact_width_line() {
+    for body in ["abcd", "한글"] {
+        let state = MultilineInputView {
+            kind: MultilineInputKind::EditDescription,
+            title: "Edit description".to_string(),
+            prompt: String::new(),
+            lines: vec![body.to_string()],
+            row: 0,
+            column: body.len(),
+            mode: MultilineInputMode::Compose,
+        };
+
+        let (lines, cursor_row) = description_editor_lines(&state, 4);
+
+        assert_eq!(lines.len(), 2, "{body}");
+        assert_eq!(cursor_row, 1, "{body}");
+        assert_eq!(lines[1].width(), 1, "{body}");
+        assert_eq!(description_visual_row_count(&state, 4), 2, "{body}");
+    }
 }
 
 #[test]

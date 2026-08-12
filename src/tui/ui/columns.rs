@@ -11,11 +11,11 @@ use crate::tui::columns::ColumnBoard;
 use crate::tui::overlay::TextInputView;
 use crate::tui::store::TuiStore;
 use crate::tui::text::str_cells;
+use crate::tui::text::truncate_width;
 use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BG_LANE, BG_LANE_ACTIVE, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED,
     LANE_DIVIDER, ORANGE, RED, SELECTED_BG, YELLOW,
 };
-use crate::tui::ui::truncate::truncate_width;
 use crate::tui::widgets::priority_short;
 use unicode_width::UnicodeWidthStr;
 

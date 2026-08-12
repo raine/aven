@@ -1,6 +1,7 @@
 use ratatui::Frame;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
+use unicode_width::UnicodeWidthStr;
 
 use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::input::prefixed_input_line;
@@ -9,6 +10,7 @@ use crate::tui::overlay::{
     PROJECT_PICKER_VIEWPORT_ROWS, PROJECT_PICKER_WIDTH, PickerItem, PickerKind, PickerMode,
     PickerView, picker_row_count, picker_viewport_start,
 };
+use crate::tui::text::truncate_width;
 use crate::tui::theme::{self, ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, SELECTED};
 use crate::tui::widgets::priority_icon;
 
@@ -207,9 +209,11 @@ pub(in crate::tui::ui) fn label_picker_line(item: &PickerItem, selected: bool) -
     } else {
         Style::new().fg(FG).bg(BG_ALT)
     };
+    let label = truncate_width(label, 30);
+    let label_padding = 30usize.saturating_sub(label.width());
     Line::from(vec![
         Span::styled(format!("{marker} "), row_style),
-        Span::styled(format!("{label:<30}"), label_style),
+        Span::styled(format!("{label}{}", " ".repeat(label_padding)), label_style),
         Span::styled(format!("{task_count:>8}"), row_style),
         Span::styled(format!("{series_count:>18}"), row_style),
     ])

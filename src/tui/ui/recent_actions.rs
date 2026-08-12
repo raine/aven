@@ -7,13 +7,13 @@ use ratatui::widgets::{
 };
 
 use super::timestamps::local_timestamp_display;
-use super::truncate::truncate_width;
 use crate::change_log::op_type;
 use crate::query::RecentActionItem;
 use crate::queue::{now_seconds, unix_seconds};
 use crate::tui::app::Focus;
 use crate::tui::list_surface::ListSurface;
 use crate::tui::store::TuiStore;
+use crate::tui::text::truncate_width;
 use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, PINK, RED, SELECTED,
     SELECTED_INACTIVE, YELLOW,

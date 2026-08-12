@@ -3,15 +3,17 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
+use unicode_width::UnicodeWidthStr;
 
 use super::super::dialog::Dialog;
 use super::super::input::{cursor_cell, input_line};
 use super::super::task_display::labels_display;
 use super::super::task_list::EPIC_MARKER;
-use super::super::truncate::truncate_width;
+use super::super::truncate::truncate_spans_width;
 use crate::query::SearchMatchedField;
 use crate::queue::{now_seconds, unix_seconds};
 use crate::tui::overlay::{SearchKind, SearchResultItem};
+use crate::tui::text::truncate_width;
 use crate::tui::theme::{self, ACCENT, BG, FG, FG_DIM, FG_MUTED, SELECTED};
 use crate::tui::widgets::{priority_icon, status_span};
 
@@ -207,7 +209,7 @@ fn result_line(
     if result.create_new {
         let title_width = width.saturating_sub(2).max(8);
         let title = truncate_width(&result.title, title_width);
-        let used_width = 2 + title.chars().count();
+        let used_width = 2 + title.width();
         let mut spans = vec![Span::styled(format!("{marker} "), style)];
         spans.extend(title_spans(&title, input, result.matched_field, style));
         spans.push(Span::styled(
@@ -222,7 +224,7 @@ fn result_line(
         .saturating_sub(ref_width + 4 + epic_marker_width)
         .max(8);
     let title = truncate_width(&result.title, title_width);
-    let used_width = 2 + ref_width + 1 + title.chars().count() + epic_marker_width;
+    let used_width = 2 + ref_width + 1 + title.width() + epic_marker_width;
     let mut spans = vec![Span::styled(format!("{marker} "), style)];
     spans.extend(result_ref_spans(result, ref_width, style));
     spans.push(Span::styled(" ", style));
@@ -245,7 +247,7 @@ fn result_ref_spans(result: &SearchResultItem, width: usize, style: Style) -> Ve
     let display_ref = truncate_width(&result.display_ref, width);
     let bg = style.bg.unwrap_or(BG);
     if let Some((project, suffix)) = display_ref.split_once('-') {
-        let used_width = project.chars().count() + 1 + suffix.chars().count();
+        let used_width = project.width() + 1 + suffix.width();
         return vec![
             Span::styled(
                 project.to_string(),
@@ -369,7 +371,7 @@ fn result_meta_line(
     if result.deleted {
         spans.push(Span::styled(" deleted", muted));
     }
-    truncate_spans_to_width(&mut spans, width);
+    let mut spans = truncate_spans_width(spans, width, muted);
     let used_width = spans_width(&spans);
     spans.push(Span::styled(
         " ".repeat(width.saturating_sub(used_width)),
@@ -380,7 +382,7 @@ fn result_meta_line(
 
 fn padded_meta_line(value: &str, style: Style, width: usize) -> Line<'static> {
     let value = truncate_width(value, width);
-    let padding = width.saturating_sub(value.chars().count());
+    let padding = width.saturating_sub(value.width());
     Line::from(vec![
         Span::styled(value, style),
         Span::styled(" ".repeat(padding), style),
@@ -392,24 +394,8 @@ fn apply_bg(mut span: Span<'static>, bg: Color) -> Span<'static> {
     span
 }
 
-fn truncate_spans_to_width(spans: &mut Vec<Span<'static>>, width: usize) {
-    let mut used = 0;
-    let mut index = 0;
-    while index < spans.len() {
-        let content_width = spans[index].content.chars().count();
-        if used + content_width > width {
-            let remaining = width.saturating_sub(used);
-            spans[index].content = truncate_width(&spans[index].content, remaining).into();
-            spans.truncate(index + 1);
-            return;
-        }
-        used += content_width;
-        index += 1;
-    }
-}
-
 fn spans_width(spans: &[Span<'static>]) -> usize {
-    spans.iter().map(|span| span.content.chars().count()).sum()
+    spans.iter().map(|span| span.content.as_ref().width()).sum()
 }
 
 fn row_style(selected: bool, stale: bool) -> Style {
@@ -486,4 +472,24 @@ fn search_hint_line(intent: &SearchKind, selected: Option<&SearchResultItem>) ->
         Span::styled(" close", Style::new().fg(FG_DIM)),
     ]);
     Line::from(spans)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn padded_meta_line_fills_cell_width() {
+        let line = padded_meta_line("한글", Style::new(), 4);
+
+        assert_eq!(line.width(), 4);
+    }
+
+    #[test]
+    fn span_truncation_uses_cell_width() {
+        let spans = truncate_spans_width(vec![Span::raw("한글")], 3, Style::default());
+
+        assert_eq!(Line::from(spans.clone()).to_string(), "한…");
+        assert_eq!(spans_width(&spans), 3);
+    }
 }

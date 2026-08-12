@@ -1,57 +1,67 @@
-pub(super) fn truncate_width(value: &str, max_width: usize) -> String {
-    use unicode_width::UnicodeWidthStr;
-    if UnicodeWidthStr::width(value) <= max_width {
-        return value.to_string();
+use ratatui::style::Style;
+use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
+
+use crate::tui::text::take_leading_display_cells;
+
+pub(super) fn truncate_line_width(
+    line: Line<'static>,
+    max_width: usize,
+    ellipsis_style: Style,
+) -> Line<'static> {
+    Line::from(truncate_spans_width(line.spans, max_width, ellipsis_style))
+}
+
+pub(super) fn truncate_spans_width(
+    spans: Vec<Span<'static>>,
+    max_width: usize,
+    mut ellipsis_style: Style,
+) -> Vec<Span<'static>> {
+    if spans.iter().map(Span::width).sum::<usize>() <= max_width {
+        return spans;
     }
     if max_width == 0 {
-        return String::new();
+        return Vec::new();
     }
-    if max_width == 1 {
-        return "…".to_string();
-    }
-    let mut truncated = String::new();
-    let mut width = 0;
-    for ch in value.chars() {
-        let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-        if width + ch_width > max_width - 1 {
+
+    let target_width = max_width - 1;
+    let mut used_width = 0;
+    let mut truncated = Vec::new();
+    for span in spans {
+        ellipsis_style = span.style;
+        let remaining = target_width.saturating_sub(used_width);
+        let content = take_leading_display_cells(&span.content, remaining);
+        used_width += content.width();
+        if !content.is_empty() {
+            truncated.push(Span::styled(content.to_string(), span.style));
+        }
+        if content.len() < span.content.len() || used_width == target_width {
             break;
         }
-        truncated.push(ch);
-        width += ch_width;
     }
-    truncated.push('…');
+    truncated.push(Span::styled("…", ellipsis_style));
     truncated
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::style::Color;
 
     #[test]
-    fn truncate_width_uses_display_width() {
-        assert_eq!(truncate_width("abcdef", 4), "abc…");
-        assert_eq!(truncate_width("漢字漢字", 5), "漢字…");
-    }
+    fn truncates_styled_wide_spans_to_cell_width() {
+        let first_style = Style::new().fg(Color::Blue);
+        let second_style = Style::new().fg(Color::Green);
+        let spans = vec![
+            Span::styled("ab", first_style),
+            Span::styled("한글", second_style),
+        ];
 
-    #[test]
-    fn truncate_width_preserves_short_values() {
-        assert_eq!(truncate_width("abc", 5), "abc");
-    }
+        let truncated = truncate_spans_width(spans, 4, Style::default());
 
-    #[test]
-    fn truncate_width_returns_empty_for_zero_width() {
-        assert_eq!(truncate_width("abc", 0), "");
-    }
-
-    #[test]
-    fn truncate_width_uses_single_ellipsis_for_width_one() {
-        assert_eq!(truncate_width("abc", 1), "…");
-    }
-
-    #[test]
-    fn truncate_width_with_cjk() {
-        // CJK characters have width 2
-        assert_eq!(truncate_width("aあb", 3), "a…");
-        assert_eq!(truncate_width("あいう", 4), "あ…");
+        assert_eq!(Line::from(truncated.clone()).width(), 3);
+        assert_eq!(truncated[0].content.as_ref(), "ab");
+        assert_eq!(truncated[1].content.as_ref(), "…");
+        assert_eq!(truncated[1].style, second_style);
     }
 }

@@ -10,7 +10,7 @@ use super::add_task::{
 };
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::{TextInputKind, TextInputView};
-use crate::tui::text::char_boundary_at_or_before;
+use crate::tui::text::{char_boundary_at_or_before, str_cells};
 use crate::tui::theme::{FG, FG_DIM};
 
 pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInputView) {
@@ -144,14 +144,14 @@ pub(in crate::tui::ui) fn project_path_input_line(
     cursor: usize,
     width: usize,
 ) -> Line<'static> {
-    if input.chars().count().saturating_add(1) <= width || width < 2 {
+    if str_cells(input).saturating_add(1) <= width || width < 2 {
         return clipped_input_line(input, cursor, width);
     }
     let cursor = char_boundary_at_or_before(input, cursor);
-    let cursor_chars = input[..cursor].chars().count();
+    let cursor_cells = str_cells(&input[..cursor]);
     let mut line = clipped_input_line(input, cursor, width.saturating_sub(1));
     let marker = Span::styled("…", Style::new().fg(FG_DIM));
-    if cursor_chars >= width.saturating_sub(1) {
+    if cursor_cells >= width.saturating_sub(1) {
         line.spans.insert(0, marker);
     } else {
         line.spans.push(marker);
