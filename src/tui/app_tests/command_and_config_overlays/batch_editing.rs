@@ -1,5 +1,25 @@
 use super::*;
 
+async fn create_and_select_titled_tasks<const N: usize>(
+    app: &mut App,
+    titles: [&str; N],
+) -> [crate::ids::TaskId; N] {
+    let mut task_ids = Vec::with_capacity(N);
+    for title in titles {
+        let selected = create_and_select_task(app, test_task_draft(title)).await;
+        task_ids.push(app.store.tasks[selected].task.id.clone());
+    }
+    task_ids.try_into().unwrap_or_else(|_| unreachable!())
+}
+
+fn task_item<'a>(app: &'a App, task_id: &crate::ids::TaskId) -> &'a crate::query::TaskListItem {
+    app.store
+        .tasks
+        .iter()
+        .find(|item| &item.task.id == task_id)
+        .unwrap()
+}
+
 #[tokio::test]
 async fn status_shortcut_uses_footer_chooser_for_unmarked_task() {
     let mut app = test_app().await;
@@ -24,10 +44,7 @@ async fn status_shortcut_uses_footer_chooser_for_unmarked_task() {
 #[tokio::test]
 async fn command_palette_captures_bulk_scope_and_single_target_limits() {
     let mut app = test_app().await;
-    let first = create_and_select_task(&mut app, test_task_draft("first")).await;
-    let first_id = app.store.tasks[first].task.id.clone();
-    let second = create_and_select_task(&mut app, test_task_draft("second")).await;
-    let second_id = app.store.tasks[second].task.id.clone();
+    let [first_id, second_id] = create_and_select_titled_tasks(&mut app, ["first", "second"]).await;
     app.list.mark(first_id);
     app.list.mark(second_id);
 
@@ -55,12 +72,8 @@ async fn command_palette_captures_bulk_scope_and_single_target_limits() {
 #[tokio::test]
 async fn status_shortcut_uses_footer_chooser_for_marked_tasks_with_undo() {
     let mut app = test_app().await;
-    let first = create_and_select_task(&mut app, test_task_draft("first")).await;
-    let first_id = app.store.tasks[first].task.id.clone();
-    let second = create_and_select_task(&mut app, test_task_draft("second")).await;
-    let second_id = app.store.tasks[second].task.id.clone();
-    let third = create_and_select_task(&mut app, test_task_draft("third")).await;
-    let third_id = app.store.tasks[third].task.id.clone();
+    let [first_id, second_id, third_id] =
+        create_and_select_titled_tasks(&mut app, ["first", "second", "third"]).await;
     app.list.mark(first_id.clone());
     app.list.mark(second_id.clone());
 
@@ -75,25 +88,16 @@ async fn status_shortcut_uses_footer_chooser_for_marked_tasks_with_undo() {
         .await
         .unwrap();
 
-    let status_for = |app: &App, task_id: &str| {
-        app.store
-            .tasks
-            .iter()
-            .find(|item| item.task.id.as_str() == task_id)
-            .unwrap()
-            .task
-            .status
-    };
-    assert_eq!(status_for(&app, &first_id), TaskStatus::Todo);
-    assert_eq!(status_for(&app, &second_id), TaskStatus::Todo);
-    assert_eq!(status_for(&app, &third_id), TaskStatus::Inbox);
+    assert_eq!(task_item(&app, &first_id).task.status, TaskStatus::Todo);
+    assert_eq!(task_item(&app, &second_id).task.status, TaskStatus::Todo);
+    assert_eq!(task_item(&app, &third_id).task.status, TaskStatus::Inbox);
     assert_eq!(app.list.marked_task_ids().len(), 2);
 
     app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
 
-    assert_eq!(status_for(&app, &first_id), TaskStatus::Inbox);
-    assert_eq!(status_for(&app, &second_id), TaskStatus::Inbox);
-    assert_eq!(status_for(&app, &third_id), TaskStatus::Inbox);
+    assert_eq!(task_item(&app, &first_id).task.status, TaskStatus::Inbox);
+    assert_eq!(task_item(&app, &second_id).task.status, TaskStatus::Inbox);
+    assert_eq!(task_item(&app, &third_id).task.status, TaskStatus::Inbox);
     assert_eq!(app.list.marked_task_ids().len(), 2);
 }
 
@@ -104,13 +108,9 @@ async fn submit_edit_project_updates_only_marked_tasks() {
         .create_project("Mobile App".to_string())
         .await
         .unwrap();
-    let first = create_and_select_task(&mut app, test_task_draft("first")).await;
-    let first_id = app.store.tasks[first].task.id.clone();
-    let second = create_and_select_task(&mut app, test_task_draft("second")).await;
-    let second_id = app.store.tasks[second].task.id.clone();
-    let third = create_and_select_task(&mut app, test_task_draft("third")).await;
-    let third_id = app.store.tasks[third].task.id.clone();
-    let original_project = app.store.tasks[third].task.project_key.clone();
+    let [first_id, second_id, third_id] =
+        create_and_select_titled_tasks(&mut app, ["first", "second", "third"]).await;
+    let original_project = task_item(&app, &third_id).task.project_key.clone();
     app.list.mark(first_id.clone());
     app.list.mark(second_id.clone());
     app.begin_edit_project();
@@ -126,19 +126,12 @@ async fn submit_edit_project_updates_only_marked_tasks() {
         .await
         .unwrap();
 
-    let project_for = |app: &App, task_id: &str| {
-        app.store
-            .tasks
-            .iter()
-            .find(|item| item.task.id.as_str() == task_id)
-            .unwrap()
-            .task
-            .project_key
-            .clone()
-    };
-    assert_eq!(project_for(&app, &first_id), "mobile-app");
-    assert_eq!(project_for(&app, &second_id), "mobile-app");
-    assert_eq!(project_for(&app, &third_id), original_project);
+    assert_eq!(task_item(&app, &first_id).task.project_key, "mobile-app");
+    assert_eq!(task_item(&app, &second_id).task.project_key, "mobile-app");
+    assert_eq!(
+        task_item(&app, &third_id).task.project_key,
+        original_project
+    );
 }
 
 #[tokio::test]
@@ -210,19 +203,9 @@ async fn project_edit_keeps_captured_targets_and_anchor_across_refresh() {
         .await
         .unwrap();
 
-    let project_for = |app: &App, task_id: &crate::ids::TaskId| {
-        app.store
-            .tasks
-            .iter()
-            .find(|item| &item.task.id == task_id)
-            .unwrap()
-            .task
-            .project_key
-            .clone()
-    };
-    assert_eq!(project_for(&app, &first_id), "mobile-app");
-    assert_eq!(project_for(&app, &second_id), "mobile-app");
-    assert_ne!(project_for(&app, &third_id), "mobile-app");
+    assert_eq!(task_item(&app, &first_id).task.project_key, "mobile-app");
+    assert_eq!(task_item(&app, &second_id).task.project_key, "mobile-app");
+    assert_ne!(task_item(&app, &third_id).task.project_key, "mobile-app");
     assert_eq!(
         app.store
             .selected_task(app.list.selected_task())
@@ -234,12 +217,8 @@ async fn project_edit_keeps_captured_targets_and_anchor_across_refresh() {
 #[tokio::test]
 async fn empty_project_retry_keeps_captured_targets() {
     let mut app = test_app().await;
-    let first = create_and_select_task(&mut app, test_task_draft("first")).await;
-    let first_id = app.store.tasks[first].task.id.clone();
-    let second = create_and_select_task(&mut app, test_task_draft("second")).await;
-    let second_id = app.store.tasks[second].task.id.clone();
-    let third = create_and_select_task(&mut app, test_task_draft("third")).await;
-    let third_id = app.store.tasks[third].task.id.clone();
+    let [first_id, second_id, third_id] =
+        create_and_select_titled_tasks(&mut app, ["first", "second", "third"]).await;
     app.list.mark(first_id.clone());
     app.list.mark(second_id.clone());
     app.begin_edit_project();
@@ -275,12 +254,8 @@ async fn empty_project_retry_keeps_captured_targets() {
 #[tokio::test]
 async fn submit_edit_priority_updates_only_marked_tasks() {
     let mut app = test_app().await;
-    let first = create_and_select_task(&mut app, test_task_draft("first")).await;
-    let first_id = app.store.tasks[first].task.id.clone();
-    let second = create_and_select_task(&mut app, test_task_draft("second")).await;
-    let second_id = app.store.tasks[second].task.id.clone();
-    let third = create_and_select_task(&mut app, test_task_draft("third")).await;
-    let third_id = app.store.tasks[third].task.id.clone();
+    let [first_id, second_id, third_id] =
+        create_and_select_titled_tasks(&mut app, ["first", "second", "third"]).await;
     app.list.mark(first_id.clone());
     app.list.mark(second_id.clone());
     app.begin_edit_priority();
@@ -296,18 +271,12 @@ async fn submit_edit_priority_updates_only_marked_tasks() {
         .await
         .unwrap();
 
-    let priority_for = |app: &App, task_id: &str| {
-        app.store
-            .tasks
-            .iter()
-            .find(|item| item.task.id.as_str() == task_id)
-            .unwrap()
-            .task
-            .priority
-    };
-    assert_eq!(priority_for(&app, &first_id), TaskPriority::High);
-    assert_eq!(priority_for(&app, &second_id), TaskPriority::High);
-    assert_eq!(priority_for(&app, &third_id), TaskPriority::None);
+    assert_eq!(task_item(&app, &first_id).task.priority, TaskPriority::High);
+    assert_eq!(
+        task_item(&app, &second_id).task.priority,
+        TaskPriority::High
+    );
+    assert_eq!(task_item(&app, &third_id).task.priority, TaskPriority::None);
 }
 
 #[tokio::test]
@@ -340,14 +309,7 @@ async fn mixed_marked_due_dates_keep_then_set_and_undo_as_one_batch() {
     ));
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     assert_eq!(
-        app.store
-            .tasks
-            .iter()
-            .find(|item| item.task.id == first_id)
-            .unwrap()
-            .task
-            .due_on
-            .as_deref(),
+        task_item(&app, &first_id).task.due_on.as_deref(),
         Some("2099-01-01")
     );
 
@@ -356,51 +318,19 @@ async fn mixed_marked_due_dates_keep_then_set_and_undo_as_one_batch() {
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     for task_id in [&first_id, &second_id] {
         assert_eq!(
-            app.store
-                .tasks
-                .iter()
-                .find(|item| &item.task.id == task_id)
-                .unwrap()
-                .task
-                .due_on
-                .as_deref(),
+            task_item(&app, task_id).task.due_on.as_deref(),
             Some("2099-02-02")
         );
     }
-    assert!(
-        app.store
-            .tasks
-            .iter()
-            .find(|item| item.task.id == third_id)
-            .unwrap()
-            .task
-            .due_on
-            .is_none()
-    );
+    assert!(task_item(&app, &third_id).task.due_on.is_none());
     assert_eq!(app.list.marked_task_ids().len(), 2);
 
     app.undo_last().await.unwrap();
     assert_eq!(
-        app.store
-            .tasks
-            .iter()
-            .find(|item| item.task.id == first_id)
-            .unwrap()
-            .task
-            .due_on
-            .as_deref(),
+        task_item(&app, &first_id).task.due_on.as_deref(),
         Some("2099-01-01")
     );
-    assert!(
-        app.store
-            .tasks
-            .iter()
-            .find(|item| item.task.id == second_id)
-            .unwrap()
-            .task
-            .due_on
-            .is_none()
-    );
+    assert!(task_item(&app, &second_id).task.due_on.is_none());
 }
 
 #[tokio::test]
@@ -444,26 +374,14 @@ async fn clearing_marked_due_dates_requires_confirmation() {
         .unwrap();
 
     for task_id in [first_id, second_id] {
-        assert!(
-            app.store
-                .tasks
-                .iter()
-                .find(|item| item.task.id == task_id)
-                .unwrap()
-                .task
-                .due_on
-                .is_none()
-        );
+        assert!(task_item(&app, &task_id).task.due_on.is_none());
     }
 }
 
 #[tokio::test]
 async fn begin_delete_task_confirms_marked_tasks_when_tasks_are_marked() {
     let mut app = test_app().await;
-    let first = create_and_select_task(&mut app, test_task_draft("first")).await;
-    let first_id = app.store.tasks[first].task.id.clone();
-    let second = create_and_select_task(&mut app, test_task_draft("second")).await;
-    let second_id = app.store.tasks[second].task.id.clone();
+    let [first_id, second_id] = create_and_select_titled_tasks(&mut app, ["first", "second"]).await;
     app.list.mark(first_id);
 
     app.begin_delete_task();
@@ -488,12 +406,8 @@ async fn begin_delete_task_confirms_marked_tasks_when_tasks_are_marked() {
 #[tokio::test]
 async fn update_deleted_updates_only_marked_tasks() {
     let mut app = test_app().await;
-    let first = create_and_select_task(&mut app, test_task_draft("first")).await;
-    let first_id = app.store.tasks[first].task.id.clone();
-    let second = create_and_select_task(&mut app, test_task_draft("second")).await;
-    let second_id = app.store.tasks[second].task.id.clone();
-    let third = create_and_select_task(&mut app, test_task_draft("third")).await;
-    let third_id = app.store.tasks[third].task.id.clone();
+    let [first_id, second_id, third_id] =
+        create_and_select_titled_tasks(&mut app, ["first", "second", "third"]).await;
     app.list.mark(first_id.clone());
     app.list.mark(second_id.clone());
 
@@ -542,12 +456,8 @@ async fn edit_labels_shortcut_uses_selected_task_without_marks() {
 async fn submit_edit_labels_multi_updates_only_marked_tasks() {
     let mut app = test_app().await;
     app.store.create_label("batch".to_string()).await.unwrap();
-    let first = create_and_select_task(&mut app, test_task_draft("first")).await;
-    let first_id = app.store.tasks[first].task.id.clone();
-    let second = create_and_select_task(&mut app, test_task_draft("second")).await;
-    let second_id = app.store.tasks[second].task.id.clone();
-    let third = create_and_select_task(&mut app, test_task_draft("third")).await;
-    let third_id = app.store.tasks[third].task.id.clone();
+    let [first_id, second_id, third_id] =
+        create_and_select_titled_tasks(&mut app, ["first", "second", "third"]).await;
     app.list.mark(first_id.clone());
     app.list.mark(second_id.clone());
     app.begin_edit_labels();
@@ -563,16 +473,10 @@ async fn submit_edit_labels_multi_updates_only_marked_tasks() {
         .await
         .unwrap();
 
-    let labels_for = |app: &App, task_id: &str| {
-        app.store
-            .tasks
-            .iter()
-            .find(|item| item.task.id.as_str() == task_id)
-            .unwrap()
-            .labels
-            .clone()
-    };
-    assert_eq!(labels_for(&app, &first_id), vec!["batch".to_string()]);
-    assert_eq!(labels_for(&app, &second_id), vec!["batch".to_string()]);
-    assert!(labels_for(&app, &third_id).is_empty());
+    assert_eq!(task_item(&app, &first_id).labels, vec!["batch".to_string()]);
+    assert_eq!(
+        task_item(&app, &second_id).labels,
+        vec!["batch".to_string()]
+    );
+    assert!(task_item(&app, &third_id).labels.is_empty());
 }
