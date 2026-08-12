@@ -9,7 +9,7 @@ use crate::ids::{ProjectId, TaskId, WorkspaceId};
 use crate::recurrence::{
     RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceOutcome, RecurrenceRule,
     RecurrenceSchedule, RecurrenceSeriesId, RecurrenceSeriesState, TimeZoneId, WeekdaySet,
-    derive_occurrence_identity, is_slot, slot_values,
+    derive_occurrence_identity, is_slot,
 };
 use crate::sync::wire::ChangeWire;
 use crate::task_fields::TaskField;
@@ -435,10 +435,6 @@ async fn apply_outcome(conn: &mut SqliteConnection, change: &ChangeWire) -> Resu
     ensure!(
         is_slot(&schedule.rule, schedule.start_on, slot_on),
         "error recurrence-slot-off-lattice slot={slot_on}"
-    );
-    ensure!(
-        resolved_at >= slot_values(&schedule, slot_on)?.boundary_at,
-        "error invalid-sync-change recurrence-resolution-before-slot"
     );
     let task_id = str_payload(&change.payload, "task_id")?.parse::<TaskId>()?;
     let existing = sqlx::query(

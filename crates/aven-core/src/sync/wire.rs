@@ -921,10 +921,10 @@ fn validate_recurrence_outcome(change: &ChangeWire) -> Result<()> {
     }
     let outcome = RecurrenceOutcome::parse(&required_string_payload("outcome", &change.payload)?)
         .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}"))?;
-    let resolved_at = required_timestamp_payload("resolved_at", &change.payload)?;
-    if resolved_at < crate::recurrence::slot_values(&schedule, slot_on)?.boundary_at {
-        bail!("error invalid-sync-change recurrence-resolution-before-slot");
-    }
+    // Clients may resolve the projected occurrence before its slot begins
+    // (e.g. canceling the final occurrence of a stopped series), so
+    // resolved_at is validated for format only, not ordered against the slot.
+    required_timestamp_payload("resolved_at", &change.payload)?;
     let conflict_resolution = change
         .payload
         .get("conflict_resolution")

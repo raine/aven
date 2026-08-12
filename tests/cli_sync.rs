@@ -3835,6 +3835,61 @@ fn recurrence_complete_skip_creates_series_conflict_without_blocking_projection(
 }
 
 #[test]
+fn recurrence_resolution_before_slot_syncs_and_applies() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("recurrence-early-a.sqlite");
+    let b = env.db("recurrence-early-b.sqlite");
+    let tomorrow = chrono::Utc::now()
+        .date_naive()
+        .checked_add_days(chrono::Days::new(1))
+        .unwrap()
+        .to_string();
+    let output = ok(env.aven(
+        &a,
+        [
+            "add",
+            "early cancel",
+            "--repeat",
+            "daily",
+            "--repeat-due",
+            "same-day",
+            "--time-zone",
+            "UTC",
+            "--repeat-start-on",
+            &tomorrow,
+        ],
+    ));
+    let series_ref = output.split_whitespace().nth(1).unwrap().to_string();
+    let occurrence_ref = output
+        .split_whitespace()
+        .find_map(|part| part.strip_prefix("occurrence="))
+        .unwrap()
+        .trim_matches('"')
+        .to_string();
+    ok(env.aven(&a, ["recur", "stop", &series_ref]));
+    ok(env.aven(&a, ["edit", &occurrence_ref, "--status", "canceled"]));
+
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    for db in [&a, &b] {
+        assert_eq!(
+            query_sql_scalar(db, "SELECT outcome FROM recurrence_occurrences"),
+            "skipped"
+        );
+        assert_eq!(
+            query_sql_scalar(db, "SELECT projection_state FROM recurrence_occurrences"),
+            "resolved"
+        );
+        assert_eq!(
+            scalar_i64(db, "SELECT count(*) FROM conflicts WHERE resolved = 0"),
+            0
+        );
+    }
+}
+
+#[test]
 fn recurrence_active_stop_race_preserves_tasks_and_blocks_projection() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
