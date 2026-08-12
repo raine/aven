@@ -123,6 +123,42 @@ async fn load_epic_pair(
     Ok(EpicPair { epic, child })
 }
 
+async fn insert_epic_link_if_absent(
+    conn: &mut SqliteConnection,
+    pair: &EpicPair,
+    created_at: &str,
+) -> Result<bool> {
+    let existing_epic_id = sqlx::query_scalar::<_, crate::ids::TaskId>(
+        "SELECT epic_task_id FROM task_epic_links WHERE workspace_id = ? AND child_task_id = ?",
+    )
+    .bind(&pair.child.workspace_id)
+    .bind(&pair.child.id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    if let Some(existing_epic_id) = existing_epic_id
+        && existing_epic_id != pair.epic.id
+    {
+        bail!(
+            "error epic-child-already-linked child_task_id={} epic_task_id={}",
+            pair.child.id,
+            existing_epic_id
+        );
+    }
+
+    Ok(sqlx::query(
+        "INSERT OR IGNORE INTO task_epic_links(workspace_id, epic_task_id, child_task_id, created_at)
+         VALUES (?, ?, ?, ?)",
+    )
+    .bind(&pair.child.workspace_id)
+    .bind(&pair.epic.id)
+    .bind(&pair.child.id)
+    .bind(created_at)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected()
+        > 0)
+}
+
 async fn record_epic_change(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
@@ -221,34 +257,7 @@ pub(crate) async fn add_task_to_epic_in_transaction(
     if promoted {
         mark_task_as_epic(conn, workspace, &pair.epic).await?;
     }
-    let existing_epic_id = sqlx::query_scalar::<_, crate::ids::TaskId>(
-        "SELECT epic_task_id FROM task_epic_links WHERE workspace_id = ? AND child_task_id = ?",
-    )
-    .bind(&pair.child.workspace_id)
-    .bind(&pair.child.id)
-    .fetch_optional(&mut *conn)
-    .await?;
-    if let Some(existing_epic_id) = existing_epic_id
-        && existing_epic_id != pair.epic.id
-    {
-        bail!(
-            "error epic-child-already-linked child_task_id={} epic_task_id={}",
-            pair.child.id,
-            existing_epic_id
-        );
-    }
-    let changed = sqlx::query(
-        "INSERT OR IGNORE INTO task_epic_links(workspace_id, epic_task_id, child_task_id, created_at)
-         VALUES (?, ?, ?, ?)",
-    )
-    .bind(&pair.child.workspace_id)
-    .bind(&pair.epic.id)
-    .bind(&pair.child.id)
-    .bind(&ts)
-    .execute(&mut *conn)
-    .await?
-    .rows_affected()
-        > 0;
+    let changed = insert_epic_link_if_absent(conn, &pair, &ts).await?;
 
     if changed {
         record_epic_change(conn, workspace, &pair, op_type::EPIC_LINK_ADD).await?;
@@ -269,34 +278,8 @@ pub(crate) async fn restore_task_to_epic_in_transaction(
     epic_id: &crate::ids::TaskId,
 ) -> Result<EpicLinkOutcome> {
     let pair = load_epic_pair(conn, workspace, child_id, epic_id).await?;
-    let existing_epic_id = sqlx::query_scalar::<_, crate::ids::TaskId>(
-        "SELECT epic_task_id FROM task_epic_links WHERE workspace_id = ? AND child_task_id = ?",
-    )
-    .bind(&pair.child.workspace_id)
-    .bind(&pair.child.id)
-    .fetch_optional(&mut *conn)
-    .await?;
-    if let Some(existing_epic_id) = existing_epic_id
-        && existing_epic_id != pair.epic.id
-    {
-        bail!(
-            "error epic-child-already-linked child_task_id={} epic_task_id={}",
-            pair.child.id,
-            existing_epic_id
-        );
-    }
-    let changed = sqlx::query(
-        "INSERT OR IGNORE INTO task_epic_links(workspace_id, epic_task_id, child_task_id, created_at)
-         VALUES (?, ?, ?, ?)",
-    )
-    .bind(&pair.child.workspace_id)
-    .bind(&pair.epic.id)
-    .bind(&pair.child.id)
-    .bind(now())
-    .execute(&mut *conn)
-    .await?
-    .rows_affected()
-        > 0;
+    let ts = now();
+    let changed = insert_epic_link_if_absent(conn, &pair, &ts).await?;
     if changed {
         record_epic_change(conn, workspace, &pair, op_type::EPIC_LINK_ADD).await?;
     }
