@@ -41,6 +41,31 @@ fn event_after_queued_wheel(direction: MouseEventKind) -> Result<Option<Event>> 
 }
 
 impl App {
+    /// Renders one frame and leaves the terminal cursor on the caret of the
+    /// focused text input.
+    ///
+    /// The TUI paints its own cursor cell, so Ratatui hides the terminal cursor
+    /// and would otherwise leave it wherever the buffer diff stopped writing.
+    /// Input method editors draw their in-progress composition at the terminal
+    /// cursor, so Korean, Japanese, and Chinese preedit text would appear at an
+    /// unrelated cell instead of at the caret.
+    fn draw(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
+        let view = self.view();
+        terminal.draw(|frame| {
+            ui::render(frame, &self.store, &mut self.widgets, &mut self.list, &view)
+        })?;
+        self.park_terminal_cursor(terminal);
+        Ok(())
+    }
+
+    /// Moves the hidden terminal cursor onto the last rendered caret. Called
+    /// again after inline image emission because those writes move the cursor.
+    fn park_terminal_cursor(&self, terminal: &mut DefaultTerminal) {
+        if let Some(position) = self.widgets.text_cursor {
+            let _ = terminal.set_cursor_position(position);
+        }
+    }
+
     pub(crate) async fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
         let result = self.run_loop(terminal).await;
@@ -131,11 +156,9 @@ impl App {
             }
 
             if needs_redraw {
-                let view = self.view();
-                terminal.draw(|frame| {
-                    ui::render(frame, &self.store, &mut self.widgets, &mut self.list, &view)
-                })?;
+                self.draw(terminal)?;
                 needs_redraw = self.render_inline_images_after_draw(terminal).is_err();
+                self.park_terminal_cursor(terminal);
             }
 
             let timeout = self.next_poll_timeout();
@@ -240,10 +263,7 @@ impl App {
         self.inline_images.reconcile_displayed(&current, backend);
 
         if repaint {
-            let view = self.view();
-            terminal.draw(|frame| {
-                ui::render(frame, &self.store, &mut self.widgets, &mut self.list, &view)
-            })?;
+            self.draw(terminal)?;
         }
         if backend == InlineImageBackend::None {
             return Ok(());
@@ -282,10 +302,7 @@ impl App {
             ) {
                 let repaint = self.erase_previous_inline_images().unwrap_or(false);
                 if repaint {
-                    let view = self.view();
-                    let _ = terminal.draw(|frame| {
-                        ui::render(frame, &self.store, &mut self.widgets, &mut self.list, &view)
-                    });
+                    let _ = self.draw(terminal);
                 }
                 return Err(error.into());
             }
@@ -293,10 +310,7 @@ impl App {
         if let Err(error) = stdout.flush() {
             let repaint = self.erase_previous_inline_images().unwrap_or(false);
             if repaint {
-                let view = self.view();
-                let _ = terminal.draw(|frame| {
-                    ui::render(frame, &self.store, &mut self.widgets, &mut self.list, &view)
-                });
+                let _ = self.draw(terminal);
             }
             return Err(error.into());
         }

@@ -13,7 +13,7 @@ pub(crate) use self::hit_test::TaskListHit;
 use super::input::clipped_input_line;
 use super::task_display::{description_or_placeholder, labels_display};
 use super::timestamps::local_timestamp_display;
-use super::truncate::truncate_chars;
+use super::truncate::truncate_width;
 use crate::query::{TaskListItem, TaskSort};
 use crate::queue::{now_seconds, unix_seconds};
 use crate::tui::app::Focus;
@@ -1045,7 +1045,7 @@ fn build_epic_child_row_cells(
 ) -> Vec<Line<'static>> {
     let branch = if last { "└─" } else { "├─" };
     let ref_prefix = format!("{}{branch} ", if marked { "●" } else { " " });
-    let display_ref = truncate_chars(
+    let display_ref = truncate_width(
         &item.display_ref,
         column_widths[0].saturating_sub(ref_prefix.chars().count() + 1),
     );
@@ -1225,7 +1225,7 @@ fn compact_age(age_seconds: i64) -> String {
 }
 
 fn project_cell(item: &TaskListItem, max_width: usize) -> Line<'static> {
-    let project = truncate_chars(&item.task.project_key, max_width.saturating_sub(1));
+    let project = truncate_width(&item.task.project_key, max_width.saturating_sub(1));
     Line::from(vec![
         Span::styled(
             project,
@@ -1299,7 +1299,7 @@ fn availability_preview_line(
     )?;
     let countdown = relative.strip_prefix("available ").unwrap_or(&relative);
     let fixed_width = "available ".len() + countdown.len() + " · ".len();
-    let local = truncate_chars(&local, width.saturating_sub(fixed_width));
+    let local = truncate_width(&local, width.saturating_sub(fixed_width));
 
     Some(Line::from(vec![
         Span::styled("available ", Style::new().fg(FG_DIM)),
@@ -1317,7 +1317,7 @@ fn due_preview_line(item: &TaskListItem, now_seconds: i64, width: usize) -> Opti
     let [relative, date] = crate::tui::time::due_summary_lines(due_on, now_seconds)?;
     let relative = relative.strip_prefix("due ").unwrap_or(&relative);
     let fixed_width = "due ".len() + relative.len() + " · ".len();
-    let date = truncate_chars(&date, width.saturating_sub(fixed_width));
+    let date = truncate_width(&date, width.saturating_sub(fixed_width));
     let color = if !item.task.status.is_open() {
         FG_MUTED
     } else {

@@ -10,11 +10,12 @@ use crate::tui::app::Focus;
 use crate::tui::columns::ColumnBoard;
 use crate::tui::overlay::TextInputView;
 use crate::tui::store::TuiStore;
+use crate::tui::text::str_cells;
 use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BG_LANE, BG_LANE_ACTIVE, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED,
     LANE_DIVIDER, ORANGE, RED, SELECTED_BG, YELLOW,
 };
-use crate::tui::ui::truncate::{truncate_chars, truncate_width};
+use crate::tui::ui::truncate::truncate_width;
 use crate::tui::widgets::priority_short;
 use unicode_width::UnicodeWidthStr;
 
@@ -387,12 +388,12 @@ fn card_title_lines(title: &str, max_width: usize) -> Vec<Line<'static>> {
     let mut lines = [String::new(), String::new()];
     for line in &mut lines {
         while let Some(word) = words.peek().copied() {
-            let needed = usize::from(!line.is_empty()) + word.chars().count();
-            if !line.is_empty() && line.chars().count() + needed > max_width {
+            let needed = usize::from(!line.is_empty()) + str_cells(word);
+            if !line.is_empty() && str_cells(line) + needed > max_width {
                 break;
             }
-            if line.is_empty() && word.chars().count() > max_width {
-                *line = truncate_chars(word, max_width);
+            if line.is_empty() && str_cells(word) > max_width {
+                *line = truncate_width(word, max_width);
                 words.next();
                 break;
             }
@@ -404,7 +405,7 @@ fn card_title_lines(title: &str, max_width: usize) -> Vec<Line<'static>> {
         }
     }
     if words.peek().is_some() {
-        lines[1] = truncate_chars(&format!("{} …", lines[1]), max_width);
+        lines[1] = truncate_width(&format!("{} …", lines[1]), max_width);
     }
     lines
         .into_iter()

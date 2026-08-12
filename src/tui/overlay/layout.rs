@@ -1,7 +1,7 @@
 use ratatui::layout::{Constraint, Flex, Layout, Rect, Size};
 use ratatui::widgets::{Block, Borders, Padding};
 
-use crate::tui::text::char_count_ranges;
+use crate::tui::text::cell_width_ranges;
 
 use super::{PickerKind, PickerMode, PickerView, TagComboboxView, picker_viewport_start};
 
@@ -162,7 +162,7 @@ fn picker_visible_start(state: &PickerView, viewport_rows: usize) -> usize {
 
 pub(crate) fn confirm_layout(terminal_size: Size, prompt: &str) -> ConfirmLayout {
     let width = confirm_width(terminal_size.width, prompt);
-    let prompt_rows = char_count_ranges(prompt, width.saturating_sub(4) as usize).len();
+    let prompt_rows = cell_width_ranges(prompt, width.saturating_sub(4) as usize).len();
     let height = prompt_rows.saturating_add(4) as u16;
     let area = dialog_area(
         Rect::new(0, 0, terminal_size.width, terminal_size.height),

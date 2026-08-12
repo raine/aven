@@ -12,7 +12,7 @@ use crate::tui::overlay::{
     ConfirmView, MultilineInputKind, MultilineInputMode, MultilineInputView,
 };
 use crate::tui::text::{
-    cell_width_ranges, char_boundary_at_or_before, char_count_ranges, char_count_segment_index,
+    cell_width_ranges, cell_width_segment_index, char_boundary_at_or_before, segment_index_at,
 };
 use crate::tui::theme::{FG, FG_DIM, FG_MUTED};
 
@@ -151,7 +151,7 @@ pub(in crate::tui::ui) fn description_visual_row_count(
     state
         .lines
         .iter()
-        .map(|line| char_count_ranges(line, line_width).len())
+        .map(|line| cell_width_ranges(line, line_width).len())
         .sum::<usize>()
         .max(1)
 }
@@ -164,10 +164,10 @@ pub(in crate::tui::ui) fn description_editor_lines(
     let mut cursor_row = 0;
     let show_placeholder = state.lines.len() == 1 && state.lines[0].is_empty();
     for (row_index, line) in state.lines.iter().enumerate() {
-        let ranges = char_count_ranges(line, line_width);
+        let ranges = cell_width_ranges(line, line_width);
         if row_index == state.row {
             let cursor = char_boundary_at_or_before(line, state.column);
-            let cursor_segment = char_count_segment_index(line, cursor, line_width);
+            let cursor_segment = cell_width_segment_index(line, cursor, line_width);
             cursor_row = lines.len().saturating_add(cursor_segment);
             for (range_index, (start, end)) in ranges.into_iter().enumerate() {
                 if range_index == cursor_segment {
@@ -303,14 +303,7 @@ fn render_tail_viewport_multiline(
         let ranges = cell_width_ranges(line, line_width);
         let cursor =
             (row_index == state.row).then(|| char_boundary_at_or_before(line, state.column));
-        let cursor_segment = cursor.and_then(|cursor| {
-            ranges
-                .iter()
-                .position(|(range_start, range_end)| {
-                    cursor < *range_end || (*range_start == *range_end && cursor == *range_start)
-                })
-                .or_else(|| ranges.len().checked_sub(1))
-        });
+        let cursor_segment = cursor.map(|cursor| segment_index_at(&ranges, cursor));
         for (range_index, (range_start, range_end)) in ranges.into_iter().enumerate() {
             let segment_cursor = cursor
                 .filter(|_| cursor_segment == Some(range_index))

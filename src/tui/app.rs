@@ -113,10 +113,14 @@ fn loading_frame(started_at: Instant) -> &'static str {
     frames[(elapsed / 120) % frames.len()]
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct WidgetState {
     pub(crate) inline_image_placements: Vec<crate::tui::ui::DetailInlineImagePlacement>,
     pub(crate) detail_document: Option<std::rc::Rc<crate::tui::ui::DetailDocument>>,
+    /// Cell holding the caret of the focused text input in the last rendered
+    /// frame, parked on the terminal cursor after every draw so IME preedit
+    /// text appears where the user is typing.
+    pub(crate) text_cursor: Option<ratatui::layout::Position>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -272,10 +276,7 @@ impl App {
             should_quit: false,
             list: ListSurface::new(has_tasks),
             intake: IntakeController::new(),
-            widgets: WidgetState {
-                inline_image_placements: Vec::new(),
-                detail_document: None,
-            },
+            widgets: WidgetState::default(),
             overlay: None,
             onboarding_intro: None,
             notification: None,

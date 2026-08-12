@@ -7,7 +7,7 @@ use ratatui::widgets::{
 };
 
 use super::timestamps::local_timestamp_display;
-use super::truncate::truncate_chars;
+use super::truncate::truncate_width;
 use crate::change_log::op_type;
 use crate::query::RecentActionItem;
 use crate::queue::{now_seconds, unix_seconds};
@@ -203,7 +203,7 @@ fn render_action_row(
         row_style.bg.unwrap_or(BG),
     );
     let sync_marker = if action.synced { "✓" } else { "•" };
-    let summary = truncate_chars(&action.summary, cells[4].width.saturating_sub(1) as usize);
+    let summary = truncate_width(&action.summary, cells[4].width.saturating_sub(1) as usize);
     let values = [
         Line::from(vec![Span::styled(
             format!(" {when}"),
@@ -219,7 +219,7 @@ fn render_action_row(
             ),
             Span::styled(" ", row_style),
             Span::styled(
-                truncate_chars(&action.verb, cells[1].width.saturating_sub(4) as usize),
+                truncate_width(&action.verb, cells[1].width.saturating_sub(4) as usize),
                 row_style.fg(FG),
             ),
         ]),
@@ -271,7 +271,7 @@ fn action_project_cell(
     let Some(project_key) = project_key else {
         return Line::from("");
     };
-    let project = truncate_chars(project_key, max_width.saturating_sub(1));
+    let project = truncate_width(project_key, max_width.saturating_sub(1));
     Line::from(vec![
         Span::styled(project, Style::new().fg(FG_MUTED).bg(bg)),
         Span::styled(" ", Style::new().bg(bg)),
