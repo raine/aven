@@ -871,19 +871,59 @@ mod tests {
         )
     }
 
-    fn compile_fixture() -> (tempfile::TempDir, PathBuf) {
-        let dir = tempfile::tempdir().unwrap();
-        let source =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/custom_command_process.rs");
-        let executable = dir.path().join("custom-command-process");
-        let status = std::process::Command::new("rustc")
-            .args(["--edition=2024", "-o"])
-            .arg(&executable)
-            .arg(source)
-            .status()
-            .unwrap();
-        assert!(status.success());
-        (dir, executable)
+    fn compile_fixture() -> PathBuf {
+        use std::collections::hash_map::DefaultHasher;
+        use std::fs::OpenOptions;
+        use std::hash::{Hash, Hasher};
+
+        const SOURCE: &str = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/custom_command_process.rs"
+        ));
+
+        let current_exe = std::env::current_exe().unwrap();
+        let mut hasher = DefaultHasher::new();
+        SOURCE.hash(&mut hasher);
+        current_exe.hash(&mut hasher);
+        let fixture_dir = current_exe
+            .parent()
+            .unwrap()
+            .join("custom-command-fixtures");
+        std::fs::create_dir_all(&fixture_dir).unwrap();
+        let executable = fixture_dir.join(format!("custom-command-process-{:x}", hasher.finish()));
+        if executable.exists() {
+            return executable;
+        }
+
+        let lock = executable.with_extension("lock");
+        loop {
+            match OpenOptions::new().write(true).create_new(true).open(&lock) {
+                Ok(lock_file) => {
+                    let temporary =
+                        executable.with_extension(format!("tmp-{}", std::process::id()));
+                    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("tests/fixtures/custom_command_process.rs");
+                    let status = std::process::Command::new("rustc")
+                        .args(["--edition=2024", "-o"])
+                        .arg(&temporary)
+                        .arg(source)
+                        .status()
+                        .unwrap();
+                    assert!(status.success());
+                    std::fs::rename(temporary, &executable).unwrap();
+                    drop(lock_file);
+                    std::fs::remove_file(lock).unwrap();
+                    return executable;
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    if executable.exists() {
+                        return executable;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("could not coordinate custom command fixture: {error}"),
+            }
+        }
     }
 
     fn process_is_running(pid: i32) -> bool {
@@ -924,7 +964,7 @@ mod tests {
     #[tokio::test]
     async fn waiting_command_drains_output_while_delivering_input() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
-        let (_dir, fixture) = compile_fixture();
+        let fixture = compile_fixture();
         let input = vec![b'i'; 256 * 1024];
         let mut controller = CustomCommandController::default();
         controller
@@ -946,7 +986,7 @@ mod tests {
     #[tokio::test]
     async fn nonzero_exit_includes_stderr_diagnostic() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
-        let (_dir, fixture) = compile_fixture();
+        let fixture = compile_fixture();
         let mut controller = CustomCommandController::default();
         controller
             .launch(fixture_invocation(
@@ -967,7 +1007,7 @@ mod tests {
     #[tokio::test]
     async fn nonzero_exit_uses_stdout_when_stderr_is_empty() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
-        let (_dir, fixture) = compile_fixture();
+        let fixture = compile_fixture();
         let mut controller = CustomCommandController::default();
         controller
             .launch(fixture_invocation(
@@ -988,7 +1028,7 @@ mod tests {
     #[tokio::test]
     async fn failure_does_not_include_input_unless_child_echoes_it() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
-        let (_dir, fixture) = compile_fixture();
+        let fixture = compile_fixture();
         let input = br#"{"secret":"task JSON marker"}"#.to_vec();
         let mut controller = CustomCommandController::default();
         controller
@@ -1018,7 +1058,7 @@ mod tests {
     #[tokio::test]
     async fn output_above_retention_limit_is_drained_and_successful() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
-        let (_dir, fixture) = compile_fixture();
+        let fixture = compile_fixture();
         let mut controller = CustomCommandController::default();
         controller
             .launch_with_timeouts(
@@ -1039,7 +1079,7 @@ mod tests {
     #[tokio::test]
     async fn large_failure_retains_tail_and_marks_truncation() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
-        let (_dir, fixture) = compile_fixture();
+        let fixture = compile_fixture();
         let mut controller = CustomCommandController::default();
         controller
             .launch(fixture_invocation(
@@ -1128,7 +1168,7 @@ mod tests {
     #[tokio::test]
     async fn waiting_timeout_covers_blocked_input_delivery() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
-        let (_dir, fixture) = compile_fixture();
+        let fixture = compile_fixture();
         let mut controller = CustomCommandController::default();
         let started = Instant::now();
         controller
@@ -1152,7 +1192,7 @@ mod tests {
     #[tokio::test]
     async fn planned_cwd_and_environment_override_reach_the_child() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
-        let (_dir, fixture) = compile_fixture();
+        let fixture = compile_fixture();
         let state = tempfile::tempdir().unwrap();
         let cwd = state.path().join("working-directory");
         std::fs::create_dir(&cwd).unwrap();
@@ -1185,7 +1225,7 @@ mod tests {
     #[tokio::test]
     async fn configured_timeout_bounds_input_output_and_wait_phases() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
-        let (_dir, fixture) = compile_fixture();
+        let fixture = compile_fixture();
         let state = tempfile::tempdir().unwrap();
         let cases = [
             ("never-read", vec![b'i'; 256 * 1024], None),
@@ -1276,7 +1316,7 @@ mod tests {
     #[tokio::test]
     async fn waiting_command_reports_closed_stdin_as_input_failure() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
-        let (_dir, fixture) = compile_fixture();
+        let fixture = compile_fixture();
         let mut controller = CustomCommandController::default();
         controller
             .launch_with_timeouts(
@@ -1298,7 +1338,7 @@ mod tests {
     #[tokio::test]
     async fn timeout_terminates_descendants_holding_output_open() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
-        let (_dir, fixture) = compile_fixture();
+        let fixture = compile_fixture();
         let state = tempfile::tempdir().unwrap();
         let pid_file = state.path().join("descendant.pid");
         let mut command = fixture_invocation(
@@ -1323,7 +1363,7 @@ mod tests {
     #[tokio::test]
     async fn shutdown_terminates_waiting_process_tree() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
-        let (_dir, fixture) = compile_fixture();
+        let fixture = compile_fixture();
         let state = tempfile::tempdir().unwrap();
         let pid_file = state.path().join("descendant.pid");
         let mut command = fixture_invocation(
@@ -1353,7 +1393,7 @@ mod tests {
     #[tokio::test]
     async fn background_input_delivery_is_bounded_and_cleans_up() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
-        let (_dir, fixture) = compile_fixture();
+        let fixture = compile_fixture();
         let mut controller = CustomCommandController::default();
         controller
             .launch_with_timeouts(
@@ -1375,7 +1415,7 @@ mod tests {
     #[tokio::test]
     async fn background_closed_stdin_reports_handoff_failure() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
-        let (_dir, fixture) = compile_fixture();
+        let fixture = compile_fixture();
         let mut controller = CustomCommandController::default();
         controller
             .launch_with_timeouts(
@@ -1398,7 +1438,7 @@ mod tests {
     #[tokio::test]
     async fn successful_background_handoff_survives_controller_shutdown() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
-        let (_dir, fixture) = compile_fixture();
+        let fixture = compile_fixture();
         let state = tempfile::tempdir().unwrap();
         let pid_file = state.path().join("background.pid");
         let mut command = fixture_invocation(
@@ -1432,7 +1472,7 @@ mod tests {
     #[tokio::test]
     async fn background_command_ignores_completion_timeout_and_reports_complete_input_handoff() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
-        let (_dir, fixture) = compile_fixture();
+        let fixture = compile_fixture();
         let state = tempfile::tempdir().unwrap();
         let output = state.path().join("background.json");
         let input = br#"{"version":1}"#.to_vec();
@@ -1460,7 +1500,7 @@ mod tests {
     #[tokio::test]
     async fn completions_preserve_invocation_identity_out_of_launch_order() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
-        let (_dir, fixture) = compile_fixture();
+        let fixture = compile_fixture();
         let mut controller = CustomCommandController::default();
         let slow = controller
             .launch(fixture_invocation(
