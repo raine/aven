@@ -3,6 +3,11 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.29 (2026-08-12)
+
+- Configure experimental [custom TUI commands](/custom-commands/) to run local programs from the command palette or keybindings and pass selected or marked task context.
+- Fix: CJK, emoji, and other wide-character text fits correctly in TUI fields and layouts, and input method composition appears at the active caret. ([#10](https://github.com/raine/aven/pull/10))
+
 ## v0.1.28 (2026-08-10)
 
 - Sync is more reliable on slow or unstable connections, coordinates daemon and manual operations, and downloads only attachments referenced by live tasks.
