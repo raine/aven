@@ -19,6 +19,7 @@ const DIAGNOSTIC_WIDTH_LIMIT: usize = 512;
 const BACKGROUND_INPUT_TIMEOUT: Duration = Duration::from_secs(5);
 const TERMINATION_GRACE: Duration = Duration::from_millis(500);
 const IO_CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
+const INPUT_FAILURE_EXIT_GRACE: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CustomCommandInvocationId(u64);
@@ -446,7 +447,14 @@ async fn supervise_waiting(
         }
     }
 
-    let cleanup = if stop_reason.is_some() {
+    if stop_reason == Some(StopReason::InputFailure)
+        && status_result.is_none()
+        && let Ok(result) = tokio::time::timeout(INPUT_FAILURE_EXIT_GRACE, child.wait()).await
+    {
+        status_result = Some(result);
+    }
+    let status_preceded_cleanup = status_result.is_some();
+    let cleanup = if stop_reason.is_some() && !status_preceded_cleanup {
         phase.send_replace(InvocationPhase::Canceling);
         terminate_and_reap(child, process).await.err()
     } else {
@@ -465,16 +473,8 @@ async fn supervise_waiting(
     let stderr_result = flatten_task(stderr_result.expect("stderr result collected"));
     let status_result = status_result.expect("status result collected");
 
-    if let Err(error) = stdin_result
-        && stop_reason != Some(StopReason::Timeout)
-        && stop_reason != Some(StopReason::Canceled)
-    {
-        return Err(with_cleanup(
-            format!("could not send input to :{name}: {error}"),
-            cleanup.as_ref(),
-        ));
-    }
-    if stop_reason.is_none()
+    if (stop_reason.is_none()
+        || stop_reason == Some(StopReason::InputFailure) && status_preceded_cleanup)
         && let Ok(status) = &status_result
         && !status.success()
     {
@@ -500,7 +500,16 @@ async fn supervise_waiting(
             error.push_str(": ");
             error.push_str(&diagnostic);
         }
-        return Err(with_cleanup(error, cleanup.as_ref()));
+        return Err(error);
+    }
+    if let Err(error) = stdin_result
+        && stop_reason != Some(StopReason::Timeout)
+        && stop_reason != Some(StopReason::Canceled)
+    {
+        return Err(with_cleanup(
+            format!("could not send input to :{name}: {error}"),
+            cleanup.as_ref(),
+        ));
     }
     if stop_reason == Some(StopReason::Timeout) {
         return Err(with_cleanup(
@@ -1029,7 +1038,7 @@ mod tests {
     async fn failure_does_not_include_input_unless_child_echoes_it() {
         let _test_guard = PROCESS_TEST_LOCK.lock().await;
         let fixture = compile_fixture();
-        let input = br#"{"secret":"task JSON marker"}"#.to_vec();
+        let input = br#"{"secret":"task JSON marker"}"#.repeat(32 * 1024);
         let mut controller = CustomCommandController::default();
         controller
             .launch(fixture_invocation(
