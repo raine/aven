@@ -454,7 +454,9 @@ async fn supervise_waiting(
         status_result = Some(result);
     }
     let status_preceded_cleanup = status_result.is_some();
-    let cleanup = if stop_reason.is_some() && !status_preceded_cleanup {
+    let exited_after_input_failure =
+        stop_reason == Some(StopReason::InputFailure) && status_preceded_cleanup;
+    let cleanup = if stop_reason.is_some() && !exited_after_input_failure {
         phase.send_replace(InvocationPhase::Canceling);
         terminate_and_reap(child, process).await.err()
     } else {
