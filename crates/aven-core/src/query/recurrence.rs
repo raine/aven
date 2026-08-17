@@ -642,10 +642,7 @@ fn build_history_entries(
         })
         .map(|occurrence| occurrence.slot_on);
     let current_slot = live_slot.max(projected_slot);
-    let created_on = DateTime::parse_from_rfc3339(&series.created_at)?
-        .with_timezone(&series.timezone.timezone())
-        .date_naive()
-        .max(series.start_on);
+    let history_start = series.start_on;
     let stop_at = series
         .stopped_at
         .as_deref()
@@ -704,7 +701,7 @@ fn build_history_entries(
     }
 
     if let Some(current_slot) = current_slot {
-        for slot_on in schedule.slots_on_or_after(created_on) {
+        for slot_on in schedule.slots_on_or_after(history_start) {
             if slot_on >= current_slot {
                 break;
             }
@@ -948,8 +945,12 @@ async fn load_task_display_refs(
 
 fn rule_label(frequency: String, interval: u32, weekdays: String) -> String {
     match (frequency.as_str(), interval, weekdays.as_str()) {
-        ("daily", _, _) => "daily".to_string(),
-        ("monthly", _, _) => "monthly".to_string(),
+        ("daily", 1, _) => "daily".to_string(),
+        ("daily", interval, _) => format!("every {interval} days"),
+        ("monthly", 1, _) => "monthly".to_string(),
+        ("monthly", interval, _) => format!("every {interval} months"),
+        ("yearly", 1, _) => "yearly".to_string(),
+        ("yearly", interval, _) => format!("every {interval} years"),
         ("weekly", 1, "mon,tue,wed,thu,fri") => "weekdays".to_string(),
         ("weekly", 1, days) => format!("weekly on {days}"),
         ("weekly", interval, days) => format!("every {interval} weeks on {days}"),

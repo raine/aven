@@ -3,7 +3,7 @@ use crate::ids::{MetadataFieldId, ProjectId, TaskId, WorkspaceId};
 use crate::recurrence::{
     RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceOutcome, RecurrenceProjectionState,
     RecurrenceRule, RecurrenceSchedule, RecurrenceSeriesId, RecurrenceSeriesState, TimeZoneId,
-    WeekdaySet, derive_occurrence_identity, is_slot, slot_values,
+    WeekdaySet, derive_occurrence_identity, is_slot,
 };
 use crate::task_fields::TaskField;
 use anyhow::{Context, Result, bail, ensure};
@@ -1184,8 +1184,6 @@ fn validate_recurrence_snapshot(
             "error invalid-export-snapshot recurrence slot={} is outside the series lattice",
             slot_on
         );
-        let slot = slot_values(&series.schedule, slot_on)?;
-        let boundary = DateTime::parse_from_rfc3339(&slot.boundary_at)?;
         let creation_date = series
             .created_at
             .with_timezone(&series.schedule.timezone.timezone())
@@ -1195,14 +1193,6 @@ fn validate_recurrence_snapshot(
             "error invalid-export-snapshot recurrence slot={} precedes the series lifecycle",
             slot_on
         );
-        if let Some(stopped_at) = series.stopped_at {
-            ensure!(
-                boundary <= stopped_at,
-                "error invalid-export-snapshot recurrence slot={} exceeds the stop boundary",
-                slot_on
-            );
-        }
-
         let projection_state = RecurrenceProjectionState::parse(&row.projection_state)?;
         let outcome = optional_import_text(&row.outcome)
             .map(RecurrenceOutcome::parse)
@@ -1247,8 +1237,14 @@ fn validate_recurrence_snapshot(
             );
         }
         for value in [resolved_at, archived_at].into_iter().flatten() {
-            DateTime::parse_from_rfc3339(value)
+            let activity_at = DateTime::parse_from_rfc3339(value)
                 .context("invalid recurrence occurrence timestamp")?;
+            if let Some(stopped_at) = series.stopped_at {
+                ensure!(
+                    activity_at <= stopped_at,
+                    "error invalid-export-snapshot recurrence activity exceeds the stop boundary"
+                );
+            }
         }
 
         if let Some(task_id) = task_id {

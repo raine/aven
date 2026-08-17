@@ -3,6 +3,10 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.30 (2026-08-17)
+
+- Recurring tasks support every N days, months, or years, including anchored month-end and leap-day behavior without schedule drift.
+
 ## v0.1.29 (2026-08-12)
 
 - Configure experimental [custom TUI commands](/custom-commands/) to run local programs from the command palette or keybindings and pass selected or marked task context.

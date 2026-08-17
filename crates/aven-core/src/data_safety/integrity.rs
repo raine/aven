@@ -13,7 +13,7 @@ use crate::db::{
     recurrence_occurrence_from_row, recurrence_pause_interval_from_row, recurrence_series_from_row,
     recurrence_series_label_from_row,
 };
-use crate::recurrence::{RecurrenceSchedule, derive_occurrence_identity, is_slot, slot_values};
+use crate::recurrence::{RecurrenceSchedule, derive_occurrence_identity, is_slot};
 
 use super::IntegrityCheck;
 
@@ -277,13 +277,18 @@ async fn recurrence_row_checks(conn: &mut SqliteConnection) -> Result<Vec<Integr
             }
         }
         if let Some(stopped_at) = &series.stopped_at {
-            let boundary = slot_values(&schedule, occurrence.slot_on)
-                .ok()
-                .and_then(|slot| DateTime::parse_from_rfc3339(&slot.boundary_at).ok());
             let stopped = DateTime::parse_from_rfc3339(stopped_at).ok();
-            if boundary
-                .zip(stopped)
-                .is_none_or(|(boundary, stopped)| boundary > stopped)
+            let activity = occurrence
+                .resolved_at
+                .as_deref()
+                .or(occurrence.archived_at.as_deref());
+            if stopped.is_none()
+                || activity.is_some_and(|value| {
+                    DateTime::parse_from_rfc3339(value)
+                        .ok()
+                        .zip(stopped)
+                        .is_none_or(|(at, stop)| at > stop)
+                })
             {
                 stop_boundary_violations += 1;
             }
@@ -715,6 +720,35 @@ mod tests {
 
         let checks = recurrence_integrity_checks(&mut conn).await.unwrap();
         assert!(checks.iter().all(|check| check.ok), "{checks:#?}");
+    }
+
+    #[tokio::test]
+    async fn stopped_series_may_keep_a_future_projected_occurrence() {
+        let (_temp, mut conn) = test_conn().await;
+        let (series_id, schedule, project_id) = insert_series_fixture(&mut conn).await;
+        insert_occurrence_task(
+            &mut conn,
+            &series_id,
+            &schedule,
+            &project_id,
+            NaiveDate::from_ymd_opt(2026, 7, 22).unwrap(),
+            "projected",
+            "todo",
+        )
+        .await;
+        sqlx::query(
+            "UPDATE recurrence_series SET state = 'stopped', stopped_at = '2026-07-20T12:00:00Z' WHERE id = ?",
+        )
+        .bind(series_id.to_string())
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        let checks = recurrence_integrity_checks(&mut conn).await.unwrap();
+        assert!(
+            check(&checks, "recurrence stop boundaries").ok,
+            "{checks:#?}"
+        );
     }
 
     #[tokio::test]

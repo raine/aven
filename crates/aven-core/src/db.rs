@@ -1316,6 +1316,33 @@ mod tests {
         .unwrap();
 
         sqlx::query(
+            "INSERT INTO recurrence_series(
+                workspace_id, id, title, description, project_id, priority, initial_status,
+                frequency, interval, weekdays, timezone, start_on, available_local_time,
+                due_policy, state, created_at, updated_at
+             ) VALUES
+                ('0000000000000000', '7KQ9A1X4MV2P8D7A', 'days', '',
+                 '7KQ9A1X4MV2P8D6S', 'none', 'todo', 'daily', 3, '', 'UTC',
+                 '2026-07-20', '', 'same_day', 'active', 't', 't'),
+                ('0000000000000000', '7KQ9A1X4MV2P8D7B', 'months', '',
+                 '7KQ9A1X4MV2P8D6S', 'none', 'todo', 'monthly', 3, '', 'UTC',
+                 '2026-07-20', '', 'same_day', 'active', 't', 't'),
+                ('0000000000000000', '7KQ9A1X4MV2P8D7C', 'years', '',
+                 '7KQ9A1X4MV2P8D6S', 'none', 'todo', 'yearly', 2, '', 'UTC',
+                 '2026-07-20', '', 'same_day', 'active', 't', 't')",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        for invalid in [
+            "INSERT INTO recurrence_series(workspace_id,id,title,description,project_id,priority,initial_status,frequency,interval,weekdays,timezone,start_on,available_local_time,due_policy,state,created_at,updated_at) VALUES ('0000000000000000','7KQ9A1X4MV2P8D7D','bad','','7KQ9A1X4MV2P8D6S','none','todo','daily',0,'','UTC','2026-07-20','','same_day','active','t','t')",
+            "INSERT INTO recurrence_series(workspace_id,id,title,description,project_id,priority,initial_status,frequency,interval,weekdays,timezone,start_on,available_local_time,due_policy,state,created_at,updated_at) VALUES ('0000000000000000','7KQ9A1X4MV2P8D7E','bad','','7KQ9A1X4MV2P8D6S','none','todo','monthly',2,'mon','UTC','2026-07-20','','same_day','active','t','t')",
+            "INSERT INTO recurrence_series(workspace_id,id,title,description,project_id,priority,initial_status,frequency,interval,weekdays,timezone,start_on,available_local_time,due_policy,state,created_at,updated_at) VALUES ('0000000000000000','7KQ9A1X4MV2P8D7F','bad','','7KQ9A1X4MV2P8D6S','none','todo','weekly',2,'','UTC','2026-07-20','','same_day','active','t','t')",
+        ] {
+            assert!(sqlx::query(invalid).execute(&mut *conn).await.is_err());
+        }
+
+        sqlx::query(
             "UPDATE recurrence_series SET title = 'future journal' WHERE id = '7KQ9A1X4MV2P8D6R'",
         )
         .execute(&mut *conn)

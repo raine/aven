@@ -19,7 +19,7 @@ use crate::recurrence::{
 };
 use crate::task_fields::TaskField;
 
-pub const SYNC_PROTOCOL_VERSION: u32 = 13;
+pub const SYNC_PROTOCOL_VERSION: u32 = 14;
 const MAX_CHANGE_PAYLOAD_BYTES: usize = 64 * 1024;
 pub fn sync_server_url_is_valid(server: &str) -> bool {
     let Ok(url) = url::Url::parse(server) else {
@@ -921,10 +921,7 @@ fn validate_recurrence_outcome(change: &ChangeWire) -> Result<()> {
     }
     let outcome = RecurrenceOutcome::parse(&required_string_payload("outcome", &change.payload)?)
         .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}"))?;
-    let resolved_at = required_timestamp_payload("resolved_at", &change.payload)?;
-    if resolved_at < crate::recurrence::slot_values(&schedule, slot_on)?.boundary_at {
-        bail!("error invalid-sync-change recurrence-resolution-before-slot");
-    }
+    required_timestamp_payload("resolved_at", &change.payload)?;
     let conflict_resolution = change
         .payload
         .get("conflict_resolution")
@@ -1868,7 +1865,7 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(serde_json::to_value(delete).unwrap(), delete_value);
-        assert_eq!(SYNC_PROTOCOL_VERSION, 13);
+        assert_eq!(SYNC_PROTOCOL_VERSION, 14);
     }
 
     #[test]

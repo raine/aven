@@ -439,7 +439,7 @@ fn consumer_api_reuses_pure_recurrence_enums() {
 }
 
 #[tokio::test]
-async fn consumer_api_round_trips_monthly_recurrence_rules() {
+async fn consumer_api_round_trips_monthly_and_yearly_recurrence_rules() {
     let directory = tempfile::tempdir().unwrap();
     let store = Store::open(directory.path().join("monthly.sqlite"))
         .await
@@ -461,6 +461,16 @@ async fn consumer_api_round_trips_monthly_recurrence_rules() {
             .frequency,
         RecurrenceFrequency::Monthly
     );
+
+    let mut yearly = daily_series("biennial review");
+    yearly.schedule.rule.frequency = RecurrenceFrequency::Yearly;
+    yearly.schedule.rule.interval = 2;
+    let created = store
+        .create_recurrence_series(&workspace.id, yearly)
+        .await
+        .unwrap();
+    assert_eq!(created.series.rule.frequency, RecurrenceFrequency::Yearly);
+    assert_eq!(created.series.rule.interval, 2);
 }
 
 #[tokio::test]

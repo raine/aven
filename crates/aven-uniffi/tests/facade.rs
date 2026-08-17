@@ -173,7 +173,7 @@ fn monthly_series(title: &str) -> CreateRecurrenceSeries {
 }
 
 #[test]
-fn recurrence_facade_round_trips_monthly_rules() {
+fn recurrence_facade_round_trips_monthly_and_yearly_rules() {
     let directory = tempfile::tempdir().unwrap();
     let client = AvenClient::open(
         directory
@@ -191,13 +191,22 @@ fn recurrence_facade_round_trips_monthly_rules() {
     assert_eq!(created.series.rule.frequency, RecurrenceFrequency::Monthly);
     assert_eq!(
         client
-            .show_recurrence_series(workspace.id, created.series_ref)
+            .show_recurrence_series(workspace.id.clone(), created.series_ref)
             .unwrap()
             .series
             .rule
             .frequency,
         RecurrenceFrequency::Monthly
     );
+
+    let mut yearly = daily_series("facade biennial");
+    yearly.schedule.rule.frequency = RecurrenceFrequency::Yearly;
+    yearly.schedule.rule.interval = 2;
+    let created = client
+        .create_recurrence_series(workspace.id, yearly)
+        .unwrap();
+    assert_eq!(created.series.rule.frequency, RecurrenceFrequency::Yearly);
+    assert_eq!(created.series.rule.interval, 2);
 }
 
 #[test]

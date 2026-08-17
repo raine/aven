@@ -200,9 +200,14 @@ pub(in crate::tui::ui) fn render_add_task_full_frame(frame: &mut Frame, state: &
 fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect, dialog_area: Rect) {
     let mut lines = add_task_metadata_lines(state, content.width);
     if state.schedule_error.is_some() && state.schedule_validation_requested {
+        let guidance = if crate::schedule_input::recurrence_intent(&state.schedule_input) {
+            crate::recurrence_input::rule_guidance()
+        } else {
+            crate::schedule_input::schedule_guidance()
+        };
         lines.push(fit_line_to_width(
             Line::from(Span::styled(
-                format!("  Schedule: {}", crate::schedule_input::schedule_guidance()),
+                format!("  Schedule: {guidance}"),
                 Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
             )),
             content.width as usize,
@@ -590,7 +595,10 @@ const COMPOSER_HELP_TOPICS: &[(&str, &str)] = &[
         "when the task becomes actionable; empty = now",
     ),
     ("One-off Due", "due date; empty = no due date"),
-    ("Repeat", "daily · weekdays · every Friday · every 3 weeks"),
+    (
+        "Repeat",
+        "daily · every 3 days · monthly · yearly · every Friday",
+    ),
     (
         "Repeat Available",
         "time each occurrence appears; empty = start of day",
@@ -735,7 +743,7 @@ fn schedule_editor_lines(editor: &ScheduleEditorState) -> Vec<Line<'static>> {
         } else if error.contains("invalid-due") {
             "Due: try next Friday or leave empty"
         } else if editor.mode == ScheduleEditorMode::Repeat {
-            "Repeat: use daily, weekdays, every Friday, or every 3 weeks"
+            "Repeat: use daily · every 3 days · monthly · yearly"
         } else {
             crate::schedule_input::schedule_guidance()
         };

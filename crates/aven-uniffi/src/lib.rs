@@ -161,6 +161,7 @@ pub enum RecurrenceFrequency {
     Daily,
     Weekly,
     Monthly,
+    Yearly,
 }
 
 impl From<RecurrenceFrequency> for core_api::RecurrenceFrequency {
@@ -169,6 +170,7 @@ impl From<RecurrenceFrequency> for core_api::RecurrenceFrequency {
             RecurrenceFrequency::Daily => Self::Daily,
             RecurrenceFrequency::Weekly => Self::Weekly,
             RecurrenceFrequency::Monthly => Self::Monthly,
+            RecurrenceFrequency::Yearly => Self::Yearly,
         }
     }
 }
@@ -179,6 +181,7 @@ impl From<core_api::RecurrenceFrequency> for RecurrenceFrequency {
             core_api::RecurrenceFrequency::Daily => Self::Daily,
             core_api::RecurrenceFrequency::Weekly => Self::Weekly,
             core_api::RecurrenceFrequency::Monthly => Self::Monthly,
+            core_api::RecurrenceFrequency::Yearly => Self::Yearly,
         }
     }
 }

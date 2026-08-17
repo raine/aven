@@ -19,7 +19,7 @@ const SYNC_OPPOSITE_DEP_CHANGE_ID: &str = "FFFFFFFFFFFFFFFF";
 const SYNC_CLIENT_ID: &str = "GGGGGGGGGGGGGGGG";
 const MAX_PUSH_BATCH: usize = 256;
 const MAX_PULL_BATCH: usize = 512;
-const SYNC_PROTOCOL_VERSION: u32 = 13;
+const SYNC_PROTOCOL_VERSION: u32 = 14;
 
 fn sync_round_values(output: &str, key: &str) -> Vec<u64> {
     output
@@ -34,6 +34,15 @@ fn sync_round_values(output: &str, key: &str) -> Vec<u64> {
 }
 
 fn add_daily_recurrence(env: &TestEnv, db: &std::path::Path, title: &str) -> (String, String) {
+    add_recurrence(env, db, title, "daily")
+}
+
+fn add_recurrence(
+    env: &TestEnv,
+    db: &std::path::Path,
+    title: &str,
+    rule: &str,
+) -> (String, String) {
     let today = chrono::Utc::now().date_naive().to_string();
     let output = ok(env.aven(
         db,
@@ -41,7 +50,7 @@ fn add_daily_recurrence(env: &TestEnv, db: &std::path::Path, title: &str) -> (St
             "add",
             title,
             "--repeat",
-            "daily",
+            rule,
             "--repeat-due",
             "same-day",
             "--time-zone",
@@ -2679,7 +2688,7 @@ fn old_request_protocol_version_is_rejected_before_changes_are_stored() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let body = serde_json::json!({
-        "protocol_version": 9,
+        "protocol_version": 13,
         "client_id": "old-client",
         "after": 0,
         "changes": [project_change_json("old-version-change", "old-version")]
@@ -2690,7 +2699,7 @@ fn old_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        &format!("error sync-protocol-unsupported client=9 server={SYNC_PROTOCOL_VERSION}"),
+        &format!("error sync-protocol-unsupported client=13 server={SYNC_PROTOCOL_VERSION}"),
     );
 }
 
@@ -2725,7 +2734,7 @@ fn wrong_response_protocol_version_is_rejected() {
     let changes_before = scalar_i64(&db, "SELECT count(*) FROM changes");
     let sync_cursor_before = meta_value(&db, "sync_cursor");
     let server = start_fake_sync_server(json!({
-        "protocol_version": 0,
+        "protocol_version": 13,
         "cursor": 7,
         "has_more": false,
         "push_acks": [],
@@ -2736,7 +2745,7 @@ fn wrong_response_protocol_version_is_rejected() {
     contains_all(
         &error,
         &[&format!(
-            "error sync-protocol-unsupported client={SYNC_PROTOCOL_VERSION} server=0"
+            "error sync-protocol-unsupported client={SYNC_PROTOCOL_VERSION} server=13"
         )],
     );
     assert_eq!(
@@ -3676,6 +3685,92 @@ async fn recurrence_server_rejects_malformed_and_deterministically_mismatched_pa
             .await
             .unwrap()
             .contains("recurrence-deterministic-mismatch")
+    );
+}
+
+#[test]
+fn recurrence_intervals_and_yearly_rules_sync_with_deterministic_occurrences() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("recurrence-interval-a.sqlite");
+    let b = env.db("recurrence-interval-b.sqlite");
+    for (title, rule) in [
+        ("multi day", "every 3 days"),
+        ("multi month", "every 3 months"),
+        ("yearly", "yearly"),
+        ("multi year", "every 2 years"),
+    ] {
+        add_recurrence(&env, &a, title, rule);
+    }
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    assert_eq!(
+        query_sql_scalar(
+            &a,
+            "SELECT group_concat(frequency || ':' || interval, ',') FROM recurrence_series ORDER BY title",
+        ),
+        query_sql_scalar(
+            &b,
+            "SELECT group_concat(frequency || ':' || interval, ',') FROM recurrence_series ORDER BY title",
+        )
+    );
+    assert_eq!(
+        query_sql_scalar(
+            &a,
+            "SELECT group_concat(slot_on || ':' || task_id, ',') FROM recurrence_occurrences ORDER BY series_id",
+        ),
+        query_sql_scalar(
+            &b,
+            "SELECT group_concat(slot_on || ':' || task_id, ',') FROM recurrence_occurrences ORDER BY series_id",
+        )
+    );
+}
+
+#[test]
+fn future_recurrence_resolutions_sync_and_converge() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("recurrence-future-a.sqlite");
+    let b = env.db("recurrence-future-b.sqlite");
+    let start = (chrono::Utc::now().date_naive() + chrono::Days::new(1)).to_string();
+    let output = ok(env.aven(
+        &a,
+        [
+            "add",
+            "future recurrence",
+            "--repeat",
+            "daily",
+            "--repeat-due",
+            "same-day",
+            "--time-zone",
+            "UTC",
+            "--repeat-start-on",
+            &start,
+        ],
+    ));
+    let series_ref = output.split_whitespace().nth(1).unwrap().to_string();
+
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    ok(env.aven(&a, ["recur", "skip", &series_ref]));
+    ok(env.aven(&b, ["recur", "skip", &series_ref]));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    sync(&env, &a, &server);
+
+    assert_eq!(
+        query_sql_scalar(
+            &a,
+            "SELECT group_concat(slot_on || ':' || task_id || ':' || outcome, ',') FROM recurrence_occurrences ORDER BY slot_on",
+        ),
+        query_sql_scalar(
+            &b,
+            "SELECT group_concat(slot_on || ':' || task_id || ':' || outcome, ',') FROM recurrence_occurrences ORDER BY slot_on",
+        )
+    );
+    assert_eq!(
+        scalar_i64(&a, "SELECT count(*) FROM changes WHERE server_seq IS NULL"),
+        0
     );
 }
 

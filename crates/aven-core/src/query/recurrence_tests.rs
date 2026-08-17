@@ -541,6 +541,38 @@ async fn recurrence_history_pages_preserve_metadata_and_boundaries() {
 }
 
 #[tokio::test]
+async fn history_includes_lattice_slots_before_series_creation() {
+    let (_temp, database, workspace) = setup().await;
+    let created = database
+        .create_recurrence_series(
+            &workspace,
+            CreateRecurrenceSeriesParams::new(draft("past start", 20)).at(at(24, 12)),
+        )
+        .await
+        .unwrap();
+
+    let history = database
+        .recurrence_history_at(&workspace.id, &created.series.id, at(24, 12), 0, 20)
+        .await
+        .unwrap();
+    assert_eq!(history.total, 4);
+    assert!(
+        history
+            .items
+            .iter()
+            .all(|entry| { entry.kind == RecurrenceHistoryKind::Missed && !entry.openable })
+    );
+    assert_eq!(
+        history
+            .items
+            .iter()
+            .filter_map(|entry| entry.slot_on.as_deref())
+            .collect::<Vec<_>>(),
+        ["2026-07-23", "2026-07-22", "2026-07-21", "2026-07-20"]
+    );
+}
+
+#[tokio::test]
 async fn history_combines_task_outcomes_archived_and_derived_rows() {
     let (_temp, database, workspace) = setup().await;
     let created = create(&database, &workspace, "history fixture", 20).await;

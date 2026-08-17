@@ -46,10 +46,17 @@ fn add_parses_fixed_rules_and_rejects_ambiguous_scheduling() {
 
     for (index, rule) in [
         "daily",
+        "every 1 days",
+        "every 3 days",
         "weekdays",
         "weekly",
         "fortnightly",
         "monthly",
+        "every 1 months",
+        "every 3 months",
+        "yearly",
+        "every 1 years",
+        "every 2 years",
         "every 2 weeks",
         "weekly on mon,wed,fri",
         "every 2 weeks on tue",
@@ -79,14 +86,23 @@ fn add_parses_fixed_rules_and_rejects_ambiguous_scheduling() {
         let series_ref = output.split_whitespace().nth(1).unwrap();
         let shown = ok(env.aven(&db, ["recur", "show", series_ref]));
         match rule {
-            "monthly" => contains_all(&shown, &["rule=\"monthly\""]),
+            "monthly" | "every 1 months" => contains_all(&shown, &["rule=\"monthly\""]),
+            "every 3 days" => contains_all(&shown, &["rule=\"every 3 days\""]),
+            "every 3 months" => contains_all(&shown, &["rule=\"every 3 months\""]),
+            "yearly" | "every 1 years" => contains_all(&shown, &["rule=\"yearly\""]),
+            "every 2 years" => contains_all(&shown, &["rule=\"every 2 years\""]),
             "fortnightly" | "every 2 weeks" => contains_all(&shown, &["rule=\"every 2 weeks on"]),
             _ => {}
         }
     }
 
     for rule in [
-        "every 3 days",
+        "every 0 days",
+        "every -1 months",
+        "every nope years",
+        "every 4294967296 days",
+        "every 3 bananas",
+        "every 3 days on mon",
         "weekly on monday",
         "weekly on fri,mon",
         "every two weeks on tue",

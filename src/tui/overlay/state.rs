@@ -843,7 +843,7 @@ impl ScheduleEditorState {
                         self.preview = schedule
                             .slots_on_or_after(from)
                             .take(3)
-                            .map(|date| date.format("%a %b %-d").to_string())
+                            .map(|date| date.format("%a %b %-d %Y").to_string())
                             .collect();
                         None
                     }
@@ -1201,13 +1201,6 @@ impl AddTaskState {
         }) else {
             return;
         };
-        if schedule.rule.frequency() == aven_core::recurrence::RecurrenceFrequency::Weekly
-            && schedule.rule.interval() > 5200
-        {
-            self.recurrence_error =
-                Some("preview unavailable for intervals above 5200 weeks".to_string());
-            return;
-        }
         let zone = schedule
             .timezone
             .as_str()
@@ -1217,7 +1210,7 @@ impl AddTaskState {
         self.recurrence_preview = schedule
             .slots_on_or_after(from)
             .take(3)
-            .map(|date| date.format("%a %b %-d").to_string())
+            .map(|date| date.format("%a %b %-d %Y").to_string())
             .collect();
     }
 }

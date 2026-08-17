@@ -43,27 +43,34 @@ fn recurrence_series_ids_and_timezones_validate_ingress() {
 }
 
 #[test]
-fn rules_reject_values_outside_the_fixed_schedule_lattice() {
-    assert!(
-        RecurrenceRule::new(
-            RecurrenceFrequency::Weekly,
-            0,
-            WeekdaySet::from_weekdays([Weekday::Mon]),
-        )
-        .is_err()
-    );
+fn rules_enforce_positive_intervals_and_weekly_only_weekdays() {
+    for frequency in [
+        RecurrenceFrequency::Daily,
+        RecurrenceFrequency::Weekly,
+        RecurrenceFrequency::Monthly,
+        RecurrenceFrequency::Yearly,
+    ] {
+        let weekdays = if frequency == RecurrenceFrequency::Weekly {
+            WeekdaySet::from_weekdays([Weekday::Mon])
+        } else {
+            WeekdaySet::default()
+        };
+        assert!(RecurrenceRule::new(frequency, 0, weekdays).is_err());
+    }
     assert!(RecurrenceRule::weekly_on([]).is_err());
     assert!(RecurrenceRule::new(RecurrenceFrequency::Weekly, 1, WeekdaySet::default()).is_err());
-    assert!(RecurrenceRule::new(RecurrenceFrequency::Daily, 2, WeekdaySet::default(),).is_err());
-    assert!(RecurrenceRule::new(RecurrenceFrequency::Monthly, 2, WeekdaySet::default()).is_err());
-    assert!(
-        RecurrenceRule::new(
-            RecurrenceFrequency::Monthly,
-            1,
-            WeekdaySet::from_weekdays([Weekday::Mon]),
-        )
-        .is_err()
-    );
+    for frequency in [
+        RecurrenceFrequency::Daily,
+        RecurrenceFrequency::Monthly,
+        RecurrenceFrequency::Yearly,
+    ] {
+        assert!(
+            RecurrenceRule::new(frequency, 1, WeekdaySet::from_weekdays([Weekday::Mon]),).is_err()
+        );
+    }
+    assert!(RecurrenceRule::every_n_days(2).is_ok());
+    assert!(RecurrenceRule::every_n_months(2).is_ok());
+    assert!(RecurrenceRule::every_n_years(2).is_ok());
     assert!(
         serde_json::from_str::<RecurrenceRule>(
             r#"{"frequency":"weekly","interval":1,"weekdays":"fri,mon"}"#,
@@ -113,6 +120,157 @@ fn daily_and_weekday_iteration_crosses_leap_dates() {
             date(2026, 7, 21),
             date(2026, 7, 22),
         ]
+    );
+}
+
+#[test]
+fn interval_recurrences_derive_every_slot_from_the_anchor() {
+    let daily = schedule(
+        RecurrenceRule::every_n_days(3).unwrap(),
+        "UTC",
+        date(2026, 8, 10),
+        None,
+        RecurrenceDuePolicy::SameDay,
+    );
+    assert_eq!(
+        daily
+            .slots_on_or_after(daily.start_on)
+            .take(4)
+            .collect::<Vec<_>>(),
+        vec![
+            date(2026, 8, 10),
+            date(2026, 8, 13),
+            date(2026, 8, 16),
+            date(2026, 8, 19),
+        ]
+    );
+
+    let monthly = schedule(
+        RecurrenceRule::every_n_months(3).unwrap(),
+        "UTC",
+        date(2027, 1, 31),
+        None,
+        RecurrenceDuePolicy::SameDay,
+    );
+    assert_eq!(
+        monthly
+            .slots_on_or_after(monthly.start_on)
+            .take(5)
+            .collect::<Vec<_>>(),
+        vec![
+            date(2027, 1, 31),
+            date(2027, 4, 30),
+            date(2027, 7, 31),
+            date(2027, 10, 31),
+            date(2028, 1, 31),
+        ]
+    );
+
+    let yearly = schedule(
+        RecurrenceRule::yearly(),
+        "UTC",
+        date(2028, 2, 29),
+        None,
+        RecurrenceDuePolicy::SameDay,
+    );
+    assert_eq!(
+        yearly
+            .slots_on_or_after(yearly.start_on)
+            .take(5)
+            .collect::<Vec<_>>(),
+        vec![
+            date(2028, 2, 29),
+            date(2029, 2, 28),
+            date(2030, 2, 28),
+            date(2031, 2, 28),
+            date(2032, 2, 29),
+        ]
+    );
+    let every_two_years = RecurrenceRule::every_n_years(2).unwrap();
+    assert_eq!(
+        schedule(
+            every_two_years,
+            "UTC",
+            date(2028, 2, 29),
+            None,
+            RecurrenceDuePolicy::None
+        )
+        .slots_on_or_after(date(2029, 1, 1))
+        .take(3)
+        .collect::<Vec<_>>(),
+        vec![date(2030, 2, 28), date(2032, 2, 29), date(2034, 2, 28)]
+    );
+    let json = serde_json::to_string(&every_two_years).unwrap();
+    assert_eq!(json, r#"{"frequency":"yearly","interval":2,"weekdays":""}"#);
+    assert_eq!(
+        serde_json::from_str::<RecurrenceRule>(&json).unwrap(),
+        every_two_years
+    );
+}
+
+#[test]
+fn direct_navigation_matches_slot_scan_oracles() {
+    let cases = [
+        (RecurrenceRule::every_n_days(3).unwrap(), date(2026, 8, 10)),
+        (
+            RecurrenceRule::every_n_weeks_on(3, [Weekday::Mon, Weekday::Thu]).unwrap(),
+            date(2026, 8, 12),
+        ),
+        (
+            RecurrenceRule::every_n_months(3).unwrap(),
+            date(2027, 1, 31),
+        ),
+        (RecurrenceRule::every_n_years(2).unwrap(), date(2028, 2, 29)),
+    ];
+    for (rule, start_on) in cases {
+        for offset in 0..500 {
+            let query = start_on
+                .checked_add_days(chrono::Days::new(offset))
+                .unwrap();
+            let expected_after = (offset..=900)
+                .map(|candidate| {
+                    start_on
+                        .checked_add_days(chrono::Days::new(candidate))
+                        .unwrap()
+                })
+                .find(|candidate| is_slot(&rule, start_on, *candidate));
+            assert_eq!(
+                super::schedule::slot_on_or_after(&rule, start_on, query),
+                expected_after
+            );
+            let expected_before = (0..=offset)
+                .rev()
+                .map(|candidate| {
+                    start_on
+                        .checked_add_days(chrono::Days::new(candidate))
+                        .unwrap()
+                })
+                .find(|candidate| is_slot(&rule, start_on, *candidate));
+            assert_eq!(
+                super::schedule::slot_on_or_before(&rule, start_on, query),
+                expected_before
+            );
+        }
+    }
+}
+
+#[test]
+fn direct_navigation_handles_partial_weeks_large_intervals_and_overflow() {
+    let start_on = date(2026, 7, 15);
+    let rule = RecurrenceRule::every_n_weeks_on(u32::MAX, [Weekday::Mon, Weekday::Thu]).unwrap();
+    assert_eq!(
+        schedule(rule, "UTC", start_on, None, RecurrenceDuePolicy::None)
+            .slots_on_or_after(start_on)
+            .next(),
+        Some(date(2026, 7, 16))
+    );
+    assert!(!is_slot(&rule, start_on, date(2026, 7, 13)));
+    assert_eq!(next_slot_after(&rule, start_on, date(2026, 7, 16)), None);
+
+    let daily = RecurrenceRule::every_n_days(u32::MAX).unwrap();
+    assert_eq!(
+        next_slot_after(&daily, NaiveDate::MAX, NaiveDate::MAX),
+        None
     );
 }
 
@@ -287,6 +445,35 @@ fn weekly_live_slots_end_at_the_next_scheduled_boundary() {
     assert_eq!(
         slot_cutoff(&schedule, date(2026, 7, 3)).unwrap(),
         utc("2026-07-09T22:00:00Z")
+    );
+}
+
+#[test]
+fn midnight_transition_preserves_live_slot_boundaries() {
+    let schedule = schedule(
+        RecurrenceRule::daily(),
+        "America/Sao_Paulo",
+        date(2018, 11, 3),
+        None,
+        RecurrenceDuePolicy::SameDay,
+    );
+    assert_eq!(
+        live_slot_on(
+            &schedule.rule,
+            schedule.start_on,
+            utc("2018-11-04T02:59:59Z"),
+            &schedule.timezone,
+        ),
+        Some(date(2018, 11, 3))
+    );
+    assert_eq!(
+        live_slot_on(
+            &schedule.rule,
+            schedule.start_on,
+            utc("2018-11-04T03:00:00Z"),
+            &schedule.timezone,
+        ),
+        Some(date(2018, 11, 4))
     );
 }
 

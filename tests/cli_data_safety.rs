@@ -343,6 +343,124 @@ fn import_rejects_attachment_inventory_metadata_mismatch() {
 }
 
 #[test]
+fn recurrence_export_import_preserves_interval_and_yearly_rules() {
+    let env = TestEnv::new();
+    let source = env.db("recurrence-interval-source.sqlite");
+    let target = env.db("recurrence-interval-target.sqlite");
+    let today = Utc::now().date_naive().to_string();
+    for (title, rule) in [
+        ("multi day", "every 3 days"),
+        ("multi month", "every 3 months"),
+        ("yearly", "yearly"),
+        ("multi year", "every 2 years"),
+    ] {
+        ok(env.aven(
+            &source,
+            [
+                "add",
+                title,
+                "--project",
+                "app",
+                "--repeat",
+                rule,
+                "--time-zone",
+                "UTC",
+                "--repeat-start-on",
+                &today,
+            ],
+        ));
+    }
+    let export = env.path("recurrence-intervals.json");
+    ok(env.aven(&source, ["export", "--output", export.to_str().unwrap()]));
+    ok(env.aven(&target, ["import", export.to_str().unwrap(), "--yes"]));
+    assert_eq!(
+        scalar_i64(&target, "SELECT count(*) FROM recurrence_series"),
+        4
+    );
+    assert_eq!(
+        scalar_i64(
+            &target,
+            "SELECT count(*) FROM recurrence_series WHERE frequency = 'daily' AND interval = 3"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar_i64(
+            &target,
+            "SELECT count(*) FROM recurrence_series WHERE frequency = 'monthly' AND interval = 3"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar_i64(
+            &target,
+            "SELECT count(*) FROM recurrence_series WHERE frequency = 'yearly' AND interval = 1"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar_i64(
+            &target,
+            "SELECT count(*) FROM recurrence_series WHERE frequency = 'yearly' AND interval = 2"
+        ),
+        1
+    );
+}
+
+#[test]
+fn stopped_series_with_future_current_occurrence_round_trips() {
+    let env = TestEnv::new();
+    let source = env.db("recurrence-stopped-future-source.sqlite");
+    let target = env.db("recurrence-stopped-future-target.sqlite");
+    let start = (Utc::now().date_naive() + chrono::Days::new(1)).to_string();
+    let created = ok(env.aven(
+        &source,
+        [
+            "add",
+            "future yearly",
+            "--project",
+            "app",
+            "--repeat",
+            "yearly",
+            "--time-zone",
+            "UTC",
+            "--repeat-start-on",
+            &start,
+        ],
+    ));
+    let series_ref = created.split_whitespace().nth(1).unwrap();
+    ok(env.aven(&source, ["recur", "stop", series_ref]));
+
+    let export = env.path("recurrence-stopped-future.json");
+    ok(env.aven(&source, ["export", "--output", export.to_str().unwrap()]));
+    ok(env.aven(&target, ["import", export.to_str().unwrap(), "--yes"]));
+    contains_all(
+        &ok(env.aven(&source, ["doctor", "--integrity"])),
+        &["recurrence stop boundaries", "0 invalid"],
+    );
+    contains_all(
+        &ok(env.aven(&target, ["doctor", "--integrity"])),
+        &["recurrence stop boundaries", "0 invalid"],
+    );
+    for database in [&source, &target] {
+        assert_eq!(
+            scalar_i64(
+                database,
+                "SELECT count(*) FROM recurrence_series WHERE state = 'stopped' AND stopped_at <> ''"
+            ),
+            1
+        );
+        assert_eq!(
+            scalar_i64(
+                database,
+                "SELECT count(*) FROM recurrence_occurrences WHERE projection_state = 'projected'"
+            ),
+            1
+        );
+    }
+}
+
+#[test]
 fn recurrence_export_import_round_trips_aggregate_and_occurrence_local_data() {
     let env = TestEnv::new();
     let source_db = env.db("recurrence-export-source.sqlite");

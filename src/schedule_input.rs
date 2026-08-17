@@ -22,25 +22,30 @@ pub(crate) fn parse_schedule_input(input: &str) -> Result<ParsedScheduleInput> {
     }
 
     let clauses = input.split(',').map(str::trim).collect::<Vec<_>>();
-    let (rule_input, available_time) = clauses[0]
-        .rsplit_once(" at ")
-        .map_or((clauses[0], ""), |(rule, time)| (rule.trim(), time.trim()));
-    if let Ok(Some(rule)) = crate::recurrence_input::canonical_rule_input(rule_input) {
+    if recurrence_intent(input) {
+        let mut rule_clauses = clauses.as_slice();
         let mut due_policy = "same-day".to_string();
         let mut starts_on = String::new();
-        for clause in &clauses[1..] {
-            if clause.eq_ignore_ascii_case("due same day") {
+        while let Some((last, rest)) = rule_clauses.split_last() {
+            if last.eq_ignore_ascii_case("due same day") {
                 due_policy = "same-day".to_string();
-            } else if clause.eq_ignore_ascii_case("due none")
-                || clause.eq_ignore_ascii_case("no due")
-            {
+            } else if last.eq_ignore_ascii_case("due none") || last.eq_ignore_ascii_case("no due") {
                 due_policy = "none".to_string();
-            } else if let Some(value) = clause.strip_prefix("starting ") {
+            } else if let Some(value) = last.strip_prefix("starting ") {
                 starts_on = value.trim().to_string();
             } else {
-                bail!(schedule_guidance());
+                break;
             }
+            rule_clauses = rest;
         }
+        let rule_and_time = rule_clauses.join(", ");
+        let (rule_input, available_time) = rule_and_time
+            .rsplit_once(" at ")
+            .map_or((rule_and_time.as_str(), ""), |(rule, time)| {
+                (rule.trim(), time.trim())
+            });
+        let rule = crate::recurrence_input::canonical_rule_input(rule_input)?
+            .ok_or_else(|| anyhow::anyhow!(crate::recurrence_input::rule_guidance()))?;
         crate::commands::recurrence_schedule(
             &rule,
             (!available_time.is_empty()).then_some(available_time),
@@ -123,8 +128,27 @@ pub(crate) fn format_schedule_input(
     }
 }
 
+pub(crate) fn recurrence_intent(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    let weekday = normalized
+        .split_once(" at ")
+        .map_or(normalized.as_str(), |(value, _)| value)
+        .strip_suffix('s')
+        .unwrap_or(&normalized);
+    normalized.starts_with("every ")
+        || normalized.starts_with("annual")
+        || matches!(
+            normalized.as_str(),
+            "daily" | "weekdays" | "weekly" | "fortnightly" | "monthly" | "yearly" | "annually"
+        )
+        || matches!(
+            weekday,
+            "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday"
+        )
+}
+
 pub(crate) const fn schedule_guidance() -> &'static str {
-    "Try tomorrow, available tomorrow at 9am, due next Friday, or every Friday at 09:00"
+    "Try tomorrow, available tomorrow at 9am, due next Friday, every Friday at 09:00, or every 3 days at 09:00"
 }
 
 #[cfg(test)]
@@ -145,6 +169,31 @@ mod tests {
                     && available_time == "09:00"
                     && due_policy == "same-day"
         ));
+        assert!(matches!(
+            parse_schedule_input("every 3 days at 09:00, due same day").unwrap(),
+            ParsedScheduleInput::Recurring { rule, available_time, .. }
+                if rule == "every 3 days" && available_time == "09:00"
+        ));
+        assert!(matches!(
+            parse_schedule_input("Every Monday, Wednesday, and Friday").unwrap(),
+            ParsedScheduleInput::Recurring { rule, .. }
+                if rule == "Every Monday, Wednesday, and Friday"
+        ));
+        assert!(matches!(
+            parse_schedule_input("Fridays at 09:00").unwrap(),
+            ParsedScheduleInput::Recurring { rule, available_time, .. }
+                if rule == "Fridays" && available_time == "09:00"
+        ));
+        for input in [
+            "every 3 day at 09:00",
+            "every 0 days",
+            "every 3 days on Monday",
+            "every 3 months on Friday",
+            "annually-ish",
+        ] {
+            let error = parse_schedule_input(input).unwrap_err().to_string();
+            assert!(error.contains("Try daily"), "{input}: {error}");
+        }
     }
 
     #[test]

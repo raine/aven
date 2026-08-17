@@ -1689,6 +1689,20 @@ mod tests {
     }
 
     #[test]
+    fn schedule_editor_previews_large_weekly_rules_and_includes_years() {
+        let mut state = add_task_state(AddTaskStep::Schedule);
+        state.time_zone = "UTC".to_string();
+        state.repeat_start_on = LineEdit::new("2028-02-29".to_string());
+        let mut editor = state.schedule_editor(ScheduleEditorField::Repeat);
+        editor.mode = ScheduleEditorMode::Repeat;
+        editor.repeat_rule = LineEdit::new("every 4294967295 weeks on tue".to_string());
+        editor.validate();
+
+        assert!(editor.error.is_none(), "{:?}", editor.error);
+        assert_eq!(editor.preview, ["Tue Feb 29 2028"]);
+    }
+
+    #[test]
     fn schedule_editor_validates_on_tab_and_clears_while_editing() {
         let mut state = add_task_state(AddTaskStep::Schedule);
         let mut editor = state.schedule_editor(ScheduleEditorField::Repeat);

@@ -1,9 +1,11 @@
 use std::fmt;
 
-use chrono::{DateTime, Days, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{
+    DateTime, Datelike, Days, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
+};
 use chrono_tz::{GapInfo, Tz};
 
-use super::rule::RecurrenceRule;
+use super::rule::{RecurrenceFrequency, RecurrenceRule, last_day_of_month};
 use super::{RecurrenceDuePolicy, RecurrenceSchedule, RecurrenceSlot};
 
 pub fn is_slot(rule: &RecurrenceRule, start_on: NaiveDate, date: NaiveDate) -> bool {
@@ -15,8 +17,7 @@ pub fn next_slot_after(
     start_on: NaiveDate,
     date: NaiveDate,
 ) -> Option<NaiveDate> {
-    let next = date.checked_add_days(Days::new(1))?;
-    RecurrenceSlotIter::new(rule, start_on, next).next()
+    slot_on_or_after(rule, start_on, date.checked_add_days(Days::new(1))?)
 }
 
 pub fn live_slot_on(
@@ -26,16 +27,15 @@ pub fn live_slot_on(
     timezone: &super::TimeZoneId,
 ) -> Option<NaiveDate> {
     let zone = timezone.timezone();
-    let mut date = now.with_timezone(&zone).date_naive();
-    while date >= start_on {
-        if is_slot(rule, start_on, date)
-            && resolve_local(zone, date.and_time(NaiveTime::MIN)).ok()? <= now
-        {
-            return Some(date);
+    let local_today = now.with_timezone(&zone).date_naive();
+    let mut slot = slot_on_or_before(rule, start_on, local_today)?;
+    loop {
+        if resolve_local(zone, slot.and_time(NaiveTime::MIN)).ok()? <= now {
+            return Some(slot);
         }
-        date = date.checked_sub_days(Days::new(1))?;
+        let before = slot.checked_sub_days(Days::new(1))?;
+        slot = slot_on_or_before(rule, start_on, before)?;
     }
-    None
 }
 
 pub fn projection_slot_at(
@@ -107,16 +107,176 @@ impl Iterator for RecurrenceSlotIter<'_> {
     type Item = NaiveDate;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut candidate = self.candidate?;
-        loop {
-            let following = candidate.checked_add_days(Days::new(1));
-            if is_slot(self.rule, self.start_on, candidate) {
-                self.candidate = following;
-                return Some(candidate);
-            }
-            candidate = following?;
+        let slot = slot_on_or_after(self.rule, self.start_on, self.candidate?)?;
+        self.candidate = slot.checked_add_days(Days::new(1));
+        Some(slot)
+    }
+}
+
+pub(crate) fn slot_on_or_after(
+    rule: &RecurrenceRule,
+    start_on: NaiveDate,
+    date: NaiveDate,
+) -> Option<NaiveDate> {
+    let target = date.max(start_on);
+    match rule.frequency() {
+        RecurrenceFrequency::Daily => daily_slot_on_or_after(rule.interval(), start_on, target),
+        RecurrenceFrequency::Weekly => weekly_slot_on_or_after(rule, start_on, target),
+        RecurrenceFrequency::Monthly => {
+            month_slot_on_or_after(i64::from(rule.interval()), start_on, target)
+        }
+        RecurrenceFrequency::Yearly => {
+            month_slot_on_or_after(i64::from(rule.interval()) * 12, start_on, target)
         }
     }
+}
+
+pub(crate) fn slot_on_or_before(
+    rule: &RecurrenceRule,
+    start_on: NaiveDate,
+    date: NaiveDate,
+) -> Option<NaiveDate> {
+    if date < start_on {
+        return None;
+    }
+    match rule.frequency() {
+        RecurrenceFrequency::Daily => daily_slot_on_or_before(rule.interval(), start_on, date),
+        RecurrenceFrequency::Weekly => weekly_slot_on_or_before(rule, start_on, date),
+        RecurrenceFrequency::Monthly => {
+            month_slot_on_or_before(i64::from(rule.interval()), start_on, date)
+        }
+        RecurrenceFrequency::Yearly => {
+            month_slot_on_or_before(i64::from(rule.interval()) * 12, start_on, date)
+        }
+    }
+}
+
+fn daily_slot_on_or_after(
+    interval: u32,
+    start_on: NaiveDate,
+    date: NaiveDate,
+) -> Option<NaiveDate> {
+    let elapsed = date.signed_duration_since(start_on).num_days();
+    let interval = i64::from(interval);
+    let periods = elapsed.checked_add(interval - 1)?.checked_div(interval)?;
+    add_days(start_on, periods.checked_mul(interval)?)
+}
+
+fn daily_slot_on_or_before(
+    interval: u32,
+    start_on: NaiveDate,
+    date: NaiveDate,
+) -> Option<NaiveDate> {
+    let elapsed = date.signed_duration_since(start_on).num_days();
+    let interval = i64::from(interval);
+    add_days(
+        start_on,
+        elapsed.checked_div(interval)?.checked_mul(interval)?,
+    )
+}
+
+fn month_slot_on_or_after(period: i64, start_on: NaiveDate, date: NaiveDate) -> Option<NaiveDate> {
+    let difference = month_ordinal(date).checked_sub(month_ordinal(start_on))?;
+    let mut index = difference.checked_div(period)?;
+    let mut slot = month_slot(start_on, period, index)?;
+    if slot < date {
+        index = index.checked_add(1)?;
+        slot = month_slot(start_on, period, index)?;
+    }
+    Some(slot)
+}
+
+fn month_slot_on_or_before(period: i64, start_on: NaiveDate, date: NaiveDate) -> Option<NaiveDate> {
+    let difference = month_ordinal(date).checked_sub(month_ordinal(start_on))?;
+    let mut index = difference.checked_div(period)?;
+    let mut slot = month_slot(start_on, period, index)?;
+    if slot > date {
+        index = index.checked_sub(1)?;
+        if index < 0 {
+            return None;
+        }
+        slot = month_slot(start_on, period, index)?;
+    }
+    Some(slot)
+}
+
+fn month_slot(start_on: NaiveDate, period: i64, index: i64) -> Option<NaiveDate> {
+    let ordinal = month_ordinal(start_on).checked_add(period.checked_mul(index)?)?;
+    let year = i32::try_from(ordinal.div_euclid(12)).ok()?;
+    let month = u32::try_from(ordinal.rem_euclid(12) + 1).ok()?;
+    let first = NaiveDate::from_ymd_opt(year, month, 1)?;
+    NaiveDate::from_ymd_opt(year, month, start_on.day().min(last_day_of_month(first)))
+}
+
+fn weekly_slot_on_or_after(
+    rule: &RecurrenceRule,
+    start_on: NaiveDate,
+    date: NaiveDate,
+) -> Option<NaiveDate> {
+    let anchor_monday = monday_of(start_on)?;
+    let target_monday = monday_of(date)?;
+    let target_week = target_monday
+        .signed_duration_since(anchor_monday)
+        .num_days()
+        .checked_div(7)?;
+    let interval = i64::from(rule.interval());
+    let mut block = target_week.checked_div(interval)?;
+    loop {
+        let monday = add_weeks(anchor_monday, block.checked_mul(interval)?)?;
+        for weekday in rule.weekdays_set().iter() {
+            let candidate = add_days(monday, i64::from(weekday.num_days_from_monday()))?;
+            if candidate >= start_on && candidate >= date {
+                return Some(candidate);
+            }
+        }
+        block = block.checked_add(1)?;
+    }
+}
+
+fn weekly_slot_on_or_before(
+    rule: &RecurrenceRule,
+    start_on: NaiveDate,
+    date: NaiveDate,
+) -> Option<NaiveDate> {
+    let anchor_monday = monday_of(start_on)?;
+    let target_monday = monday_of(date)?;
+    let target_week = target_monday
+        .signed_duration_since(anchor_monday)
+        .num_days()
+        .checked_div(7)?;
+    let interval = i64::from(rule.interval());
+    let mut block = target_week.checked_div(interval)?;
+    loop {
+        let monday = add_weeks(anchor_monday, block.checked_mul(interval)?)?;
+        for weekday in rule.weekdays_set().iter().rev() {
+            if let Some(candidate) = add_days(monday, i64::from(weekday.num_days_from_monday()))
+                && candidate >= start_on
+                && candidate <= date
+            {
+                return Some(candidate);
+            }
+        }
+        block = block.checked_sub(1)?;
+        if block < 0 {
+            return None;
+        }
+    }
+}
+
+fn month_ordinal(date: NaiveDate) -> i64 {
+    i64::from(date.year()) * 12 + i64::from(date.month0())
+}
+
+fn monday_of(date: NaiveDate) -> Option<NaiveDate> {
+    date.checked_sub_days(Days::new(u64::from(date.weekday().num_days_from_monday())))
+}
+
+fn add_weeks(date: NaiveDate, weeks: i64) -> Option<NaiveDate> {
+    add_days(date, weeks.checked_mul(7)?)
+}
+
+fn add_days(date: NaiveDate, days: i64) -> Option<NaiveDate> {
+    date.checked_add_days(Days::new(u64::try_from(days).ok()?))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

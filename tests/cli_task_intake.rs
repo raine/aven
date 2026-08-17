@@ -422,7 +422,7 @@ agent:
     contains_all(
         &prompt,
         &[
-            "daily, every Friday, or every Monday and Thursday",
+            "daily, every 3 days, yearly, or every Monday and Thursday",
             "Ambiguous timing remains one-off",
             "Recurrence defaults are no availability time, same-day due, the local time zone, and today",
         ],

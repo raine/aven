@@ -26,11 +26,14 @@ Press `a` to open the task composer, then type a repeating expression in
 **Schedule**:
 
 - `daily`
+- `every 3 days at 09:00`
 - `every weekday at 09:00`
 - `every Friday at 09:00`
 - `fortnightly`
 - `every 3 weeks, no due`
-- `monthly, starting 2026-08-01`
+- `every 3 months, starting 2026-08-01`
+- `yearly`
+- `every 2 years`
 
 Press `Enter` on **Schedule** when a structured editor is easier. Choose
 **Repeating**, then set the repetition pattern, availability time, due setting,
@@ -44,21 +47,31 @@ and start date. The schedule uses your device's time zone.
 
 | Schedule | Example |
 | --- | --- |
-| Every day | `every day` |
+| Every day | `daily` or `every day` |
+| Every N days | `every 3 days` |
 | Monday through Friday | `every weekday` |
 | Weekly | `every Friday` |
 | Every two weeks | `fortnightly` |
 | Selected weekdays | `every Monday and Thursday` |
 | Every N weeks | `every 3 weeks` |
 | Selected days every N weeks | `every 3 weeks on Monday and Thursday` |
-| Monthly | `every month` |
+| Monthly | `monthly` or `every month` |
+| Every N months | `every 3 months` |
+| Yearly | `yearly`, `annually`, or `every year` |
+| Every N years | `every 2 years` |
 
 Weeks begin on Monday. A weekly or fortnightly schedule without an explicit
-weekday uses the start date's weekday.
+weekday uses the start date's weekday. Weekday selections apply only to weekly
+schedules.
 
-Monthly schedules keep their original day number. When a month is shorter, Aven
-uses its last day without changing the schedule. A task that starts on January
-31 returns on February 28 or 29, then March 31.
+Every schedule is anchored to its start date. Daily intervals count local
+calendar days, so daylight-saving changes do not alter the cadence. Monthly
+schedules keep their original day number. When a month is shorter, Aven uses
+its last day without changing later dates. A task every three months from
+January 31 runs on January 31, April 30, July 31, and October 31.
+
+Yearly schedules keep the anchor month and day. A February 29 yearly schedule
+uses February 28 in non-leap years and returns to February 29 in leap years.
 
 ## Choose when tasks become available and due
 

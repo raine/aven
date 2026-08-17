@@ -10,6 +10,7 @@ pub enum RecurrenceFrequency {
     Daily,
     Weekly,
     Monthly,
+    Yearly,
 }
 
 impl RecurrenceFrequency {
@@ -18,6 +19,7 @@ impl RecurrenceFrequency {
             Self::Daily => "daily",
             Self::Weekly => "weekly",
             Self::Monthly => "monthly",
+            Self::Yearly => "yearly",
         }
     }
 
@@ -26,6 +28,7 @@ impl RecurrenceFrequency {
             "daily" => Ok(Self::Daily),
             "weekly" => Ok(Self::Weekly),
             "monthly" => Ok(Self::Monthly),
+            "yearly" => Ok(Self::Yearly),
             _ => Err(InvalidRecurrenceFrequency(value.to_string())),
         }
     }
@@ -74,7 +77,7 @@ impl WeekdaySet {
         self.0 == 0
     }
 
-    pub fn iter(self) -> impl Iterator<Item = Weekday> {
+    pub fn iter(self) -> impl DoubleEndedIterator<Item = Weekday> {
         [
             Weekday::Mon,
             Weekday::Tue,
@@ -153,24 +156,16 @@ impl RecurrenceRule {
         interval: u32,
         weekdays: WeekdaySet,
     ) -> Result<Self, InvalidRecurrenceRule> {
+        if interval == 0 {
+            return Err(InvalidRecurrenceRule::ZeroInterval);
+        }
         match frequency {
-            RecurrenceFrequency::Daily if interval != 1 => {
-                return Err(InvalidRecurrenceRule::DailyInterval);
-            }
-            RecurrenceFrequency::Daily if !weekdays.is_empty() => {
-                return Err(InvalidRecurrenceRule::DailyWeekdays);
-            }
-            RecurrenceFrequency::Weekly if interval == 0 => {
-                return Err(InvalidRecurrenceRule::ZeroInterval);
-            }
             RecurrenceFrequency::Weekly if weekdays.is_empty() => {
                 return Err(InvalidRecurrenceRule::EmptyWeekdays);
             }
-            RecurrenceFrequency::Monthly if interval != 1 => {
-                return Err(InvalidRecurrenceRule::MonthlyInterval);
-            }
-            RecurrenceFrequency::Monthly if !weekdays.is_empty() => {
-                return Err(InvalidRecurrenceRule::MonthlyWeekdays);
+            RecurrenceFrequency::Weekly => {}
+            _ if !weekdays.is_empty() => {
+                return Err(InvalidRecurrenceRule::NonWeeklyWeekdays);
             }
             _ => {}
         }
@@ -182,11 +177,11 @@ impl RecurrenceRule {
     }
 
     pub fn daily() -> Self {
-        Self {
-            frequency: RecurrenceFrequency::Daily,
-            interval: 1,
-            weekdays: WeekdaySet::default(),
-        }
+        Self::every_n_days(1).expect("one day is a valid recurrence interval")
+    }
+
+    pub fn every_n_days(interval: u32) -> Result<Self, InvalidRecurrenceRule> {
+        Self::new(RecurrenceFrequency::Daily, interval, WeekdaySet::default())
     }
 
     pub fn weekdays() -> Self {
@@ -198,11 +193,23 @@ impl RecurrenceRule {
     }
 
     pub fn monthly() -> Self {
-        Self {
-            frequency: RecurrenceFrequency::Monthly,
-            interval: 1,
-            weekdays: WeekdaySet::default(),
-        }
+        Self::every_n_months(1).expect("one month is a valid recurrence interval")
+    }
+
+    pub fn every_n_months(interval: u32) -> Result<Self, InvalidRecurrenceRule> {
+        Self::new(
+            RecurrenceFrequency::Monthly,
+            interval,
+            WeekdaySet::default(),
+        )
+    }
+
+    pub fn yearly() -> Self {
+        Self::every_n_years(1).expect("one year is a valid recurrence interval")
+    }
+
+    pub fn every_n_years(interval: u32) -> Result<Self, InvalidRecurrenceRule> {
+        Self::new(RecurrenceFrequency::Yearly, interval, WeekdaySet::default())
     }
 
     pub fn weekly(weekday: Weekday) -> Self {
@@ -243,7 +250,9 @@ impl RecurrenceRule {
             return false;
         }
         match self.frequency {
-            RecurrenceFrequency::Daily => true,
+            RecurrenceFrequency::Daily => {
+                date.signed_duration_since(start_on).num_days() % i64::from(self.interval) == 0
+            }
             RecurrenceFrequency::Weekly => {
                 let days_from_anchor = i64::from(start_on.weekday().num_days_from_monday())
                     + date.signed_duration_since(start_on).num_days();
@@ -251,7 +260,10 @@ impl RecurrenceRule {
                 weeks % i64::from(self.interval) == 0 && self.weekdays.contains(date.weekday())
             }
             RecurrenceFrequency::Monthly => {
-                date.day() == start_on.day().min(last_day_of_month(date))
+                matches_month_period(self.interval.into(), start_on, date)
+            }
+            RecurrenceFrequency::Yearly => {
+                matches_month_period(i64::from(self.interval) * 12, start_on, date)
             }
         }
     }
@@ -278,28 +290,31 @@ impl<'de> Deserialize<'de> for RecurrenceRule {
 pub enum InvalidRecurrenceRule {
     ZeroInterval,
     EmptyWeekdays,
-    DailyInterval,
-    DailyWeekdays,
-    MonthlyInterval,
-    MonthlyWeekdays,
+    NonWeeklyWeekdays,
 }
 
 impl fmt::Display for InvalidRecurrenceRule {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::ZeroInterval => "weekly recurrence interval must be greater than zero",
+            Self::ZeroInterval => "recurrence interval must be greater than zero",
             Self::EmptyWeekdays => "weekly recurrence must contain at least one weekday",
-            Self::DailyInterval => "daily recurrence interval must be one",
-            Self::DailyWeekdays => "daily recurrence cannot contain a weekday set",
-            Self::MonthlyInterval => "monthly recurrence interval must be one",
-            Self::MonthlyWeekdays => "monthly recurrence cannot contain a weekday set",
+            Self::NonWeeklyWeekdays => "weekday selections require weekly recurrence",
         })
     }
 }
 
 impl std::error::Error for InvalidRecurrenceRule {}
 
-fn last_day_of_month(date: chrono::NaiveDate) -> u32 {
+fn matches_month_period(period: i64, start_on: chrono::NaiveDate, date: chrono::NaiveDate) -> bool {
+    let start_month = i64::from(start_on.year()) * 12 + i64::from(start_on.month0());
+    let date_month = i64::from(date.year()) * 12 + i64::from(date.month0());
+    let month_difference = date_month - start_month;
+    month_difference >= 0
+        && month_difference % period == 0
+        && date.day() == start_on.day().min(last_day_of_month(date))
+}
+
+pub(crate) fn last_day_of_month(date: chrono::NaiveDate) -> u32 {
     (28..=31)
         .rev()
         .find(|day| date.with_day(*day).is_some())

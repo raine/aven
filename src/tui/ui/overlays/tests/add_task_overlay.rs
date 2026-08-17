@@ -346,6 +346,20 @@ fn focused_schedule_field_waits_to_show_validation() {
 }
 
 #[test]
+fn malformed_recurrence_shows_recurrence_guidance() {
+    let rendered = render_overlay_view(add_task_overlay(AddTaskView {
+        focus: AddTaskStep::Project,
+        schedule_input: "every 0 days".to_string(),
+        schedule_error: Some("invalid recurrence".to_string()),
+        schedule_validation_requested: true,
+        ..add_task_view()
+    }));
+
+    assert!(rendered.contains("Schedule: Try daily"));
+    assert!(!rendered.contains("Schedule: Try tomorrow"));
+}
+
+#[test]
 fn add_task_metadata_values_use_shared_styles() {
     let project = metadata_field(AddTaskStep::Project, "Project", "aven", AddTaskStep::Title);
     assert_eq!(project.to_string(), "  ^P Project: ● aven");
