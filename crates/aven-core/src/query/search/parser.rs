@@ -1,6 +1,4 @@
-/// Longest prefix `unique_project_prefix` can mint: a three-character base plus
-/// a collision counter.
-const MAX_PROJECT_PREFIX_LEN: usize = 4;
+use crate::projects::MAX_PROJECT_PREFIX_LEN;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedTaskSearchQuery {
@@ -191,11 +189,11 @@ fn parse_ref_query(input: &str) -> Option<ParsedRefSearchQuery> {
     None
 }
 
-/// Project prefixes are derived from project keys, so they can carry digits
-/// (`00-main` yields `0M`) as well as a disambiguating counter (`0L2`). Only the
-/// length rules a leading group out as a prefix candidate.
+/// Alphabetic prefixes are valid regardless of length. Prefixes containing
+/// digits follow the length constraint used for explicit project prefixes.
 fn is_project_prefix_group(group: &str) -> bool {
-    group.len() <= MAX_PROJECT_PREFIX_LEN
+    group.chars().all(|ch| ch.is_ascii_alphabetic())
+        || (group.len() <= MAX_PROJECT_PREFIX_LEN && group.chars().any(|ch| ch.is_ascii_digit()))
 }
 
 fn suffix_has_digit(input: &str) -> bool {
@@ -279,7 +277,7 @@ mod tests {
     }
 
     #[test]
-    fn task_search_parser_identifies_ref_shapes_for_numeric_project_prefixes() {
+    fn task_search_parser_supports_numeric_and_long_alphabetic_project_prefixes() {
         let numeric = parse_task_search_query("0M-XYMT").ref_query.unwrap();
         assert_eq!(numeric.normalized_prefix.as_deref(), Some("0M"));
         assert_eq!(numeric.normalized_suffix, "XYMT");
@@ -288,11 +286,19 @@ mod tests {
         assert_eq!(counted.normalized_prefix.as_deref(), Some("012"));
         assert_eq!(counted.normalized_suffix, "70K1");
 
-        let long_leading_group = parse_task_search_query("release-cleanup")
+        let long_numeric = parse_task_search_query("2FAST-7OKI").ref_query.unwrap();
+        assert_eq!(long_numeric.normalized_prefix.as_deref(), Some("2FAST"));
+        assert_eq!(long_numeric.normalized_suffix, "70K1");
+
+        let long_alphabetic = parse_task_search_query("BRAVO-7OKI").ref_query.unwrap();
+        assert_eq!(long_alphabetic.normalized_prefix.as_deref(), Some("BRAV0"));
+        assert_eq!(long_alphabetic.normalized_suffix, "70K1");
+
+        let hyphenated = parse_task_search_query("release-cleanup")
             .ref_query
             .unwrap();
-        assert_eq!(long_leading_group.normalized_prefix, None);
-        assert_eq!(long_leading_group.normalized_suffix, "RE1EASEC1EANUP");
+        assert_eq!(hyphenated.normalized_prefix.as_deref(), Some("RE1EASE"));
+        assert_eq!(hyphenated.normalized_suffix, "C1EANUP");
     }
 
     #[test]
