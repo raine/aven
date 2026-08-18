@@ -1,3 +1,7 @@
+/// Longest prefix `unique_project_prefix` can mint: a three-character base plus
+/// a collision counter.
+const MAX_PROJECT_PREFIX_LEN: usize = 4;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedTaskSearchQuery {
     pub trimmed: String,
@@ -165,7 +169,7 @@ fn parse_ref_query(input: &str) -> Option<ParsedRefSearchQuery> {
     if groups.is_empty() {
         return None;
     }
-    if groups.len() >= 2 && groups[0].chars().all(|c| c.is_ascii_alphabetic()) {
+    if groups.len() >= 2 && is_project_prefix_group(groups[0]) {
         let suffix = groups[1..].join("");
         if suffix.len() >= 3 && (!has_whitespace || has_ref_marker || suffix_has_digit(&suffix)) {
             return Some(ParsedRefSearchQuery {
@@ -185,6 +189,13 @@ fn parse_ref_query(input: &str) -> Option<ParsedRefSearchQuery> {
         });
     }
     None
+}
+
+/// Project prefixes are derived from project keys, so they can carry digits
+/// (`00-main` yields `0M`) as well as a disambiguating counter (`0L2`). Only the
+/// length rules a leading group out as a prefix candidate.
+fn is_project_prefix_group(group: &str) -> bool {
+    group.len() <= MAX_PROJECT_PREFIX_LEN
 }
 
 fn suffix_has_digit(input: &str) -> bool {
@@ -265,6 +276,23 @@ mod tests {
         assert_eq!(qualified.normalized_suffix, "70K1");
 
         assert_eq!(parse_task_search_query("release cleanup").ref_query, None);
+    }
+
+    #[test]
+    fn task_search_parser_identifies_ref_shapes_for_numeric_project_prefixes() {
+        let numeric = parse_task_search_query("0M-XYMT").ref_query.unwrap();
+        assert_eq!(numeric.normalized_prefix.as_deref(), Some("0M"));
+        assert_eq!(numeric.normalized_suffix, "XYMT");
+
+        let counted = parse_task_search_query("/0L2-7OKI").ref_query.unwrap();
+        assert_eq!(counted.normalized_prefix.as_deref(), Some("012"));
+        assert_eq!(counted.normalized_suffix, "70K1");
+
+        let long_leading_group = parse_task_search_query("release-cleanup")
+            .ref_query
+            .unwrap();
+        assert_eq!(long_leading_group.normalized_prefix, None);
+        assert_eq!(long_leading_group.normalized_suffix, "RE1EASEC1EANUP");
     }
 
     #[test]
