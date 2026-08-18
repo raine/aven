@@ -49,6 +49,10 @@ impl RecurrenceSeriesId {
     }
 }
 
+/// Prefix every recurrence series display ref carries, in place of the project
+/// prefix a task ref uses.
+pub(crate) const SERIES_REF_PREFIX: &str = "RCR";
+
 pub(crate) fn recurrence_series_display_ref(
     series_id: &RecurrenceSeriesId,
     ids: &[RecurrenceSeriesId],
@@ -66,7 +70,7 @@ pub(crate) fn recurrence_series_display_ref(
         .max()
         .unwrap_or(0);
     let length = 4.max(shared.saturating_add(1)).min(id.len());
-    format!("RCR-{}", &id[..length])
+    format!("{SERIES_REF_PREFIX}-{}", &id[..length])
 }
 
 impl Default for RecurrenceSeriesId {

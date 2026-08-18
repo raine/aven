@@ -19,8 +19,8 @@ use crate::mutation::apply_field_value_in_workspace;
 use crate::projects::resolve_or_create_project_in_workspace;
 use crate::recurrence::{
     RecurrenceDuePolicy, RecurrenceOutcome, RecurrenceProjectionState, RecurrenceSchedule,
-    RecurrenceSeriesId, RecurrenceSeriesState, derive_occurrence_identity, next_slot_after,
-    projection_slot_at, recurrence_series_display_ref, slot_cutoff, slot_values,
+    RecurrenceSeriesId, RecurrenceSeriesState, SERIES_REF_PREFIX, derive_occurrence_identity,
+    next_slot_after, projection_slot_at, recurrence_series_display_ref, slot_cutoff, slot_values,
 };
 use crate::refs::get_task_in_workspace;
 use crate::task_fields::TaskField;
@@ -33,7 +33,6 @@ use crate::workspaces::Workspace;
 mod tests;
 
 const RECONCILE_ATTEMPTS: usize = 3;
-const SERIES_REF_PREFIX: &str = "RCR";
 const SERIES_TEMPLATE_FIELDS: &[&str] = &[
     "title",
     "description",
