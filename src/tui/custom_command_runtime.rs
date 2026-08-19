@@ -1499,13 +1499,15 @@ mod tests {
         controller.launch(command).unwrap();
 
         assert!(completion(&mut controller).await.result.is_ok());
+        let mut output_contents = Vec::new();
         for _ in 0..100 {
-            if output.exists() {
+            output_contents = std::fs::read(&output).unwrap_or_default();
+            if output_contents == input {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        assert_eq!(std::fs::read(output).unwrap(), input);
+        assert_eq!(output_contents, input);
     }
 
     #[tokio::test]

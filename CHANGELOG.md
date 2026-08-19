@@ -3,9 +3,13 @@ title: Changelog
 description: Release notes for aven.
 ---
 
-## v0.1.30 (2026-08-17)
+## v0.1.30 (2026-08-19)
 
-- Recurring tasks support every N days, months, or years, including anchored month-end and leap-day behavior without schedule drift.
+- [Recurring tasks](/recurring-tasks/) support every N days, weeks, months, or years, including anchored month-end and leap-day behavior without schedule drift
+- The [TUI task composer](/tui/#capture-tasks) automatically sets prioritized and repeating tasks to todo. Choose a status manually to override it, or pick `Auto` to restore the automatic choice.
+- [Search](/tui/#search-filter-and-order) finds a recurring series by the `RCR-` ref shown on its task rows. ([#14](https://github.com/raine/aven/pull/14))
+- Fix: Searching a task ref whose project prefix contains digits, such as `0M-XYMT`, finds the task, and accepting a search result in the TUI keeps showing it. ([#13](https://github.com/raine/aven/pull/13))
+- Fix: A [custom TUI command](/custom-commands/) that exits early reports its own exit status instead of an input delivery error, and timed-out commands clean up leftover child processes.
 
 ## v0.1.29 (2026-08-12)
 
