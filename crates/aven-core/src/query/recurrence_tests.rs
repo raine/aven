@@ -3,7 +3,9 @@ use sqlx::Connection;
 
 use super::*;
 use crate::operations::{CreateRecurrenceSeriesParams, RecurrenceSeriesDraft};
-use crate::query::{SortDirection, TaskFilters, TaskQueryMode, TaskSearchQuery, TaskSort};
+use crate::query::{
+    SearchMatchedField, SortDirection, TaskFilters, TaskQueryMode, TaskSearchQuery, TaskSort,
+};
 use crate::recurrence::{
     RecurrenceDuePolicy, RecurrenceOutcome, RecurrenceRule, RecurrenceSchedule, TimeZoneId,
 };
@@ -783,4 +785,50 @@ async fn recurrence_hydration_statement_shapes_stay_bounded() {
     assert_eq!(items.len(), 24);
     assert!(items.iter().all(|item| item.recurrence.is_some()));
     assert!(conn.cached_statements_size() <= 16);
+}
+
+#[tokio::test]
+async fn search_resolves_recurrence_series_refs_to_their_occurrences() {
+    let (_temp, database, workspace) = setup().await;
+    let created = create(&database, &workspace, "series ref fixture", 6).await;
+    let series_ref = created.series_ref.clone();
+    let suffix = series_ref.split_once('-').unwrap().1.to_string();
+
+    let search = |text: String| {
+        let database = database.clone();
+        let workspace_id = workspace.id.clone();
+        async move {
+            let mut conn = database.acquire_writer().await.unwrap();
+            super::super::search::search_task_items_in_workspace(
+                &mut conn,
+                &workspace_id,
+                TaskSearchQuery {
+                    metadata: Vec::new(),
+                    has_metadata: Vec::new(),
+                    missing_metadata: Vec::new(),
+                    text,
+                    project: None,
+                    include_deleted: false,
+                    limit: 20,
+                },
+            )
+            .await
+            .unwrap()
+        }
+    };
+
+    // The series ref is what the UI shows for a recurring row, so searching it
+    // has to land on the occurrence the series currently projects.
+    let qualified = search(series_ref).await;
+    assert_eq!(qualified.len(), 1);
+    assert_eq!(qualified[0].item.task.id, created.task.id);
+    assert_eq!(qualified[0].matched_field, SearchMatchedField::Ref);
+
+    let bare = search(suffix.clone()).await;
+    assert_eq!(bare.len(), 1);
+    assert_eq!(bare[0].item.task.id, created.task.id);
+    assert_eq!(bare[0].matched_field, SearchMatchedField::Ref);
+
+    let wrong_prefix = search(format!("/APP-{suffix}")).await;
+    assert!(wrong_prefix.is_empty());
 }

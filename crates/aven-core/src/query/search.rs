@@ -125,6 +125,15 @@ struct SearchDocument {
     labels_text: String,
     notes_text: String,
     attachments_text: String,
+    series: Option<DocumentSeries>,
+}
+
+/// Recurrence identity of an occurrence task. The ref lane reads it so a series
+/// ref like `RCR-NP3S` — the ref the UI shows for a recurring row — resolves to
+/// the occurrences that series projects.
+struct DocumentSeries {
+    id: String,
+    display_ref: String,
 }
 
 struct ScoredDocument {
@@ -551,6 +560,16 @@ async fn load_candidate_search_documents(
         )
         .await?;
         merge_search_documents(&mut documents, ref_documents);
+        let series_documents = load_series_ref_search_documents(
+            conn,
+            workspace_id,
+            project_id,
+            include_deleted,
+            ref_query,
+            display_refs,
+        )
+        .await?;
+        merge_search_documents(&mut documents, series_documents);
     }
     let attachment_documents = load_attachment_text_search_documents(
         conn,
@@ -563,6 +582,9 @@ async fn load_candidate_search_documents(
     .await?;
     merge_search_documents(&mut documents, attachment_documents);
     attach_attachment_search_text(conn, workspace_id.as_str(), &mut documents).await?;
+    if parsed.ref_query.is_some() {
+        attach_recurrence_series_refs(conn, workspace_id, &mut documents).await?;
+    }
     Ok(documents)
 }
 
@@ -598,6 +620,75 @@ async fn load_ref_search_documents(
     .fetch_all(&mut *conn)
     .await?;
     search_documents_from_rows(rows, display_refs)
+}
+
+/// Suffix a series ref query addresses, or `None` when the query names a project
+/// prefix and so cannot be a series ref.
+fn series_ref_suffix(ref_query: &parser::ParsedRefSearchQuery) -> Option<&str> {
+    match ref_query.normalized_prefix.as_deref() {
+        Some(prefix) if prefix != crate::recurrence::SERIES_REF_PREFIX => None,
+        _ => Some(&ref_query.normalized_suffix),
+    }
+}
+
+async fn load_series_ref_search_documents(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    project_id: Option<&ProjectId>,
+    include_deleted: bool,
+    ref_query: &parser::ParsedRefSearchQuery,
+    display_refs: &DisplayRefContext,
+) -> Result<Vec<SearchDocument>> {
+    let Some(suffix) = series_ref_suffix(ref_query) else {
+        return Ok(Vec::new());
+    };
+    let mut query = QueryBuilder::<Sqlite>::new(
+        "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
+         p.key AS project_key, p.name AS project_name, p.prefix AS project_prefix,
+         t.status, t.priority, t.source, t.created_at, t.updated_at, t.queue_activity_at, t.available_at, t.due_on, t.deleted, t.is_epic,
+         '' AS fts_labels, '' AS fts_notes
+         FROM recurrence_occurrences ro
+         JOIN tasks t ON t.workspace_id = ro.workspace_id AND t.id = ro.task_id
+         JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
+         WHERE ro.workspace_id = ",
+    );
+    query.push_bind(workspace_id);
+    query.push(" AND (");
+    query.push_bind(include_deleted);
+    query.push(" OR t.deleted = 0) AND (");
+    query.push_bind(project_id.is_none());
+    query.push(" OR t.project_id = ");
+    query.push_bind(project_id);
+    query.push(") AND ");
+    query.push(super::fragments::ordinary_task_clause("t"));
+    query.push(" AND ro.series_id GLOB ");
+    query.push_bind(format!("{suffix}*"));
+    query.push(" ORDER BY t.updated_at DESC, t.id");
+
+    let rows = query.build().fetch_all(&mut *conn).await?;
+    search_documents_from_rows(rows, display_refs)
+}
+
+async fn attach_recurrence_series_refs(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    documents: &mut [SearchDocument],
+) -> Result<()> {
+    let task_ids = documents
+        .iter()
+        .map(|document| document.task.id.clone())
+        .collect::<Vec<_>>();
+    let mut summaries =
+        super::recurrence::task_recurrence_summaries(conn, workspace_id, &task_ids).await?;
+    for document in documents {
+        document.series = summaries
+            .remove(&document.task.id)
+            .map(|summary| DocumentSeries {
+                id: summary.series_id.to_string(),
+                display_ref: summary.series_ref,
+            });
+    }
+    Ok(())
 }
 
 fn merge_search_documents(documents: &mut Vec<SearchDocument>, incoming: Vec<SearchDocument>) {
@@ -678,6 +769,7 @@ fn search_documents_from_rows(
                 task,
                 display_ref,
                 project_name,
+                series: None,
             }
         })
         .collect())
@@ -928,17 +1020,44 @@ fn score_ref_lane(
     document: &SearchDocument,
     ref_query: &parser::ParsedRefSearchQuery,
 ) -> Option<i64> {
+    // Option ordering keeps whichever identity the query addresses more closely.
+    score_task_ref_lane(document, ref_query).max(score_series_ref_lane(document, ref_query))
+}
+
+fn score_task_ref_lane(
+    document: &SearchDocument,
+    ref_query: &parser::ParsedRefSearchQuery,
+) -> Option<i64> {
     if let Some(prefix) = ref_query.normalized_prefix.as_deref()
         && normalize_ref_query(&document.task.project_prefix) != prefix
     {
         return None;
     }
-    let normalized_id = normalize_ref_query(&document.task.id);
+    score_ref_identity(&document.task.id, &document.display_ref, ref_query)
+}
+
+fn score_series_ref_lane(
+    document: &SearchDocument,
+    ref_query: &parser::ParsedRefSearchQuery,
+) -> Option<i64> {
+    let suffix = series_ref_suffix(ref_query)?;
+    let series = document.series.as_ref()?;
+    normalize_ref_query(&series.id)
+        .starts_with(suffix)
+        .then(|| score_ref_identity(&series.id, &series.display_ref, ref_query))
+        .flatten()
+}
+
+fn score_ref_identity(
+    id: &str,
+    display_ref: &str,
+    ref_query: &parser::ParsedRefSearchQuery,
+) -> Option<i64> {
+    let normalized_id = normalize_ref_query(id);
     if !normalized_id.starts_with(&ref_query.normalized_suffix) {
         return None;
     }
-    let display_suffix_len = document
-        .display_ref
+    let display_suffix_len = display_ref
         .rsplit_once('-')
         .map(|(_, suffix)| normalize_ref_query(suffix).len())
         .unwrap_or(0);
