@@ -7,11 +7,68 @@ pub(crate) const ADD_NOTE_TITLE: &str = "Add note";
 pub(crate) const ADD_TASK_TITLE_PROJECT_TITLE: &str = "Add task: project";
 pub(crate) const ADD_TASK_LABELS_TITLE: &str = "Add task: labels";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum InitialStatusOrigin {
-    UntouchedDefault,
-    RecurrenceDefault,
-    Explicit,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AddTaskStatusChoice {
+    Derived,
+    Explicit(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AddTaskPriorityChoice {
+    Literal(String),
+    HumanSelected(String),
+}
+
+impl AddTaskStatusChoice {
+    pub(crate) fn from_picker_value(value: &str) -> Option<Self> {
+        if value == crate::tui::store::ADD_TASK_STATUS_AUTO_VALUE {
+            Some(Self::Derived)
+        } else if crate::choices::STATUSES.contains(&value) {
+            Some(Self::Explicit(value.to_string()))
+        } else {
+            None
+        }
+    }
+}
+
+impl AddTaskPriorityChoice {
+    pub(crate) fn value(&self) -> &str {
+        match self {
+            Self::Literal(value) | Self::HumanSelected(value) => value,
+        }
+    }
+
+    pub(crate) fn from_human_selection(value: &str) -> Option<Self> {
+        crate::choices::PRIORITIES
+            .contains(&value)
+            .then(|| Self::HumanSelected(value.to_string()))
+    }
+
+    fn drives_derived_status(&self) -> bool {
+        matches!(self, Self::HumanSelected(value) if value != "none")
+    }
+}
+
+pub(crate) fn automatic_add_task_status(
+    priority: &AddTaskPriorityChoice,
+    recurring: bool,
+) -> &'static str {
+    if recurring || priority.drives_derived_status() {
+        "todo"
+    } else {
+        "inbox"
+    }
+}
+
+pub(crate) fn derived_add_task_status<'a>(
+    status: &'a AddTaskStatusChoice,
+    priority: &AddTaskPriorityChoice,
+    recurring: bool,
+) -> &'a str {
+    match status {
+        AddTaskStatusChoice::Explicit(status) => status,
+        AddTaskStatusChoice::Derived => automatic_add_task_status(priority, recurring),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -173,9 +230,8 @@ struct AddTaskDraftState {
     description: String,
     project: Option<String>,
     inferred_project: Option<String>,
-    status: String,
-    status_origin: InitialStatusOrigin,
-    priority: String,
+    status: AddTaskStatusChoice,
+    priority: AddTaskPriorityChoice,
     labels: Vec<String>,
     is_epic: bool,
     create_more: bool,
@@ -202,9 +258,8 @@ impl Default for AddTaskDraftState {
             description: String::new(),
             project: None,
             inferred_project: None,
-            status: "inbox".to_string(),
-            status_origin: InitialStatusOrigin::UntouchedDefault,
-            priority: "none".to_string(),
+            status: AddTaskStatusChoice::Derived,
+            priority: AddTaskPriorityChoice::Literal("none".to_string()),
             labels: Vec::new(),
             is_epic: false,
             create_more: false,
@@ -236,9 +291,8 @@ pub(crate) struct AddTaskContext {
     pub(crate) description: String,
     pub(crate) step: AddTaskStep,
     pub(crate) project: String,
-    pub(crate) status: String,
-    pub(crate) status_origin: InitialStatusOrigin,
-    pub(crate) priority: String,
+    pub(crate) status: AddTaskStatusChoice,
+    pub(crate) priority: AddTaskPriorityChoice,
     pub(crate) labels: Vec<String>,
     pub(crate) is_epic: bool,
     pub(crate) create_more: bool,
@@ -310,9 +364,8 @@ impl AuthoringState {
             description: series.description.clone(),
             project: Some(project),
             inferred_project: None,
-            status: series.initial_status.as_str().to_string(),
-            status_origin: InitialStatusOrigin::Explicit,
-            priority: series.priority.as_str().to_string(),
+            status: AddTaskStatusChoice::Explicit(series.initial_status.as_str().to_string()),
+            priority: AddTaskPriorityChoice::Literal(series.priority.as_str().to_string()),
             labels: detail.labels.clone(),
             is_epic: false,
             create_more: false,
@@ -404,7 +457,6 @@ impl AuthoringState {
             step: draft.step,
             project: project.to_string(),
             status: draft.status.clone(),
-            status_origin: draft.status_origin,
             priority: draft.priority.clone(),
             labels: draft.labels.clone(),
             is_epic: draft.is_epic,
@@ -429,29 +481,26 @@ impl AuthoringState {
         Some(draft.project.clone())
     }
 
-    pub(crate) fn apply_add_task_status_choice(&mut self, status: &str) -> Option<String> {
+    pub(crate) fn apply_add_task_status_choice(
+        &mut self,
+        value: &str,
+    ) -> Option<AddTaskStatusChoice> {
         let draft = self.flow.as_mut()?;
-        if !crate::choices::STATUSES.contains(&status) {
-            return None;
-        }
-        draft.status = status.to_string();
-        draft.status_origin = InitialStatusOrigin::Explicit;
-        Some(draft.status.clone())
+        let choice = AddTaskStatusChoice::from_picker_value(value)?;
+        draft.status = choice.clone();
+        Some(choice)
     }
 
-    pub(crate) fn capture_add_task_status(
+    pub(crate) fn capture_add_task_choices(
         &mut self,
-        status: String,
-        origin: InitialStatusOrigin,
+        status: AddTaskStatusChoice,
+        priority: AddTaskPriorityChoice,
     ) -> bool {
         let Some(draft) = self.flow.as_mut() else {
             return false;
         };
-        if !crate::choices::STATUSES.contains(&status.as_str()) {
-            return false;
-        }
         draft.status = status;
-        draft.status_origin = origin;
+        draft.priority = priority;
         true
     }
 
@@ -541,14 +590,10 @@ impl AuthoringState {
     }
 
     pub(crate) fn apply_add_task_priority(&mut self, values: Vec<String>) -> bool {
-        let Some(draft) = self.flow.as_mut() else {
+        let Some(value) = values.first() else {
             return false;
         };
-        draft.priority = values
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "none".to_string());
-        true
+        self.apply_add_task_priority_value(value).is_some()
     }
 
     pub(crate) fn apply_add_task_labels(&mut self, values: Vec<String>) -> bool {
@@ -685,12 +730,12 @@ impl AuthoringState {
         true
     }
 
-    pub(crate) fn apply_add_task_priority_value(&mut self, priority: &str) -> Option<String> {
+    pub(crate) fn apply_add_task_priority_value(
+        &mut self,
+        priority: &str,
+    ) -> Option<AddTaskPriorityChoice> {
         let draft = self.flow.as_mut()?;
-        if !crate::choices::PRIORITIES.contains(&priority) {
-            return None;
-        }
-        draft.priority = priority.to_string();
+        draft.priority = AddTaskPriorityChoice::from_human_selection(priority)?;
         Some(draft.priority.clone())
     }
 
@@ -705,7 +750,9 @@ impl AuthoringState {
         let Some(schedule) = recurrence else {
             return true;
         };
-        self.capture_add_task_status("todo".to_string(), InitialStatusOrigin::RecurrenceDefault);
+        if let Some(draft) = self.flow.as_mut() {
+            draft.status = AddTaskStatusChoice::Derived;
+        }
         self.apply_add_task_recurrence(
             None,
             None,
@@ -730,13 +777,12 @@ impl AuthoringState {
         draft.title = task.title;
         draft.description = task.description;
         draft.project = task.project;
-        draft.status_origin = if task.status == "inbox" {
-            InitialStatusOrigin::UntouchedDefault
+        draft.status = if task.status == "inbox" {
+            AddTaskStatusChoice::Derived
         } else {
-            InitialStatusOrigin::Explicit
+            AddTaskStatusChoice::Explicit(task.status)
         };
-        draft.status = task.status;
-        draft.priority = task.priority;
+        draft.priority = AddTaskPriorityChoice::Literal(task.priority);
         draft.labels = task.labels;
         draft.is_epic = task.is_epic;
         draft.available_at = task.available_at.unwrap_or_default();
@@ -764,8 +810,14 @@ impl AuthoringState {
                 title: trimmed.to_string(),
                 description,
                 project: draft.project,
-                status: draft.status,
-                priority: draft.priority,
+                status: derived_add_task_status(
+                    &draft.status,
+                    &draft.priority,
+                    draft.template_schedule.is_some()
+                        || !matches!(draft.repeat_rule.trim(), "" | "none"),
+                )
+                .to_string(),
+                priority: draft.priority.value().to_string(),
                 source: crate::choices::TaskSource::Tui,
                 labels: draft.labels,
                 available_at: (!draft.available_at.is_empty()).then_some(draft.available_at),
@@ -821,43 +873,44 @@ mod tests {
         let mut state = AuthoringState::default();
         state.begin_add_task(None, None);
 
-        assert_eq!(state.add_task_context().unwrap().status, "inbox");
         assert_eq!(
-            state.apply_add_task_status_choice("todo").as_deref(),
-            Some("todo")
+            state.add_task_context().unwrap().status,
+            AddTaskStatusChoice::Derived
+        );
+        assert_eq!(
+            state.apply_add_task_status_choice("todo"),
+            Some(AddTaskStatusChoice::Explicit("todo".to_string()))
         );
         assert!(matches!(
             state.submit_add_task(),
             AddTaskTitleSubmit::ReopenTitle { .. }
         ));
-        assert_eq!(state.add_task_context().unwrap().status, "todo");
+        assert_eq!(
+            state.add_task_context().unwrap().status,
+            AddTaskStatusChoice::Explicit("todo".to_string())
+        );
     }
 
     #[test]
-    fn add_task_status_origin_survives_capture_round_trip() {
+    fn add_task_status_choice_survives_capture_round_trip() {
         let mut state = AuthoringState::default();
         state.begin_add_task(None, None);
-        assert!(
-            state.capture_add_task_status(
-                "todo".to_string(),
-                InitialStatusOrigin::RecurrenceDefault,
-            )
-        );
-
-        let context = state.add_task_context().unwrap();
-        assert_eq!(context.status, "todo");
+        assert!(state.capture_add_task_choices(
+            AddTaskStatusChoice::Derived,
+            AddTaskPriorityChoice::Literal("none".to_string()),
+        ));
         assert_eq!(
-            context.status_origin,
-            InitialStatusOrigin::RecurrenceDefault
+            state.add_task_context().unwrap().status,
+            AddTaskStatusChoice::Derived
         );
 
         assert_eq!(
-            state.apply_add_task_status_choice("inbox").as_deref(),
-            Some("inbox")
+            state.apply_add_task_status_choice("inbox"),
+            Some(AddTaskStatusChoice::Explicit("inbox".to_string()))
         );
         assert_eq!(
-            state.add_task_context().unwrap().status_origin,
-            InitialStatusOrigin::Explicit
+            state.add_task_context().unwrap().status,
+            AddTaskStatusChoice::Explicit("inbox".to_string())
         );
     }
 
@@ -975,11 +1028,7 @@ mod tests {
 
         let context = state.add_task_context().unwrap();
         assert_eq!(context.title, "Review metrics");
-        assert_eq!(context.status, "todo");
-        assert_eq!(
-            context.status_origin,
-            InitialStatusOrigin::RecurrenceDefault
-        );
+        assert_eq!(context.status, AddTaskStatusChoice::Derived);
         assert_eq!(context.repeat_rule, "Every Monday and Thursday");
         assert_eq!(context.repeat_at, "09:30");
         assert_eq!(context.repeat_due, "none");
@@ -987,6 +1036,36 @@ mod tests {
         assert_eq!(context.repeat_start_on, "2026-08-03");
         assert!(context.available_at.is_empty());
         assert!(context.due_on.is_empty());
+    }
+
+    #[test]
+    fn inferred_priority_remains_literal_for_derived_inbox_status() {
+        let mut state = AuthoringState::default();
+        state.begin_add_task(None, None);
+        assert!(
+            state.apply_task_intake_result(crate::task_intake::TaskIntakeResult {
+                task: TaskDraft {
+                    metadata: Vec::new(),
+                    title: "Review release".to_string(),
+                    description: String::new(),
+                    project: None,
+                    status: "inbox".to_string(),
+                    priority: "high".to_string(),
+                    source: crate::choices::TaskSource::Tui,
+                    labels: Vec::new(),
+                    available_at: None,
+                    due_on: None,
+                    is_epic: false,
+                },
+                recurrence: None,
+            })
+        );
+
+        let AddTaskTitleSubmit::Create(create) = state.submit_add_task() else {
+            panic!("parsed task should be ready to create");
+        };
+        assert_eq!(create.draft.status, "inbox");
+        assert_eq!(create.draft.priority, "high");
     }
 
     #[test]
@@ -1082,12 +1161,12 @@ mod tests {
         ));
         assert!(state.apply_add_task_project(vec!["aven".to_string()]));
         assert_eq!(
-            state.apply_add_task_status_choice("todo").as_deref(),
-            Some("todo")
+            state.apply_add_task_status_choice("todo"),
+            Some(AddTaskStatusChoice::Explicit("todo".to_string()))
         );
         assert_eq!(
-            state.apply_add_task_priority_value("high").as_deref(),
-            Some("high")
+            state.apply_add_task_priority_value("high"),
+            Some(AddTaskPriorityChoice::HumanSelected("high".to_string()))
         );
         assert!(state.apply_add_task_labels(vec!["feature".to_string()]));
         assert!(state.apply_add_task_epic(true));
@@ -1114,9 +1193,14 @@ mod tests {
         assert!(context.description.is_empty());
         assert_eq!(context.step, AddTaskStep::Title);
         assert_eq!(context.project, "aven");
-        assert_eq!(context.status, "todo");
-        assert_eq!(context.status_origin, InitialStatusOrigin::Explicit);
-        assert_eq!(context.priority, "high");
+        assert_eq!(
+            context.status,
+            AddTaskStatusChoice::Explicit("todo".to_string())
+        );
+        assert_eq!(
+            context.priority,
+            AddTaskPriorityChoice::HumanSelected("high".to_string())
+        );
         assert_eq!(context.labels, vec!["feature".to_string()]);
         assert!(!context.create_more);
         assert!(!context.is_epic);
@@ -1126,6 +1210,30 @@ mod tests {
         assert!(context.repeat_rule.is_empty());
         assert!(!context.schedule_expanded);
         assert!(!state.add_task_has_pending_attachments());
+    }
+
+    #[test]
+    fn rapid_entry_reset_preserves_derived_priority_semantics() {
+        let mut state = AuthoringState::default();
+        state.begin_add_task(None, None);
+        assert!(state.capture_add_task_fields(
+            "First task".to_string(),
+            String::new(),
+            AddTaskStep::Title,
+        ));
+        assert_eq!(
+            state.apply_add_task_priority_value("high"),
+            Some(AddTaskPriorityChoice::HumanSelected("high".to_string()))
+        );
+        assert!(state.apply_add_task_create_more(true));
+        assert!(state.reset_after_created_task());
+
+        let context = state.add_task_context().unwrap();
+        assert_eq!(context.status, AddTaskStatusChoice::Derived);
+        assert_eq!(
+            context.priority,
+            AddTaskPriorityChoice::HumanSelected("high".to_string())
+        );
     }
 
     #[test]

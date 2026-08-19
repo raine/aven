@@ -139,7 +139,7 @@ impl App {
         }
         if recurring
             && !matches!(
-                crate::choices::TaskStatus::parse(&state.status),
+                crate::choices::TaskStatus::parse(state.effective_status()),
                 Ok(status) if status.is_open()
             )
         {
@@ -196,8 +196,8 @@ impl App {
                         title: Some(title.to_string()),
                         description: Some(state.description.lines.join("\n").trim().to_string()),
                         project: state.selected_project.clone(),
-                        priority: Some(state.priority.clone()),
-                        initial_status: Some(state.status.clone()),
+                        priority: Some(state.priority.value().to_string()),
+                        initial_status: Some(state.effective_status().to_string()),
                         labels: Some(state.labels.clone()),
                         set_metadata: Vec::new(),
                         remove_metadata: Vec::new(),
@@ -221,8 +221,8 @@ impl App {
                     .selected_project
                     .clone()
                     .or_else(|| state.inferred_project.clone()),
-                state.priority.clone(),
-                state.status.clone(),
+                state.priority.value().to_string(),
+                state.effective_status().to_string(),
                 state.labels.clone(),
                 schedule,
             );
@@ -277,8 +277,8 @@ impl App {
             title: title.to_string(),
             description: state.description.lines.join("\n").trim().to_string(),
             project: state.selected_project.clone(),
-            status: state.status.clone(),
-            priority: state.priority.clone(),
+            status: state.effective_status().to_string(),
+            priority: state.priority.value().to_string(),
             source: crate::choices::TaskSource::Tui,
             labels: state.labels.clone(),
             metadata: Vec::new(),

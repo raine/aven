@@ -111,13 +111,16 @@ The queue is the default attention view in the TUI. It answers: what should I lo
 
 Tasks are grouped from most urgent to least urgent:
 
-1. **Needs action**: sync conflicts, urgent tasks, stale active tasks, and available, unblocked tasks due today or overdue
-2. **Blocked**: tasks with unresolved open dependencies
+1. **Needs action**: sync conflicts, urgent tasks, stale active tasks, and visible, unblocked tasks due today or overdue
+2. **Available**: deferred tasks whose availability time arrived since their latest queue activity
 3. **Focus**: active tasks and high-priority todo tasks
-4. **Triage**: inbox tasks and medium-priority todo tasks
-5. **Later**: backlog tasks, low-priority todo tasks, and todo tasks with no priority
+4. **Soon**: medium-priority todo tasks
+5. **Triage**: inbox tasks
+6. **Blocked**: tasks with unresolved open dependencies
+7. **Later**: remaining open work, including backlog tasks and todo tasks with low or no priority
+8. **Epics**: epic containers, separated from actionable child tasks
 
-A stale active task is active work that has gone without updates long enough to need attention.
+A stale active task is active work that has gone without updates long enough to need attention. Conflicts, urgent priority, and stale active state place a task in Needs action before dependency grouping. Other blocked work remains in Blocked, including work whose due date or availability time arrived.
 
 Inside a group, queue order is stable and favors important statuses, higher priorities, stale active work, approaching deadlines, and older tasks. Due today and overdue work receive the strongest deadline boost. Deadlines within the next seven days receive a progressively larger boost as they approach. Deadline scoring applies only to visible, non-epic work, so it does not reveal deferred tasks or promote epic containers as actionable tasks.
 

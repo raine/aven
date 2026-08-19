@@ -76,7 +76,6 @@ impl App {
             selected_project: selected_project.clone(),
             initial_project: selected_project,
             status: context.status,
-            status_origin: context.status_origin,
             priority: context.priority,
             labels: context.labels,
             is_epic: context.is_epic,
@@ -147,9 +146,7 @@ impl App {
             self.authoring
                 .apply_add_task_project(state.selected_project.clone().into_iter().collect());
             self.authoring
-                .capture_add_task_status(state.status.clone(), state.status_origin);
-            self.authoring
-                .apply_add_task_priority_value(&state.priority);
+                .capture_add_task_choices(state.status.clone(), state.priority.clone());
             self.authoring.apply_add_task_labels(state.labels.clone());
             self.authoring.apply_add_task_epic(state.is_epic);
             self.authoring
@@ -175,21 +172,20 @@ impl App {
         captured
     }
 
-    pub(super) fn set_add_task_status(&mut self, status: &str) {
-        if let Some(status) = self.authoring.apply_add_task_status_choice(status) {
+    pub(super) fn set_add_task_status(&mut self, value: &str) {
+        if let Some(choice) = self.authoring.apply_add_task_status_choice(value) {
             if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
-                state.status = status.clone();
-                state.status_origin = crate::tui::authoring::InitialStatusOrigin::Explicit;
+                state.status = choice;
             } else {
                 self.begin_add_task_step();
             }
         }
     }
 
-    pub(super) fn set_add_task_priority(&mut self, priority: &str) {
-        if let Some(priority) = self.authoring.apply_add_task_priority_value(priority) {
+    pub(super) fn set_add_task_priority(&mut self, value: &str) {
+        if let Some(choice) = self.authoring.apply_add_task_priority_value(value) {
             if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
-                state.priority = priority.clone();
+                state.priority = choice;
             } else {
                 self.begin_add_task_step();
             }
@@ -221,7 +217,11 @@ impl App {
                 state: PickerState::new(
                     PickerIntent::AddTaskStatus,
                     "Add task: status",
-                    self.store.status_picker_items(Some(&state.status)),
+                    self.store.add_task_status_picker_items(
+                        state.effective_status(),
+                        state.automatic_status(),
+                        state.status_is_automatic(),
+                    ),
                     false,
                 ),
             },
@@ -230,7 +230,7 @@ impl App {
                 state: PickerState::new(
                     PickerIntent::AddTaskPriority,
                     "Add task: priority",
-                    self.store.priority_picker_items(&state.priority),
+                    self.store.priority_picker_items(state.priority.value()),
                     false,
                 ),
             },

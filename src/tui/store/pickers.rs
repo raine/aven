@@ -6,6 +6,7 @@ use crate::workspaces::Workspace;
 use super::TuiStore;
 
 pub(crate) const CREATE_PROJECT_PICKER_VALUE_PREFIX: &str = "\0create-project:";
+pub(crate) const ADD_TASK_STATUS_AUTO_VALUE: &str = "\0auto-status";
 
 pub(crate) fn create_project_picker_name(value: &str) -> Option<&str> {
     value
@@ -35,6 +36,25 @@ impl TuiStore {
                 selected: *status == selected,
             })
             .collect()
+    }
+
+    pub(crate) fn add_task_status_picker_items(
+        &self,
+        effective_status: &str,
+        automatic_status: &str,
+        automatic: bool,
+    ) -> Vec<PickerItem> {
+        let mut items = vec![PickerItem {
+            label: format!("Auto ({automatic_status})"),
+            value: ADD_TASK_STATUS_AUTO_VALUE.to_string(),
+            selected: automatic,
+        }];
+        items.extend(STATUSES.iter().map(|status| PickerItem {
+            label: (*status).to_string(),
+            value: (*status).to_string(),
+            selected: !automatic && *status == effective_status,
+        }));
+        items
     }
 
     pub(crate) fn label_picker_items(&self) -> Vec<PickerItem> {

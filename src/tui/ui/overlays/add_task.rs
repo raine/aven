@@ -390,7 +390,7 @@ fn metadata_columns(width: u16) -> usize {
 fn add_task_metadata_lines(state: &AddTaskView, width: u16) -> Vec<Line<'static>> {
     let owned = [
         metadata_field(AddTaskStep::Project, "Project", &state.project, state.focus),
-        metadata_field(AddTaskStep::Status, "Status", &state.status, state.focus),
+        status_metadata_field(&state.status, state.status_automatic, state.focus),
         metadata_field(
             AddTaskStep::Priority,
             "Priority",
@@ -422,6 +422,15 @@ fn add_task_metadata_lines(state: &AddTaskView, width: u16) -> Vec<Line<'static>
         .chunks(columns)
         .map(|chunk| metadata_row(chunk.to_vec(), width as usize))
         .collect()
+}
+
+fn status_metadata_field(status: &str, automatic: bool, focus: AddTaskStep) -> Line<'static> {
+    let mut line = metadata_field(AddTaskStep::Status, "Status", status, focus);
+    if automatic {
+        line.spans
+            .push(Span::styled(" (auto)", Style::new().fg(FG_MUTED)));
+    }
+    line
 }
 
 fn schedule_metadata_field(state: &AddTaskView) -> Line<'static> {

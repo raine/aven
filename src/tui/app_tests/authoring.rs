@@ -39,9 +39,8 @@ async fn create_more_reopens_blank_composer_with_retained_defaults() {
     };
     state.title = LineEdit::new("First rapid task".to_string());
     state.description.lines = vec!["First details".to_string()];
-    state.status = "todo".to_string();
-    state.status_origin = crate::tui::authoring::InitialStatusOrigin::Explicit;
-    state.priority = "high".to_string();
+    state.apply_status_choice("todo");
+    state.apply_priority_choice("high");
     state.labels = vec!["rapid".to_string()];
     state.is_epic = true;
 
@@ -53,8 +52,8 @@ async fn create_more_reopens_blank_composer_with_retained_defaults() {
             if state.focus == AddTaskStep::Title
                 && state.title.text.is_empty()
                 && state.description.lines == vec![String::new()]
-                && state.status == "todo"
-                && state.priority == "high"
+                && state.effective_status() == "todo"
+                && state.priority.value() == "high"
                 && state.labels == vec!["rapid".to_string()]
                 && !state.is_epic
                 && !state.create_more
@@ -118,6 +117,50 @@ async fn create_more_reopens_blank_composer_with_retained_defaults() {
 }
 
 #[tokio::test]
+async fn create_more_preserves_derived_status_semantics() {
+    let (_dir, pool, mut app) = test_app_with_pool().await;
+    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+        panic!("expected composer");
+    };
+    state.title = LineEdit::new("Derived todo".to_string());
+    state.apply_priority_choice("high");
+    app.handle_overlay_key(ctrl_g()).await.unwrap();
+
+    let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+        panic!("expected repeated composer");
+    };
+    assert!(state.status_is_automatic());
+    assert_eq!(state.effective_status(), "todo");
+    state.title = LineEdit::new("Derived inbox".to_string());
+    state.apply_priority_choice("none");
+    app.handle_overlay_key(ctrl_g()).await.unwrap();
+
+    let rows = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT title, status, priority FROM tasks
+         WHERE title IN ('Derived todo', 'Derived inbox') ORDER BY title",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "Derived inbox".to_string(),
+                "inbox".to_string(),
+                "none".to_string(),
+            ),
+            (
+                "Derived todo".to_string(),
+                "todo".to_string(),
+                "high".to_string(),
+            ),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn create_more_refresh_failure_resets_committed_draft_without_duplication() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
     app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
@@ -166,7 +209,7 @@ async fn create_more_precommit_failure_preserves_the_exact_draft() {
     };
     state.title = LineEdit::new("Retry safely".to_string());
     state.description.lines = vec!["Preserve this".to_string()];
-    state.priority = "urgent".to_string();
+    state.apply_priority_choice("urgent");
 
     let error = app.handle_overlay_key(ctrl_g()).await.unwrap_err();
 
@@ -176,7 +219,7 @@ async fn create_more_precommit_failure_preserves_the_exact_draft() {
         Some(OverlayState::AddTask(state))
             if state.title.text == "Retry safely"
                 && state.description.lines == vec!["Preserve this".to_string()]
-                && state.priority == "urgent"
+                && state.priority.value() == "urgent"
                 && !state.create_more
     ));
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks WHERE title = 'Retry safely'")
@@ -276,8 +319,7 @@ async fn add_task_recurring_preserves_each_explicit_open_status() {
             panic!("expected composer");
         };
         state.title = LineEdit::new(format!("Explicit {status}"));
-        state.status = status.to_string();
-        state.status_origin = crate::tui::authoring::InitialStatusOrigin::Explicit;
+        state.apply_status_choice(status);
         state.set_repeat_rule("daily".to_string());
         app.handle_overlay_key(ctrl_s()).await.unwrap();
 
@@ -304,8 +346,7 @@ async fn add_task_recurring_terminal_status_persists_nothing() {
             panic!("expected composer");
         };
         state.title = LineEdit::new(format!("Terminal {status}"));
-        state.status = status.to_string();
-        state.status_origin = crate::tui::authoring::InitialStatusOrigin::Explicit;
+        state.apply_status_choice(status);
         state.labels = vec![format!("unpersisted-{status}")];
         state.set_repeat_rule("daily".to_string());
         app.handle_overlay_key(ctrl_s()).await.unwrap();
@@ -442,7 +483,7 @@ async fn add_task_status_hotkey_selects_direct_status() {
     assert_pending(&app, &["t"]);
     assert!(matches!(
         &app.overlay,
-        Some(OverlayState::AddTask(state)) if state.status == "inbox"
+        Some(OverlayState::AddTask(state)) if state.effective_status() == "inbox"
     ));
     assert!(matches!(
         app.view().overlay,
@@ -457,7 +498,7 @@ async fn add_task_status_hotkey_selects_direct_status() {
     assert_pending_empty(&app);
     assert!(matches!(
         &app.overlay,
-        Some(OverlayState::AddTask(state)) if state.status == "active"
+        Some(OverlayState::AddTask(state)) if state.effective_status() == "active"
     ));
     assert_eq!(toast_message(&app), None);
 
@@ -480,7 +521,7 @@ async fn add_task_priority_hotkey_selects_direct_priority() {
     assert_pending(&app, &["r"]);
     assert!(matches!(
         &app.overlay,
-        Some(OverlayState::AddTask(state)) if state.priority == "none"
+        Some(OverlayState::AddTask(state)) if state.priority.value() == "none"
     ));
     assert!(matches!(
         app.view().overlay,
@@ -495,7 +536,7 @@ async fn add_task_priority_hotkey_selects_direct_priority() {
     assert_pending_empty(&app);
     assert!(matches!(
         &app.overlay,
-        Some(OverlayState::AddTask(state)) if state.priority == "high"
+        Some(OverlayState::AddTask(state)) if state.priority.value() == "high"
     ));
     assert_eq!(toast_message(&app), None);
 
@@ -505,6 +546,76 @@ async fn add_task_priority_hotkey_selects_direct_priority() {
     let selected = app.list.selected_task().unwrap();
     assert_eq!(app.store.tasks[selected].task.title, "Fix release");
     assert_eq!(app.store.tasks[selected].task.priority, TaskPriority::High);
+}
+
+#[tokio::test]
+async fn add_task_priority_picker_and_shortcut_share_status_derivation() {
+    let mut app = test_app().await;
+    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+        panic!("expected composer");
+    };
+    state.focus = AddTaskStep::Priority;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+        panic!("expected composer priority picker");
+    };
+    let crate::tui::overlay::AddTaskMode::Picker { state: picker, .. } = &mut state.mode else {
+        panic!("expected priority picker");
+    };
+    picker.selected = picker
+        .items
+        .iter()
+        .position(|item| item.value == "high")
+        .unwrap();
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::AddTask(state))
+            if state.priority.value() == "high" && state.effective_status() == "todo"
+    ));
+
+    app.handle_overlay_key(ctrl_r()).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Char('n')))
+        .await
+        .unwrap();
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::AddTask(state))
+            if state.priority.value() == "none" && state.effective_status() == "inbox"
+    ));
+}
+
+#[tokio::test]
+async fn add_task_status_picker_auto_restores_derived_status() {
+    let mut app = test_app().await;
+    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+        panic!("expected composer");
+    };
+    state.apply_priority_choice("high");
+    state.apply_status_choice("inbox");
+    state.focus = AddTaskStep::Status;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+        panic!("expected composer status picker");
+    };
+    let crate::tui::overlay::AddTaskMode::Picker { state: picker, .. } = &mut state.mode else {
+        panic!("expected status picker");
+    };
+    assert!(picker.items.iter().any(|item| item.label == "Auto (todo)"));
+    picker.selected = picker
+        .items
+        .iter()
+        .position(|item| item.value == crate::tui::store::ADD_TASK_STATUS_AUTO_VALUE)
+        .unwrap();
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::AddTask(state))
+            if state.status_is_automatic() && state.effective_status() == "todo"
+    ));
 }
 
 #[tokio::test]

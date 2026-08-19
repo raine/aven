@@ -236,11 +236,11 @@ pub(crate) fn handle_generic_overlay_key(
                                     };
                                 }
                                 AddTaskStep::Status => {
-                                    state.status = value;
-                                    state.status_origin =
-                                        crate::tui::authoring::InitialStatusOrigin::Explicit;
+                                    state.apply_status_choice(&value);
                                 }
-                                AddTaskStep::Priority => state.priority = value,
+                                AddTaskStep::Priority => {
+                                    state.apply_priority_choice(&value);
+                                }
                                 AddTaskStep::Epic => state.is_epic = value == "true",
                                 AddTaskStep::RepeatDue => state.repeat_due = value,
                                 _ => {}
@@ -1041,9 +1041,8 @@ mod tests {
             inferred_project: None,
             selected_project: Some("aven".to_string()),
             initial_project: Some("aven".to_string()),
-            status: "inbox".to_string(),
-            status_origin: crate::tui::authoring::InitialStatusOrigin::UntouchedDefault,
-            priority: "none".to_string(),
+            status: crate::tui::authoring::AddTaskStatusChoice::Derived,
+            priority: crate::tui::authoring::AddTaskPriorityChoice::Literal("none".to_string()),
             labels: Vec::new(),
             is_epic: false,
             create_more: false,
@@ -1275,46 +1274,97 @@ mod tests {
     }
 
     #[test]
-    fn add_task_recurrence_defaults_only_untouched_inbox_to_todo() {
-        let mut untouched = add_task_state(AddTaskStep::RepeatRule);
-        untouched.set_repeat_rule("daily".to_string());
-        assert_eq!(untouched.status, "todo");
-        assert_eq!(
-            untouched.status_origin,
-            crate::tui::authoring::InitialStatusOrigin::RecurrenceDefault
-        );
+    fn add_task_recurrence_derives_status_unless_status_is_explicit() {
+        let mut automatic = add_task_state(AddTaskStep::RepeatRule);
+        automatic.set_repeat_rule("daily".to_string());
+        assert_eq!(automatic.effective_status(), "todo");
 
         let mut explicit = add_task_state(AddTaskStep::RepeatRule);
-        explicit.status_origin = crate::tui::authoring::InitialStatusOrigin::Explicit;
+        explicit.apply_status_choice("inbox");
         explicit.set_repeat_rule("weekly".to_string());
-        assert_eq!(explicit.status, "inbox");
+        assert_eq!(explicit.effective_status(), "inbox");
     }
 
     #[test]
     fn add_task_partial_recurrence_keeps_composer_schedule_fields_hidden() {
         let mut state = add_task_state(AddTaskStep::Schedule);
         state.set_repeat_rule("d".to_string());
-        assert_eq!(state.status, "inbox");
-        assert_eq!(
-            state.status_origin,
-            crate::tui::authoring::InitialStatusOrigin::UntouchedDefault
-        );
+        assert_eq!(state.effective_status(), "inbox");
         assert!(!state.is_step_editable(AddTaskStep::AvailableAt));
         assert!(!state.is_step_editable(AddTaskStep::RepeatAt));
     }
 
     #[test]
-    fn add_task_recurrence_disable_restores_only_automatic_todo() {
+    fn add_task_recurrence_disable_restores_derived_inbox() {
         let mut automatic = add_task_state(AddTaskStep::RepeatRule);
         automatic.set_repeat_rule("daily".to_string());
         automatic.set_repeat_rule("none".to_string());
-        assert_eq!(automatic.status, "inbox");
+        assert_eq!(automatic.effective_status(), "inbox");
 
         let mut explicit = add_task_state(AddTaskStep::RepeatRule);
         explicit.set_repeat_rule("daily".to_string());
-        explicit.status_origin = crate::tui::authoring::InitialStatusOrigin::Explicit;
+        explicit.apply_status_choice("todo");
         explicit.set_repeat_rule("none".to_string());
-        assert_eq!(explicit.status, "todo");
+        assert_eq!(explicit.effective_status(), "todo");
+    }
+
+    #[test]
+    fn add_task_priority_derivation_round_trips_between_inbox_and_todo() {
+        let mut state = add_task_state(AddTaskStep::Priority);
+        assert_eq!(state.effective_status(), "inbox");
+
+        assert!(state.apply_priority_choice("high"));
+        assert_eq!(state.effective_status(), "todo");
+
+        assert!(state.apply_priority_choice("none"));
+        assert_eq!(state.effective_status(), "inbox");
+    }
+
+    #[test]
+    fn add_task_explicit_status_wins_over_priority_changes() {
+        let mut inbox = add_task_state(AddTaskStep::Status);
+        assert!(inbox.apply_status_choice("inbox"));
+        assert!(inbox.apply_priority_choice("high"));
+        assert_eq!(inbox.effective_status(), "inbox");
+        assert!(inbox.apply_priority_choice("none"));
+        assert_eq!(inbox.effective_status(), "inbox");
+
+        let mut todo = add_task_state(AddTaskStep::Status);
+        assert!(todo.apply_status_choice("todo"));
+        assert!(todo.apply_priority_choice("high"));
+        assert!(todo.apply_priority_choice("none"));
+        assert_eq!(todo.effective_status(), "todo");
+    }
+
+    #[test]
+    fn add_task_recurrence_and_priority_derive_independently_in_either_order() {
+        let mut priority_first = add_task_state(AddTaskStep::Priority);
+        priority_first.apply_priority_choice("high");
+        priority_first.set_repeat_rule("daily".to_string());
+        priority_first.apply_priority_choice("none");
+        assert_eq!(priority_first.effective_status(), "todo");
+        priority_first.set_repeat_rule("none".to_string());
+        assert_eq!(priority_first.effective_status(), "inbox");
+
+        let mut recurrence_first = add_task_state(AddTaskStep::RepeatRule);
+        recurrence_first.set_repeat_rule("daily".to_string());
+        recurrence_first.apply_priority_choice("high");
+        recurrence_first.set_repeat_rule("none".to_string());
+        assert_eq!(recurrence_first.effective_status(), "todo");
+        recurrence_first.apply_priority_choice("none");
+        assert_eq!(recurrence_first.effective_status(), "inbox");
+    }
+
+    #[test]
+    fn add_task_auto_status_choice_restores_derivation() {
+        let mut state = add_task_state(AddTaskStep::Status);
+        state.apply_priority_choice("high");
+        state.apply_status_choice("inbox");
+        assert_eq!(state.effective_status(), "inbox");
+
+        assert!(state.apply_status_choice(crate::tui::store::ADD_TASK_STATUS_AUTO_VALUE));
+        assert!(state.status_is_automatic());
+        assert_eq!(state.effective_status(), "todo");
     }
 
     #[test]

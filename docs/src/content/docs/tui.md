@@ -90,7 +90,11 @@ Press `a` to open the task composer. Project, status, priority, labels, availabi
 
 `Enter` opens the focused metadata control, creates from the title, and inserts a newline in the description. `Ctrl-Enter` creates from any field in terminals that report modified Enter keys. `Ctrl-s` is the portable create shortcut.
 
-Press `Ctrl-g` to create the task and immediately start another. The next draft retains the project, status, priority, and labels, while clearing task-specific content such as the title, description, schedule, and attachments. This shortcut applies to standalone, non-repeating tasks.
+Press `Ctrl-g` to create the task and immediately start another. The next draft retains the project, status choice, priority, and labels, while clearing task-specific content such as the title, description, schedule, and attachments. This shortcut applies to standalone, non-repeating tasks.
+
+The composer shows automatically derived statuses with an `(auto)` marker. A plain draft uses `inbox`. Choosing any priority other than `none` changes the automatic status to `todo`; returning to `none` restores `inbox` unless the task repeats. Repeating tasks also derive `todo`. These inputs compose independently, so clearing either one leaves `todo` while the other still applies.
+
+Choosing a status makes it explicit, including choosing `inbox`, and an explicit status stays unchanged when priority or recurrence changes. Choose **Auto** in the status picker to restore derivation. This priority behavior applies only to direct human choices in the TUI composer. CLI creation, agent creation, natural-language intake, and priority edits on existing tasks leave status unchanged unless a status is supplied or selected separately.
 
 ### Set a schedule
 

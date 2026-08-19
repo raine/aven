@@ -92,6 +92,17 @@ fn metadata_grid_keeps_three_balanced_columns_above_title() {
 }
 
 #[test]
+fn add_task_overlay_marks_automatic_status() {
+    let rendered = render_overlay_view(add_task_overlay(AddTaskView {
+        status: "todo".to_string(),
+        status_automatic: true,
+        ..add_task_view()
+    }));
+
+    assert!(rendered.contains("todo (auto)"));
+}
+
+#[test]
 fn schedule_fields_align_with_the_metadata_grid() {
     let buffer = overlay_buffer(add_task_overlay(AddTaskView {
         available_at: "tomorrow".to_string(),

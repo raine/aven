@@ -34,8 +34,8 @@ pub(crate) use epics::{AddEpicChildContext, EpicContext};
 pub(crate) use launch::{TuiLaunch, TuiStartup};
 pub(crate) use onboarding::OnboardingStatus;
 pub(crate) use pickers::{
-    CREATE_PROJECT_PICKER_VALUE_PREFIX, create_project_picker_name, deleted_picker_items,
-    epic_picker_items,
+    ADD_TASK_STATUS_AUTO_VALUE, CREATE_PROJECT_PICKER_VALUE_PREFIX, create_project_picker_name,
+    deleted_picker_items, epic_picker_items,
 };
 pub(crate) use recurrence::recurrence_draft;
 pub(crate) use task_commands::{PriorityMutation, TaskDateField, TaskTextField};

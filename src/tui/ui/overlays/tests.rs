@@ -158,6 +158,7 @@ fn add_task_view() -> AddTaskView {
         focus: AddTaskStep::Title,
         project: "aven".to_string(),
         status: "inbox".to_string(),
+        status_automatic: true,
         priority: "none".to_string(),
         labels: Vec::new(),
         is_epic: false,

@@ -1,6 +1,9 @@
 use crate::ids::WorkspaceId;
 use crate::query::SearchMatchedField;
-use crate::tui::authoring::{AddTaskStep, InitialStatusOrigin, PendingTaskAttachmentSummary};
+use crate::tui::authoring::{
+    AddTaskPriorityChoice, AddTaskStatusChoice, AddTaskStep, PendingTaskAttachmentSummary,
+    automatic_add_task_status, derived_add_task_status,
+};
 use crate::tui::conflict_flow::ConflictResolutionChoice;
 use crate::tui::event::{Action, CommandContext};
 use crate::tui::overlay::text_input::LineEdit;
@@ -903,9 +906,8 @@ pub(crate) struct AddTaskState {
     pub(crate) inferred_project: Option<String>,
     pub(crate) selected_project: Option<String>,
     pub(crate) initial_project: Option<String>,
-    pub(crate) status: String,
-    pub(crate) status_origin: InitialStatusOrigin,
-    pub(crate) priority: String,
+    pub(crate) status: AddTaskStatusChoice,
+    pub(crate) priority: AddTaskPriorityChoice,
     pub(crate) labels: Vec<String>,
     pub(crate) is_epic: bool,
     pub(crate) create_more: bool,
@@ -1050,8 +1052,8 @@ impl AddTaskState {
                 .iter()
                 .any(|line| !line.trim().is_empty())
             || self.selected_project != self.initial_project
-            || self.status != "inbox"
-            || self.priority != "none"
+            || self.status != AddTaskStatusChoice::Derived
+            || self.priority.value() != "none"
             || !self.labels.is_empty()
             || self.is_epic
             || !self.available_at.text.trim().is_empty()
@@ -1098,21 +1100,37 @@ impl AddTaskState {
     }
 
     pub(crate) fn refresh_repeat_status(&mut self) {
-        let enabled = self.recurrence_valid();
-        if enabled {
+        if self.recurrence_valid() {
             self.create_more = false;
         }
-        match (enabled, self.status_origin) {
-            (true, InitialStatusOrigin::UntouchedDefault) if self.status == "inbox" => {
-                self.status = "todo".to_string();
-                self.status_origin = InitialStatusOrigin::RecurrenceDefault;
-            }
-            (false, InitialStatusOrigin::RecurrenceDefault) => {
-                self.status = "inbox".to_string();
-                self.status_origin = InitialStatusOrigin::UntouchedDefault;
-            }
-            _ => {}
-        }
+    }
+
+    pub(crate) fn effective_status(&self) -> &str {
+        derived_add_task_status(&self.status, &self.priority, self.recurrence_valid())
+    }
+
+    pub(crate) fn automatic_status(&self) -> &'static str {
+        automatic_add_task_status(&self.priority, self.recurrence_valid())
+    }
+
+    pub(crate) fn status_is_automatic(&self) -> bool {
+        matches!(self.status, AddTaskStatusChoice::Derived)
+    }
+
+    pub(crate) fn apply_status_choice(&mut self, value: &str) -> bool {
+        let Some(choice) = AddTaskStatusChoice::from_picker_value(value) else {
+            return false;
+        };
+        self.status = choice;
+        true
+    }
+
+    pub(crate) fn apply_priority_choice(&mut self, value: &str) -> bool {
+        let Some(choice) = AddTaskPriorityChoice::from_human_selection(value) else {
+            return false;
+        };
+        self.priority = choice;
+        true
     }
 
     pub(crate) fn recurrence_enabled(&self) -> bool {
