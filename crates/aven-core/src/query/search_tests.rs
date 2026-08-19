@@ -1404,3 +1404,61 @@ async fn task_search_applies_project_scope_to_every_candidate_lane_before_limiti
     );
     assert_eq!(attachments[0].matched_field, SearchMatchedField::Attachment);
 }
+
+#[tokio::test]
+async fn task_search_resolves_display_refs_for_numeric_project_prefixes() {
+    let (_temp, mut conn) = test_conn().await;
+    sqlx::query(
+        "INSERT INTO projects(id, key, name, prefix, created_at, updated_at)
+         VALUES ('0000000000000002', '00-main', '00. Main', '0M', 't', 't')",
+    )
+    .execute(conn.as_mut())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO tasks(id, title, description, project_id, status, priority,
+             created_at, updated_at, queue_activity_at)
+         VALUES ('XYMTB8W8T3NRZDXY', 'FinceptTerminal', '', '0000000000000002', 'todo', 'none', 't', 't', 't')",
+    )
+    .execute(conn.as_mut())
+    .await
+    .unwrap();
+
+    let workspace_id = crate::workspaces::default_workspace_id();
+    let preview = search_task_preview_set_in_workspace(
+        &mut conn,
+        &workspace_id,
+        TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
+            text: "fin".to_string(),
+            project: None,
+            include_deleted: false,
+            limit: 10,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(preview.items[0].display_ref, "0M-XYMT");
+
+    // Accepting a preview row re-runs the search against its display ref, so the
+    // ref lane has to recognize a prefix that carries digits.
+    let accepted = search_task_items_in_workspace(
+        &mut conn,
+        &workspace_id,
+        TaskSearchQuery {
+            metadata: Vec::new(),
+            has_metadata: Vec::new(),
+            missing_metadata: Vec::new(),
+            text: preview.items[0].display_ref.clone(),
+            project: None,
+            include_deleted: false,
+            limit: 10,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(accepted[0].item.task.id.as_str(), "XYMTB8W8T3NRZDXY");
+    assert_eq!(accepted[0].matched_field, SearchMatchedField::Ref);
+}

@@ -1,3 +1,5 @@
+use crate::projects::MAX_EXPLICIT_PROJECT_PREFIX_LEN;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedTaskSearchQuery {
     pub trimmed: String,
@@ -165,7 +167,7 @@ fn parse_ref_query(input: &str) -> Option<ParsedRefSearchQuery> {
     if groups.is_empty() {
         return None;
     }
-    if groups.len() >= 2 && groups[0].chars().all(|c| c.is_ascii_alphabetic()) {
+    if groups.len() >= 2 && is_project_prefix_group(groups[0]) {
         let suffix = groups[1..].join("");
         if suffix.len() >= 3 && (!has_whitespace || has_ref_marker || suffix_has_digit(&suffix)) {
             return Some(ParsedRefSearchQuery {
@@ -185,6 +187,14 @@ fn parse_ref_query(input: &str) -> Option<ParsedRefSearchQuery> {
         });
     }
     None
+}
+
+/// Alphabetic groups are prefix candidates regardless of length. Groups
+/// containing digits follow the length constraint for explicit project prefixes.
+fn is_project_prefix_group(group: &str) -> bool {
+    group.chars().all(|ch| ch.is_ascii_alphabetic())
+        || (group.len() <= MAX_EXPLICIT_PROJECT_PREFIX_LEN
+            && group.chars().any(|ch| ch.is_ascii_digit()))
 }
 
 fn suffix_has_digit(input: &str) -> bool {
@@ -265,6 +275,28 @@ mod tests {
         assert_eq!(qualified.normalized_suffix, "70K1");
 
         assert_eq!(parse_task_search_query("release cleanup").ref_query, None);
+    }
+
+    #[test]
+    fn task_search_parser_supports_numeric_project_prefixes() {
+        let numeric = parse_task_search_query("0M-XYMT").ref_query.unwrap();
+        assert_eq!(numeric.normalized_prefix.as_deref(), Some("0M"));
+        assert_eq!(numeric.normalized_suffix, "XYMT");
+
+        let counted = parse_task_search_query("/0L2-7OKI").ref_query.unwrap();
+        assert_eq!(counted.normalized_prefix.as_deref(), Some("012"));
+        assert_eq!(counted.normalized_suffix, "70K1");
+
+        let long_numeric = parse_task_search_query("2FAST-7OKI").ref_query.unwrap();
+        assert_eq!(long_numeric.normalized_prefix.as_deref(), Some("2FAST"));
+        assert_eq!(long_numeric.normalized_suffix, "70K1");
+    }
+
+    #[test]
+    fn task_search_parser_supports_long_alphabetic_project_prefixes() {
+        let parsed = parse_task_search_query("BRAVO-7OKI").ref_query.unwrap();
+        assert_eq!(parsed.normalized_prefix.as_deref(), Some("BRAV0"));
+        assert_eq!(parsed.normalized_suffix, "70K1");
     }
 
     #[test]

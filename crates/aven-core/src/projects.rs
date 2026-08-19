@@ -434,6 +434,8 @@ async fn restore_deleted_project(
     )))
 }
 
+pub(crate) const MAX_EXPLICIT_PROJECT_PREFIX_LEN: usize = 8;
+
 async fn unique_project_prefix(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
