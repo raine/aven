@@ -661,9 +661,9 @@ async fn load_series_ref_search_documents(
     query.push_bind(project_id);
     query.push(") AND ");
     query.push(super::fragments::ordinary_task_clause("t"));
-    query.push(" AND ro.series_id LIKE ");
-    query.push_bind(suffix);
-    query.push(" || '%' ORDER BY t.updated_at DESC, t.id");
+    query.push(" AND ro.series_id GLOB ");
+    query.push_bind(format!("{suffix}*"));
+    query.push(" ORDER BY t.updated_at DESC, t.id");
 
     let rows = query.build().fetch_all(&mut *conn).await?;
     search_documents_from_rows(rows, display_refs)
