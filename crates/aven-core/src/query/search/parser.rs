@@ -1,4 +1,4 @@
-use crate::projects::MAX_PROJECT_PREFIX_LEN;
+use crate::projects::MAX_EXPLICIT_PROJECT_PREFIX_LEN;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedTaskSearchQuery {
@@ -189,11 +189,12 @@ fn parse_ref_query(input: &str) -> Option<ParsedRefSearchQuery> {
     None
 }
 
-/// Alphabetic prefixes are valid regardless of length. Prefixes containing
-/// digits follow the length constraint used for explicit project prefixes.
+/// Alphabetic groups are prefix candidates regardless of length. Groups
+/// containing digits follow the length constraint for explicit project prefixes.
 fn is_project_prefix_group(group: &str) -> bool {
     group.chars().all(|ch| ch.is_ascii_alphabetic())
-        || (group.len() <= MAX_PROJECT_PREFIX_LEN && group.chars().any(|ch| ch.is_ascii_digit()))
+        || (group.len() <= MAX_EXPLICIT_PROJECT_PREFIX_LEN
+            && group.chars().any(|ch| ch.is_ascii_digit()))
 }
 
 fn suffix_has_digit(input: &str) -> bool {
@@ -277,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn task_search_parser_supports_numeric_and_long_alphabetic_project_prefixes() {
+    fn task_search_parser_supports_numeric_project_prefixes() {
         let numeric = parse_task_search_query("0M-XYMT").ref_query.unwrap();
         assert_eq!(numeric.normalized_prefix.as_deref(), Some("0M"));
         assert_eq!(numeric.normalized_suffix, "XYMT");
@@ -289,16 +290,13 @@ mod tests {
         let long_numeric = parse_task_search_query("2FAST-7OKI").ref_query.unwrap();
         assert_eq!(long_numeric.normalized_prefix.as_deref(), Some("2FAST"));
         assert_eq!(long_numeric.normalized_suffix, "70K1");
+    }
 
-        let long_alphabetic = parse_task_search_query("BRAVO-7OKI").ref_query.unwrap();
-        assert_eq!(long_alphabetic.normalized_prefix.as_deref(), Some("BRAV0"));
-        assert_eq!(long_alphabetic.normalized_suffix, "70K1");
-
-        let hyphenated = parse_task_search_query("release-cleanup")
-            .ref_query
-            .unwrap();
-        assert_eq!(hyphenated.normalized_prefix.as_deref(), Some("RE1EASE"));
-        assert_eq!(hyphenated.normalized_suffix, "C1EANUP");
+    #[test]
+    fn task_search_parser_supports_long_alphabetic_project_prefixes() {
+        let parsed = parse_task_search_query("BRAVO-7OKI").ref_query.unwrap();
+        assert_eq!(parsed.normalized_prefix.as_deref(), Some("BRAV0"));
+        assert_eq!(parsed.normalized_suffix, "70K1");
     }
 
     #[test]

@@ -806,7 +806,7 @@ async fn project_prefix_exists(
 
 fn normalize_prefix(prefix: &str) -> Result<String> {
     let prefix = prefix.trim().to_ascii_uppercase();
-    if (2..=crate::projects::MAX_PROJECT_PREFIX_LEN).contains(&prefix.len())
+    if (2..=crate::projects::MAX_EXPLICIT_PROJECT_PREFIX_LEN).contains(&prefix.len())
         && prefix.chars().all(|ch| ch.is_ascii_alphanumeric())
     {
         Ok(prefix)
