@@ -3,6 +3,9 @@
 `aven` is a local-first task manager. Use it to find and inspect work, maintain
 task state, create follow-up tasks, and leave durable handoff context.
 
+Do not create tasks unless the user asks or active agent instructions enable
+automatic task creation.
+
 ## Basics
 
 - Run commands from the repository whose tasks you want. Aven infers the

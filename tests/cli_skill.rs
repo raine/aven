@@ -28,6 +28,7 @@ fn skill_install_targets_explicit_agent() {
         &installed,
         &[
             "# Aven CLI Primer",
+            "Do not create tasks unless the user asks",
             "aven list --ready",
             "aven context APP-7KQ9",
             "aven edit APP-7KQ9 --status active",
