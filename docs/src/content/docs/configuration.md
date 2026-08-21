@@ -263,7 +263,7 @@ security guidance.
 
 ## Agent task intake
 
-Natural-language task intake can call an external agent command. The configured command receives a prompt through the `{prompt}` argument placeholder. Custom system prompts can use `{input}`, `{priorities}`, `{selected_project}`, `{inferred_project}`, `{projects}`, and `{labels}`. A non-empty selected project is authoritative, while the inferred project comes from current-directory routing.
+Natural-language task intake can call an external agent command. Include `{prompt}` in an argument to pass the generated prompt there. When no argument contains `{prompt}`, aven writes the prompt to the command's standard input. Custom system prompts can use `{input}`, `{priorities}`, `{selected_project}`, `{inferred_project}`, `{projects}`, and `{labels}`. A non-empty selected project is authoritative, while the inferred project comes from current-directory routing.
 
 ```yaml
 agent:
@@ -272,6 +272,26 @@ agent:
     args: ["-p", "--no-session-persistence", "--bare", "{prompt}"]
     timeout_seconds: 45
 ```
+
+[Pi](https://pi.dev) accepts the task-intake prompt through standard input in print mode. This configuration uses Pi's configured default provider and model:
+
+```yaml
+agent:
+  task_intake:
+    command: "pi"
+    args:
+      - --print
+      - --no-session
+      - --no-tools
+      - --no-extensions
+      - --no-skills
+      - --no-prompt-templates
+      - --no-context-files
+      - --no-approve
+    timeout_seconds: 300
+```
+
+The isolation flags keep task intake independent of project resources and prevent it from creating sessions or invoking tools. Add `--provider` and `--model` arguments when task intake should use a specific authenticated model.
 
 ## Environment overrides
 
