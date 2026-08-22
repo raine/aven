@@ -697,6 +697,10 @@ async fn ensure_supported_export(_conn: &mut SqliteConnection, export: &AvenExpo
 }
 
 fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
+    ensure!(
+        export.version == EXPORT_VERSION || export.tables.task_related_links.is_empty(),
+        "error invalid-export-snapshot related links require version {EXPORT_VERSION}"
+    );
     let mut workspace_ids = HashSet::new();
     for workspace in &export.tables.workspaces {
         if workspace_ids.contains(&workspace.id) {

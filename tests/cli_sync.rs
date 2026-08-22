@@ -2009,14 +2009,27 @@ fn valid_offline_batch_with_related_operations_still_syncs() {
     let task_ref = extract_ref(&ok(
         env.aven(&a, ["add", "offline batch", "--project", "app"])
     ));
+    let related_ref = extract_ref(&ok(
+        env.aven(&a, ["add", "offline related", "--project", "app"])
+    ));
     ok(env.aven(&a, ["edit", &task_ref, "--label", "offline"]));
     ok(env.aven_stdin(&a, ["note", &task_ref, "--stdin"], "batch note\n"));
+    ok(env.aven(&a, ["related", "add", &task_ref, &related_ref]));
 
     sync(&env, &a, &server);
     sync(&env, &b, &server);
 
     let full = ok(env.aven(&b, ["show", &task_ref, "--full"]));
-    contains_all(&full, &["offline batch", "labels=offline", "batch note"]);
+    contains_all(
+        &full,
+        &[
+            "offline batch",
+            "labels=offline",
+            "batch note",
+            &related_ref,
+            "offline related",
+        ],
+    );
 }
 
 #[test]

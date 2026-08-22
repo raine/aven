@@ -79,6 +79,54 @@ async fn create_undo_soft_deletes_tasks_with_related_tombstones() {
 }
 
 #[tokio::test]
+async fn related_no_ops_do_not_wake_the_daemon() {
+    let mut store = test_store().await;
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    socket
+        .set_read_timeout(Some(std::time::Duration::from_millis(100)))
+        .unwrap();
+    let (related_id, _) = create_selected_task(&mut store, "Wake related").await;
+    let (_task_id, selected) = create_selected_task(&mut store, "Wake subject").await;
+    let mut config = crate::config::AppConfig::default();
+    config.sync.enabled = true;
+    config.daemon.wake_addr = Some(socket.local_addr().unwrap().to_string());
+    store.set_config(config);
+    let mut byte = [0_u8; 1];
+
+    let added = store
+        .add_related(Some(selected), &related_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(socket.recv(&mut byte).unwrap(), 1);
+    store
+        .add_related(added.selected, &related_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        socket.recv(&mut byte).unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+
+    let removed = store
+        .remove_related(added.selected, &related_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(socket.recv(&mut byte).unwrap(), 1);
+    store
+        .remove_related(removed.selected, &related_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        socket.recv(&mut byte).unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+}
+
+#[tokio::test]
 async fn related_undo_rejects_a_changed_pair_version() {
     let mut store = test_store().await;
     let (related_id, _) = create_selected_task(&mut store, "Version related").await;

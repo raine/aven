@@ -98,6 +98,22 @@ fn related_export_uses_v3_and_round_trips_tombstone_state() {
         &["invalid-export-snapshot", "related pair is not canonical"],
     );
 
+    let mut mislabeled = snapshot.clone();
+    mislabeled["version"] = serde_json::json!(2);
+    let mislabeled_export = env.path("related-v2.json");
+    std::fs::write(
+        &mislabeled_export,
+        serde_json::to_vec_pretty(&mislabeled).unwrap(),
+    )
+    .unwrap();
+    contains_all(
+        &fail(env.aven(
+            &target,
+            ["import", "--yes", mislabeled_export.to_str().unwrap()],
+        )),
+        &["invalid-export-snapshot", "related links require version 3"],
+    );
+
     ok(env.aven(&target, ["import", "--yes", export.to_str().unwrap()]));
     contains_all(
         &ok(env.aven(&target, ["doctor", "--integrity"])),

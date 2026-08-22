@@ -798,6 +798,101 @@ mod tests {
     use crate::attachments::storage::{object_path, sha256_hex, upsert_inventory_available};
     use crate::sync::wire::{ChangeWire, SYNC_PROTOCOL_VERSION, SyncRequest};
 
+    #[tokio::test]
+    async fn related_comparison_observes_push_acknowledgement_first() {
+        let (_temp, mut conn) = crate::test_support::test_conn().await;
+        let workspace = crate::workspaces::Workspace::default();
+        let project = crate::projects::create_project(&mut conn, &workspace, "related-ack")
+            .await
+            .unwrap();
+        let task_id: crate::ids::TaskId = "AAAA000000000001".parse().unwrap();
+        let related_task_id: crate::ids::TaskId = "BBBB000000000002".parse().unwrap();
+        for id in [&task_id, &related_task_id] {
+            sqlx::query(
+                "INSERT INTO tasks(id, workspace_id, title, description, project_id, status, priority, created_at, updated_at)
+                 VALUES (?, ?, 'task', '', ?, 'todo', 'none', 't', 't')",
+            )
+            .bind(id)
+            .bind(&workspace.id)
+            .bind(&project.id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        }
+        let local = crate::operations::set_task_related_link_in_transaction(
+            &mut conn,
+            &workspace,
+            &task_id,
+            &related_task_id,
+            true,
+        )
+        .await
+        .unwrap();
+        let local_change_id = local.change_id.unwrap();
+        set_meta(&mut conn, "sync_cursor", "3").await.unwrap();
+
+        let remote = ChangeWire {
+            change_id: "CCCC000000000003".to_string(),
+            client_id: "remote".to_string(),
+            local_seq: 1,
+            entity_type: "task".to_string(),
+            entity_id: task_id.to_string(),
+            field: Some("related".to_string()),
+            op_type: op_type::RELATED_REMOVE.to_string(),
+            payload: json!({
+                "workspace_id": workspace.id,
+                "workspace_key": workspace.key,
+                "related_task_id": related_task_id,
+            }),
+            base_version: None,
+            created_at: "2026-08-22T00:00:00Z".to_string(),
+            server_seq: Some(4),
+        };
+        let page = ApplySyncPage {
+            request: SyncRequest {
+                protocol_version: Some(SYNC_PROTOCOL_VERSION),
+                client_id: "local".to_string(),
+                after: 3,
+                pull_limit: Some(100),
+                changes: Vec::new(),
+            },
+            response: SyncResponse {
+                protocol_version: SYNC_PROTOCOL_VERSION,
+                cursor: 4,
+                has_more: false,
+                push_acks: vec![PushAck {
+                    change_id: local_change_id.clone(),
+                    server_seq: 5,
+                }],
+                changes: vec![remote],
+            },
+            attempted_at: "2026-08-22T00:00:01Z".to_string(),
+            previous_pushed: 0,
+            previous_pulled: 0,
+        };
+
+        apply_sync_response(&mut conn, page).await.unwrap();
+
+        let state: (i64, String) = sqlx::query_as(
+            "SELECT linked, last_change_id FROM task_related_links
+             WHERE workspace_id = ? AND task_a_id = ? AND task_b_id = ?",
+        )
+        .bind(&workspace.id)
+        .bind(&task_id)
+        .bind(&related_task_id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(state, (1, local_change_id.clone()));
+        let acknowledged: Option<i64> =
+            sqlx::query_scalar("SELECT server_seq FROM changes WHERE change_id = ?")
+                .bind(local_change_id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(acknowledged, Some(5));
+    }
+
     async fn corrupt_attachment_page() -> (
         tempfile::TempDir,
         Database,

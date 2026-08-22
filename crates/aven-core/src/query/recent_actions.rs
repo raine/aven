@@ -415,3 +415,50 @@ fn preview(value: &str, limit: usize) -> String {
     out.push('…');
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn related_mutations_use_related_link_activity_vocabulary() {
+        let payload = json!({"related_task_id": "BBBB000000000002"});
+        let added = action_text(
+            "task",
+            op_type::RELATED_ADD,
+            Some("related"),
+            &payload,
+            Some("subject"),
+            None,
+        );
+        assert_eq!(
+            added,
+            (
+                "related link".to_string(),
+                "added related task: subject".to_string(),
+                Some("BBBB000000000002".to_string()),
+                "blue".to_string(),
+            )
+        );
+
+        let removed = action_text(
+            "task",
+            op_type::RELATED_REMOVE,
+            Some("related"),
+            &payload,
+            Some("subject"),
+            None,
+        );
+        assert_eq!(
+            removed,
+            (
+                "related link".to_string(),
+                "removed related task: subject".to_string(),
+                Some("BBBB000000000002".to_string()),
+                "dim".to_string(),
+            )
+        );
+    }
+}

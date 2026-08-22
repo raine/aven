@@ -5208,6 +5208,50 @@ mod tests {
         item
     }
 
+    #[test]
+    fn related_detail_rows_hide_deleted_targets_for_live_tasks() {
+        let mut item = detail_test_item();
+        let live_id = crate::test_support::task_id("live-related-task");
+        let deleted_id = crate::test_support::task_id("deleted-related-task");
+        item.related = vec![
+            crate::query::TaskRelatedLink {
+                task_id: live_id.clone(),
+                display_ref: "APP-LIVE".to_string(),
+                title: "Live related".to_string(),
+                status: TaskStatus::Todo,
+                priority: TaskPriority::None,
+                deleted: false,
+                linked_at: "2026-08-22T00:00:00Z".to_string(),
+            },
+            crate::query::TaskRelatedLink {
+                task_id: deleted_id.clone(),
+                display_ref: "APP-DEAD".to_string(),
+                title: "Deleted related".to_string(),
+                status: TaskStatus::Done,
+                priority: TaskPriority::Low,
+                deleted: true,
+                linked_at: "2026-08-22T00:00:01Z".to_string(),
+            },
+        ];
+
+        let related_targets = |item: &TaskListItem| {
+            detail_interactive_rows(item, 100, 40, None, &BTreeSet::new())
+                .into_iter()
+                .filter_map(|row| match row.target {
+                    DetailTargetId::Task {
+                        section: DetailSection::Related,
+                        task_id,
+                    } => Some(task_id),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(related_targets(&item), vec![live_id.clone()]);
+
+        item.task.deleted = true;
+        assert_eq!(related_targets(&item), vec![live_id, deleted_id]);
+    }
+
     fn detail_test_item() -> TaskListItem {
         TaskListItem {
             metadata: Vec::new(),
