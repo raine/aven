@@ -232,8 +232,8 @@ fn header_layout(
     layout.push(
         vec![Span::styled(
             match store.view_state.layout {
-                TaskLayout::List => " ▦ list ",
-                TaskLayout::Columns => " ▦ columns ",
+                TaskLayout::List => " 󰉹 list ",
+                TaskLayout::Columns => " 󰕰 columns ",
             },
             Style::new()
                 .fg(FG)
@@ -796,7 +796,7 @@ mod tests {
             })
         );
         assert_eq!(
-            header_target_at(&store, None, area, column_for("▦ list"), area.y),
+            header_target_at(&store, None, area, column_for("󰉹 list"), area.y),
             Some(HeaderTarget::Layout)
         );
         assert_eq!(
