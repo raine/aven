@@ -524,8 +524,7 @@ impl App {
             }
             PickerIntent::RemoveRelated { selection } => match values.first() {
                 Some(related_task_id) => {
-                    self.submit_remove_related(selection, related_task_id.parse()?)
-                        .await?;
+                    self.confirm_remove_related(selection, related_task_id.parse()?);
                 }
                 None => {
                     self.set_warning("no matching related task");

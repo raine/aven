@@ -219,6 +219,98 @@ async fn submitting_dependency_removal_removes_dependency() {
 }
 
 #[tokio::test]
+async fn related_removal_picker_requires_confirmation_and_supports_undo() {
+    let mut app = test_app().await;
+    let related_index = create_and_select_task(&mut app, test_task_draft("Related task")).await;
+    let related_id = app.store.tasks[related_index].task.id.clone();
+    let subject_index = create_and_select_task(&mut app, test_task_draft("Subject task")).await;
+    let subject_id = app.store.tasks[subject_index].task.id.clone();
+    let added = app
+        .store
+        .add_related(Some(subject_index), &related_id)
+        .await
+        .unwrap()
+        .unwrap();
+    app.list.select_task(added.selected);
+
+    for code in [KeyCode::Char('t'), KeyCode::Char('k'), KeyCode::Char('r')] {
+        app.handle_normal_key(code).await.unwrap();
+    }
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Confirm(ConfirmState {
+            intent: ConfirmIntent::UnlinkRelated {
+                selection,
+                related_task_id,
+            },
+            title,
+            prompt,
+        })) if selection.single_id() == Some(&subject_id)
+            && related_task_id == &related_id
+            && title == "Unlink relationship"
+            && prompt.contains("Related task")
+    ));
+    assert_eq!(
+        app.store
+            .load_task_item(&subject_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .related
+            .len(),
+        1
+    );
+
+    app.handle_overlay_key(key(KeyCode::Char('n')))
+        .await
+        .unwrap();
+    assert!(app.overlay.is_none());
+    assert_eq!(
+        app.store
+            .load_task_item(&subject_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .related
+            .len(),
+        1
+    );
+
+    for code in [KeyCode::Char('t'), KeyCode::Char('k'), KeyCode::Char('r')] {
+        app.handle_normal_key(code).await.unwrap();
+    }
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Char('y')))
+        .await
+        .unwrap();
+
+    assert!(
+        app.store
+            .load_task_item(&subject_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .related
+            .is_empty()
+    );
+    assert!(toast_message(&app).is_some_and(|message| message.contains("removed related link")));
+
+    app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
+    assert_eq!(
+        app.store
+            .load_task_item(&subject_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .related
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn no_selected_task_shows_info() {
     let mut app = test_app().await;
     app.list.select_task(None);

@@ -820,6 +820,34 @@ impl App {
         );
     }
 
+    pub(super) fn confirm_remove_related(
+        &mut self,
+        selection: TaskSelection,
+        related_task_id: crate::ids::TaskId,
+    ) {
+        let Some(related) = selection.targets()[0]
+            .related
+            .iter()
+            .find(|related| related.task_id == related_task_id)
+        else {
+            self.set_warning("related task is unavailable");
+            self.begin_remove_related();
+            return;
+        };
+        let prompt = format!(
+            "Unlink {} {} from this task?",
+            related.display_ref, related.title
+        );
+        self.overlay = Some(OverlayState::confirm(
+            ConfirmIntent::UnlinkRelated {
+                selection,
+                related_task_id,
+            },
+            "Unlink relationship",
+            prompt,
+        ));
+    }
+
     pub(super) fn begin_remove_dependency(&mut self) {
         let Some(selection) = self.capture_single_edit_selection("dependency") else {
             return;
