@@ -129,15 +129,15 @@ impl App {
         }
     }
 
-    pub(super) async fn move_tasks_by_column(&mut self, delta: isize) -> Result<()> {
+    pub(super) async fn move_tasks_by_column_for(
+        &mut self,
+        selection: TaskSelection,
+        delta: isize,
+    ) -> Result<()> {
         if !self.store.view_state.is_columns() {
             self.set_info("column moves are available in columns layout");
             return Ok(());
         }
-        let Some(selection) = self.resolve_task_selection() else {
-            self.set_info("no selected task to move");
-            return Ok(());
-        };
         let mut changes = Vec::with_capacity(selection.len());
         for item in selection.targets() {
             let Some(status) = crate::tui::columns::adjacent_lane_entry_status(
@@ -155,6 +155,14 @@ impl App {
             changes.push((item.task.id.clone(), status));
         }
         self.apply_column_moves(&selection, changes).await
+    }
+
+    pub(super) async fn move_tasks_by_column(&mut self, delta: isize) -> Result<()> {
+        let Some(selection) = self.resolve_task_selection() else {
+            self.set_info("no selected task to move");
+            return Ok(());
+        };
+        self.move_tasks_by_column_for(selection, delta).await
     }
 
     pub(super) fn begin_move_to_column(&mut self) {
@@ -262,14 +270,11 @@ impl App {
         Ok(())
     }
 
-    pub(super) async fn set_exact_priority(
+    pub(super) async fn set_exact_priority_for(
         &mut self,
+        selection: TaskSelection,
         priority: crate::choices::TaskPriority,
     ) -> Result<()> {
-        let Some(selection) = self.resolve_task_selection() else {
-            self.set_info("no selected task to edit");
-            return Ok(());
-        };
         let result = self
             .store
             .mutate_priority_selection(
@@ -281,11 +286,22 @@ impl App {
         Ok(())
     }
 
-    pub(super) async fn update_priority(&mut self, reverse: bool) -> Result<()> {
+    pub(super) async fn set_exact_priority(
+        &mut self,
+        priority: crate::choices::TaskPriority,
+    ) -> Result<()> {
         let Some(selection) = self.resolve_task_selection() else {
             self.set_info("no selected task to edit");
             return Ok(());
         };
+        self.set_exact_priority_for(selection, priority).await
+    }
+
+    pub(super) async fn update_priority_for(
+        &mut self,
+        selection: TaskSelection,
+        reverse: bool,
+    ) -> Result<()> {
         let result = self
             .store
             .mutate_priority_selection(
@@ -295,6 +311,14 @@ impl App {
             .await?;
         self.apply_mutation_result(result);
         Ok(())
+    }
+
+    pub(super) async fn update_priority(&mut self, reverse: bool) -> Result<()> {
+        let Some(selection) = self.resolve_task_selection() else {
+            self.set_info("no selected task to edit");
+            return Ok(());
+        };
+        self.update_priority_for(selection, reverse).await
     }
 
     pub(super) async fn update_deleted(&mut self, deleted: bool) -> Result<()> {
@@ -426,16 +450,10 @@ impl App {
     }
 
     pub(super) fn selected_command_task(&self) -> Option<TaskListItem> {
-        self.detail_command_selection
-            .as_ref()
-            .and_then(|selection| selection.targets().first().cloned())
-            .or_else(|| self.store.selected_task(self.list.selected_task()).cloned())
+        self.store.selected_task(self.list.selected_task()).cloned()
     }
 
     pub(super) fn resolve_task_selection(&self) -> Option<TaskSelection> {
-        if let Some(selection) = &self.detail_command_selection {
-            return Some(selection.clone());
-        }
         if self.detail.is_active() {
             TaskSelection::resolve_single(&self.store.tasks, self.list.selected_task())
         } else {
@@ -531,14 +549,62 @@ impl App {
         }
     }
 
-    pub(super) fn begin_status_picker(&mut self) {
-        let Some(selection) = self.capture_edit_selection() else {
-            return;
-        };
+    pub(super) fn begin_status_picker_for(&mut self, selection: TaskSelection) {
+        self.pending_shortcut.clear();
         self.footer_choice = Some(FooterChoiceState {
             mode: FooterChoiceMode::Status,
             selection,
         });
+    }
+
+    pub(super) fn begin_edit_title_for(&mut self, selection: TaskSelection) {
+        let title = selection.targets()[0].task.title.clone();
+        self.open_edit_title_overlay(selection, title);
+    }
+
+    pub(super) fn begin_edit_description_for(&mut self, selection: TaskSelection) {
+        let description = selection.targets()[0].task.description.clone();
+        self.open_edit_description_overlay(selection, description);
+    }
+
+    pub(super) fn begin_edit_availability_for(&mut self, selection: TaskSelection) {
+        let (aggregate, available_at) = Self::aggregate_value(&selection, |item| {
+            item.task.available_at.clone().unwrap_or_default()
+        });
+        self.open_edit_availability_overlay(selection, aggregate, available_at);
+    }
+
+    pub(super) fn begin_edit_due_for(&mut self, selection: TaskSelection) {
+        let (aggregate, due_on) = Self::aggregate_value(&selection, |item| {
+            item.task.due_on.clone().unwrap_or_default()
+        });
+        self.open_edit_due_overlay(selection, aggregate, due_on);
+    }
+
+    pub(super) fn begin_edit_labels_for(&mut self, selection: TaskSelection) {
+        self.open_edit_labels(selection);
+    }
+
+    pub(super) async fn begin_add_dependency_for(
+        &mut self,
+        selection: TaskSelection,
+    ) -> Result<()> {
+        let display_ref = selection.targets()[0].display_ref.clone();
+        self.clear_live_search_preview();
+        self.overlay = Some(OverlayState::Search(SearchState::for_intent(
+            SearchIntent::AddDependency {
+                selection,
+                display_ref,
+            },
+        )));
+        Ok(())
+    }
+
+    pub(super) fn begin_status_picker(&mut self) {
+        let Some(selection) = self.capture_edit_selection() else {
+            return;
+        };
+        self.begin_status_picker_for(selection);
     }
 
     pub(super) fn begin_edit_title(&mut self) {
@@ -615,6 +681,10 @@ impl App {
         let Some(selection) = self.capture_edit_selection() else {
             return;
         };
+        self.begin_edit_priority_for(selection);
+    }
+
+    pub(super) fn begin_edit_priority_for(&mut self, selection: TaskSelection) {
         if selection.len() == 1 {
             self.footer_choice = Some(FooterChoiceState {
                 mode: FooterChoiceMode::Priority,
@@ -804,6 +874,10 @@ impl App {
         let Some(selection) = self.capture_single_edit_selection("related link") else {
             return Ok(());
         };
+        self.begin_add_related_for(selection).await
+    }
+
+    pub(super) async fn begin_add_related_for(&mut self, selection: TaskSelection) -> Result<()> {
         let display_ref = selection.targets()[0].display_ref.clone();
         self.clear_live_search_preview();
         self.overlay = Some(OverlayState::Search(SearchState::for_intent(
@@ -819,6 +893,10 @@ impl App {
         let Some(selection) = self.capture_single_edit_selection("related link") else {
             return;
         };
+        self.open_remove_related_picker(selection);
+    }
+
+    pub(super) fn open_remove_related_picker(&mut self, selection: TaskSelection) {
         let Some(index) = self.selection_index(&selection) else {
             self.set_warning("task is unavailable");
             return;
@@ -1426,7 +1504,7 @@ impl App {
     }
 
     pub(super) fn bulk_scope_marked_task_count(&self) -> usize {
-        if self.detail_command_selection.is_some() || self.detail.is_active() {
+        if self.detail.is_active() {
             return 0;
         }
         self.store

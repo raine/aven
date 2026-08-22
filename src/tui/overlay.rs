@@ -27,13 +27,13 @@ pub(crate) use picker::{
 };
 pub(crate) use state::{
     AddTaskMode, AddTaskState, ChangelogState, CommandAvailabilityOverride, CommandState,
-    ConfirmIntent, HeaderMenuAction, HeaderMenuItem, HeaderMenuKind, HeaderMenuState,
-    MultilineInputMode, MultilineInputState, MultilineIntent, OrderMenuState, OverlayOutcome,
-    OverlayState, OverlaySubmit, OverlayTarget, PickerIntent, PickerItem, PickerMode, PickerState,
-    RECURRENCE_HISTORY_PAGE_SIZE, RecurrenceHistoryAction, RecurrenceHistoryEntryKey,
-    RecurrenceHistoryState, ScheduleEditorField, ScheduleEditorMode, ScheduleEditorState,
-    SearchIntent, SearchResultItem, SearchState, TagComboboxIntent, TextIntent, TextPanelState,
-    UpdateActionFocus, UpdateNotesState, UpdateOverlayState,
+    ConfirmIntent, EpicChildRemovalRestoration, HeaderMenuAction, HeaderMenuItem, HeaderMenuKind,
+    HeaderMenuState, MultilineInputMode, MultilineInputState, MultilineIntent, OrderMenuState,
+    OverlayOutcome, OverlayState, OverlaySubmit, OverlayTarget, PickerIntent, PickerItem,
+    PickerMode, PickerState, RECURRENCE_HISTORY_PAGE_SIZE, RecurrenceHistoryAction,
+    RecurrenceHistoryEntryKey, RecurrenceHistoryState, ScheduleEditorField, ScheduleEditorMode,
+    ScheduleEditorState, SearchIntent, SearchResultItem, SearchState, TagComboboxIntent,
+    TextIntent, TextPanelState, UpdateActionFocus, UpdateNotesState, UpdateOverlayState,
 };
 #[cfg(test)]
 pub(crate) use state::{ConfirmState, TextInputState};

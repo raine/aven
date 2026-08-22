@@ -30,7 +30,7 @@ use aven_core::db::Database;
 
 pub(crate) use crate::query::RecentActionItem;
 pub(crate) use attachments::AttachmentWorkerContext;
-pub(crate) use epics::{AddEpicChildContext, EpicContext};
+pub(crate) use epics::{AddEpicChildContext, EpicChildTarget, EpicContext};
 pub(crate) use launch::{TuiLaunch, TuiStartup};
 pub(crate) use onboarding::OnboardingStatus;
 pub(crate) use pickers::{
@@ -304,6 +304,54 @@ impl TuiStore {
             .await?
             .into_iter()
             .next())
+    }
+
+    pub(crate) async fn load_task_items(
+        &self,
+        task_ids: &[crate::ids::TaskId],
+    ) -> Result<Vec<TaskListItem>> {
+        let requested = task_ids.iter().collect::<std::collections::BTreeSet<_>>();
+        let resident = self
+            .tasks
+            .iter()
+            .filter(|item| requested.contains(&item.task.id))
+            .map(|item| (item.task.id.clone(), item.clone()))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let missing = task_ids
+            .iter()
+            .filter(|task_id| !resident.contains_key(*task_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let hydrated = if missing.is_empty() {
+            Vec::new()
+        } else {
+            self.database
+                .list_task_items(
+                    &self.active_workspace.id,
+                    crate::query::TaskFilters {
+                        include_deleted: true,
+                        task_ids: crate::query::TaskIdFilter::Only(missing),
+                        ..crate::query::TaskFilters::default()
+                    },
+                    crate::query::TaskQueryMode::Flat,
+                    crate::query::TaskSort::Created,
+                    crate::query::SortDirection::Asc,
+                )
+                .await?
+        };
+        let hydrated = hydrated
+            .into_iter()
+            .map(|item| (item.task.id.clone(), item))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        Ok(task_ids
+            .iter()
+            .filter_map(|task_id| {
+                resident
+                    .get(task_id)
+                    .or_else(|| hydrated.get(task_id))
+                    .cloned()
+            })
+            .collect())
     }
 
     pub(crate) async fn task_full_report(

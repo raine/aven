@@ -172,6 +172,16 @@ impl DetailTargetId {
         }
     }
 
+    pub(crate) fn routing_domain(&self) -> crate::tui::event::RoutingDomain {
+        match self {
+            Self::Task { .. } => crate::tui::event::RoutingDomain::DetailRelated,
+            Self::Note { .. } | Self::Expand { .. } => {
+                crate::tui::event::RoutingDomain::DetailPassive
+            }
+            Self::Attachment { .. } => crate::tui::event::RoutingDomain::DetailAttachment,
+        }
+    }
+
     pub(crate) fn attachment_id(&self) -> Option<&str> {
         match self {
             Self::Attachment { attachment_id } => Some(attachment_id),
@@ -220,7 +230,6 @@ pub(crate) struct App {
     pub(super) pending_shortcut: ShortcutBuffer,
     pub(super) pending_shortcut_scroll: u16,
     pub(super) footer_choice: Option<FooterChoiceState>,
-    pub(super) detail_command_selection: Option<crate::tui::task_selection::TaskSelection>,
     pub(crate) detail: crate::tui::detail_session::DetailSession,
     pub(super) authoring: AuthoringState,
     pub(super) needs_terminal_clear: bool,
@@ -236,7 +245,7 @@ pub(crate) struct App {
     pub(super) inline_image_backend: InlineImageBackend,
     pub(super) preview_controller: crate::tui::preview_controller::PreviewController,
     pub(super) attachment_controller: crate::tui::attachment_controller::AttachmentController,
-    pub(crate) command_catalog: crate::tui::event::CommandCatalog,
+    pub(crate) command_catalog: std::sync::Arc<crate::tui::event::CommandCatalog>,
     pub(super) custom_command_planning: crate::tui::custom_command::CustomCommandPlanningContext,
     pub(super) custom_commands: crate::tui::custom_command_runtime::CustomCommandController,
     pub(super) pending_terminal_command:
@@ -304,7 +313,6 @@ impl App {
             pending_shortcut: ShortcutBuffer::default(),
             pending_shortcut_scroll: 0,
             footer_choice: None,
-            detail_command_selection: None,
             detail: crate::tui::detail_session::DetailSession::inactive(),
             authoring: AuthoringState::default(),
             needs_terminal_clear: false,
@@ -320,7 +328,7 @@ impl App {
             inline_image_backend: active_backend_from_env(config.local.inline_images),
             preview_controller: crate::tui::preview_controller::PreviewController::new(),
             attachment_controller: crate::tui::attachment_controller::AttachmentController::new(),
-            command_catalog: crate::tui::event::CommandCatalog::default(),
+            command_catalog: std::sync::Arc::new(crate::tui::event::CommandCatalog::default()),
             custom_command_planning,
             custom_commands: crate::tui::custom_command_runtime::CustomCommandController::default(),
             pending_terminal_command: None,
@@ -356,7 +364,9 @@ impl App {
     }
 
     pub(crate) fn set_config(&mut self, config: AppConfig) {
-        self.command_catalog = crate::tui::event::CommandCatalog::new(config.tui.commands.clone());
+        self.command_catalog = std::sync::Arc::new(crate::tui::event::CommandCatalog::new(
+            config.tui.commands.clone(),
+        ));
         self.custom_command_planning.blob_dir =
             crate::config::resolve_blob_dir(self.store.database_path(), &config).ok();
         self.store.set_config(config.clone());
@@ -369,6 +379,186 @@ impl App {
 
     pub(crate) fn set_add_task_db_path(&mut self, db_path: std::path::PathBuf) {
         self.intake.set_db_path(db_path);
+    }
+
+    fn highlighted_sidebar_command_target(
+        &self,
+    ) -> Option<crate::tui::event::SidebarCommandTarget> {
+        use crate::tui::event::SidebarCommandTarget;
+        use crate::tui::store::SidebarEntryTarget;
+
+        self.list
+            .selected_sidebar()
+            .and_then(|index| self.store.sidebar_entries.get(index))
+            .and_then(|entry| entry.target.as_ref())
+            .map(|target| match target {
+                SidebarEntryTarget::View(view) => SidebarCommandTarget::View(*view),
+                SidebarEntryTarget::Scope(scope) => SidebarCommandTarget::from_scope(scope),
+            })
+    }
+
+    pub(super) fn current_routing_domain(&self) -> crate::tui::event::RoutingDomain {
+        use crate::tui::event::RoutingDomain;
+        if self.detail.is_active() {
+            return self
+                .detail
+                .state()
+                .and_then(|detail| detail.focused_target())
+                .map_or(RoutingDomain::DetailParent, DetailTargetId::routing_domain);
+        }
+        if self.intake.view().add_task_only {
+            return RoutingDomain::Normal;
+        }
+        let focused_sidebar = (self.list.focus() == crate::tui::list_surface::Focus::Sidebar)
+            .then(|| self.highlighted_sidebar_command_target())
+            .flatten();
+        let is_empty = self.store.main_row_count() == 0;
+        if self.store.view_state.query == crate::tui::store::TaskQuery::Recurring {
+            return crate::tui::event::recurrence_list_situation(
+                self.selected_recurrence_target_id().is_some(),
+                &focused_sidebar,
+                is_empty,
+                None,
+            )
+            .routing_domain();
+        }
+        crate::tui::event::list_situation(
+            self.bulk_scope_marked_task_count(),
+            self.store
+                .selected_task(self.list.selected_task())
+                .is_some(),
+            &focused_sidebar,
+            is_empty,
+            None,
+        )
+        .routing_domain()
+    }
+
+    pub(super) fn capture_command_session(
+        &self,
+        recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
+    ) -> crate::tui::event::CommandSessionSnapshot {
+        use crate::tui::event::{
+            CommandSessionSnapshot, CommandSurfaceSnapshot, CommandWorkspaceSnapshot,
+            DetailCommandFocus,
+        };
+        use crate::tui::store::TaskQuery;
+
+        let workspace = CommandWorkspaceSnapshot {
+            id: self.store.active_workspace.id.clone(),
+            key: self.store.active_workspace.key.clone(),
+            name: self.store.active_workspace.name.clone(),
+        };
+        if self.intake.view().add_task_only {
+            return CommandSessionSnapshot {
+                workspace,
+                surface: CommandSurfaceSnapshot::AddTaskOnly,
+                recurrence_series_id,
+            };
+        }
+        let focused_sidebar = (self.list.focus() == crate::tui::list_surface::Focus::Sidebar)
+            .then(|| self.highlighted_sidebar_command_target())
+            .flatten();
+        let selected = self.store.selected_task(self.list.selected_task());
+        if self.detail.is_active()
+            && let Some(parent) = selected
+        {
+            let focus = self
+                .detail
+                .state()
+                .and_then(|detail| detail.focused_target())
+                .filter(|target| {
+                    crate::tui::ui::detail_target_is_actionable(parent, target)
+                        || matches!(
+                            target,
+                            DetailTargetId::Task {
+                                section: DetailSection::EpicChildren,
+                                task_id,
+                            } if self.detail.state().and_then(|detail| detail.removed_epic_child()).is_some_and(
+                                |removed| removed.epic_id == parent.task.id
+                                    && removed.child.task_id == *task_id
+                            )
+                        )
+                })
+                .map(|target| match target {
+                    DetailTargetId::Task {
+                        section: DetailSection::EpicChildren,
+                        task_id,
+                    } => DetailCommandFocus::Relationship {
+                        section: DetailSection::EpicChildren,
+                        task_id: task_id.clone(),
+                    },
+                    DetailTargetId::Task { section, task_id } => DetailCommandFocus::Relationship {
+                        section: *section,
+                        task_id: task_id.clone(),
+                    },
+                    DetailTargetId::Note { .. } => DetailCommandFocus::Note,
+                    DetailTargetId::Attachment { attachment_id } => {
+                        let bytes_present = parent.attachments.iter().any(|attachment| {
+                            attachment.attachment_id == *attachment_id
+                                && self.attachment_bytes_are_available(attachment)
+                        });
+                        DetailCommandFocus::Attachment {
+                            attachment_id: attachment_id.clone(),
+                            bytes_present,
+                        }
+                    }
+                    DetailTargetId::Expand { .. } => DetailCommandFocus::Disclosure
+                });
+            return CommandSessionSnapshot {
+                workspace,
+                surface: CommandSurfaceSnapshot::Detail {
+                    parent_task_id: parent.task.id.clone(),
+                    marked_task_ids: self.marked_task_ids_in_view(),
+                    focus,
+                    scroll: self.detail.state().map_or(0, |detail| detail.scroll()),
+                },
+                recurrence_series_id,
+            };
+        }
+        let is_empty = self.store.main_row_count() == 0;
+        let empty_preferred_action = is_empty
+            .then(|| {
+                if self.store.view_state.is_columns() {
+                    crate::tui::ui::column_board_empty_state(&self.store)
+                } else {
+                    match self.store.view_state.query {
+                        TaskQuery::Recurring => crate::tui::ui::recurrence_empty_state(&self.store),
+                        TaskQuery::RecentActions => {
+                            crate::tui::ui::recent_actions_empty_state(&self.store)
+                        }
+                        _ => crate::tui::ui::task_empty_state(&self.store),
+                    }
+                }
+            })
+            .and_then(|state| state.action.map(|action| action.action));
+        let surface = if self.store.view_state.query == TaskQuery::Recurring {
+            CommandSurfaceSnapshot::RecurrenceList {
+                focused_sidebar,
+                is_empty,
+                empty_preferred_action,
+            }
+        } else {
+            let primary_task_id = selected.map(|item| item.task.id.clone());
+            CommandSurfaceSnapshot::List {
+                primary_task_id,
+                marked_task_ids: self.marked_task_ids_in_view(),
+                visible_task_ids: self
+                    .store
+                    .tasks
+                    .iter()
+                    .map(|item| item.task.id.clone())
+                    .collect(),
+                focused_sidebar,
+                is_empty,
+                empty_preferred_action,
+            }
+        };
+        CommandSessionSnapshot {
+            workspace,
+            surface,
+            recurrence_series_id,
+        }
     }
 
     pub(crate) async fn begin_command(&mut self) {
@@ -406,21 +596,16 @@ impl App {
                 }
             }));
         }
-        let mut state = crate::tui::overlay::CommandState::blank();
-        state.context = if self.detail.is_active() {
-            crate::tui::event::CommandContext::Detail
-        } else {
-            crate::tui::event::CommandContext::Normal
-        };
-        state.marked_task_count = self.bulk_scope_marked_task_count();
-        state.custom_command_marked_task_count = self.marked_task_ids_in_view().len();
-        state.target = target;
-        state.unavailable = unavailable;
-        if state.marked_task_count > 1 {
-            state.unavailable.extend(
-                state
-                    .context
-                    .commands()
+        let recurrence_series_id = target.as_ref().map(|target| match target {
+            crate::tui::overlay::OverlayTarget::RecurrenceSeries { series_id, .. } => {
+                series_id.clone()
+            }
+        });
+        let session = self.capture_command_session(recurrence_series_id);
+        if session.marked_task_ids().len() > 1 {
+            unavailable.extend(
+                crate::tui::event::COMMANDS
+                    .iter()
                     .filter(|command| {
                         matches!(
                             command.bulk_support(),
@@ -433,6 +618,11 @@ impl App {
                     }),
             );
         }
+        let state = crate::tui::overlay::CommandState::new(
+            session,
+            self.command_catalog.clone(),
+            unavailable,
+        );
         self.overlay = Some(OverlayState::Command { state });
     }
 

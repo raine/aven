@@ -1,8 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::tui::event::{
-    CatalogShortcutLookup, CommandCatalog, CommandContext, CommandHandler, key_label,
-    shortcut_label,
+    CatalogShortcutLookup, CommandCatalog, CommandHandler, key_label, shortcut_label,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,14 +44,15 @@ impl ShortcutBuffer {
         self.codes.iter().map(|code| key_label(*code)).collect()
     }
 
-    pub(crate) fn resolve_normal(
+    pub(crate) fn resolve_normal_in_domain(
         &mut self,
         code: KeyCode,
         catalog: &CommandCatalog,
+        domain: crate::tui::event::RoutingDomain,
     ) -> NormalShortcutResolution {
         let had_pending = !self.codes.is_empty();
         let sequence = self.with_code(code);
-        match catalog.resolve_shortcut(CommandContext::Normal, &sequence) {
+        match catalog.resolve_shortcut_in_domain(domain, &sequence) {
             CatalogShortcutLookup::Found(handler) => {
                 self.clear();
                 NormalShortcutResolution::Command(handler)
@@ -77,10 +77,35 @@ impl ShortcutBuffer {
         }
     }
 
-    pub(crate) fn resolve_detail(
+    pub(crate) fn resolve_detail_in_domain(
         &mut self,
         key: KeyEvent,
         catalog: &CommandCatalog,
+        domain: crate::tui::event::RoutingDomain,
+    ) -> DetailShortcutResolution {
+        self.resolve_detail_with_section(key, catalog, domain, None)
+    }
+
+    pub(crate) fn resolve_detail_in_focus(
+        &mut self,
+        key: KeyEvent,
+        catalog: &CommandCatalog,
+        section: crate::tui::app::DetailSection,
+    ) -> DetailShortcutResolution {
+        self.resolve_detail_with_section(
+            key,
+            catalog,
+            crate::tui::event::RoutingDomain::DetailRelated,
+            Some(section),
+        )
+    }
+
+    fn resolve_detail_with_section(
+        &mut self,
+        key: KeyEvent,
+        catalog: &CommandCatalog,
+        domain: crate::tui::event::RoutingDomain,
+        section: Option<crate::tui::app::DetailSection>,
     ) -> DetailShortcutResolution {
         if !key.modifiers.is_empty() && key.modifiers != KeyModifiers::SHIFT {
             return DetailShortcutResolution::PassThrough;
@@ -88,7 +113,7 @@ impl ShortcutBuffer {
 
         let had_pending = !self.codes.is_empty();
         let sequence = self.with_code(key.code);
-        match catalog.resolve_shortcut(CommandContext::Detail, &sequence) {
+        match catalog.resolve_shortcut_in_context(domain, section, &sequence) {
             CatalogShortcutLookup::Found(handler) => {
                 self.clear();
                 detail_resolution(handler)
@@ -206,7 +231,11 @@ mod tests {
     fn normal_prefix_is_stored_and_rendered() {
         let mut buffer = ShortcutBuffer::default();
         assert_eq!(
-            buffer.resolve_normal(KeyCode::Char('t'), &CommandCatalog::default()),
+            buffer.resolve_normal_in_domain(
+                KeyCode::Char('t'),
+                &CommandCatalog::default(),
+                crate::tui::event::RoutingDomain::Normal
+            ),
             NormalShortcutResolution::Prefix
         );
         assert_eq!(buffer.labels(), vec!["t".to_string()]);
@@ -217,11 +246,19 @@ mod tests {
         let mut buffer = ShortcutBuffer::default();
         let catalog = CommandCatalog::default();
         assert_eq!(
-            buffer.resolve_normal(KeyCode::Char('t'), &catalog),
+            buffer.resolve_normal_in_domain(
+                KeyCode::Char('t'),
+                &catalog,
+                crate::tui::event::RoutingDomain::Normal
+            ),
             NormalShortcutResolution::Prefix
         );
         assert_eq!(
-            buffer.resolve_normal(KeyCode::Char('z'), &catalog),
+            buffer.resolve_normal_in_domain(
+                KeyCode::Char('z'),
+                &catalog,
+                crate::tui::event::RoutingDomain::Normal
+            ),
             NormalShortcutResolution::Missing("t z".to_string())
         );
         assert!(buffer.is_empty());
@@ -231,9 +268,10 @@ mod tests {
     fn detail_missing_without_prefix_passes_through() {
         let mut buffer = ShortcutBuffer::default();
         assert_eq!(
-            buffer.resolve_detail(
+            buffer.resolve_detail_in_domain(
                 KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
-                &CommandCatalog::default()
+                &CommandCatalog::default(),
+                crate::tui::event::RoutingDomain::DetailParent,
             ),
             DetailShortcutResolution::PassThrough
         );
@@ -244,16 +282,18 @@ mod tests {
         let mut buffer = ShortcutBuffer::default();
         let catalog = CommandCatalog::default();
         assert_eq!(
-            buffer.resolve_detail(
+            buffer.resolve_detail_in_domain(
                 KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
-                &catalog
+                &catalog,
+                crate::tui::event::RoutingDomain::DetailParent,
             ),
             DetailShortcutResolution::Prefix
         );
         assert_eq!(
-            buffer.resolve_detail(
+            buffer.resolve_detail_in_domain(
                 KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
-                &catalog
+                &catalog,
+                crate::tui::event::RoutingDomain::DetailParent,
             ),
             DetailShortcutResolution::MissingAfterPrefix("t z".to_string())
         );

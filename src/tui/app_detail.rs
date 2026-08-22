@@ -98,15 +98,11 @@ impl App {
         }
     }
 
-    pub(super) async fn copy_selected_task_markdown(&mut self) -> Result<()> {
-        let Some(task_id) = self
-            .selected_command_task()
-            .map(|item| item.task.id.clone())
-        else {
-            self.set_info("no selected task to copy");
-            return Ok(());
-        };
-        let Some(report) = self.store.task_full_report(&task_id).await? else {
+    pub(super) async fn copy_task_markdown_for(
+        &mut self,
+        task_id: &crate::ids::TaskId,
+    ) -> Result<()> {
+        let Some(report) = self.store.task_full_report(task_id).await? else {
             self.set_warning("task is unavailable");
             return Ok(());
         };
@@ -117,18 +113,31 @@ impl App {
         Ok(())
     }
 
+    pub(super) async fn copy_selected_task_markdown(&mut self) -> Result<()> {
+        let Some(task_id) = self
+            .selected_command_task()
+            .map(|item| item.task.id.clone())
+        else {
+            self.set_info("no selected task to copy");
+            return Ok(());
+        };
+        self.copy_task_markdown_for(&task_id).await
+    }
+
+    pub(super) fn begin_create_task_gist_for(&mut self, task_id: crate::ids::TaskId) {
+        self.overlay = Some(OverlayState::confirm(
+            ConfirmIntent::CreateTaskGist { task_id },
+            "Create GitHub gist",
+            "Publish this task as a secret GitHub gist? Anyone with the URL can view it.",
+        ));
+    }
+
     pub(super) fn begin_create_task_gist(&mut self) {
         let Some(item) = self.store.selected_task(self.list.selected_task()) else {
             self.set_info("no selected task to share");
             return;
         };
-        self.overlay = Some(OverlayState::confirm(
-            ConfirmIntent::CreateTaskGist {
-                task_id: item.task.id.clone(),
-            },
-            "Create GitHub gist",
-            "Publish this task as a secret GitHub gist? Anyone with the URL can view it.",
-        ));
+        self.begin_create_task_gist_for(item.task.id.clone());
     }
 
     pub(super) async fn submit_create_task_gist(&mut self, task_id: crate::ids::TaskId) {

@@ -53,7 +53,7 @@ async fn command_palette_captures_bulk_scope_and_single_target_limits() {
     let Some(OverlayState::Command { state }) = &app.overlay else {
         panic!("expected command palette");
     };
-    assert_eq!(state.marked_task_count, 2);
+    assert_eq!(state.marked_task_count(), 2);
     assert!(state.unavailable.iter().any(|override_| {
         override_.action == crate::tui::event::Action::BeginEditTitle
             && override_.reason == "one task only"

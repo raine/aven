@@ -635,7 +635,11 @@ async fn stale_detail_child_focus_is_cleared_before_shortcuts() {
 
 #[tokio::test]
 async fn focused_detail_child_routes_actions_and_preserves_parent_detail() {
-    let (_dir, pool, mut app) = test_app_with_pool().await;
+    let (_dir, pool, mut app) = Box::pin(async {
+        let (dir, pool, app) = test_app_with_pool().await;
+        (dir, pool, Box::new(app))
+    })
+    .await;
     let (parent_id, child_ids) =
         create_epic_with_children(&mut app, &pool, "Parent epic", &["Child task"]).await;
     let child_id = child_ids[0].clone();
@@ -1028,6 +1032,208 @@ async fn focused_only_related_removal_reconciles_to_another_detail_target() {
 }
 
 #[tokio::test]
+async fn command_panel_unlinks_captured_relationship_a_after_focus_moves_to_b() {
+    let (_dir, _pool, mut app) = test_app_with_pool().await;
+    let (blocker_id, blocked_id) = create_blocked_pair(&mut app).await;
+    app.store.refresh(Some(&blocker_id)).await.unwrap();
+    let blocker_index = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == blocker_id)
+        .unwrap();
+    app.list.select_task(Some(blocker_index));
+    app.show_detail(0);
+    app.detail
+        .state_mut()
+        .unwrap()
+        .set_focused_target(Some(DetailTargetId::Task {
+            section: DetailSection::Blocks,
+            task_id: blocked_id.clone(),
+        }));
+
+    app.dispatch_key(key(KeyCode::Char(':')), (80, 24).into())
+        .await
+        .unwrap();
+    assert!(matches!(app.overlay, Some(OverlayState::Command { .. })));
+    let other = create_and_select_task(&mut app, test_task_draft("Relationship B")).await;
+    let other_id = app.store.tasks[other].task.id.clone();
+    app.detail
+        .state_mut()
+        .unwrap()
+        .set_focused_target(Some(DetailTargetId::Task {
+            section: DetailSection::Blocks,
+            task_id: other_id,
+        }));
+    type_chars(&mut app, "remove-dependency").await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::Confirm(ConfirmState {
+            intent: ConfirmIntent::UnlinkDependency { ref selection, ref depends_on_task_id },
+            ..
+        })) if selection.single_id() == Some(&blocked_id) && depends_on_task_id == &blocker_id
+    ));
+}
+
+#[tokio::test]
+async fn command_panel_add_related_keeps_the_captured_parent_task() {
+    let mut app = test_app().await;
+    let subject_index =
+        create_and_select_task(&mut app, test_task_draft("Related command subject")).await;
+    let subject_id = app.store.tasks[subject_index].task.id.clone();
+    let subject_ref = app.store.tasks[subject_index].display_ref.clone();
+    let other_index =
+        create_and_select_task(&mut app, test_task_draft("Different live selection")).await;
+    app.list.select_task(Some(subject_index));
+    app.show_detail(0);
+
+    app.dispatch_key(key(KeyCode::Char(':')), (100, 30).into())
+        .await
+        .unwrap();
+    app.list.select_task(Some(other_index));
+    type_chars(&mut app, "add-related").await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Search(SearchState {
+            intent: SearchIntent::AddRelated { selection, display_ref },
+            ..
+        })) if selection.single_id() == Some(&subject_id) && display_ref == &subject_ref
+    ));
+}
+
+#[tokio::test]
+async fn command_panel_ranks_and_unlinks_the_captured_related_task() {
+    let (_dir, _pool, mut app) = test_app_with_pool().await;
+    let (subject_id, related_ids) = setup_related_detail(&mut app, 2).await;
+    app.detail
+        .state_mut()
+        .unwrap()
+        .set_focused_target(Some(DetailTargetId::Task {
+            section: DetailSection::Related,
+            task_id: related_ids[0].clone(),
+        }));
+
+    app.dispatch_key(key(KeyCode::Char(':')), (100, 30).into())
+        .await
+        .unwrap();
+    let Some(OverlayState::Command { state }) = &app.overlay else {
+        panic!("command overlay");
+    };
+    let names = state
+        .candidates
+        .iter()
+        .filter_map(|candidate| state.catalog.command(candidate.index))
+        .map(crate::tui::event::CatalogCommand::name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        &names[..8],
+        &[
+            "status-picker",
+            "status-done",
+            "edit-title",
+            "copy-ref",
+            "copy-title",
+            "remove-related",
+            "delete",
+            "add-note",
+        ]
+    );
+
+    app.detail
+        .state_mut()
+        .unwrap()
+        .set_focused_target(Some(DetailTargetId::Task {
+            section: DetailSection::Related,
+            task_id: related_ids[1].clone(),
+        }));
+    type_chars(&mut app, "remove-related").await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::Confirm(ConfirmState {
+            intent: ConfirmIntent::UnlinkRelated { ref selection, ref related_task_id },
+            ..
+        })) if selection.single_id() == Some(&subject_id) && related_task_id == &related_ids[0]
+    ));
+}
+
+#[tokio::test]
+async fn command_panel_targets_the_captured_epic_child_and_keeps_the_parent_anchor() {
+    let mut app = test_app().await;
+    let parent_index = create_and_select_task(
+        &mut app,
+        TaskDraft {
+            metadata: Vec::new(),
+            is_epic: true,
+            ..test_task_draft("Parent epic")
+        },
+    )
+    .await;
+    let parent_id = app.store.tasks[parent_index].task.id.clone();
+    let parent_ref = app.store.tasks[parent_index].display_ref.clone();
+    let project_key = app.store.tasks[parent_index].task.project_key.clone();
+    let child_index = create_and_select_task(&mut app, test_task_draft("Captured child")).await;
+    let child_id = app.store.tasks[child_index].task.id.clone();
+    app.store
+        .add_epic_child(
+            crate::tui::store::EpicContext {
+                epic_id: parent_id.clone(),
+                display_ref: parent_ref,
+                project_key,
+            },
+            child_id.clone(),
+        )
+        .await
+        .unwrap();
+    app.store.refresh(Some(&parent_id)).await.unwrap();
+    let parent_index = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == parent_id)
+        .unwrap();
+    app.list.select_task(Some(parent_index));
+    app.show_detail(0);
+    app.detail
+        .state_mut()
+        .unwrap()
+        .set_focused_target(Some(DetailTargetId::Task {
+            section: DetailSection::EpicChildren,
+            task_id: child_id.clone(),
+        }));
+
+    app.dispatch_key(key(KeyCode::Char(':')), (80, 24).into())
+        .await
+        .unwrap();
+    assert!(matches!(app.overlay, Some(OverlayState::Command { .. })));
+    app.detail.state_mut().unwrap().set_focused_target(None);
+    type_chars(&mut app, "edit-title").await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::TextInput(state))
+            if matches!(
+                &state.intent,
+                TextIntent::EditTitle { selection }
+                    if selection.single_id() == Some(&child_id)
+            )
+    ));
+    assert_eq!(
+        app.store
+            .selected_task(app.list.selected_task())
+            .map(|item| &item.task.id),
+        Some(&parent_id)
+    );
+    assert!(app.detail.is_active());
+}
+
+#[tokio::test]
 async fn focused_relationship_delete_and_unsupported_actions_are_explicit() {
     let (_dir, _pool, mut app) = test_app_with_pool().await;
     let (blocker_id, blocked_id) = create_blocked_pair(&mut app).await;
@@ -1053,7 +1259,7 @@ async fn focused_relationship_delete_and_unsupported_actions_are_explicit() {
     }
     assert_eq!(
         toast_message(&app).as_deref(),
-        Some("open the related task before using that command")
+        Some("invalid shortcut: t r")
     );
 
     for code in [KeyCode::Char('t'), KeyCode::Char('D')] {
@@ -1416,4 +1622,316 @@ async fn focused_detail_child_removes_and_undo_restores_relationship() {
     .await
     .unwrap();
     assert_eq!(linked, 1);
+}
+
+#[tokio::test]
+async fn colon_dispatch_opens_captured_dependency_relationship_panel() {
+    let (_dir, _pool, mut app) = test_app_with_pool().await;
+    let (blocker_id, blocked_id) = create_blocked_pair(&mut app).await;
+    app.store.refresh(Some(&blocked_id)).await.unwrap();
+    let blocked_index = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == blocked_id)
+        .unwrap();
+    app.list.select_task(Some(blocked_index));
+    app.show_detail(0);
+    app.detail
+        .state_mut()
+        .unwrap()
+        .set_focused_target(Some(DetailTargetId::Task {
+            section: DetailSection::DependsOn,
+            task_id: blocker_id.clone(),
+        }));
+
+    app.dispatch_key(shift_key(KeyCode::Char(':')), (100, 30).into())
+        .await
+        .unwrap();
+
+    let Some(OverlayState::Command { state }) = &app.overlay else {
+        panic!("command overlay");
+    };
+    let names = state
+        .candidates
+        .iter()
+        .filter_map(|candidate| state.catalog.command(candidate.index))
+        .map(crate::tui::event::CatalogCommand::name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        &names[..8],
+        &[
+            "status-picker",
+            "status-done",
+            "edit-title",
+            "copy-ref",
+            "copy-title",
+            "remove-dependency",
+            "delete",
+            "add-note",
+        ]
+    );
+    assert!(matches!(
+        state.session.detail_focus(),
+        Some(crate::tui::event::DetailCommandFocus::Relationship { task_id, .. })
+            if task_id == &blocker_id
+    ));
+}
+
+#[tokio::test]
+async fn colon_dispatch_opens_captured_epic_child_panel_and_confirms_unlink() {
+    let (_dir, pool, mut app) = test_app_with_pool().await;
+    let (epic_id, child_ids) =
+        create_epic_with_children(&mut app, &pool, "Dispatch epic", &["Dispatch child"]).await;
+    let child_id = child_ids[0].clone();
+    app.store.refresh(Some(&epic_id)).await.unwrap();
+    let epic_index = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == epic_id)
+        .unwrap();
+    app.list.select_task(Some(epic_index));
+    app.show_detail(4);
+    app.detail
+        .state_mut()
+        .unwrap()
+        .set_focused_target(Some(DetailTargetId::Task {
+            section: DetailSection::EpicChildren,
+            task_id: child_id.clone(),
+        }));
+
+    app.dispatch_key(shift_key(KeyCode::Char(':')), (100, 30).into())
+        .await
+        .unwrap();
+    let Some(OverlayState::Command { state }) = &app.overlay else {
+        panic!("command overlay");
+    };
+    let names = state
+        .candidates
+        .iter()
+        .filter_map(|candidate| state.catalog.command(candidate.index))
+        .map(crate::tui::event::CatalogCommand::name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        &names[..8],
+        &[
+            "status-picker",
+            "status-done",
+            "edit-title",
+            "copy-ref",
+            "copy-title",
+            "task-child-remove",
+            "delete",
+            "add-note",
+        ]
+    );
+
+    type_chars(&mut app, "task-child-remove").await;
+    app.dispatch_key(key(KeyCode::Enter), (100, 30).into())
+        .await
+        .unwrap();
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Confirm(ConfirmState {
+            intent: ConfirmIntent::UnlinkEpicChild { target, .. },
+            ..
+        })) if target.epic.epic_id == epic_id && target.child.task_id == child_id
+    ));
+}
+
+#[tokio::test]
+async fn command_panel_rejects_epic_removal_for_dependency_relationship() {
+    let (_dir, _pool, mut app) = test_app_with_pool().await;
+    let (blocker_id, blocked_id) = create_blocked_pair(&mut app).await;
+    app.store.refresh(Some(&blocked_id)).await.unwrap();
+    let blocked_index = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == blocked_id)
+        .unwrap();
+    app.list.select_task(Some(blocked_index));
+    app.show_detail(0);
+    app.detail
+        .state_mut()
+        .unwrap()
+        .set_focused_target(Some(DetailTargetId::Task {
+            section: DetailSection::DependsOn,
+            task_id: blocker_id,
+        }));
+
+    app.begin_command().await;
+    type_chars(&mut app, "task-child-remove").await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert!(!matches!(app.overlay, Some(OverlayState::Confirm(_))));
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some(":task-child-remove is disabled: command does not apply to the captured relationship")
+    );
+    assert_eq!(
+        app.store
+            .load_task_item(&blocked_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .depends_on
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn parent_detail_child_remove_command_requires_confirmation() {
+    let (_dir, pool, mut app) = test_app_with_pool().await;
+    let (epic_id, child_ids) = create_epic_with_children(
+        &mut app,
+        &pool,
+        "Parent command epic",
+        &["Parent command child"],
+    )
+    .await;
+    let child_id = child_ids[0].clone();
+    app.store.refresh(Some(&child_id)).await.unwrap();
+    app.list.select_task(Some(0));
+    app.show_detail(0);
+
+    app.dispatch_key(shift_key(KeyCode::Char(':')), (100, 30).into())
+        .await
+        .unwrap();
+    type_chars(&mut app, "task-child-remove").await;
+    app.dispatch_key(key(KeyCode::Enter), (100, 30).into())
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Confirm(ConfirmState {
+            intent: ConfirmIntent::UnlinkEpicChild { target, .. },
+            ..
+        })) if target.epic.epic_id == epic_id && target.child.task_id == child_id
+    ));
+    assert_eq!(
+        app.store
+            .load_task_item(&child_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .epic_parent
+            .as_ref()
+            .map(|parent| &parent.task_id),
+        Some(&epic_id)
+    );
+}
+
+#[tokio::test]
+async fn command_panel_rejects_dependency_removal_for_epic_child() {
+    let (_dir, pool, mut app) = test_app_with_pool().await;
+    let (epic_id, child_ids) =
+        create_epic_with_children(&mut app, &pool, "Cross pair epic", &["Epic child"]).await;
+    let child_id = child_ids[0].clone();
+    app.store.refresh(Some(&epic_id)).await.unwrap();
+    let epic_index = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == epic_id)
+        .unwrap();
+    app.list.select_task(Some(epic_index));
+    app.show_detail(0);
+    app.detail
+        .state_mut()
+        .unwrap()
+        .set_focused_target(Some(DetailTargetId::Task {
+            section: DetailSection::EpicChildren,
+            task_id: child_id.clone(),
+        }));
+
+    app.begin_command().await;
+    type_chars(&mut app, "remove-dependency").await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert!(!matches!(app.overlay, Some(OverlayState::Confirm(_))));
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some(":remove-dependency is disabled: command does not apply to the captured relationship")
+    );
+    assert_eq!(
+        app.store
+            .load_task_item(&child_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .epic_parent
+            .as_ref()
+            .map(|parent| &parent.task_id),
+        Some(&epic_id)
+    );
+}
+
+#[tokio::test]
+async fn epic_child_confirmation_uses_captured_target_after_focus_changes() {
+    let (_dir, pool, mut app) = test_app_with_pool().await;
+    let (epic_id, child_ids) = create_epic_with_children(
+        &mut app,
+        &pool,
+        "Captured confirmation epic",
+        &["Captured child", "Other child"],
+    )
+    .await;
+    let captured_child_id = child_ids[0].clone();
+    let other_child_id = child_ids[1].clone();
+    app.store.refresh(Some(&epic_id)).await.unwrap();
+    let epic_index = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == epic_id)
+        .unwrap();
+    app.list.select_task(Some(epic_index));
+    app.show_detail(7);
+    app.detail
+        .state_mut()
+        .unwrap()
+        .set_focused_target(Some(DetailTargetId::Task {
+            section: DetailSection::EpicChildren,
+            task_id: captured_child_id.clone(),
+        }));
+
+    app.begin_command().await;
+    type_chars(&mut app, "task-child-remove").await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert!(matches!(app.overlay, Some(OverlayState::Confirm(_))));
+
+    app.detail
+        .state_mut()
+        .unwrap()
+        .set_focused_target(Some(DetailTargetId::Task {
+            section: DetailSection::EpicChildren,
+            task_id: other_child_id.clone(),
+        }));
+    app.handle_overlay_key(key(KeyCode::Char('y')))
+        .await
+        .unwrap();
+
+    let epic = app.store.load_task_item(&epic_id).await.unwrap().unwrap();
+    assert!(
+        epic.epic_children
+            .iter()
+            .all(|child| child.task_id != captured_child_id)
+    );
+    assert!(
+        epic.epic_children
+            .iter()
+            .any(|child| child.task_id == other_child_id)
+    );
+    assert_eq!(app.detail.state().unwrap().scroll(), 7);
+    assert_eq!(
+        app.detail
+            .state()
+            .and_then(|detail| detail.focused_target())
+            .and_then(DetailTargetId::task_id),
+        Some(&captured_child_id)
+    );
 }

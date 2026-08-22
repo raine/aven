@@ -48,6 +48,13 @@ pub(crate) fn route_key(key: KeyEvent, state: KeyRouteState, terminal_height: u1
     if key.code == KeyCode::Esc && state.shortcut_pending {
         return KeyInput::CancelShortcut;
     }
+    if key.code == KeyCode::Char(':')
+        && matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT)
+        && !state.shortcut_pending
+        && (!state.overlay_captures || state.detail_overlay)
+    {
+        return KeyInput::Action(Action::BeginCommand);
+    }
     if state.overlay_captures {
         if key.code == KeyCode::Char('?') && state.detail_overlay {
             return KeyInput::ToggleHelp;
@@ -85,11 +92,28 @@ pub(crate) enum NormalKeyInput {
     Missing(String),
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn route_normal_key(
     shortcut: &ShortcutBuffer,
     code: KeyCode,
     overlay_captures: bool,
     catalog: &CommandCatalog,
+) -> NormalKeyTranslation {
+    route_normal_key_in_domain(
+        shortcut,
+        code,
+        overlay_captures,
+        catalog,
+        crate::tui::event::RoutingDomain::Normal,
+    )
+}
+
+pub(crate) fn route_normal_key_in_domain(
+    shortcut: &ShortcutBuffer,
+    code: KeyCode,
+    overlay_captures: bool,
+    catalog: &CommandCatalog,
+    domain: crate::tui::event::RoutingDomain,
 ) -> NormalKeyTranslation {
     let mut shortcut = shortcut.clone();
     let input = if overlay_captures && (code != KeyCode::Esc || shortcut.is_empty()) {
@@ -101,7 +125,7 @@ pub(crate) fn route_normal_key(
             NormalKeyInput::CancelOverlay
         }
     } else {
-        match shortcut.resolve_normal(code, catalog) {
+        match shortcut.resolve_normal_in_domain(code, catalog, domain) {
             NormalShortcutResolution::Command(handler) => NormalKeyInput::Command(handler),
             NormalShortcutResolution::Prefix => NormalKeyInput::Prefix,
             NormalShortcutResolution::Missing(label) => NormalKeyInput::Missing(label),
@@ -152,6 +176,20 @@ mod tests {
     }
 
     #[test]
+    fn command_panel_routes_before_detail_overlay_capture() {
+        let input = route_key(
+            KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT),
+            KeyRouteState {
+                overlay_captures: true,
+                detail_overlay: true,
+                ..KeyRouteState::default()
+            },
+            24,
+        );
+        assert_eq!(input, KeyInput::Action(Action::BeginCommand));
+    }
+
+    #[test]
     fn pending_escape_cancels_the_shortcut() {
         let input = route_key(
             key(KeyCode::Esc),
@@ -196,7 +234,11 @@ mod tests {
     fn normal_shortcut_translation_returns_action_and_next_buffer() {
         let mut shortcut = ShortcutBuffer::default();
         let catalog = CommandCatalog::default();
-        shortcut.resolve_normal(KeyCode::Char('g'), &catalog);
+        shortcut.resolve_normal_in_domain(
+            KeyCode::Char('g'),
+            &catalog,
+            crate::tui::event::RoutingDomain::Normal,
+        );
         let translation = route_normal_key(&shortcut, KeyCode::Char('g'), false, &catalog);
         assert_eq!(
             translation.input,

@@ -75,6 +75,9 @@ impl App {
             Action::CopyTaskNotes => self.copy_selected_task_notes(),
             Action::CopyTaskMarkdown => self.copy_selected_task_markdown().await?,
             Action::BeginCreateTaskGist => self.begin_create_task_gist(),
+            Action::OpenAttachment | Action::SaveAttachment | Action::DeleteAttachment => {
+                self.set_warning("requires a focused attachment")
+            }
             Action::BeginEditTitle => self.begin_edit_title(),
             Action::BeginEditDescription => self.begin_edit_description(),
             Action::BeginEditProject => self.begin_edit_project(),

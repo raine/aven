@@ -689,7 +689,14 @@ async fn recurrence_palette_skip_uses_live_projection_after_historical_navigatio
             .iter()
             .all(|override_| override_.action != Action::SkipRecurrence)
     );
-    app.execute_targeted_recurrence_action(state.target, Action::SkipRecurrence)
+    let target = OverlayTarget::RecurrenceSeries {
+        workspace_id: state.session.workspace.id,
+        series_id: state
+            .session
+            .recurrence_series_id
+            .expect("captured recurrence series"),
+    };
+    app.execute_targeted_recurrence_action(Some(target), Action::SkipRecurrence)
         .await
         .unwrap();
 
@@ -734,13 +741,10 @@ async fn recurrence_palette_disables_skip_for_historical_task_without_live_proje
     let Some(OverlayState::Command { state }) = app.overlay.as_ref() else {
         panic!("expected command palette");
     };
-    assert!(matches!(
-        &state.target,
-        Some(OverlayTarget::RecurrenceSeries {
-            series_id: target_series_id,
-            ..
-        }) if target_series_id == &series_id
-    ));
+    assert_eq!(
+        state.session.recurrence_series_id.as_ref(),
+        Some(&series_id)
+    );
     assert!(state.unavailable.iter().any(|override_| {
         override_.action == Action::SkipRecurrence
             && override_.reason == "series has no current occurrence to skip"
@@ -1254,6 +1258,7 @@ async fn recurrence_palette_disables_invalid_lifecycle_action_with_reason() {
         panic!("expected command palette");
     };
     state.input = LineEdit::new("recurrence-pause".to_string());
+    state.refresh_candidates();
 
     app.handle_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .await

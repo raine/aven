@@ -52,18 +52,13 @@ impl App {
         Ok(Some(targets))
     }
 
-    pub(super) async fn show_conflict_details(&mut self) -> Result<()> {
-        let Some(targets) = self.conflict_targets_for_selected().await? else {
-            self.set_info("no selected task for conflicts");
-            return Ok(());
-        };
+    pub(super) async fn show_conflict_details_for(
+        &mut self,
+        item: &crate::query::TaskListItem,
+    ) -> Result<()> {
+        let targets = self.store.conflict_targets_for(item).await?;
         if targets.is_empty() {
-            let display_ref = self
-                .store
-                .selected_task(self.list.selected_task())
-                .map(|item| item.display_ref.clone())
-                .unwrap_or_else(|| "task".to_string());
-            self.set_info(format!("{display_ref} has no unresolved conflicts"));
+            self.set_info(format!("{} has no unresolved conflicts", item.display_ref));
             return Ok(());
         }
         let mut lines = Vec::new();
@@ -89,6 +84,14 @@ impl App {
         Ok(())
     }
 
+    pub(super) async fn show_conflict_details(&mut self) -> Result<()> {
+        let Some(item) = self.store.selected_task(self.list.selected_task()).cloned() else {
+            self.set_info("no selected task for conflicts");
+            return Ok(());
+        };
+        self.show_conflict_details_for(&item).await
+    }
+
     pub(super) fn move_to_conflict(&mut self, delta: isize) {
         let current = self.list.selected_task();
         let Some(next) = self.store.next_conflict_index(current, delta) else {
@@ -103,13 +106,15 @@ impl App {
         self.list.focus_tasks();
     }
 
-    pub(super) async fn begin_conflict_resolution(
+    pub(super) fn begin_conflict_resolution_for(
         &mut self,
         choice: ConflictResolutionChoice,
-    ) -> Result<()> {
-        let Some(targets) = self.load_conflict_targets_for_resolution().await? else {
-            return Ok(());
-        };
+        targets: Vec<ConflictTarget>,
+    ) {
+        if targets.is_empty() {
+            self.set_info("selected task has no unresolved conflicts");
+            return;
+        }
         if targets.len() == 1 {
             self.open_conflict_confirm(choice, targets.into_iter().next().unwrap());
         } else {
@@ -121,13 +126,24 @@ impl App {
                 &targets,
             );
         }
-        Ok(())
     }
 
-    pub(super) async fn begin_manual_conflict_merge(&mut self) -> Result<()> {
+    pub(super) async fn begin_conflict_resolution(
+        &mut self,
+        choice: ConflictResolutionChoice,
+    ) -> Result<()> {
         let Some(targets) = self.load_conflict_targets_for_resolution().await? else {
             return Ok(());
         };
+        self.begin_conflict_resolution_for(choice, targets);
+        Ok(())
+    }
+
+    pub(super) fn begin_manual_conflict_merge_for(&mut self, targets: Vec<ConflictTarget>) {
+        if targets.is_empty() {
+            self.set_info("selected task has no unresolved conflicts");
+            return;
+        }
         if targets.len() == 1 {
             self.open_manual_conflict_editor(targets.into_iter().next().unwrap());
         } else {
@@ -138,6 +154,13 @@ impl App {
                 &targets,
             );
         }
+    }
+
+    pub(super) async fn begin_manual_conflict_merge(&mut self) -> Result<()> {
+        let Some(targets) = self.load_conflict_targets_for_resolution().await? else {
+            return Ok(());
+        };
+        self.begin_manual_conflict_merge_for(targets);
         Ok(())
     }
 

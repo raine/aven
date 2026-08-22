@@ -4,7 +4,7 @@ use crate::choices::{TaskPriority, TaskStatus};
 use crate::tui::store::{TaskLayout, TaskOrder, TaskQuery};
 
 #[cfg(test)]
-use super::{ShortcutLookup, resolve_shortcut};
+use super::{ShortcutLookup, resolve_shortcut_for};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BulkSupport {
@@ -13,6 +13,37 @@ pub(crate) enum BulkSupport {
     Focused,
     BulkControl,
     NotTaskScoped,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SurfaceEffect {
+    Preserve,
+    ExitDetail,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RelationshipTargetPolicy {
+    Dependency,
+    Related,
+    EpicChild,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommandTargetPolicy {
+    None,
+    Focused,
+    Single(&'static str),
+    Batch,
+    Marks,
+    Relationship(RelationshipTargetPolicy),
+    Attachment,
+    Recurrence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommandScopePolicy {
+    Any,
+    ListOnly,
 }
 
 #[allow(dead_code)]
@@ -65,6 +96,9 @@ pub(crate) enum Action {
     CopyTaskNotes,
     CopyTaskMarkdown,
     BeginCreateTaskGist,
+    OpenAttachment,
+    SaveAttachment,
+    DeleteAttachment,
     BeginEditTitle,
     BeginEditDescription,
     BeginEditProject,
@@ -153,7 +187,58 @@ impl Action {
         )
     }
 
-    pub(crate) const fn bulk_support(self) -> BulkSupport {
+    pub(crate) const fn surface_effect(self) -> SurfaceEffect {
+        if matches!(
+            self,
+            Self::SetOrder(_)
+                | Self::ReverseSort
+                | Self::BeginScopeProject
+                | Self::BeginSwitchWorkspace
+                | Self::ClearFilters
+                | Self::ToggleClosedFilter
+                | Self::ToggleDeletedFilter
+                | Self::CycleRecurringLifecycleFilter
+                | Self::ToggleLayout
+                | Self::SetLayout(_)
+                | Self::ShowView(_)
+                | Self::ShowWorkspaceScope
+                | Self::BeginConflictList
+                | Self::NextConflict
+                | Self::PreviousConflict
+        ) {
+            SurfaceEffect::ExitDetail
+        } else {
+            SurfaceEffect::Preserve
+        }
+    }
+
+    pub(crate) const fn scope_policy(self) -> CommandScopePolicy {
+        if matches!(
+            self,
+            Self::MoveDown
+                | Self::MoveUp
+                | Self::MoveLeft
+                | Self::MoveRight
+                | Self::PreviousItem
+                | Self::NextItem
+                | Self::First
+                | Self::Last
+                | Self::ToggleFocus
+                | Self::ToggleSidebar
+                | Self::ToggleColumnsPreview
+                | Self::BeginFilterLabel
+                | Self::BeginFilterPriority
+                | Self::ToggleMarkSelected
+                | Self::ToggleMarkAllInView
+                | Self::ClearMarks
+        ) {
+            CommandScopePolicy::ListOnly
+        } else {
+            CommandScopePolicy::Any
+        }
+    }
+
+    pub(crate) const fn target_policy(self) -> CommandTargetPolicy {
         match self {
             Self::MoveColumnLeft
             | Self::MoveColumnRight
@@ -169,107 +254,62 @@ impl Action {
             | Self::BeginEditLabels
             | Self::Delete
             | Self::Restore
-            | Self::BeginStatusPicker => BulkSupport::Batch,
-            Self::BeginEditTitle => BulkSupport::SingleOnly("title"),
-            Self::BeginEditDescription => BulkSupport::SingleOnly("description"),
-            Self::BeginAddNote => BulkSupport::SingleOnly("note"),
-            Self::BeginAddDependency | Self::BeginRemoveDependency => {
-                BulkSupport::SingleOnly("dependency")
-            }
-            Self::BeginAddRelated | Self::BeginRemoveRelated => {
-                BulkSupport::SingleOnly("related link")
-            }
-            Self::CopyShortRef | Self::CopyDurableRef | Self::CopyTaskTitle => BulkSupport::Batch,
+            | Self::BeginStatusPicker
+            | Self::CopyShortRef
+            | Self::CopyDurableRef
+            | Self::CopyTaskTitle => CommandTargetPolicy::Batch,
+            Self::BeginEditTitle => CommandTargetPolicy::Single("title"),
+            Self::BeginEditDescription => CommandTargetPolicy::Single("description"),
+            Self::BeginAddNote => CommandTargetPolicy::Single("note"),
+            Self::BeginAddDependency => CommandTargetPolicy::Single("dependency"),
+            Self::BeginAddRelated => CommandTargetPolicy::Single("related link"),
             Self::CopyTaskDescription
             | Self::CopyTaskText
             | Self::CopyTaskNotes
-            | Self::CopyTaskMarkdown => BulkSupport::SingleOnly("copy"),
-            Self::BeginCreateTaskGist
-            | Self::SkipRecurrence
+            | Self::CopyTaskMarkdown => CommandTargetPolicy::Single("copy"),
+            Self::BeginRemoveDependency => {
+                CommandTargetPolicy::Relationship(RelationshipTargetPolicy::Dependency)
+            }
+            Self::BeginRemoveRelated => {
+                CommandTargetPolicy::Relationship(RelationshipTargetPolicy::Related)
+            }
+            Self::RemoveEpicChild => {
+                CommandTargetPolicy::Relationship(RelationshipTargetPolicy::EpicChild)
+            }
+            Self::OpenAttachment | Self::SaveAttachment | Self::DeleteAttachment => {
+                CommandTargetPolicy::Attachment
+            }
+            Self::SkipRecurrence
             | Self::BeginEditRecurrenceTemplate
             | Self::PauseRecurrence
             | Self::ResumeRecurrence
             | Self::StopRecurrence
-            | Self::ShowRecurrenceHistory
+            | Self::ShowRecurrenceHistory => CommandTargetPolicy::Recurrence,
+            Self::BeginCreateTaskGist
             | Self::ToggleEpicExpanded
             | Self::BeginAddEpicChild
-            | Self::RemoveEpicChild => BulkSupport::Focused,
-            Self::Undo
-            | Self::ToggleMarkSelected
-            | Self::ToggleMarkAllInView
-            | Self::ClearMarks => BulkSupport::BulkControl,
-            Self::Quit
-            | Self::MoveDown
-            | Self::MoveUp
-            | Self::MoveLeft
-            | Self::MoveRight
-            | Self::PreviousItem
-            | Self::NextItem
-            | Self::First
-            | Self::Last
-            | Self::ToggleFocus
-            | Self::ToggleSidebar
-            | Self::ToggleDetail
-            | Self::ToggleColumnsPreview
-            | Self::GoBack
-            | Self::GoForward
-            | Self::ReturnToLastChange
-            | Self::ToggleHelp
-            | Self::ShowWelcome
-            | Self::BeginSearch
-            | Self::BeginCommand
-            | Self::AcceptSearch
-            | Self::AcceptCommand
-            | Self::CancelOverlay
-            | Self::CancelSearch
-            | Self::CancelCommand
-            | Self::BackspaceSearch
-            | Self::BackspaceCommand
-            | Self::SearchChar(_)
-            | Self::CommandChar(_)
-            | Self::Refresh
-            | Self::SyncNow
-            | Self::SetOrder(_)
-            | Self::ReverseSort
-            | Self::BeginRenameProject
-            | Self::BeginDeleteProject
-            | Self::BeginAddTask
-            | Self::BeginAddProject
-            | Self::BeginAddProjectPath
-            | Self::BeginRemoveProjectPath
-            | Self::BeginAddLabel
-            | Self::BeginBrowseLabels
-            | Self::BeginRenameLabel
-            | Self::BeginDeleteLabel
-            | Self::BeginFilterLabel
-            | Self::BeginFilterPriority
-            | Self::BeginScopeProject
-            | Self::BeginSwitchWorkspace
-            | Self::BeginAddWorkspace
-            | Self::BeginRenameWorkspace
-            | Self::ClearFilters
-            | Self::ToggleClosedFilter
-            | Self::ToggleDeletedFilter
-            | Self::CycleRecurringLifecycleFilter
-            | Self::ToggleLayout
-            | Self::SetLayout(_)
-            | Self::ShowView(_)
-            | Self::ShowWorkspaceScope
-            | Self::BeginConflictList
             | Self::ShowConflictDetails
-            | Self::NextConflict
-            | Self::PreviousConflict
             | Self::AcceptConflictLocal
             | Self::AcceptConflictRemote
             | Self::BeginManualConflictMerge
-            | Self::ShowConfigStatus
-            | Self::ShowConfigInfo
-            | Self::ShowConfigPaths
-            | Self::ShowDatabaseStats
-            | Self::BeginUpdate
-            | Self::ShowChangelog
-            | Self::BeginConfigInit
-            | Self::None => BulkSupport::NotTaskScoped,
+            | Self::ToggleDetail => CommandTargetPolicy::Focused,
+            Self::ToggleMarkSelected | Self::ToggleMarkAllInView | Self::ClearMarks => {
+                CommandTargetPolicy::Marks
+            }
+            _ => CommandTargetPolicy::None,
+        }
+    }
+
+    pub(crate) const fn bulk_support(self) -> BulkSupport {
+        match self.target_policy() {
+            CommandTargetPolicy::Batch => BulkSupport::Batch,
+            CommandTargetPolicy::Single(reason) => BulkSupport::SingleOnly(reason),
+            CommandTargetPolicy::Focused
+            | CommandTargetPolicy::Relationship(_)
+            | CommandTargetPolicy::Attachment
+            | CommandTargetPolicy::Recurrence => BulkSupport::Focused,
+            CommandTargetPolicy::Marks => BulkSupport::BulkControl,
+            CommandTargetPolicy::None => BulkSupport::NotTaskScoped,
         }
     }
 
@@ -317,7 +357,7 @@ impl Action {
             return Self::CancelOverlay;
         }
 
-        match resolve_shortcut(&[code]) {
+        match resolve_shortcut_for(super::CommandContext::Normal, &[code]) {
             ShortcutLookup::Found(action) | ShortcutLookup::Ambiguous(action) => action,
             ShortcutLookup::Prefix | ShortcutLookup::Missing => Self::None,
         }

@@ -6,6 +6,7 @@ description: Release notes for aven.
 ## Unreleased
 
 - Use [Columns](/tui/#columns) as a layout for the active task view. Press `v l` to switch between Columns and List without changing which tasks are shown.
+- The [TUI command palette](/tui/#discover-commands) prioritizes actions for the focused task, marked tasks, detail row, or sidebar item and keeps that target through pickers and confirmations.
 
 ## v0.1.31 (2026-08-23)
 

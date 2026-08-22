@@ -11,6 +11,17 @@ use crate::tui::terminal_command::TerminalProcessRunner;
 
 use super::*;
 
+async fn execute_custom_command(
+    app: &mut App,
+    command_id: usize,
+    invoked_as: &str,
+) -> anyhow::Result<()> {
+    let snapshot = app.capture_command_session(None);
+    let catalog = app.command_catalog.clone();
+    app.execute_captured_custom_command(&catalog, command_id, invoked_as, &snapshot)
+        .await
+}
+
 #[derive(Default)]
 struct FakeTerminalTransition {
     suspended: usize,
@@ -158,7 +169,9 @@ async fn terminal_success_policies_run_after_restoration() {
         app_config.tui.commands[0].execution = CustomTuiCommandExecution::Terminal;
         app.set_config(app_config);
 
-        app.execute_custom_command(0, "dispatch").await.unwrap();
+        execute_custom_command(&mut app, 0, "dispatch")
+            .await
+            .unwrap();
         assert!(app.pending_terminal_command.is_some());
         assert!(!app.custom_commands.work_pending());
         assert!(!app.should_quit);
@@ -192,7 +205,9 @@ async fn app_projects_active_invocation_paths_and_excludes_environment_values() 
         .insert("ACCESS_TOKEN".to_string(), "secret-marker".to_string());
     app.set_config(app_config);
 
-    app.execute_custom_command(0, "dispatch").await.unwrap();
+    execute_custom_command(&mut app, 0, "dispatch")
+        .await
+        .unwrap();
     poll_until_complete(&mut app).await;
 
     let json = captured_json(&capture);
@@ -272,7 +287,7 @@ async fn successful_waiting_command_applies_quit_policy() {
     let mut app = test_app().await;
     app.set_config(config("/usr/bin/tee", CustomTuiCommandSuccess::Quit));
 
-    app.execute_custom_command(0, "custom-dispatch")
+    execute_custom_command(&mut app, 0, "custom-dispatch")
         .await
         .unwrap();
     assert!(!app.should_quit);
@@ -286,7 +301,9 @@ async fn failed_waiting_command_leaves_app_open_with_error() {
     let mut app = test_app().await;
     app.set_config(config("/usr/bin/false", CustomTuiCommandSuccess::Quit));
 
-    app.execute_custom_command(0, "dispatch").await.unwrap();
+    execute_custom_command(&mut app, 0, "dispatch")
+        .await
+        .unwrap();
     poll_until_complete(&mut app).await;
 
     assert!(!app.should_quit);
@@ -299,7 +316,9 @@ async fn successful_stay_policy_leaves_app_open() {
     let mut app = test_app().await;
     app.set_config(config("/usr/bin/tee", CustomTuiCommandSuccess::Stay));
 
-    app.execute_custom_command(0, "dispatch").await.unwrap();
+    execute_custom_command(&mut app, 0, "dispatch")
+        .await
+        .unwrap();
     poll_until_complete(&mut app).await;
 
     assert!(!app.should_quit);
@@ -314,7 +333,9 @@ async fn stay_policy_retains_the_current_projection_after_external_mutation() {
     let task_id = app.store.tasks[selected].task.id.clone();
     app.set_config(config("/usr/bin/tee", CustomTuiCommandSuccess::Stay));
 
-    app.execute_custom_command(0, "dispatch").await.unwrap();
+    execute_custom_command(&mut app, 0, "dispatch")
+        .await
+        .unwrap();
     external_database(&app)
         .await
         .update_task(
@@ -361,7 +382,9 @@ async fn refresh_policy_updates_projection_and_preserves_navigation_identity() {
     let view_state = app.store.view_state.clone();
     app.set_config(config("/usr/bin/tee", CustomTuiCommandSuccess::Refresh));
 
-    app.execute_custom_command(0, "dispatch").await.unwrap();
+    execute_custom_command(&mut app, 0, "dispatch")
+        .await
+        .unwrap();
     external_database(&app)
         .await
         .update_task(
@@ -404,7 +427,9 @@ async fn refresh_policy_reconciles_a_task_that_leaves_the_active_view() {
     app.list.mark(disappearing_id.clone());
     app.set_config(config("/usr/bin/tee", CustomTuiCommandSuccess::Refresh));
 
-    app.execute_custom_command(0, "dispatch").await.unwrap();
+    execute_custom_command(&mut app, 0, "dispatch")
+        .await
+        .unwrap();
     external_database(&app)
         .await
         .update_task(
@@ -436,7 +461,9 @@ async fn refresh_failure_leaves_app_open_with_bounded_useful_error() {
     let task_id = app.store.tasks[selected].task.id.clone();
     app.set_config(config("/usr/bin/tee", CustomTuiCommandSuccess::Refresh));
 
-    app.execute_custom_command(0, "dispatch").await.unwrap();
+    execute_custom_command(&mut app, 0, "dispatch")
+        .await
+        .unwrap();
     external_database(&app)
         .await
         .update_task(
@@ -470,8 +497,7 @@ async fn refresh_and_quit_requires_a_successful_refresh() {
         "/usr/bin/tee",
         CustomTuiCommandSuccess::RefreshAndQuit,
     ));
-    successful
-        .execute_custom_command(0, "dispatch")
+    execute_custom_command(&mut successful, 0, "dispatch")
         .await
         .unwrap();
     poll_until_complete(&mut successful).await;
@@ -482,7 +508,9 @@ async fn refresh_and_quit_requires_a_successful_refresh() {
         "/usr/bin/tee",
         CustomTuiCommandSuccess::RefreshAndQuit,
     ));
-    failed.execute_custom_command(0, "dispatch").await.unwrap();
+    execute_custom_command(&mut failed, 0, "dispatch")
+        .await
+        .unwrap();
     failed.store.fail_next_refresh();
     poll_until_complete(&mut failed).await;
     assert!(!failed.should_quit);
@@ -499,7 +527,9 @@ async fn nonzero_exit_never_refreshes_or_quits() {
         CustomTuiCommandSuccess::RefreshAndQuit,
     ));
 
-    app.execute_custom_command(0, "dispatch").await.unwrap();
+    execute_custom_command(&mut app, 0, "dispatch")
+        .await
+        .unwrap();
     external_database(&app)
         .await
         .update_task(
@@ -563,11 +593,15 @@ async fn out_of_order_completions_apply_effects_and_preserve_error_notification(
         )
         .await
         .unwrap();
-    app.execute_custom_command(0, "slow-stay").await.unwrap();
-    app.execute_custom_command(1, "medium-refresh")
+    execute_custom_command(&mut app, 0, "slow-stay")
         .await
         .unwrap();
-    app.execute_custom_command(2, "fast-failure").await.unwrap();
+    execute_custom_command(&mut app, 1, "medium-refresh")
+        .await
+        .unwrap();
+    execute_custom_command(&mut app, 2, "fast-failure")
+        .await
+        .unwrap();
 
     let failure = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
@@ -641,7 +675,9 @@ async fn target_none_is_available_without_primary_in_list_and_detail_contexts() 
         vec![],
     ));
 
-    app.execute_custom_command(0, "dispatch").await.unwrap();
+    execute_custom_command(&mut app, 0, "dispatch")
+        .await
+        .unwrap();
     poll_until_complete(&mut app).await;
     let list = captured_json(&list_path);
     assert!(list["selection"]["primary"].is_null());
@@ -654,7 +690,9 @@ async fn target_none_is_available_without_primary_in_list_and_detail_contexts() 
         CustomTuiCommandTarget::None,
         vec![],
     ));
-    app.execute_custom_command(0, "dispatch").await.unwrap();
+    execute_custom_command(&mut app, 0, "dispatch")
+        .await
+        .unwrap();
     poll_until_complete(&mut app).await;
     let detail = captured_json(&detail_path);
     assert!(detail["selection"]["primary"].is_object());
@@ -674,7 +712,9 @@ async fn focused_target_uses_list_or_displayed_detail_primary_and_requires_one()
         vec![],
     ));
 
-    app.execute_custom_command(0, "dispatch").await.unwrap();
+    execute_custom_command(&mut app, 0, "dispatch")
+        .await
+        .unwrap();
     assert_eq!(
         toast_message(&app).as_deref(),
         Some(":dispatch is disabled: requires a focused task")
@@ -683,7 +723,9 @@ async fn focused_target_uses_list_or_displayed_detail_primary_and_requires_one()
 
     let selected = create_and_select_task(&mut app, test_task_draft("displayed primary")).await;
     let primary_id = app.store.tasks[selected].task.id.clone();
-    app.execute_custom_command(0, "dispatch").await.unwrap();
+    execute_custom_command(&mut app, 0, "dispatch")
+        .await
+        .unwrap();
     poll_until_complete(&mut app).await;
     assert_eq!(
         captured_json(&list_path)["targeting"]["targets"][0]["id"],
@@ -703,7 +745,9 @@ async fn focused_target_uses_list_or_displayed_detail_primary_and_requires_one()
         CustomTuiCommandTarget::Focused,
         vec![],
     ));
-    app.execute_custom_command(0, "dispatch").await.unwrap();
+    execute_custom_command(&mut app, 0, "dispatch")
+        .await
+        .unwrap();
     poll_until_complete(&mut app).await;
     assert_eq!(
         captured_json(&detail_path)["targeting"]["targets"][0]["id"],
@@ -727,14 +771,18 @@ async fn marked_target_requires_marks_and_preserves_visible_order_in_list_and_de
         vec![],
     ));
 
-    app.execute_custom_command(0, "dispatch").await.unwrap();
+    execute_custom_command(&mut app, 0, "dispatch")
+        .await
+        .unwrap();
     assert_eq!(
         toast_message(&app).as_deref(),
         Some(":dispatch is disabled: requires one or more marked tasks")
     );
 
     app.list.mark(second_id);
-    app.execute_custom_command(0, "dispatch").await.unwrap();
+    execute_custom_command(&mut app, 0, "dispatch")
+        .await
+        .unwrap();
     poll_until_complete(&mut app).await;
     let one = captured_json(&list_path);
     assert_eq!(one["targeting"]["targets"].as_array().unwrap().len(), 1);
@@ -757,10 +805,13 @@ async fn marked_target_requires_marks_and_preserves_visible_order_in_list_and_de
     assert!(matches!(
         &app.overlay,
         Some(OverlayState::Command { state })
-            if state.marked_task_count == 0 && state.custom_command_marked_task_count == 2
+            if state.marked_task_count() == 2
+                && matches!(state.session.surface, crate::tui::event::CommandSurfaceSnapshot::Detail { .. })
     ));
     app.overlay = None;
-    app.execute_custom_command(0, "dispatch").await.unwrap();
+    execute_custom_command(&mut app, 0, "dispatch")
+        .await
+        .unwrap();
     poll_until_complete(&mut app).await;
     let detail = captured_json(&detail_path);
     let actual = detail["targeting"]["targets"]
@@ -796,7 +847,9 @@ async fn marked_or_focused_falls_back_then_prefers_marks() {
         vec![],
     ));
 
-    app.execute_custom_command(0, "dispatch").await.unwrap();
+    execute_custom_command(&mut app, 0, "dispatch")
+        .await
+        .unwrap();
     poll_until_complete(&mut app).await;
     let fallback = captured_json(&fallback_path);
     assert_eq!(fallback["targeting"]["resolved_from"], "focused");
@@ -811,7 +864,9 @@ async fn marked_or_focused_falls_back_then_prefers_marks() {
         CustomTuiCommandTarget::MarkedOrFocused,
         vec![],
     ));
-    app.execute_custom_command(0, "dispatch").await.unwrap();
+    execute_custom_command(&mut app, 0, "dispatch")
+        .await
+        .unwrap();
     poll_until_complete(&mut app).await;
     let preferred = captured_json(&marked_path);
     assert_eq!(preferred["targeting"]["resolved_from"], "marked");

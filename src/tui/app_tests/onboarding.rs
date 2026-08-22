@@ -1,5 +1,5 @@
 use super::*;
-use crate::tui::event::{CommandLookup, lookup_command};
+
 use crate::tui::overlay::OverlayView;
 use crate::tui::store::OnboardingStatus;
 
@@ -159,9 +159,10 @@ async fn welcome_quit_completes_but_control_c_does_not() {
 
 #[test]
 fn welcome_command_is_discoverable() {
-    assert_eq!(
-        lookup_command("welcome"),
-        CommandLookup::Found(Action::ShowWelcome)
+    assert!(
+        crate::tui::event::COMMANDS
+            .iter()
+            .any(|command| { command.name == "welcome" && command.action == Action::ShowWelcome })
     );
 }
 

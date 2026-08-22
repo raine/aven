@@ -12,6 +12,13 @@ impl TuiStore {
         let Some(item) = self.selected_task(index) else {
             return Ok(None);
         };
+        self.conflict_targets_for(item).await.map(Some)
+    }
+
+    pub(crate) async fn conflict_targets_for(
+        &self,
+        item: &crate::query::TaskListItem,
+    ) -> Result<Vec<ConflictTarget>> {
         let details = self
             .database
             .task_conflicts(&self.active_workspace, &item.task.id, None)
@@ -51,7 +58,7 @@ impl TuiStore {
                     }),
             );
         }
-        Ok(Some(targets))
+        Ok(targets)
     }
 
     pub(crate) async fn append_recurrence_conflict_tasks(&mut self) -> Result<()> {

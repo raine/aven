@@ -7,6 +7,7 @@ use crate::query::TaskListItem;
 pub(crate) struct TaskSelection {
     targets: Vec<TaskListItem>,
     anchor: TaskSelectionAnchor,
+    uses_marks: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,7 +18,9 @@ struct TaskSelectionAnchor {
 
 impl PartialEq for TaskSelection {
     fn eq(&self, other: &Self) -> bool {
-        self.ids().eq(other.ids()) && self.anchor == other.anchor
+        self.ids().eq(other.ids())
+            && self.anchor == other.anchor
+            && self.uses_marks == other.uses_marks
     }
 }
 
@@ -53,6 +56,7 @@ impl TaskSelection {
                 task_id: tasks[anchor_index].task.id.clone(),
                 index: anchor_index,
             },
+            uses_marks,
         })
     }
 
@@ -64,6 +68,7 @@ impl TaskSelection {
                 task_id: tasks[index].task.id.clone(),
                 index,
             },
+            uses_marks: false,
         })
     }
 
@@ -78,7 +83,32 @@ impl TaskSelection {
                 task_id: anchor.task.id.clone(),
                 index: anchor_index,
             },
+            uses_marks: false,
         }
+    }
+
+    pub(crate) fn from_captured(
+        targets: Vec<TaskListItem>,
+        anchor: &TaskListItem,
+        anchor_index: usize,
+    ) -> Option<Self> {
+        Self::from_captured_with_marks(targets, anchor, anchor_index, false)
+    }
+
+    pub(crate) fn from_captured_with_marks(
+        targets: Vec<TaskListItem>,
+        anchor: &TaskListItem,
+        anchor_index: usize,
+        uses_marks: bool,
+    ) -> Option<Self> {
+        (!targets.is_empty()).then(|| Self {
+            targets,
+            anchor: TaskSelectionAnchor {
+                task_id: anchor.task.id.clone(),
+                index: anchor_index,
+            },
+            uses_marks,
+        })
     }
 
     #[cfg(test)]
@@ -103,6 +133,7 @@ impl TaskSelection {
                 task_id: tasks[anchor_index].task.id.clone(),
                 index: anchor_index,
             },
+            uses_marks: false,
         })
     }
 
@@ -112,6 +143,10 @@ impl TaskSelection {
 
     pub(crate) fn is_single(&self) -> bool {
         self.targets.len() == 1
+    }
+
+    pub(crate) fn uses_marks(&self) -> bool {
+        self.uses_marks
     }
 
     pub(crate) fn targets(&self) -> &[TaskListItem] {

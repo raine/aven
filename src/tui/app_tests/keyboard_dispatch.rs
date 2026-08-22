@@ -319,7 +319,7 @@ async fn esc_closes_every_overlay_variant() {
             intent: SearchIntent::Navigate,
         }),
         OverlayState::Command {
-            state: CommandState::new(LineEdit::new("ref".to_string())),
+            state: CommandState::test_with_input("ref"),
         },
         OverlayState::TextInput(TextInputState::new(
             TextIntent::AddProject,

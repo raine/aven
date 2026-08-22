@@ -18,22 +18,25 @@ use crate::tui::store::TaskScope;
 pub(crate) const ADD_TASK_NATURAL_TITLE: &str = "Add task: natural language";
 
 impl App {
-    pub(super) async fn begin_add_task(&mut self) -> Result<()> {
+    pub(super) async fn begin_add_task_for(&mut self, project: Option<String>) -> Result<()> {
         self.pending_shortcut.clear();
-        let active_project = match &self.store.view_state.scope {
-            TaskScope::Project(project) => Some(project.clone()),
-            TaskScope::Workspace => None,
-        };
-        let inferred_project = if active_project.is_none() {
+        let inferred_project = if project.is_none() {
             self.store.inferred_add_project().await?
         } else {
             None
         };
-        self.authoring
-            .begin_add_task(active_project, inferred_project);
+        self.authoring.begin_add_task(project, inferred_project);
         self.apply_default_add_task_recurrence()?;
         self.begin_add_task_title();
         Ok(())
+    }
+
+    pub(super) async fn begin_add_task(&mut self) -> Result<()> {
+        let active_project = match &self.store.view_state.scope {
+            TaskScope::Project(project) => Some(project.clone()),
+            TaskScope::Workspace => None,
+        };
+        self.begin_add_task_for(active_project).await
     }
 
     fn apply_default_add_task_recurrence(&mut self) -> Result<()> {
@@ -261,6 +264,22 @@ impl App {
         self.overlay = Some(OverlayState::AddTask(state));
     }
 
+    pub(super) fn begin_add_note_for(
+        &mut self,
+        selection: crate::tui::task_selection::TaskSelection,
+    ) {
+        self.pending_shortcut.clear();
+        let item = &selection.targets()[0];
+        self.overlay = Some(OverlayState::blank_multiline_input(
+            MultilineIntent::AddNote {
+                task_id: item.task.id.clone(),
+                display_ref: item.display_ref.clone(),
+            },
+            ADD_NOTE_TITLE,
+            "note body:",
+        ));
+    }
+
     pub(super) fn begin_add_note(&mut self) {
         self.pending_shortcut.clear();
         let Some(selection) = self.resolve_task_selection() else {
@@ -274,15 +293,7 @@ impl App {
             ));
             return;
         }
-        let item = &selection.targets()[0];
-        self.overlay = Some(OverlayState::blank_multiline_input(
-            MultilineIntent::AddNote {
-                task_id: item.task.id.clone(),
-                display_ref: item.display_ref.clone(),
-            },
-            ADD_NOTE_TITLE,
-            "note body:",
-        ));
+        self.begin_add_note_for(selection);
     }
 
     pub(super) async fn submit_add_task_title_labels(&mut self, labels: Vec<String>) -> Result<()> {

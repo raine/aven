@@ -89,15 +89,17 @@ impl App {
     }
 
     pub(super) fn begin_add_project_path(&mut self) {
+        let selected = (self.list.focus() == Focus::Sidebar)
+            .then(|| self.selected_sidebar_project())
+            .flatten();
+        self.begin_add_project_path_for(selected.as_deref());
+    }
+
+    pub(super) fn begin_add_project_path_for(&mut self, selected: Option<&str>) {
         self.pending_shortcut.clear();
-        let selected = if self.list.focus() == Focus::Sidebar {
-            self.selected_sidebar_project()
-        } else {
-            None
-        };
         let items = self
             .store
-            .existing_project_picker_items(selected.as_deref().unwrap_or_default());
+            .existing_project_picker_items(selected.unwrap_or_default());
         self.open_picker_overlay(
             PickerIntent::AddProjectPath,
             ADD_PROJECT_PATH_TITLE,
@@ -107,15 +109,17 @@ impl App {
     }
 
     pub(super) fn begin_remove_project_path(&mut self) {
+        let selected = (self.list.focus() == Focus::Sidebar)
+            .then(|| self.selected_sidebar_project())
+            .flatten();
+        self.begin_remove_project_path_for(selected.as_deref());
+    }
+
+    pub(super) fn begin_remove_project_path_for(&mut self, selected: Option<&str>) {
         self.pending_shortcut.clear();
-        let selected = if self.list.focus() == Focus::Sidebar {
-            self.selected_sidebar_project()
-        } else {
-            None
-        };
         let items = self
             .store
-            .existing_project_picker_items(selected.as_deref().unwrap_or_default());
+            .existing_project_picker_items(selected.unwrap_or_default());
         self.open_picker_overlay(
             PickerIntent::RemoveProjectPath,
             REMOVE_PROJECT_PATH_TITLE,
@@ -307,43 +311,46 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn begin_delete_task(&mut self) {
+    pub(super) fn begin_delete_task_for(
+        &mut self,
+        selection: crate::tui::task_selection::TaskSelection,
+    ) {
         self.pending_shortcut.clear();
-        let Some(selection) = self.resolve_task_selection() else {
-            self.set_info("no selected task to edit");
-            return;
-        };
-        if !self.detail.is_active() && !self.marked_task_ids_in_view().is_empty() {
+        let prompt = if selection.uses_marks() {
             let count = selection.len();
             let noun = if count == 1 { "task" } else { "tasks" };
-            self.overlay = Some(OverlayState::confirm(
-                ConfirmIntent::DeleteTasks { selection },
-                DELETE_TASK_TITLE,
-                format!("Delete {count} marked {noun}?"),
-            ));
-            return;
-        }
-        let Some(task) = self.store.selected_task(self.list.selected_task()) else {
-            self.set_info("no selected task to edit");
-            return;
+            format!("Delete {count} marked {noun}?")
+        } else {
+            let task = &selection.targets()[0];
+            format!("Delete {} {}?", task.display_ref, task.task.title)
         };
         self.overlay = Some(OverlayState::confirm(
             ConfirmIntent::DeleteTasks { selection },
             DELETE_TASK_TITLE,
-            format!("Delete {} {}?", task.display_ref, task.task.title),
+            prompt,
         ));
     }
 
-    pub(super) fn begin_rename_project(&mut self) {
-        self.pending_shortcut.clear();
-        let selected = if self.list.focus() == Focus::Sidebar {
-            self.selected_sidebar_project()
-        } else {
-            None
+    pub(super) fn begin_delete_task(&mut self) {
+        let Some(selection) = self.resolve_task_selection() else {
+            self.set_info("no selected task to edit");
+            return;
         };
+        self.begin_delete_task_for(selection);
+    }
+
+    pub(super) fn begin_rename_project(&mut self) {
+        let selected = (self.list.focus() == Focus::Sidebar)
+            .then(|| self.selected_sidebar_project())
+            .flatten();
+        self.begin_rename_project_for(selected.as_deref());
+    }
+
+    pub(super) fn begin_rename_project_for(&mut self, selected: Option<&str>) {
+        self.pending_shortcut.clear();
         let items = self
             .store
-            .existing_project_picker_items(selected.as_deref().unwrap_or_default());
+            .existing_project_picker_items(selected.unwrap_or_default());
         self.open_picker_overlay(
             PickerIntent::RenameProject,
             RENAME_PROJECT_TITLE,
@@ -353,15 +360,17 @@ impl App {
     }
 
     pub(super) fn begin_delete_project(&mut self) {
+        let selected = (self.list.focus() == Focus::Sidebar)
+            .then(|| self.selected_sidebar_project())
+            .flatten();
+        self.begin_delete_project_for(selected.as_deref());
+    }
+
+    pub(super) fn begin_delete_project_for(&mut self, selected: Option<&str>) {
         self.pending_shortcut.clear();
-        let selected = if self.list.focus() == Focus::Sidebar {
-            self.selected_sidebar_project()
-        } else {
-            None
-        };
         let items = self
             .store
-            .existing_project_picker_items(selected.as_deref().unwrap_or_default());
+            .existing_project_picker_items(selected.unwrap_or_default());
         self.open_picker_overlay(
             PickerIntent::DeleteProject,
             DELETE_PROJECT_TITLE,
@@ -383,11 +392,11 @@ impl App {
             })
     }
 
-    pub(super) fn copy_selected_ref(&mut self, kind: TaskRefKind) {
-        let Some(selection) = self.resolve_task_selection() else {
-            self.set_info("no selected task to copy");
-            return;
-        };
+    pub(super) fn copy_selected_ref_for(
+        &mut self,
+        selection: &crate::tui::task_selection::TaskSelection,
+        kind: TaskRefKind,
+    ) {
         let value = task_refs_for_copy(selection.targets(), kind);
         let success = if selection.is_single() {
             format!("copied {}", selection.targets()[0].display_ref)
@@ -396,6 +405,48 @@ impl App {
         };
         match copy_to_clipboard(&value) {
             Ok(()) => self.set_success(success),
+            Err(error) => self.set_error(format!("copy failed: {error}")),
+        }
+    }
+
+    pub(super) fn copy_selected_ref(&mut self, kind: TaskRefKind) {
+        let Some(selection) = self.resolve_task_selection() else {
+            self.set_info("no selected task to copy");
+            return;
+        };
+        self.copy_selected_ref_for(&selection, kind);
+    }
+
+    pub(super) fn copy_selected_task_text_for(
+        &mut self,
+        selection: &crate::tui::task_selection::TaskSelection,
+        kind: TaskCopyKind,
+    ) {
+        if kind == TaskCopyKind::Title {
+            let success = if selection.is_single() {
+                "copied task title".to_string()
+            } else {
+                format!("copied {} task titles", selection.len())
+            };
+            match copy_to_clipboard(&task_titles_for_copy(selection.targets())) {
+                Ok(()) => self.set_success(success),
+                Err(error) => self.set_error(format!("copy failed: {error}")),
+            }
+            return;
+        }
+        let task = &selection.targets()[0];
+        if kind == TaskCopyKind::Description && task.task.description.is_empty() {
+            self.set_info("task description is empty");
+            return;
+        }
+        let value = task_text_for_copy(&task.task.title, &task.task.description, kind);
+        let copied = match kind {
+            TaskCopyKind::Title => unreachable!("title copies use task selection"),
+            TaskCopyKind::Description => "task description",
+            TaskCopyKind::TitleAndDescription => "task title and description",
+        };
+        match copy_to_clipboard(&value) {
+            Ok(()) => self.set_success(format!("copied {copied}")),
             Err(error) => self.set_error(format!("copy failed: {error}")),
         }
     }
@@ -438,11 +489,11 @@ impl App {
         }
     }
 
-    pub(super) fn copy_selected_task_notes(&mut self) {
-        let Some(task) = self.selected_command_task() else {
-            self.set_info("no selected task to copy");
-            return;
-        };
+    pub(super) fn copy_selected_task_notes_for(
+        &mut self,
+        selection: &crate::tui::task_selection::TaskSelection,
+    ) {
+        let task = &selection.targets()[0];
         if task.notes.is_empty() {
             self.set_info("task has no notes");
             return;
@@ -451,6 +502,14 @@ impl App {
             Ok(()) => self.set_success("copied task notes"),
             Err(error) => self.set_error(format!("copy failed: {error}")),
         }
+    }
+
+    pub(super) fn copy_selected_task_notes(&mut self) {
+        let Some(selection) = self.resolve_task_selection() else {
+            self.set_info("no selected task to copy");
+            return;
+        };
+        self.copy_selected_task_notes_for(&selection);
     }
 
     pub(super) fn submit_add_project_path_picker(&mut self, values: Vec<String>) {

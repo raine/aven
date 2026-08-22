@@ -11,7 +11,7 @@ use super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use crate::config::CustomTuiCommandTarget;
 use crate::tui::app::{DetailSection, DetailTargetId};
 use crate::tui::event::{
-    Action, BulkSupport, CatalogCommand, CommandCatalog, CommandContext, CommandSpec,
+    Action, BuiltInCommand, BulkSupport, CatalogCommand, CommandCatalog, CommandContext,
 };
 use crate::tui::theme::{
     ACCENT, BG_ALT, BG_PANEL, BORDER, CUSTOM_COMMAND_NAME, CUSTOM_COMMAND_TAG, FG, FG_DIM,
@@ -79,6 +79,75 @@ const DETAIL_HELP_TOPICS: &[HelpTopic] = &[
         keys: "[/]",
         description: "select previous or next task",
         section: "Task detail",
+    },
+];
+
+const ATTACHMENT_DETAIL_HELP_TOPICS: &[HelpTopic] = &[
+    HelpTopic {
+        keys: "Esc",
+        description: "clear attachment focus",
+        section: "General",
+    },
+    HelpTopic {
+        keys: "Enter / o",
+        description: "open focused attachment",
+        section: "Attachment",
+    },
+    HelpTopic {
+        keys: "s",
+        description: "save focused attachment",
+        section: "Attachment",
+    },
+    HelpTopic {
+        keys: "D",
+        description: "delete focused attachment",
+        section: "Attachment",
+    },
+    HelpTopic {
+        keys: "Tab/Shift+Tab",
+        description: "focus next or previous detail row",
+        section: "Attachment",
+    },
+];
+
+const NOTE_DETAIL_HELP_TOPICS: &[HelpTopic] = &[
+    HelpTopic {
+        keys: "Esc",
+        description: "clear note focus",
+        section: "General",
+    },
+    HelpTopic {
+        keys: "e",
+        description: "edit focused note",
+        section: "Note",
+    },
+    HelpTopic {
+        keys: "D",
+        description: "delete focused note",
+        section: "Note",
+    },
+    HelpTopic {
+        keys: "Tab/Shift+Tab",
+        description: "focus next or previous detail row",
+        section: "Note",
+    },
+];
+
+const DISCLOSURE_DETAIL_HELP_TOPICS: &[HelpTopic] = &[
+    HelpTopic {
+        keys: "Esc",
+        description: "clear disclosure focus",
+        section: "General",
+    },
+    HelpTopic {
+        keys: "Enter",
+        description: "expand relationship rows",
+        section: "Relationship",
+    },
+    HelpTopic {
+        keys: "Tab/Shift+Tab",
+        description: "focus next or previous detail row",
+        section: "Relationship",
     },
 ];
 
@@ -326,6 +395,15 @@ fn detail_help_lines_for(
     if focused_epic_child(focused_target) {
         return focused_help_lines(CHILD_DETAIL_HELP_TOPICS, undo_description);
     }
+    if matches!(focused_target, Some(DetailTargetId::Attachment { .. })) {
+        return focused_help_lines(ATTACHMENT_DETAIL_HELP_TOPICS, undo_description);
+    }
+    if matches!(focused_target, Some(DetailTargetId::Note { .. })) {
+        return focused_help_lines(NOTE_DETAIL_HELP_TOPICS, undo_description);
+    }
+    if matches!(focused_target, Some(DetailTargetId::Expand { .. })) {
+        return focused_help_lines(DISCLOSURE_DETAIL_HELP_TOPICS, undo_description);
+    }
     detail_help_lines(undo_description)
 }
 
@@ -482,7 +560,7 @@ fn command_name_style() -> Style {
 #[cfg(test)]
 fn command_hint_line(
     leading: Span<'static>,
-    command: &CommandSpec,
+    command: &BuiltInCommand,
     command_name_width: usize,
 ) -> Line<'static> {
     let mut spans = vec![
@@ -537,7 +615,7 @@ fn catalog_command_name_width(commands: &[CatalogCommand<'_>]) -> usize {
 }
 
 fn help_command_line(
-    command: &CommandSpec,
+    command: &BuiltInCommand,
     context: CommandContext,
     undo_description: &str,
 ) -> Line<'static> {
@@ -567,13 +645,13 @@ fn help_command_line(
 }
 
 #[cfg(test)]
-fn command_line(command: &CommandSpec, context: CommandContext) -> Line<'static> {
+fn command_line(command: &BuiltInCommand, context: CommandContext) -> Line<'static> {
     command_line_with_highlight(command, context, false)
 }
 
 #[cfg(test)]
 fn command_line_with_highlight(
-    command: &CommandSpec,
+    command: &BuiltInCommand,
     context: CommandContext,
     highlighted: bool,
 ) -> Line<'static> {
@@ -698,48 +776,54 @@ fn command_palette_line(
 }
 
 pub(super) struct CommandRenderContext<'a> {
-    pub(super) unavailable: &'a [crate::tui::overlay::CommandAvailabilityOverride],
-    pub(super) undo_description: &'a str,
-    pub(super) command_context: CommandContext,
-    pub(super) marked_task_count: usize,
-    pub(super) custom_command_marked_task_count: usize,
+    pub(super) session: &'a crate::tui::event::CommandSessionSnapshot,
     pub(super) catalog: &'a CommandCatalog,
-    pub(super) has_primary_task: bool,
+    pub(super) candidates: &'a [crate::tui::event::CommandCandidate],
+    pub(super) undo_description: &'a str,
 }
 
 pub(super) fn render_command(
     frame: &mut Frame,
     input: &str,
     cursor: usize,
-    cycle_input: Option<&str>,
-    highlighted: Option<&str>,
+    highlighted: Option<usize>,
     render_context: CommandRenderContext<'_>,
 ) {
     let CommandRenderContext {
-        unavailable,
-        undo_description,
-        command_context,
-        marked_task_count,
-        custom_command_marked_task_count,
+        session,
         catalog,
-        has_primary_task,
+        candidates,
+        undo_description,
     } = render_context;
-    let matches = catalog.matching(
-        command_context,
-        cycle_input.unwrap_or(input),
-        marked_task_count,
-    );
-    let match_count = matches.len();
-    let selected = highlighted
-        .and_then(|highlighted| {
-            matches
-                .iter()
-                .position(|command| command.name() == highlighted)
+    let captured_marked_task_count = session.marked_task_ids().len();
+    let marked_task_count = if matches!(
+        session.surface,
+        crate::tui::event::CommandSurfaceSnapshot::Detail { .. }
+    ) {
+        0
+    } else {
+        captured_marked_task_count
+    };
+    let has_primary_task = session.primary_task_id().is_some();
+    let command_context = session.routing_domain().command_context();
+    let matches = candidates
+        .iter()
+        .filter_map(|candidate| {
+            catalog
+                .command(candidate.index)
+                .map(|command| (command, candidate.availability.reason()))
         })
-        .unwrap_or(0);
+        .collect::<Vec<_>>();
+    let match_count = matches.len();
+    let selected = highlighted.unwrap_or(0).min(match_count.saturating_sub(1));
     let offset = selected.saturating_sub(7);
     let visible_end = offset.saturating_add(8).min(match_count);
-    let command_name_width = catalog_command_name_width(&matches[offset..visible_end]);
+    let command_name_width = catalog_command_name_width(
+        &matches[offset..visible_end]
+            .iter()
+            .map(|(command, _)| *command)
+            .collect::<Vec<_>>(),
+    );
     let height = (visible_end.saturating_sub(offset) as u16)
         .saturating_add(3)
         .saturating_add(u16::from(match_count > 0));
@@ -768,52 +852,30 @@ pub(super) fn render_command(
     let line_width = (content.width as usize).saturating_sub(usize::from(match_count > 8));
 
     let mut lines = vec![input_line(":", input, cursor)];
-    for command in matches.into_iter().skip(offset).take(8) {
-        let target_marked_task_count = if command.is_custom() {
-            custom_command_marked_task_count
-        } else {
-            marked_task_count
-        };
-        let unavailable_reason = command
-            .built_in()
-            .and_then(|built_in| {
-                unavailable
-                    .iter()
-                    .find(|override_| override_.action == built_in.action)
-                    .map(|override_| override_.reason)
-            })
-            .or_else(|| command.unavailable_reason(has_primary_task, target_marked_task_count));
-        let is_highlighted = highlighted == Some(command.name());
-        let marked_annotation = || {
-            let noun = if target_marked_task_count == 1 {
-                "task"
-            } else {
-                "tasks"
-            };
-            format!("{target_marked_task_count} {noun} · ")
+    for (row, (command, unavailable_reason)) in matches.into_iter().enumerate().skip(offset).take(8)
+    {
+        let marked_annotation = |count| {
+            let noun = if count == 1 { "task" } else { "tasks" };
+            format!("{count} {noun} · ")
         };
         let annotation = match command.custom_target() {
             Some(CustomTuiCommandTarget::Marked | CustomTuiCommandTarget::MarkedOrFocused)
-                if target_marked_task_count > 0 =>
+                if captured_marked_task_count > 0 =>
             {
-                Some(marked_annotation())
+                Some(marked_annotation(captured_marked_task_count))
             }
             Some(CustomTuiCommandTarget::MarkedOrFocused) if has_primary_task => {
                 Some("focused task · ".to_string())
             }
-            Some(CustomTuiCommandTarget::Focused) if target_marked_task_count > 0 => {
+            Some(CustomTuiCommandTarget::Focused) if has_primary_task => {
                 Some("focused task · ".to_string())
             }
             _ => match command.bulk_support() {
-                BulkSupport::Batch if target_marked_task_count > 0 => Some(marked_annotation()),
-                BulkSupport::Focused if target_marked_task_count > 0 => {
-                    Some("focused task · ".to_string())
+                BulkSupport::Batch if marked_task_count > 0 => {
+                    Some(marked_annotation(marked_task_count))
                 }
-                BulkSupport::Batch
-                | BulkSupport::SingleOnly(_)
-                | BulkSupport::Focused
-                | BulkSupport::BulkControl
-                | BulkSupport::NotTaskScoped => None,
+                BulkSupport::Focused if has_primary_task => Some("focused task · ".to_string()),
+                _ => None,
             },
         };
         let description_override = command
@@ -826,7 +888,7 @@ pub(super) fn render_command(
             command_name_width,
             line_width,
             CommandPaletteOptions {
-                highlighted: is_highlighted,
+                highlighted: highlighted == Some(row),
                 annotation,
                 unavailable_reason,
                 description_override,
@@ -885,10 +947,12 @@ struct PrefixHintAvailability {
     has_primary_task: bool,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn prefix_hint_lines(context: CommandContext, pending: &[String]) -> Vec<Line<'static>> {
     prefix_hint_lines_with_availability(context, pending, true, true, 0)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn prefix_hint_lines_with_availability(
     context: CommandContext,
     pending: &[String],
@@ -910,12 +974,27 @@ fn prefix_hint_lines_with_availability(
     )
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn prefix_hint_lines_for_catalog(
     catalog: &CommandCatalog,
     context: CommandContext,
     pending: &[String],
     availability: PrefixHintAvailability,
 ) -> Vec<Line<'static>> {
+    let domain = match context {
+        CommandContext::Normal => crate::tui::event::RoutingDomain::Normal,
+        CommandContext::Detail => crate::tui::event::RoutingDomain::DetailParent,
+    };
+    prefix_hint_lines_for_catalog_in_domain(catalog, domain, pending, availability)
+}
+
+fn prefix_hint_lines_for_catalog_in_domain(
+    catalog: &CommandCatalog,
+    domain: crate::tui::event::RoutingDomain,
+    pending: &[String],
+    availability: PrefixHintAvailability,
+) -> Vec<Line<'static>> {
+    let context = domain.command_context();
     let PrefixHintAvailability {
         copy_description: copy_description_available,
         copy_notes: copy_notes_available,
@@ -923,7 +1002,7 @@ fn prefix_hint_lines_for_catalog(
         custom_command_marked_task_count,
         has_primary_task,
     } = availability;
-    let matches = catalog.prefix_hints(context, pending);
+    let matches = catalog.prefix_hints_in_domain(domain, pending);
     let command_name_width = catalog_command_name_width(
         &matches
             .iter()
@@ -1014,14 +1093,9 @@ fn prefix_hint_lines_for_catalog(
 }
 
 pub(super) fn render_prefix_hints(frame: &mut Frame, view: &ViewState) {
-    let context = if view.detail_underlay {
-        CommandContext::Detail
-    } else {
-        CommandContext::Normal
-    };
-    let lines = prefix_hint_lines_for_catalog(
+    let lines = prefix_hint_lines_for_catalog_in_domain(
         &view.command_catalog,
-        context,
+        view.routing_domain,
         &view.pending_shortcut,
         PrefixHintAvailability {
             copy_description: view.copy_description_available,
@@ -1051,15 +1125,22 @@ pub(super) fn render_prefix_hints(frame: &mut Frame, view: &ViewState) {
 
 pub(crate) fn prefix_hint_scroll_cap(
     frame_height: u16,
-    detail_underlay: bool,
+    domain: crate::tui::event::RoutingDomain,
     pending: &[String],
 ) -> u16 {
-    let context = if detail_underlay {
-        CommandContext::Detail
-    } else {
-        CommandContext::Normal
-    };
-    let line_count = prefix_hint_lines(context, pending).len();
+    let line_count = prefix_hint_lines_for_catalog_in_domain(
+        &CommandCatalog::default(),
+        domain,
+        pending,
+        PrefixHintAvailability {
+            copy_description: true,
+            copy_notes: true,
+            marked_task_count: 0,
+            custom_command_marked_task_count: 0,
+            has_primary_task: true,
+        },
+    )
+    .len();
     let visible_rows = prefix_hint_visible_rows(frame_height, line_count) as usize;
     line_count.saturating_sub(visible_rows) as u16
 }
@@ -1076,7 +1157,7 @@ mod tests {
         CustomTuiCommandConfig, CustomTuiCommandExecution, CustomTuiCommandSuccess,
         CustomTuiCommandTarget,
     };
-    use crate::tui::event::{COMMANDS, CommandContext, key_label, matching_commands_for_bulk};
+    use crate::tui::event::{COMMANDS, CommandContext, CommandQuery, key_label};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -1162,11 +1243,58 @@ mod tests {
         buffer_text(terminal.backend())
     }
 
+    fn command_snapshot(
+        marked: usize,
+        has_primary_task: bool,
+        context: CommandContext,
+        recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
+    ) -> crate::tui::event::CommandSessionSnapshot {
+        let workspace = crate::workspaces::Workspace::default();
+        let primary = has_primary_task.then(|| crate::test_support::task_id("command-primary"));
+        let marks = (0..marked)
+            .map(|index| crate::test_support::task_id(&format!("command-mark-{index}")))
+            .collect::<Vec<_>>();
+        let surface = if context == CommandContext::Detail {
+            let parent = primary.unwrap_or_else(|| crate::test_support::task_id("command-detail"));
+            crate::tui::event::CommandSurfaceSnapshot::Detail {
+                parent_task_id: parent.clone(),
+                marked_task_ids: marks,
+                focus: None,
+                scroll: 0,
+            }
+        } else {
+            crate::tui::event::CommandSurfaceSnapshot::List {
+                primary_task_id: primary.clone(),
+                marked_task_ids: marks.clone(),
+                visible_task_ids: marks,
+                focused_sidebar: None,
+                is_empty: false,
+                empty_preferred_action: None,
+            }
+        };
+        crate::tui::event::CommandSessionSnapshot {
+            workspace: crate::tui::event::CommandWorkspaceSnapshot {
+                id: workspace.id,
+                key: workspace.key,
+                name: workspace.name,
+            },
+            surface,
+            recurrence_series_id,
+        }
+    }
+
     fn render_command_overlay(input: &str, cursor: usize) -> String {
         render_command_overlay_with_marks(input, cursor, 0)
     }
 
     fn render_command_overlay_with_marks(input: &str, cursor: usize, marked: usize) -> String {
+        let catalog = CommandCatalog::default();
+        let session = command_snapshot(marked, true, CommandContext::Normal, None);
+        let candidates = catalog.query(CommandQuery {
+            input,
+            snapshot: &session,
+            unavailable: &[],
+        });
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
@@ -1176,15 +1304,11 @@ mod tests {
                     input,
                     cursor,
                     None,
-                    None,
                     CommandRenderContext {
+                        session: &session,
+                        catalog: &catalog,
+                        candidates: &candidates,
                         undo_description: DEFAULT_UNDO_DESCRIPTION,
-                        unavailable: &[],
-                        command_context: CommandContext::Normal,
-                        marked_task_count: marked,
-                        custom_command_marked_task_count: marked,
-                        catalog: &CommandCatalog::default(),
-                        has_primary_task: true,
                     },
                 )
             })
@@ -1201,6 +1325,12 @@ mod tests {
         let mut command = custom_command_catalog().custom(0).unwrap().clone();
         command.target = target;
         let catalog = CommandCatalog::new(vec![command]);
+        let session = command_snapshot(marked, has_primary_task, context, None);
+        let candidates = catalog.query(CommandQuery {
+            input: "dispatch",
+            snapshot: &session,
+            unavailable: &[],
+        });
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
@@ -1210,19 +1340,11 @@ mod tests {
                     "dispatch",
                     "dispatch".len(),
                     None,
-                    None,
                     CommandRenderContext {
-                        undo_description: DEFAULT_UNDO_DESCRIPTION,
-                        unavailable: &[],
-                        command_context: context,
-                        marked_task_count: if context == CommandContext::Detail {
-                            0
-                        } else {
-                            marked
-                        },
-                        custom_command_marked_task_count: marked,
+                        session: &session,
                         catalog: &catalog,
-                        has_primary_task,
+                        candidates: &candidates,
+                        undo_description: DEFAULT_UNDO_DESCRIPTION,
                     },
                 )
             })
@@ -1246,6 +1368,20 @@ mod tests {
         highlighted: Option<&str>,
         width: u16,
     ) -> ratatui::buffer::Buffer {
+        let catalog = CommandCatalog::default();
+        let session = command_snapshot(0, true, CommandContext::Normal, None);
+        let candidates = catalog.query(CommandQuery {
+            input: cycle_input.unwrap_or(input),
+            snapshot: &session,
+            unavailable: &[],
+        });
+        let highlighted = highlighted.and_then(|name| {
+            candidates.iter().position(|candidate| {
+                catalog
+                    .command(candidate.index)
+                    .is_some_and(|command| command.name() == name)
+            })
+        });
         let backend = TestBackend::new(width, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
@@ -1254,16 +1390,12 @@ mod tests {
                     frame,
                     input,
                     cursor,
-                    cycle_input,
                     highlighted,
                     CommandRenderContext {
+                        session: &session,
+                        catalog: &catalog,
+                        candidates: &candidates,
                         undo_description: DEFAULT_UNDO_DESCRIPTION,
-                        unavailable: &[],
-                        command_context: CommandContext::Normal,
-                        marked_task_count: 0,
-                        custom_command_marked_task_count: 0,
-                        catalog: &CommandCatalog::default(),
-                        has_primary_task: true,
                     },
                 )
             })
@@ -1508,6 +1640,13 @@ mod tests {
             .unwrap();
         let help = buffer_text(help_terminal.backend());
 
+        let catalog = CommandCatalog::default();
+        let session = command_snapshot(0, true, CommandContext::Normal, None);
+        let candidates = catalog.query(CommandQuery {
+            input: "undo",
+            snapshot: &session,
+            unavailable: &[],
+        });
         let command_backend = TestBackend::new(100, 30);
         let mut command_terminal = Terminal::new(command_backend).unwrap();
         command_terminal
@@ -1517,15 +1656,11 @@ mod tests {
                     "undo",
                     4,
                     None,
-                    None,
                     CommandRenderContext {
+                        session: &session,
+                        catalog: &catalog,
+                        candidates: &candidates,
                         undo_description: description,
-                        unavailable: &[],
-                        command_context: CommandContext::Normal,
-                        marked_task_count: 0,
-                        custom_command_marked_task_count: 0,
-                        catalog: &CommandCatalog::default(),
-                        has_primary_task: true,
                     },
                 )
             })
@@ -1578,13 +1713,23 @@ mod tests {
         let rendered = buffer_text_from_rows(&buffer);
 
         assert!(rendered.contains(":search"));
-        let commands = matching_commands_for_bulk(CommandContext::Normal, "", 0);
-        let position = commands
+        let catalog = CommandCatalog::default();
+        let session = command_snapshot(0, true, CommandContext::Normal, None);
+        let candidates = catalog.query(CommandQuery {
+            input: "",
+            snapshot: &session,
+            unavailable: &[],
+        });
+        let position = candidates
             .iter()
-            .position(|command| command.name == "search")
+            .position(|candidate| {
+                catalog
+                    .command(candidate.index)
+                    .is_some_and(|command| command.name() == "search")
+            })
             .unwrap()
             + 1;
-        assert!(rendered.contains(&format!("{position}/{}", commands.len())));
+        assert!(rendered.contains(&format!("{position}/{}", candidates.len())));
         assert!(rendered.contains("┃"));
         assert!((0..buffer.area.height).any(|row| {
             buffer_row(&buffer, row).contains(":search")
@@ -1595,10 +1740,13 @@ mod tests {
 
     #[test]
     fn command_overlay_sizes_name_column_for_visible_commands() {
-        let buffer = render_command_buffer("", 0, None, Some("config-init"));
+        let buffer = render_command_buffer("", 0, None, Some("conflict-manual-merge"));
         let rendered = buffer_text_from_rows(&buffer);
 
-        assert!(rendered.contains(":conflict-manual-merge  resolve with manual value"));
+        assert!(
+            rendered.contains(":conflict-manual-merge  focused task · resolve with manual value"),
+            "{rendered}"
+        );
         assert!(!rendered.contains("mergeresolve"));
     }
 
@@ -1623,10 +1771,10 @@ mod tests {
 
     #[test]
     fn command_overlay_truncates_descriptions_with_an_ellipsis() {
-        let buffer = render_command_buffer_at_width("", 0, None, Some("filter-priority"), 72);
+        let buffer = render_command_buffer_at_width("", 0, None, Some("task-child-remove"), 72);
         let rendered = buffer_text_from_rows(&buffer);
 
-        assert!(rendered.contains(":task-child-remove"));
+        assert!(rendered.contains(":task-child-remove"), "{rendered}");
         assert!(rendered.contains('…'));
     }
 
@@ -1728,6 +1876,31 @@ mod tests {
         assert!(!rendered.contains("edit selected task title"));
         assert!(!rendered.contains("add a child to the selected epic"));
         assert!(!rendered.contains("select previous or next task"));
+    }
+
+    #[test]
+    fn focused_note_and_disclosure_help_exclude_task_mutations() {
+        let note = DetailTargetId::Note {
+            note_id: "note-help".to_string(),
+        };
+        let note_text = detail_help_lines_for(Some(&note), DEFAULT_UNDO_DESCRIPTION)
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(note_text.contains("edit focused note"));
+        assert!(!note_text.contains("set selected task status"));
+
+        let disclosure = DetailTargetId::Expand {
+            section: DetailSection::DependsOn,
+        };
+        let disclosure_text = detail_help_lines_for(Some(&disclosure), DEFAULT_UNDO_DESCRIPTION)
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(disclosure_text.contains("expand relationship rows"));
+        assert!(!disclosure_text.contains("set selected task status"));
     }
 
     #[test]
@@ -1857,11 +2030,17 @@ mod tests {
     #[test]
     fn custom_command_palette_rows_right_align_origin_tag() {
         let catalog = custom_command_catalog();
-        let command = catalog
-            .matching(CommandContext::Normal, "dispatch", 0)
+        let session = command_snapshot(0, true, CommandContext::Normal, None);
+        let candidate = catalog
+            .query(CommandQuery {
+                input: "dispatch",
+                snapshot: &session,
+                unavailable: &[],
+            })
             .into_iter()
             .next()
             .unwrap();
+        let command = catalog.command(candidate.index).unwrap();
         let line = command_palette_line(
             command,
             CommandContext::Normal,
@@ -1964,6 +2143,22 @@ mod tests {
             action: crate::tui::event::Action::PauseRecurrence,
             reason: "series is already paused",
         }];
+        let catalog = CommandCatalog::default();
+        let session = command_snapshot(
+            0,
+            true,
+            CommandContext::Normal,
+            Some(aven_core::recurrence::RecurrenceSeriesId::new()),
+        );
+        let unavailable_pairs = unavailable
+            .iter()
+            .map(|override_| (override_.action, override_.reason))
+            .collect::<Vec<_>>();
+        let candidates = catalog.query(CommandQuery {
+            input: "recurrence-pause",
+            snapshot: &session,
+            unavailable: &unavailable_pairs,
+        });
         terminal
             .draw(|frame| {
                 render_command(
@@ -1971,15 +2166,11 @@ mod tests {
                     "recurrence-pause",
                     "recurrence-pause".len(),
                     None,
-                    None,
                     CommandRenderContext {
+                        session: &session,
+                        catalog: &catalog,
+                        candidates: &candidates,
                         undo_description: DEFAULT_UNDO_DESCRIPTION,
-                        unavailable: &unavailable,
-                        command_context: CommandContext::Normal,
-                        marked_task_count: 0,
-                        custom_command_marked_task_count: 0,
-                        catalog: &CommandCatalog::default(),
-                        has_primary_task: true,
                     },
                 )
             })
@@ -1998,7 +2189,8 @@ mod tests {
             .collect::<Vec<_>>();
         for command in COMMANDS {
             assert!(
-                sections.contains(&command.section),
+                sections.contains(&command.section)
+                    || CommandContext::Detail.sections().contains(&command.section),
                 ":{} section {} is not rendered by help",
                 command.name,
                 command.section

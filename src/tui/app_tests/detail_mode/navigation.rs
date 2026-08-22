@@ -296,56 +296,50 @@ async fn missing_linked_task_keeps_current_detail_open() {
     assert!(app.detail.state_mut().unwrap().history.is_empty());
 }
 
-#[tokio::test]
-async fn detail_focus_policy_covers_task_and_focused_target_categories() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Focus policy target")).await;
-    app.show_detail(0);
-    let linked_id = crate::test_support::task_id("focus-policy-link");
+#[test]
+fn focused_detail_policy_matches_target_section() {
+    use crate::tui::event::{DetailFocusPolicy, RoutingDomain, focus_policy_compatible};
 
-    assert!(app.detail_focus_allows_action(Action::BeginEditTitle));
-
-    app.detail.state_mut().unwrap().focused_target = Some(DetailTargetId::Task {
-        section: DetailSection::EpicChildren,
-        task_id: linked_id.clone(),
-    });
-    assert!(app.detail_focus_allows_action(Action::RemoveEpicChild));
-    assert!(!app.detail_focus_allows_action(Action::BeginEditTitle));
-    assert_eq!(
-        app.detail_focus_warning(),
-        "leave epic child focus before using that command"
-    );
-
-    app.detail.state_mut().unwrap().focused_target = Some(DetailTargetId::Task {
-        section: DetailSection::DependsOn,
-        task_id: linked_id,
-    });
-    assert!(app.detail_focus_allows_action(Action::Refresh));
-    assert!(!app.detail_focus_allows_action(Action::BeginEditTitle));
-    assert_eq!(
-        app.detail_focus_warning(),
-        "leave relationship focus before using that command"
-    );
-
-    app.detail.state_mut().unwrap().focused_target = Some(DetailTargetId::Attachment {
-        attachment_id: "attachment".to_string(),
-    });
-    assert!(app.detail_focus_allows_action(Action::BeginSearch));
-    assert!(!app.detail_focus_allows_action(Action::BeginEditTitle));
-    assert_eq!(
-        app.detail_focus_warning(),
-        "leave attachment focus before using that command"
-    );
-
-    app.detail.state_mut().unwrap().focused_target = Some(DetailTargetId::Expand {
-        section: DetailSection::Blocks,
-    });
-    assert!(app.detail_focus_allows_action(Action::ReturnToLastChange));
-    assert!(!app.detail_focus_allows_action(Action::BeginEditTitle));
-    assert_eq!(
-        app.detail_focus_warning(),
-        "leave relationship disclosure focus before using that command"
-    );
+    let regular = crate::tui::app::DetailTargetId::Task {
+        section: crate::tui::app::DetailSection::DependsOn,
+        task_id: crate::test_support::task_id("policy-regular"),
+    };
+    let child = crate::tui::app::DetailTargetId::Task {
+        section: crate::tui::app::DetailSection::EpicChildren,
+        task_id: crate::test_support::task_id("policy-child"),
+    };
+    let attachment = crate::tui::app::DetailTargetId::Attachment {
+        attachment_id: "policy-attachment".to_string(),
+    };
+    let note = crate::tui::app::DetailTargetId::Note {
+        note_id: "policy-note".to_string(),
+    };
+    let cases = [
+        (DetailFocusPolicy::Global, &regular, true),
+        (DetailFocusPolicy::RelatedTask, &regular, true),
+        (DetailFocusPolicy::EpicChild, &regular, false),
+        (DetailFocusPolicy::EpicChild, &child, true),
+        (DetailFocusPolicy::ParentTask, &regular, false),
+        (DetailFocusPolicy::Global, &attachment, true),
+        (DetailFocusPolicy::RelatedTask, &attachment, false),
+        (DetailFocusPolicy::Global, &note, true),
+        (DetailFocusPolicy::RelatedTask, &note, false),
+    ];
+    for (policy, target, expected) in cases {
+        let section = matches!(target, crate::tui::app::DetailTargetId::Task { .. })
+            .then(|| target.section());
+        let domain = target.routing_domain();
+        assert_eq!(
+            focus_policy_compatible(policy, domain, section),
+            expected,
+            "policy {policy:?} target {target:?}"
+        );
+    }
+    assert!(focus_policy_compatible(
+        DetailFocusPolicy::ParentTask,
+        RoutingDomain::DetailParent,
+        None
+    ));
 }
 
 #[tokio::test]

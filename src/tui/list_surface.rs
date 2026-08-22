@@ -186,6 +186,10 @@ impl ListSurface {
         self.marked_task_ids.extend(task_ids);
     }
 
+    pub(crate) fn unmark(&mut self, task_id: &TaskId) {
+        self.marked_task_ids.remove(task_id);
+    }
+
     pub(crate) fn clear_marks(&mut self) {
         self.marked_task_ids.clear();
     }

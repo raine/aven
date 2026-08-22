@@ -5,10 +5,11 @@ use crate::tui::authoring::{
     automatic_add_task_status, derived_add_task_status,
 };
 use crate::tui::conflict_flow::ConflictResolutionChoice;
-use crate::tui::event::{Action, CommandContext};
+use crate::tui::event::Action;
 use crate::tui::overlay::text_input::LineEdit;
 use crate::tui::store::{
-    ConflictTarget, EpicContext, TaskOrder, TaskQuery, TuiDatabaseStats, TuiSyncStatus,
+    ConflictTarget, EpicChildTarget, EpicContext, TaskOrder, TaskQuery, TuiDatabaseStats,
+    TuiSyncStatus,
 };
 use crate::tui::task_selection::TaskSelection;
 use crate::tui::text::{char_boundary_at_or_before, normalize_pasted_newlines};
@@ -172,50 +173,100 @@ pub(crate) struct CommandAvailabilityOverride {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CommandState {
     pub(crate) input: LineEdit,
+    pub(crate) session: crate::tui::event::CommandSessionSnapshot,
+    pub(crate) catalog: std::sync::Arc<crate::tui::event::CommandCatalog>,
+    pub(crate) candidates: Vec<crate::tui::event::CommandCandidate>,
     pub(crate) cycle_input: Option<String>,
+    pub(crate) cycle_candidates: Vec<usize>,
     pub(crate) cycle_index: usize,
-    pub(crate) highlighted: Option<String>,
-    pub(crate) context: CommandContext,
-    pub(crate) marked_task_count: usize,
-    pub(crate) custom_command_marked_task_count: usize,
-    pub(crate) target: Option<OverlayTarget>,
+    pub(crate) highlighted: Option<usize>,
     pub(crate) unavailable: Vec<CommandAvailabilityOverride>,
 }
 
 impl CommandState {
-    pub(crate) fn blank() -> Self {
-        Self {
+    pub(crate) fn new(
+        session: crate::tui::event::CommandSessionSnapshot,
+        catalog: std::sync::Arc<crate::tui::event::CommandCatalog>,
+        unavailable: Vec<CommandAvailabilityOverride>,
+    ) -> Self {
+        let mut state = Self {
             input: LineEdit::blank(),
+            session,
+            catalog,
+            candidates: Vec::new(),
             cycle_input: None,
+            cycle_candidates: Vec::new(),
             cycle_index: 0,
             highlighted: None,
-            context: CommandContext::Normal,
-            marked_task_count: 0,
-            custom_command_marked_task_count: 0,
-            target: None,
-            unavailable: Vec::new(),
-        }
+            unavailable,
+        };
+        state.refresh_candidates();
+        state
     }
 
-    #[cfg(test)]
-    pub(crate) fn new(input: LineEdit) -> Self {
-        Self {
-            input,
-            cycle_input: None,
-            cycle_index: 0,
-            highlighted: None,
-            context: CommandContext::Normal,
-            marked_task_count: 0,
-            custom_command_marked_task_count: 0,
-            target: None,
-            unavailable: Vec::new(),
-        }
+    pub(crate) fn refresh_candidates(&mut self) {
+        let unavailable = self
+            .unavailable
+            .iter()
+            .map(|override_| (override_.action, override_.reason))
+            .collect::<Vec<_>>();
+        self.candidates = self.catalog.query(crate::tui::event::CommandQuery {
+            input: self.input.as_str(),
+            snapshot: &self.session,
+            unavailable: &unavailable,
+        });
+        self.highlighted = self
+            .highlighted
+            .filter(|index| *index < self.candidates.len());
     }
 
     pub(crate) fn reset_cycle(&mut self) {
         self.cycle_input = None;
+        self.cycle_candidates.clear();
         self.cycle_index = 0;
         self.highlighted = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_with_input(input: &str) -> Self {
+        let workspace = crate::tui::event::CommandWorkspaceSnapshot {
+            id: crate::ids::WorkspaceId::new(),
+            key: "test".to_string(),
+            name: "Test".to_string(),
+        };
+        let session = crate::tui::event::CommandSessionSnapshot {
+            workspace,
+            surface: crate::tui::event::CommandSurfaceSnapshot::List {
+                primary_task_id: None,
+                marked_task_ids: Vec::new(),
+                visible_task_ids: Vec::new(),
+                focused_sidebar: None,
+                is_empty: false,
+                empty_preferred_action: None,
+            },
+            recurrence_series_id: None,
+        };
+        let mut state = Self::new(
+            session,
+            std::sync::Arc::new(crate::tui::event::CommandCatalog::default()),
+            Vec::new(),
+        );
+        state.input = LineEdit::new(input.to_string());
+        state.refresh_candidates();
+        state
+    }
+
+    #[cfg(test)]
+    pub(crate) fn marked_task_count(&self) -> usize {
+        self.session.marked_task_ids().len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn highlighted_name(&self) -> Option<&str> {
+        self.highlighted
+            .and_then(|row| self.candidates.get(row))
+            .and_then(|candidate| self.catalog.command(candidate.index))
+            .map(crate::tui::event::CatalogCommand::name)
     }
 }
 
@@ -665,6 +716,13 @@ pub(crate) enum TagComboboxIntent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EpicChildRemovalRestoration {
+    pub(crate) anchor_id: crate::ids::TaskId,
+    pub(crate) section: crate::tui::app::DetailSection,
+    pub(crate) scroll: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ConfirmIntent {
     ResolveConflict {
         target: ConflictTarget,
@@ -702,8 +760,8 @@ pub(crate) enum ConfirmIntent {
         related_task_id: crate::ids::TaskId,
     },
     UnlinkEpicChild {
-        epic_id: crate::ids::TaskId,
-        child_id: crate::ids::TaskId,
+        target: EpicChildTarget,
+        restoration: EpicChildRemovalRestoration,
     },
     DeleteAttachment {
         attachment_id: String,

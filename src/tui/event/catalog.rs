@@ -15,24 +15,38 @@ pub(crate) struct KeySequence {
 pub(crate) enum DetailFocusPolicy {
     Global,
     ParentTask,
+    RelatedTask,
     EpicChild,
+    Attachment,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct CommandSpec {
+pub(crate) struct BuiltInCommand {
     pub(crate) name: &'static str,
     pub(crate) aliases: &'static [&'static str],
     pub(crate) description: &'static str,
     pub(crate) section: &'static str,
     list_keys: &'static [KeySequence],
     detail_keys: &'static [KeySequence],
-    pub(crate) detail_focus: DetailFocusPolicy,
+    detail_focus: DetailFocusPolicy,
     pub(crate) action: Action,
 }
 
-impl CommandSpec {
+impl BuiltInCommand {
     pub(crate) const fn bulk_support(self) -> BulkSupport {
         self.action.bulk_support()
+    }
+
+    pub(crate) const fn target_policy(self) -> super::CommandTargetPolicy {
+        self.action.target_policy()
+    }
+
+    pub(crate) const fn scope_policy(self) -> super::CommandScopePolicy {
+        self.action.scope_policy()
+    }
+
+    pub(crate) const fn surface_effect(self) -> super::SurfaceEffect {
+        self.action.surface_effect()
     }
 
     pub(crate) const fn implemented(
@@ -60,7 +74,7 @@ impl CommandSpec {
             section,
             list_keys: keys,
             detail_keys: &[],
-            detail_focus: DetailFocusPolicy::ParentTask,
+            detail_focus: detail_focus_policy(action),
             action,
         }
     }
@@ -90,7 +104,7 @@ impl CommandSpec {
             section,
             keys,
             keys,
-            DetailFocusPolicy::ParentTask,
+            detail_focus_policy(action),
             action,
         )
     }
@@ -165,10 +179,25 @@ impl CommandSpec {
 
     pub(crate) const fn is_available(self, context: CommandContext) -> bool {
         match context {
-            CommandContext::Normal => true,
+            CommandContext::Normal => !matches!(
+                self.action,
+                Action::OpenAttachment | Action::SaveAttachment | Action::DeleteAttachment
+            ),
             CommandContext::Detail => !self.detail_keys.is_empty(),
         }
     }
+
+    pub(crate) const fn detail_focus(self) -> DetailFocusPolicy {
+        self.detail_focus
+    }
+}
+
+pub(crate) fn detail_focus_for_action(action: Action) -> DetailFocusPolicy {
+    COMMANDS
+        .iter()
+        .find(|command| command.action == action)
+        .map(|command| command.detail_focus())
+        .unwrap_or(DetailFocusPolicy::ParentTask)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,7 +207,7 @@ pub(crate) enum CommandContext {
 }
 
 impl CommandContext {
-    pub(crate) fn commands(self) -> impl Iterator<Item = &'static CommandSpec> {
+    pub(crate) fn commands(self) -> impl Iterator<Item = &'static BuiltInCommand> {
         COMMANDS
             .iter()
             .filter(move |command| command.is_available(self))
@@ -189,6 +218,42 @@ impl CommandContext {
             Self::Normal => NORMAL_HELP_SECTIONS,
             Self::Detail => DETAIL_HELP_SECTIONS,
         }
+    }
+}
+
+const fn detail_focus_policy(action: Action) -> DetailFocusPolicy {
+    use super::CommandTargetPolicy;
+
+    match action.target_policy() {
+        CommandTargetPolicy::Attachment => DetailFocusPolicy::Attachment,
+        CommandTargetPolicy::Relationship(_) => DetailFocusPolicy::RelatedTask,
+        CommandTargetPolicy::Batch | CommandTargetPolicy::Single(_) => {
+            if matches!(action, Action::BeginEditEpic | Action::CopyTaskMarkdown) {
+                DetailFocusPolicy::ParentTask
+            } else {
+                DetailFocusPolicy::RelatedTask
+            }
+        }
+        _ if matches!(
+            action,
+            Action::BeginCommand
+                | Action::BeginSearch
+                | Action::Refresh
+                | Action::SyncNow
+                | Action::GoBack
+                | Action::GoForward
+                | Action::ReturnToLastChange
+                | Action::ToggleHelp
+                | Action::Quit
+                | Action::BeginConflictList
+                | Action::NextConflict
+                | Action::PreviousConflict
+                | Action::Undo
+        ) =>
+        {
+            DetailFocusPolicy::Global
+        }
+        _ => DetailFocusPolicy::ParentTask,
     }
 }
 
@@ -209,8 +274,8 @@ pub(crate) const NORMAL_HELP_SECTIONS: &[&str] = &[
 pub(crate) const DETAIL_HELP_SECTIONS: &[&str] =
     &["General", "Navigation", "Task detail", "Tasks", "Conflicts"];
 
-pub(crate) const COMMANDS: &[CommandSpec] = &[
-    CommandSpec::implemented(
+pub(crate) const COMMANDS: &[BuiltInCommand] = &[
+    BuiltInCommand::implemented(
         "quit",
         "quit the TUI",
         "General",
@@ -220,7 +285,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::Quit,
     ),
-    CommandSpec::implemented_global_in_detail(
+    BuiltInCommand::implemented_global_in_detail(
         "command",
         "open the command panel",
         "General",
@@ -230,7 +295,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginCommand,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "help",
         "toggle shortcut help",
         "General",
@@ -240,14 +305,14 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ToggleHelp,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "welcome",
         "show the getting-started guide",
         "General",
         &[],
         Action::ShowWelcome,
     ),
-    CommandSpec::implemented_global_in_detail(
+    BuiltInCommand::implemented_global_in_detail(
         "refresh",
         "reload tasks",
         "General",
@@ -257,7 +322,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::Refresh,
     ),
-    CommandSpec::implemented_global_in_detail(
+    BuiltInCommand::implemented_global_in_detail(
         "sync",
         "sync with the remote server",
         "General",
@@ -267,21 +332,21 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SyncNow,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "update",
         "check for and install an aven update",
         "General",
         &[],
         Action::BeginUpdate,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "changelog",
         "read aven release notes",
         "General",
         &[],
         Action::ShowChangelog,
     ),
-    CommandSpec::implemented_for_epic_child(
+    BuiltInCommand::implemented_for_epic_child(
         "undo",
         "undo last TUI mutation",
         "General",
@@ -291,7 +356,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::Undo,
     ),
-    CommandSpec::implemented_global_in_detail(
+    BuiltInCommand::implemented_global_in_detail(
         "search",
         "search all tasks",
         "General",
@@ -301,7 +366,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginSearch,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "move-down",
         "move selection down",
         "Navigation",
@@ -317,7 +382,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::MoveDown,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "move-up",
         "move selection up",
         "Navigation",
@@ -333,7 +398,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::MoveUp,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "move-left",
         "move focus left",
         "Navigation",
@@ -349,7 +414,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::MoveLeft,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "move-right",
         "move focus right or toggle selected epic",
         "Navigation",
@@ -365,7 +430,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::MoveRight,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "move-column-left",
         "move selected or marked tasks to the previous column",
         "Tasks",
@@ -375,7 +440,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::MoveColumnLeft,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "move-column-right",
         "move selected or marked tasks to the next column",
         "Tasks",
@@ -385,7 +450,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::MoveColumnRight,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "move-to-column",
         "move selected or marked tasks to a column",
         "Tasks",
@@ -395,7 +460,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginMoveToColumn,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "previous-item",
         "select previous item in flow",
         "Navigation",
@@ -405,7 +470,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::PreviousItem,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "next-item",
         "select next item in flow",
         "Navigation",
@@ -415,7 +480,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::NextItem,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "first",
         "jump to the first item",
         "Navigation",
@@ -431,7 +496,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::First,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "last",
         "jump to the last item",
         "Navigation",
@@ -447,7 +512,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::Last,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "focus",
         "switch between views and tasks",
         "Navigation",
@@ -463,7 +528,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::ToggleFocus,
     ),
-    CommandSpec::implemented_global_in_detail(
+    BuiltInCommand::implemented_global_in_detail(
         "back",
         "return to the previous navigation state",
         "Navigation",
@@ -473,7 +538,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::GoBack,
     ),
-    CommandSpec::implemented_global_in_detail(
+    BuiltInCommand::implemented_global_in_detail(
         "forward",
         "return to the next navigation state",
         "Navigation",
@@ -483,7 +548,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::GoForward,
     ),
-    CommandSpec::implemented_global_in_detail(
+    BuiltInCommand::implemented_global_in_detail(
         "return-to-change",
         "select the task most recently changed",
         "Navigation",
@@ -493,7 +558,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ReturnToLastChange,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "toggle-sidebar",
         "toggle the sidebar",
         "Navigation",
@@ -503,7 +568,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ToggleSidebar,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "detail",
         "select a view or toggle task detail",
         "Navigation",
@@ -513,7 +578,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ToggleDetail,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "toggle-columns-preview",
         "toggle the selected-task preview in columns view",
         "Navigation",
@@ -523,7 +588,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ToggleColumnsPreview,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "delete",
         "confirm deleting selected task",
         "Tasks",
@@ -533,8 +598,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::Delete,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_with_aliases_in_detail(
         "status-picker",
+        &["status"],
         "open task status picker",
         "Tasks",
         &[
@@ -549,7 +615,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::BeginStatusPicker,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "restore",
         "restore selected task",
         "Tasks",
@@ -559,7 +625,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::Restore,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "status-inbox",
         "set status to inbox",
         "Tasks",
@@ -569,7 +635,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetStatus(TaskStatus::Inbox),
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "status-backlog",
         "set status to backlog",
         "Tasks",
@@ -579,7 +645,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetStatus(TaskStatus::Backlog),
     ),
-    CommandSpec::implemented_with_aliases_in_detail(
+    BuiltInCommand::implemented_with_aliases_in_detail(
         "status-todo",
         &["todo"],
         "set status to todo",
@@ -590,7 +656,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetStatus(TaskStatus::Todo),
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "status-active",
         "set status to active",
         "Tasks",
@@ -600,7 +666,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetStatus(TaskStatus::Active),
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "status-done",
         "set status to done",
         "Tasks",
@@ -616,7 +682,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::SetStatus(TaskStatus::Done),
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "status-canceled",
         "set status to canceled",
         "Tasks",
@@ -632,7 +698,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::SetStatus(TaskStatus::Canceled),
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "recurrence-skip",
         "skip the current recurring occurrence",
         "Tasks",
@@ -642,7 +708,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SkipRecurrence,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "recurrence-edit-template",
         "edit the recurring template for future occurrences",
         "Tasks",
@@ -652,7 +718,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginEditRecurrenceTemplate,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "recurrence-pause",
         "pause the selected recurring series",
         "Tasks",
@@ -662,7 +728,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::PauseRecurrence,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "recurrence-resume",
         "resume the selected recurring series",
         "Tasks",
@@ -672,7 +738,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ResumeRecurrence,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "recurrence-stop",
         "stop future occurrences after the current task",
         "Tasks",
@@ -682,7 +748,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::StopRecurrence,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "recurrence-history",
         "show recurring series history",
         "Tasks",
@@ -693,7 +759,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ShowRecurrenceHistory,
     ),
     // Views
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "view-queue",
         "show queue view",
         "Views",
@@ -703,7 +769,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowView(TaskQuery::Queue),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "layout-toggle",
         "switch between list and columns",
         "Views",
@@ -713,21 +779,21 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ToggleLayout,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "layout-columns",
         "present the active query as columns",
         "Views",
         &[],
         Action::SetLayout(TaskLayout::Columns),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "layout-list",
         "present the active query as a list",
         "Views",
         &[],
         Action::SetLayout(TaskLayout::List),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "view-all",
         "show all available tasks",
         "Views",
@@ -737,7 +803,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowView(TaskQuery::All),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "view-open",
         "show open task view",
         "Views",
@@ -747,7 +813,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowView(TaskQuery::Open),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "view-upcoming",
         "show upcoming task view",
         "Views",
@@ -757,7 +823,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowView(TaskQuery::Upcoming),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "view-epics",
         "show open epics",
         "Views",
@@ -767,7 +833,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowView(TaskQuery::Epics),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "view-recurring",
         "show recurring tasks",
         "Views",
@@ -777,7 +843,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowView(TaskQuery::Recurring),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "view-recent",
         "show recent actions",
         "Views",
@@ -787,7 +853,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowView(TaskQuery::RecentActions),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "view-inbox",
         "show inbox view",
         "Views",
@@ -797,7 +863,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowView(TaskQuery::Inbox),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "view-backlog",
         "show backlog view",
         "Views",
@@ -807,7 +873,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowView(TaskQuery::Backlog),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "view-todo",
         "show todo view",
         "Views",
@@ -817,7 +883,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowView(TaskQuery::Todo),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "view-active",
         "show active view",
         "Views",
@@ -827,7 +893,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowView(TaskQuery::Active),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "view-done",
         "show done view",
         "Views",
@@ -837,7 +903,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowView(TaskQuery::Done),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "view-conflicts",
         "show conflicts view",
         "Views",
@@ -847,7 +913,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowView(TaskQuery::Conflicts),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "view-search",
         "show search results",
         "Views",
@@ -857,7 +923,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowView(TaskQuery::Search),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "scope-all",
         "show all projects in current workspace",
         "Navigation",
@@ -867,7 +933,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowWorkspaceScope,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "scope-project",
         "scope to a project",
         "Navigation",
@@ -877,7 +943,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginScopeProject,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "workspace-switch",
         "switch active workspace",
         "Navigation",
@@ -887,7 +953,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginSwitchWorkspace,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "workspace-create",
         "create a workspace",
         "Workspaces",
@@ -897,7 +963,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginAddWorkspace,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "workspace-rename",
         "rename a workspace",
         "Workspaces",
@@ -908,7 +974,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::BeginRenameWorkspace,
     ),
     // Add/Create
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "add-task",
         "add a new task",
         "Tasks",
@@ -924,7 +990,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::BeginAddTask,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "add-note",
         "add a note to selected task",
         "Tasks",
@@ -941,7 +1007,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::BeginAddNote,
     ),
     // Metadata
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "add-project",
         "create a new project",
         "Projects",
@@ -951,7 +1017,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginAddProject,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "add-label",
         "create a new label",
         "Labels",
@@ -961,7 +1027,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginAddLabel,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "browse-labels",
         "browse labels and usage",
         "Labels",
@@ -971,7 +1037,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginBrowseLabels,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "rename-label",
         "rename a label everywhere it is used",
         "Labels",
@@ -981,7 +1047,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginRenameLabel,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "delete-label",
         "delete a label everywhere it is used",
         "Labels",
@@ -991,7 +1057,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginDeleteLabel,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "rename-project",
         "rename a project and display prefix",
         "Projects",
@@ -1001,7 +1067,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginRenameProject,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "delete-project",
         "delete a project",
         "Projects",
@@ -1011,7 +1077,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginDeleteProject,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "add-project-path",
         "add a path to a project",
         "Projects",
@@ -1021,7 +1087,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginAddProjectPath,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "remove-project-path",
         "remove a path from a project",
         "Projects",
@@ -1032,7 +1098,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::BeginRemoveProjectPath,
     ),
     // Edit
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "edit-title",
         "edit selected task title",
         "Tasks",
@@ -1048,7 +1114,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::BeginEditTitle,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "edit-description",
         "edit selected task description",
         "Tasks",
@@ -1064,7 +1130,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::BeginEditDescription,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "edit-project",
         "edit selected task project",
         "Tasks",
@@ -1080,7 +1146,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::BeginEditProject,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "edit-priority",
         "edit selected task priority",
         "Tasks",
@@ -1096,7 +1162,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::BeginEditPriority,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "edit-epic",
         "edit selected task epic container state",
         "Tasks",
@@ -1112,7 +1178,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::BeginEditEpic,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "edit-availability",
         "edit selected task availability",
         "Tasks",
@@ -1128,7 +1194,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::BeginEditAvailability,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "edit-due",
         "edit selected task due date",
         "Tasks",
@@ -1144,7 +1210,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::BeginEditDue,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "edit-labels",
         "edit selected task labels",
         "Tasks",
@@ -1160,7 +1226,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::BeginEditLabels,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "copy-ref",
         "copy selected task display ref",
         "Tasks",
@@ -1170,7 +1236,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::CopyShortRef,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "copy-id",
         "copy selected task id",
         "Tasks",
@@ -1180,7 +1246,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::CopyDurableRef,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "copy-title",
         "copy selected task title",
         "Tasks",
@@ -1190,7 +1256,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::CopyTaskTitle,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "copy-description",
         "copy selected task description",
         "Tasks",
@@ -1200,7 +1266,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::CopyTaskDescription,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "copy-text",
         "copy selected task title and description",
         "Tasks",
@@ -1210,7 +1276,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::CopyTaskText,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "copy-notes",
         "copy selected task notes",
         "Tasks",
@@ -1220,7 +1286,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::CopyTaskNotes,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "copy-markdown",
         "copy selected task as Markdown",
         "Tasks",
@@ -1230,7 +1296,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::CopyTaskMarkdown,
     ),
-    CommandSpec::implemented_with_detail_bindings(
+    BuiltInCommand::implemented_with_detail_bindings(
         "create-gist",
         &["gist"],
         "create a secret GitHub gist from this task",
@@ -1243,8 +1309,47 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         DetailFocusPolicy::ParentTask,
         Action::BeginCreateTaskGist,
     ),
+    BuiltInCommand::implemented_with_detail_bindings(
+        "attachment-open",
+        &["open-attachment"],
+        "open focused attachment",
+        "Task detail",
+        &[],
+        &[KeySequence {
+            codes: &[KeyCode::Char('o')],
+            label: "o",
+        }],
+        DetailFocusPolicy::Attachment,
+        Action::OpenAttachment,
+    ),
+    BuiltInCommand::implemented_with_detail_bindings(
+        "attachment-save",
+        &["save-attachment"],
+        "save focused attachment",
+        "Task detail",
+        &[],
+        &[KeySequence {
+            codes: &[KeyCode::Char('s')],
+            label: "s",
+        }],
+        DetailFocusPolicy::Attachment,
+        Action::SaveAttachment,
+    ),
+    BuiltInCommand::implemented_with_detail_bindings(
+        "attachment-delete",
+        &["delete-attachment"],
+        "delete focused attachment",
+        "Task detail",
+        &[],
+        &[KeySequence {
+            codes: &[KeyCode::Char('D')],
+            label: "D",
+        }],
+        DetailFocusPolicy::Attachment,
+        Action::DeleteAttachment,
+    ),
     // Priority
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "priority-none",
         "set priority to none",
         "Tasks",
@@ -1254,7 +1359,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetPriority(TaskPriority::None),
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "priority-low",
         "set priority to low",
         "Tasks",
@@ -1264,7 +1369,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetPriority(TaskPriority::Low),
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "priority-medium",
         "set priority to medium",
         "Tasks",
@@ -1274,7 +1379,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetPriority(TaskPriority::Medium),
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "priority-high",
         "set priority to high",
         "Tasks",
@@ -1284,7 +1389,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetPriority(TaskPriority::High),
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "priority-urgent",
         "set priority to urgent",
         "Tasks",
@@ -1294,7 +1399,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetPriority(TaskPriority::Urgent),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "toggle-mark",
         "toggle mark on selected task",
         "Tasks",
@@ -1304,7 +1409,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ToggleMarkSelected,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "toggle-mark-all",
         "toggle marks on visible tasks",
         "Tasks",
@@ -1314,7 +1419,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ToggleMarkAllInView,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "clear-marks",
         "clear task marks",
         "Tasks",
@@ -1325,7 +1430,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ClearMarks,
     ),
     // Dependencies
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "add-dependency",
         "add blocker to selected task",
         "Tasks",
@@ -1335,7 +1440,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginAddDependency,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "remove-dependency",
         "remove blocker or unlink focused relationship",
         "Tasks",
@@ -1346,7 +1451,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::BeginRemoveDependency,
     ),
     // Related tasks
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "add-related",
         "add a related task",
         "Tasks",
@@ -1356,7 +1461,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginAddRelated,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "remove-related",
         "remove a related task",
         "Tasks",
@@ -1367,7 +1472,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::BeginRemoveRelated,
     ),
     // Epic
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "task-epic-toggle",
         "toggle epic parent expand/collapse",
         "Tasks",
@@ -1377,7 +1482,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ToggleEpicExpanded,
     ),
-    CommandSpec::implemented_for_epic_child(
+    BuiltInCommand::implemented_for_epic_child(
         "task-child-add",
         "add a child to the selected epic",
         "Tasks",
@@ -1387,7 +1492,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginAddEpicChild,
     ),
-    CommandSpec::implemented_for_epic_child(
+    BuiltInCommand::implemented_for_epic_child(
         "task-child-remove",
         "remove the selected child from its epic",
         "Tasks",
@@ -1398,7 +1503,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::RemoveEpicChild,
     ),
     // Filters
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "filter-label",
         "filter by label",
         "Filters",
@@ -1408,7 +1513,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginFilterLabel,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "filter-priority",
         "filter by priority",
         "Filters",
@@ -1418,7 +1523,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginFilterPriority,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "filter-recurring-lifecycle",
         "cycle recurring series lifecycle",
         "Filters",
@@ -1428,7 +1533,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::CycleRecurringLifecycleFilter,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "filter-clear",
         "clear all filters",
         "Filters",
@@ -1438,7 +1543,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ClearFilters,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "filter-closed",
         "cycle closed task visibility",
         "Filters",
@@ -1448,7 +1553,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ToggleClosedFilter,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "filter-deleted",
         "cycle deleted task visibility",
         "Filters",
@@ -1459,7 +1564,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ToggleDeletedFilter,
     ),
     // Order
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "order-due",
         "sort by due date",
         "Order",
@@ -1469,7 +1574,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetOrder(crate::tui::store::TaskOrder::DueOn),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "order-created",
         "sort by created date",
         "Order",
@@ -1479,7 +1584,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetOrder(TaskOrder::Created),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "order-updated",
         "sort by updated date",
         "Order",
@@ -1489,7 +1594,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetOrder(TaskOrder::Updated),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "order-priority",
         "sort by priority",
         "Order",
@@ -1499,7 +1604,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetOrder(TaskOrder::Priority),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "order-project",
         "sort by project",
         "Order",
@@ -1509,7 +1614,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetOrder(TaskOrder::Project),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "order-title",
         "sort by title",
         "Order",
@@ -1519,7 +1624,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetOrder(TaskOrder::Title),
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "order-reverse",
         "reverse sort direction",
         "Order",
@@ -1530,7 +1635,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ReverseSort,
     ),
     // Conflict
-    CommandSpec::implemented_global_in_detail(
+    BuiltInCommand::implemented_global_in_detail(
         "conflict-list",
         "list or filter conflicts",
         "Conflicts",
@@ -1540,7 +1645,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginConflictList,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "conflict-show",
         "show conflict details",
         "Conflicts",
@@ -1550,7 +1655,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowConflictDetails,
     ),
-    CommandSpec::implemented_global_in_detail(
+    BuiltInCommand::implemented_global_in_detail(
         "conflict-next",
         "jump to next conflict",
         "Conflicts",
@@ -1560,7 +1665,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::NextConflict,
     ),
-    CommandSpec::implemented_global_in_detail(
+    BuiltInCommand::implemented_global_in_detail(
         "conflict-prev",
         "jump to previous conflict",
         "Conflicts",
@@ -1570,7 +1675,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::PreviousConflict,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "conflict-use-local",
         "resolve with local value",
         "Conflicts",
@@ -1580,7 +1685,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::AcceptConflictLocal,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "conflict-use-remote",
         "resolve with remote value",
         "Conflicts",
@@ -1590,7 +1695,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::AcceptConflictRemote,
     ),
-    CommandSpec::implemented_in_detail(
+    BuiltInCommand::implemented_in_detail(
         "conflict-manual-merge",
         "resolve with manual value",
         "Conflicts",
@@ -1601,7 +1706,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::BeginManualConflictMerge,
     ),
     // Config
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "config-status",
         "show sync and daemon status",
         "Config",
@@ -1611,7 +1716,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowConfigStatus,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "config-show",
         "show configuration",
         "Config",
@@ -1621,7 +1726,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowConfigInfo,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "config-paths",
         "show data paths",
         "Config",
@@ -1631,7 +1736,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowConfigPaths,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "database-stats",
         "show database statistics",
         "Config",
@@ -1641,7 +1746,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::ShowDatabaseStats,
     ),
-    CommandSpec::implemented(
+    BuiltInCommand::implemented(
         "config-init",
         "initialize configuration",
         "Config",
@@ -1661,7 +1766,7 @@ pub(crate) struct CommandDomain {
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl CommandDomain {
-    pub(crate) fn commands(self) -> Vec<&'static CommandSpec> {
+    pub(crate) fn commands(self) -> Vec<&'static BuiltInCommand> {
         COMMANDS
             .iter()
             .filter(|command| command.section == self.section)
@@ -1674,6 +1779,9 @@ pub(crate) const COMMAND_DOMAINS: &[CommandDomain] = &[
     CommandDomain { section: "General" },
     CommandDomain {
         section: "Navigation",
+    },
+    CommandDomain {
+        section: "Task detail",
     },
     CommandDomain { section: "Tasks" },
     CommandDomain {

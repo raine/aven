@@ -22,8 +22,28 @@ use crate::tui::ui::attachment_is_locally_openable;
 pub(crate) const DELETE_ATTACHMENT_TITLE: &str = "Remove image";
 
 impl App {
+    pub(super) fn attachment_bytes_are_available(
+        &self,
+        attachment: &crate::task_render::AttachmentMetadataJson,
+    ) -> bool {
+        if attachment.deleted
+            || !attachment.has_blob
+            || attachment.bytes_state != AttachmentBytesState::Present
+        {
+            return false;
+        }
+        let Some(db_path) = self.intake.db_path() else {
+            return false;
+        };
+        let Ok(blob_dir) = resolve_blob_dir(db_path, self.intake.config()) else {
+            return false;
+        };
+        crate::attachments::storage::object_path(&blob_dir, &attachment.sha256)
+            .is_ok_and(|path| path.is_file())
+    }
+
     pub(super) fn begin_delete_attachment(&mut self, attachment_id: &str, scroll: u16) {
-        let Some(attachment) = self
+        let attachment = self
             .store
             .selected_task(self.list.selected_task())
             .and_then(|item| {
@@ -31,10 +51,19 @@ impl App {
                     attachment.attachment_id == attachment_id && !attachment.deleted
                 })
             })
-        else {
+            .cloned();
+        let Some(attachment) = attachment else {
             self.set_warning("image attachment is unavailable");
             return;
         };
+        self.begin_delete_attachment_metadata(&attachment, scroll);
+    }
+
+    pub(super) fn begin_delete_attachment_metadata(
+        &mut self,
+        attachment: &crate::task_render::AttachmentMetadataJson,
+        scroll: u16,
+    ) {
         let label = attachment
             .filename
             .as_deref()
@@ -45,7 +74,7 @@ impl App {
         }
         self.overlay = Some(OverlayState::confirm(
             ConfirmIntent::DeleteAttachment {
-                attachment_id: attachment_id.to_string(),
+                attachment_id: attachment.attachment_id.clone(),
             },
             DELETE_ATTACHMENT_TITLE,
             format!("Remove {label}?"),
@@ -53,7 +82,7 @@ impl App {
     }
 
     pub(super) fn begin_save_attachment(&mut self, attachment_id: &str, scroll: u16) {
-        let Some(attachment) = self
+        let attachment = self
             .store
             .selected_task(self.list.selected_task())
             .and_then(|item| {
@@ -61,11 +90,20 @@ impl App {
                     attachment.attachment_id == attachment_id && !attachment.deleted
                 })
             })
-        else {
+            .cloned();
+        let Some(attachment) = attachment else {
             self.set_warning("attachment is no longer available");
             return;
         };
-        if attachment.bytes_state != AttachmentBytesState::Present {
+        self.begin_save_attachment_metadata(&attachment, scroll);
+    }
+
+    pub(super) fn begin_save_attachment_metadata(
+        &mut self,
+        attachment: &crate::task_render::AttachmentMetadataJson,
+        scroll: u16,
+    ) {
+        if !self.attachment_bytes_are_available(attachment) {
             self.set_warning("attachment bytes are unavailable");
             return;
         }
@@ -79,7 +117,7 @@ impl App {
         }
         self.overlay = Some(OverlayState::text_input(
             TextIntent::SaveAttachment {
-                attachment_id: attachment_id.to_string(),
+                attachment_id: attachment.attachment_id.clone(),
                 filename: filename.clone(),
                 scroll,
             },

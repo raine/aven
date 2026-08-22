@@ -1,4 +1,4 @@
-use crate::query::TaskDependencyLink;
+use crate::query::{TaskDependencyLink, TaskListItem};
 use crate::tui::store::MutationMessage;
 use crate::undo::UndoContext;
 
@@ -17,7 +17,7 @@ pub(crate) enum AddEpicChildContext {
     Promote(EpicContext),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EpicChildTarget {
     pub(crate) epic: EpicContext,
     pub(crate) child: TaskDependencyLink,
@@ -127,6 +127,29 @@ impl TuiStore {
             return Some(target);
         }
         let item = self.selected_task(selected)?;
+        let parent = item.epic_parent.as_ref()?;
+        Some(EpicChildTarget {
+            epic: EpicContext {
+                epic_id: parent.task_id.clone(),
+                display_ref: parent.display_ref.clone(),
+                project_key: item.task.project_key.clone(),
+            },
+            child: TaskDependencyLink {
+                task_id: item.task.id.clone(),
+                display_ref: item.display_ref.clone(),
+                title: item.task.title.clone(),
+                status: item.task.status.as_str().to_string(),
+                priority: item.task.priority.as_str().to_string(),
+                unresolved: !matches!(item.task.status.as_str(), "done" | "canceled"),
+            },
+            original_position: 0,
+        })
+    }
+
+    pub(crate) fn resolve_epic_child_target_for_item(
+        &self,
+        item: &TaskListItem,
+    ) -> Option<EpicChildTarget> {
         let parent = item.epic_parent.as_ref()?;
         Some(EpicChildTarget {
             epic: EpicContext {

@@ -1,25 +1,36 @@
 mod action;
 mod catalog;
 mod command_catalog;
+mod command_query;
 mod lookup;
+mod session;
 
-pub(crate) use self::action::{Action, BulkSupport, SINGLE_TASK_COPY_ACTIONS};
+pub(crate) use self::action::{
+    Action, BulkSupport, CommandScopePolicy, CommandTargetPolicy, RelationshipTargetPolicy,
+    SINGLE_TASK_COPY_ACTIONS, SurfaceEffect,
+};
 #[allow(unused_imports)]
 pub(crate) use self::catalog::{
-    COMMAND_DOMAINS, COMMANDS, CommandContext, CommandDomain, CommandSpec, DetailFocusPolicy,
-    KeySequence,
+    BuiltInCommand, COMMAND_DOMAINS, COMMANDS, CommandContext, CommandDomain, DetailFocusPolicy,
+    KeySequence, detail_focus_for_action,
 };
 pub(crate) use self::command_catalog::{
-    CatalogCommand, CatalogLookup, CatalogShortcutLookup, CommandCatalog, CommandHandler,
+    CatalogCommand, CatalogShortcutLookup, CommandCatalog, CommandHandler, RoutingDomain,
+    command_match_rank as command_match_rank_for_query, focus_policy_compatible,
     validate_custom_command_keys,
+};
+pub(crate) use self::command_query::{
+    CommandAvailability, CommandCandidate, CommandDisabled, CommandQuery, command_availability,
 };
 #[allow(unused_imports)]
 pub(crate) use self::lookup::{
-    CommandCompletion, CommandLookup, CommandSpecLookup, ShortcutLookup, command_cycle_options,
-    command_cycle_options_for, complete_command, complete_command_for, key_label, lookup_command,
-    lookup_command_spec, lookup_command_spec_for, matching_commands, matching_commands_for,
-    matching_commands_for_bulk, preferred_shortcut_label, prefix_hint_commands, resolve_shortcut,
-    resolve_shortcut_for, resolve_shortcut_in, resolve_shortcut_in_for, shortcut_label,
+    ShortcutLookup, key_label, preferred_shortcut_label, prefix_hint_commands,
+    resolve_shortcut_for, resolve_shortcut_in_for, shortcut_label,
+};
+pub(crate) use self::session::{
+    CommandSessionSnapshot, CommandSituation, CommandSurfaceSnapshot, CommandWorkspaceSnapshot,
+    DetailCommandFocus, ResolvedCommand, ResolvedCommandTarget, SidebarCommandTarget,
+    list_situation, recurrence_list_situation,
 };
 
 #[cfg(test)]
@@ -64,6 +75,9 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::CopyTaskNotes
             | Action::CopyTaskMarkdown
             | Action::BeginCreateTaskGist
+            | Action::OpenAttachment
+            | Action::SaveAttachment
+            | Action::DeleteAttachment
             | Action::BeginEditTitle
             | Action::BeginEditDescription
             | Action::BeginEditProject
@@ -138,6 +152,10 @@ fn implemented_action_is_handled(action: Action) -> bool {
 mod tests {
     use crossterm::event::KeyCode;
 
+    fn resolve_shortcut(input: &[KeyCode]) -> ShortcutLookup {
+        resolve_shortcut_for(CommandContext::Normal, input)
+    }
+
     use crate::choices::{TaskPriority, TaskStatus};
     use crate::tui::store::TaskQuery;
 
@@ -201,89 +219,10 @@ mod tests {
     }
 
     #[test]
-    fn lookup_command_finds_exact_name() {
-        assert_eq!(lookup_command("quit"), CommandLookup::Found(Action::Quit));
-    }
-
-    #[test]
-    fn lookup_command_finds_sync_action() {
-        assert_eq!(
-            lookup_command("sync"),
-            CommandLookup::Found(Action::SyncNow)
-        );
-    }
-
-    #[test]
     fn resolves_sync_shortcut() {
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('S')]),
             ShortcutLookup::Found(Action::SyncNow)
-        );
-    }
-
-    #[test]
-    fn lookup_command_finds_unique_prefix() {
-        assert_eq!(lookup_command("ref"), CommandLookup::Found(Action::Refresh));
-    }
-
-    #[test]
-    fn lookup_command_finds_prefixed_suffix() {
-        assert_eq!(
-            lookup_command(":todo"),
-            CommandLookup::Found(Action::SetStatus(TaskStatus::Todo))
-        );
-    }
-
-    #[test]
-    fn lookup_command_ignores_dashes() {
-        assert_eq!(
-            lookup_command(":statusin"),
-            CommandLookup::Found(Action::SetStatus(TaskStatus::Inbox))
-        );
-    }
-
-    #[test]
-    fn lookup_command_preserves_suffix_ambiguity() {
-        assert_eq!(lookup_command(":done"), CommandLookup::Ambiguous);
-    }
-
-    #[test]
-    fn bulk_command_display_prioritizes_batch_actions() {
-        let commands = matching_commands_for_bulk(CommandContext::Normal, "", 3);
-        let first_non_batch = commands
-            .iter()
-            .position(|command| command.bulk_support() != BulkSupport::Batch)
-            .unwrap();
-
-        assert!(first_non_batch > 0);
-        assert!(
-            commands[..first_non_batch]
-                .iter()
-                .all(|command| command.bulk_support() == BulkSupport::Batch)
-        );
-        assert!(
-            commands[first_non_batch..]
-                .iter()
-                .any(|command| matches!(command.bulk_support(), BulkSupport::SingleOnly(_)))
-        );
-    }
-
-    #[test]
-    fn bulk_command_display_preserves_typed_lookup_order() {
-        let ordinary = matching_commands_for(CommandContext::Normal, "delete")
-            .into_iter()
-            .map(|command| command.name)
-            .collect::<Vec<_>>();
-        let marked = matching_commands_for_bulk(CommandContext::Normal, "delete", 3)
-            .into_iter()
-            .map(|command| command.name)
-            .collect::<Vec<_>>();
-
-        assert_eq!(marked, ordinary);
-        assert_eq!(lookup_command(":done"), CommandLookup::Ambiguous);
-        assert_eq!(
-            complete_command(":statusin"),
-            CommandCompletion::Completed("status-inbox".to_string())
         );
     }
 
@@ -301,93 +240,17 @@ mod tests {
         );
         assert_eq!(Action::ClearMarks.bulk_support(), BulkSupport::BulkControl);
         assert_eq!(
+            Action::BeginAddRelated.target_policy(),
+            CommandTargetPolicy::Single("related link")
+        );
+        assert_eq!(
+            Action::BeginRemoveRelated.target_policy(),
+            CommandTargetPolicy::Relationship(RelationshipTargetPolicy::Related)
+        );
+        assert_eq!(
             Action::ShowView(TaskQuery::Open).bulk_support(),
             BulkSupport::NotTaskScoped
         );
-    }
-
-    #[test]
-    fn complete_command_fills_unique_match() {
-        assert_eq!(
-            complete_command(":todo"),
-            CommandCompletion::Completed("status-todo".to_string())
-        );
-    }
-
-    #[test]
-    fn complete_command_fills_dashless_match() {
-        assert_eq!(
-            complete_command(":statusin"),
-            CommandCompletion::Completed("status-inbox".to_string())
-        );
-    }
-
-    #[test]
-    fn complete_command_reports_unchanged_for_ambiguous_match() {
-        assert_eq!(complete_command("stat"), CommandCompletion::Unchanged);
-    }
-
-    #[test]
-    fn command_cycle_options_keeps_lower_ranked_visible_matches() {
-        assert_eq!(
-            command_cycle_options("r"),
-            vec![
-                "refresh",
-                "return-to-change",
-                "restore",
-                "recurrence-skip",
-                "recurrence-edit-template",
-                "recurrence-pause",
-                "recurrence-resume",
-                "recurrence-stop",
-                "recurrence-history",
-                "rename-label",
-                "rename-project",
-                "remove-project-path",
-                "remove-dependency",
-                "remove-related",
-                "move-right",
-                "move-column-right",
-                "view-recurring",
-                "view-recent",
-                "workspace-rename",
-                "copy-ref",
-                "add-related",
-                "task-child-remove",
-                "filter-recurring-lifecycle",
-                "order-reverse",
-                "conflict-use-remote"
-            ]
-        );
-    }
-
-    #[test]
-    fn command_cycle_options_keeps_visible_matches_after_exact_match() {
-        assert_eq!(
-            command_cycle_options("delete"),
-            vec!["delete", "delete-label", "delete-project", "filter-deleted"]
-        );
-    }
-
-    #[test]
-    fn complete_command_reports_unchanged_when_fully_extended() {
-        assert_eq!(complete_command("status-"), CommandCompletion::Unchanged);
-    }
-
-    #[test]
-    fn lookup_command_reports_ambiguous_prefix() {
-        assert_eq!(lookup_command("s"), CommandLookup::Ambiguous);
-    }
-
-    #[test]
-    fn lookup_command_reports_empty_input() {
-        assert_eq!(lookup_command(""), CommandLookup::Empty);
-        assert_eq!(lookup_command("   "), CommandLookup::Empty);
-    }
-
-    #[test]
-    fn lookup_command_reports_missing_input() {
-        assert_eq!(lookup_command("zzzz"), CommandLookup::Missing);
     }
 
     #[test]
@@ -404,7 +267,7 @@ mod tests {
 
     #[test]
     fn resolves_multi_key_sequences_from_catalog() {
-        let commands = [CommandSpec::implemented(
+        let commands = [BuiltInCommand::implemented(
             "test-sequence",
             "test sequence",
             "Test",
@@ -416,18 +279,22 @@ mod tests {
         )];
 
         assert_eq!(
-            resolve_shortcut_in(&commands, &[KeyCode::Char('a')]),
+            resolve_shortcut_in_for(&commands, CommandContext::Normal, &[KeyCode::Char('a')]),
             ShortcutLookup::Prefix
         );
         assert_eq!(
-            resolve_shortcut_in(&commands, &[KeyCode::Char('a'), KeyCode::Char('t')]),
+            resolve_shortcut_in_for(
+                &commands,
+                CommandContext::Normal,
+                &[KeyCode::Char('a'), KeyCode::Char('t')]
+            ),
             ShortcutLookup::Found(Action::BeginSearch)
         );
     }
 
     #[test]
     fn context_uses_its_own_command_bindings() {
-        let commands = [CommandSpec::implemented_with_detail_bindings(
+        let commands = [BuiltInCommand::implemented_with_detail_bindings(
             "contextual",
             &[],
             "contextual command",
@@ -461,7 +328,7 @@ mod tests {
     #[test]
     fn resolves_exact_prefix_ambiguity() {
         let commands = [
-            CommandSpec::implemented(
+            BuiltInCommand::implemented(
                 "single-g",
                 "single g",
                 "Test",
@@ -471,7 +338,7 @@ mod tests {
                 }],
                 Action::First,
             ),
-            CommandSpec::implemented(
+            BuiltInCommand::implemented(
                 "double-g",
                 "double g",
                 "Test",
@@ -484,7 +351,7 @@ mod tests {
         ];
 
         assert_eq!(
-            resolve_shortcut_in(&commands, &[KeyCode::Char('g')]),
+            resolve_shortcut_in_for(&commands, CommandContext::Normal, &[KeyCode::Char('g')]),
             ShortcutLookup::Ambiguous(Action::First)
         );
     }
@@ -492,7 +359,7 @@ mod tests {
     #[test]
     fn resolves_duplicate_exact_sequences_as_ambiguous() {
         let commands = [
-            CommandSpec::implemented(
+            BuiltInCommand::implemented(
                 "first-q",
                 "first q",
                 "Test",
@@ -502,7 +369,7 @@ mod tests {
                 }],
                 Action::Quit,
             ),
-            CommandSpec::implemented(
+            BuiltInCommand::implemented(
                 "second-q",
                 "second q",
                 "Test",
@@ -515,7 +382,7 @@ mod tests {
         ];
 
         assert_eq!(
-            resolve_shortcut_in(&commands, &[KeyCode::Char('q')]),
+            resolve_shortcut_in_for(&commands, CommandContext::Normal, &[KeyCode::Char('q')]),
             ShortcutLookup::Ambiguous(Action::Quit)
         );
     }
@@ -535,19 +402,10 @@ mod tests {
             resolve_shortcut(&[KeyCode::Char('u')]),
             ShortcutLookup::Found(Action::Undo)
         );
-        assert_eq!(lookup_command("undo"), CommandLookup::Found(Action::Undo));
     }
 
     #[test]
-    fn resolves_update_and_changelog_commands_without_global_shortcuts() {
-        assert_eq!(
-            lookup_command("update"),
-            CommandLookup::Found(Action::BeginUpdate)
-        );
-        assert_eq!(
-            lookup_command("changelog"),
-            CommandLookup::Found(Action::ShowChangelog)
-        );
+    fn catalog_includes_update_and_changelog_without_global_shortcuts() {
         for name in ["update", "changelog"] {
             let command = COMMANDS
                 .iter()
@@ -711,6 +569,14 @@ mod tests {
         for context in [CommandContext::Normal, CommandContext::Detail] {
             let mut seen: Vec<(&[KeyCode], &str, &str)> = Vec::new();
             for command in context.commands() {
+                if context == CommandContext::Detail
+                    && matches!(
+                        command.action,
+                        Action::OpenAttachment | Action::SaveAttachment | Action::DeleteAttachment
+                    )
+                {
+                    continue;
+                }
                 for key in command.keys(context) {
                     if let Some((_, other_command, other_label)) =
                         seen.iter().find(|(codes, _, _)| *codes == key.codes)
@@ -1000,7 +866,10 @@ mod tests {
             ('D', Action::BeginDeleteLabel),
         ] {
             assert_eq!(
-                resolve_shortcut(&[KeyCode::Char('L'), KeyCode::Char(key)]),
+                resolve_shortcut_for(
+                    CommandContext::Normal,
+                    &[KeyCode::Char('L'), KeyCode::Char(key)]
+                ),
                 ShortcutLookup::Found(action)
             );
         }

@@ -605,8 +605,11 @@ impl App {
                 self.submit_remove_related(selection, related_task_id)
                     .await?;
             }
-            ConfirmIntent::UnlinkEpicChild { epic_id, child_id } => {
-                self.submit_unlink_epic_child(epic_id, child_id).await?;
+            ConfirmIntent::UnlinkEpicChild {
+                target,
+                restoration,
+            } => {
+                self.submit_unlink_epic_child(target, restoration).await?;
             }
             ConfirmIntent::DeleteAttachment { attachment_id } => {
                 self.submit_delete_attachment(attachment_id).await?;

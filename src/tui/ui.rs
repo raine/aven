@@ -2,6 +2,9 @@ mod columns;
 mod detail;
 mod dialog;
 mod empty_state;
+pub(crate) use self::empty_state::{
+    column_board_empty_state, recent_actions_empty_state, recurrence_empty_state, task_empty_state,
+};
 mod footer;
 mod header;
 
@@ -120,7 +123,8 @@ pub(crate) struct ViewState {
     pub(crate) surface: ViewSurface,
     pub(crate) inline_images: Option<DetailInlineImageContext>,
     pub(crate) pending_attachments: Vec<crate::tui::attachment_controller::PendingAttachmentView>,
-    pub(crate) command_catalog: crate::tui::event::CommandCatalog,
+    pub(crate) command_catalog: std::sync::Arc<crate::tui::event::CommandCatalog>,
+    pub(crate) routing_domain: crate::tui::event::RoutingDomain,
     pub(crate) has_primary_task: bool,
     pub(crate) undo_description: String,
 }
@@ -795,8 +799,8 @@ fn render_overlay_content(
     frame: &mut Frame,
     overlay: &OverlayView,
     inline_title_editor: bool,
-    command_catalog: &crate::tui::event::CommandCatalog,
-    has_primary_task: bool,
+    _command_catalog: &crate::tui::event::CommandCatalog,
+    _has_primary_task: bool,
     undo_description: &str,
 ) {
     match overlay {
@@ -832,26 +836,20 @@ fn render_overlay_content(
         OverlayView::Command {
             input,
             cursor,
-            cycle_input,
+            session,
+            catalog,
+            candidates,
             highlighted,
-            context,
-            marked_task_count,
-            custom_command_marked_task_count,
-            unavailable,
         } => render_command(
             frame,
             input,
             *cursor,
-            cycle_input.as_deref(),
-            highlighted.as_deref(),
+            *highlighted,
             CommandRenderContext {
-                unavailable,
+                session,
+                catalog,
+                candidates,
                 undo_description,
-                command_context: *context,
-                marked_task_count: *marked_task_count,
-                custom_command_marked_task_count: *custom_command_marked_task_count,
-                catalog: command_catalog,
-                has_primary_task,
             },
         ),
         OverlayView::AddTask(state) => self::overlays::render_add_task(frame, state),

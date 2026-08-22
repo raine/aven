@@ -74,6 +74,32 @@ pub(crate) fn dispatch_overlay_mouse(
             }
             OverlayMouseOutcome::Retained(OverlayState::Changelog(state))
         }
+        OverlayState::Command { mut state }
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left) =>
+        {
+            let selected = state.highlighted.unwrap_or(0);
+            let offset = selected.saturating_sub(7);
+            let visible = state.candidates.len().saturating_sub(offset).min(8);
+            let height = (visible as u16)
+                .saturating_add(3)
+                .saturating_add(u16::from(!state.candidates.is_empty()));
+            let width = terminal_size.width.saturating_sub(2).min(112);
+            let area = super::dialog_area(
+                Rect::new(0, 0, terminal_size.width, terminal_size.height),
+                width,
+                height,
+            );
+            let first_row = area.y.saturating_add(2);
+            if mouse.column >= area.x
+                && mouse.column < area.right()
+                && mouse.row >= first_row
+                && usize::from(mouse.row.saturating_sub(first_row)) < visible
+            {
+                let index = offset + usize::from(mouse.row.saturating_sub(first_row));
+                state.highlighted = Some(index);
+            }
+            OverlayMouseOutcome::Retained(OverlayState::Command { state })
+        }
         OverlayState::HeaderMenu(state)
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) =>
         {
@@ -370,6 +396,23 @@ mod tests {
             overlay = next;
         }
         assert_eq!(overlay, OverlayState::DetailHelp { scroll: 4 });
+    }
+
+    #[test]
+    fn command_row_click_uses_catalog_order_for_highlight() {
+        let state = crate::tui::overlay::CommandState::test_with_input("");
+        let size = Size::new(100, 30);
+        let outcome = dispatch_overlay_mouse(
+            OverlayState::Command { state },
+            mouse(MouseEventKind::Down(MouseButton::Left), 10, 11),
+            size,
+            context(),
+        );
+        assert!(matches!(
+            outcome,
+            OverlayMouseOutcome::Retained(OverlayState::Command { state })
+                if state.highlighted_name() == Some("add-task")
+        ));
     }
 
     #[test]

@@ -2147,7 +2147,7 @@ async fn add_note_requires_selected_task() {
         toast_message(&app).as_deref(),
         Some("no selected task for note")
     );
-    assert_eq!(toast_severity(&app), Some(ToastSeverity::Info));
+    assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
 }
 
 #[tokio::test]

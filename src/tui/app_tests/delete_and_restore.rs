@@ -169,6 +169,47 @@ async fn delete_project_picker_preselects_sidebar_project() {
 }
 
 #[tokio::test]
+async fn command_project_picker_uses_captured_sidebar_project_after_focus_change() {
+    let mut app = test_app().await;
+    app.store
+        .create_project("Project A".to_string())
+        .await
+        .unwrap();
+    app.store
+        .create_project("Project B".to_string())
+        .await
+        .unwrap();
+    app.list.focus_sidebar();
+    let project_index = |app: &App, key: &str| {
+        app.store
+            .sidebar_entries
+            .iter()
+            .position(|entry| {
+                entry.target
+                    == Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(
+                        key.to_string(),
+                    )))
+            })
+            .unwrap()
+    };
+    app.list
+        .select_sidebar(Some(project_index(&app, "project-a")));
+
+    app.begin_command().await;
+    let command_overlay = app.overlay.take().expect("command overlay");
+    app.list
+        .select_sidebar(Some(project_index(&app, "project-b")));
+    app.overlay = Some(command_overlay);
+    type_chars(&mut app, "delete-project").await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    let Some(OverlayState::Picker(state)) = &app.overlay else {
+        panic!("expected project picker");
+    };
+    assert_eq!(state.items[state.selected].value, "project-a");
+}
+
+#[tokio::test]
 async fn project_path_picker_preselects_sidebar_project() {
     let mut app = test_app().await;
     app.store

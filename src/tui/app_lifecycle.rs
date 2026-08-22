@@ -439,6 +439,7 @@ impl App {
             inline_images,
             pending_attachments: self.attachment_controller.views(),
             command_catalog: self.command_catalog.clone(),
+            routing_domain: self.current_routing_domain(),
             has_primary_task: selected_task.is_some(),
             undo_description,
         }

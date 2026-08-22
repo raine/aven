@@ -4,7 +4,7 @@ use crossterm::event::KeyCode;
 use crate::config::{CustomTuiCommandConfig, CustomTuiCommandTarget};
 
 use super::{
-    Action, BulkSupport, COMMANDS, CommandContext, CommandSpec, KeySequence, shortcut_label,
+    Action, BuiltInCommand, BulkSupport, COMMANDS, CommandContext, KeySequence, shortcut_label,
 };
 
 const MAX_CUSTOM_KEY_SEQUENCE_LEN: usize = 4;
@@ -15,13 +15,13 @@ pub(crate) enum CommandHandler {
     Custom(usize),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct RuntimeKeySequence {
     codes: Vec<KeyCode>,
     label: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RuntimeCustomCommand {
     config: CustomTuiCommandConfig,
     list_keys: Vec<RuntimeKeySequence>,
@@ -36,7 +36,7 @@ pub(crate) struct CatalogKeySequence<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum CatalogCommand<'a> {
-    BuiltIn(&'static CommandSpec),
+    BuiltIn(&'static BuiltInCommand),
     Custom {
         id: usize,
         command: &'a RuntimeCustomCommand,
@@ -181,7 +181,7 @@ impl<'a> CatalogCommand<'a> {
         }
     }
 
-    pub(crate) fn built_in(self) -> Option<&'static CommandSpec> {
+    pub(crate) fn built_in(self) -> Option<&'static BuiltInCommand> {
         match self {
             Self::BuiltIn(command) => Some(command),
             Self::Custom { .. } => None,
@@ -219,17 +219,9 @@ fn catalog_static_key(key: &'static KeySequence) -> CatalogKeySequence<'static> 
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct CommandCatalog {
     custom: Vec<RuntimeCustomCommand>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum CatalogLookup<'a> {
-    Empty,
-    Found(CatalogCommand<'a>),
-    Ambiguous,
-    Missing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -238,6 +230,21 @@ pub(crate) enum CatalogShortcutLookup {
     Prefix,
     Ambiguous(CommandHandler),
     Missing,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum RoutingDomain {
+    Normal,
+    DetailParent,
+    DetailRelated,
+    DetailPassive,
+    DetailAttachment,
+}
+
+impl RoutingDomain {
+    pub(crate) fn command_context(self) -> CommandContext {
+        domain_context(self)
+    }
 }
 
 impl CommandCatalog {
@@ -249,6 +256,25 @@ impl CommandCatalog {
 
     pub(crate) fn custom(&self, id: usize) -> Option<&CustomTuiCommandConfig> {
         self.custom.get(id).map(|command| &command.config)
+    }
+
+    pub(crate) fn command(&self, index: usize) -> Option<CatalogCommand<'_>> {
+        if let Some(command) = COMMANDS.get(index) {
+            return Some(CatalogCommand::BuiltIn(command));
+        }
+        let id = index.checked_sub(COMMANDS.len())?;
+        self.custom
+            .get(id)
+            .map(|command| CatalogCommand::Custom { id, command })
+    }
+
+    pub(crate) fn all_commands(&self) -> impl Iterator<Item = CatalogCommand<'_>> {
+        COMMANDS.iter().map(CatalogCommand::BuiltIn).chain(
+            self.custom
+                .iter()
+                .enumerate()
+                .map(|(id, command)| CatalogCommand::Custom { id, command }),
+        )
     }
 
     pub(crate) fn commands(&self, context: CommandContext) -> Vec<CatalogCommand<'_>> {
@@ -266,65 +292,18 @@ impl CommandCatalog {
         commands
     }
 
-    pub(crate) fn matching(
+    pub(crate) fn resolve_shortcut_in_domain(
         &self,
-        context: CommandContext,
-        input: &str,
-        marked_task_count: usize,
-    ) -> Vec<CatalogCommand<'_>> {
-        let input = normalize(input);
-        let mut matches = self
-            .commands(context)
-            .into_iter()
-            .filter_map(|command| command_match_rank(command, input).map(|rank| (rank, command)))
-            .collect::<Vec<_>>();
-        matches.sort_by_key(|(rank, _)| *rank);
-        let mut matches = matches
-            .into_iter()
-            .map(|(_, command)| command)
-            .collect::<Vec<_>>();
-        if marked_task_count > 0 && input.is_empty() {
-            matches.sort_by_key(|command| match command.bulk_support() {
-                BulkSupport::Batch => 0,
-                BulkSupport::BulkControl => 1,
-                BulkSupport::Focused => 2,
-                BulkSupport::NotTaskScoped => 3,
-                BulkSupport::SingleOnly(_) => 4,
-            });
-        }
-        matches
+        domain: RoutingDomain,
+        input: &[KeyCode],
+    ) -> CatalogShortcutLookup {
+        self.resolve_shortcut_in_context(domain, None, input)
     }
 
-    pub(crate) fn lookup(&self, context: CommandContext, input: &str) -> CatalogLookup<'_> {
-        let input = normalize(input);
-        if input.is_empty() {
-            return CatalogLookup::Empty;
-        }
-        let matches = self
-            .commands(context)
-            .into_iter()
-            .filter_map(|command| command_match_rank(command, input).map(|rank| (rank, command)))
-            .collect::<Vec<_>>();
-        let Some(best_rank) = matches.iter().map(|(rank, _)| *rank).min() else {
-            return CatalogLookup::Missing;
-        };
-        let mut best = matches
-            .into_iter()
-            .filter(|(rank, _)| *rank == best_rank)
-            .map(|(_, command)| command);
-        let Some(command) = best.next() else {
-            return CatalogLookup::Missing;
-        };
-        if best.next().is_some() {
-            CatalogLookup::Ambiguous
-        } else {
-            CatalogLookup::Found(command)
-        }
-    }
-
-    pub(crate) fn resolve_shortcut(
+    pub(crate) fn resolve_shortcut_in_context(
         &self,
-        context: CommandContext,
+        domain: RoutingDomain,
+        section: Option<crate::tui::app::DetailSection>,
         input: &[KeyCode],
     ) -> CatalogShortcutLookup {
         if input.is_empty() {
@@ -332,7 +311,11 @@ impl CommandCatalog {
         }
         let mut exact = Vec::new();
         let mut prefix = false;
+        let context = domain_context(domain);
         for command in self.commands(context) {
+            if !binding_active(&command, domain, section) {
+                continue;
+            }
             for key in command.keys(context) {
                 if key.codes == input {
                     exact.push(command.handler());
@@ -363,13 +346,15 @@ impl CommandCatalog {
         })
     }
 
-    pub(crate) fn prefix_hints(
+    pub(crate) fn prefix_hints_in_domain(
         &self,
-        context: CommandContext,
+        domain: RoutingDomain,
         pending: &[String],
     ) -> Vec<(CatalogCommand<'_>, String)> {
+        let context = domain_context(domain);
         self.commands(context)
             .into_iter()
+            .filter(|command| binding_active(command, domain, None))
             .flat_map(|command| {
                 command.keys(context).into_iter().filter_map(move |key| {
                     let labels = key
@@ -390,59 +375,40 @@ impl CommandCatalog {
             })
             .collect()
     }
-
-    pub(crate) fn cycle_options(&self, context: CommandContext, input: &str) -> Vec<String> {
-        self.matching(context, input, 0)
-            .into_iter()
-            .map(|command| command.name().to_string())
-            .collect()
-    }
-
-    pub(crate) fn complete(
-        &self,
-        context: CommandContext,
-        input: &str,
-    ) -> super::CommandCompletion {
-        let input = normalize(input);
-        if input.is_empty() {
-            return super::CommandCompletion::Empty;
-        }
-        let matches = self
-            .commands(context)
-            .into_iter()
-            .filter_map(|command| command_match_rank(command, input).map(|rank| (rank, command)))
-            .collect::<Vec<_>>();
-        let Some(best_rank) = matches.iter().map(|(rank, _)| *rank).min() else {
-            return super::CommandCompletion::Missing;
-        };
-        let names = matches
-            .iter()
-            .filter(|(rank, _)| *rank == best_rank)
-            .map(|(_, command)| command.name())
-            .collect::<Vec<_>>();
-        if names.len() != 1 {
-            return super::CommandCompletion::Unchanged;
-        }
-        if names[0].len() > input.len() {
-            super::CommandCompletion::Completed(names[0].to_string())
-        } else {
-            super::CommandCompletion::Unchanged
-        }
-    }
 }
 
 pub(crate) fn validate_custom_command_keys(commands: &[CustomTuiCommandConfig]) -> Result<()> {
-    for context in [CommandContext::Normal, CommandContext::Detail] {
-        let mut assigned = COMMANDS
+    const DOMAINS: &[RoutingDomain] = &[
+        RoutingDomain::Normal,
+        RoutingDomain::DetailParent,
+        RoutingDomain::DetailRelated,
+        RoutingDomain::DetailPassive,
+        RoutingDomain::DetailAttachment,
+    ];
+    for &domain in DOMAINS {
+        let context = domain_context(domain);
+        let mut assigned = Vec::<(Vec<KeyCode>, String)>::new();
+        for command in COMMANDS
             .iter()
-            .filter(|command| command.is_available(context))
-            .flat_map(|command| {
-                command
-                    .keys(context)
+            .map(CatalogCommand::BuiltIn)
+            .filter(|command| binding_active(command, domain, None))
+        {
+            for key in command.keys(context) {
+                if let Some((_, owner)) = assigned
                     .iter()
-                    .map(move |key| (key.codes.to_vec(), format!(":{}", command.name)))
-            })
-            .collect::<Vec<_>>();
+                    .find(|(existing, _)| existing.as_slice() == key.codes)
+                {
+                    bail!(
+                        "built-in keybinding {} conflicts between {} and :{} in {} routing domain",
+                        shortcut_label(key.codes),
+                        owner,
+                        command.name(),
+                        routing_domain_name(domain),
+                    );
+                }
+                assigned.push((key.codes.to_vec(), format!(":{}", command.name())));
+            }
+        }
         for command in commands {
             let configured = match context {
                 CommandContext::Normal => &command.keys,
@@ -457,14 +423,11 @@ pub(crate) fn validate_custom_command_keys(commands: &[CustomTuiCommandConfig]) 
                 })?;
                 if let Some((_, owner)) = assigned.iter().find(|(existing, _)| *existing == codes) {
                     bail!(
-                        "custom command {} keybinding {} conflicts with {} in {} view",
+                        "custom command {} keybinding {} conflicts with {} in {} routing domain",
                         command.name,
                         shortcut_label(&codes),
                         owner,
-                        match context {
-                            CommandContext::Normal => "list",
-                            CommandContext::Detail => "detail",
-                        }
+                        routing_domain_name(domain),
                     );
                 }
                 assigned.push((codes, format!(":{}", command.name)));
@@ -472,6 +435,16 @@ pub(crate) fn validate_custom_command_keys(commands: &[CustomTuiCommandConfig]) 
         }
     }
     Ok(())
+}
+
+fn routing_domain_name(domain: RoutingDomain) -> &'static str {
+    match domain {
+        RoutingDomain::Normal => "normal",
+        RoutingDomain::DetailParent => "detail parent",
+        RoutingDomain::DetailRelated => "detail related",
+        RoutingDomain::DetailPassive => "detail passive",
+        RoutingDomain::DetailAttachment => "detail attachment",
+    }
 }
 
 fn parse_keys(keys: &[String]) -> Vec<RuntimeKeySequence> {
@@ -551,11 +524,57 @@ fn parse_key(token: &str) -> Option<KeyCode> {
     }
 }
 
-fn normalize(input: &str) -> &str {
-    input.trim().strip_prefix(':').unwrap_or(input.trim())
+pub(super) fn domain_context(domain: RoutingDomain) -> CommandContext {
+    match domain {
+        RoutingDomain::DetailParent
+        | RoutingDomain::DetailRelated
+        | RoutingDomain::DetailPassive
+        | RoutingDomain::DetailAttachment => CommandContext::Detail,
+        _ => CommandContext::Normal,
+    }
 }
 
-fn command_match_rank(command: CatalogCommand<'_>, input: &str) -> Option<u8> {
+pub(crate) fn focus_policy_compatible(
+    policy: super::DetailFocusPolicy,
+    domain: RoutingDomain,
+    section: Option<crate::tui::app::DetailSection>,
+) -> bool {
+    use super::DetailFocusPolicy;
+    match domain {
+        RoutingDomain::DetailAttachment => {
+            matches!(
+                policy,
+                DetailFocusPolicy::Global | DetailFocusPolicy::Attachment
+            )
+        }
+        RoutingDomain::DetailPassive => policy == DetailFocusPolicy::Global,
+        RoutingDomain::DetailRelated => match policy {
+            DetailFocusPolicy::Global | DetailFocusPolicy::RelatedTask => true,
+            DetailFocusPolicy::EpicChild => section
+                .is_none_or(|section| section == crate::tui::app::DetailSection::EpicChildren),
+            _ => false,
+        },
+        RoutingDomain::DetailParent | RoutingDomain::Normal => {
+            policy != DetailFocusPolicy::Attachment
+        }
+    }
+}
+
+pub(crate) fn binding_active(
+    command: &CatalogCommand<'_>,
+    domain: RoutingDomain,
+    section: Option<crate::tui::app::DetailSection>,
+) -> bool {
+    let Some(command) = command.built_in() else {
+        return true;
+    };
+    focus_policy_compatible(command.detail_focus(), domain, section)
+        || (command.action == Action::RemoveEpicChild
+            && domain == RoutingDomain::DetailRelated
+            && section == Some(crate::tui::app::DetailSection::EpicParent))
+}
+
+pub(crate) fn command_match_rank(command: CatalogCommand<'_>, input: &str) -> Option<u8> {
     if input.is_empty() {
         return Some(0);
     }
@@ -578,6 +597,15 @@ fn command_match_rank(command: CatalogCommand<'_>, input: &str) -> Option<u8> {
         .any(|segment| segment.starts_with(input))
     {
         Some(3)
+    } else if command.description().starts_with(input) {
+        Some(4)
+    } else if command.description().split_whitespace().any(|word| {
+        word.trim_matches(|character: char| !character.is_alphanumeric())
+            .starts_with(input)
+    }) {
+        Some(5)
+    } else if command.description().contains(input) {
+        Some(6)
     } else {
         None
     }
@@ -604,6 +632,53 @@ mod tests {
 
     use super::*;
     use crate::config::{CustomTuiCommandExecution, CustomTuiCommandSuccess};
+    use crate::tui::event::CommandQuery;
+    use crate::tui::event::command_query::CommandAvailability;
+
+    fn snapshot(
+        surface: super::super::CommandSurfaceSnapshot,
+        recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
+    ) -> super::super::CommandSessionSnapshot {
+        let workspace = crate::workspaces::Workspace::default();
+        super::super::CommandSessionSnapshot {
+            workspace: super::super::CommandWorkspaceSnapshot {
+                id: workspace.id,
+                key: workspace.key,
+                name: workspace.name,
+            },
+            surface,
+            recurrence_series_id,
+        }
+    }
+
+    fn resolve_catalog_shortcut(
+        catalog: &CommandCatalog,
+        context: CommandContext,
+        input: &[KeyCode],
+    ) -> CatalogShortcutLookup {
+        let domain = match context {
+            CommandContext::Normal => RoutingDomain::Normal,
+            CommandContext::Detail => RoutingDomain::DetailParent,
+        };
+        catalog.resolve_shortcut_in_domain(domain, input)
+    }
+
+    fn query_names(
+        catalog: &CommandCatalog,
+        snapshot: &super::super::CommandSessionSnapshot,
+        input: &str,
+    ) -> Vec<String> {
+        catalog
+            .query(CommandQuery {
+                input,
+                snapshot,
+                unavailable: &[],
+            })
+            .into_iter()
+            .filter_map(|candidate| catalog.command(candidate.index))
+            .map(|command| command.name().to_string())
+            .collect()
+    }
 
     fn custom() -> CustomTuiCommandConfig {
         CustomTuiCommandConfig {
@@ -650,34 +725,36 @@ mod tests {
     #[test]
     fn custom_names_and_aliases_share_one_catalog_entry() {
         let catalog = CommandCatalog::new(vec![custom()]);
-        let CatalogLookup::Found(canonical) = catalog.lookup(CommandContext::Normal, "dispatch")
-        else {
-            panic!("canonical command missing");
-        };
-        let CatalogLookup::Found(alias) = catalog.lookup(CommandContext::Detail, "custom-dispatch")
-        else {
-            panic!("alias missing");
-        };
+        let snapshot = snapshot(super::super::CommandSurfaceSnapshot::AddTaskOnly, None);
+        let canonical = query_names(&catalog, &snapshot, "dispatch");
+        let alias = query_names(&catalog, &snapshot, "custom-dispatch");
 
-        assert_eq!(canonical.handler(), alias.handler());
-        assert_eq!(canonical.name(), "dispatch");
+        assert_eq!(canonical, vec!["dispatch"]);
+        assert_eq!(alias, canonical);
     }
 
     #[test]
-    fn matching_and_completion_include_custom_and_built_in_commands() {
+    fn session_query_includes_custom_and_built_in_commands() {
         let catalog = CommandCatalog::new(vec![custom()]);
-        let names = catalog
-            .matching(CommandContext::Normal, "d", 0)
-            .into_iter()
-            .map(CatalogCommand::name)
-            .collect::<Vec<_>>();
+        let task_id = crate::test_support::task_id("catalog-query-task");
+        let snapshot = snapshot(
+            super::super::CommandSurfaceSnapshot::List {
+                primary_task_id: Some(task_id.clone()),
+                marked_task_ids: vec![],
+                visible_task_ids: vec![task_id.clone()],
+                focused_sidebar: None,
+                is_empty: false,
+                empty_preferred_action: None,
+            },
+            None,
+        );
+        let names = query_names(&catalog, &snapshot, "d");
 
-        assert!(names.contains(&"dispatch"));
-        assert!(names.contains(&"delete"));
-        assert!(
-            catalog
-                .cycle_options(CommandContext::Normal, "custom-d")
-                .contains(&"dispatch".to_string())
+        assert!(names.contains(&"dispatch".to_string()));
+        assert!(names.contains(&"delete".to_string()));
+        assert_eq!(
+            query_names(&catalog, &snapshot, "custom-d"),
+            vec!["dispatch"]
         );
     }
 
@@ -686,11 +763,15 @@ mod tests {
         let catalog = CommandCatalog::new(vec![custom()]);
         for context in [CommandContext::Normal, CommandContext::Detail] {
             assert_eq!(
-                catalog.resolve_shortcut(context, &[KeyCode::Char('z')]),
+                resolve_catalog_shortcut(&catalog, context, &[KeyCode::Char('z')]),
                 CatalogShortcutLookup::Prefix
             );
             assert_eq!(
-                catalog.resolve_shortcut(context, &[KeyCode::Char('z'), KeyCode::Char('d')]),
+                resolve_catalog_shortcut(
+                    &catalog,
+                    context,
+                    &[KeyCode::Char('z'), KeyCode::Char('d')]
+                ),
                 CatalogShortcutLookup::Found(CommandHandler::Custom(0))
             );
         }
@@ -743,11 +824,451 @@ mod tests {
         assert_eq!(commands[3].unavailable_reason(true, 0), None);
         assert_eq!(commands[3].unavailable_reason(false, 1), None);
         assert_eq!(
-            catalog.resolve_shortcut(
+            resolve_catalog_shortcut(
+                &catalog,
                 CommandContext::Normal,
                 &[KeyCode::Char('z'), KeyCode::Char('2')]
             ),
             CatalogShortcutLookup::Found(CommandHandler::Custom(2))
+        );
+    }
+
+    #[test]
+    fn contextual_first_pages_are_explicit_and_deterministic() {
+        use super::super::{CommandSurfaceSnapshot, DetailCommandFocus, SidebarCommandTarget};
+        use crate::tui::app::DetailSection;
+        use crate::tui::store::TaskQuery;
+
+        let catalog = CommandCatalog::default();
+        let parent_id = crate::test_support::task_id("command-parent");
+        let related_id = crate::test_support::task_id("command-related");
+        let parent = snapshot(
+            CommandSurfaceSnapshot::Detail {
+                parent_task_id: parent_id.clone(),
+                marked_task_ids: Vec::new(),
+                focus: None,
+                scroll: 0,
+            },
+            None,
+        );
+        assert_eq!(
+            &query_names(&catalog, &parent, "")[..8],
+            &[
+                "edit-title",
+                "edit-description",
+                "status-picker",
+                "edit-priority",
+                "edit-project",
+                "edit-labels",
+                "add-note",
+                "add-dependency"
+            ]
+        );
+
+        let marked = snapshot(
+            CommandSurfaceSnapshot::List {
+                primary_task_id: Some(parent_id.clone()),
+                marked_task_ids: vec![parent_id.clone(), related_id.clone()],
+                visible_task_ids: vec![parent_id.clone(), related_id.clone()],
+                focused_sidebar: None,
+                is_empty: false,
+                empty_preferred_action: None,
+            },
+            None,
+        );
+        assert_eq!(
+            &query_names(&catalog, &marked, "")[..8],
+            &[
+                "status-picker",
+                "status-done",
+                "edit-project",
+                "edit-priority",
+                "edit-labels",
+                "delete",
+                "copy-ref",
+                "clear-marks"
+            ]
+        );
+
+        let attachment = snapshot(
+            CommandSurfaceSnapshot::Detail {
+                parent_task_id: parent_id.clone(),
+                marked_task_ids: Vec::new(),
+                focus: Some(DetailCommandFocus::Attachment {
+                    attachment_id: "ATTACHMENT000001".to_string(),
+                    bytes_present: true,
+                }),
+                scroll: 0,
+            },
+            None,
+        );
+        assert_eq!(
+            &query_names(&catalog, &attachment, "")[..3],
+            &["attachment-open", "attachment-save", "attachment-delete"]
+        );
+
+        let epic_child = snapshot(
+            CommandSurfaceSnapshot::Detail {
+                parent_task_id: parent_id.clone(),
+                marked_task_ids: Vec::new(),
+                focus: Some(DetailCommandFocus::Relationship {
+                    section: DetailSection::EpicChildren,
+                    task_id: related_id.clone(),
+                }),
+                scroll: 0,
+            },
+            None,
+        );
+        assert_eq!(
+            &query_names(&catalog, &epic_child, "")[..6],
+            &[
+                "status-picker",
+                "status-done",
+                "edit-title",
+                "copy-ref",
+                "copy-title",
+                "task-child-remove"
+            ]
+        );
+
+        let note = snapshot(
+            CommandSurfaceSnapshot::Detail {
+                parent_task_id: parent_id.clone(),
+                marked_task_ids: Vec::new(),
+                focus: Some(DetailCommandFocus::Note),
+                scroll: 0,
+            },
+            None,
+        );
+        assert_eq!(
+            &query_names(&catalog, &note, "")[..4],
+            &["back", "search", "refresh", "command"]
+        );
+
+        let disclosure = snapshot(
+            CommandSurfaceSnapshot::Detail {
+                parent_task_id: parent_id.clone(),
+                marked_task_ids: Vec::new(),
+                focus: Some(DetailCommandFocus::Disclosure),
+                scroll: 0,
+            },
+            None,
+        );
+        assert_eq!(
+            &query_names(&catalog, &disclosure, "")[..4],
+            &["back", "search", "refresh", "command"]
+        );
+
+        let sidebar = snapshot(
+            CommandSurfaceSnapshot::List {
+                primary_task_id: Some(parent_id.clone()),
+                marked_task_ids: vec![],
+                visible_task_ids: vec![parent_id.clone()],
+                focused_sidebar: Some(SidebarCommandTarget::View(TaskQuery::Queue)),
+                is_empty: false,
+                empty_preferred_action: None,
+            },
+            None,
+        );
+        assert_eq!(query_names(&catalog, &sidebar, "")[0], "view-queue");
+
+        let sidebar_workspace = snapshot(
+            CommandSurfaceSnapshot::List {
+                primary_task_id: Some(parent_id.clone()),
+                marked_task_ids: vec![],
+                visible_task_ids: vec![parent_id.clone()],
+                focused_sidebar: Some(SidebarCommandTarget::Workspace),
+                is_empty: false,
+                empty_preferred_action: None,
+            },
+            None,
+        );
+        assert_eq!(
+            &query_names(&catalog, &sidebar_workspace, "")[..4],
+            &[
+                "scope-all",
+                "workspace-switch",
+                "workspace-rename",
+                "workspace-create"
+            ]
+        );
+
+        let sidebar_project = snapshot(
+            CommandSurfaceSnapshot::List {
+                primary_task_id: Some(parent_id.clone()),
+                marked_task_ids: vec![],
+                visible_task_ids: vec![parent_id.clone()],
+                focused_sidebar: Some(SidebarCommandTarget::Project("aven".to_string())),
+                is_empty: false,
+                empty_preferred_action: None,
+            },
+            None,
+        );
+        assert_eq!(
+            &query_names(&catalog, &sidebar_project, "")[..4],
+            &[
+                "scope-project",
+                "rename-project",
+                "add-task",
+                "add-project-path"
+            ]
+        );
+
+        let selected = snapshot(
+            CommandSurfaceSnapshot::List {
+                primary_task_id: Some(parent_id.clone()),
+                marked_task_ids: vec![],
+                visible_task_ids: vec![parent_id.clone()],
+                focused_sidebar: None,
+                is_empty: false,
+                empty_preferred_action: None,
+            },
+            None,
+        );
+        assert_eq!(
+            &query_names(&catalog, &selected, "")[..4],
+            &[
+                "status-picker",
+                "status-done",
+                "edit-title",
+                "edit-priority"
+            ]
+        );
+
+        let empty = snapshot(
+            CommandSurfaceSnapshot::List {
+                primary_task_id: None,
+                marked_task_ids: vec![],
+                visible_task_ids: vec![],
+                focused_sidebar: None,
+                is_empty: true,
+                empty_preferred_action: Some(Action::BeginSearch),
+            },
+            None,
+        );
+        assert_eq!(
+            &query_names(&catalog, &empty, "")[..4],
+            &["search", "add-task", "view-queue", "filter-clear"]
+        );
+        let clear_filter_empty = snapshot(
+            CommandSurfaceSnapshot::List {
+                primary_task_id: None,
+                marked_task_ids: vec![],
+                visible_task_ids: vec![],
+                focused_sidebar: None,
+                is_empty: true,
+                empty_preferred_action: Some(Action::ClearFilters),
+            },
+            None,
+        );
+        assert_eq!(
+            &query_names(&catalog, &clear_filter_empty, "")[..3],
+            &["filter-clear", "add-task", "search"]
+        );
+        let deleted_empty = snapshot(
+            CommandSurfaceSnapshot::List {
+                primary_task_id: None,
+                marked_task_ids: vec![],
+                visible_task_ids: vec![],
+                focused_sidebar: None,
+                is_empty: true,
+                empty_preferred_action: Some(Action::ToggleDeletedFilter),
+            },
+            None,
+        );
+        assert_eq!(
+            query_names(&catalog, &deleted_empty, "")[0],
+            "filter-deleted"
+        );
+
+        let neutral = snapshot(
+            CommandSurfaceSnapshot::List {
+                primary_task_id: None,
+                marked_task_ids: vec![],
+                visible_task_ids: vec![],
+                focused_sidebar: None,
+                is_empty: false,
+                empty_preferred_action: None,
+            },
+            None,
+        );
+        assert_eq!(
+            &query_names(&catalog, &neutral, "")[..4],
+            &["add-task", "search", "view-queue", "scope-project"]
+        );
+
+        let add_task_only = snapshot(CommandSurfaceSnapshot::AddTaskOnly, None);
+        assert_eq!(
+            query_names(&catalog, &add_task_only, ""),
+            &["add-task", "quit", "help", "config-show"]
+        );
+
+        let series_id = aven_core::recurrence::RecurrenceSeriesId::new();
+        let recurring = snapshot(
+            CommandSurfaceSnapshot::RecurrenceList {
+                focused_sidebar: None,
+                is_empty: false,
+                empty_preferred_action: None,
+            },
+            Some(series_id),
+        );
+        assert_eq!(
+            &query_names(&catalog, &recurring, "")[..4],
+            &[
+                "recurrence-edit-template",
+                "recurrence-pause",
+                "recurrence-resume",
+                "recurrence-stop"
+            ]
+        );
+
+        let relationship = snapshot(
+            CommandSurfaceSnapshot::Detail {
+                parent_task_id: parent_id.clone(),
+                marked_task_ids: Vec::new(),
+                focus: Some(DetailCommandFocus::Relationship {
+                    section: DetailSection::DependsOn,
+                    task_id: related_id,
+                }),
+                scroll: 0,
+            },
+            None,
+        );
+        assert_eq!(
+            &query_names(&catalog, &relationship, "")[..5],
+            &[
+                "status-picker",
+                "status-done",
+                "edit-title",
+                "copy-ref",
+                "copy-title"
+            ]
+        );
+    }
+
+    #[test]
+    fn text_tiers_precede_availability_and_context() {
+        use super::super::{CommandSurfaceSnapshot, DetailCommandFocus};
+
+        let parent_id = crate::test_support::task_id("text-tier-parent");
+        let snapshot = snapshot(
+            CommandSurfaceSnapshot::Detail {
+                parent_task_id: parent_id.clone(),
+                marked_task_ids: Vec::new(),
+                focus: Some(DetailCommandFocus::Attachment {
+                    attachment_id: "ATTACHMENT000002".to_string(),
+                    bytes_present: true,
+                }),
+                scroll: 0,
+            },
+            None,
+        );
+        let catalog = CommandCatalog::default();
+        let matches = catalog.query(CommandQuery {
+            input: "delete",
+            snapshot: &snapshot,
+            unavailable: &[],
+        });
+
+        assert_eq!(catalog.command(matches[0].index).unwrap().name(), "delete");
+        assert!(matches[0].availability.reason().is_some());
+        assert!(matches.iter().any(|candidate| {
+            catalog.command(candidate.index).unwrap().name() == "attachment-delete"
+                && candidate.availability == CommandAvailability::Ready
+        }));
+    }
+
+    #[test]
+    fn typed_queries_keep_commands_unavailable_in_the_captured_context() {
+        use super::super::CommandSurfaceSnapshot;
+
+        let task_id = crate::test_support::task_id("typed-disabled-target");
+        let snapshot = snapshot(
+            CommandSurfaceSnapshot::List {
+                primary_task_id: Some(task_id.clone()),
+                marked_task_ids: vec![],
+                visible_task_ids: vec![task_id.clone()],
+                focused_sidebar: None,
+                is_empty: false,
+                empty_preferred_action: None,
+            },
+            None,
+        );
+        let catalog = CommandCatalog::default();
+        assert!(
+            query_names(&catalog, &snapshot, "")
+                .iter()
+                .all(|name| name != "attachment-save")
+        );
+        let matches = catalog.query(CommandQuery {
+            input: "attachment-save",
+            snapshot: &snapshot,
+            unavailable: &[],
+        });
+        assert_eq!(
+            catalog.command(matches[0].index).unwrap().name(),
+            "attachment-save"
+        );
+        assert_eq!(
+            matches[0].availability.reason(),
+            Some("requires a focused attachment")
+        );
+        let done = query_names(&catalog, &snapshot, "done");
+        assert!(done.len() > 1);
+        assert!(done.iter().any(|name| name == "status-done"));
+    }
+
+    #[test]
+    fn attachment_domain_routes_status_and_save_without_conflict() {
+        let catalog = CommandCatalog::default();
+        assert_eq!(
+            catalog.resolve_shortcut_in_domain(RoutingDomain::DetailParent, &[KeyCode::Char('s')]),
+            CatalogShortcutLookup::Found(CommandHandler::BuiltIn(Action::BeginStatusPicker))
+        );
+        assert_eq!(
+            catalog.resolve_shortcut_in_domain(RoutingDomain::DetailRelated, &[KeyCode::Char('s')]),
+            CatalogShortcutLookup::Found(CommandHandler::BuiltIn(Action::BeginStatusPicker))
+        );
+        assert_eq!(
+            catalog
+                .resolve_shortcut_in_domain(RoutingDomain::DetailAttachment, &[KeyCode::Char('s')]),
+            CatalogShortcutLookup::Found(CommandHandler::BuiltIn(Action::SaveAttachment))
+        );
+    }
+
+    #[test]
+    fn routing_domains_filter_prefix_hints_and_preserve_exact_prefix_precedence() {
+        let catalog = CommandCatalog::default();
+        assert!(
+            catalog
+                .prefix_hints_in_domain(RoutingDomain::DetailAttachment, &["t".to_string()])
+                .is_empty()
+        );
+        assert!(
+            catalog
+                .prefix_hints_in_domain(RoutingDomain::DetailRelated, &["t".to_string()])
+                .iter()
+                .any(|(command, _)| command.name() == "remove-dependency")
+        );
+
+        let mut short = custom();
+        short.name = "short".to_string();
+        short.keys = vec!["z".to_string()];
+        let mut long = custom();
+        long.name = "long".to_string();
+        long.keys = vec!["z x".to_string()];
+        validate_custom_command_keys(&[short.clone(), long.clone()]).unwrap();
+        let catalog = CommandCatalog::new(vec![short, long]);
+        assert_eq!(
+            catalog.resolve_shortcut_in_domain(RoutingDomain::Normal, &[KeyCode::Char('z')]),
+            CatalogShortcutLookup::Ambiguous(CommandHandler::Custom(0))
+        );
+        assert_eq!(
+            catalog.resolve_shortcut_in_domain(
+                RoutingDomain::Normal,
+                &[KeyCode::Char('z'), KeyCode::Char('x')]
+            ),
+            CatalogShortcutLookup::Found(CommandHandler::Custom(1))
         );
     }
 
@@ -758,18 +1279,20 @@ mod tests {
         let catalog = CommandCatalog::new(vec![command]);
 
         assert_eq!(
-            catalog.resolve_shortcut(
+            resolve_catalog_shortcut(
+                &catalog,
                 CommandContext::Normal,
                 &[KeyCode::Char('z'), KeyCode::Char('d')]
             ),
             CatalogShortcutLookup::Found(CommandHandler::Custom(0))
         );
         assert_eq!(
-            catalog.resolve_shortcut(CommandContext::Detail, &[KeyCode::Char('Z')]),
+            resolve_catalog_shortcut(&catalog, CommandContext::Detail, &[KeyCode::Char('Z')]),
             CatalogShortcutLookup::Found(CommandHandler::Custom(0))
         );
         assert_eq!(
-            catalog.resolve_shortcut(
+            resolve_catalog_shortcut(
+                &catalog,
                 CommandContext::Detail,
                 &[KeyCode::Char('z'), KeyCode::Char('d')]
             ),
