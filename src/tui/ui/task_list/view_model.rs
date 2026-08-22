@@ -103,7 +103,7 @@ impl TaskListView {
         let rows = match render_mode {
             TaskListRenderMode::Queue => queue_rows(tasks),
             TaskListRenderMode::Upcoming => upcoming_rows(tasks, crate::queue::now_seconds()),
-            TaskListRenderMode::Flat | TaskListRenderMode::Columns => task_rows(tasks),
+            TaskListRenderMode::Flat => task_rows(tasks),
             TaskListRenderMode::Epics => epics_rows(tasks, expanded_epic_ids),
         };
         Self { rows, render_mode }

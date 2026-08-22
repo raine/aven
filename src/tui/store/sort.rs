@@ -1,16 +1,16 @@
 use anyhow::Result;
 
-use super::{TaskOrder, TaskView, TuiStore};
+use super::{TaskOrder, TaskQuery, TuiStore};
 
 impl TuiStore {
     pub(crate) fn sort_label(&self) -> &'static str {
-        if self.view_state.view == TaskView::Queue {
+        if self.view_state.query == TaskQuery::Queue {
             return "ranked";
         }
-        if self.view_state.view == TaskView::Search {
+        if self.view_state.query == TaskQuery::Search {
             return "relevance";
         }
-        if self.view_state.view == TaskView::Upcoming {
+        if self.view_state.query == TaskQuery::Upcoming {
             return "available";
         }
         match self.view_state.order {

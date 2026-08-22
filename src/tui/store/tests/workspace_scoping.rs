@@ -10,7 +10,7 @@ async fn default_startup_opens_all_projects() {
         .await
         .unwrap();
 
-    assert_eq!(reopened.view_state.view, TaskView::Queue);
+    assert_eq!(reopened.view_state.query, TaskQuery::Queue);
     assert_eq!(reopened.view_state.scope, TaskScope::Workspace);
     assert_eq!(reopened.tasks.len(), 1);
 }
@@ -48,7 +48,7 @@ async fn initial_project_opens_project_view() {
         reopened.view_state.scope,
         TaskScope::Project("mobile-app".to_string())
     );
-    assert_eq!(reopened.view_state.view, TaskView::Queue);
+    assert_eq!(reopened.view_state.query, TaskQuery::Queue);
     assert_eq!(reopened.tasks.len(), 1);
     assert_eq!(reopened.tasks[0].task.title, "mobile task");
 }
@@ -267,7 +267,7 @@ async fn switch_workspace_refreshes_workspace_scoped_state() {
     drop(conn);
 
     store.view_state.scope = TaskScope::Project("missing".to_string());
-    store.show_view(TaskView::Todo).await.unwrap();
+    store.show_view(TaskQuery::Todo).await.unwrap();
     store.view_state.filter_modifiers.label = Some("default-label".to_string());
     store.view_state.filter_modifiers.priority = Some("urgent".to_string());
     store.view_state.projection_origin =
@@ -281,7 +281,7 @@ async fn switch_workspace_refreshes_workspace_scoped_state() {
     assert!(selected.is_none());
     assert_eq!(store.active_workspace.key, "client-work");
     assert_eq!(store.view_state.scope, TaskScope::Workspace);
-    assert_eq!(store.view_state.view, TaskView::Todo);
+    assert_eq!(store.view_state.query, TaskQuery::Todo);
     assert_eq!(
         store.view_state.projection_origin,
         super::super::TaskProjectionOrigin::NamedView

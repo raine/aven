@@ -18,7 +18,7 @@ async fn create_epic_child_pair(store: &mut TuiStore) -> (TaskId, TaskId, usize)
     .unwrap();
     drop(conn);
 
-    store.view_state.view = TaskView::Epics;
+    store.view_state.query = TaskQuery::Epics;
     store.refresh(Some(&parent_id)).await.unwrap();
     let parent_index = store
         .tasks
@@ -55,7 +55,7 @@ async fn epics_view_closed_filter_includes_and_isolates_closed_epics() {
         .unwrap();
     store.update_status(closed_selected, "done").await.unwrap();
 
-    store.show_view(TaskView::Epics).await.unwrap();
+    store.show_view(TaskQuery::Epics).await.unwrap();
 
     assert_eq!(store.counts.epics, 1);
     assert_eq!(
@@ -162,7 +162,7 @@ async fn toggle_epic_expands_and_collapses_parent() {
 async fn status_change_from_collapsed_epic_selects_remaining_row() {
     let mut store = test_store().await;
     let (first_parent_id, _, _) = create_epic_child_pair(&mut store).await;
-    store.show_view(TaskView::Queue).await.unwrap();
+    store.show_view(TaskQuery::Queue).await.unwrap();
     let (second_parent_id, _, _) = create_epic_child_pair(&mut store).await;
     let first_parent = store
         .tasks
@@ -391,7 +391,7 @@ async fn remove_completed_epic_child() {
         .update_status(Some(child_index), "done")
         .await
         .unwrap();
-    store.view_state.view = TaskView::Epics;
+    store.view_state.query = TaskQuery::Epics;
     store.refresh(None).await.unwrap();
     let child_index = store
         .tasks

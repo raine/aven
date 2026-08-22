@@ -53,7 +53,7 @@ async fn create_task_assigns_tui_source() {
 #[tokio::test]
 async fn create_task_reports_hidden_by_filters() {
     let mut store = test_store().await;
-    store.show_view(TaskView::Todo).await.unwrap();
+    store.show_view(TaskQuery::Todo).await.unwrap();
     let (message, selected) = store
         .create_task(task_draft("Inbox task"), None)
         .await
@@ -76,7 +76,7 @@ async fn create_task_preserves_previous_selection_when_hidden() {
         .update_status(Some(first_selected), "todo")
         .await
         .unwrap();
-    store.show_view(TaskView::Todo).await.unwrap();
+    store.show_view(TaskQuery::Todo).await.unwrap();
     let current_index = store.refresh(Some(&task_id)).await.unwrap();
 
     let (_, selected) = store
@@ -95,7 +95,7 @@ async fn queue_status_change_keeps_selection_at_ranked_position() {
     for title in ["First", "Selected", "Third"] {
         create_selected_task(&mut store, title).await;
     }
-    store.show_view(TaskView::Queue).await.unwrap();
+    store.show_view(TaskQuery::Queue).await.unwrap();
     let selected = 1;
     let selected_id = store.tasks[selected].task.id.clone();
 
@@ -123,7 +123,7 @@ async fn filtered_status_change_selects_successor_then_previous_at_end() {
         let (_, selected) = create_selected_task(&mut store, title).await;
         store.update_status(Some(selected), "todo").await.unwrap();
     }
-    store.show_view(TaskView::Todo).await.unwrap();
+    store.show_view(TaskQuery::Todo).await.unwrap();
     let second = 1;
     let predecessor_id = store.tasks[second - 1].task.id.clone();
     let successor_id = store.tasks[second + 1].task.id.clone();
@@ -151,7 +151,7 @@ async fn unchanged_status_keeps_selected_task_at_its_position() {
     for title in ["First", "Selected", "Third"] {
         create_selected_task(&mut store, title).await;
     }
-    store.show_view(TaskView::Queue).await.unwrap();
+    store.show_view(TaskQuery::Queue).await.unwrap();
     let selected = 1;
     let selected_id = store.tasks[selected].task.id.clone();
 
@@ -171,7 +171,7 @@ async fn marked_status_change_keeps_selection_at_ranked_position() {
     for title in ["First", "Selected", "Third", "Fourth"] {
         create_selected_task(&mut store, title).await;
     }
-    store.show_view(TaskView::Queue).await.unwrap();
+    store.show_view(TaskQuery::Queue).await.unwrap();
     let selected = 2;
     let targets = vec![
         store.tasks[0].task.id.clone(),
@@ -194,7 +194,7 @@ async fn preserving_status_change_follows_task_after_queue_reorder() {
     for title in ["First", "Selected", "Third"] {
         create_selected_task(&mut store, title).await;
     }
-    store.show_view(TaskView::Queue).await.unwrap();
+    store.show_view(TaskQuery::Queue).await.unwrap();
     let selected = 1;
     let selected_id = store.tasks[selected].task.id.clone();
 
@@ -238,7 +238,7 @@ async fn update_status_preserving_task_keeps_done_item_in_filtered_view() {
     let selected = selected.unwrap();
     let task_id = store.tasks[selected].task.id.clone();
 
-    store.show_view(TaskView::Todo).await.unwrap();
+    store.show_view(TaskQuery::Todo).await.unwrap();
     let selected = store
         .tasks
         .iter()

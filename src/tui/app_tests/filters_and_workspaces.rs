@@ -184,7 +184,7 @@ async fn upcoming_view_shortcut_selects_upcoming() {
     app.handle_normal_key(KeyCode::Char('v')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
 
-    assert_eq!(app.store.view_state.view, TaskView::Upcoming);
+    assert_eq!(app.store.view_state.query, TaskQuery::Upcoming);
 }
 
 #[tokio::test]
@@ -232,7 +232,7 @@ async fn done_view_shortcut_keeps_project_scope() {
         app.store.view_state.scope,
         TaskScope::Project("mobile-app".to_string())
     );
-    assert_eq!(app.store.view_state.view, TaskView::Done);
+    assert_eq!(app.store.view_state.query, TaskQuery::Done);
     assert_eq!(app.store.tasks.len(), 1);
     assert_eq!(app.store.tasks[0].task.title, "Mobile done");
     assert_eq!(toast_message(&app), None);
@@ -529,12 +529,12 @@ async fn switch_workspace_shortcut_opens_picker() {
 async fn refresh_reports_invalid_project_scope_fallback() {
     let mut app = test_app().await;
     app.store.view_state.scope = TaskScope::Project("missing".to_string());
-    app.store.view_state.view = TaskView::Todo;
+    app.store.view_state.query = TaskQuery::Todo;
 
     app.refresh().await.unwrap();
 
     assert_eq!(app.store.view_state.scope, TaskScope::Workspace);
-    assert_eq!(app.store.view_state.view, TaskView::Todo);
+    assert_eq!(app.store.view_state.query, TaskQuery::Todo);
     assert_eq!(
         toast_message(&app).as_deref(),
         Some("project scope missing is no longer available")
@@ -554,14 +554,14 @@ async fn switch_workspace_changes_active_workspace() {
     drop(conn);
     app.refresh().await.unwrap();
 
-    app.store.view_state.view = TaskView::Todo;
+    app.store.view_state.query = TaskQuery::Todo;
 
     app.submit_switch_workspace(vec!["client-work".to_string()])
         .await
         .unwrap();
 
     assert_eq!(app.store.active_workspace.key, "client-work");
-    assert_eq!(app.store.view_state.view, TaskView::Todo);
+    assert_eq!(app.store.view_state.query, TaskQuery::Todo);
     assert!(app.store.tasks.is_empty());
     assert!(app.overlay.is_none());
     assert_eq!(toast_message(&app), None);
@@ -572,12 +572,12 @@ async fn switch_workspace_changes_active_workspace() {
 #[tokio::test]
 async fn clear_filters_shortcut_resets_default_view_without_notification() {
     let mut app = test_app().await;
-    app.store.view_state.view = TaskView::Todo;
+    app.store.view_state.query = TaskQuery::Todo;
 
     app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
 
-    assert_eq!(app.store.view_state.view, TaskView::Todo);
+    assert_eq!(app.store.view_state.query, TaskQuery::Todo);
     assert_eq!(toast_message(&app), None);
 }
 
@@ -588,8 +588,8 @@ async fn go_conflicts_shortcut_sets_conflicts_view() {
     app.handle_normal_key(KeyCode::Char('v')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
 
-    assert_eq!(app.store.view_state.view, TaskView::Conflicts);
-    assert_eq!(app.store.view_state.view, TaskView::Conflicts);
+    assert_eq!(app.store.view_state.query, TaskQuery::Conflicts);
+    assert_eq!(app.store.view_state.query, TaskQuery::Conflicts);
 }
 
 #[tokio::test]
@@ -662,7 +662,7 @@ async fn header_click_opens_view_menu_and_selects_view() {
                 column,
                 0,
             ) {
-                Some(crate::tui::ui::HeaderTarget::View {
+                Some(crate::tui::ui::HeaderTarget::Query {
                     column: menu_column,
                 }) => Some((column, menu_column)),
                 _ => None,
@@ -684,14 +684,14 @@ async fn header_click_opens_view_menu_and_selects_view() {
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: menu_column.saturating_add(2),
-            row: 5,
+            row: 6,
             modifiers: KeyModifiers::NONE,
         },
         (140, 24).into(),
     )
     .await
     .unwrap();
-    assert_eq!(app.store.view_state.view, TaskView::Inbox);
+    assert_eq!(app.store.view_state.query, TaskQuery::Inbox);
     assert!(app.overlay.is_none());
     assert_eq!(toast_message(&app), None);
 }
@@ -781,45 +781,45 @@ async fn header_click_opens_workspace_menu_when_more_than_two_are_available() {
 async fn header_metric_click_still_selects_view_directly() {
     let mut app = test_app().await;
 
-    let queue_column = (0..140)
+    let queue_column = (0..180)
         .find(|column| {
             matches!(
                 crate::tui::ui::header_target_at(
                     &app.store,
                     None,
-                    ratatui::layout::Rect::new(0, 0, 140, 2),
+                    ratatui::layout::Rect::new(0, 0, 180, 2),
                     *column,
                     0,
                 ),
-                Some(crate::tui::ui::HeaderTarget::MetricView(TaskView::Queue))
+                Some(crate::tui::ui::HeaderTarget::MetricView(TaskQuery::Queue))
             )
         })
         .unwrap();
-    app.dispatch_mouse(header_click(queue_column), (140, 24).into())
+    app.dispatch_mouse(header_click(queue_column), (180, 24).into())
         .await
         .unwrap();
-    assert_eq!(app.store.view_state.view, TaskView::Queue);
+    assert_eq!(app.store.view_state.query, TaskQuery::Queue);
     assert_eq!(toast_message(&app), None);
 
     let mut app = test_app().await;
-    let inbox_column = (0..140)
+    let inbox_column = (0..180)
         .find(|column| {
             matches!(
                 crate::tui::ui::header_target_at(
                     &app.store,
                     None,
-                    ratatui::layout::Rect::new(0, 0, 140, 2),
+                    ratatui::layout::Rect::new(0, 0, 180, 2),
                     *column,
                     0,
                 ),
-                Some(crate::tui::ui::HeaderTarget::MetricView(TaskView::Inbox))
+                Some(crate::tui::ui::HeaderTarget::MetricView(TaskQuery::Inbox))
             )
         })
         .unwrap();
-    app.dispatch_mouse(header_click(inbox_column), (140, 24).into())
+    app.dispatch_mouse(header_click(inbox_column), (180, 24).into())
         .await
         .unwrap();
-    assert_eq!(app.store.view_state.view, TaskView::Inbox);
+    assert_eq!(app.store.view_state.query, TaskQuery::Inbox);
 }
 
 #[tokio::test]
@@ -879,7 +879,7 @@ async fn header_click_opens_order_menu_and_selects_order() {
     .await
     .unwrap();
 
-    assert_eq!(app.store.view_state.view, TaskView::Open);
+    assert_eq!(app.store.view_state.query, TaskQuery::Open);
     assert_eq!(app.store.view_state.order, TaskOrder::Project);
     assert!(app.overlay.is_none());
     assert_eq!(toast_message(&app), None);
@@ -894,7 +894,7 @@ async fn header_click_ignores_capturing_overlay() {
         .await
         .unwrap();
 
-    assert_eq!(app.store.view_state.view, TaskView::Queue);
+    assert_eq!(app.store.view_state.query, TaskQuery::Queue);
     assert!(matches!(app.overlay, Some(OverlayState::Search(_))));
 }
 

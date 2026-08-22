@@ -105,6 +105,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::ToggleClosedFilter
             | Action::ToggleDeletedFilter
             | Action::CycleRecurringLifecycleFilter
+            | Action::SetLayout(_)
             | Action::ShowView(_)
             | Action::ShowWorkspaceScope
             | Action::BeginConflictList
@@ -137,7 +138,7 @@ mod tests {
     use crossterm::event::KeyCode;
 
     use crate::choices::{TaskPriority, TaskStatus};
-    use crate::tui::store::TaskView;
+    use crate::tui::store::TaskQuery;
 
     use super::*;
 
@@ -299,7 +300,7 @@ mod tests {
         );
         assert_eq!(Action::ClearMarks.bulk_support(), BulkSupport::BulkControl);
         assert_eq!(
-            Action::ShowView(TaskView::Open).bulk_support(),
+            Action::ShowView(TaskQuery::Open).bulk_support(),
             BulkSupport::NotTaskScoped
         );
     }
@@ -564,7 +565,7 @@ mod tests {
 
         assert_eq!(command.description, "show upcoming task view");
         assert_eq!(command.section, "Views");
-        assert_eq!(command.action, Action::ShowView(TaskView::Upcoming));
+        assert_eq!(command.action, Action::ShowView(TaskQuery::Upcoming));
         assert_eq!(
             command
                 .keys(CommandContext::Normal)
@@ -579,7 +580,7 @@ mod tests {
     fn resolves_upcoming_view_shortcut() {
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('p')]),
-            ShortcutLookup::Found(Action::ShowView(TaskView::Upcoming))
+            ShortcutLookup::Found(Action::ShowView(TaskQuery::Upcoming))
         );
     }
 
@@ -1210,19 +1211,21 @@ mod tests {
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('q')]),
-            ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskView::Queue))
+            ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskQuery::Queue))
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('e')]),
-            ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskView::Epics))
+            ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskQuery::Epics))
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('r')]),
-            ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskView::RecentActions))
+            ShortcutLookup::Found(Action::ShowView(
+                crate::tui::store::TaskQuery::RecentActions
+            ))
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('s')]),
-            ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskView::Search))
+            ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskQuery::Search))
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('p')]),

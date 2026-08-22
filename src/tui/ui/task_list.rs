@@ -129,7 +129,7 @@ pub(crate) fn task_at_position(
     column: u16,
     row: u16,
 ) -> Option<TaskListHit> {
-    if store.view_state.render_mode() == TaskListRenderMode::Columns {
+    if store.view_state.is_columns() {
         return super::columns::column_task_at_position(store, table_state, area, column, row);
     }
     let table_area = task_list_areas(area).table_area;
@@ -146,7 +146,7 @@ pub(crate) fn task_status_at_position(
     column: u16,
     row: u16,
 ) -> Option<TaskListHit> {
-    if store.view_state.render_mode() == TaskListRenderMode::Columns {
+    if store.view_state.is_columns() {
         return None;
     }
     let table_area = task_list_areas(area).table_area;
@@ -1575,7 +1575,7 @@ mod tests {
     use crate::choices::TaskPriority;
     use crate::operations::TaskDraft;
     use crate::tui::overlay::TextInputKind;
-    use crate::tui::store::{ClosedTaskVisibility, TaskProjectionOrigin, TaskScope, TaskView};
+    use crate::tui::store::{ClosedTaskVisibility, TaskProjectionOrigin, TaskQuery, TaskScope};
     use crate::tui::test_support::task_list_item;
     use chrono::TimeZone;
     use ratatui::Terminal;
@@ -1744,7 +1744,7 @@ mod tests {
                 .insert(parent.task.id.clone());
         }
         store.tasks = vec![parent, child];
-        store.view_state.view = TaskView::Epics;
+        store.view_state.query = TaskQuery::Epics;
         store
     }
 
@@ -1783,7 +1783,7 @@ mod tests {
     #[tokio::test]
     async fn empty_epics_view_teaches_closed_filter() {
         let mut store = test_store_with_tasks(Vec::new()).await;
-        store.view_state.view = TaskView::Epics;
+        store.view_state.query = TaskQuery::Epics;
 
         let state = crate::tui::ui::empty_state::task_empty_state(&store);
 
@@ -2012,31 +2012,31 @@ mod tests {
 
         let mut store = test_store_with_tasks(Vec::new()).await;
         let named_views = [
-            TaskView::Queue,
-            TaskView::Columns,
-            TaskView::Open,
-            TaskView::Inbox,
-            TaskView::Active,
-            TaskView::Backlog,
-            TaskView::Todo,
-            TaskView::Done,
-            TaskView::Upcoming,
-            TaskView::Conflicts,
-            TaskView::Epics,
+            TaskQuery::Queue,
+            TaskQuery::All,
+            TaskQuery::Open,
+            TaskQuery::Inbox,
+            TaskQuery::Active,
+            TaskQuery::Backlog,
+            TaskQuery::Todo,
+            TaskQuery::Done,
+            TaskQuery::Upcoming,
+            TaskQuery::Conflicts,
+            TaskQuery::Epics,
         ];
         for view in named_views {
-            store.view_state.view = view;
+            store.view_state.query = view;
             let state = task_empty_state(&store);
             assert!(!state.title.is_empty(), "missing title for {view:?}");
             assert!(state.action.is_some(), "missing action for {view:?}");
         }
 
         store.view_state.scope = TaskScope::Project("app".to_string());
-        store.view_state.view = TaskView::Queue;
+        store.view_state.query = TaskQuery::Queue;
         assert_eq!(task_empty_state(&store).title, "No tasks in this project");
 
         store.view_state.scope = TaskScope::Workspace;
-        store.view_state.view = TaskView::Search;
+        store.view_state.query = TaskQuery::Search;
         store.view_state.projection_origin = TaskProjectionOrigin::SearchPrompt;
         assert_eq!(task_empty_state(&store).title, "Search tasks");
 
@@ -2068,14 +2068,14 @@ mod tests {
         );
 
         store.view_state.filter_modifiers = Default::default();
-        store.view_state.view = TaskView::Queue;
+        store.view_state.query = TaskQuery::Queue;
         store.counts.upcoming = 2;
         assert_eq!(
             task_empty_state(&store).reason,
             EmptyStateReason::DeferredTasks
         );
 
-        store.view_state.view = TaskView::Recurring;
+        store.view_state.query = TaskQuery::Recurring;
         store.view_state.recurring.lifecycle =
             crate::query::RecurrenceSeriesLifecycleFilter::Stopped;
         assert_eq!(
@@ -2083,7 +2083,7 @@ mod tests {
             EmptyStateReason::RecurrenceLifecycle
         );
 
-        store.view_state.view = TaskView::RecentActions;
+        store.view_state.query = TaskQuery::RecentActions;
         assert_eq!(
             recent_actions_empty_state(&store).reason,
             EmptyStateReason::RecentActions

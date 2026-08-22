@@ -243,7 +243,7 @@ impl App {
 
     async fn accept_search_input(&mut self, input: String) -> Result<()> {
         let previous = self.store.view_state.clone();
-        let selected = if self.store.view_state.view == crate::tui::store::TaskView::Recurring {
+        let selected = if self.store.view_state.query == crate::tui::store::TaskQuery::Recurring {
             let selected_id = self
                 .store
                 .selected_recurrence_series(self.list.selected_task())
@@ -452,7 +452,7 @@ impl App {
     }
 
     pub(super) fn schedule_search_preview(&mut self, state: &mut SearchState) {
-        if self.store.view_state.view == crate::tui::store::TaskView::Recurring {
+        if self.store.view_state.query == crate::tui::store::TaskQuery::Recurring {
             state.clear_results();
             self.clear_live_search_preview();
             return;

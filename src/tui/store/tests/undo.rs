@@ -130,7 +130,7 @@ async fn partially_unchanged_batch_undo_presentation_uses_changed_scope() {
 #[tokio::test]
 async fn undo_presentation_resolves_task_hidden_by_mutation() {
     let mut store = test_store().await;
-    store.view_state.view = TaskView::Inbox;
+    store.view_state.query = TaskQuery::Inbox;
     store.refresh(None).await.unwrap();
     let (_task_id, selected) = create_selected_task(&mut store, "Leaves inbox").await;
     let display_ref = store.tasks[selected].display_ref.clone();

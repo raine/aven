@@ -31,7 +31,7 @@ async fn availability_transition_refreshes_tasks_sidebar_and_project_counts() {
     assert_eq!(project.open_count, 0);
     assert_eq!(project.inbox_count, 0);
 
-    store.show_view(TaskView::Upcoming).await.unwrap();
+    store.show_view(TaskQuery::Upcoming).await.unwrap();
     assert_eq!(store.tasks.len(), 1);
     assert_eq!(store.tasks[0].task.title, "Scheduled store task");
     let task_id = store.tasks[0].task.id.clone();
@@ -44,7 +44,7 @@ async fn availability_transition_refreshes_tasks_sidebar_and_project_counts() {
         .unwrap();
     drop(conn);
 
-    store.show_view(TaskView::Queue).await.unwrap();
+    store.show_view(TaskQuery::Queue).await.unwrap();
 
     assert_eq!(store.tasks.len(), 1);
     assert_eq!(store.tasks[0].task.id, task_id);
@@ -91,7 +91,7 @@ async fn clear_filters_preserves_view_scope_and_order() {
         .show_scope(TaskScopeTarget::Project("mobile-app".to_string()))
         .await
         .unwrap();
-    store.show_view(TaskView::Todo).await.unwrap();
+    store.show_view(TaskQuery::Todo).await.unwrap();
     store.view_state.order = TaskOrder::Priority;
     store.view_state.direction = SortDirection::Desc;
     store.view_state.filter_modifiers.label = Some("backend".to_string());
@@ -106,7 +106,7 @@ async fn clear_filters_preserves_view_scope_and_order() {
         store.view_state.scope,
         TaskScope::Project("mobile-app".to_string())
     );
-    assert_eq!(store.view_state.view, TaskView::Todo);
+    assert_eq!(store.view_state.query, TaskQuery::Todo);
     assert_eq!(store.view_state.order, TaskOrder::Priority);
     assert_eq!(store.view_state.direction, SortDirection::Desc);
     assert!(store.view_state.filter_modifiers.label.is_none());
@@ -120,9 +120,9 @@ async fn clear_filters_preserves_view_scope_and_order() {
 async fn show_conflicts_view_sets_conflicts_view() {
     let mut store = test_store().await;
 
-    store.show_view(TaskView::Conflicts).await.unwrap();
+    store.show_view(TaskQuery::Conflicts).await.unwrap();
 
-    assert_eq!(store.view_state.view, TaskView::Conflicts);
+    assert_eq!(store.view_state.query, TaskQuery::Conflicts);
     assert!(store.view_state.filters().conflicts_only);
 }
 
@@ -135,7 +135,7 @@ async fn queue_view_hides_done_tasks() {
         .unwrap();
     store.update_status(selected, "done").await.unwrap();
 
-    store.show_view(TaskView::Queue).await.unwrap();
+    store.show_view(TaskQuery::Queue).await.unwrap();
 
     assert!(
         store
@@ -145,7 +145,7 @@ async fn queue_view_hides_done_tasks() {
     );
     assert_eq!(store.counts.done, 1);
     assert!(store.sidebar_entries.iter().any(|entry| {
-        entry.target == Some(SidebarEntryTarget::View(TaskView::Done)) && entry.count == 1
+        entry.target == Some(SidebarEntryTarget::View(TaskQuery::Done)) && entry.count == 1
     }));
 }
 
@@ -178,7 +178,7 @@ async fn project_scope_hides_done_and_canceled_tasks_in_open_view() {
         .show_scope(TaskScopeTarget::Project("mobile-app".to_string()))
         .await
         .unwrap();
-    store.show_view(TaskView::Open).await.unwrap();
+    store.show_view(TaskQuery::Open).await.unwrap();
 
     let filters = store.view_state.filters();
     assert_eq!(filters.project.as_deref(), Some("mobile-app"));
@@ -203,7 +203,7 @@ async fn done_view_shows_done_tasks() {
     let selected = selected.unwrap();
     store.update_status(Some(selected), "done").await.unwrap();
 
-    store.show_view(TaskView::Done).await.unwrap();
+    store.show_view(TaskQuery::Done).await.unwrap();
 
     assert_eq!(
         store.view_state.filters().statuses,
@@ -269,7 +269,7 @@ async fn search_view_submitted_search_hides_deleted_ordinary_text_results() {
         .collect::<Vec<_>>();
     assert_eq!(ids, vec![live_id.as_str()]);
     assert!(!ids.contains(&deleted_id.as_str()));
-    assert_eq!(store.view_state.view, TaskView::Search);
+    assert_eq!(store.view_state.query, TaskQuery::Search);
 }
 
 #[tokio::test]
@@ -277,7 +277,7 @@ async fn search_view_without_query_has_an_empty_prompt_projection() {
     let mut store = test_store().await;
     create_search_task(&mut store, "Existing task").await;
 
-    store.show_view(TaskView::Search).await.unwrap();
+    store.show_view(TaskQuery::Search).await.unwrap();
 
     assert!(store.tasks.is_empty());
     assert_eq!(
@@ -294,7 +294,7 @@ async fn search_view_keeps_zero_result_restriction() {
     store.accept_search("missing phrase").await.unwrap();
 
     assert!(store.tasks.is_empty());
-    assert_eq!(store.view_state.view, TaskView::Search);
+    assert_eq!(store.view_state.query, TaskQuery::Search);
     assert!(matches!(
         &store.view_state.projection_origin,
         super::super::TaskProjectionOrigin::Search { query, task_ids }
@@ -437,13 +437,13 @@ async fn search_view_finds_done_tasks_from_queue() {
         .await
         .unwrap();
     store.update_status(selected, "done").await.unwrap();
-    store.show_view(TaskView::Queue).await.unwrap();
+    store.show_view(TaskQuery::Queue).await.unwrap();
     assert!(store.tasks.is_empty());
 
     store.accept_search("spotlight needle").await.unwrap();
 
     assert_eq!(store.view_state.scope, TaskScope::Workspace);
-    assert_eq!(store.view_state.view, TaskView::Search);
+    assert_eq!(store.view_state.query, TaskQuery::Search);
     assert_eq!(store.tasks.len(), 1);
     assert_eq!(store.tasks[0].task.title, "Finished spotlight needle");
 }
@@ -460,7 +460,7 @@ async fn closed_filter_reuses_visibility_cycle_for_tasks() {
         .await
         .unwrap();
     store.update_status(selected, "done").await.unwrap();
-    store.show_view(TaskView::Queue).await.unwrap();
+    store.show_view(TaskQuery::Queue).await.unwrap();
 
     assert_eq!(store.tasks.len(), 1);
     assert_eq!(store.tasks[0].task.title, "Open task");
@@ -531,23 +531,23 @@ async fn ordering_from_queue_switches_to_open() {
     let mut store = test_store().await;
 
     store.set_order(TaskOrder::Priority).await.unwrap();
-    assert_eq!(store.view_state.view, TaskView::Open);
+    assert_eq!(store.view_state.query, TaskQuery::Open);
     assert_eq!(store.view_state.order, TaskOrder::Priority);
     assert_eq!(store.view_state.direction, SortDirection::Asc);
 
     store.reverse_sort().await.unwrap();
-    assert_eq!(store.view_state.view, TaskView::Open);
+    assert_eq!(store.view_state.query, TaskQuery::Open);
     assert_eq!(store.view_state.direction, SortDirection::Desc);
 }
 
 #[tokio::test]
 async fn upcoming_keeps_availability_as_effective_order() {
     let mut store = test_store().await;
-    store.show_view(TaskView::Upcoming).await.unwrap();
+    store.show_view(TaskQuery::Upcoming).await.unwrap();
     store.set_order(TaskOrder::DueOn).await.unwrap();
     store.reverse_sort().await.unwrap();
 
-    assert_eq!(store.view_state.view, TaskView::Upcoming);
+    assert_eq!(store.view_state.query, TaskQuery::Upcoming);
     assert_eq!(store.view_state.sort(), crate::query::TaskSort::AvailableAt);
     assert_eq!(store.view_state.sort_direction(), SortDirection::Asc);
     assert_eq!(store.sort_label(), "available");
@@ -559,7 +559,7 @@ async fn timestamp_orders_default_to_descending_and_can_toggle() {
     let mut store = test_store().await;
 
     store.set_order(TaskOrder::Updated).await.unwrap();
-    assert_eq!(store.view_state.view, TaskView::Open);
+    assert_eq!(store.view_state.query, TaskQuery::Open);
     assert_eq!(store.view_state.order, TaskOrder::Updated);
     assert_eq!(store.view_state.direction, SortDirection::Desc);
 

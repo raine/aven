@@ -225,7 +225,7 @@ Set `AVEN_NO_UPDATE_CHECK=1` to disable automatic checks for one environment. Th
 
 ## TUI columns
 
-The Columns view groups Aven's semantic statuses into named lanes. Names and order are presentation settings. Task status values remain `inbox`, `backlog`, `todo`, `active`, `done`, and `canceled` across the CLI, sync, queue, dependencies, and agent workflows.
+The columns layout groups Aven's semantic statuses into named lanes. Names and order are presentation settings. Task status values remain `inbox`, `backlog`, `todo`, `active`, `done`, and `canceled` across the CLI, sync, queue, dependencies, and agent workflows.
 
 The default board keeps every status visible:
 

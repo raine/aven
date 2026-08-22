@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::tui::app::{App, TaskCopyKind, TaskRefKind};
 use crate::tui::conflict_flow::ConflictResolutionChoice;
 use crate::tui::event::Action;
-use crate::tui::store::TaskView;
+use crate::tui::store::TaskQuery;
 
 impl App {
     pub(in crate::tui) async fn execute(&mut self, action: Action) -> Result<()> {
@@ -49,7 +49,7 @@ impl App {
             Action::ToggleSidebar => self.toggle_sidebar(),
             Action::ToggleDetail => self.activate_or_toggle_detail().await?,
             Action::ToggleColumnsPreview => {
-                if self.store.view_state.view == crate::tui::store::TaskView::Columns {
+                if self.store.view_state.is_columns() {
                     self.store.columns_preview_visible = !self.store.columns_preview_visible;
                 }
             }
@@ -115,7 +115,7 @@ impl App {
             Action::ToggleClosedFilter => self.toggle_closed_filter().await?,
             Action::ToggleDeletedFilter => self.toggle_deleted_filter().await?,
             Action::CycleRecurringLifecycleFilter => {
-                if self.store.view_state.view == TaskView::Recurring {
+                if self.store.view_state.query == TaskQuery::Recurring {
                     let selected_id = self
                         .store
                         .selected_recurrence_series(self.list.selected_task())
@@ -129,6 +129,7 @@ impl App {
                     self.set_warning("recurring lifecycle filter is available in Recurring Tasks");
                 }
             }
+            Action::SetLayout(layout) => self.set_layout(layout),
             Action::ShowView(view) => self.show_view(view).await?,
             Action::ShowWorkspaceScope => {
                 self.show_scope(crate::tui::store::TaskScopeTarget::Workspace)

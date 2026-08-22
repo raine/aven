@@ -4,7 +4,7 @@ use crate::tui::app::App;
 use crate::tui::overlay::{
     HeaderMenuAction, HeaderMenuItem, HeaderMenuKind, OverlayState, PickerIntent,
 };
-use crate::tui::store::{TaskOrder, TaskScope, TaskScopeTarget, TaskView};
+use crate::tui::store::{TaskLayout, TaskOrder, TaskQuery, TaskScope, TaskScopeTarget};
 
 pub(crate) const FILTER_LABEL_TITLE: &str = "Filter: label";
 pub(crate) const FILTER_PRIORITY_TITLE: &str = "Filter: priority";
@@ -68,12 +68,26 @@ impl App {
         );
     }
 
-    pub(super) async fn show_view(&mut self, view: TaskView) -> Result<()> {
+    pub(super) async fn show_view(&mut self, view: TaskQuery) -> Result<()> {
         let previous = self.store.view_state.clone();
-        let selected = self.store.show_view(view).await?;
+        let selected_id = self
+            .list
+            .selected_task()
+            .and_then(|index| self.store.tasks.get(index))
+            .map(|item| item.task.id.clone());
+        let selected = self
+            .store
+            .show_view_preserving(view, selected_id.as_ref())
+            .await?;
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
         Ok(())
+    }
+
+    pub(super) fn set_layout(&mut self, layout: TaskLayout) {
+        if let Err(message) = self.store.view_state.set_layout(layout) {
+            self.set_warning(message);
+        }
     }
 
     pub(super) async fn show_scope(&mut self, scope: TaskScopeTarget) -> Result<()> {
@@ -155,21 +169,21 @@ impl App {
 
     pub(super) fn show_view_menu(&mut self, column: u16, row: u16) {
         self.pending_shortcut.clear();
-        let selected = self.store.view_state.view;
+        let selected = self.store.view_state.query;
         let items = [
-            ("q", "queue", TaskView::Queue),
-            ("o", "open", TaskView::Open),
-            ("t", "todo", TaskView::Todo),
-            ("i", "inbox", TaskView::Inbox),
-            ("a", "active", TaskView::Active),
-            ("b", "backlog", TaskView::Backlog),
-            ("d", "done", TaskView::Done),
-            ("e", "epics", TaskView::Epics),
-            ("u", "recurring", TaskView::Recurring),
-            ("r", "recent", TaskView::RecentActions),
-            ("c", "conflicts", TaskView::Conflicts),
-            ("s", "search", TaskView::Search),
-            ("l", "columns", TaskView::Columns),
+            ("q", "queue", TaskQuery::Queue),
+            ("l", "all", TaskQuery::All),
+            ("o", "open", TaskQuery::Open),
+            ("t", "todo", TaskQuery::Todo),
+            ("i", "inbox", TaskQuery::Inbox),
+            ("a", "active", TaskQuery::Active),
+            ("b", "backlog", TaskQuery::Backlog),
+            ("d", "done", TaskQuery::Done),
+            ("e", "epics", TaskQuery::Epics),
+            ("u", "recurring", TaskQuery::Recurring),
+            ("r", "recent", TaskQuery::RecentActions),
+            ("c", "conflicts", TaskQuery::Conflicts),
+            ("s", "search", TaskQuery::Search),
         ]
         .into_iter()
         .map(|(key, label, view)| HeaderMenuItem {
@@ -236,7 +250,7 @@ impl App {
     }
 
     pub(super) async fn toggle_closed_filter(&mut self) -> Result<()> {
-        if !self.store.view_state.view.supports_closed_filter() {
+        if !self.store.view_state.query.supports_closed_filter() {
             self.set_warning("Closed visibility is available in Queue, Open, and Epics views");
             return Ok(());
         }

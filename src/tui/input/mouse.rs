@@ -3,7 +3,7 @@ use ratatui::layout::Rect;
 
 use crate::choices::TaskStatus;
 use crate::tui::list_surface::ListSurface;
-use crate::tui::store::{TaskView, TuiStore};
+use crate::tui::store::{TaskQuery, TuiStore};
 use crate::tui::ui::{recent_action_at_position, task_at_position, task_status_at_position};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,7 +87,7 @@ pub(crate) fn route_task_surface(view: TaskSurfaceView<'_>, column: u16, row: u1
     let focus = list.focus();
     let sidebar_visible = list.sidebar_visible();
     route_task_surface_hits(TaskSurfaceHits {
-        lane_status: (outside_sidebar && store.view_state.view == TaskView::Columns)
+        lane_status: (outside_sidebar && store.view_state.is_columns())
             .then(|| {
                 crate::tui::ui::column_lane_at_position(
                     store,
@@ -101,13 +101,13 @@ pub(crate) fn route_task_surface(view: TaskSurfaceView<'_>, column: u16, row: u1
                 })
             })
             .flatten(),
-        recent_action: (outside_sidebar && store.view_state.view == TaskView::RecentActions)
+        recent_action: (outside_sidebar && store.view_state.query == TaskQuery::RecentActions)
             .then(|| {
                 recent_action_at_position(store, list.table_state(), task_area, column, row)
                     .map(|hit| hit.action_index)
             })
             .flatten(),
-        series: (outside_sidebar && store.view_state.view == TaskView::Recurring)
+        series: (outside_sidebar && store.view_state.query == TaskQuery::Recurring)
             .then(|| {
                 crate::tui::ui::recurrence_series_at_position(
                     store,

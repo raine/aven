@@ -955,13 +955,14 @@ aven demo
 Open the terminal user interface.
 
 ```sh
-aven tui [<task-ref>] [--view <view>] [-p [<project>] | --project [<project>]] [--label <label>] [--priority <priority>] [--add-task | --add-task-only] [--natural]
+aven tui [<task-ref>] [--view <view>] [--layout <layout>] [-p [<project>] | --project [<project>]] [--label <label>] [--priority <priority>] [--add-task | --add-task-only] [--natural]
 ```
 
 | Argument or option | Description |
 | --- | --- |
 | `[<task-ref>]` | Open a task detail directly. Task refs cannot be combined with browse context or composer options. |
-| `--view <view>` | Start in `queue`, `columns`, `open`, `inbox`, `active`, `backlog`, `todo`, `done`, `upcoming`, `conflicts`, `epics`, or `recent-actions`. |
+| `--view <view>` | Start with the `queue`, `all`, `open`, `inbox`, `active`, `backlog`, `todo`, `done`, `upcoming`, `conflicts`, `epics`, `recurring`, or `recent-actions` query. |
+| `--layout <layout>` | Present a compatible query as `list` or `columns`. |
 | `-p`, `--project [<project>]` | Start in a project. Passing the flag without a value uses the project inferred from the current directory. Omitting the flag starts with workspace scope. |
 | `--label <label>` | Apply an initial label filter. |
 | `--priority <priority>` | Apply an initial `none`, `low`, `medium`, `high`, or `urgent` priority filter. |
@@ -969,12 +970,12 @@ aven tui [<task-ref>] [--view <view>] [-p [<project>] | --project [<project>]] [
 | `--add-task-only` | Run only the add-task popup and exit after submission or cancellation. Project scope remains available. |
 | `--natural` | Use natural-language intake. Requires `--add-task` or `--add-task-only`. |
 
-Views, project scope, label, priority, and `--add-task` compose. The `recent-actions` view rejects label and priority filters because it displays change-log entries rather than tasks. `--add-task` and `--add-task-only` are mutually exclusive.
+Queries, layout, project scope, label, priority, and `--add-task` compose. Columns supports `all`, `open`, status, and `conflicts` queries. Incompatible query and layout pairs fail at launch. The `recent-actions` query rejects label and priority filters because it displays change-log entries rather than tasks. `--add-task` and `--add-task-only` are mutually exclusive.
 
 ```sh
 aven tui
 aven tui --project aven --view todo --label bug
-aven tui --view columns
+aven tui --view all --layout columns
 aven tui AVN-7KQ9
 aven tui --add-task --natural
 aven tui --project aven --add-task-only

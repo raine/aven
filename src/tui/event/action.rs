@@ -1,7 +1,7 @@
 use crossterm::event::KeyCode;
 
 use crate::choices::{TaskPriority, TaskStatus};
-use crate::tui::store::{TaskOrder, TaskView};
+use crate::tui::store::{TaskLayout, TaskOrder, TaskQuery};
 
 #[cfg(test)]
 use super::{ShortcutLookup, resolve_shortcut};
@@ -106,7 +106,8 @@ pub(crate) enum Action {
     ToggleClosedFilter,
     ToggleDeletedFilter,
     CycleRecurringLifecycleFilter,
-    ShowView(TaskView),
+    SetLayout(TaskLayout),
+    ShowView(TaskQuery),
     ShowWorkspaceScope,
     BeginConflictList,
     ShowConflictDetails,
@@ -249,6 +250,7 @@ impl Action {
             | Self::ToggleClosedFilter
             | Self::ToggleDeletedFilter
             | Self::CycleRecurringLifecycleFilter
+            | Self::SetLayout(_)
             | Self::ShowView(_)
             | Self::ShowWorkspaceScope
             | Self::BeginConflictList

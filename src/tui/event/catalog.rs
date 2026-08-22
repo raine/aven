@@ -1,7 +1,7 @@
 use crossterm::event::KeyCode;
 
 use crate::choices::{TaskPriority, TaskStatus};
-use crate::tui::store::{TaskOrder, TaskView};
+use crate::tui::store::{TaskLayout, TaskOrder, TaskQuery};
 
 use super::{Action, BulkSupport};
 
@@ -701,17 +701,37 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('v'), KeyCode::Char('q')],
             label: "v q",
         }],
-        Action::ShowView(TaskView::Queue),
+        Action::ShowView(TaskQuery::Queue),
     ),
     CommandSpec::implemented(
-        "view-columns",
-        "show configurable column view",
+        "layout-columns",
+        "present the active query as columns",
         "Views",
         &[KeySequence {
             codes: &[KeyCode::Char('v'), KeyCode::Char('l')],
             label: "v l",
         }],
-        Action::ShowView(TaskView::Columns),
+        Action::SetLayout(TaskLayout::Columns),
+    ),
+    CommandSpec::implemented(
+        "layout-list",
+        "present the active query as a list",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('v'), KeyCode::Char('v')],
+            label: "v v",
+        }],
+        Action::SetLayout(TaskLayout::List),
+    ),
+    CommandSpec::implemented(
+        "view-all",
+        "show all available tasks",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('v'), KeyCode::Char('w')],
+            label: "v w",
+        }],
+        Action::ShowView(TaskQuery::All),
     ),
     CommandSpec::implemented(
         "view-open",
@@ -721,7 +741,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('v'), KeyCode::Char('o')],
             label: "v o",
         }],
-        Action::ShowView(TaskView::Open),
+        Action::ShowView(TaskQuery::Open),
     ),
     CommandSpec::implemented(
         "view-upcoming",
@@ -731,7 +751,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('v'), KeyCode::Char('p')],
             label: "v p",
         }],
-        Action::ShowView(TaskView::Upcoming),
+        Action::ShowView(TaskQuery::Upcoming),
     ),
     CommandSpec::implemented(
         "view-epics",
@@ -741,7 +761,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('v'), KeyCode::Char('e')],
             label: "v e",
         }],
-        Action::ShowView(TaskView::Epics),
+        Action::ShowView(TaskQuery::Epics),
     ),
     CommandSpec::implemented(
         "view-recurring",
@@ -751,7 +771,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('v'), KeyCode::Char('u')],
             label: "v u",
         }],
-        Action::ShowView(TaskView::Recurring),
+        Action::ShowView(TaskQuery::Recurring),
     ),
     CommandSpec::implemented(
         "view-recent",
@@ -761,7 +781,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('v'), KeyCode::Char('r')],
             label: "v r",
         }],
-        Action::ShowView(TaskView::RecentActions),
+        Action::ShowView(TaskQuery::RecentActions),
     ),
     CommandSpec::implemented(
         "view-inbox",
@@ -771,7 +791,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('v'), KeyCode::Char('i')],
             label: "v i",
         }],
-        Action::ShowView(TaskView::Inbox),
+        Action::ShowView(TaskQuery::Inbox),
     ),
     CommandSpec::implemented(
         "view-backlog",
@@ -781,7 +801,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('v'), KeyCode::Char('b')],
             label: "v b",
         }],
-        Action::ShowView(TaskView::Backlog),
+        Action::ShowView(TaskQuery::Backlog),
     ),
     CommandSpec::implemented(
         "view-todo",
@@ -791,7 +811,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('v'), KeyCode::Char('t')],
             label: "v t",
         }],
-        Action::ShowView(TaskView::Todo),
+        Action::ShowView(TaskQuery::Todo),
     ),
     CommandSpec::implemented(
         "view-active",
@@ -801,7 +821,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('v'), KeyCode::Char('a')],
             label: "v a",
         }],
-        Action::ShowView(TaskView::Active),
+        Action::ShowView(TaskQuery::Active),
     ),
     CommandSpec::implemented(
         "view-done",
@@ -811,7 +831,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('v'), KeyCode::Char('d')],
             label: "v d",
         }],
-        Action::ShowView(TaskView::Done),
+        Action::ShowView(TaskQuery::Done),
     ),
     CommandSpec::implemented(
         "view-conflicts",
@@ -821,7 +841,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('v'), KeyCode::Char('c')],
             label: "v c",
         }],
-        Action::ShowView(TaskView::Conflicts),
+        Action::ShowView(TaskQuery::Conflicts),
     ),
     CommandSpec::implemented(
         "view-search",
@@ -831,7 +851,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('v'), KeyCode::Char('s')],
             label: "v s",
         }],
-        Action::ShowView(TaskView::Search),
+        Action::ShowView(TaskQuery::Search),
     ),
     CommandSpec::implemented(
         "scope-all",

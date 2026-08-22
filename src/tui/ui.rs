@@ -84,7 +84,7 @@ use crate::tui::overlay::{
     HeaderMenuKind, HeaderMenuView, MultilineInputKind, OrderMenuView, OverlayView, TextInputKind,
     TextInputView,
 };
-use crate::tui::store::{TaskOrder, TaskView, TuiStore};
+use crate::tui::store::{TaskOrder, TaskQuery, TuiStore};
 use crate::tui::theme::{ACCENT, BG, BG_ALT, BG_PANEL, FG, FG_DIM, GREEN, PINK, SELECTED};
 use crate::tui::toast::Toast;
 
@@ -315,9 +315,9 @@ fn render_surface(
         }
     }
     let footer_mode = match view.footer_mode(footer.width) {
-        FooterMode::List if store.view_state.view == TaskView::Columns => FooterMode::Columns,
+        FooterMode::List if store.view_state.is_columns() => FooterMode::Columns,
         FooterMode::Detail | FooterMode::DetailNested
-            if store.view_state.view == TaskView::Recurring =>
+            if store.view_state.query == TaskQuery::Recurring =>
         {
             match store
                 .recurrence_detail
@@ -355,7 +355,7 @@ fn render_surface(
     );
 
     if view.detail_underlay {
-        if store.view_state.view == TaskView::Recurring {
+        if store.view_state.query == TaskQuery::Recurring {
             if let Some(detail) = store.recurrence_detail.as_ref() {
                 render_recurrence_detail(frame, detail, detail_underlay_scroll(view));
             }
@@ -414,11 +414,11 @@ fn render_main_surface(
     area: ratatui::layout::Rect,
     inline_title_editor: Option<&TextInputView>,
 ) {
-    if store.view_state.view == TaskView::RecentActions {
+    if store.view_state.query == TaskQuery::RecentActions {
         render_recent_actions(frame, store, list, focus, area);
-    } else if store.view_state.view == TaskView::Recurring {
+    } else if store.view_state.query == TaskQuery::Recurring {
         render_recurrence_series(frame, store, list, focus, area);
-    } else if store.view_state.view == TaskView::Columns {
+    } else if store.view_state.is_columns() {
         let marked_task_ids = list.marked_task_ids().clone();
         render_columns(
             frame,

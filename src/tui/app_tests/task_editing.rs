@@ -599,13 +599,13 @@ async fn done_and_cancel_aliases_update_selected_task() {
     create_and_select_task(&mut app, test_task_draft("Status alias")).await;
 
     app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
-    let selected = app.store.show_view(TaskView::Done).await.unwrap();
+    let selected = app.store.show_view(TaskQuery::Done).await.unwrap();
     app.list.select_task(selected);
     let selected = app.list.selected_task().unwrap();
     assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Done);
 
     app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
-    let selected = app.store.show_view(TaskView::Done).await.unwrap();
+    let selected = app.store.show_view(TaskQuery::Done).await.unwrap();
     app.list.select_task(selected);
     let selected = app.list.selected_task().unwrap();
     assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Canceled);

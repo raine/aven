@@ -10,7 +10,7 @@ use crate::tui::overlay::{
     RECURRENCE_HISTORY_PAGE_SIZE, RecurrenceHistoryAction, RecurrenceHistoryEntryKey,
     RecurrenceHistoryState,
 };
-use crate::tui::store::TaskView;
+use crate::tui::store::TaskQuery;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RecurrenceActionKind {
@@ -154,7 +154,7 @@ impl App {
         &mut self,
         action: &Action,
     ) -> Result<bool> {
-        if self.store.view_state.view != TaskView::Recurring || self.detail.is_active() {
+        if self.store.view_state.query != TaskQuery::Recurring || self.detail.is_active() {
             return Ok(false);
         }
 
@@ -263,7 +263,7 @@ impl App {
 
     pub(crate) fn selected_recurrence_target_id(&self) -> Option<RecurrenceTargetId> {
         let workspace_id = self.store.active_workspace.id.clone();
-        let series_id = if self.store.view_state.view == TaskView::Recurring {
+        let series_id = if self.store.view_state.query == TaskQuery::Recurring {
             self.store
                 .selected_recurrence_series(self.list.selected_task())
                 .map(|item| item.series.id.clone())
@@ -422,7 +422,7 @@ impl App {
         message: crate::tui::store::MutationMessage,
     ) -> Result<()> {
         self.list.select_task(message.selected);
-        if self.store.view_state.view == TaskView::Recurring
+        if self.store.view_state.query == TaskQuery::Recurring
             && self.store.recurrence_detail.is_some()
         {
             self.store.load_recurrence_series_detail(series_id).await?;

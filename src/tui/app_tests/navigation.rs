@@ -68,7 +68,7 @@ async fn sidebar_click_selects_saved_view_in_narrow_overlay() {
         .position(|entry| {
             matches!(
                 &entry.target,
-                Some(SidebarEntryTarget::View(TaskView::Open))
+                Some(SidebarEntryTarget::View(TaskQuery::Open))
             )
         })
         .unwrap() as u16;
@@ -84,7 +84,7 @@ async fn sidebar_click_selects_saved_view_in_narrow_overlay() {
         .await
         .unwrap();
 
-    assert_eq!(app.store.view_state.view, TaskView::Open);
+    assert_eq!(app.store.view_state.query, TaskQuery::Open);
     assert_eq!(app.list.focus(), Focus::Tasks);
     assert_eq!(app.list.selected_sidebar(), Some(view_row as usize));
     assert!(app.overlay.is_none());

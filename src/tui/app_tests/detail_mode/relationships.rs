@@ -506,7 +506,7 @@ async fn right_navigation_toggles_selected_epic() {
     let (parent_id, child_ids) =
         create_epic_with_children(&mut app, &pool, "Parent epic", &["Child task"]).await;
     let child_id = child_ids[0].clone();
-    app.store.show_view(TaskView::Epics).await.unwrap();
+    app.store.show_view(TaskQuery::Epics).await.unwrap();
 
     for code in [KeyCode::Char('l'), KeyCode::Right] {
         let parent_index = app
@@ -1274,7 +1274,7 @@ async fn focused_detail_child_removes_and_undo_restores_relationship() {
     let (parent_id, child_ids) =
         create_epic_with_children(&mut app, &pool, "Parent epic", &["Child task"]).await;
     let child_id = child_ids[0].clone();
-    app.store.view_state.view = crate::tui::store::TaskView::Epics;
+    app.store.view_state.query = crate::tui::store::TaskQuery::Epics;
     app.store.refresh(Some(&parent_id)).await.unwrap();
     let parent_index = app
         .store

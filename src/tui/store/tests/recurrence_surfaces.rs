@@ -61,7 +61,7 @@ async fn recurring_series_view_includes_paused_and_filters_stopped() {
         .await
         .unwrap();
 
-    store.show_view(TaskView::Recurring).await.unwrap();
+    store.show_view(TaskQuery::Recurring).await.unwrap();
     assert_eq!(store.recurrence_series.len(), 1);
     assert_eq!(store.recurrence_series[0].series.id, series_id);
     assert!(store.tasks.is_empty());
@@ -81,7 +81,7 @@ async fn recurring_series_search_and_refresh_restore_series_identity() {
     let mut store = test_store().await;
     create_daily_named(&mut store, "Alpha journal").await;
     create_daily_named(&mut store, "Beta journal").await;
-    store.show_view(TaskView::Recurring).await.unwrap();
+    store.show_view(TaskQuery::Recurring).await.unwrap();
     let beta = store
         .recurrence_series
         .iter()
@@ -153,7 +153,7 @@ async fn paused_projection_leaves_ordinary_views_but_direct_access_remains() {
         .unwrap();
     assert!(!store.tasks.iter().any(|item| item.task.id == task_id));
 
-    store.view_state.view = TaskView::Search;
+    store.view_state.query = TaskQuery::Search;
     store.view_state.projection_origin =
         super::super::TaskProjectionOrigin::ExactTasks(vec![task_id.clone()]);
     store.refresh(Some(&task_id)).await.unwrap();
@@ -171,7 +171,7 @@ async fn done_view_uses_one_grouped_series_history_row() {
     let (_, selected) = create_daily(&mut store).await;
     store.update_status(Some(selected), "done").await.unwrap();
 
-    store.show_view(TaskView::Done).await.unwrap();
+    store.show_view(TaskQuery::Done).await.unwrap();
     assert_eq!(store.tasks.len(), 1);
     let group = store.tasks[0].recurrence_group.as_ref().unwrap();
     assert_eq!(group.counts.completed, 1);
@@ -202,7 +202,7 @@ async fn lifecycle_conflict_appears_in_needs_action_with_series_target() {
     .unwrap();
     drop(conn);
 
-    store.show_view(TaskView::Conflicts).await.unwrap();
+    store.show_view(TaskQuery::Conflicts).await.unwrap();
     assert_eq!(store.tasks.len(), 1);
     assert!(store.tasks[0].has_conflict);
     let targets = store.conflict_targets(Some(0)).await.unwrap().unwrap();

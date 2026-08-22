@@ -111,7 +111,7 @@ async fn command_palette_selects_upcoming_view() {
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
     assert!(app.overlay.is_none());
-    assert_eq!(app.store.view_state.view, TaskView::Upcoming);
+    assert_eq!(app.store.view_state.query, TaskQuery::Upcoming);
 }
 
 #[tokio::test]

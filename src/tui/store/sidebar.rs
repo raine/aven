@@ -1,4 +1,4 @@
-use super::{SidebarEntry, SidebarEntryTarget, TaskScopeTarget, TaskView, TuiStore};
+use super::{SidebarEntry, SidebarEntryTarget, TaskQuery, TaskScopeTarget, TuiStore};
 
 impl TuiStore {
     pub(super) fn rebuild_sidebar(&mut self) {
@@ -9,30 +9,26 @@ impl TuiStore {
                 target: None,
                 section: true,
             },
-            view_entry("Queue", self.counts.open, TaskView::Queue),
-            view_entry(
-                "Columns",
-                self.counts.open + self.counts.done,
-                TaskView::Columns,
-            ),
-            view_entry("Open", self.counts.open, TaskView::Open),
-            view_entry("Inbox", self.counts.inbox, TaskView::Inbox),
-            view_entry("Active", self.counts.active, TaskView::Active),
-            view_entry("Backlog", self.counts.backlog, TaskView::Backlog),
-            view_entry("Todo", self.counts.todo, TaskView::Todo),
-            view_entry("Upcoming", self.counts.upcoming, TaskView::Upcoming),
-            view_entry("Done", self.counts.done, TaskView::Done),
-            view_entry("Conflicts", self.counts.conflicts, TaskView::Conflicts),
-            view_entry("Epics", self.counts.epics, TaskView::Epics),
+            view_entry("Queue", self.counts.open, TaskQuery::Queue),
+            view_entry("All", self.counts.open + self.counts.done, TaskQuery::All),
+            view_entry("Open", self.counts.open, TaskQuery::Open),
+            view_entry("Inbox", self.counts.inbox, TaskQuery::Inbox),
+            view_entry("Active", self.counts.active, TaskQuery::Active),
+            view_entry("Backlog", self.counts.backlog, TaskQuery::Backlog),
+            view_entry("Todo", self.counts.todo, TaskQuery::Todo),
+            view_entry("Upcoming", self.counts.upcoming, TaskQuery::Upcoming),
+            view_entry("Done", self.counts.done, TaskQuery::Done),
+            view_entry("Conflicts", self.counts.conflicts, TaskQuery::Conflicts),
+            view_entry("Epics", self.counts.epics, TaskQuery::Epics),
             view_entry(
                 "Recurring Tasks",
                 self.counts.recurring,
-                TaskView::Recurring,
+                TaskQuery::Recurring,
             ),
             view_entry(
                 "Recent actions",
                 self.recent_actions.len() as i64,
-                TaskView::RecentActions,
+                TaskQuery::RecentActions,
             ),
             view_entry(
                 "Search",
@@ -40,7 +36,7 @@ impl TuiStore {
                     .projection_origin
                     .match_count()
                     .unwrap_or_default() as i64,
-                TaskView::Search,
+                TaskQuery::Search,
             ),
             SidebarEntry {
                 label: String::new(),
@@ -93,7 +89,7 @@ impl TuiStore {
     }
 }
 
-fn view_entry(label: &str, count: i64, view: TaskView) -> SidebarEntry {
+fn view_entry(label: &str, count: i64, view: TaskQuery) -> SidebarEntry {
     SidebarEntry {
         label: label.to_string(),
         count,

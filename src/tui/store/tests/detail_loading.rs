@@ -5,7 +5,7 @@ async fn exact_task_load_ignores_active_view_filters() {
     let mut store = test_store().await;
     let (task_id, index) = create_selected_task(&mut store, "Filtered detail").await;
     store.update_status(Some(index), "todo").await.unwrap();
-    store.view_state.view = TaskView::Inbox;
+    store.view_state.query = TaskQuery::Inbox;
     store.refresh(None).await.unwrap();
     assert!(store.tasks.iter().all(|item| item.task.id != task_id));
 

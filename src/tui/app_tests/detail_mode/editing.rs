@@ -46,7 +46,7 @@ async fn availability_editor_sets_task_from_task_list() {
     type_chars(&mut app, "tomorrow").await;
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-    app.show_view(TaskView::Upcoming).await.unwrap();
+    app.show_view(TaskQuery::Upcoming).await.unwrap();
     let task = app
         .store
         .tasks
@@ -207,7 +207,7 @@ async fn task_list_availability_editor_clears_with_empty_input() {
         )
         .await
         .unwrap();
-    app.show_view(TaskView::Upcoming).await.unwrap();
+    app.show_view(TaskQuery::Upcoming).await.unwrap();
     app.list.select_task(Some(0));
 
     app.begin_edit_availability();
@@ -216,7 +216,7 @@ async fn task_list_availability_editor_clears_with_empty_input() {
         .unwrap();
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-    app.show_view(TaskView::Queue).await.unwrap();
+    app.show_view(TaskQuery::Queue).await.unwrap();
     assert!(
         app.store
             .tasks
@@ -232,9 +232,15 @@ async fn detail_mutation_targets_selected_task_when_tasks_are_marked() {
     let marked_id = app.store.tasks[marked_index].task.id.clone();
     let selected_index = create_and_select_task(&mut app, test_task_draft("Detail target")).await;
     let selected_id = app.store.tasks[selected_index].task.id.clone();
+    app.store.show_view(TaskQuery::All).await.unwrap();
     app.list.mark(marked_id.clone());
     app.list.mark(selected_id.clone());
-    app.list.select_task(Some(selected_index));
+    app.list.select_task(
+        app.store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == selected_id),
+    );
     app.show_detail(0);
 
     for code in [KeyCode::Char('e'), KeyCode::Char('t')] {
@@ -686,6 +692,13 @@ async fn detail_bare_status_and_priority_shortcuts_keep_detail() {
     let mut app = test_app().await;
     let selected = create_and_select_task(&mut app, test_task_draft("Quick detail actions")).await;
     let task_id = app.store.tasks[selected].task.id.clone();
+    app.store.show_view(TaskQuery::All).await.unwrap();
+    app.list.select_task(
+        app.store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id),
+    );
     app.show_detail(0);
 
     app.dispatch_key(key(KeyCode::Char('d')), (80, 24).into())
@@ -814,7 +827,7 @@ async fn conflict_navigation_closes_detail_with_non_default_session_state() {
         );
         assert!(app.pending_shortcut.is_empty());
         if action == Action::BeginConflictList {
-            assert_eq!(app.store.view_state.view, TaskView::Conflicts);
+            assert_eq!(app.store.view_state.query, TaskQuery::Conflicts);
         } else {
             assert_ne!(
                 app.store.tasks[app.list.selected_task().unwrap()].task.id,
@@ -831,6 +844,13 @@ async fn detail_done_shortcut_keeps_detail_and_sets_message() {
     let selected = create_and_select_task(&mut app, test_task_draft("Done target")).await;
     let selected_task_id = app.store.tasks[selected].task.id.clone();
     let display_ref = app.store.tasks[selected].display_ref.clone();
+    app.store.show_view(TaskQuery::All).await.unwrap();
+    app.list.select_task(
+        app.store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == selected_task_id),
+    );
     app.show_detail(7);
 
     app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
@@ -852,12 +872,25 @@ async fn detail_done_shortcut_keeps_detail_and_sets_message() {
 }
 
 #[tokio::test]
+async fn detail_closes_when_status_change_removes_task_from_query() {
+    let mut app = test_app().await;
+    let selected = create_and_select_task(&mut app, test_task_draft("Filtered target")).await;
+    let task_id = app.store.tasks[selected].task.id.clone();
+    app.show_detail(0);
+
+    app.update_status(TaskStatus::Done).await.unwrap();
+
+    assert!(app.detail.is_inactive());
+    assert!(app.store.tasks.iter().all(|item| item.task.id != task_id));
+}
+
+#[tokio::test]
 async fn queue_status_change_preserves_viewport_row_and_recalls_changed_task() {
     let mut app = test_app().await;
     for title in ["First", "Changed", "Third"] {
         create_and_select_task(&mut app, test_task_draft(title)).await;
     }
-    app.show_view(TaskView::Queue).await.unwrap();
+    app.show_view(TaskQuery::Queue).await.unwrap();
     let selected = 1;
     let changed_id = app.store.tasks[selected].task.id.clone();
     app.list.select_task(Some(selected));
@@ -893,7 +926,7 @@ async fn recalling_filtered_status_change_returns_from_detail_to_queue_anchor() 
     for title in ["First", "Changed", "Third"] {
         create_and_select_task(&mut app, test_task_draft(title)).await;
     }
-    app.show_view(TaskView::Queue).await.unwrap();
+    app.show_view(TaskQuery::Queue).await.unwrap();
     let selected = 1;
     let changed_id = app.store.tasks[selected].task.id.clone();
     app.list.select_task(Some(selected));
@@ -904,7 +937,7 @@ async fn recalling_filtered_status_change_returns_from_detail_to_queue_anchor() 
     let return_offset = app.list.task_offset();
     app.execute(Action::ReturnToLastChange).await.unwrap();
 
-    assert_eq!(app.store.view_state.view, TaskView::Search);
+    assert_eq!(app.store.view_state.query, TaskQuery::Search);
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
     assert_eq!(app.store.tasks.len(), 1);
@@ -912,7 +945,7 @@ async fn recalling_filtered_status_change_returns_from_detail_to_queue_anchor() 
 
     app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
 
-    assert_eq!(app.store.view_state.view, TaskView::Queue);
+    assert_eq!(app.store.view_state.query, TaskQuery::Queue);
     assert!(app.overlay.is_none());
     assert_eq!(app.list.task_offset(), return_offset);
     assert_eq!(
@@ -931,6 +964,13 @@ async fn detail_status_picker_done_refreshes_content_and_metadata() {
     create_and_select_task(&mut app, test_task_draft("Next target")).await;
     let selected = create_and_select_task(&mut app, test_task_draft("Done target")).await;
     let selected_task_id = app.store.tasks[selected].task.id.clone();
+    app.store.show_view(TaskQuery::All).await.unwrap();
+    app.list.select_task(
+        app.store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == selected_task_id),
+    );
     app.show_detail(4);
     render_app_buffer(&mut app, 120, 40);
 
@@ -1166,6 +1206,13 @@ async fn detail_undo_after_status_menu_keeps_task_identity() {
     create_and_select_task(&mut app, test_task_draft("Other task")).await;
     let selected = create_and_select_task(&mut app, test_task_draft("Undo target")).await;
     let task_id = app.store.tasks[selected].task.id.clone();
+    app.store.show_view(TaskQuery::All).await.unwrap();
+    app.list.select_task(
+        app.store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id),
+    );
     app.show_detail(0);
 
     app.dispatch_mouse(

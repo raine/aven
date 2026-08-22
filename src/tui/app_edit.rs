@@ -40,8 +40,18 @@ impl App {
             self.set_info("no selected task to edit");
             return Ok(());
         };
-        let preserve_task = self.status_change_preserves_task();
+        let preserve_task = false;
         let changed_task_id = self.changed_status_target(&selection, status);
+        let detail_anchor_id = self
+            .detail
+            .is_active()
+            .then(|| {
+                self.list
+                    .selected_task()
+                    .and_then(|index| self.store.tasks.get(index))
+                    .map(|item| item.task.id.clone())
+            })
+            .flatten();
         let viewport_row = (!preserve_task)
             .then(|| self.selected_task_viewport_row())
             .flatten();
@@ -49,13 +59,15 @@ impl App {
             .store
             .mutate_status_selection(&selection, status, preserve_task)
             .await?;
+        let detail_anchor_hidden = changed_task_id.as_ref() == detail_anchor_id.as_ref()
+            && detail_anchor_id.as_ref().is_some_and(|task_id| {
+                self.store.tasks.iter().all(|item| &item.task.id != task_id)
+            });
         self.apply_status_mutation_result(result, changed_task_id, viewport_row);
+        if detail_anchor_hidden {
+            self.clear_detail_session();
+        }
         Ok(())
-    }
-
-    fn status_change_preserves_task(&self) -> bool {
-        self.store.view_state.view == crate::tui::store::TaskView::Columns
-            || self.detail.is_active()
     }
 
     fn changed_status_target(
@@ -118,8 +130,8 @@ impl App {
     }
 
     pub(super) async fn move_tasks_by_column(&mut self, delta: isize) -> Result<()> {
-        if self.store.view_state.view != crate::tui::store::TaskView::Columns {
-            self.set_info("column moves are available in Columns view");
+        if !self.store.view_state.is_columns() {
+            self.set_info("column moves are available in columns layout");
             return Ok(());
         }
         let Some(selection) = self.resolve_task_selection() else {
@@ -146,8 +158,8 @@ impl App {
     }
 
     pub(super) fn begin_move_to_column(&mut self) {
-        if self.store.view_state.view != crate::tui::store::TaskView::Columns {
-            self.set_info("column moves are available in Columns view");
+        if !self.store.view_state.is_columns() {
+            self.set_info("column moves are available in columns layout");
             return;
         }
         let Some(selection) = self.resolve_task_selection() else {
@@ -879,8 +891,18 @@ impl App {
             .single_id()
             .filter(|task_id| *task_id != selection.anchor_id())
             .map(|_| selection.anchor_id().clone());
-        let preserve_task = self.status_change_preserves_task() && relationship_anchor.is_none();
+        let preserve_task = false;
         let changed_task_id = self.changed_status_target(&selection, status);
+        let detail_anchor_id = self
+            .detail
+            .is_active()
+            .then(|| {
+                self.list
+                    .selected_task()
+                    .and_then(|index| self.store.tasks.get(index))
+                    .map(|item| item.task.id.clone())
+            })
+            .flatten();
         let viewport_row = (!preserve_task)
             .then(|| self.selected_task_viewport_row())
             .flatten();
@@ -893,7 +915,14 @@ impl App {
                 if let Some(anchor_id) = relationship_anchor {
                     result.selected = self.store.refresh(Some(&anchor_id)).await?;
                 }
+                let detail_anchor_hidden = changed_task_id.as_ref() == detail_anchor_id.as_ref()
+                    && detail_anchor_id.as_ref().is_some_and(|task_id| {
+                        self.store.tasks.iter().all(|item| &item.task.id != task_id)
+                    });
                 self.apply_status_mutation_result(result, changed_task_id, viewport_row);
+                if detail_anchor_hidden {
+                    self.clear_detail_session();
+                }
             }
             Err(error) => {
                 let committed = crate::tui::store::mutation_committed(&error);

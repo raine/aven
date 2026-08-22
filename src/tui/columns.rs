@@ -1,6 +1,4 @@
-use std::cmp::Ordering;
-
-use crate::choices::{TaskPriority, TaskStatus};
+use crate::choices::TaskStatus;
 use crate::config::TaskColumnConfig;
 use crate::query::TaskListItem;
 
@@ -13,77 +11,6 @@ pub(crate) struct TaskColumn<'a> {
 #[derive(Debug)]
 pub(crate) struct ColumnBoard<'a> {
     pub(crate) columns: Vec<TaskColumn<'a>>,
-}
-
-#[derive(Clone, Copy)]
-enum LaneSort {
-    Oldest,
-    PriorityThenOldest,
-    StaleThenPriority,
-    RecentTerminal,
-    Preserve,
-}
-
-fn sort_lane(config: &TaskColumnConfig, tasks: &[TaskListItem], task_indices: &mut [usize]) {
-    let sort = lane_sort(config);
-    task_indices.sort_by(|left, right| {
-        if matches!(sort, LaneSort::Preserve) {
-            return Ordering::Equal;
-        }
-        let left = &tasks[*left].task;
-        let right = &tasks[*right].task;
-        let ordering = match sort {
-            LaneSort::Oldest => left.created_at.cmp(&right.created_at),
-            LaneSort::PriorityThenOldest => priority_cmp(left.priority, right.priority)
-                .then_with(|| left.created_at.cmp(&right.created_at)),
-            LaneSort::StaleThenPriority => left
-                .queue_activity_at
-                .cmp(&right.queue_activity_at)
-                .then_with(|| priority_cmp(left.priority, right.priority)),
-            LaneSort::RecentTerminal => right
-                .queue_activity_at
-                .cmp(&left.queue_activity_at)
-                .then_with(|| right.updated_at.cmp(&left.updated_at)),
-            LaneSort::Preserve => Ordering::Equal,
-        };
-        ordering.then_with(|| left.id.cmp(&right.id))
-    });
-}
-
-fn lane_sort(config: &TaskColumnConfig) -> LaneSort {
-    let statuses = config
-        .statuses
-        .iter()
-        .filter_map(|status| TaskStatus::parse(status).ok())
-        .collect::<Vec<_>>();
-    if statuses.iter().all(|status| *status == TaskStatus::Inbox) {
-        LaneSort::Oldest
-    } else if statuses
-        .iter()
-        .all(|status| matches!(status, TaskStatus::Backlog | TaskStatus::Todo))
-    {
-        LaneSort::PriorityThenOldest
-    } else if statuses.iter().all(|status| *status == TaskStatus::Active) {
-        LaneSort::StaleThenPriority
-    } else if statuses.iter().all(|status| status.is_terminal()) {
-        LaneSort::RecentTerminal
-    } else {
-        LaneSort::Preserve
-    }
-}
-
-fn priority_cmp(left: TaskPriority, right: TaskPriority) -> Ordering {
-    priority_rank(right).cmp(&priority_rank(left))
-}
-
-fn priority_rank(priority: TaskPriority) -> u8 {
-    match priority {
-        TaskPriority::None => 0,
-        TaskPriority::Low => 1,
-        TaskPriority::Medium => 2,
-        TaskPriority::High => 3,
-        TaskPriority::Urgent => 4,
-    }
 }
 
 pub(crate) fn lane_index_for_status(
@@ -127,7 +54,7 @@ impl<'a> ColumnBoard<'a> {
         let columns = columns
             .iter()
             .map(|config| {
-                let mut task_indices = tasks
+                let task_indices = tasks
                     .iter()
                     .enumerate()
                     .filter(|(_, item)| {
@@ -138,7 +65,6 @@ impl<'a> ColumnBoard<'a> {
                     })
                     .map(|(index, _)| index)
                     .collect::<Vec<_>>();
-                sort_lane(config, tasks, &mut task_indices);
                 TaskColumn {
                     config,
                     task_indices,
@@ -323,7 +249,7 @@ mod tests {
     }
 
     #[test]
-    fn semantic_lanes_use_workflow_specific_sorting() {
+    fn every_lane_preserves_query_order() {
         let tasks = vec![
             item_with_sort(0, "inbox", TaskPriority::Urgent, "2026-02-01", "2026-02-01"),
             item_with_sort(1, "inbox", TaskPriority::Low, "2026-01-01", "2026-01-01"),
@@ -367,10 +293,10 @@ mod tests {
 
         let board = ColumnBoard::new(&config, &tasks);
 
-        assert_eq!(board.columns[0].task_indices, [1, 0]);
-        assert_eq!(board.columns[1].task_indices, [3, 2]);
-        assert_eq!(board.columns[2].task_indices, [5, 4]);
-        assert_eq!(board.columns[3].task_indices, [7, 6]);
+        assert_eq!(board.columns[0].task_indices, [0, 1]);
+        assert_eq!(board.columns[1].task_indices, [2, 3]);
+        assert_eq!(board.columns[2].task_indices, [4, 5]);
+        assert_eq!(board.columns[3].task_indices, [6, 7]);
     }
 
     #[test]

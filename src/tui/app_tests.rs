@@ -23,7 +23,7 @@ use crate::tui::overlay::{
     TextInputState, TextIntent, TextPanelState,
 };
 use crate::tui::store::{
-    SidebarEntryTarget, TaskOrder, TaskScope, TaskScopeTarget, TaskView, TaskViewState,
+    SidebarEntryTarget, TaskLayout, TaskOrder, TaskQuery, TaskScope, TaskScopeTarget, TaskViewState,
 };
 use crate::tui::toast::ToastSeverity;
 use crate::tui::ui::ViewSurface;

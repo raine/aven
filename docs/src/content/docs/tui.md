@@ -28,12 +28,12 @@ Use `?` for commands available in the current mode. Use `:` to search the comple
 
 Queue is the default view. It groups open work by what needs attention across the active scope. See [Concepts](/concepts/) for queue groups, statuses, priorities, availability, due dates, dependencies, epics, and related tasks.
 
-Use the sidebar or the `v` command family to switch views.
+Use the sidebar or the `v` command family to switch queries and layouts.
 
-| Goal | View | Open with |
+| Goal | Query or layout | Open with |
 | --- | --- | --- |
 | Decide what needs attention | Queue | `v q` |
-| Move work through lifecycle lanes | Columns | `v l` |
+| Present a compatible query in lifecycle lanes | Columns layout | `v l` |
 | See all unfinished work | Open | `v o` |
 | Triage captured work | Inbox | `v i` |
 | Review work saved for later | Backlog | `v b` |
@@ -157,17 +157,17 @@ Press `Space` to mark or unmark the selected task. The footer shows the marked c
 | `t V` | Toggle marks on visible tasks |
 | `t C` | Clear all marks |
 
-Status, priority, project, labels, availability, due date, delete, and Columns moves apply to the marked set when marks exist. A batch mutation creates one undo step.
+Status, priority, project, labels, availability, due date, delete, and column moves apply to the marked set when marks exist. A batch mutation creates one undo step.
 
 ## Columns
 
-Columns arranges tasks into configurable lifecycle lanes.
+Columns is a presentation layout over the active query. It arranges the same ordered task set into configurable lifecycle lanes.
 
 ![aven TUI showing tasks organized across lifecycle columns](/columns.webp)
 
 <p class="media-caption">Columns arranges tasks into lifecycle lanes and shows details for the selected task.</p>
 
-Use `v l` to open Columns. Up and down move within a lane. Left and right switch lanes. Press `<` or `>` to move the selected or marked tasks one lane, or `m` to choose a destination.
+Use `v l` to switch a compatible query to columns and `v v` to return to the list. Use `v w` to select All when you want every available status. All, Open, status, Search, and Conflicts queries support columns. Queue, Upcoming, Epics, Recurring Tasks, and Recent Actions use their specialized list layouts. Up and down move within a lane. Left and right switch lanes. Press `<` or `>` to move the selected or marked tasks one lane, or `m` to choose a destination.
 
 Moving a task into a lane assigns the lane's first configured status. Choosing its existing lane preserves its exact status. This matters when a lane groups several statuses, such as `done` and `canceled`.
 
@@ -286,9 +286,9 @@ See [terminal tips](/tips/#use-ctrl-enter-in-alacritty-and-tmux) for modified-ke
 
 Mouse actions cover the same common outcomes as keyboard commands:
 
-- Click the sidebar or header to change view, scope, project, filter, or ordering.
+- Click the sidebar or header to change query, layout, scope, project, filter, or ordering.
 - Double-click a task to open detail.
-- In Columns, click a lane header to move selected or marked tasks, or right-click a task to choose status.
+- In the columns layout, click a lane header to move selected or marked tasks, or right-click a task to choose status.
 - Click an inline image to open its TUI preview, or its text label to use the system viewer.
 - Scroll task detail with the mouse wheel.
 

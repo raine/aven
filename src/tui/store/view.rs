@@ -7,7 +7,7 @@ use crate::query::{self, SortDirection, TaskSearchQuery};
 
 use super::{
     ClosedTaskVisibility, MainRowSelection, SidebarEntryTarget, TaskFilterModifiers, TaskOrder,
-    TaskProjectionOrigin, TaskScope, TaskScopeTarget, TaskView, TuiStore,
+    TaskProjectionOrigin, TaskQuery, TaskScope, TaskScopeTarget, TuiStore,
 };
 
 async fn search_preview_with_database(
@@ -56,33 +56,41 @@ impl TuiStore {
         self.sidebar_entries
             .iter()
             .position(|entry| match &entry.target {
-                Some(SidebarEntryTarget::View(view)) => *view == self.view_state.view,
+                Some(SidebarEntryTarget::View(view)) => *view == self.view_state.query,
                 _ => false,
             })
             .or(Some(1))
     }
 
-    pub(crate) async fn show_view(&mut self, view: TaskView) -> Result<Option<usize>> {
+    pub(crate) async fn show_view(&mut self, view: TaskQuery) -> Result<Option<usize>> {
+        self.show_view_preserving(view, None).await
+    }
+
+    pub(crate) async fn show_view_preserving(
+        &mut self,
+        view: TaskQuery,
+        selected: Option<&crate::ids::TaskId>,
+    ) -> Result<Option<usize>> {
         let mut view_state = self.view_state.clone();
-        view_state.view = view;
+        view_state.set_query(view);
         if !view.supports_closed_filter() {
             view_state.filter_modifiers.closed = ClosedTaskVisibility::Default;
         }
-        if view == TaskView::Upcoming {
+        if view == TaskQuery::Upcoming {
             view_state.direction = SortDirection::Asc;
         }
-        if view == TaskView::Search
+        if view == TaskQuery::Search
             && matches!(
                 view_state.projection_origin,
                 TaskProjectionOrigin::NamedView
             )
         {
             view_state.projection_origin = TaskProjectionOrigin::SearchPrompt;
-        } else if view != TaskView::Search {
+        } else if view != TaskQuery::Search {
             view_state.projection_origin = TaskProjectionOrigin::NamedView;
         }
         Ok(self
-            .refresh_with_view_state(view_state, None)
+            .refresh_with_view_state(view_state, selected)
             .await?
             .selected)
     }
@@ -204,7 +212,7 @@ impl TuiStore {
         if text.is_empty() {
             let mut view_state = self.view_state.clone();
             view_state.projection_origin = TaskProjectionOrigin::NamedView;
-            view_state.view = TaskView::Queue;
+            view_state.set_query(TaskQuery::Queue);
             return Ok(self
                 .refresh_with_view_state(view_state, None)
                 .await?
@@ -227,7 +235,7 @@ impl TuiStore {
             .await?;
         let mut view_state = self.view_state.clone();
         view_state.scope = TaskScope::Workspace;
-        view_state.view = TaskView::Search;
+        view_state.set_query(TaskQuery::Search);
         view_state.projection_origin = TaskProjectionOrigin::Search {
             query: text.to_string(),
             task_ids: results
@@ -282,7 +290,7 @@ impl TuiStore {
     ) -> Result<Option<usize>> {
         let mut view_state = self.view_state.clone();
         view_state.scope = TaskScope::Workspace;
-        view_state.view = TaskView::Search;
+        view_state.set_query(TaskQuery::Search);
         view_state.projection_origin = TaskProjectionOrigin::ExactTasks(vec![task_id.clone()]);
         view_state.filter_modifiers = TaskFilterModifiers::default();
         Ok(self
@@ -292,8 +300,8 @@ impl TuiStore {
     }
 
     pub(super) fn set_view_order(view_state: &mut super::TaskViewState, order: TaskOrder) {
-        if view_state.view == TaskView::Queue {
-            view_state.view = TaskView::Open;
+        if view_state.query == TaskQuery::Queue {
+            view_state.set_query(TaskQuery::Open);
         }
         view_state.order = order;
         if matches!(order, TaskOrder::Created | TaskOrder::Updated) {
@@ -302,8 +310,8 @@ impl TuiStore {
     }
 
     pub(super) fn reverse_view_order(view_state: &mut super::TaskViewState) {
-        if view_state.view == TaskView::Queue {
-            view_state.view = TaskView::Open;
+        if view_state.query == TaskQuery::Queue {
+            view_state.set_query(TaskQuery::Open);
         }
         view_state.direction = view_state.direction.toggled();
     }
@@ -312,8 +320,8 @@ impl TuiStore {
         &self,
         selected: Option<&MainRowSelection>,
     ) -> Option<usize> {
-        match self.view_state.view {
-            TaskView::Recurring => {
+        match self.view_state.query {
+            TaskQuery::Recurring => {
                 if self.recurrence_series.is_empty() {
                     return None;
                 }
@@ -327,7 +335,7 @@ impl TuiStore {
                     })
                     .or(Some(0))
             }
-            TaskView::RecentActions => (!self.recent_actions.is_empty()).then_some(0),
+            TaskQuery::RecentActions => (!self.recent_actions.is_empty()).then_some(0),
             _ => self.restored_task_selection(selected.and_then(|selected| match selected {
                 MainRowSelection::Task(id) => Some(id),
                 MainRowSelection::RecurrenceSeries(_) => None,

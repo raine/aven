@@ -740,7 +740,7 @@ async fn attachment_preview_refresh_preserves_owning_task_across_query_change() 
         attachment_id: "OWNEDIMAGE".to_string(),
         scroll: 6,
     });
-    app.store.view_state.view = TaskView::Done;
+    app.store.view_state.query = TaskQuery::Done;
 
     app.refresh().await.unwrap();
 

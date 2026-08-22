@@ -8,7 +8,7 @@ use crate::tui::conflict_flow::ConflictResolutionChoice;
 use crate::tui::event::{Action, CommandContext};
 use crate::tui::overlay::text_input::LineEdit;
 use crate::tui::store::{
-    ConflictTarget, EpicContext, TaskOrder, TaskView, TuiDatabaseStats, TuiSyncStatus,
+    ConflictTarget, EpicContext, TaskOrder, TaskQuery, TuiDatabaseStats, TuiSyncStatus,
 };
 use crate::tui::task_selection::TaskSelection;
 use crate::tui::text::{char_boundary_at_or_before, normalize_pasted_newlines};
@@ -387,7 +387,7 @@ pub(crate) enum HeaderMenuAction {
     Workspace(String),
     WorkspaceScope,
     ProjectScope(String),
-    View(TaskView),
+    View(TaskQuery),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -166,7 +166,7 @@ async fn project_edit_records_moved_task_for_detail_recall() {
     assert!(toast_message(&app).unwrap().contains("g . return"));
     app.execute(Action::ReturnToLastChange).await.unwrap();
     assert!(app.detail.is_active());
-    assert_eq!(app.store.view_state.view, TaskView::Search);
+    assert_eq!(app.store.view_state.query, TaskQuery::Search);
     assert_eq!(app.store.tasks.len(), 1);
     assert_eq!(app.store.tasks[0].task.id, changed_id);
 }

@@ -9,7 +9,7 @@ use crate::choices::TaskPriority;
 use crate::tui::app::Focus;
 use crate::tui::list_surface::ListSurface;
 use crate::tui::store::{
-    SidebarEntry, SidebarEntryTarget, TaskScope, TaskScopeTarget, TaskView, TuiStore,
+    SidebarEntry, SidebarEntryTarget, TaskQuery, TaskScope, TaskScopeTarget, TuiStore,
 };
 use crate::tui::text::truncate_width;
 use crate::tui::theme::{
@@ -193,9 +193,9 @@ pub(super) fn render_sidebar(
                 Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(project))) => {
                     theme::project_color(project)
                 }
-                Some(SidebarEntryTarget::View(TaskView::Active)) => FG_MUTED,
-                Some(SidebarEntryTarget::View(TaskView::Todo)) => FG_DIM,
-                Some(SidebarEntryTarget::View(TaskView::Epics)) => YELLOW,
+                Some(SidebarEntryTarget::View(TaskQuery::Active)) => FG_MUTED,
+                Some(SidebarEntryTarget::View(TaskQuery::Todo)) => FG_DIM,
+                Some(SidebarEntryTarget::View(TaskQuery::Epics)) => YELLOW,
                 _ => FG,
             };
             let label_style = if is_active_view {
@@ -268,7 +268,7 @@ fn badge(count: i64, active: bool) -> Span<'static> {
 
 fn sidebar_entry_active(entry: &SidebarEntry, store: &TuiStore) -> bool {
     match &entry.target {
-        Some(SidebarEntryTarget::View(view)) => *view == store.view_state.view,
+        Some(SidebarEntryTarget::View(view)) => *view == store.view_state.query,
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)) => {
             store.view_state.scope == TaskScope::Workspace
         }
@@ -281,20 +281,20 @@ fn sidebar_entry_active(entry: &SidebarEntry, store: &TuiStore) -> bool {
 
 fn sidebar_icon(entry: &SidebarEntry) -> &'static str {
     match entry.target {
-        Some(SidebarEntryTarget::View(TaskView::Queue)) => QUEUE_MARKER,
-        Some(SidebarEntryTarget::View(TaskView::Columns)) => COLUMNS_MARKER,
-        Some(SidebarEntryTarget::View(TaskView::Inbox)) => INBOX_MARKER,
-        Some(SidebarEntryTarget::View(TaskView::Todo)) => TODO_MARKER,
-        Some(SidebarEntryTarget::View(TaskView::Active)) => ACTIVE_MARKER,
-        Some(SidebarEntryTarget::View(TaskView::Backlog)) => BACKLOG_MARKER,
-        Some(SidebarEntryTarget::View(TaskView::Done)) => DONE_MARKER,
-        Some(SidebarEntryTarget::View(TaskView::Upcoming)) => UPCOMING_MARKER,
-        Some(SidebarEntryTarget::View(TaskView::Conflicts)) => CONFLICT_MARKER,
-        Some(SidebarEntryTarget::View(TaskView::Search)) => SEARCH_MARKER,
-        Some(SidebarEntryTarget::View(TaskView::RecentActions)) => RECENT_MARKER,
-        Some(SidebarEntryTarget::View(TaskView::Epics)) => EPIC_MARKER,
-        Some(SidebarEntryTarget::View(TaskView::Recurring)) => RECURRING_MARKER,
-        Some(SidebarEntryTarget::View(TaskView::Open)) => OPEN_MARKER,
+        Some(SidebarEntryTarget::View(TaskQuery::Queue)) => QUEUE_MARKER,
+        Some(SidebarEntryTarget::View(TaskQuery::All)) => COLUMNS_MARKER,
+        Some(SidebarEntryTarget::View(TaskQuery::Inbox)) => INBOX_MARKER,
+        Some(SidebarEntryTarget::View(TaskQuery::Todo)) => TODO_MARKER,
+        Some(SidebarEntryTarget::View(TaskQuery::Active)) => ACTIVE_MARKER,
+        Some(SidebarEntryTarget::View(TaskQuery::Backlog)) => BACKLOG_MARKER,
+        Some(SidebarEntryTarget::View(TaskQuery::Done)) => DONE_MARKER,
+        Some(SidebarEntryTarget::View(TaskQuery::Upcoming)) => UPCOMING_MARKER,
+        Some(SidebarEntryTarget::View(TaskQuery::Conflicts)) => CONFLICT_MARKER,
+        Some(SidebarEntryTarget::View(TaskQuery::Search)) => SEARCH_MARKER,
+        Some(SidebarEntryTarget::View(TaskQuery::RecentActions)) => RECENT_MARKER,
+        Some(SidebarEntryTarget::View(TaskQuery::Epics)) => EPIC_MARKER,
+        Some(SidebarEntryTarget::View(TaskQuery::Recurring)) => RECURRING_MARKER,
+        Some(SidebarEntryTarget::View(TaskQuery::Open)) => OPEN_MARKER,
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)) => WORKSPACE_MARKER,
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(_))) => PROJECT_MARKER,
         None => " ",
@@ -303,20 +303,20 @@ fn sidebar_icon(entry: &SidebarEntry) -> &'static str {
 
 fn sidebar_label(entry: &SidebarEntry) -> String {
     match entry.target {
-        Some(SidebarEntryTarget::View(TaskView::Queue)) => "Queue".to_string(),
-        Some(SidebarEntryTarget::View(TaskView::Columns)) => "Columns".to_string(),
-        Some(SidebarEntryTarget::View(TaskView::Inbox)) => "Inbox".to_string(),
-        Some(SidebarEntryTarget::View(TaskView::Active)) => "All active".to_string(),
-        Some(SidebarEntryTarget::View(TaskView::Backlog)) => "Backlog".to_string(),
-        Some(SidebarEntryTarget::View(TaskView::Todo)) => "All todo".to_string(),
-        Some(SidebarEntryTarget::View(TaskView::Done)) => "Done".to_string(),
-        Some(SidebarEntryTarget::View(TaskView::Upcoming)) => "Upcoming".to_string(),
-        Some(SidebarEntryTarget::View(TaskView::Conflicts)) => "Conflicts".to_string(),
-        Some(SidebarEntryTarget::View(TaskView::Search)) => "Search".to_string(),
-        Some(SidebarEntryTarget::View(TaskView::RecentActions)) => "Recent actions".to_string(),
-        Some(SidebarEntryTarget::View(TaskView::Epics)) => "Epics".to_string(),
-        Some(SidebarEntryTarget::View(TaskView::Recurring)) => "Recurring Tasks".to_string(),
-        Some(SidebarEntryTarget::View(TaskView::Open)) => "Open".to_string(),
+        Some(SidebarEntryTarget::View(TaskQuery::Queue)) => "Queue".to_string(),
+        Some(SidebarEntryTarget::View(TaskQuery::All)) => "All".to_string(),
+        Some(SidebarEntryTarget::View(TaskQuery::Inbox)) => "Inbox".to_string(),
+        Some(SidebarEntryTarget::View(TaskQuery::Active)) => "All active".to_string(),
+        Some(SidebarEntryTarget::View(TaskQuery::Backlog)) => "Backlog".to_string(),
+        Some(SidebarEntryTarget::View(TaskQuery::Todo)) => "All todo".to_string(),
+        Some(SidebarEntryTarget::View(TaskQuery::Done)) => "Done".to_string(),
+        Some(SidebarEntryTarget::View(TaskQuery::Upcoming)) => "Upcoming".to_string(),
+        Some(SidebarEntryTarget::View(TaskQuery::Conflicts)) => "Conflicts".to_string(),
+        Some(SidebarEntryTarget::View(TaskQuery::Search)) => "Search".to_string(),
+        Some(SidebarEntryTarget::View(TaskQuery::RecentActions)) => "Recent actions".to_string(),
+        Some(SidebarEntryTarget::View(TaskQuery::Epics)) => "Epics".to_string(),
+        Some(SidebarEntryTarget::View(TaskQuery::Recurring)) => "Recurring Tasks".to_string(),
+        Some(SidebarEntryTarget::View(TaskQuery::Open)) => "Open".to_string(),
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)) => "Workspace".to_string(),
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(_))) => entry
             .label

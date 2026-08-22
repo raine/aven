@@ -91,7 +91,7 @@ async fn recurrence_context_menu_matches_lifecycle() {
     let mut app = test_app().await;
     let (task_id, series_id) = add_recurring_series(&mut app, "Context series").await;
     app.list
-        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+        .select_task(app.store.show_view(TaskQuery::Recurring).await.unwrap());
     let size = (140, 24);
 
     let click = recurrence_right_click_event(&app, size, 0);
@@ -135,7 +135,7 @@ async fn recurrence_context_menu_matches_lifecycle() {
     let mut app = test_app().await;
     add_recurring_series(&mut app, "Stopped context").await;
     app.list
-        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+        .select_task(app.store.show_view(TaskQuery::Recurring).await.unwrap());
     app.execute_selected_recurrence_action(Action::StopRecurrence)
         .await
         .unwrap();

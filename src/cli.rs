@@ -349,7 +349,7 @@ pub(crate) enum CodingAgentArg {
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TuiViewArg {
     Queue,
-    Columns,
+    All,
     Open,
     Inbox,
     Active,
@@ -361,6 +361,12 @@ pub(crate) enum TuiViewArg {
     Epics,
     Recurring,
     RecentActions,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TuiLayoutArg {
+    List,
+    Columns,
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
@@ -394,12 +400,15 @@ pub(crate) struct TuiArgs {
     /// Open this task's detail directly
     #[arg(
         value_name = "TASK_REF",
-        conflicts_with_all = ["project", "view", "label", "priority", "add_task", "add_task_only"]
+        conflicts_with_all = ["project", "view", "layout", "label", "priority", "add_task", "add_task_only"]
     )]
     pub(crate) task_ref: Option<String>,
     /// Start in this named view
     #[arg(long, value_enum, conflicts_with = "add_task_only")]
     pub(crate) view: Option<TuiViewArg>,
+    /// Present the selected query as a list or columns
+    #[arg(long, value_enum, conflicts_with = "add_task_only")]
+    pub(crate) layout: Option<TuiLayoutArg>,
     /// Start in project scope; omit the value to infer from the current directory
     #[arg(short = 'p', long, num_args = 0..=1, default_missing_value = "")]
     pub(crate) project: Option<String>,
@@ -1637,6 +1646,8 @@ mod tests {
             "--project",
             "app",
             "--view",
+            "all",
+            "--layout",
             "columns",
             "--label",
             "bug",
@@ -1650,7 +1661,8 @@ mod tests {
             panic!("expected tui command");
         };
         assert_eq!(args.project.as_deref(), Some("app"));
-        assert_eq!(args.view, Some(TuiViewArg::Columns));
+        assert_eq!(args.view, Some(TuiViewArg::All));
+        assert_eq!(args.layout, Some(TuiLayoutArg::Columns));
         assert_eq!(args.label.as_deref(), Some("bug"));
         assert_eq!(args.priority, Some(TuiPriorityArg::Urgent));
         assert!(args.add_task);
@@ -1661,7 +1673,7 @@ mod tests {
     fn tui_launch_parses_all_typed_values() {
         for view in [
             "queue",
-            "columns",
+            "all",
             "open",
             "inbox",
             "active",
@@ -1675,6 +1687,9 @@ mod tests {
             "recent-actions",
         ] {
             assert!(Cli::try_parse_from(["aven", "tui", "--view", view]).is_ok());
+        }
+        for layout in ["list", "columns"] {
+            assert!(Cli::try_parse_from(["aven", "tui", "--layout", layout]).is_ok());
         }
         for priority in ["none", "low", "medium", "high", "urgent"] {
             assert!(Cli::try_parse_from(["aven", "tui", "--priority", priority]).is_ok());

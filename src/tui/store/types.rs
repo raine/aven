@@ -80,9 +80,9 @@ pub(crate) enum TaskScope {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TaskView {
+pub(crate) enum TaskQuery {
     Queue,
-    Columns,
+    All,
     Open,
     Inbox,
     Active,
@@ -97,10 +97,33 @@ pub(crate) enum TaskView {
     RecentActions,
 }
 
-impl TaskView {
+impl TaskQuery {
     pub(crate) fn supports_closed_filter(self) -> bool {
         matches!(self, Self::Queue | Self::Open | Self::Epics)
     }
+
+    pub(crate) fn supports_layout(self, layout: TaskLayout) -> bool {
+        layout == TaskLayout::List
+            || matches!(
+                self,
+                Self::All
+                    | Self::Open
+                    | Self::Inbox
+                    | Self::Active
+                    | Self::Backlog
+                    | Self::Todo
+                    | Self::Done
+                    | Self::Conflicts
+                    | Self::Search
+            )
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum TaskLayout {
+    #[default]
+    List,
+    Columns,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -177,7 +200,6 @@ pub(crate) enum TaskOrder {
 pub(crate) enum TaskListRenderMode {
     Flat,
     Queue,
-    Columns,
     Upcoming,
     Epics,
 }
@@ -185,7 +207,8 @@ pub(crate) enum TaskListRenderMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TaskViewState {
     pub(crate) scope: TaskScope,
-    pub(crate) view: TaskView,
+    pub(crate) query: TaskQuery,
+    pub(crate) layout: TaskLayout,
     pub(crate) projection_origin: TaskProjectionOrigin,
     pub(crate) filter_modifiers: TaskFilterModifiers,
     pub(crate) order: TaskOrder,
@@ -199,7 +222,8 @@ impl Default for TaskViewState {
     fn default() -> Self {
         Self {
             scope: TaskScope::Workspace,
-            view: TaskView::Queue,
+            query: TaskQuery::Queue,
+            layout: TaskLayout::List,
             projection_origin: TaskProjectionOrigin::default(),
             filter_modifiers: TaskFilterModifiers::default(),
             order: TaskOrder::Created,
@@ -212,8 +236,27 @@ impl Default for TaskViewState {
 }
 
 impl TaskViewState {
+    pub(crate) fn is_columns(&self) -> bool {
+        self.layout == TaskLayout::Columns
+    }
+
+    pub(crate) fn set_layout(&mut self, layout: TaskLayout) -> Result<(), &'static str> {
+        if !self.query.supports_layout(layout) {
+            return Err("active query does not support columns layout");
+        }
+        self.layout = layout;
+        Ok(())
+    }
+
+    pub(crate) fn set_query(&mut self, query: TaskQuery) {
+        self.query = query;
+        if !query.supports_layout(self.layout) {
+            self.layout = TaskLayout::List;
+        }
+    }
+
     pub(crate) fn reset_projection_origin(&mut self) {
-        self.projection_origin = if self.view == TaskView::Search {
+        self.projection_origin = if self.query == TaskQuery::Search {
             TaskProjectionOrigin::SearchPrompt
         } else {
             TaskProjectionOrigin::NamedView
@@ -222,7 +265,7 @@ impl TaskViewState {
 
     pub(crate) fn for_exact_task(task_id: crate::ids::TaskId) -> Self {
         Self {
-            view: TaskView::Search,
+            query: TaskQuery::Search,
             projection_origin: TaskProjectionOrigin::ExactTasks(vec![task_id]),
             ..Self::default()
         }
@@ -240,46 +283,46 @@ impl TaskViewState {
         if let TaskScope::Project(project) = &self.scope {
             filters.project = Some(project.clone());
         }
-        match self.view {
-            TaskView::Queue => {
+        match self.query {
+            TaskQuery::Queue => {
                 filters.hide_done = true;
                 filters.availability = TaskAvailabilityFilter::Available;
             }
-            TaskView::Columns => filters.availability = TaskAvailabilityFilter::Available,
-            TaskView::Open => {
+            TaskQuery::All => filters.availability = TaskAvailabilityFilter::Available,
+            TaskQuery::Open => {
                 filters.hide_done = true;
                 filters.availability = TaskAvailabilityFilter::Available;
             }
-            TaskView::Inbox => {
+            TaskQuery::Inbox => {
                 filters.status = Some("inbox".to_string());
                 filters.availability = TaskAvailabilityFilter::Available;
             }
-            TaskView::Active => {
+            TaskQuery::Active => {
                 filters.status = Some("active".to_string());
                 filters.availability = TaskAvailabilityFilter::Available;
             }
-            TaskView::Backlog => {
+            TaskQuery::Backlog => {
                 filters.status = Some("backlog".to_string());
                 filters.availability = TaskAvailabilityFilter::Available;
             }
-            TaskView::Todo => {
+            TaskQuery::Todo => {
                 filters.status = Some("todo".to_string());
                 filters.availability = TaskAvailabilityFilter::Available;
             }
-            TaskView::Done => filters.statuses = vec!["done".to_string(), "canceled".to_string()],
-            TaskView::Upcoming => filters.availability = TaskAvailabilityFilter::Upcoming,
-            TaskView::Conflicts => filters.conflicts_only = true,
-            TaskView::Epics => {
+            TaskQuery::Done => filters.statuses = vec!["done".to_string(), "canceled".to_string()],
+            TaskQuery::Upcoming => filters.availability = TaskAvailabilityFilter::Upcoming,
+            TaskQuery::Conflicts => filters.conflicts_only = true,
+            TaskQuery::Epics => {
                 filters.epics_only = true;
                 filters.hide_done = true;
                 filters.availability = TaskAvailabilityFilter::Available;
             }
-            TaskView::Search => {
+            TaskQuery::Search => {
                 filters.include_deleted = true;
             }
-            TaskView::Recurring | TaskView::RecentActions => {}
+            TaskQuery::Recurring | TaskQuery::RecentActions => {}
         }
-        if self.view.supports_closed_filter() {
+        if self.query.supports_closed_filter() {
             match self.filter_modifiers.closed {
                 ClosedTaskVisibility::Default => {}
                 ClosedTaskVisibility::Included => filters.hide_done = false,
@@ -304,17 +347,15 @@ impl TaskViewState {
     }
 
     pub(crate) fn query_mode(&self) -> TaskQueryMode {
-        match self.view {
-            TaskView::Queue => TaskQueryMode::RankedQueue,
-            TaskView::Columns | TaskView::Recurring | TaskView::RecentActions => {
-                TaskQueryMode::Flat
-            }
+        match self.query {
+            TaskQuery::Queue => TaskQueryMode::RankedQueue,
+            TaskQuery::Recurring | TaskQuery::RecentActions => TaskQueryMode::Flat,
             _ => TaskQueryMode::Flat,
         }
     }
 
     pub(crate) fn sort(&self) -> TaskSort {
-        if self.view == TaskView::Upcoming {
+        if self.query == TaskQuery::Upcoming {
             TaskSort::AvailableAt
         } else {
             self.order.into()
@@ -322,7 +363,7 @@ impl TaskViewState {
     }
 
     pub(crate) fn sort_direction(&self) -> SortDirection {
-        if self.view == TaskView::Upcoming {
+        if self.query == TaskQuery::Upcoming {
             SortDirection::Asc
         } else {
             self.direction
@@ -330,14 +371,93 @@ impl TaskViewState {
     }
 
     pub(crate) fn render_mode(&self) -> TaskListRenderMode {
-        match self.view {
-            TaskView::Queue => TaskListRenderMode::Queue,
-            TaskView::Columns => TaskListRenderMode::Columns,
-            TaskView::Upcoming => TaskListRenderMode::Upcoming,
-            TaskView::Epics => TaskListRenderMode::Epics,
-            TaskView::Recurring | TaskView::RecentActions => TaskListRenderMode::Flat,
+        match self.query {
+            TaskQuery::Queue => TaskListRenderMode::Queue,
+            TaskQuery::Upcoming => TaskListRenderMode::Upcoming,
+            TaskQuery::Epics => TaskListRenderMode::Epics,
+            TaskQuery::Recurring | TaskQuery::RecentActions => TaskListRenderMode::Flat,
             _ => TaskListRenderMode::Flat,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn columns_compatibility_is_explicit() {
+        for query in [
+            TaskQuery::All,
+            TaskQuery::Open,
+            TaskQuery::Inbox,
+            TaskQuery::Active,
+            TaskQuery::Backlog,
+            TaskQuery::Todo,
+            TaskQuery::Done,
+            TaskQuery::Conflicts,
+            TaskQuery::Search,
+        ] {
+            assert!(query.supports_layout(TaskLayout::Columns), "{query:?}");
+        }
+        for query in [
+            TaskQuery::Queue,
+            TaskQuery::Upcoming,
+            TaskQuery::Epics,
+            TaskQuery::Recurring,
+            TaskQuery::RecentActions,
+        ] {
+            assert!(!query.supports_layout(TaskLayout::Columns), "{query:?}");
+            assert!(query.supports_layout(TaskLayout::List), "{query:?}");
+        }
+    }
+
+    #[test]
+    fn layout_does_not_change_query_semantics() {
+        let mut state = TaskViewState {
+            query: TaskQuery::Todo,
+            ..TaskViewState::default()
+        };
+        let list_filters = state.filters();
+        let list_mode = state.query_mode();
+        let list_sort = state.sort();
+
+        state.set_layout(TaskLayout::Columns).unwrap();
+
+        assert_eq!(
+            format!("{:?}", state.filters()),
+            format!("{list_filters:?}")
+        );
+        assert_eq!(state.query_mode(), list_mode);
+        assert_eq!(state.sort(), list_sort);
+    }
+
+    #[test]
+    fn incompatible_query_coerces_columns_to_list() {
+        let mut state = TaskViewState {
+            query: TaskQuery::All,
+            layout: TaskLayout::Columns,
+            ..TaskViewState::default()
+        };
+
+        state.set_query(TaskQuery::Queue);
+
+        assert_eq!(state.query, TaskQuery::Queue);
+        assert_eq!(state.layout, TaskLayout::List);
+    }
+
+    #[test]
+    fn all_query_includes_every_available_status() {
+        let state = TaskViewState {
+            query: TaskQuery::All,
+            ..TaskViewState::default()
+        };
+        let filters = state.filters();
+
+        assert_eq!(filters.availability, TaskAvailabilityFilter::Available);
+        assert!(!filters.hide_done);
+        assert!(filters.status.is_none());
+        assert!(filters.statuses.is_empty());
     }
 }
 
@@ -362,7 +482,7 @@ pub(crate) enum TaskScopeTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SidebarEntryTarget {
-    View(TaskView),
+    View(TaskQuery),
     Scope(TaskScopeTarget),
 }
 

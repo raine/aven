@@ -344,7 +344,7 @@ async fn refresh_policy_updates_projection_and_preserves_navigation_identity() {
     selected_draft.priority = "high".to_string();
     let selected = create_and_select_task(&mut app, selected_draft).await;
     let selected_id = app.store.tasks[selected].task.id.clone();
-    app.store.view_state.view = TaskView::Inbox;
+    app.store.view_state.query = TaskQuery::Inbox;
     app.store.view_state.order = TaskOrder::Title;
     app.store.view_state.filter_modifiers.priority = Some("high".to_string());
     app.refresh().await.unwrap();
@@ -392,7 +392,7 @@ async fn refresh_policy_reconciles_a_task_that_leaves_the_active_view() {
     let disappearing = create_and_select_task(&mut app, test_task_draft("Leaves inbox")).await;
     let disappearing_id = app.store.tasks[disappearing].task.id.clone();
     create_and_select_task(&mut app, test_task_draft("Remains in inbox")).await;
-    app.store.view_state.view = TaskView::Inbox;
+    app.store.view_state.query = TaskQuery::Inbox;
     app.refresh().await.unwrap();
     let disappearing = app
         .store

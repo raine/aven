@@ -300,7 +300,7 @@ mod tests {
     use super::*;
     use crate::ids::WorkspaceId;
     use crate::tui::overlay::{HeaderMenuItem, HeaderMenuKind, HeaderMenuState};
-    use crate::tui::store::TaskView;
+    use crate::tui::store::TaskQuery;
 
     fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
         MouseEvent {
@@ -329,7 +329,7 @@ mod tests {
                 key: "i".to_string(),
                 label: "inbox".to_string(),
                 selected: false,
-                action: HeaderMenuAction::View(TaskView::Inbox),
+                action: HeaderMenuAction::View(TaskQuery::Inbox),
             }],
         };
         let area = state.area(80, 24);
@@ -342,7 +342,7 @@ mod tests {
         assert!(matches!(
             outcome,
             OverlayMouseOutcome::Submitted(OverlaySubmit::HeaderMenu {
-                action: HeaderMenuAction::View(TaskView::Inbox)
+                action: HeaderMenuAction::View(TaskQuery::Inbox)
             })
         ));
 

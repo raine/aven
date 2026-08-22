@@ -341,15 +341,126 @@ async fn column_view_shortcut_selects_columns() {
     let mut app = test_app().await;
 
     app.handle_normal_key(KeyCode::Char('v')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('w')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('v')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
 
-    assert_eq!(app.store.view_state.view, TaskView::Columns);
+    assert_eq!(app.store.view_state.query, TaskQuery::All);
+    assert_eq!(app.store.view_state.layout, TaskLayout::Columns);
+}
+
+#[tokio::test]
+async fn layout_switch_preserves_query_rows_selection_marks_and_history() {
+    let mut app = test_app().await;
+    let index = create_and_select_task(&mut app, test_task_draft("layout task")).await;
+    let task_id = app.store.tasks[index].task.id.clone();
+    app.list.select_task(Some(index));
+    app.list.mark(task_id.clone());
+    let task_ids = app
+        .store
+        .tasks
+        .iter()
+        .map(|item| item.task.id.clone())
+        .collect::<Vec<_>>();
+
+    app.set_layout(TaskLayout::Columns);
+
+    assert_eq!(app.store.view_state.query, TaskQuery::Queue);
+    assert_eq!(app.store.view_state.layout, TaskLayout::List);
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("active query does not support columns layout")
+    );
+
+    app.store.show_view(TaskQuery::All).await.unwrap();
+    app.list.select_task(
+        app.store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id),
+    );
+    let all_ids = app
+        .store
+        .tasks
+        .iter()
+        .map(|item| item.task.id.clone())
+        .collect::<Vec<_>>();
+    app.set_layout(TaskLayout::Columns);
+    app.set_layout(TaskLayout::List);
+
+    assert_eq!(app.store.view_state.query, TaskQuery::All);
+    assert_eq!(app.store.view_state.layout, TaskLayout::List);
+    assert_eq!(
+        all_ids,
+        app.store
+            .tasks
+            .iter()
+            .map(|item| item.task.id.clone())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(task_ids, all_ids);
+    assert_eq!(
+        app.store.tasks[app.list.selected_task().unwrap()].task.id,
+        task_id
+    );
+    assert!(app.list.marked_task_ids().contains(&task_id));
+    assert!(app.list.navigation_is_empty());
+}
+
+#[tokio::test]
+async fn incompatible_query_coerces_layout_and_back_restores_both() {
+    let mut app = test_app().await;
+    app.store.show_view(TaskQuery::All).await.unwrap();
+    app.set_layout(TaskLayout::Columns);
+
+    app.show_view(TaskQuery::Queue).await.unwrap();
+    assert_eq!(app.store.view_state.query, TaskQuery::Queue);
+    assert_eq!(app.store.view_state.layout, TaskLayout::List);
+
+    app.go_back().await.unwrap();
+    assert_eq!(app.store.view_state.query, TaskQuery::All);
+    assert_eq!(app.store.view_state.layout, TaskLayout::Columns);
+}
+
+#[tokio::test]
+async fn status_change_removes_card_outside_scoped_columns_query() {
+    let mut app = test_app().await;
+    let first = create_and_select_task(&mut app, test_task_draft("First todo")).await;
+    let first_id = app.store.tasks[first].task.id.clone();
+    app.update_status(TaskStatus::Todo).await.unwrap();
+    let second = create_and_select_task(&mut app, test_task_draft("Second todo")).await;
+    let second_id = app.store.tasks[second].task.id.clone();
+    app.update_status(TaskStatus::Todo).await.unwrap();
+    app.store.show_view(TaskQuery::Todo).await.unwrap();
+    app.store
+        .view_state
+        .set_layout(TaskLayout::Columns)
+        .unwrap();
+    app.list.select_task(
+        app.store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == first_id),
+    );
+
+    app.update_status(TaskStatus::Active).await.unwrap();
+
+    assert!(app.store.tasks.iter().all(|item| item.task.id != first_id));
+    assert_eq!(app.store.tasks.len(), 1);
+    assert_eq!(
+        app.store.tasks[app.list.selected_task().unwrap()].task.id,
+        second_id
+    );
 }
 
 #[tokio::test]
 async fn column_view_preview_shortcut_toggles_session_visibility() {
     let mut app = test_app().await;
-    app.store.show_view(TaskView::Columns).await.unwrap();
+    app.store.show_view(TaskQuery::All).await.unwrap();
+    app.store
+        .view_state
+        .set_layout(TaskLayout::Columns)
+        .unwrap();
     assert!(app.store.columns_preview_visible);
 
     app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
@@ -366,7 +477,11 @@ async fn column_move_shortcut_updates_status_and_undo_restores_it() {
     let mut app = test_app().await;
     let index = create_and_select_task(&mut app, test_task_draft("move me")).await;
     let task_id = app.store.tasks[index].task.id.clone();
-    app.store.show_view(TaskView::Columns).await.unwrap();
+    app.store.show_view(TaskQuery::All).await.unwrap();
+    app.store
+        .view_state
+        .set_layout(TaskLayout::Columns)
+        .unwrap();
     app.list.select_task(
         app.store
             .tasks
@@ -416,7 +531,11 @@ async fn column_move_shortcut_advances_marked_tasks_from_their_own_lanes() {
     let todo_id = app.store.tasks[todo].task.id.clone();
     app.list.mark(inbox_id.clone());
     app.list.mark(todo_id.clone());
-    app.store.show_view(TaskView::Columns).await.unwrap();
+    app.store.show_view(TaskQuery::All).await.unwrap();
+    app.store
+        .view_state
+        .set_layout(TaskLayout::Columns)
+        .unwrap();
 
     app.handle_normal_key(KeyCode::Char('>')).await.unwrap();
 
@@ -450,7 +569,11 @@ async fn column_move_shortcut_advances_marked_tasks_from_their_own_lanes() {
 async fn column_move_picker_uses_lane_names_and_first_statuses() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("move with picker")).await;
-    app.store.show_view(TaskView::Columns).await.unwrap();
+    app.store.show_view(TaskQuery::All).await.unwrap();
+    app.store
+        .view_state
+        .set_layout(TaskLayout::Columns)
+        .unwrap();
 
     app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
 
@@ -474,7 +597,11 @@ async fn column_relative_move_keeps_marked_batch_unchanged_at_edge() {
     let backlog_id = app.store.tasks[backlog].task.id.clone();
     app.list.mark(inbox_id.clone());
     app.list.mark(backlog_id.clone());
-    app.store.show_view(TaskView::Columns).await.unwrap();
+    app.store.show_view(TaskQuery::All).await.unwrap();
+    app.store
+        .view_state
+        .set_layout(TaskLayout::Columns)
+        .unwrap();
 
     app.handle_normal_key(KeyCode::Char('<')).await.unwrap();
 
@@ -499,7 +626,11 @@ async fn column_relative_move_keeps_marked_batch_unchanged_at_edge() {
 async fn choosing_current_column_preserves_grouped_status() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("stay canceled")).await;
-    app.store.show_view(TaskView::Columns).await.unwrap();
+    app.store.show_view(TaskQuery::All).await.unwrap();
+    app.store
+        .view_state
+        .set_layout(TaskLayout::Columns)
+        .unwrap();
     app.update_status(TaskStatus::Canceled).await.unwrap();
 
     let selection = app.resolve_task_selection().unwrap();
@@ -522,7 +653,11 @@ async fn column_lane_header_click_moves_selected_task() {
     let mut app = test_app().await;
     let index = create_and_select_task(&mut app, test_task_draft("mouse move")).await;
     let task_id = app.store.tasks[index].task.id.clone();
-    app.store.show_view(TaskView::Columns).await.unwrap();
+    app.store.show_view(TaskQuery::All).await.unwrap();
+    app.store
+        .view_state
+        .set_layout(TaskLayout::Columns)
+        .unwrap();
     app.list.select_task(
         app.store
             .tasks
@@ -550,7 +685,11 @@ async fn column_lane_header_click_moves_selected_task() {
 async fn column_card_right_click_opens_status_choices() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("mouse status")).await;
-    app.store.show_view(TaskView::Columns).await.unwrap();
+    app.store.show_view(TaskQuery::All).await.unwrap();
+    app.store
+        .view_state
+        .set_layout(TaskLayout::Columns)
+        .unwrap();
 
     app.dispatch_mouse(right_click(1, 4), (80, 24).into())
         .await
@@ -574,7 +713,11 @@ async fn column_view_navigates_within_and_between_lanes() {
         draft.status = status.to_string();
         app.store.create_task(draft, None).await.unwrap();
     }
-    app.store.show_view(TaskView::Columns).await.unwrap();
+    app.store.show_view(TaskQuery::All).await.unwrap();
+    app.store
+        .view_state
+        .set_layout(TaskLayout::Columns)
+        .unwrap();
     let active = app
         .store
         .tasks
@@ -617,7 +760,8 @@ async fn column_view_keeps_task_selected_when_status_becomes_done() {
     let mut draft = test_task_draft("finish me");
     draft.status = "active".to_string();
     create_and_select_task(&mut app, draft).await;
-    app.show_view(TaskView::Columns).await.unwrap();
+    app.show_view(TaskQuery::All).await.unwrap();
+    app.set_layout(TaskLayout::Columns);
     let selected_id = app
         .store
         .selected_task(app.list.selected_task())

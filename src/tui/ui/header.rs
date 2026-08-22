@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
-use crate::tui::store::{TaskScope, TaskView, TuiStore};
+use crate::tui::store::{TaskLayout, TaskQuery, TaskScope, TuiStore};
 use crate::tui::theme::{
     self, ACCENT, BG, BG_PANEL, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, INVERSE_FG, ORANGE,
     PINK, RED,
@@ -19,8 +19,9 @@ pub(crate) enum HeaderTarget {
     Changelog,
     Workspace { column: u16 },
     Scope { column: u16 },
-    View { column: u16 },
-    MetricView(TaskView),
+    Query { column: u16 },
+    Layout,
+    MetricView(TaskQuery),
     Order { column: u16 },
     Update,
     SyncStatus,
@@ -104,7 +105,7 @@ impl HeaderTarget {
         match self {
             Self::Workspace { .. } => Self::Workspace { column },
             Self::Scope { .. } => Self::Scope { column },
-            Self::View { .. } => Self::View { column },
+            Self::Query { .. } => Self::Query { column },
             Self::Order { .. } => Self::Order { column },
             target => target,
         }
@@ -224,9 +225,23 @@ fn header_layout(
     scope.extend(scope_badge(store));
     layout.push(scope, Some(HeaderTarget::Scope { column: 0 }));
     layout.push_text(separator(), None);
-    let mut view = vec![Span::styled("view ", Style::new().fg(FG_DIM))];
+    let mut view = vec![Span::styled("query ", Style::new().fg(FG_DIM))];
     view.extend(view_badge(store));
-    layout.push(view, Some(HeaderTarget::View { column: 0 }));
+    layout.push(view, Some(HeaderTarget::Query { column: 0 }));
+    layout.push_text(separator(), None);
+    layout.push(
+        vec![Span::styled(
+            match store.view_state.layout {
+                TaskLayout::List => " ▦ list ",
+                TaskLayout::Columns => " ▦ columns ",
+            },
+            Style::new()
+                .fg(FG)
+                .bg(BG_PANEL)
+                .add_modifier(Modifier::BOLD),
+        )],
+        Some(HeaderTarget::Layout),
+    );
     layout.push(active_filter_spans(store), None);
 
     let order = active_order_spans(store);
@@ -290,43 +305,43 @@ fn header_metrics(store: &TuiStore, compact: bool) -> Vec<Span<'static>> {
 fn header_metric_entries(
     store: &TuiStore,
     compact: bool,
-) -> Vec<(&'static str, i64, Color, bool, TaskView)> {
-    let view = store.view_state.view;
+) -> Vec<(&'static str, i64, Color, bool, TaskQuery)> {
+    let view = store.view_state.query;
     let metrics = [
         (
             "queue",
             store.counts.open,
             ACCENT,
-            view == TaskView::Queue,
-            TaskView::Queue,
+            view == TaskQuery::Queue,
+            TaskQuery::Queue,
         ),
         (
             "open",
             store.counts.open,
             GREEN,
-            view == TaskView::Open,
-            TaskView::Open,
+            view == TaskQuery::Open,
+            TaskQuery::Open,
         ),
         (
             "todo",
             store.counts.todo,
             BLUE,
-            view == TaskView::Todo,
-            TaskView::Todo,
+            view == TaskQuery::Todo,
+            TaskQuery::Todo,
         ),
         (
             "inbox",
             store.counts.inbox,
             FG_MUTED,
-            view == TaskView::Inbox,
-            TaskView::Inbox,
+            view == TaskQuery::Inbox,
+            TaskQuery::Inbox,
         ),
         (
             "conflicts",
             store.counts.conflicts,
             PINK,
-            view == TaskView::Conflicts,
-            TaskView::Conflicts,
+            view == TaskQuery::Conflicts,
+            TaskQuery::Conflicts,
         ),
     ];
     metrics
@@ -383,21 +398,21 @@ fn view_badge(store: &TuiStore) -> Vec<Span<'static>> {
 }
 
 fn active_view_label(store: &TuiStore) -> &'static str {
-    match store.view_state.view {
-        TaskView::Queue => "queue",
-        TaskView::Columns => "columns",
-        TaskView::Open => "open",
-        TaskView::Inbox => "inbox",
-        TaskView::Active => "active",
-        TaskView::Backlog => "backlog",
-        TaskView::Todo => "todo",
-        TaskView::Done => "done",
-        TaskView::Upcoming => "upcoming",
-        TaskView::Conflicts => "conflicts",
-        TaskView::Search => "search",
-        TaskView::RecentActions => "recent",
-        TaskView::Epics => "epics",
-        TaskView::Recurring => "recurring",
+    match store.view_state.query {
+        TaskQuery::Queue => "queue",
+        TaskQuery::All => "all",
+        TaskQuery::Open => "open",
+        TaskQuery::Inbox => "inbox",
+        TaskQuery::Active => "active",
+        TaskQuery::Backlog => "backlog",
+        TaskQuery::Todo => "todo",
+        TaskQuery::Done => "done",
+        TaskQuery::Upcoming => "upcoming",
+        TaskQuery::Conflicts => "conflicts",
+        TaskQuery::Search => "search",
+        TaskQuery::RecentActions => "recent",
+        TaskQuery::Epics => "epics",
+        TaskQuery::Recurring => "recurring",
     }
 }
 
@@ -414,7 +429,7 @@ fn metric(label: &str, count: i64, color: Color, active: bool) -> Vec<Span<'stat
 }
 
 fn active_order_spans(store: &TuiStore) -> Vec<Span<'static>> {
-    if store.view_state.view == TaskView::Recurring {
+    if store.view_state.query == TaskQuery::Recurring {
         return Vec::new();
     }
     let mut spans = vec![
@@ -426,8 +441,8 @@ fn active_order_spans(store: &TuiStore) -> Vec<Span<'static>> {
         ),
     ];
     if !matches!(
-        store.view_state.view,
-        TaskView::Queue | TaskView::Search | TaskView::RecentActions
+        store.view_state.query,
+        TaskQuery::Queue | TaskQuery::Search | TaskQuery::RecentActions
     ) {
         spans.push(Span::styled(
             format!(" {}", store.sort_direction_label()),
@@ -438,7 +453,7 @@ fn active_order_spans(store: &TuiStore) -> Vec<Span<'static>> {
 }
 
 fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
-    if store.view_state.view == TaskView::Recurring {
+    if store.view_state.query == TaskQuery::Recurring {
         let mut parts = vec![vec![filter_part(format!(
             "lifecycle={}",
             store.view_state.recurring.lifecycle.as_str()
@@ -581,7 +596,7 @@ mod tests {
     #[tokio::test]
     async fn search_prompt_omits_match_count_filter() {
         let (mut store, _dir) = test_store().await;
-        store.show_view(TaskView::Search).await.unwrap();
+        store.show_view(TaskQuery::Search).await.unwrap();
 
         assert!(!spans_text(active_filter_spans(&store)).contains("matches="));
     }
@@ -591,7 +606,8 @@ mod tests {
         let (mut store, _dir) = test_store().await;
         store.view_state = TaskViewState {
             scope: TaskScope::Project("mobile-app".to_string()),
-            view: TaskView::Open,
+            query: TaskQuery::Open,
+            layout: TaskLayout::List,
             projection_origin: crate::tui::store::TaskProjectionOrigin::ExactTasks(vec![
                 crate::test_support::task_id("task-1"),
                 crate::test_support::task_id("task-2"),
@@ -664,7 +680,7 @@ mod tests {
         let (mut store, _dir) = test_store().await;
         store.view_state.filter_modifiers.label = Some("capture".to_string());
 
-        let rendered = spans_text(header_spans(&store, None, 98));
+        let rendered = spans_text(header_spans(&store, None, 110));
 
         assert!(rendered.contains("filter label=capture"), "{rendered:?}");
         assert!(rendered.contains("queue 3"), "{rendered:?}");
@@ -682,9 +698,9 @@ mod tests {
     #[tokio::test]
     async fn sync_indicator_keeps_space_after_complete_left_segment() {
         let (mut store, _dir) = test_store().await;
-        store.view_state.view = TaskView::Todo;
+        store.view_state.query = TaskQuery::Todo;
         store.sync_status.enabled = true;
-        let width = 89;
+        let width = 150;
         let backend = TestBackend::new(width, 2);
         let mut terminal = Terminal::new(backend).unwrap();
 
@@ -704,7 +720,7 @@ mod tests {
     #[tokio::test]
     async fn queue_header_shows_ranked_order_without_direction() {
         let (mut store, _dir) = test_store().await;
-        store.view_state.view = TaskView::Queue;
+        store.view_state.query = TaskQuery::Queue;
         store.view_state.direction = crate::query::SortDirection::Desc;
 
         assert_eq!(spans_text(view_badge(&store)), " queue ");
@@ -774,10 +790,14 @@ mod tests {
             })
         );
         assert_eq!(
-            header_target_at(&store, None, area, column_for("view "), area.y),
-            Some(HeaderTarget::View {
-                column: column_for("view ")
+            header_target_at(&store, None, area, column_for("query "), area.y),
+            Some(HeaderTarget::Query {
+                column: column_for("query ")
             })
+        );
+        assert_eq!(
+            header_target_at(&store, None, area, column_for("▦ list"), area.y),
+            Some(HeaderTarget::Layout)
         );
         assert_eq!(
             header_target_at(&store, None, area, column_for("label=capture"), area.y),
@@ -791,7 +811,7 @@ mod tests {
         );
         assert_eq!(
             header_target_at(&store, None, area, column_for("queue 3"), area.y),
-            Some(HeaderTarget::MetricView(TaskView::Queue))
+            Some(HeaderTarget::MetricView(TaskQuery::Queue))
         );
         assert_eq!(
             header_target_at(

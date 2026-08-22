@@ -1,9 +1,9 @@
 use anyhow::{Result, bail};
 use aven_core::db::Database;
 
-use crate::cli::{TuiArgs, TuiViewArg};
+use crate::cli::{TuiArgs, TuiLayoutArg, TuiViewArg};
 use crate::ids::TaskId;
-use crate::tui::store::{TaskFilterModifiers, TaskScope, TaskView, TaskViewState};
+use crate::tui::store::{TaskFilterModifiers, TaskLayout, TaskQuery, TaskScope, TaskViewState};
 use crate::workspaces::Workspace;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,9 +48,13 @@ impl TuiLaunch {
             ),
             None => TaskScope::Workspace,
         };
-        let view = args.view.map_or(TaskView::Queue, TaskView::from);
-        if view == TaskView::RecentActions && (args.label.is_some() || args.priority.is_some()) {
-            bail!("recent-actions view does not support task filters");
+        let view = args.view.map_or(TaskQuery::Queue, TaskQuery::from);
+        let layout = args.layout.map_or(TaskLayout::List, TaskLayout::from);
+        if !view.supports_layout(layout) {
+            bail!("{} query does not support columns layout", query_name(view));
+        }
+        if view == TaskQuery::RecentActions && (args.label.is_some() || args.priority.is_some()) {
+            bail!("recent-actions query does not support task filters");
         }
         let label = match args.label {
             Some(label) => Some(
@@ -66,7 +70,8 @@ impl TuiLaunch {
         let priority = args.priority.map(|priority| priority.as_str().to_string());
         let view_state = TaskViewState {
             scope,
-            view,
+            query: view,
+            layout,
             filter_modifiers: TaskFilterModifiers {
                 label,
                 priority,
@@ -93,11 +98,11 @@ impl TuiLaunch {
     }
 }
 
-impl From<TuiViewArg> for TaskView {
+impl From<TuiViewArg> for TaskQuery {
     fn from(view: TuiViewArg) -> Self {
         match view {
             TuiViewArg::Queue => Self::Queue,
-            TuiViewArg::Columns => Self::Columns,
+            TuiViewArg::All => Self::All,
             TuiViewArg::Open => Self::Open,
             TuiViewArg::Inbox => Self::Inbox,
             TuiViewArg::Active => Self::Active,
@@ -110,6 +115,34 @@ impl From<TuiViewArg> for TaskView {
             TuiViewArg::Recurring => Self::Recurring,
             TuiViewArg::RecentActions => Self::RecentActions,
         }
+    }
+}
+
+impl From<TuiLayoutArg> for TaskLayout {
+    fn from(layout: TuiLayoutArg) -> Self {
+        match layout {
+            TuiLayoutArg::List => Self::List,
+            TuiLayoutArg::Columns => Self::Columns,
+        }
+    }
+}
+
+fn query_name(query: TaskQuery) -> &'static str {
+    match query {
+        TaskQuery::Queue => "queue",
+        TaskQuery::All => "all",
+        TaskQuery::Open => "open",
+        TaskQuery::Inbox => "inbox",
+        TaskQuery::Active => "active",
+        TaskQuery::Backlog => "backlog",
+        TaskQuery::Todo => "todo",
+        TaskQuery::Done => "done",
+        TaskQuery::Upcoming => "upcoming",
+        TaskQuery::Conflicts => "conflicts",
+        TaskQuery::Search => "search",
+        TaskQuery::Epics => "epics",
+        TaskQuery::Recurring => "recurring",
+        TaskQuery::RecentActions => "recent-actions",
     }
 }
 
@@ -132,6 +165,7 @@ mod tests {
         TuiArgs {
             task_ref: None,
             view: None,
+            layout: None,
             project: None,
             label: None,
             priority: None,
@@ -182,7 +216,7 @@ mod tests {
             launch.view_state.scope,
             TaskScope::Project("app".to_string())
         );
-        assert_eq!(launch.view_state.view, TaskView::Todo);
+        assert_eq!(launch.view_state.query, TaskQuery::Todo);
         assert_eq!(
             launch.view_state.filter_modifiers.label.as_deref(),
             Some("bug-fix")
@@ -195,6 +229,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolves_all_query_with_columns_layout() {
+        let (_temp, database, _conn) = setup().await;
+        let mut input = args();
+        input.view = Some(TuiViewArg::All);
+        input.layout = Some(TuiLayoutArg::Columns);
+
+        let launch = TuiLaunch::resolve(&database, &Workspace::default(), input)
+            .await
+            .unwrap();
+
+        assert_eq!(launch.view_state.query, TaskQuery::All);
+        assert_eq!(launch.view_state.layout, TaskLayout::Columns);
+    }
+
+    #[tokio::test]
+    async fn rejects_incompatible_query_and_layout() {
+        let (_temp, database, _conn) = setup().await;
+        let mut input = args();
+        input.view = Some(TuiViewArg::Queue);
+        input.layout = Some(TuiLayoutArg::Columns);
+
+        let error = TuiLaunch::resolve(&database, &Workspace::default(), input)
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "queue query does not support columns layout"
+        );
+    }
+
+    #[tokio::test]
     async fn resolves_upcoming_browse_view() {
         let (_temp, database, _conn) = setup().await;
         let mut input = args();
@@ -204,7 +270,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(launch.view_state.view, TaskView::Upcoming);
+        assert_eq!(launch.view_state.query, TaskQuery::Upcoming);
         assert_eq!(launch.startup, TuiStartup::Browse);
     }
 
@@ -218,7 +284,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(launch.view_state.view, TaskView::Recurring);
+        assert_eq!(launch.view_state.query, TaskQuery::Recurring);
         assert_eq!(launch.startup, TuiStartup::Browse);
     }
 
@@ -248,7 +314,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(launch.view_state.scope, TaskScope::Workspace);
-        assert_eq!(launch.view_state.view, TaskView::Search);
+        assert_eq!(launch.view_state.query, TaskQuery::Search);
         assert_eq!(
             launch.view_state.projection_origin,
             crate::tui::store::TaskProjectionOrigin::ExactTasks(vec![task_id.clone()])
@@ -269,7 +335,7 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "recent-actions view does not support task filters"
+            "recent-actions query does not support task filters"
         );
     }
 

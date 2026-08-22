@@ -549,9 +549,9 @@ impl App {
         fallback: Option<usize>,
         table_offset: usize,
     ) {
-        let row_count = match self.store.view_state.view {
-            crate::tui::store::TaskView::Recurring => self.store.recurrence_series.len(),
-            crate::tui::store::TaskView::RecentActions => self.store.recent_actions.len(),
+        let row_count = match self.store.view_state.query {
+            crate::tui::store::TaskQuery::Recurring => self.store.recurrence_series.len(),
+            crate::tui::store::TaskQuery::RecentActions => self.store.recent_actions.len(),
             _ => self.store.tasks.len(),
         };
         self.apply_filter_selection(selected.filter(|&index| index < row_count).or(fallback));
@@ -564,7 +564,8 @@ impl App {
             self.set_info("no previous navigation state");
             return Ok(());
         };
-        let returns_to_series = previous.view_state.view == crate::tui::store::TaskView::Recurring;
+        let returns_to_series =
+            previous.view_state.query == crate::tui::store::TaskQuery::Recurring;
         let selected = returns_to_series
             .then_some(self.series_detail_return.as_ref())
             .flatten()

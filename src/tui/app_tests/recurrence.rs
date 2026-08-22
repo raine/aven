@@ -215,7 +215,7 @@ async fn add_recurrence_history_fixture(
         .await
         .unwrap();
     app.list
-        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+        .select_task(app.store.show_view(TaskQuery::Recurring).await.unwrap());
     (created.task.id, created.series.id)
 }
 
@@ -293,7 +293,7 @@ async fn recurrence_history_enter_opens_the_linked_archived_task() {
         .await
         .unwrap();
 
-    assert_eq!(app.store.view_state.view, TaskView::Search);
+    assert_eq!(app.store.view_state.query, TaskQuery::Search);
     assert_eq!(app.store.tasks[0].task.id, archived_task_id);
     assert!(app.detail.is_active());
     assert!(app.overlay.is_none());
@@ -308,7 +308,7 @@ async fn recurring_series_detail_opens_hidden_occurrence_and_returns() {
         .await
         .unwrap();
     app.list
-        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+        .select_task(app.store.show_view(TaskQuery::Recurring).await.unwrap());
 
     let terminal = ratatui::layout::Size::new(120, 40);
     app.dispatch_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), terminal)
@@ -324,13 +324,13 @@ async fn recurring_series_detail_opens_hidden_occurrence_and_returns() {
     app.dispatch_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), terminal)
         .await
         .unwrap();
-    assert_eq!(app.store.view_state.view, TaskView::Search);
+    assert_eq!(app.store.view_state.query, TaskQuery::Search);
     assert_eq!(app.store.tasks[0].task.id, task_id);
     assert!(app.detail.is_active());
     assert!(app.overlay.is_none());
 
     app.go_back().await.unwrap();
-    assert_eq!(app.store.view_state.view, TaskView::Recurring);
+    assert_eq!(app.store.view_state.query, TaskQuery::Recurring);
     assert_eq!(
         app.store
             .selected_recurrence_series(app.list.selected_task())
@@ -348,7 +348,7 @@ async fn recurring_series_rows_route_task_commands_to_series_feedback() {
     let mut app = test_app().await;
     let (_, series_id) = add_recurring_series(&mut app, "Series command routing").await;
     app.list
-        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+        .select_task(app.store.show_view(TaskQuery::Recurring).await.unwrap());
 
     for (keys, expected) in [
         (
@@ -392,7 +392,7 @@ async fn recurring_series_rows_copy_series_ref_and_edit_template() {
     let mut app = test_app().await;
     add_recurring_series(&mut app, "Series copy and edit").await;
     app.list
-        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+        .select_task(app.store.show_view(TaskQuery::Recurring).await.unwrap());
     let series_ref = app
         .store
         .selected_recurrence_series(app.list.selected_task())
@@ -421,7 +421,7 @@ async fn recurring_series_delete_guides_to_confirmed_stop() {
     let mut app = test_app().await;
     add_recurring_series(&mut app, "Series lifecycle routing").await;
     app.list
-        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+        .select_task(app.store.show_view(TaskQuery::Recurring).await.unwrap());
 
     app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('D')).await.unwrap();
@@ -447,7 +447,7 @@ async fn recurring_series_list_and_detail_use_compact_natural_language() {
     let mut app = test_app().await;
     add_recurring_series(&mut app, "Natural recurring detail").await;
     app.list
-        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+        .select_task(app.store.show_view(TaskQuery::Recurring).await.unwrap());
 
     let list = render_app_text(&mut app, 120, 30);
     assert!(list.contains("Every day"));
@@ -541,7 +541,7 @@ async fn recurrence_template_update_restores_series_identity_after_reordering() 
     add_recurring_series(&mut app, "Alpha series").await;
     let (_, edited_series_id) = add_recurring_series(&mut app, "Zulu series").await;
     app.list
-        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+        .select_task(app.store.show_view(TaskQuery::Recurring).await.unwrap());
     let edited_index = app
         .store
         .recurrence_series
@@ -589,7 +589,7 @@ async fn recurrence_creation_in_recurring_view_selects_created_series() {
     let mut app = test_app().await;
     add_recurring_series(&mut app, "Anchor series").await;
     app.list
-        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+        .select_task(app.store.show_view(TaskQuery::Recurring).await.unwrap());
 
     let (message, selected) = app
         .store
@@ -615,7 +615,7 @@ async fn recurrence_creation_in_recurring_view_reports_filtered_series_and_prese
     add_recurring_series(&mut app, "Keep Alpha").await;
     let (_, selected_series_id) = add_recurring_series(&mut app, "Keep Zulu").await;
     app.list
-        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+        .select_task(app.store.show_view(TaskQuery::Recurring).await.unwrap());
     app.store.view_state.recurring.search = Some("Keep".to_string());
     let selected = app.store.refresh(None).await.unwrap();
     app.list.select_task(selected);
@@ -752,7 +752,7 @@ async fn recurrence_detail_restoration_accepts_matching_series_selection() {
     let mut app = test_app().await;
     let (_, series_id) = add_recurring_series(&mut app, "Detail restore").await;
     app.list
-        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+        .select_task(app.store.show_view(TaskQuery::Recurring).await.unwrap());
     app.store
         .load_recurrence_series_detail(&series_id)
         .await
@@ -771,7 +771,7 @@ async fn recurrence_series_detail_restores_after_lifecycle_history_and_stop_roun
     let mut app = test_app().await;
     let (_, series_id) = add_recurring_series(&mut app, "Detail round trips").await;
     app.list
-        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+        .select_task(app.store.show_view(TaskQuery::Recurring).await.unwrap());
     let terminal = ratatui::layout::Size::new(120, 40);
     app.dispatch_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), terminal)
         .await
@@ -829,7 +829,7 @@ async fn recurrence_series_detail_keeps_status_and_stop_shortcuts_distinct() {
     let mut app = test_app().await;
     let (_, series_id) = add_recurring_series(&mut app, "Shortcut distinction").await;
     app.list
-        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+        .select_task(app.store.show_view(TaskQuery::Recurring).await.unwrap());
     let terminal = ratatui::layout::Size::new(120, 40);
     app.dispatch_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), terminal)
         .await
@@ -877,18 +877,18 @@ async fn recurrence_series_detail_return_survives_intermediate_back_navigation()
     let mut app = test_app().await;
     let (_, series_id) = add_recurring_series(&mut app, "Multi-hop return").await;
     app.list
-        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+        .select_task(app.store.show_view(TaskQuery::Recurring).await.unwrap());
     app.activate_or_toggle_detail().await.unwrap();
     app.detail = crate::tui::detail_session::DetailSession::open(5);
     app.open_recurrence_occurrence().await.unwrap();
-    app.show_view(TaskView::Open).await.unwrap();
+    app.show_view(TaskQuery::Open).await.unwrap();
 
     app.go_back().await.unwrap();
-    assert_eq!(app.store.view_state.view, TaskView::Search);
+    assert_eq!(app.store.view_state.query, TaskQuery::Search);
     assert!(app.series_detail_return.is_some());
 
     app.go_back().await.unwrap();
-    assert_eq!(app.store.view_state.view, TaskView::Recurring);
+    assert_eq!(app.store.view_state.query, TaskQuery::Recurring);
     assert_eq!(
         app.store
             .selected_recurrence_series(app.list.selected_task())
@@ -912,7 +912,7 @@ async fn recurring_series_lifecycle_filter_reveals_stopped_series() {
         .await
         .unwrap();
     app.list
-        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+        .select_task(app.store.show_view(TaskQuery::Recurring).await.unwrap());
     assert!(app.store.recurrence_series.is_empty());
 
     app.store.view_state.recurring.lifecycle = RecurrenceSeriesLifecycleFilter::Stopped;
@@ -924,7 +924,7 @@ async fn recurring_series_lifecycle_filter_reveals_stopped_series() {
 #[tokio::test]
 async fn recurring_lifecycle_filter_change_does_not_notify() {
     let mut app = test_app().await;
-    app.show_view(TaskView::Recurring).await.unwrap();
+    app.show_view(TaskQuery::Recurring).await.unwrap();
 
     app.execute(Action::CycleRecurringLifecycleFilter)
         .await
@@ -943,7 +943,7 @@ async fn recurrence_pause_resume_journey_preserves_selection_and_occurrence() {
     let (_task_id, series_id) = add_stable_journey_series(&mut app, "Pause resume journey").await;
     let size: ratatui::layout::Size = (140, 24).into();
     dispatch_keys(&mut app, size, &[KeyCode::Char('v'), KeyCode::Char('u')]).await;
-    assert_eq!(app.store.view_state.view, TaskView::Recurring);
+    assert_eq!(app.store.view_state.query, TaskQuery::Recurring);
     let workspace_id = app.store.active_workspace.id.clone();
     let before = persisted_recurrence(&pool, &workspace_id, &series_id).await;
     assert_eq!(before.series_state, "active");
@@ -1051,7 +1051,7 @@ async fn recurrence_stop_journey_persists_keep_skip_and_cancel() {
         let (_task_id, series_id) = add_stable_journey_series(&mut app, "Stop journey").await;
         let size: ratatui::layout::Size = (140, 24).into();
         dispatch_keys(&mut app, size, &[KeyCode::Char('v'), KeyCode::Char('u')]).await;
-        assert_eq!(app.store.view_state.view, TaskView::Recurring);
+        assert_eq!(app.store.view_state.query, TaskQuery::Recurring);
         let workspace_id = app.store.active_workspace.id.clone();
         let before = persisted_recurrence(&pool, &workspace_id, &series_id).await;
 
@@ -1168,7 +1168,7 @@ async fn recurrence_stop_rejects_invalid_picker_value() {
     let mut app = test_app().await;
     let (_task_id, series_id) = add_recurring_series(&mut app, "Invalid stop").await;
     app.list
-        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+        .select_task(app.store.show_view(TaskQuery::Recurring).await.unwrap());
     let target = Some(OverlayTarget::RecurrenceSeries {
         workspace_id: app.store.active_workspace.id.clone(),
         series_id: series_id.clone(),
@@ -1196,7 +1196,7 @@ async fn recurrence_overlay_retains_series_identity_across_selection_change() {
     let (_, first_id) = add_recurring_series(&mut app, "Alpha series").await;
     let (_, second_id) = add_recurring_series(&mut app, "Beta series").await;
     app.list
-        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+        .select_task(app.store.show_view(TaskQuery::Recurring).await.unwrap());
     let first_index = app
         .store
         .recurrence_series
@@ -1248,7 +1248,7 @@ async fn recurrence_palette_disables_invalid_lifecycle_action_with_reason() {
         .await
         .unwrap();
     app.list
-        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+        .select_task(app.store.show_view(TaskQuery::Recurring).await.unwrap());
     app.begin_command().await;
     let Some(OverlayState::Command { state }) = app.overlay.as_mut() else {
         panic!("expected command palette");

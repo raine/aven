@@ -81,7 +81,7 @@ async fn late_refresh_failure_preserves_view_and_cached_state() {
         .collect::<Vec<_>>();
     store.fail_next_refresh_at(RefreshFailureStage::Tasks);
 
-    let error = store.show_view(TaskView::Todo).await.unwrap_err();
+    let error = store.show_view(TaskQuery::Todo).await.unwrap_err();
 
     assert!(error.to_string().contains("Tasks"));
     assert_eq!(store.refresh_health(), RefreshHealth::Failed);
@@ -122,9 +122,9 @@ async fn late_refresh_failure_preserves_view_and_cached_state() {
         original_sidebar
     );
 
-    store.show_view(TaskView::Todo).await.unwrap();
+    store.show_view(TaskQuery::Todo).await.unwrap();
     assert_eq!(store.refresh_health(), RefreshHealth::Healthy);
-    assert_eq!(store.view_state.view, TaskView::Todo);
+    assert_eq!(store.view_state.query, TaskQuery::Todo);
     assert!(store.tasks.is_empty());
 }
 

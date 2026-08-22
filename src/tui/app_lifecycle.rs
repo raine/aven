@@ -27,7 +27,7 @@ use crate::tui::overlay::OverlayView::AddTask;
 use crate::tui::overlay::{OverlayState, OverlayView};
 use crate::tui::platform::SystemTerminalTransition;
 use crate::tui::preview_controller::PreviewKey;
-use crate::tui::store::{MainRowSelection, TaskView};
+use crate::tui::store::{MainRowSelection, TaskQuery};
 use crate::tui::ui::{self, ViewState, ViewSurface};
 
 fn event_after_queued_wheel(direction: MouseEventKind) -> Result<Option<Event>> {
@@ -509,8 +509,8 @@ impl App {
 
     async fn refresh_view(&mut self, kind: RefreshKind) -> Result<()> {
         let selected = self.list.selected_task();
-        let recent_action_selection =
-            (self.store.view_state.view == TaskView::RecentActions).then(|| {
+        let recent_action_selection = (self.store.view_state.query == TaskQuery::RecentActions)
+            .then(|| {
                 (
                     selected,
                     self.store
@@ -518,9 +518,9 @@ impl App {
                         .map(|action| action.change_id.clone()),
                 )
             });
-        let selected_id = match self.store.view_state.view {
-            TaskView::RecentActions => None,
-            TaskView::Recurring => self
+        let selected_id = match self.store.view_state.query {
+            TaskQuery::RecentActions => None,
+            TaskQuery::Recurring => self
                 .store
                 .selected_recurrence_series(selected)
                 .map(|item| MainRowSelection::RecurrenceSeries(item.series.id.clone())),
@@ -529,7 +529,7 @@ impl App {
                 .selected_task(selected)
                 .map(|item| MainRowSelection::Task(item.task.id.clone())),
         };
-        let recurrence_detail_id = (self.store.view_state.view == TaskView::Recurring
+        let recurrence_detail_id = (self.store.view_state.query == TaskQuery::Recurring
             && self.detail.is_active())
         .then(|| {
             self.store

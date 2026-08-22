@@ -67,7 +67,7 @@ impl TuiStore {
         preserve_task: bool,
     ) -> Result<MutationMessage> {
         let selected_task_id = selection.single_id().cloned();
-        let epic_fallback = (self.view_state.view == super::TaskView::Epics
+        let epic_fallback = (self.view_state.query == super::TaskQuery::Epics
             && selection.is_single()
             && selection.targets()[0].task.is_epic)
             .then(|| {

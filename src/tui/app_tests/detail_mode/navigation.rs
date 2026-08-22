@@ -395,7 +395,7 @@ async fn linked_task_opens_outside_active_list_filter() {
         .await
         .unwrap();
     drop(conn);
-    app.store.view_state.view = TaskView::Inbox;
+    app.store.view_state.query = TaskQuery::Inbox;
     app.store.refresh(Some(&parent_id)).await.unwrap();
     assert_eq!(app.store.tasks.len(), 1);
     app.list.select_task(Some(0));
@@ -413,7 +413,7 @@ async fn linked_task_opens_outside_active_list_filter() {
         .await
         .unwrap();
 
-    assert_eq!(app.store.view_state.view, TaskView::Search);
+    assert_eq!(app.store.view_state.query, TaskQuery::Search);
     assert_eq!(app.store.tasks[0].task.id, child_id);
     assert!(app.detail.state_mut().unwrap().expanded_sections.is_empty());
     assert!(app.overlay.is_none());
@@ -435,7 +435,7 @@ async fn linked_task_opens_outside_active_list_filter() {
         .await
         .unwrap();
 
-    assert_eq!(app.store.view_state.view, TaskView::Inbox);
+    assert_eq!(app.store.view_state.query, TaskQuery::Inbox);
     assert_eq!(app.store.tasks[0].task.id, parent_id);
     assert!(
         app.detail
@@ -489,7 +489,7 @@ async fn in_filter_linked_task_uses_its_source_list_position_for_siblings() {
         .await
         .unwrap();
 
-    assert_eq!(app.store.view_state.view, TaskView::Queue);
+    assert_eq!(app.store.view_state.query, TaskQuery::Queue);
     assert_eq!(
         app.store
             .selected_task(app.list.selected_task())
@@ -533,7 +533,7 @@ async fn hidden_linked_task_navigates_previous_and_next_in_source_list() {
         .execute(&pool)
         .await
         .unwrap();
-    app.store.view_state.view = TaskView::Inbox;
+    app.store.view_state.query = TaskQuery::Inbox;
     app.store.refresh(Some(&source_id)).await.unwrap();
     let source = app
         .store
@@ -557,7 +557,7 @@ async fn hidden_linked_task_navigates_previous_and_next_in_source_list() {
     app.dispatch_key(key(KeyCode::Char('[')), (80, 24).into())
         .await
         .unwrap();
-    assert_eq!(app.store.view_state.view, TaskView::Inbox);
+    assert_eq!(app.store.view_state.query, TaskQuery::Inbox);
     assert_eq!(
         app.store
             .selected_task(app.list.selected_task())
@@ -579,7 +579,7 @@ async fn hidden_linked_task_navigates_previous_and_next_in_source_list() {
     app.dispatch_key(key(KeyCode::Char(']')), (80, 24).into())
         .await
         .unwrap();
-    assert_eq!(app.store.view_state.view, TaskView::Inbox);
+    assert_eq!(app.store.view_state.query, TaskQuery::Inbox);
     assert_eq!(
         app.store
             .selected_task(app.list.selected_task())
@@ -632,7 +632,7 @@ async fn deleted_linked_task_navigates_in_source_list_and_returns_to_parent() {
         .await
         .unwrap();
 
-    assert_eq!(app.store.view_state.view, TaskView::Queue);
+    assert_eq!(app.store.view_state.query, TaskQuery::Queue);
     assert_eq!(
         app.store
             .selected_task(app.list.selected_task())

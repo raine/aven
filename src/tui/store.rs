@@ -43,9 +43,9 @@ pub(crate) use task_creation::task_creation_committed;
 pub(crate) use types::{
     ClosedTaskVisibility, ConflictTarget, MainRowSelection, MutationMessage,
     RecurringSeriesViewState, SidebarEntry, SidebarEntryTarget, SyncStatusCheck,
-    TaskFilterModifiers, TaskListRenderMode, TaskOrder, TaskProjectionOrigin, TaskScope,
-    TaskScopeTarget, TaskView, TaskViewState, TuiDatabaseStats, TuiSyncStatus, UndoPresentation,
-    mutation_committed,
+    TaskFilterModifiers, TaskLayout, TaskListRenderMode, TaskOrder, TaskProjectionOrigin,
+    TaskQuery, TaskScope, TaskScopeTarget, TaskViewState, TuiDatabaseStats, TuiSyncStatus,
+    UndoPresentation, mutation_committed,
 };
 #[cfg(test)]
 pub(crate) use types::{DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts};
@@ -343,9 +343,9 @@ impl TuiStore {
     }
 
     pub(crate) fn main_row_count(&self) -> usize {
-        match self.view_state.view {
-            TaskView::RecentActions => self.recent_actions.len(),
-            TaskView::Recurring => self.recurrence_series.len(),
+        match self.view_state.query {
+            TaskQuery::RecentActions => self.recent_actions.len(),
+            TaskQuery::Recurring => self.recurrence_series.len(),
             _ => self.tasks.len(),
         }
     }
@@ -521,11 +521,11 @@ impl TuiStore {
             .list_recent_actions_from_current_projection(&workspace_id, project_scope.as_deref())
             .await?;
         self.inject_refresh_failure(RefreshFailureStage::Tasks)?;
-        if self.view_state.view == TaskView::RecentActions {
+        if self.view_state.query == TaskQuery::RecentActions {
             self.tasks.clear();
             self.recurrence_series.clear();
             self.recurrence_detail = None;
-        } else if self.view_state.view == TaskView::Recurring {
+        } else if self.view_state.query == TaskQuery::Recurring {
             self.tasks.clear();
             self.recurrence_series = self
                 .database
@@ -557,7 +557,7 @@ impl TuiStore {
                     self.view_state.sort_direction(),
                 )
                 .await?;
-            if self.view_state.view == TaskView::Conflicts {
+            if self.view_state.query == TaskQuery::Conflicts {
                 self.append_recurrence_conflict_tasks().await?;
             }
         }

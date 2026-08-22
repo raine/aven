@@ -37,7 +37,7 @@ impl TuiStore {
                 .await?
                 .context("choose a project for this recurring task")?;
         }
-        let recurring_view = self.view_state.view == super::TaskView::Recurring;
+        let recurring_view = self.view_state.query == super::TaskQuery::Recurring;
         let previous_task_id = (!recurring_view)
             .then(|| {
                 self.selected_task(current_selected_index)
@@ -216,7 +216,7 @@ impl TuiStore {
             .stop_recurrence_series(&self.active_workspace, series_id, skip_current)
             .await?;
         self.wake_after_mutation();
-        if self.view_state.view == super::TaskView::Recurring {
+        if self.view_state.query == super::TaskQuery::Recurring {
             self.view_state.recurring.lifecycle =
                 aven_core::query::RecurrenceSeriesLifecycleFilter::All;
         }
@@ -271,7 +271,7 @@ impl TuiStore {
         series_id: &RecurrenceSeriesId,
         selected_task_id: Option<&crate::ids::TaskId>,
     ) -> Result<Option<usize>> {
-        if self.view_state.view == super::TaskView::Recurring {
+        if self.view_state.query == super::TaskQuery::Recurring {
             return Ok(self
                 .refresh_with_scope_fallback(Some(&super::MainRowSelection::RecurrenceSeries(
                     series_id.clone(),

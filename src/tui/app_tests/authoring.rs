@@ -729,7 +729,7 @@ async fn direct_task_start_opens_selected_detail_without_history() {
         .unwrap();
 
     let view_state = TaskViewState {
-        view: TaskView::Search,
+        query: TaskQuery::Search,
         projection_origin: crate::tui::store::TaskProjectionOrigin::ExactTasks(vec![
             task_id.clone(),
         ]),
@@ -759,7 +759,7 @@ async fn direct_task_start_opens_selected_detail_without_history() {
 
     app.handle_normal_key(KeyCode::Esc).await.unwrap();
     assert!(app.overlay.is_none());
-    assert_eq!(app.store.view_state.view, TaskView::Search);
+    assert_eq!(app.store.view_state.query, TaskQuery::Search);
     assert_eq!(app.store.tasks.len(), 1);
 }
 
@@ -783,7 +783,7 @@ async fn recent_actions_start_selects_the_first_action() {
     create_and_select_task(&mut app, test_task_draft("recorded task")).await;
     drop(app);
     let view_state = TaskViewState {
-        view: TaskView::RecentActions,
+        query: TaskQuery::RecentActions,
         ..TaskViewState::default()
     };
 
@@ -808,7 +808,7 @@ async fn recent_action_opens_its_task_detail() {
     let mut app = test_app().await;
     let selected = create_and_select_task(&mut app, test_task_draft("recent action task")).await;
     let task_id = app.store.tasks[selected].task.id.clone();
-    app.store.view_state.view = TaskView::RecentActions;
+    app.store.view_state.query = TaskQuery::RecentActions;
     app.refresh().await.unwrap();
     let action_index = app
         .store
@@ -821,7 +821,7 @@ async fn recent_action_opens_its_task_detail() {
     app.handle_normal_key(KeyCode::Enter).await.unwrap();
 
     assert!(app.detail.is_active());
-    assert_eq!(app.store.view_state.view, TaskView::Search);
+    assert_eq!(app.store.view_state.query, TaskQuery::Search);
     assert_eq!(app.store.tasks.len(), 1);
     assert_eq!(app.store.tasks[0].task.id, task_id);
     assert_eq!(app.list.selected_task(), Some(0));
@@ -832,7 +832,7 @@ async fn recent_action_detail_returns_to_the_selected_action() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("first recent task")).await;
     create_and_select_task(&mut app, test_task_draft("second recent task")).await;
-    app.store.view_state.view = TaskView::RecentActions;
+    app.store.view_state.query = TaskQuery::RecentActions;
     app.refresh().await.unwrap();
     let selected_index = 1;
     let change_id = app.store.recent_actions[selected_index].change_id.clone();
@@ -843,7 +843,7 @@ async fn recent_action_detail_returns_to_the_selected_action() {
     app.handle_normal_key(KeyCode::Esc).await.unwrap();
 
     assert!(!app.detail.is_active());
-    assert_eq!(app.store.view_state.view, TaskView::RecentActions);
+    assert_eq!(app.store.view_state.query, TaskQuery::RecentActions);
     let selected = app.list.selected_task().unwrap();
     assert_eq!(app.store.recent_actions[selected].change_id, change_id);
     assert_eq!(app.list.task_offset(), 1);
@@ -853,7 +853,7 @@ async fn recent_action_detail_returns_to_the_selected_action() {
 async fn unavailable_recent_action_task_reports_feedback() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("available task")).await;
-    app.store.view_state.view = TaskView::RecentActions;
+    app.store.view_state.query = TaskQuery::RecentActions;
     app.refresh().await.unwrap();
     let mut action = app.store.recent_actions[0].clone();
     action.entity_type = "task".to_string();
@@ -864,7 +864,7 @@ async fn unavailable_recent_action_task_reports_feedback() {
     app.handle_normal_key(KeyCode::Enter).await.unwrap();
 
     assert!(!app.detail.is_active());
-    assert_eq!(app.store.view_state.view, TaskView::RecentActions);
+    assert_eq!(app.store.view_state.query, TaskQuery::RecentActions);
     assert_eq!(
         toast_message(&app).as_deref(),
         Some("recent action task is unavailable")
@@ -876,7 +876,7 @@ async fn unavailable_recent_action_task_reports_feedback() {
 async fn non_task_recent_action_reports_missing_task_identity() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("task action")).await;
-    app.store.view_state.view = TaskView::RecentActions;
+    app.store.view_state.query = TaskQuery::RecentActions;
     app.refresh().await.unwrap();
     let mut action = app.store.recent_actions[0].clone();
     action.entity_type = "project".to_string();
@@ -886,7 +886,7 @@ async fn non_task_recent_action_reports_missing_task_identity() {
     app.handle_normal_key(KeyCode::Enter).await.unwrap();
 
     assert!(!app.detail.is_active());
-    assert_eq!(app.store.view_state.view, TaskView::RecentActions);
+    assert_eq!(app.store.view_state.query, TaskQuery::RecentActions);
     assert_eq!(
         toast_message(&app).as_deref(),
         Some("recent action has no task identity")
@@ -1262,7 +1262,7 @@ async fn refresh_preserves_recent_action_selection() {
         .create_task(test_task_draft("second task"), None)
         .await
         .unwrap();
-    app.store.view_state.view = TaskView::RecentActions;
+    app.store.view_state.query = TaskQuery::RecentActions;
     app.refresh().await.unwrap();
     app.list.select_task(Some(1));
     let selected_change_id = app.store.recent_actions[1].change_id.clone();
@@ -1287,7 +1287,7 @@ async fn recent_actions_mouse_click_selects_row() {
         .create_task(test_task_draft("second task"), None)
         .await
         .unwrap();
-    app.store.view_state.view = TaskView::RecentActions;
+    app.store.view_state.query = TaskQuery::RecentActions;
     app.refresh().await.unwrap();
     let expected_change_id = app.store.recent_actions[1].change_id.clone();
 
@@ -2086,7 +2086,7 @@ async fn add_task_composer_sets_fuzzy_availability() {
     state.available_at = crate::tui::overlay::LineEdit::new("next monday at 9am".to_string());
 
     app.handle_overlay_key(ctrl_s()).await.unwrap();
-    app.store.show_view(TaskView::Upcoming).await.unwrap();
+    app.store.show_view(TaskQuery::Upcoming).await.unwrap();
 
     assert_eq!(app.store.tasks.len(), 1);
     assert!(app.store.tasks[0].task.available_at.is_some());
@@ -2104,7 +2104,7 @@ async fn add_task_composer_preserves_availability_and_due_date() {
     state.due_on = crate::tui::overlay::LineEdit::new("in 3 weeks".to_string());
 
     app.handle_overlay_key(ctrl_s()).await.unwrap();
-    app.store.show_view(TaskView::Upcoming).await.unwrap();
+    app.store.show_view(TaskQuery::Upcoming).await.unwrap();
 
     assert_eq!(app.store.tasks.len(), 1);
     let task = &app.store.tasks[0].task;

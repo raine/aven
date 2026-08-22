@@ -8,7 +8,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::query::RecurrenceSeriesLifecycleFilter;
 use crate::tui::event::{Action, CommandContext, preferred_shortcut_label};
 use crate::tui::store::{
-    ClosedTaskVisibility, RefreshHealth, TaskProjectionOrigin, TaskScope, TaskView, TuiStore,
+    ClosedTaskVisibility, RefreshHealth, TaskProjectionOrigin, TaskQuery, TaskScope, TuiStore,
 };
 use crate::tui::theme::{ACCENT, BG, BG_ALT, FG, FG_DIM, FG_MUTED, RED};
 
@@ -78,7 +78,7 @@ pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
         || modifiers.label.is_some()
         || modifiers.priority.is_some()
         || (modifiers.closed == ClosedTaskVisibility::Only
-            && store.view_state.view != TaskView::Epics);
+            && store.view_state.query != TaskQuery::Epics);
     match &store.view_state.projection_origin {
         TaskProjectionOrigin::SearchPrompt => {
             return EmptyState::new(
@@ -109,7 +109,7 @@ pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
                 EmptyStateReason::TaskUnavailable,
                 "Task unavailable",
                 "That task is not available in this workspace.",
-                Action::ShowView(TaskView::Queue),
+                Action::ShowView(TaskQuery::Queue),
                 "View queue",
                 "queue",
             );
@@ -138,7 +138,7 @@ pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
     if modifiers.label.is_some()
         || modifiers.priority.is_some()
         || (modifiers.closed == ClosedTaskVisibility::Only
-            && store.view_state.view != TaskView::Epics)
+            && store.view_state.query != TaskQuery::Epics)
     {
         return EmptyState::new(
             EmptyStateReason::NoFilterMatches,
@@ -151,23 +151,23 @@ pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
     }
 
     if matches!(
-        store.view_state.view,
-        TaskView::Queue | TaskView::Open | TaskView::Columns
+        store.view_state.query,
+        TaskQuery::Queue | TaskQuery::Open | TaskQuery::All
     ) && store.counts.upcoming > 0
     {
         return EmptyState::new(
             EmptyStateReason::DeferredTasks,
             "No tasks available yet",
             "Scheduled tasks are waiting in Upcoming.",
-            Action::ShowView(TaskView::Upcoming),
+            Action::ShowView(TaskQuery::Upcoming),
             "View upcoming tasks",
             "upcoming",
         );
     }
 
     if matches!(
-        store.view_state.view,
-        TaskView::Queue | TaskView::Open | TaskView::Columns
+        store.view_state.query,
+        TaskQuery::Queue | TaskQuery::Open | TaskQuery::All
     ) && store.counts.open == 0
         && store.counts.done == 0
         && store.counts.upcoming == 0
@@ -175,85 +175,85 @@ pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
         return scope_empty_state(&store.view_state.scope);
     }
 
-    match store.view_state.view {
-        TaskView::Queue => named_state(
+    match store.view_state.query {
+        TaskQuery::Queue => named_state(
             "Queue is clear",
             "Nothing is actionable in this scope.",
             Action::BeginAddTask,
             "Add a task",
             "add task",
         ),
-        TaskView::Columns => named_state(
+        TaskQuery::All => named_state(
             "No tasks in these columns",
             "Available tasks in this scope will appear by status.",
             Action::BeginAddTask,
             "Add a task",
             "add task",
         ),
-        TaskView::Open => named_state(
+        TaskQuery::Open => named_state(
             "No open tasks",
             "This scope has no available unfinished tasks.",
             Action::BeginAddTask,
             "Add a task",
             "add task",
         ),
-        TaskView::Inbox => named_state(
+        TaskQuery::Inbox => named_state(
             "Inbox is clear",
             "Capture anything you do not want to lose.",
             Action::BeginAddTask,
             "Add a task",
             "add task",
         ),
-        TaskView::Active => named_state(
+        TaskQuery::Active => named_state(
             "No active tasks",
             "Start the next task from your queue.",
-            Action::ShowView(TaskView::Queue),
+            Action::ShowView(TaskQuery::Queue),
             "View queue",
             "queue",
         ),
-        TaskView::Backlog => named_state(
+        TaskQuery::Backlog => named_state(
             "Backlog is clear",
             "There are no parked tasks in this scope.",
-            Action::ShowView(TaskView::Queue),
+            Action::ShowView(TaskQuery::Queue),
             "View queue",
             "queue",
         ),
-        TaskView::Todo => named_state(
+        TaskQuery::Todo => named_state(
             "No todo tasks",
             "Choose the next task from your queue.",
-            Action::ShowView(TaskView::Queue),
+            Action::ShowView(TaskQuery::Queue),
             "View queue",
             "queue",
         ),
-        TaskView::Done => named_state(
+        TaskQuery::Done => named_state(
             "Nothing completed yet",
             "Finished and canceled tasks collect here.",
-            Action::ShowView(TaskView::Queue),
+            Action::ShowView(TaskQuery::Queue),
             "View queue",
             "queue",
         ),
-        TaskView::Upcoming => named_state(
+        TaskQuery::Upcoming => named_state(
             "Nothing scheduled",
             "No open tasks are waiting for a future date.",
-            Action::ShowView(TaskView::Queue),
+            Action::ShowView(TaskQuery::Queue),
             "View queue",
             "queue",
         ),
-        TaskView::Conflicts => named_state(
+        TaskQuery::Conflicts => named_state(
             "No conflicts",
             "Task changes agree across devices.",
-            Action::ShowView(TaskView::Queue),
+            Action::ShowView(TaskQuery::Queue),
             "View queue",
             "queue",
         ),
-        TaskView::Search => named_state(
+        TaskQuery::Search => named_state(
             "Search tasks",
             "Find tasks by title, notes, labels, or ID.",
             Action::BeginSearch,
             "Start a search",
             "search",
         ),
-        TaskView::Epics => {
+        TaskQuery::Epics => {
             let (title, detail) = match modifiers.closed {
                 ClosedTaskVisibility::Only => (
                     "No closed epics",
@@ -276,10 +276,10 @@ pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
                 "closed filter",
             )
         }
-        TaskView::Recurring | TaskView::RecentActions => named_state(
+        TaskQuery::Recurring | TaskQuery::RecentActions => named_state(
             "Nothing to show",
             "This view has no rows in the current scope.",
-            Action::ShowView(TaskView::Queue),
+            Action::ShowView(TaskQuery::Queue),
             "View queue",
             "queue",
         ),
@@ -550,8 +550,8 @@ mod tests {
             Action::ToggleClosedFilter,
             Action::ToggleDeletedFilter,
             Action::CycleRecurringLifecycleFilter,
-            Action::ShowView(TaskView::Queue),
-            Action::ShowView(TaskView::Upcoming),
+            Action::ShowView(TaskQuery::Queue),
+            Action::ShowView(TaskQuery::Upcoming),
             Action::Refresh,
             Action::ShowConfigInfo,
         ];

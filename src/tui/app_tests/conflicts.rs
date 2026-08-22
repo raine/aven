@@ -5,8 +5,8 @@ async fn conflict_list_shortcut_applies_conflicts_view() {
     let mut app = test_app().await;
     app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
-    assert_eq!(app.store.view_state.view, TaskView::Conflicts);
-    assert_eq!(app.store.view_state.view, TaskView::Conflicts);
+    assert_eq!(app.store.view_state.query, TaskQuery::Conflicts);
+    assert_eq!(app.store.view_state.query, TaskQuery::Conflicts);
     assert_eq!(
         toast_message(&app).as_deref(),
         Some("no unresolved conflicts")

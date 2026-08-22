@@ -26,7 +26,7 @@ use crate::tui::overlay::{
 };
 use crate::tui::platform::{copy_to_clipboard, is_editor_prefix_key, open_url_in_default_browser};
 use crate::tui::shortcut_buffer::DetailShortcutResolution;
-use crate::tui::store::TaskView;
+use crate::tui::store::TaskQuery;
 use crate::tui::ui::{
     composer_help_scroll_cap, database_stats_scroll_cap, detail_copy_target_at,
     detail_help_scroll_cap, help_scroll_cap, prefix_hint_scroll_cap, task_at_position,
@@ -274,7 +274,7 @@ impl App {
                 return Ok(());
             }
             MouseInput::StatusPress => {
-                if self.store.view_state.view == TaskView::Recurring {
+                if self.store.view_state.query == TaskQuery::Recurring {
                     if self.overlay.is_none()
                         && let Some(hit) = crate::tui::ui::recurrence_series_at_position(
                             &self.store,
@@ -379,8 +379,17 @@ impl App {
                     self.show_scope_menu(column, mouse.row);
                     Ok(())
                 }
-                crate::tui::ui::HeaderTarget::View { column } => {
+                crate::tui::ui::HeaderTarget::Query { column } => {
                     self.show_view_menu(column, mouse.row);
+                    Ok(())
+                }
+                crate::tui::ui::HeaderTarget::Layout => {
+                    let layout = if self.store.view_state.is_columns() {
+                        crate::tui::store::TaskLayout::List
+                    } else {
+                        crate::tui::store::TaskLayout::Columns
+                    };
+                    self.set_layout(layout);
                     Ok(())
                 }
                 crate::tui::ui::HeaderTarget::MetricView(view) => self.show_view(view).await,
@@ -502,7 +511,7 @@ impl App {
         if self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row) {
             return Ok(());
         }
-        let hit = if self.store.view_state.view == TaskView::Columns {
+        let hit = if self.store.view_state.is_columns() {
             task_at_position(
                 &self.store,
                 self.list.table_state(),
@@ -826,7 +835,7 @@ impl App {
             return Ok(());
         }
 
-        let next = if self.store.view_state.view == TaskView::Columns {
+        let next = if self.store.view_state.is_columns() {
             crate::tui::columns::ColumnBoard::new(&self.store.task_columns, &self.store.tasks)
                 .move_vertical_bounded(self.list.selected_task(), delta)
         } else {
@@ -1161,7 +1170,7 @@ impl App {
                 self.show_detail(scroll);
                 return Ok(());
             }
-            if self.store.view_state.view == TaskView::Recurring
+            if self.store.view_state.query == TaskQuery::Recurring
                 && key.code == KeyCode::Enter
                 && key.modifiers.is_empty()
             {
@@ -2140,7 +2149,7 @@ impl App {
             }
             DetailShortcutResolution::Action(action) => {
                 self.pending_shortcut_scroll = 0;
-                if self.store.view_state.view == TaskView::Recurring
+                if self.store.view_state.query == TaskQuery::Recurring
                     && action == Action::BeginStatusPicker
                 {
                     self.set_info(

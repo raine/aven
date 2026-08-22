@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::tui::app::{App, Focus, LastChangeReturnState, RecentActionReturnState};
 use crate::tui::navigation::{next_index, next_selectable_sidebar};
 use crate::tui::overlay::{OverlayState, PickerIntent, PickerItem};
-use crate::tui::store::{MainRowSelection, TaskView, TaskViewState};
+use crate::tui::store::{MainRowSelection, TaskQuery, TaskViewState};
 
 impl App {
     pub(super) fn restore_sidebar_selection(&mut self) {
@@ -24,13 +24,13 @@ impl App {
     pub(super) async fn move_selection(&mut self, delta: isize) -> Result<()> {
         match self.list.focus() {
             Focus::Tasks => {
-                let next = if self.store.view_state.view == crate::tui::store::TaskView::Columns {
+                let next = if self.store.view_state.is_columns() {
                     crate::tui::columns::ColumnBoard::new(
                         &self.store.task_columns,
                         &self.store.tasks,
                     )
                     .move_vertical(self.list.selected_task(), delta)
-                } else if self.store.view_state.view == crate::tui::store::TaskView::Epics {
+                } else if self.store.view_state.query == crate::tui::store::TaskQuery::Epics {
                     let current = self
                         .list
                         .selected_task()
@@ -68,14 +68,14 @@ impl App {
     pub(super) async fn select_edge(&mut self, last: bool) -> Result<()> {
         match self.list.focus() {
             Focus::Tasks => {
-                if self.store.view_state.view == crate::tui::store::TaskView::Columns {
+                if self.store.view_state.is_columns() {
                     let next = crate::tui::columns::ColumnBoard::new(
                         &self.store.task_columns,
                         &self.store.tasks,
                     )
                     .edge(self.list.selected_task(), last);
                     self.list.select_task(next);
-                } else if self.store.view_state.view == crate::tui::store::TaskView::Epics {
+                } else if self.store.view_state.query == crate::tui::store::TaskQuery::Epics {
                     let row_count = crate::tui::ui::task_visual_row_count(&self.store);
                     let row = if row_count > 0 {
                         Some(if last { row_count - 1 } else { 0 })
@@ -129,9 +129,7 @@ impl App {
     }
 
     pub(super) fn move_left(&mut self) {
-        if self.list.focus() == Focus::Tasks
-            && self.store.view_state.view == crate::tui::store::TaskView::Columns
-        {
+        if self.list.focus() == Focus::Tasks && self.store.view_state.is_columns() {
             let next =
                 crate::tui::columns::ColumnBoard::new(&self.store.task_columns, &self.store.tasks)
                     .move_horizontal(self.list.selected_task(), -1);
@@ -148,7 +146,7 @@ impl App {
     pub(super) async fn move_right(&mut self) -> Result<()> {
         let selected = self.list.selected_task();
         let epic_selected = self.list.focus() == Focus::Tasks
-            && self.store.view_state.view == TaskView::Epics
+            && self.store.view_state.query == TaskQuery::Epics
             && selected
                 .and_then(|index| self.store.tasks.get(index))
                 .is_some_and(|item| item.task.is_epic);
@@ -158,9 +156,7 @@ impl App {
             }
             return Ok(());
         }
-        if self.list.focus() == Focus::Tasks
-            && self.store.view_state.view == crate::tui::store::TaskView::Columns
-        {
+        if self.list.focus() == Focus::Tasks && self.store.view_state.is_columns() {
             let next =
                 crate::tui::columns::ColumnBoard::new(&self.store.task_columns, &self.store.tasks)
                     .move_horizontal(self.list.selected_task(), 1);
@@ -170,9 +166,7 @@ impl App {
             return Ok(());
         }
         self.list.focus_tasks();
-        if self.store.view_state.view == crate::tui::store::TaskView::Columns
-            && self.list.selected_task().is_none()
-        {
+        if self.store.view_state.is_columns() && self.list.selected_task().is_none() {
             self.list.select_task(
                 crate::tui::columns::ColumnBoard::new(&self.store.task_columns, &self.store.tasks)
                     .first(),
@@ -183,7 +177,7 @@ impl App {
     }
 
     pub(super) fn previous_item(&mut self) {
-        if self.store.view_state.view == crate::tui::store::TaskView::Conflicts {
+        if self.store.view_state.query == crate::tui::store::TaskQuery::Conflicts {
             self.move_to_conflict(-1);
         } else {
             self.set_info("previous item is available in conflict flows");
@@ -191,7 +185,7 @@ impl App {
     }
 
     pub(super) fn next_item(&mut self) {
-        if self.store.view_state.view == crate::tui::store::TaskView::Conflicts {
+        if self.store.view_state.query == crate::tui::store::TaskQuery::Conflicts {
             self.move_to_conflict(1);
         } else {
             self.set_info("next item is available in conflict flows");
@@ -259,7 +253,7 @@ impl App {
     pub(super) async fn activate_or_toggle_detail(&mut self) -> Result<()> {
         if self.list.focus() == Focus::Sidebar {
             self.apply_sidebar_selection().await?;
-        } else if self.store.view_state.view == crate::tui::store::TaskView::Recurring {
+        } else if self.store.view_state.query == crate::tui::store::TaskQuery::Recurring {
             if self.detail.is_active() {
                 self.open_recurrence_occurrence().await?;
             } else if let Some(series_id) = self
@@ -279,7 +273,7 @@ impl App {
             } else {
                 self.clear_detail_session();
             }
-        } else if self.store.view_state.view == crate::tui::store::TaskView::RecentActions {
+        } else if self.store.view_state.query == crate::tui::store::TaskQuery::RecentActions {
             self.open_recent_action_task().await?;
         } else {
             self.detail = crate::tui::detail_session::DetailSession::open(0);
@@ -315,7 +309,7 @@ impl App {
         if !return_to_detail {
             return;
         }
-        let recurring = self.store.view_state.view == crate::tui::store::TaskView::Recurring;
+        let recurring = self.store.view_state.query == crate::tui::store::TaskQuery::Recurring;
         let detail_is_available = if recurring {
             self.store
                 .selected_recurrence_series(self.list.selected_task())
@@ -348,7 +342,7 @@ impl App {
         }
         if !had_overlay && self.detail.is_active() {
             self.detail.close();
-            if self.store.view_state.view == crate::tui::store::TaskView::Recurring {
+            if self.store.view_state.query == crate::tui::store::TaskQuery::Recurring {
                 self.store.recurrence_detail = None;
             }
         } else if !had_overlay && self.list.focus() == Focus::Sidebar {
