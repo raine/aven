@@ -225,7 +225,7 @@ fn header_layout(
     scope.extend(scope_badge(store));
     layout.push(scope, Some(HeaderTarget::Scope { column: 0 }));
     layout.push_text(separator(), None);
-    let mut view = vec![Span::styled("query ", Style::new().fg(FG_DIM))];
+    let mut view = vec![Span::styled("view ", Style::new().fg(FG_DIM))];
     view.extend(view_badge(store));
     layout.push(view, Some(HeaderTarget::Query { column: 0 }));
     layout.push_text(separator(), None);
@@ -809,9 +809,9 @@ mod tests {
             })
         );
         assert_eq!(
-            header_target_at(&store, None, area, column_for("query "), area.y),
+            header_target_at(&store, None, area, column_for("view "), area.y),
             Some(HeaderTarget::Query {
-                column: column_for("query ")
+                column: column_for("view ")
             })
         );
         assert_eq!(
