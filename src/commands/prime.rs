@@ -166,7 +166,7 @@ fn report_from_items(project: String, items: &[query::TaskListItem]) -> PrimeRep
         unavailable_reason: None,
         open_issue_sample: items.len(),
         conventions: PrimeConventions {
-            title_style: "capitalized".to_string(),
+            title_style: "sentence case".to_string(),
             statuses: format_counts(&status_counts, 4),
             labels: format_counts(&label_counts, 6),
         },
@@ -279,7 +279,10 @@ impl PrimeTextRenderer {
                 .expect("available report has project")
         );
         println!("Open issue sample: {}", report.open_issue_sample);
-        println!("Use {} task titles.", report.conventions.title_style);
+        println!(
+            "Use {} for task titles: capitalize the first word and proper nouns, not every significant word.",
+            report.conventions.title_style
+        );
         if report.open_issue_sample == 0 {
             println!("No open issues are available for convention summaries.");
         } else {

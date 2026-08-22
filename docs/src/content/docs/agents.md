@@ -198,7 +198,7 @@ A prime output includes the full skill first. The open-task part looks like this
 
 Project: aven
 Open issue sample: 5
-Use capitalized task titles.
+Use sentence case for task titles: capitalize the first word and proper nouns, not every significant word.
 Common statuses: active=2, inbox=3.
 Common labels: keybindings=1, ux=1.
 
