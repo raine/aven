@@ -129,6 +129,7 @@ impl App {
                     self.set_warning("recurring lifecycle filter is available in Recurring Tasks");
                 }
             }
+            Action::ToggleLayout => self.toggle_layout(),
             Action::SetLayout(layout) => self.set_layout(layout),
             Action::ShowView(view) => self.show_view(view).await?,
             Action::ShowWorkspaceScope => {

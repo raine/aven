@@ -106,6 +106,7 @@ pub(crate) enum Action {
     ToggleClosedFilter,
     ToggleDeletedFilter,
     CycleRecurringLifecycleFilter,
+    ToggleLayout,
     SetLayout(TaskLayout),
     ShowView(TaskQuery),
     ShowWorkspaceScope,
@@ -250,6 +251,7 @@ impl Action {
             | Self::ToggleClosedFilter
             | Self::ToggleDeletedFilter
             | Self::CycleRecurringLifecycleFilter
+            | Self::ToggleLayout
             | Self::SetLayout(_)
             | Self::ShowView(_)
             | Self::ShowWorkspaceScope

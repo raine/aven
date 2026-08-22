@@ -337,7 +337,7 @@ async fn column_view_installs_custom_configuration() {
 }
 
 #[tokio::test]
-async fn column_view_shortcut_selects_columns() {
+async fn layout_shortcut_toggles_columns_and_list() {
     let mut app = test_app().await;
 
     app.handle_normal_key(KeyCode::Char('v')).await.unwrap();
@@ -347,6 +347,11 @@ async fn column_view_shortcut_selects_columns() {
 
     assert_eq!(app.store.view_state.query, TaskQuery::All);
     assert_eq!(app.store.view_state.layout, TaskLayout::Columns);
+
+    app.handle_normal_key(KeyCode::Char('v')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
+
+    assert_eq!(app.store.view_state.layout, TaskLayout::List);
 }
 
 #[tokio::test]

@@ -704,23 +704,27 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ShowView(TaskQuery::Queue),
     ),
     CommandSpec::implemented(
-        "layout-columns",
-        "present the active query as columns",
+        "layout-toggle",
+        "switch between list and columns",
         "Views",
         &[KeySequence {
             codes: &[KeyCode::Char('v'), KeyCode::Char('l')],
             label: "v l",
         }],
+        Action::ToggleLayout,
+    ),
+    CommandSpec::implemented(
+        "layout-columns",
+        "present the active query as columns",
+        "Views",
+        &[],
         Action::SetLayout(TaskLayout::Columns),
     ),
     CommandSpec::implemented(
         "layout-list",
         "present the active query as a list",
         "Views",
-        &[KeySequence {
-            codes: &[KeyCode::Char('v'), KeyCode::Char('v')],
-            label: "v v",
-        }],
+        &[],
         Action::SetLayout(TaskLayout::List),
     ),
     CommandSpec::implemented(

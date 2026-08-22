@@ -33,7 +33,7 @@ Use the sidebar or the `v` command family to switch queries and layouts.
 | Goal | Query or layout | Open with |
 | --- | --- | --- |
 | Decide what needs attention | Queue | `v q` |
-| Present a compatible query in lifecycle lanes | Columns layout | `v l` |
+| Toggle a compatible query between list and lifecycle lanes | List or columns layout | `v l` |
 | See all unfinished work | Open | `v o` |
 | Triage captured work | Inbox | `v i` |
 | Review work saved for later | Backlog | `v b` |
@@ -167,7 +167,7 @@ Columns is a presentation layout over the active query. It arranges the same ord
 
 <p class="media-caption">Columns arranges tasks into lifecycle lanes and shows details for the selected task.</p>
 
-Use `v l` to switch a compatible query to columns and `v v` to return to the list. Use `v w` to select All when you want every available status. All, Open, status, Search, and Conflicts queries support columns. Queue, Upcoming, Epics, Recurring Tasks, and Recent Actions use their specialized list layouts. Up and down move within a lane. Left and right switch lanes. Press `<` or `>` to move the selected or marked tasks one lane, or `m` to choose a destination.
+Use `v l` to toggle a compatible query between list and columns. Use `:layout-list` or `:layout-columns` when you want to select a layout explicitly. Use `v w` to select All when you want every available status. All, Open, status, Search, and Conflicts queries support columns. Queue, Upcoming, Epics, Recurring Tasks, and Recent Actions use their specialized list layouts, shown as `list only` in the header. Up and down move within a lane. Left and right switch lanes. Press `<` or `>` to move the selected or marked tasks one lane, or `m` to choose a destination.
 
 Moving a task into a lane assigns the lane's first configured status. Choosing its existing lane preserves its exact status. This matters when a lane groups several statuses, such as `done` and `canceled`.
 

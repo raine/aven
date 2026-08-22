@@ -105,6 +105,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::ToggleClosedFilter
             | Action::ToggleDeletedFilter
             | Action::CycleRecurringLifecycleFilter
+            | Action::ToggleLayout
             | Action::SetLayout(_)
             | Action::ShowView(_)
             | Action::ShowWorkspaceScope
@@ -582,6 +583,25 @@ mod tests {
             resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('p')]),
             ShortcutLookup::Found(Action::ShowView(TaskQuery::Upcoming))
         );
+    }
+
+    #[test]
+    fn layout_shortcut_toggles_while_explicit_commands_have_no_shortcuts() {
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('l')]),
+            ShortcutLookup::Found(Action::ToggleLayout)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('v')]),
+            ShortcutLookup::Missing
+        );
+        for name in ["layout-list", "layout-columns"] {
+            let command = COMMANDS
+                .iter()
+                .find(|command| command.name == name)
+                .unwrap();
+            assert!(command.keys(CommandContext::Normal).is_empty());
+        }
     }
 
     #[test]

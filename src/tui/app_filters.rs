@@ -84,6 +84,15 @@ impl App {
         Ok(())
     }
 
+    pub(super) fn toggle_layout(&mut self) {
+        let layout = if self.store.view_state.is_columns() {
+            TaskLayout::List
+        } else {
+            TaskLayout::Columns
+        };
+        self.set_layout(layout);
+    }
+
     pub(super) fn set_layout(&mut self, layout: TaskLayout) {
         if let Err(message) = self.store.view_state.set_layout(layout) {
             self.set_warning(message);

@@ -384,12 +384,7 @@ impl App {
                     Ok(())
                 }
                 crate::tui::ui::HeaderTarget::Layout => {
-                    let layout = if self.store.view_state.is_columns() {
-                        crate::tui::store::TaskLayout::List
-                    } else {
-                        crate::tui::store::TaskLayout::Columns
-                    };
-                    self.set_layout(layout);
+                    self.toggle_layout();
                     Ok(())
                 }
                 crate::tui::ui::HeaderTarget::MetricView(view) => self.show_view(view).await,

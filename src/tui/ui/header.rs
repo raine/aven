@@ -229,17 +229,22 @@ fn header_layout(
     view.extend(view_badge(store));
     layout.push(view, Some(HeaderTarget::Query { column: 0 }));
     layout.push_text(separator(), None);
+    let columns_supported = store.view_state.query.supports_layout(TaskLayout::Columns);
+    let layout_label = match store.view_state.layout {
+        TaskLayout::List if !columns_supported => " 󰉹 list only ",
+        TaskLayout::List => " 󰉹 list ",
+        TaskLayout::Columns => " 󰕰 columns ",
+    };
+    let layout_style = if columns_supported {
+        Style::new()
+            .fg(FG)
+            .bg(BG_PANEL)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(FG_MUTED).bg(BG_PANEL)
+    };
     layout.push(
-        vec![Span::styled(
-            match store.view_state.layout {
-                TaskLayout::List => " 󰉹 list ",
-                TaskLayout::Columns => " 󰕰 columns ",
-            },
-            Style::new()
-                .fg(FG)
-                .bg(BG_PANEL)
-                .add_modifier(Modifier::BOLD),
-        )],
+        vec![Span::styled(layout_label, layout_style)],
         Some(HeaderTarget::Layout),
     );
     layout.push(active_filter_spans(store), None);
@@ -654,6 +659,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_only_query_disables_layout_control_visually() {
+        let (store, _dir) = test_store().await;
+
+        let layout_span = header_spans(&store, None, 150)
+            .into_iter()
+            .find(|span| span.content.contains("list only"))
+            .unwrap();
+
+        assert_eq!(layout_span.content, " 󰉹 list only ");
+        assert_eq!(layout_span.style.fg, Some(FG_MUTED));
+        assert!(!layout_span.style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[tokio::test]
     async fn compact_header_omits_order_when_it_does_not_fit() {
         let (mut store, _dir) = test_store().await;
         store.counts = crate::query::SidebarCounts::default();
@@ -680,7 +699,7 @@ mod tests {
         let (mut store, _dir) = test_store().await;
         store.view_state.filter_modifiers.label = Some("capture".to_string());
 
-        let rendered = spans_text(header_spans(&store, None, 110));
+        let rendered = spans_text(header_spans(&store, None, 116));
 
         assert!(rendered.contains("filter label=capture"), "{rendered:?}");
         assert!(rendered.contains("queue 3"), "{rendered:?}");
