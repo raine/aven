@@ -4,7 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
-use crate::tui::theme::{BG, BG_PANEL, BLUE, FG, GREEN, ORANGE, RED};
+use crate::tui::theme::{BG, BG_PANEL, BLUE, FG, FG_DIM, GREEN, ORANGE, RED};
 use crate::tui::toast::{Toast, ToastSeverity};
 
 struct ToastTone {
@@ -38,6 +38,22 @@ fn toast_width(content: &Line<'_>, frame_width: u16) -> u16 {
     content_width.clamp(20, frame_width.saturating_sub(5))
 }
 
+fn toast_message_spans(message: &str, fill: Color) -> Vec<Span<'_>> {
+    let message_style = Style::new().fg(FG).bg(fill).add_modifier(Modifier::BOLD);
+    let separator_style = Style::new()
+        .fg(FG_DIM)
+        .bg(fill)
+        .add_modifier(Modifier::BOLD);
+    let mut spans = Vec::new();
+    for (index, part) in message.split(" · ").enumerate() {
+        if index > 0 {
+            spans.push(Span::styled(" │ ", separator_style));
+        }
+        spans.push(Span::styled(part, message_style));
+    }
+    spans
+}
+
 pub(super) fn render_toast(frame: &mut Frame, toast: &Toast) {
     let tone = toast_tone(toast.severity);
     let fill = BG_PANEL;
@@ -52,11 +68,8 @@ pub(super) fn render_toast(frame: &mut Frame, toast: &Toast) {
             Span::styled(" ", Style::new().bg(fill)),
         ]);
     }
+    spans.extend(toast_message_spans(toast.message.as_str(), fill));
     spans.extend([
-        Span::styled(
-            toast.message.as_str(),
-            Style::new().fg(FG).bg(fill).add_modifier(Modifier::BOLD),
-        ),
         Span::styled(" ", Style::new().bg(fill)),
         Span::styled("", Style::new().fg(fill).bg(BG)),
     ]);
@@ -154,6 +167,23 @@ mod tests {
         let rendered = buffer_text(terminal.backend());
         assert!(rendered.contains("⠋ adding task with LLM"));
         assert!(!rendered.contains("• ⠋ adding task with LLM"));
+    }
+
+    #[test]
+    fn toast_separators_use_muted_text_color() {
+        let spans = toast_message_spans("saved · u undo · g . return", BG_PANEL);
+
+        assert_eq!(
+            spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            "saved │ u undo │ g . return"
+        );
+        assert_eq!(spans[0].style.fg, Some(FG));
+        assert_eq!(spans[1].style.fg, Some(FG_DIM));
+        assert_eq!(spans[2].style.fg, Some(FG));
+        assert_eq!(spans[3].style.fg, Some(FG_DIM));
     }
 
     #[test]

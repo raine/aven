@@ -96,7 +96,7 @@ async fn undo_guard_blocks_stale_task_field() {
 }
 
 #[tokio::test]
-async fn single_task_undo_summary_keeps_display_ref() {
+async fn single_task_undo_presentation_keeps_display_ref() {
     let mut store = test_store().await;
     let (_task_id, selected) = create_selected_task(&mut store, "Single summary").await;
     let display_ref = store.tasks[selected].display_ref.clone();
@@ -104,23 +104,74 @@ async fn single_task_undo_summary_keeps_display_ref() {
     store.update_status(Some(selected), "todo").await.unwrap();
     let undo = store.undo_last(None).await.unwrap().unwrap();
 
-    assert_eq!(undo.message, format!("undid status {display_ref}"));
+    assert_eq!(
+        undo.message,
+        format!("undid status change on {display_ref}")
+    );
 }
 
 #[tokio::test]
-async fn partially_unchanged_batch_undo_summary_uses_changed_count() {
+async fn partially_unchanged_batch_undo_presentation_uses_changed_scope() {
     let mut store = test_store().await;
     let (first_id, first) = create_selected_task(&mut store, "Already changed").await;
     let (second_id, _) = create_selected_task(&mut store, "Needs change").await;
     store.update_status(Some(first), "todo").await.unwrap();
 
     store
-        .update_status_for_tasks(None, &[first_id, second_id], "todo")
+        .update_status_for_tasks(None, &[first_id, second_id.clone()], "todo")
         .await
         .unwrap();
+    let expected = store.latest_undo.as_ref().unwrap().phrase.clone();
     let undo = store.undo_last(None).await.unwrap().unwrap();
 
-    assert_eq!(undo.message, "undid status 1 task");
+    assert_eq!(undo.message, format!("undid {expected}"));
+}
+
+#[tokio::test]
+async fn undo_presentation_resolves_task_hidden_by_mutation() {
+    let mut store = test_store().await;
+    store.view_state.view = TaskView::Inbox;
+    store.refresh(None).await.unwrap();
+    let (_task_id, selected) = create_selected_task(&mut store, "Leaves inbox").await;
+    let display_ref = store.tasks[selected].display_ref.clone();
+
+    store.update_status(Some(selected), "todo").await.unwrap();
+
+    assert!(
+        store
+            .tasks
+            .iter()
+            .all(|item| item.display_ref != display_ref)
+    );
+    let expected = format!("status change on {display_ref}");
+    assert_eq!(
+        store.latest_undo.as_ref().map(|undo| undo.phrase.as_str()),
+        Some(expected.as_str())
+    );
+}
+
+#[tokio::test]
+async fn stacked_undo_reports_consumed_entry_and_exposes_next_entry() {
+    let mut store = test_store().await;
+    let (_task_id, selected) = create_selected_task(&mut store, "Stacked undo").await;
+    let display_ref = store.tasks[selected].display_ref.clone();
+    store.update_status(Some(selected), "todo").await.unwrap();
+    store
+        .set_exact_priority(Some(selected), "high")
+        .await
+        .unwrap();
+
+    let undo = store.undo_last(None).await.unwrap().unwrap();
+
+    assert_eq!(
+        undo.message,
+        format!("undid priority change on {display_ref}")
+    );
+    let next_phrase = format!("status change on {display_ref}");
+    assert_eq!(
+        store.latest_undo.as_ref().map(|undo| undo.phrase.as_str()),
+        Some(next_phrase.as_str())
+    );
 }
 
 #[tokio::test]
@@ -171,6 +222,7 @@ async fn repeated_delete_does_not_add_noop_undo_entry() {
         .unwrap();
     store.update_deleted(Some(index), true).await.unwrap();
 
+    assert!(store.new_undo_entry_id.is_none());
     assert_eq!(
         pending_undo_count(&pool, &workspace_id).await,
         undo_count_after_delete

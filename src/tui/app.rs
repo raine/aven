@@ -658,6 +658,24 @@ impl App {
         self.set_toast(message, ToastSeverity::Success);
     }
 
+    pub(super) fn set_mutation_success(&mut self, message: impl Into<String>) {
+        let mut message = message.into();
+        if let Some(entry_id) = self.store.new_undo_entry_id.take()
+            && self
+                .store
+                .available_undo()
+                .is_some_and(|undo| undo.entry_id == entry_id)
+        {
+            const RETURN_ACTION: &str = " · g . return";
+            if let Some(index) = message.find(RETURN_ACTION) {
+                message.insert_str(index, " · u undo");
+            } else {
+                message.push_str(" · u undo");
+            }
+        }
+        self.set_success(message);
+    }
+
     fn set_toast(&mut self, message: impl Into<String>, severity: ToastSeverity) {
         self.notification = Some(Notification::toast(message, severity));
     }

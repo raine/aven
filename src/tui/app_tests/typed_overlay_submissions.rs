@@ -14,7 +14,7 @@ async fn add_project_submit_uses_intent_independent_of_title() {
 
     assert_eq!(
         toast_message(&app).as_deref(),
-        Some("created project mobile-app")
+        Some("created project mobile-app · u undo")
     );
 }
 

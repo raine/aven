@@ -643,7 +643,7 @@ impl App {
                 task_id: mutation.child.task_id,
             }));
         }
-        self.set_success(mutation.message.message);
+        self.set_mutation_success(mutation.message.message);
         Ok(())
     }
 
@@ -1854,7 +1854,7 @@ impl App {
                 task_id: mutation.child.task_id,
             }));
         }
-        self.set_success(mutation.message.message);
+        self.set_mutation_success(mutation.message.message);
         Ok(())
     }
 

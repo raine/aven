@@ -44,7 +44,8 @@ pub(crate) use types::{
     ClosedTaskVisibility, ConflictTarget, MainRowSelection, MutationMessage,
     RecurringSeriesViewState, SidebarEntry, SidebarEntryTarget, SyncStatusCheck,
     TaskFilterModifiers, TaskListRenderMode, TaskOrder, TaskProjectionOrigin, TaskScope,
-    TaskScopeTarget, TaskView, TaskViewState, TuiDatabaseStats, TuiSyncStatus, mutation_committed,
+    TaskScopeTarget, TaskView, TaskViewState, TuiDatabaseStats, TuiSyncStatus, UndoPresentation,
+    mutation_committed,
 };
 #[cfg(test)]
 pub(crate) use types::{DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts};
@@ -93,6 +94,8 @@ pub(crate) struct TuiProjection {
     pub(crate) sidebar_entries: Vec<SidebarEntry>,
     pub(crate) view_state: TaskViewState,
     pub(crate) sync_status: TuiSyncStatus,
+    pub(crate) latest_undo: Option<UndoPresentation>,
+    pub(crate) new_undo_entry_id: Option<String>,
     pub(crate) last_refresh: Instant,
     #[cfg(test)]
     clone_sentinel: ProjectionCloneSentinel,
@@ -230,6 +233,8 @@ impl TuiStore {
                 sidebar_entries: Vec::new(),
                 view_state,
                 sync_status: TuiSyncStatus::default(),
+                latest_undo: None,
+                new_undo_entry_id: None,
                 last_refresh: Instant::now(),
                 #[cfg(test)]
                 clone_sentinel: ProjectionCloneSentinel::default(),
@@ -428,6 +433,7 @@ impl TuiStore {
             .map(|detail| detail.series.id.clone());
         #[cfg(test)]
         let fail_next_refresh = self.fail_next_refresh.take();
+        let previous_undo_entry_id = self.latest_undo.as_ref().map(|undo| undo.entry_id.clone());
         let retained = RefreshRetainedState::from(&*self);
         let mut replacement =
             retained.with_projection(Self::fresh_projection(active_workspace, view_state));
@@ -445,6 +451,11 @@ impl TuiStore {
                 return Err(error);
             }
         };
+        replacement.new_undo_entry_id = replacement
+            .latest_undo
+            .as_ref()
+            .map(|undo| undo.entry_id.clone())
+            .filter(|id| Some(id) != previous_undo_entry_id.as_ref());
         replacement.refresh_health = RefreshHealth::Healthy;
         #[cfg(test)]
         {
@@ -468,6 +479,8 @@ impl TuiStore {
             sidebar_entries: Vec::new(),
             view_state,
             sync_status: TuiSyncStatus::default(),
+            latest_undo: None,
+            new_undo_entry_id: None,
             last_refresh: Instant::now(),
             #[cfg(test)]
             clone_sentinel: ProjectionCloneSentinel::default(),
@@ -551,6 +564,7 @@ impl TuiStore {
         self.load_epic_child_tasks(&workspace_id).await?;
         self.prune_expanded_epic_ids();
         self.sync_status = self.load_sync_status().await?;
+        self.latest_undo = self.load_latest_undo_presentation().await?;
         self.rebuild_sidebar();
         self.last_refresh = Instant::now();
         Ok(ScopeRefreshResult {
@@ -575,6 +589,12 @@ impl TuiStore {
 
     pub(crate) fn refresh_health(&self) -> RefreshHealth {
         self.refresh_health
+    }
+
+    pub(crate) fn available_undo(&self) -> Option<&UndoPresentation> {
+        (self.refresh_health == RefreshHealth::Healthy)
+            .then_some(self.latest_undo.as_ref())
+            .flatten()
     }
 
     pub(crate) fn scope_project(&self) -> Option<&str> {

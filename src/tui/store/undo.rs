@@ -1,10 +1,46 @@
 use anyhow::Result;
 
-use crate::tui::store::{MutationMessage, TaskScope, types::committed_mutation_error};
+use crate::tui::store::{
+    MutationMessage, RefreshHealth, TaskScope, UndoPresentation, types::committed_mutation_error,
+};
 
 use super::TuiStore;
 
 impl TuiStore {
+    pub(super) async fn load_latest_undo_presentation(&self) -> Result<Option<UndoPresentation>> {
+        let workspace_id = &self.active_workspace.id;
+        let Some(presentation) = self
+            .database
+            .latest_tui_undo_presentation(workspace_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let task_count = presentation.task_ids.len();
+        let display_refs = self
+            .database
+            .display_refs_for_task_ids(workspace_id, &presentation.task_ids)
+            .await?;
+        let phrase = if presentation.operation_phrase() == "task creation" {
+            presentation.operation_phrase().to_string()
+        } else if task_count == 1 {
+            match display_refs.get(&presentation.task_ids[0]) {
+                Some(display_ref) => {
+                    format!("{} on {display_ref}", presentation.operation_phrase())
+                }
+                None => format!("{} on 1 task", presentation.operation_phrase()),
+            }
+        } else if task_count > 1 {
+            format!("{} on {task_count} tasks", presentation.operation_phrase())
+        } else {
+            presentation.operation_phrase().to_string()
+        };
+        Ok(Some(UndoPresentation {
+            entry_id: presentation.id,
+            phrase,
+        }))
+    }
+
     pub(super) async fn refresh_task_message(
         &mut self,
         task_id: &crate::ids::TaskId,
@@ -21,6 +57,10 @@ impl TuiStore {
         &mut self,
         selected: Option<usize>,
     ) -> Result<Option<MutationMessage>> {
+        if self.refresh_health == RefreshHealth::Failed {
+            return Ok(None);
+        }
+        let consumed = self.latest_undo.clone();
         let workspace_id = self.active_workspace.id.clone();
         let Some(outcome) = self.database.apply_latest_tui_undo(&workspace_id).await? else {
             return Ok(None);
@@ -53,8 +93,12 @@ impl TuiStore {
                 .map_err(committed_mutation_error)?
                 .selected
         };
+        let phrase = consumed
+            .filter(|presentation| presentation.entry_id == outcome.presentation.id)
+            .map(|presentation| presentation.phrase)
+            .unwrap_or_else(|| outcome.presentation.operation);
         Ok(Some(MutationMessage::new(
-            format!("undid {}", outcome.summary),
+            format!("undid {phrase}"),
             selected,
         )))
     }

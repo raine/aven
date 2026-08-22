@@ -527,7 +527,7 @@ impl App {
         self.list.select_task(result.selected);
         self.preserve_or_restore_sidebar_selection();
         self.prune_task_marks();
-        self.set_success(result.message);
+        self.set_mutation_success(result.message);
     }
 
     pub(super) fn open_picker_overlay(

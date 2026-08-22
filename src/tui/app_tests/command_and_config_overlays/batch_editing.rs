@@ -331,6 +331,11 @@ async fn mixed_marked_due_dates_keep_then_set_and_undo_as_one_batch() {
         Some("2099-01-01")
     );
     assert!(task_item(&app, &second_id).task.due_on.is_none());
+    assert!(
+        toast_message(&app).is_some_and(|message| {
+            message.starts_with("undid ") && !message.contains("u undo")
+        })
+    );
 }
 
 #[tokio::test]

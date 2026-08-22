@@ -42,9 +42,12 @@ async fn committed_mutation_reports_refresh_failure_without_rolling_back() {
     assert_eq!(persisted, "todo");
     assert_eq!(store.tasks[selected].task.status, TaskStatus::Inbox);
     assert_eq!(store.refresh_health(), RefreshHealth::Failed);
+    assert!(store.available_undo().is_none());
+    assert!(store.undo_last(None).await.unwrap().is_none());
 
     let recovered = store.refresh(Some(&task_id)).await.unwrap();
     assert_eq!(store.refresh_health(), RefreshHealth::Healthy);
+    assert!(store.available_undo().is_some());
     assert_eq!(recovered, Some(selected));
     assert_eq!(store.tasks[selected].task.status, TaskStatus::Todo);
 }

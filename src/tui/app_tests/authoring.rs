@@ -28,6 +28,7 @@ async fn add_task_alias_creates_task_after_title() {
     assert_eq!(task.task.priority, TaskPriority::None);
     assert_eq!(task.task.description, "");
     assert!(task.labels.is_empty());
+    assert!(toast_message(&app).is_some_and(|message| message.ends_with(" · u undo")));
 }
 
 #[tokio::test]
@@ -1430,6 +1431,20 @@ async fn toast_expiry_clears_message_once() {
     assert!(app.clear_expired_notification());
     assert!(app.notification.is_none());
     assert!(!app.clear_expired_notification());
+}
+
+#[tokio::test]
+async fn successful_mutation_adds_undo_toast_action() {
+    let mut app = test_app().await;
+    let result = app
+        .store
+        .create_task(test_task_draft("Toast undo"), None)
+        .await
+        .unwrap();
+
+    app.apply_mutation_result(crate::tui::store::MutationMessage::new(result.0, result.1));
+
+    assert!(toast_message(&app).is_some_and(|message| message.ends_with(" · u undo")));
 }
 
 #[tokio::test]

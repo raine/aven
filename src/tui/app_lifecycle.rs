@@ -392,6 +392,10 @@ impl App {
             })
         });
         let inline_images = self.inline_image_context();
+        let available_undo = self.store.available_undo();
+        let undo_description = available_undo
+            .map(|undo| undo.undo_label())
+            .unwrap_or_else(|| "nothing to undo".to_string());
         ViewState {
             focus: self.list.focus(),
             overlay,
@@ -436,6 +440,7 @@ impl App {
             pending_attachments: self.attachment_controller.views(),
             command_catalog: self.command_catalog.clone(),
             has_primary_task: selected_task.is_some(),
+            undo_description,
         }
     }
 

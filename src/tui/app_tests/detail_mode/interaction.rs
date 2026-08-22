@@ -282,7 +282,10 @@ async fn focused_note_delete_requires_confirmation_and_honors_cancellation() {
             .and_then(|detail| detail.focused_target())
             .is_none()
     );
-    assert_eq!(toast_message(&app).as_deref(), Some("deleted note"));
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("deleted note · u undo")
+    );
 }
 
 #[tokio::test]

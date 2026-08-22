@@ -117,10 +117,7 @@ impl TuiStore {
             .create_label_with_tui_undo(&self.active_workspace, &name)
             .await?;
         self.wake_after_mutation();
-        self.labels = self
-            .database
-            .list_labels(&self.active_workspace.id, None)
-            .await?;
+        self.refresh(None).await?;
         Ok(format!("created label {}", outcome.name))
     }
 

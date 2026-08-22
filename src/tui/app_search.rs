@@ -349,7 +349,7 @@ impl App {
                             detail.set_removed_epic_child(None);
                             detail.set_scroll(0);
                         }
-                        self.set_success(mutation.message.message);
+                        self.set_mutation_success(mutation.message.message);
                     }
                     Err(error) => {
                         self.set_warning(epic_child_error_message(&error, &epic));

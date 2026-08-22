@@ -192,7 +192,7 @@ async fn status_right_click_reuses_status_update_and_undo() {
         .unwrap();
 
     assert_eq!(app.store.tasks[0].task.status, TaskStatus::Active);
-    assert!(toast_message(&app).is_some_and(|message| message.ends_with("status=active")));
+    assert!(toast_message(&app).is_some_and(|message| message.ends_with("status=active · u undo")));
 
     app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
     assert_eq!(app.store.tasks[0].task.status, TaskStatus::Inbox);

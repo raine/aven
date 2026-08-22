@@ -65,7 +65,7 @@ async fn confirm_delete_task_soft_deletes_selected_task() {
     assert!(!app.store.view_state.filter_modifiers.include_deleted);
     assert_eq!(
         toast_message(&app).as_deref(),
-        Some(format!("deleted {display_ref}").as_str())
+        Some(format!("deleted {display_ref} · u undo").as_str())
     );
 }
 
@@ -299,7 +299,7 @@ async fn rename_project_submission_updates_selected_project() {
 
     assert_eq!(
         toast_message(&app).as_deref(),
-        Some("renamed project sideagent prefix=SDG")
+        Some("renamed project sideagent prefix=SDG · u undo")
     );
     assert!(
         app.store

@@ -360,6 +360,7 @@ impl App {
                 if let Some(anchor_id) = detail_anchor_id {
                     result.selected = self.store.refresh(Some(&anchor_id)).await?;
                 }
+                self.store.new_undo_entry_id = None;
                 self.apply_mutation_result(result);
                 let removed = self
                     .detail

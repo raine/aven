@@ -33,6 +33,19 @@ pub struct UndoPayload {
     pub commands: Vec<UndoCommand>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingUndoPresentation {
+    pub id: String,
+    pub operation: String,
+    pub task_ids: Vec<crate::ids::TaskId>,
+}
+
+impl PendingUndoPresentation {
+    pub fn operation_phrase(&self) -> &str {
+        &self.operation
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub enum UndoContext {
     #[default]
@@ -198,7 +211,7 @@ pub struct TaskUndoSnapshot {
 }
 
 pub struct UndoOutcome {
-    pub summary: String,
+    pub presentation: PendingUndoPresentation,
     pub task_id: Option<crate::ids::TaskId>,
     pub include_deleted: Option<bool>,
     pub project_rename: Option<ProjectRenameUndoOutcome>,
@@ -257,6 +270,14 @@ impl Database {
     pub async fn clear_pending_tui_undo_entries(&self) -> Result<()> {
         let mut conn = self.acquire_writer().await?;
         clear_pending_tui_undo_entries(&mut conn).await
+    }
+
+    pub async fn latest_tui_undo_presentation(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<Option<PendingUndoPresentation>> {
+        let mut conn = self.acquire_reader().await?;
+        latest_tui_undo_presentation(&mut conn, workspace_id).await
     }
 
     pub async fn apply_latest_tui_undo(
@@ -443,6 +464,103 @@ fn undo_payload_has_effect(payload: &UndoPayload) -> bool {
     })
 }
 
+fn classify_undo_commands(id: String, commands: &[UndoCommand]) -> PendingUndoPresentation {
+    let mut task_ids = BTreeSet::new();
+    for command in commands {
+        match command {
+            UndoCommand::SetTaskField { task_id, .. }
+            | UndoCommand::SetTaskLabels { task_id, .. }
+            | UndoCommand::SetTaskMetadata { task_id, .. }
+            | UndoCommand::DeleteCreatedTask { task_id, .. }
+            | UndoCommand::SetNoteBody { task_id, .. }
+            | UndoCommand::RestoreDeletedNote { task_id, .. }
+            | UndoCommand::DeleteCreatedNote { task_id, .. }
+            | UndoCommand::RestoreConflictResolution { task_id, .. }
+            | UndoCommand::AddTaskDependency { task_id, .. }
+            | UndoCommand::RemoveTaskDependency { task_id, .. } => {
+                task_ids.insert(task_id.clone());
+            }
+            UndoCommand::AddEpicChild { child_id, .. }
+            | UndoCommand::RemoveEpicChild { child_id, .. } => {
+                task_ids.insert(child_id.clone());
+            }
+            UndoCommand::DeleteCreatedProject { .. }
+            | UndoCommand::SetProjectMetadata { .. }
+            | UndoCommand::DeleteCreatedLabel { .. }
+            | UndoCommand::SetLabelName { .. }
+            | UndoCommand::RestoreDeletedLabel { .. } => {}
+        }
+    }
+
+    let operation = if commands
+        .iter()
+        .any(|command| matches!(command, UndoCommand::DeleteCreatedTask { .. }))
+    {
+        "task creation"
+    } else if commands
+        .iter()
+        .any(|command| matches!(command, UndoCommand::SetTaskLabels { .. }))
+    {
+        "label change"
+    } else if let Some(command) = commands.iter().find(|command| {
+        matches!(
+            command,
+            UndoCommand::AddEpicChild { .. } | UndoCommand::RemoveEpicChild { .. }
+        )
+    }) {
+        match command {
+            UndoCommand::AddEpicChild { .. } => "epic membership addition",
+            UndoCommand::RemoveEpicChild { .. } => "epic membership removal",
+            _ => unreachable!(),
+        }
+    } else {
+        commands
+            .iter()
+            .find_map(undo_command_operation)
+            .unwrap_or("last TUI mutation")
+    };
+
+    PendingUndoPresentation {
+        id,
+        operation: operation.to_string(),
+        task_ids: task_ids.into_iter().collect(),
+    }
+}
+
+fn undo_command_operation(command: &UndoCommand) -> Option<&'static str> {
+    Some(match command {
+        UndoCommand::SetTaskField { field, after, .. } => match field.as_str() {
+            "title" => "title change",
+            "description" => "description change",
+            "project" => "project change",
+            "status" => "status change",
+            "priority" => "priority change",
+            "available_at" => "availability change",
+            "due_on" => "due date change",
+            "deleted" if after == "1" => "task deletion",
+            "deleted" => "task restoration",
+            "is_epic" => "epic status change",
+            _ => "task change",
+        },
+        UndoCommand::SetTaskLabels { .. } => "label change",
+        UndoCommand::SetTaskMetadata { .. } => "metadata change",
+        UndoCommand::DeleteCreatedTask { .. } => "task creation",
+        UndoCommand::SetNoteBody { .. } => "note edit",
+        UndoCommand::RestoreDeletedNote { .. } => "note deletion",
+        UndoCommand::DeleteCreatedNote { .. } => "note creation",
+        UndoCommand::DeleteCreatedProject { .. } => "project creation",
+        UndoCommand::SetProjectMetadata { .. } => "project change",
+        UndoCommand::DeleteCreatedLabel { .. } => "label creation",
+        UndoCommand::SetLabelName { .. } => "label rename",
+        UndoCommand::RestoreDeletedLabel { .. } => "label deletion",
+        UndoCommand::RestoreConflictResolution { .. } => "conflict resolution",
+        UndoCommand::AddTaskDependency { .. } => "dependency addition",
+        UndoCommand::RemoveTaskDependency { .. } => "dependency removal",
+        UndoCommand::AddEpicChild { .. } => "epic membership addition",
+        UndoCommand::RemoveEpicChild { .. } => "epic membership removal",
+    })
+}
+
 fn empty_command_outcome() -> CommandOutcome {
     CommandOutcome {
         task_id: None,
@@ -479,13 +597,35 @@ pub(crate) async fn clear_pending_tui_undo_entries(conn: &mut SqliteConnection) 
     Ok(())
 }
 
+pub(crate) async fn latest_tui_undo_presentation(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+) -> Result<Option<PendingUndoPresentation>> {
+    let row = sqlx::query(
+        "SELECT id, payload FROM tui_undo_entries
+         WHERE workspace_id = ? AND undone_at IS NULL
+         ORDER BY seq DESC
+         LIMIT 1",
+    )
+    .bind(workspace_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let id: String = row.get("id");
+    let payload: String = row.get("payload");
+    let payload: UndoPayload = serde_json::from_str(&payload)?;
+    Ok(Some(classify_undo_commands(id, &payload.commands)))
+}
+
 pub(crate) async fn apply_latest_tui_undo(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
 ) -> Result<Option<UndoOutcome>> {
     let mut tx = begin_immediate(conn).await?;
     let row = sqlx::query(
-        "SELECT id, summary, payload FROM tui_undo_entries
+        "SELECT id, payload FROM tui_undo_entries
          WHERE workspace_id = ? AND undone_at IS NULL
          ORDER BY seq DESC
          LIMIT 1",
@@ -497,7 +637,6 @@ pub(crate) async fn apply_latest_tui_undo(
         return Ok(None);
     };
     let entry_id: String = row.get("id");
-    let summary: String = row.get("summary");
     let payload_text: String = row.get("payload");
     let undone_at = now();
     let claimed =
@@ -511,6 +650,7 @@ pub(crate) async fn apply_latest_tui_undo(
         "error undo-entry-claim-failed id={entry_id}"
     );
     let payload: UndoPayload = serde_json::from_str(&payload_text)?;
+    let presentation = classify_undo_commands(entry_id.clone(), &payload.commands);
     let apply_result = APPLYING_UNDO
         .scope(
             (),
@@ -521,7 +661,7 @@ pub(crate) async fn apply_latest_tui_undo(
         Ok(outcome) => {
             tx.commit().await?;
             Ok(Some(UndoOutcome {
-                summary,
+                presentation,
                 task_id: outcome.task_id,
                 include_deleted: outcome.include_deleted,
                 project_rename: outcome.project_rename,
@@ -1711,4 +1851,104 @@ async fn append_dependency_change(
     )
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod presentation_tests {
+    use super::*;
+
+    fn set_field(task_id: &crate::ids::TaskId, field: &str) -> UndoCommand {
+        UndoCommand::SetTaskField {
+            task_id: task_id.clone(),
+            field: field.to_string(),
+            before: "before".to_string(),
+            after: "after".to_string(),
+        }
+    }
+
+    #[test]
+    fn classifier_derives_operations_and_unique_task_scope() {
+        let first = crate::ids::TaskId::new();
+        let second = crate::ids::TaskId::new();
+        let cases = [
+            (vec![set_field(&first, "priority")], "priority change", 1),
+            (
+                vec![
+                    set_field(&first, "status"),
+                    set_field(&first, "status"),
+                    set_field(&second, "status"),
+                ],
+                "status change",
+                2,
+            ),
+            (
+                vec![UndoCommand::SetTaskMetadata {
+                    task_id: first.clone(),
+                    field_id: crate::ids::MetadataFieldId::new(),
+                    before: None,
+                    after: Some("value".to_string()),
+                }],
+                "metadata change",
+                1,
+            ),
+        ];
+
+        for (commands, operation, task_count) in cases {
+            let presentation = classify_undo_commands("entry".to_string(), &commands);
+            assert_eq!(presentation.operation, operation);
+            assert_eq!(presentation.task_ids.len(), task_count);
+        }
+    }
+
+    #[test]
+    fn classifier_uses_primary_intent_for_mixed_payloads() {
+        let task_id = crate::ids::TaskId::new();
+        let project_id = ProjectId::new();
+        let creation = UndoCommand::DeleteCreatedTask {
+            task_id: task_id.clone(),
+            create_change_id: None,
+            expected: TaskUndoSnapshot {
+                title: "title".to_string(),
+                description: String::new(),
+                project_id,
+                project_key: "project".to_string(),
+                status: "inbox".to_string(),
+                priority: "none".to_string(),
+                available_at: String::new(),
+                due_on: String::new(),
+                deleted: false,
+                is_epic: false,
+                labels: vec!["new".to_string()],
+                metadata: BTreeMap::new(),
+            },
+            attachment_ids: Vec::new(),
+            attachment_change_ids: Vec::new(),
+        };
+        let cleanup = UndoCommand::DeleteCreatedLabel {
+            label: "new".to_string(),
+            create_change_id: "change".to_string(),
+        };
+        let presentation =
+            classify_undo_commands("entry".to_string(), &[creation, cleanup.clone()]);
+        assert_eq!(presentation.operation, "task creation");
+
+        let label_change = UndoCommand::SetTaskLabels {
+            task_id,
+            before: Vec::new(),
+            after: vec!["new".to_string()],
+        };
+        let presentation = classify_undo_commands("entry".to_string(), &[label_change, cleanup]);
+        assert_eq!(presentation.operation, "label change");
+
+        let epic_id = crate::ids::TaskId::new();
+        let child_id = crate::ids::TaskId::new();
+        let presentation = classify_undo_commands(
+            "entry".to_string(),
+            &[
+                set_field(&epic_id, "is_epic"),
+                UndoCommand::AddEpicChild { epic_id, child_id },
+            ],
+        );
+        assert_eq!(presentation.operation, "epic membership addition");
+    }
 }

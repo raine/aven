@@ -3,6 +3,10 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## Unreleased
+
+- UX: Undoable TUI changes now offer `u undo` in toasts, while the command panel and shortcut help describe the operation and affected task count before it is undone.
+
 ## v0.1.30 (2026-08-19)
 
 - [Recurring tasks](/recurring-tasks/) support every N days, weeks, months, or years, including anchored month-end and leap-day behavior without schedule drift

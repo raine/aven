@@ -23,6 +23,35 @@ impl Database {
         DisplayRefContext::for_workspace(&mut conn, workspace_id).await
     }
 
+    pub async fn display_refs_for_task_ids(
+        &self,
+        workspace_id: &WorkspaceId,
+        task_ids: &[TaskId],
+    ) -> Result<HashMap<TaskId, String>> {
+        let mut conn = self.acquire_reader().await?;
+        let context = DisplayRefContext::for_workspace(&mut conn, workspace_id).await?;
+        let mut display_refs = HashMap::with_capacity(task_ids.len());
+        for task_id in task_ids {
+            let project_prefix: Option<String> = sqlx::query_scalar(
+                "SELECT p.prefix
+                 FROM tasks t
+                 JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
+                 WHERE t.workspace_id = ? AND t.id = ?",
+            )
+            .bind(workspace_id)
+            .bind(task_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+            if let Some(project_prefix) = project_prefix {
+                display_refs.insert(
+                    task_id.clone(),
+                    context.display_ref_for_id(workspace_id, &project_prefix, task_id),
+                );
+            }
+        }
+        Ok(display_refs)
+    }
+
     pub async fn resolve_task_ref(&self, workspace: &Workspace, input: &str) -> Result<Task> {
         let mut conn = self.acquire_reader().await?;
         resolve_task_ref_in_workspace(&mut conn, workspace, input).await

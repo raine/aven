@@ -1,4 +1,16 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UndoPresentation {
+    pub(crate) entry_id: String,
+    pub(crate) phrase: String,
+}
+
+impl UndoPresentation {
+    pub(crate) fn undo_label(&self) -> String {
+        format!("undo {}", self.phrase)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MutationMessage {
     pub(crate) message: String,
     pub(crate) selected: Option<usize>,

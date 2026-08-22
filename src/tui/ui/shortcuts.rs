@@ -10,7 +10,9 @@ use super::input::input_line;
 use super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use crate::config::CustomTuiCommandTarget;
 use crate::tui::app::{DetailSection, DetailTargetId};
-use crate::tui::event::{BulkSupport, CatalogCommand, CommandCatalog, CommandContext, CommandSpec};
+use crate::tui::event::{
+    Action, BulkSupport, CatalogCommand, CommandCatalog, CommandContext, CommandSpec,
+};
 use crate::tui::theme::{
     ACCENT, BG_ALT, BG_PANEL, BORDER, CUSTOM_COMMAND_NAME, CUSTOM_COMMAND_TAG, FG, FG_DIM,
     FG_MUTED, SELECTED_BG,
@@ -141,6 +143,7 @@ const CHILD_DETAIL_HELP_TOPICS: &[HelpTopic] = &[
 const HELP_DIALOG_MAX_WIDTH: u16 = 112;
 const HELP_DIALOG_MAX_HEIGHT: u16 = 28;
 const COMMAND_DIALOG_MAX_WIDTH: u16 = 112;
+const DEFAULT_UNDO_DESCRIPTION: &str = "undo last TUI mutation";
 
 fn help_dialog_height(frame_height: u16) -> u16 {
     frame_height.saturating_sub(4).min(HELP_DIALOG_MAX_HEIGHT)
@@ -153,7 +156,7 @@ fn help_dialog_size(area: Rect) -> (u16, u16) {
     )
 }
 
-pub(super) fn render_help(frame: &mut Frame, scroll: u16) {
+pub(super) fn render_help(frame: &mut Frame, scroll: u16, undo_description: &str) {
     let (width, height) = help_dialog_size(frame.area());
     let visible_rows = height.saturating_sub(2);
     let dialog = if let Some(title) = help_scroll_title(scroll, visible_rows) {
@@ -172,11 +175,11 @@ pub(super) fn render_help(frame: &mut Frame, scroll: u16) {
     let columns = help_columns();
     let content_height = columns
         .iter()
-        .map(|sections| help_column_lines(sections).len())
+        .map(|sections| help_column_lines(sections, undo_description).len())
         .max()
         .unwrap_or(0);
     for (column, sections) in [left, right].into_iter().zip(columns.iter()) {
-        render_help_column(frame, column, sections, scroll);
+        render_help_column(frame, column, sections, scroll, undo_description);
     }
     render_vertical_scrollbar(frame, content, content_height, scroll);
 }
@@ -242,8 +245,14 @@ fn help_section_len(section: &str) -> usize {
         + 1
 }
 
-fn render_help_column(frame: &mut Frame, area: Rect, sections: &[&'static str], scroll: u16) {
-    let lines = help_column_lines(sections);
+fn render_help_column(
+    frame: &mut Frame,
+    area: Rect,
+    sections: &[&'static str],
+    scroll: u16,
+    undo_description: &str,
+) {
+    let lines = help_column_lines(sections, undo_description);
     let start = clamp_scroll_start(scroll, lines.len(), area.height as usize);
     let visible = lines
         .into_iter()
@@ -291,6 +300,7 @@ pub(super) fn render_detail_help(
     frame: &mut Frame,
     scroll: u16,
     focused_target: Option<&DetailTargetId>,
+    undo_description: &str,
 ) {
     let child_help = focused_epic_child(focused_target);
     let title = if child_help {
@@ -298,7 +308,7 @@ pub(super) fn render_detail_help(
     } else {
         "Task detail shortcuts"
     };
-    let lines = detail_help_lines_for(focused_target);
+    let lines = detail_help_lines_for(focused_target, undo_description);
     let (width, height) = help_dialog_size(frame.area());
     let mut dialog = Dialog::new(title, width, height);
     let visible_rows = dialog.area(frame).height.saturating_sub(2);
@@ -309,14 +319,17 @@ pub(super) fn render_detail_help(
     render_scrollable_help_lines(frame, content, lines, scroll);
 }
 
-fn detail_help_lines_for(focused_target: Option<&DetailTargetId>) -> Vec<Line<'static>> {
+fn detail_help_lines_for(
+    focused_target: Option<&DetailTargetId>,
+    undo_description: &str,
+) -> Vec<Line<'static>> {
     if focused_epic_child(focused_target) {
-        return focused_help_lines(CHILD_DETAIL_HELP_TOPICS);
+        return focused_help_lines(CHILD_DETAIL_HELP_TOPICS, undo_description);
     }
-    detail_help_lines()
+    detail_help_lines(undo_description)
 }
 
-fn focused_help_lines(topics: &[HelpTopic]) -> Vec<Line<'static>> {
+fn focused_help_lines(topics: &[HelpTopic], undo_description: &str) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut sections = Vec::new();
     for section in topics.iter().map(|topic| topic.section) {
@@ -335,13 +348,13 @@ fn focused_help_lines(topics: &[HelpTopic]) -> Vec<Line<'static>> {
             topics
                 .iter()
                 .filter(|topic| topic.section == section)
-                .map(detail_help_line),
+                .map(|topic| detail_help_line(topic, undo_description)),
         );
     }
     lines
 }
 
-fn detail_help_lines() -> Vec<Line<'static>> {
+fn detail_help_lines(undo_description: &str) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for section in CommandContext::Detail.sections() {
         let fixed = DETAIL_HELP_TOPICS
@@ -362,20 +375,31 @@ fn detail_help_lines() -> Vec<Line<'static>> {
             *section,
             Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
         )));
-        lines.extend(fixed.into_iter().map(detail_help_line));
         lines.extend(
-            commands
+            fixed
                 .into_iter()
-                .map(|command| help_command_line(command, CommandContext::Detail)),
+                .map(|topic| detail_help_line(topic, undo_description)),
+        );
+        lines.extend(
+            commands.into_iter().map(|command| {
+                help_command_line(command, CommandContext::Detail, undo_description)
+            }),
         );
     }
     lines
 }
 
-fn detail_help_line(topic: &HelpTopic) -> Line<'static> {
+fn detail_help_line(topic: &HelpTopic, undo_description: &str) -> Line<'static> {
     Line::from(vec![
         Span::styled(format!("{:<18}", topic.keys), Style::new().fg(FG_MUTED)),
-        Span::styled(topic.description, Style::new().fg(FG_DIM)),
+        Span::styled(
+            if topic.keys == "u" {
+                undo_description.to_string()
+            } else {
+                topic.description.to_string()
+            },
+            Style::new().fg(FG_DIM),
+        ),
     ])
 }
 
@@ -392,7 +416,7 @@ fn detail_help_scroll_title(scroll: u16, visible_rows: u16, max_rows: usize) -> 
 fn help_scroll_title(scroll: u16, visible_rows: u16) -> Option<String> {
     let max_rows = help_columns()
         .iter()
-        .map(|sections| help_column_lines(sections).len())
+        .map(|sections| help_column_lines(sections, DEFAULT_UNDO_DESCRIPTION).len())
         .max()
         .unwrap_or(0);
     let visible_rows = visible_rows as usize;
@@ -404,7 +428,7 @@ fn help_scroll_title(scroll: u16, visible_rows: u16) -> Option<String> {
     Some(format!(" {current}/{total} "))
 }
 
-fn help_column_lines(sections: &[&'static str]) -> Vec<Line<'static>> {
+fn help_column_lines(sections: &[&'static str], undo_description: &str) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for section in sections {
         if !lines.is_empty() {
@@ -418,7 +442,11 @@ fn help_column_lines(sections: &[&'static str]) -> Vec<Line<'static>> {
             .commands()
             .filter(|command| command.section == *section)
         {
-            lines.push(help_command_line(command, CommandContext::Normal));
+            lines.push(help_command_line(
+                command,
+                CommandContext::Normal,
+                undo_description,
+            ));
         }
     }
     lines
@@ -429,7 +457,7 @@ pub(crate) fn help_scroll_cap(frame_height: u16) -> u16 {
     help_columns()
         .iter()
         .map(|sections| {
-            help_column_lines(sections)
+            help_column_lines(sections, DEFAULT_UNDO_DESCRIPTION)
                 .len()
                 .saturating_sub(visible_rows)
         })
@@ -442,7 +470,7 @@ pub(crate) fn detail_help_scroll_cap(
     focused_target: Option<&DetailTargetId>,
 ) -> u16 {
     let visible_rows = help_dialog_height(frame_height).saturating_sub(2) as usize;
-    detail_help_lines_for(focused_target)
+    detail_help_lines_for(focused_target, DEFAULT_UNDO_DESCRIPTION)
         .len()
         .saturating_sub(visible_rows) as u16
 }
@@ -508,7 +536,11 @@ fn catalog_command_name_width(commands: &[CatalogCommand<'_>]) -> usize {
         .saturating_add(2)
 }
 
-fn help_command_line(command: &CommandSpec, context: CommandContext) -> Line<'static> {
+fn help_command_line(
+    command: &CommandSpec,
+    context: CommandContext,
+    undo_description: &str,
+) -> Line<'static> {
     let keys = command
         .keys(context)
         .iter()
@@ -523,7 +555,14 @@ fn help_command_line(command: &CommandSpec, context: CommandContext) -> Line<'st
         format!("{keys:<key_width$}"),
         Style::new().fg(FG_MUTED),
     )];
-    spans.push(Span::styled(command.description, Style::new().fg(FG_DIM)));
+    spans.push(Span::styled(
+        if command.action == Action::Undo {
+            undo_description.to_string()
+        } else {
+            command.description.to_string()
+        },
+        Style::new().fg(FG_DIM),
+    ));
     Line::from(spans)
 }
 
@@ -560,15 +599,26 @@ fn command_line_with_highlight(
     line
 }
 
+struct CommandPaletteOptions<'a> {
+    highlighted: bool,
+    annotation: Option<String>,
+    unavailable_reason: Option<&'a str>,
+    description_override: Option<&'a str>,
+}
+
 fn command_palette_line(
     command: CatalogCommand<'_>,
     context: CommandContext,
     command_name_width: usize,
     line_width: usize,
-    highlighted: bool,
-    annotation: Option<String>,
-    unavailable_reason: Option<&str>,
+    options: CommandPaletteOptions<'_>,
 ) -> Line<'static> {
+    let CommandPaletteOptions {
+        highlighted,
+        annotation,
+        unavailable_reason,
+        description_override,
+    } = options;
     let keys = command
         .keys(context)
         .iter()
@@ -608,7 +658,7 @@ fn command_palette_line(
             .saturating_add(origin_right_padding)
     });
     let description = crate::tui::text::truncate_width(
-        command.description(),
+        description_override.unwrap_or_else(|| command.description()),
         line_width.saturating_sub(used_width.saturating_add(origin_width)),
     );
     spans.push(Span::styled(description, Style::new().fg(FG_DIM)));
@@ -649,6 +699,7 @@ fn command_palette_line(
 
 pub(super) struct CommandRenderContext<'a> {
     pub(super) unavailable: &'a [crate::tui::overlay::CommandAvailabilityOverride],
+    pub(super) undo_description: &'a str,
     pub(super) command_context: CommandContext,
     pub(super) marked_task_count: usize,
     pub(super) custom_command_marked_task_count: usize,
@@ -666,6 +717,7 @@ pub(super) fn render_command(
 ) {
     let CommandRenderContext {
         unavailable,
+        undo_description,
         command_context,
         marked_task_count,
         custom_command_marked_task_count,
@@ -764,14 +816,21 @@ pub(super) fn render_command(
                 | BulkSupport::NotTaskScoped => None,
             },
         };
+        let description_override = command
+            .built_in()
+            .is_some_and(|built_in| built_in.action == Action::Undo)
+            .then_some(undo_description);
         lines.push(command_palette_line(
             command,
             command_context,
             command_name_width,
             line_width,
-            is_highlighted,
-            annotation,
-            unavailable_reason,
+            CommandPaletteOptions {
+                highlighted: is_highlighted,
+                annotation,
+                unavailable_reason,
+                description_override,
+            },
         ));
     }
     if match_count > 0 {
@@ -1051,7 +1110,9 @@ mod tests {
     fn render_help_overlay(scroll: u16) -> String {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| render_help(frame, scroll)).unwrap();
+        terminal
+            .draw(|frame| render_help(frame, scroll, DEFAULT_UNDO_DESCRIPTION))
+            .unwrap();
         buffer_text(terminal.backend())
     }
 
@@ -1077,7 +1138,9 @@ mod tests {
     fn render_help_buffer(scroll: u16) -> ratatui::buffer::Buffer {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| render_help(frame, scroll)).unwrap();
+        terminal
+            .draw(|frame| render_help(frame, scroll, DEFAULT_UNDO_DESCRIPTION))
+            .unwrap();
         terminal.backend().buffer().clone()
     }
 
@@ -1085,7 +1148,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_detail_help(frame, scroll, None))
+            .draw(|frame| render_detail_help(frame, scroll, None, DEFAULT_UNDO_DESCRIPTION))
             .unwrap();
         terminal.backend().buffer().clone()
     }
@@ -1094,7 +1157,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_detail_help(frame, scroll, None))
+            .draw(|frame| render_detail_help(frame, scroll, None, DEFAULT_UNDO_DESCRIPTION))
             .unwrap();
         buffer_text(terminal.backend())
     }
@@ -1115,6 +1178,7 @@ mod tests {
                     None,
                     None,
                     CommandRenderContext {
+                        undo_description: DEFAULT_UNDO_DESCRIPTION,
                         unavailable: &[],
                         command_context: CommandContext::Normal,
                         marked_task_count: marked,
@@ -1148,6 +1212,7 @@ mod tests {
                     None,
                     None,
                     CommandRenderContext {
+                        undo_description: DEFAULT_UNDO_DESCRIPTION,
                         unavailable: &[],
                         command_context: context,
                         marked_task_count: if context == CommandContext::Detail {
@@ -1192,6 +1257,7 @@ mod tests {
                     cycle_input,
                     highlighted,
                     CommandRenderContext {
+                        undo_description: DEFAULT_UNDO_DESCRIPTION,
                         unavailable: &[],
                         command_context: CommandContext::Normal,
                         marked_task_count: 0,
@@ -1433,6 +1499,44 @@ mod tests {
     }
 
     #[test]
+    fn undo_description_is_shared_by_help_and_command_panel() {
+        let description = "undo priority change";
+        let help_backend = TestBackend::new(100, 30);
+        let mut help_terminal = Terminal::new(help_backend).unwrap();
+        help_terminal
+            .draw(|frame| render_help(frame, 0, description))
+            .unwrap();
+        let help = buffer_text(help_terminal.backend());
+
+        let command_backend = TestBackend::new(100, 30);
+        let mut command_terminal = Terminal::new(command_backend).unwrap();
+        command_terminal
+            .draw(|frame| {
+                render_command(
+                    frame,
+                    "undo",
+                    4,
+                    None,
+                    None,
+                    CommandRenderContext {
+                        undo_description: description,
+                        unavailable: &[],
+                        command_context: CommandContext::Normal,
+                        marked_task_count: 0,
+                        custom_command_marked_task_count: 0,
+                        catalog: &CommandCatalog::default(),
+                        has_primary_task: true,
+                    },
+                )
+            })
+            .unwrap();
+        let command = buffer_text(command_terminal.backend());
+
+        assert!(help.contains(description));
+        assert!(command.contains(description));
+    }
+
+    #[test]
     fn overlay_render_includes_command_title_and_input() {
         let rendered = render_command_overlay("ref", 3);
         assert!(rendered.contains("Command"));
@@ -1584,7 +1688,7 @@ mod tests {
     fn global_help_includes_upcoming_view_route() {
         let rendered = help_columns()
             .iter()
-            .flat_map(|sections| help_column_lines(sections))
+            .flat_map(|sections| help_column_lines(sections, DEFAULT_UNDO_DESCRIPTION))
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
@@ -1610,7 +1714,7 @@ mod tests {
             section: DetailSection::EpicChildren,
             task_id: crate::test_support::task_id("focused-child-help"),
         };
-        let rendered = detail_help_lines_for(Some(&target))
+        let rendered = detail_help_lines_for(Some(&target), DEFAULT_UNDO_DESCRIPTION)
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
@@ -1628,7 +1732,7 @@ mod tests {
 
     #[test]
     fn detail_help_includes_fixed_overlay_rows_and_catalog_commands() {
-        let rendered = detail_help_lines()
+        let rendered = detail_help_lines(DEFAULT_UNDO_DESCRIPTION)
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
@@ -1663,7 +1767,7 @@ mod tests {
 
     #[test]
     fn detail_help_lists_recurrence_lifecycle_shortcuts() {
-        let rendered = detail_help_lines()
+        let rendered = detail_help_lines(DEFAULT_UNDO_DESCRIPTION)
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
@@ -1681,7 +1785,7 @@ mod tests {
 
     #[test]
     fn detail_help_aligns_description_columns() {
-        let key_widths = detail_help_lines()
+        let key_widths = detail_help_lines(DEFAULT_UNDO_DESCRIPTION)
             .iter()
             .filter(|line| line.spans.len() > 1)
             .map(|line| line.spans[0].content.chars().count())
@@ -1758,7 +1862,18 @@ mod tests {
             .into_iter()
             .next()
             .unwrap();
-        let line = command_palette_line(command, CommandContext::Normal, 20, 80, false, None, None);
+        let line = command_palette_line(
+            command,
+            CommandContext::Normal,
+            20,
+            80,
+            CommandPaletteOptions {
+                highlighted: false,
+                annotation: None,
+                unavailable_reason: None,
+                description_override: None,
+            },
+        );
         let name = line
             .spans
             .iter()
@@ -1858,6 +1973,7 @@ mod tests {
                     None,
                     None,
                     CommandRenderContext {
+                        undo_description: DEFAULT_UNDO_DESCRIPTION,
                         unavailable: &unavailable,
                         command_context: CommandContext::Normal,
                         marked_task_count: 0,
@@ -1895,7 +2011,7 @@ mod tests {
         let columns = help_columns();
         let row_counts = columns
             .iter()
-            .map(|sections| help_column_lines(sections).len())
+            .map(|sections| help_column_lines(sections, DEFAULT_UNDO_DESCRIPTION).len())
             .collect::<Vec<_>>();
 
         let tail_right = ["Order", "Conflicts", "Config"]

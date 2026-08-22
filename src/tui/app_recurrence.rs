@@ -425,7 +425,7 @@ impl App {
         {
             self.store.load_recurrence_series_detail(series_id).await?;
         }
-        self.set_success(message.message);
+        self.set_mutation_success(message.message);
         Ok(())
     }
 

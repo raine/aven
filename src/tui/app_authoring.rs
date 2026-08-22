@@ -559,7 +559,7 @@ impl App {
                     detail.set_scroll(0);
                 }
                 self.authoring.clear();
-                self.set_success(message);
+                self.set_mutation_success(message);
             }
             AddTaskOrigin::Standalone if context.create_more => {
                 let completion = if context.attachments.is_empty() {
@@ -599,7 +599,7 @@ impl App {
                 if let Some(error) = refresh_error {
                     self.set_warning(format!("{message}; list refresh failed: {error:#}"));
                 } else {
-                    self.set_success(message);
+                    self.set_mutation_success(message);
                 }
                 return Ok(());
             }
@@ -638,7 +638,7 @@ impl App {
                 if selected.is_none() {
                     self.restore_selection_after_mutation();
                 }
-                self.set_success(message.clone());
+                self.set_mutation_success(message.clone());
                 if self.intake.view().add_task_only {
                     self.intake.set_message(message);
                     self.should_quit = true;
@@ -661,7 +661,7 @@ impl App {
         }
         let note_id = self.store.add_note_to_task(&task_id, body).await?;
         self.refresh().await?;
-        self.set_success(format!("added note {note_id} to {display_ref}"));
+        self.set_mutation_success(format!("added note {note_id} to {display_ref}"));
         Ok(())
     }
 

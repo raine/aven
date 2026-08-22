@@ -77,7 +77,7 @@ async fn add_project_shortcut_opens_prompt_and_creates_project() {
     assert!(app.overlay.is_none());
     assert_eq!(
         toast_message(&app).as_deref(),
-        Some("created project mobile-app")
+        Some("created project mobile-app · u undo")
     );
     assert!(
         app.store
@@ -113,7 +113,7 @@ async fn add_label_shortcut_opens_prompt_and_creates_label() {
     assert!(app.overlay.is_none());
     assert_eq!(
         toast_message(&app).as_deref(),
-        Some("created label needs-review")
+        Some("created label needs-review · u undo")
     );
     assert!(app.store.labels.iter().any(|label| label == "needs-review"));
     assert!(

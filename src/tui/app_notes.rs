@@ -107,7 +107,7 @@ impl App {
         match self.store.edit_note(&task_id, &note_id, body).await? {
             Some(true) => {
                 self.refresh().await?;
-                self.set_success(format!("edited note {note_id} on {display_ref}"));
+                self.set_mutation_success(format!("edited note {note_id} on {display_ref}"));
             }
             Some(false) => self.set_info("note is unchanged"),
             None => self.set_warning("note is unavailable"),
@@ -129,7 +129,7 @@ impl App {
             detail.set_focused_target(replacement.map(|note_id| DetailTargetId::Note { note_id }));
         }
         self.refresh().await?;
-        self.set_success("deleted note");
+        self.set_mutation_success("deleted note");
         Ok(())
     }
 

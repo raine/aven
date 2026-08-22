@@ -844,7 +844,7 @@ async fn detail_done_shortcut_keeps_detail_and_sets_message() {
     assert!(app.detail.is_active());
     assert_eq!(
         toast_message(&app).as_deref(),
-        Some(format!("set {display_ref} status=done").as_str())
+        Some(format!("set {display_ref} status=done · u undo").as_str())
     );
     let selected = app.list.selected_task().unwrap();
     assert_eq!(app.store.tasks[selected].task.id, selected_task_id);
@@ -869,7 +869,11 @@ async fn queue_status_change_preserves_viewport_row_and_recalls_changed_task() {
     assert_ne!(app.store.tasks[selected].task.id, changed_id);
     assert_eq!(app.list.task_offset(), 2);
     assert_eq!(app.list.last_changed_task_id(), Some(&changed_id));
-    assert!(toast_message(&app).unwrap().contains("g . return"));
+    assert!(
+        toast_message(&app)
+            .unwrap()
+            .ends_with(" · u undo · g . return")
+    );
 
     app.execute(Action::ReturnToLastChange).await.unwrap();
 

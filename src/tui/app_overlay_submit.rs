@@ -58,7 +58,7 @@ impl App {
                 state.project = outcome.project_key.clone();
                 state.refresh_recurrence_preview();
                 self.overlay = Some(OverlayState::AddTask(state));
-                self.set_success(format!("created project {}", outcome.project_key));
+                self.set_mutation_success(format!("created project {}", outcome.project_key));
             }
             Err(error) => {
                 let mut picker = crate::tui::overlay::PickerState::new(
@@ -300,14 +300,14 @@ impl App {
             TextIntent::AddProject => {
                 let outcome = self.store.create_project(value).await?;
                 self.restore_selection_after_mutation();
-                self.set_success(format!("created project {}", outcome.project_key));
+                self.set_mutation_success(format!("created project {}", outcome.project_key));
             }
             TextIntent::AddProjectPath { project } => {
                 self.submit_add_project_path(project, value).await?;
             }
             TextIntent::AddLabel => {
                 let message = self.store.create_label(value).await?;
-                self.set_success(message);
+                self.set_mutation_success(message);
             }
             TextIntent::RenameLabel { label } => {
                 self.submit_rename_label(label, value).await?;
