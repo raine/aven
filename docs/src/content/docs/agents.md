@@ -29,7 +29,12 @@ Explicit targets are installed even when the agent directory is absent. The comm
 
 ## Set up automatic priming
 
-Run `aven prime` automatically when an agent session starts. In Claude Code, add it to the `SessionStart` hook in `~/.claude/settings.json`:
+Run `aven prime` automatically when an agent session starts so its output is
+available to the agent from the first model turn.
+
+### Claude Code
+
+Add a `SessionStart` hook to `~/.claude/settings.json`:
 
 ```json
 {
@@ -48,6 +53,78 @@ Run `aven prime` automatically when an agent session starts. In Claude Code, add
   }
 }
 ```
+
+### Pi
+
+[Pi](https://pi.dev) extensions in `~/.pi/agent/extensions/` apply globally.
+Create the directory, then add `~/.pi/agent/extensions/aven-prime.ts`:
+
+```sh
+mkdir -p ~/.pi/agent/extensions
+```
+
+```typescript
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+export default function (pi: ExtensionAPI) {
+  let primeOutput: string | undefined;
+  let delivered = false;
+
+  pi.on("session_start", async (event, ctx) => {
+    if (event.reason === "reload") return;
+
+    primeOutput = undefined;
+    delivered = false;
+
+    const result = await pi.exec("aven", ["prime"], {
+      cwd: ctx.cwd,
+      timeout: 30_000,
+    });
+
+    if (result.code !== 0) {
+      ctx.ui.notify(
+        `aven prime failed: ${result.stderr.trim() || `exit code ${result.code}`}`,
+        "error",
+      );
+      return;
+    }
+
+    primeOutput = result.stdout.trim();
+  });
+
+  pi.on("before_agent_start", async () => {
+    if (delivered || !primeOutput) return;
+
+    delivered = true;
+
+    return {
+      message: {
+        customType: "aven-prime",
+        content: primeOutput,
+        display: false,
+      },
+    };
+  });
+}
+```
+
+The extension uses two lifecycle events because they serve different purposes.
+`session_start` runs `aven prime` once in the session working directory and
+caches its output. `before_agent_start` is the point where Pi accepts context
+for a model turn, so it injects the cached output as a hidden message on the
+first turn only. Reload events are skipped to avoid injecting a second copy into
+the same session.
+
+Pi profiles can share the same extension source. For a profile rooted at
+`~/.pi-epic`, link its extension directory to the default profile:
+
+```sh
+mkdir -p ~/.pi-epic/agent
+ln -s ~/.pi/agent/extensions ~/.pi-epic/agent/extensions
+```
+
+Both profiles then discover `aven-prime.ts` through their global extension
+directory. Run `/reload` in an open Pi session after editing the extension.
 
 Other agent environments can use the same pattern: run `aven prime` at session
 start and include its output in the agent context.
