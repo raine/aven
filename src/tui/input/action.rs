@@ -165,6 +165,8 @@ impl App {
             Action::BeginConfigInit => self.begin_config_init()?,
             Action::BeginAddDependency => self.begin_add_dependency().await?,
             Action::BeginRemoveDependency => self.begin_remove_dependency(),
+            Action::BeginAddRelated => self.begin_add_related().await?,
+            Action::BeginRemoveRelated => self.begin_remove_related(),
             Action::Undo => self.undo_last().await?,
             Action::ToggleMarkSelected => self.toggle_mark_selected(),
             Action::ToggleMarkAllInView => self.toggle_mark_all_in_view(),

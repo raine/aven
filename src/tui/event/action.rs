@@ -124,6 +124,8 @@ pub(crate) enum Action {
     BeginConfigInit,
     BeginAddDependency,
     BeginRemoveDependency,
+    BeginAddRelated,
+    BeginRemoveRelated,
     Undo,
     ToggleMarkSelected,
     ToggleMarkAllInView,
@@ -171,6 +173,9 @@ impl Action {
             Self::BeginAddNote => BulkSupport::SingleOnly("note"),
             Self::BeginAddDependency | Self::BeginRemoveDependency => {
                 BulkSupport::SingleOnly("dependency")
+            }
+            Self::BeginAddRelated | Self::BeginRemoveRelated => {
+                BulkSupport::SingleOnly("related link")
             }
             Self::CopyShortRef | Self::CopyDurableRef | Self::CopyTaskTitle => BulkSupport::Batch,
             Self::CopyTaskDescription

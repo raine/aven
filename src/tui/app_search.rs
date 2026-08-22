@@ -297,6 +297,36 @@ impl App {
                     }
                 }
             }
+            SearchIntent::AddRelated {
+                selection,
+                display_ref,
+            } => {
+                let task_id = selection.single_id().cloned().expect("single selection");
+                if task_id == result.task_id {
+                    self.set_warning(format!("{display_ref} cannot relate to itself"));
+                    self.reopen_add_related_search(selection, display_ref, input);
+                    return Ok(());
+                }
+                if result.deleted {
+                    self.set_warning("deleted tasks are unavailable");
+                    self.reopen_add_related_search(selection, display_ref, input);
+                    return Ok(());
+                }
+                match self
+                    .store
+                    .add_related_to_selection(&selection, &result.task_id)
+                    .await
+                {
+                    Ok(result) => self.apply_mutation_result(result),
+                    Err(error) => {
+                        let committed = crate::tui::store::mutation_committed(&error);
+                        self.set_error(format!("{error:#}"));
+                        if !committed {
+                            self.reopen_add_related_search(selection, display_ref, input);
+                        }
+                    }
+                }
+            }
             SearchIntent::AddEpicChild {
                 epic_id,
                 display_ref,
@@ -376,6 +406,21 @@ impl App {
         self.overlay = Some(OverlayState::Search(state));
     }
 
+    fn reopen_add_related_search(
+        &mut self,
+        selection: crate::tui::task_selection::TaskSelection,
+        display_ref: String,
+        input: String,
+    ) {
+        let mut state = SearchState::for_intent(SearchIntent::AddRelated {
+            selection,
+            display_ref,
+        });
+        state.input = LineEdit::new(input);
+        self.schedule_search_preview(&mut state);
+        self.overlay = Some(OverlayState::Search(state));
+    }
+
     fn reopen_add_epic_child_search(
         &mut self,
         epic: crate::tui::store::EpicContext,
@@ -433,7 +478,9 @@ impl App {
         self.clear_live_search_preview();
         let project = match &state.intent {
             SearchIntent::AddEpicChild { project_key, .. } => Some(project_key.clone()),
-            SearchIntent::Navigate | SearchIntent::AddDependency { .. } => None,
+            SearchIntent::Navigate
+            | SearchIntent::AddDependency { .. }
+            | SearchIntent::AddRelated { .. } => None,
         };
         self.start_search_preview(query, project);
     }
@@ -470,6 +517,9 @@ impl App {
                 SearchIntent::Navigate => true,
                 SearchIntent::AddDependency { selection, .. } => {
                     selection.single_id() != Some(&result.task_id)
+                }
+                SearchIntent::AddRelated { selection, .. } => {
+                    !result.deleted && selection.single_id() != Some(&result.task_id)
                 }
                 SearchIntent::AddEpicChild { project_key, .. } => {
                     result.project_key == *project_key

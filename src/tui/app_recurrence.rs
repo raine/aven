@@ -214,6 +214,8 @@ impl App {
             | Action::BeginAddNote
             | Action::BeginAddDependency
             | Action::BeginRemoveDependency
+            | Action::BeginAddRelated
+            | Action::BeginRemoveRelated
             | Action::SetPriority(_)
             | Action::CyclePriority(_) => {
                 self.set_info(

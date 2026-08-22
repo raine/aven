@@ -16,6 +16,7 @@ mod hydration;
 mod projects;
 mod recent_actions;
 mod recurrence;
+mod related;
 mod search;
 mod sidebar;
 mod sorting;
@@ -35,6 +36,8 @@ pub(crate) use doctor::{unresolved_conflict_count, workspace_task_counts};
 pub(crate) use projects::list_project_items_in_workspace;
 pub(crate) use recent_actions::list_recent_actions_in_workspace;
 pub(crate) use recurrence::task_recurrence_summaries;
+pub use related::TaskRelatedLink;
+pub(crate) use related::{related_links_for_tasks, task_related_links};
 pub use search::{
     SearchMatchedField, TaskSearchPreviewResultSet, TaskSearchQuery, TaskSearchResult,
 };
@@ -456,6 +459,15 @@ impl Database {
     ) -> Result<TaskDependencySummary> {
         let mut conn = self.acquire_reader().await?;
         task_dependency_summary(&mut conn, workspace_id, task_id).await
+    }
+
+    pub async fn task_related_links(
+        &self,
+        workspace_id: &WorkspaceId,
+        task_id: &TaskId,
+    ) -> Result<Vec<TaskRelatedLink>> {
+        let mut conn = self.acquire_reader().await?;
+        task_related_links(&mut conn, workspace_id, task_id, None).await
     }
 
     pub async fn workspace_task_counts(

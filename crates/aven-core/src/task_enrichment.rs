@@ -24,6 +24,7 @@ pub struct TaskEnrichment {
     pub dependent_counts_by_task: HashMap<TaskId, i64>,
     pub depends_on_by_task: HashMap<TaskId, Vec<TaskDependencyLink>>,
     pub blocks_by_task: HashMap<TaskId, Vec<TaskDependencyLink>>,
+    pub related_by_task: HashMap<TaskId, Vec<crate::query::TaskRelatedLink>>,
     pub epic_children_by_task: HashMap<TaskId, Vec<TaskDependencyLink>>,
     pub epic_child_dependencies_by_task: HashMap<TaskId, Vec<TaskDependencyLink>>,
     pub epic_parent_by_task: HashMap<TaskId, TaskDependencyLink>,
@@ -108,6 +109,12 @@ async fn load_task_enrichment_with_detail(
             display_refs,
         )
         .await?,
+        related_by_task: if include_detail {
+            crate::query::related_links_for_tasks(conn, workspace_id, task_ids, display_refs)
+                .await?
+        } else {
+            HashMap::new()
+        },
         epic_children_by_task,
         epic_child_dependencies_by_task,
         epic_parent_by_task: epic_parents_for_tasks(conn, workspace_id, task_ids, display_refs)

@@ -307,6 +307,7 @@ mod workspace_scoping;
 
 mod dependency_actions;
 mod epics;
+mod related_actions;
 
 mod label_administration;
 

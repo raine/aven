@@ -4,6 +4,7 @@ mod dependencies;
 mod epics;
 mod projects;
 pub(crate) mod recurrence;
+mod related;
 mod tasks;
 
 #[cfg(feature = "test-support")]
@@ -37,6 +38,10 @@ pub use recurrence::{
     RecurrenceTemplateUpdate, RecurrenceTemplateUpdateOutcome, UpdateRecurrenceTemplateParams,
 };
 pub(crate) use recurrence::{route_recurrence_task_field, undo_recurrence_resolution};
+pub use related::RelatedOutcome;
+pub(crate) use related::{
+    canonical_related_pair, set_task_related_link_in_transaction, task_has_related_state,
+};
 pub(crate) use tasks::update_task_labels_in_workspace;
 pub use tasks::{
     NoteDeleteOutcome, NoteEditOutcome, NoteOutcome, TaskCreationOptions, TaskCreationUndo,

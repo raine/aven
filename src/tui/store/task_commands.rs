@@ -579,6 +579,112 @@ impl TuiStore {
     }
 
     #[cfg(test)]
+    pub(crate) async fn add_related(
+        &mut self,
+        index: Option<usize>,
+        related_task_id: &crate::ids::TaskId,
+    ) -> Result<Option<MutationMessage>> {
+        let Some(selection) = self.test_selected(index) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.add_related_to_selection(&selection, related_task_id)
+                .await?,
+        ))
+    }
+
+    pub(crate) async fn add_related_to_selection(
+        &mut self,
+        selection: &TaskSelection,
+        related_task_id: &crate::ids::TaskId,
+    ) -> Result<MutationMessage> {
+        ensure!(
+            selection.is_single(),
+            "related mutation requires exactly one task"
+        );
+        let item = &selection.targets()[0];
+        let outcome = self
+            .database
+            .add_task_related_link_with_undo(
+                &self.active_workspace,
+                &item.task.id,
+                related_task_id,
+                UndoContext::tui(format!("related link {}", item.display_ref)),
+            )
+            .await?;
+        if outcome.changed {
+            self.wake_after_mutation();
+        }
+        let display_refs = self
+            .database
+            .display_ref_context(&self.active_workspace.id)
+            .await?;
+        let related_ref = display_refs.display_ref(&outcome.related_task);
+        let verb = if outcome.changed { "added" } else { "kept" };
+        self.refresh_task_message(
+            &item.task.id,
+            format!(
+                "{verb} related link {} related {related_ref}",
+                item.display_ref
+            ),
+        )
+        .await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn remove_related(
+        &mut self,
+        index: Option<usize>,
+        related_task_id: &crate::ids::TaskId,
+    ) -> Result<Option<MutationMessage>> {
+        let Some(selection) = self.test_selected(index) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.remove_related_from_selection(&selection, related_task_id)
+                .await?,
+        ))
+    }
+
+    pub(crate) async fn remove_related_from_selection(
+        &mut self,
+        selection: &TaskSelection,
+        related_task_id: &crate::ids::TaskId,
+    ) -> Result<MutationMessage> {
+        ensure!(
+            selection.is_single(),
+            "related mutation requires exactly one task"
+        );
+        let item = &selection.targets()[0];
+        let outcome = self
+            .database
+            .remove_task_related_link_with_undo(
+                &self.active_workspace,
+                &item.task.id,
+                related_task_id,
+                UndoContext::tui(format!("related link {}", item.display_ref)),
+            )
+            .await?;
+        if outcome.changed {
+            self.wake_after_mutation();
+        }
+        let display_refs = self
+            .database
+            .display_ref_context(&self.active_workspace.id)
+            .await?;
+        let related_ref = display_refs.display_ref(&outcome.related_task);
+        let verb = if outcome.changed { "removed" } else { "kept" };
+        self.refresh_task_message(
+            &item.task.id,
+            format!(
+                "{verb} related link {} related {related_ref}",
+                item.display_ref
+            ),
+        )
+        .await
+    }
+
+    #[cfg(test)]
     pub(crate) async fn remove_dependency(
         &mut self,
         index: Option<usize>,

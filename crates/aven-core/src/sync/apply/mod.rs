@@ -8,6 +8,7 @@ mod note;
 mod payload;
 mod project;
 mod recurrence;
+mod related;
 mod shared;
 mod task;
 mod workspace;
@@ -54,6 +55,8 @@ pub async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWir
         op_type::NOTE_DELETE => note::delete_note(conn, change).await?,
         op_type::DEPENDENCY_ADD => dependency::add_dependency(conn, change).await?,
         op_type::DEPENDENCY_REMOVE => dependency::remove_dependency(conn, change).await?,
+        op_type::RELATED_ADD => related::apply_related(conn, change, true).await?,
+        op_type::RELATED_REMOVE => related::apply_related(conn, change, false).await?,
         op_type::EPIC_LINK_ADD => epic::add_epic_link(conn, change).await?,
         op_type::EPIC_LINK_REMOVE => epic::remove_epic_link(conn, change).await?,
         op_type::PROJECT_DELETE => project::delete_project(conn, change).await?,

@@ -297,6 +297,13 @@ async fn apply_sync_response(conn: &mut SqliteConnection, page: ApplySyncPage) -
             update_change_server_seq(&mut tx, &change.change_id, change.server_seq).await?;
             continue;
         }
+        let related_mutation = matches!(
+            change.op_type.as_str(),
+            op_type::RELATED_ADD | op_type::RELATED_REMOVE
+        );
+        if related_mutation {
+            insert_wire_change(&mut tx, change).await?;
+        }
         apply_remote_change(&mut tx, change).await?;
         if change.entity_type == "recurrence_series" {
             let workspace_id = change
@@ -317,7 +324,9 @@ async fn apply_sync_response(conn: &mut SqliteConnection, page: ApplySyncPage) -
                 .context("recurrence task change missing workspace_id")?;
             affected_series.insert((workspace_id.to_string(), series_id.to_string()));
         }
-        insert_wire_change(&mut tx, change).await?;
+        if !related_mutation {
+            insert_wire_change(&mut tx, change).await?;
+        }
         applied += 1;
     }
     for (workspace_id, series_id) in affected_series {

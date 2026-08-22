@@ -2,7 +2,9 @@ use anyhow::{Result, bail};
 use aven_core::db::Database;
 use serde_json::json;
 
-use crate::cli::{DepCommand, DepSubcommand, EpicCommand, EpicSubcommand};
+use crate::cli::{
+    DepCommand, DepSubcommand, EpicCommand, EpicSubcommand, RelatedCommand, RelatedSubcommand,
+};
 use crate::query::{SortDirection, TaskFilters, TaskQueryMode, TaskSort};
 use crate::render::{changed_text, print_json_pretty, quote};
 use crate::task_render::{
@@ -62,6 +64,85 @@ pub(crate) async fn cmd_dep(
         }
     }
     Ok(())
+}
+
+pub(crate) async fn cmd_related(
+    database: &Database,
+    workspace: &Workspace,
+    args: RelatedCommand,
+) -> Result<bool> {
+    let changed = match args.command {
+        RelatedSubcommand::Add(args) => {
+            let task = database.resolve_task_ref(workspace, &args.task_ref).await?;
+            let related = database
+                .resolve_task_ref(workspace, &args.related_ref)
+                .await?;
+            let outcome = database
+                .add_task_related_link(workspace, &task.id, &related.id)
+                .await?;
+            let display_refs = database.display_ref_context(&workspace.id).await?;
+            println!(
+                "related-added {} changed={} related={}",
+                display_refs.display_ref(&outcome.task),
+                changed_text(outcome.changed),
+                display_refs.display_ref(&outcome.related_task),
+            );
+            outcome.changed
+        }
+        RelatedSubcommand::Remove(args) => {
+            let task = database.resolve_task_ref(workspace, &args.task_ref).await?;
+            let related = database
+                .resolve_task_ref(workspace, &args.related_ref)
+                .await?;
+            let outcome = database
+                .remove_task_related_link(workspace, &task.id, &related.id)
+                .await?;
+            let display_refs = database.display_ref_context(&workspace.id).await?;
+            println!(
+                "related-removed {} changed={} related={}",
+                display_refs.display_ref(&outcome.task),
+                changed_text(outcome.changed),
+                display_refs.display_ref(&outcome.related_task),
+            );
+            outcome.changed
+        }
+        RelatedSubcommand::List(args) => {
+            let task = database.resolve_task_ref(workspace, &args.task_ref).await?;
+            let links = database.task_related_links(&workspace.id, &task.id).await?;
+            if args.json {
+                print_json_pretty(
+                    &links
+                        .iter()
+                        .map(|link| {
+                            json!({
+                                "task_id": link.task_id,
+                                "display_ref": link.display_ref,
+                                "title": link.title,
+                                "status": link.status.as_str(),
+                                "priority": link.priority.as_str(),
+                                "deleted": link.deleted,
+                                "linked_at": link.linked_at,
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                )?;
+            } else {
+                println!("Related");
+                for link in links {
+                    println!(
+                        "- {} status={} priority={} deleted={} title={}",
+                        link.display_ref,
+                        link.status,
+                        link.priority,
+                        if link.deleted { "yes" } else { "no" },
+                        quote(&link.title),
+                    );
+                }
+            }
+            false
+        }
+    };
+    Ok(changed)
 }
 
 pub(crate) async fn cmd_epic(

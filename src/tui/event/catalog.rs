@@ -1321,6 +1321,27 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginRemoveDependency,
     ),
+    // Related tasks
+    CommandSpec::implemented_in_detail(
+        "add-related",
+        "add a related task",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('k'), KeyCode::Char('a')],
+            label: "t k a",
+        }],
+        Action::BeginAddRelated,
+    ),
+    CommandSpec::implemented_in_detail(
+        "remove-related",
+        "remove a related task",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('k'), KeyCode::Char('r')],
+            label: "t k r",
+        }],
+        Action::BeginRemoveRelated,
+    ),
     // Epic
     CommandSpec::implemented(
         "task-epic-toggle",

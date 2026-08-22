@@ -522,6 +522,16 @@ impl App {
                 self.submit_stop_recurrence(Some(target), values.first().map(String::as_str))
                     .await?;
             }
+            PickerIntent::RemoveRelated { selection } => match values.first() {
+                Some(related_task_id) => {
+                    self.submit_remove_related(selection, related_task_id.parse()?)
+                        .await?;
+                }
+                None => {
+                    self.set_warning("no matching related task");
+                    self.begin_remove_related();
+                }
+            },
             PickerIntent::RemoveDependency { selection } => match values.first() {
                 Some(depends_on_task_id) => {
                     self.submit_remove_dependency(selection, depends_on_task_id.parse()?)
@@ -587,6 +597,13 @@ impl App {
                 depends_on_task_id,
             } => {
                 self.submit_remove_dependency(selection, depends_on_task_id)
+                    .await?;
+            }
+            ConfirmIntent::UnlinkRelated {
+                selection,
+                related_task_id,
+            } => {
+                self.submit_remove_related(selection, related_task_id)
                     .await?;
             }
             ConfirmIntent::UnlinkEpicChild { epic_id, child_id } => {

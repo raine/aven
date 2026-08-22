@@ -1046,6 +1046,64 @@ async fn immediate_undo_removes_untouched_active_successor_and_restores_tip() {
 }
 
 #[tokio::test]
+async fn immediate_undo_keeps_successor_referenced_by_either_related_endpoint() {
+    let (_temp, mut conn, workspace) = setup().await;
+    let created = create_daily(&mut conn, &workspace).await;
+    let resolved = resolve(
+        &mut conn,
+        &workspace,
+        &created.task.id,
+        RecurrenceOutcome::Completed,
+        "2026-07-20T18:00:00Z",
+    )
+    .await;
+    let successor_id = resolved.successor.unwrap().id;
+    let project_id: crate::ids::ProjectId =
+        sqlx::query_scalar("SELECT project_id FROM tasks WHERE id = ?")
+            .bind(&successor_id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+    let endpoint_ids = [
+        "0000000000000001".parse::<TaskId>().unwrap(),
+        "7ZZZZZZZZZZZZZZZ".parse::<TaskId>().unwrap(),
+    ];
+    for endpoint_id in &endpoint_ids {
+        sqlx::query(
+            "INSERT INTO tasks(id, workspace_id, title, description, project_id, status, priority, created_at, updated_at)
+             VALUES (?, ?, 'related endpoint', '', ?, 'todo', 'none', 't', 't')",
+        )
+        .bind(endpoint_id)
+        .bind(&workspace.id)
+        .bind(&project_id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        crate::operations::set_task_related_link_in_transaction(
+            &mut conn,
+            &workspace,
+            endpoint_id,
+            &successor_id,
+            true,
+        )
+        .await
+        .unwrap();
+    }
+
+    let mut tx = begin_immediate(&mut conn).await.unwrap();
+    let error =
+        undo_recurrence_resolution(&mut tx, &workspace.id, &created.task.id, "todo", "done")
+            .await
+            .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("recurrence-undo-successor-touched")
+    );
+    tx.rollback().await.unwrap();
+}
+
+#[tokio::test]
 async fn immediate_undo_restores_paused_tip_without_creating_successor() {
     let (_temp, mut conn, workspace) = setup().await;
     let created = create_daily(&mut conn, &workspace).await;

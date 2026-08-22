@@ -19,7 +19,7 @@ const SYNC_OPPOSITE_DEP_CHANGE_ID: &str = "FFFFFFFFFFFFFFFF";
 const SYNC_CLIENT_ID: &str = "GGGGGGGGGGGGGGGG";
 const MAX_PUSH_BATCH: usize = 256;
 const MAX_PULL_BATCH: usize = 512;
-const SYNC_PROTOCOL_VERSION: u32 = 14;
+const SYNC_PROTOCOL_VERSION: u32 = 15;
 
 fn sync_round_values(output: &str, key: &str) -> Vec<u64> {
     output
@@ -2688,7 +2688,7 @@ fn old_request_protocol_version_is_rejected_before_changes_are_stored() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let body = serde_json::json!({
-        "protocol_version": 13,
+        "protocol_version": 14,
         "client_id": "old-client",
         "after": 0,
         "changes": [project_change_json("old-version-change", "old-version")]
@@ -2699,7 +2699,7 @@ fn old_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        &format!("error sync-protocol-unsupported client=13 server={SYNC_PROTOCOL_VERSION}"),
+        &format!("error sync-protocol-unsupported client=14 server={SYNC_PROTOCOL_VERSION}"),
     );
 }
 

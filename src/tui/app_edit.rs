@@ -25,6 +25,7 @@ pub(crate) const EDIT_DUE_TITLE: &str = "Edit due date";
 pub(crate) const EDIT_DUE_PROMPT: &str = "Try today · tomorrow · in 2 weeks · next monday\nCalendar dates only · empty or none = no due date";
 pub(crate) const EDIT_LABELS_TITLE: &str = "Edit task: labels";
 pub(crate) const REMOVE_DEPENDENCY_TITLE: &str = "Remove dependency";
+pub(crate) const REMOVE_RELATED_TITLE: &str = "Remove related task";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) enum EditAggregate {
@@ -787,6 +788,38 @@ impl App {
         Ok(())
     }
 
+    pub(super) async fn begin_add_related(&mut self) -> Result<()> {
+        let Some(selection) = self.capture_single_edit_selection("related link") else {
+            return Ok(());
+        };
+        let display_ref = selection.targets()[0].display_ref.clone();
+        self.clear_live_search_preview();
+        self.overlay = Some(OverlayState::Search(SearchState::for_intent(
+            SearchIntent::AddRelated {
+                selection,
+                display_ref,
+            },
+        )));
+        Ok(())
+    }
+
+    pub(super) fn begin_remove_related(&mut self) {
+        let Some(selection) = self.capture_single_edit_selection("related link") else {
+            return;
+        };
+        let Some(index) = self.selection_index(&selection) else {
+            self.set_warning("task is unavailable");
+            return;
+        };
+        let items = self.store.selected_related_picker_items(Some(index));
+        self.open_picker_overlay(
+            PickerIntent::RemoveRelated { selection },
+            REMOVE_RELATED_TITLE,
+            items,
+            false,
+        );
+    }
+
     pub(super) fn begin_remove_dependency(&mut self) {
         let Some(selection) = self.capture_single_edit_selection("dependency") else {
             return;
@@ -1363,6 +1396,22 @@ impl App {
             .map(|item| item.task.id.clone())
             .collect::<BTreeSet<_>>();
         self.list.retain_marks(|id| visible.contains(id));
+    }
+
+    pub(super) async fn submit_remove_related(
+        &mut self,
+        selection: TaskSelection,
+        related_task_id: crate::ids::TaskId,
+    ) -> Result<()> {
+        match self
+            .store
+            .remove_related_from_selection(&selection, &related_task_id)
+            .await
+        {
+            Ok(result) => self.apply_mutation_result(result),
+            Err(error) => self.set_error(format!("{error:#}")),
+        }
+        Ok(())
     }
 
     pub(super) async fn submit_remove_dependency(

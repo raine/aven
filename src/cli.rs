@@ -36,6 +36,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
             "note",
             "note-delete",
             "dep",
+            "related",
             "epic",
             "text",
             "bulk-update",
@@ -249,6 +250,8 @@ pub(crate) enum Commands {
     Add(AddArgs),
     /// Inspect and modify task dependencies
     Dep(DepCommand),
+    /// Inspect and modify related-task links
+    Related(RelatedCommand),
     /// Inspect and modify epic membership
     Epic(EpicCommand),
     /// Show a task context snapshot
@@ -724,6 +727,35 @@ pub(crate) struct DepRemoveArgs {
 
 #[derive(Args)]
 pub(crate) struct DepListArgs {
+    pub(crate) task_ref: String,
+    #[arg(long, help = "Print machine-readable JSON")]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct RelatedCommand {
+    #[command(subcommand)]
+    pub(crate) command: RelatedSubcommand,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum RelatedSubcommand {
+    /// Link two related tasks
+    Add(RelatedMutationArgs),
+    /// Unlink two related tasks
+    Remove(RelatedMutationArgs),
+    /// List a task's related tasks
+    List(RelatedListArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct RelatedMutationArgs {
+    pub(crate) task_ref: String,
+    pub(crate) related_ref: String,
+}
+
+#[derive(Args)]
+pub(crate) struct RelatedListArgs {
     pub(crate) task_ref: String,
     #[arg(long, help = "Print machine-readable JSON")]
     pub(crate) json: bool,

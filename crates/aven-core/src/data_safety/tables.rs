@@ -236,6 +236,25 @@ pub(super) async fn import_task_dependencies(
     Ok(())
 }
 
+pub(super) async fn import_task_related_links(
+    tx: &mut SqliteConnection,
+    rows: &[super::TaskRelatedLinkRow],
+) -> Result<()> {
+    for row in rows {
+        sqlx::query(
+            "INSERT INTO task_related_links(workspace_id, task_a_id, task_b_id, linked, last_change_id) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(&row.workspace_id)
+        .bind(&row.task_a_id)
+        .bind(&row.task_b_id)
+        .bind(row.linked)
+        .bind(&row.last_change_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    Ok(())
+}
+
 pub(super) async fn import_task_epic_links(
     tx: &mut SqliteConnection,
     rows: &[super::TaskEpicLinkRow],

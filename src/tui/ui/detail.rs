@@ -46,6 +46,10 @@ pub(crate) fn detail_target_is_actionable(item: &TaskListItem, target: &DetailTa
                 .any(|link| &link.task_id == task_id),
             DetailSection::DependsOn => item.depends_on.iter().any(|link| &link.task_id == task_id),
             DetailSection::Blocks => item.blocks.iter().any(|link| &link.task_id == task_id),
+            DetailSection::Related => item
+                .related
+                .iter()
+                .any(|link| (!link.deleted || item.task.deleted) && &link.task_id == task_id),
             DetailSection::Attachments | DetailSection::Notes => false,
         },
         DetailTargetId::Note { note_id } => item.notes.iter().any(|note| note.id == *note_id),
@@ -58,6 +62,13 @@ pub(crate) fn detail_target_is_actionable(item: &TaskListItem, target: &DetailTa
             DetailSection::EpicChildren => item.epic_children.len() > 5,
             DetailSection::DependsOn => item.depends_on.len() > DETAIL_DEPENDENCY_TREE_CAP,
             DetailSection::Blocks => item.blocks.len() > DETAIL_DEPENDENCY_TREE_CAP,
+            DetailSection::Related => {
+                item.related
+                    .iter()
+                    .filter(|link| !link.deleted || item.task.deleted)
+                    .count()
+                    > DETAIL_DEPENDENCY_TREE_CAP
+            }
             DetailSection::EpicParent | DetailSection::Attachments | DetailSection::Notes => false,
         },
     }
@@ -1402,6 +1413,22 @@ fn build_detail_body_document(
         item,
         width,
     );
+    if item
+        .related
+        .iter()
+        .any(|link| !link.deleted || item.task.deleted)
+    {
+        let related_start = lines.len();
+        extend_related_section(
+            &mut lines,
+            &mut interactive_rows,
+            item,
+            width,
+            None,
+            expanded_sections.contains(&DetailSection::Related),
+        );
+        section_body_indices.push(related_start.saturating_add(1));
+    }
     if !item.depends_on.is_empty() || !item.blocks.is_empty() {
         let dependency_start = lines.len();
         extend_dependency_sections(
@@ -1987,6 +2014,73 @@ fn extend_dependency_section(
     }
     if has_disclosure {
         let target = DetailTargetId::Expand { section };
+        let label = if expanded {
+            "Show less".to_string()
+        } else {
+            format!("Show {} more", links.len() - visible)
+        };
+        push_disclosure_row(lines, rows, target, &label, active_target);
+    }
+}
+
+fn extend_related_section(
+    lines: &mut Vec<Line<'static>>,
+    rows: &mut Vec<DetailInteractiveRow>,
+    item: &TaskListItem,
+    width: usize,
+    active_target: Option<&DetailTargetId>,
+    expanded: bool,
+) {
+    let links = item
+        .related
+        .iter()
+        .filter(|link| !link.deleted || item.task.deleted)
+        .collect::<Vec<_>>();
+    if links.is_empty() {
+        return;
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            "RELATED",
+            Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!(" total={}", links.len()), Style::new().fg(FG_DIM)),
+    ]));
+    let visible = if expanded {
+        links.len()
+    } else {
+        links.len().min(DETAIL_DEPENDENCY_TREE_CAP)
+    };
+    for (index, link) in links.iter().take(visible).enumerate() {
+        let target = DetailTargetId::Task {
+            section: DetailSection::Related,
+            task_id: link.task_id.clone(),
+        };
+        let glyph = if index + 1 == visible {
+            "└─ "
+        } else {
+            "├─ "
+        };
+        let available = width.saturating_sub(glyph.width() + link.display_ref.width() + 4);
+        let title = truncate_width(&link.title, available);
+        let mut rendered = vec![Line::from(vec![
+            Span::styled(glyph, Style::new().fg(BORDER)),
+            Span::styled(link.display_ref.clone(), Style::new().fg(ACCENT)),
+            Span::raw("  "),
+            status_span(link.status.as_str()),
+            Span::raw("  "),
+            Span::styled(title, Style::new().fg(FG)),
+        ])];
+        if active_target == Some(&target) {
+            apply_link_row_style(&mut rendered);
+        }
+        push_interactive_lines(lines, rows, target, rendered);
+    }
+    if links.len() > DETAIL_DEPENDENCY_TREE_CAP {
+        let target = DetailTargetId::Expand {
+            section: DetailSection::Related,
+        };
         let label = if expanded {
             "Show less".to_string()
         } else {
@@ -5162,6 +5256,7 @@ mod tests {
                 priority: "none".to_string(),
                 unresolved: true,
             }],
+            related: Vec::new(),
             epic_children: Vec::new(),
             epic_child_dependencies: Default::default(),
             epic_parent: None,

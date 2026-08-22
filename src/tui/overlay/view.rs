@@ -14,6 +14,7 @@ use super::tag_combobox::{tag_combobox_completion, tag_combobox_matches};
 pub(crate) enum SearchKind {
     Navigate,
     AddDependency,
+    AddRelated,
     AddEpicChild { display_ref: String },
 }
 
@@ -22,6 +23,7 @@ impl From<&SearchIntent> for SearchKind {
         match intent {
             SearchIntent::Navigate => Self::Navigate,
             SearchIntent::AddDependency { .. } => Self::AddDependency,
+            SearchIntent::AddRelated { .. } => Self::AddRelated,
             SearchIntent::AddEpicChild { display_ref, .. } => Self::AddEpicChild {
                 display_ref: display_ref.clone(),
             },
@@ -34,6 +36,7 @@ impl SearchKind {
         match self {
             Self::Navigate => "Search".to_string(),
             Self::AddDependency => "Add dependency".to_string(),
+            Self::AddRelated => "Add related task".to_string(),
             Self::AddEpicChild { display_ref } => format!("Add child to {display_ref}"),
         }
     }
@@ -42,6 +45,7 @@ impl SearchKind {
         match self {
             Self::Navigate => "open task",
             Self::AddDependency => "add selected as blocker",
+            Self::AddRelated => "add selected as related",
             Self::AddEpicChild { .. } => "add selected child",
         }
     }
@@ -50,6 +54,7 @@ impl SearchKind {
         match self {
             Self::Navigate => "Search tasks, notes, labels, and projects...",
             Self::AddDependency => "Search for the task that blocks this task...",
+            Self::AddRelated => "Search for a related task...",
             Self::AddEpicChild { .. } => "Search for an existing task or create a child...",
         }
     }
@@ -57,7 +62,7 @@ impl SearchKind {
     pub(crate) fn tab_hint(&self) -> Option<&'static str> {
         match self {
             Self::Navigate => Some("open results"),
-            Self::AddDependency | Self::AddEpicChild { .. } => None,
+            Self::AddDependency | Self::AddRelated | Self::AddEpicChild { .. } => None,
         }
     }
 }

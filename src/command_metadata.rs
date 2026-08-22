@@ -94,6 +94,7 @@ impl Commands {
                 log_mode: logging::LogMode::Cli,
                 wakes_daemon: args.command.wakes_daemon(),
             },
+            Self::Related(_) => CommandMetadata::cli(),
             Self::Epic(args) => CommandMetadata {
                 log_mode: logging::LogMode::Cli,
                 wakes_daemon: args.command.wakes_daemon(),

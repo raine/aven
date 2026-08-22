@@ -181,6 +181,12 @@ pub enum UndoCommand {
         task_id: crate::ids::TaskId,
         depends_on_task_id: crate::ids::TaskId,
     },
+    SetTaskRelatedLink {
+        task_id: crate::ids::TaskId,
+        related_task_id: crate::ids::TaskId,
+        forward_change_id: String,
+        linked: bool,
+    },
     AddEpicChild {
         epic_id: crate::ids::TaskId,
         child_id: crate::ids::TaskId,
@@ -459,6 +465,7 @@ fn undo_payload_has_effect(payload: &UndoPayload) -> bool {
         | UndoCommand::RestoreConflictResolution { .. }
         | UndoCommand::AddTaskDependency { .. }
         | UndoCommand::RemoveTaskDependency { .. }
+        | UndoCommand::SetTaskRelatedLink { .. }
         | UndoCommand::AddEpicChild { .. }
         | UndoCommand::RemoveEpicChild { .. } => true,
     })
@@ -870,9 +877,12 @@ async fn apply_undo_command(
                     || labels_match_create_change(conn, change_id, &expected.labels).await?;
                 let attachment_changes_clear =
                     all_changes_unsynced(conn, attachment_change_ids).await?;
+                let related_state_clear =
+                    !crate::operations::task_has_related_state(conn, workspace_id, task_id).await?;
                 if change_is_unsynced(conn, change_id).await?
                     && labels_clear
                     && attachment_changes_clear
+                    && related_state_clear
                     && current_attachment_ids == *attachment_ids
                 {
                     hard_delete_created_task(
@@ -1230,6 +1240,43 @@ async fn apply_undo_command(
                 "error dependency-cycle task_id={task_id} depends_on_task_id={depends_on_task_id}"
             );
             add_dependency_for_undo(conn, workspace_id, task_id, depends_on_task_id).await?;
+            Ok(CommandOutcome {
+                task_id: Some(task_id.clone()),
+                include_deleted: None,
+                project_rename: None,
+                label_rename: None,
+            })
+        }
+        UndoCommand::SetTaskRelatedLink {
+            task_id,
+            related_task_id,
+            forward_change_id,
+            linked,
+        } => {
+            let (task_a_id, task_b_id) =
+                crate::operations::canonical_related_pair(task_id, related_task_id)?;
+            let current_change_id = sqlx::query_scalar::<_, String>(
+                "SELECT last_change_id FROM task_related_links
+                 WHERE workspace_id = ? AND task_a_id = ? AND task_b_id = ?",
+            )
+            .bind(workspace_id)
+            .bind(task_a_id)
+            .bind(task_b_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+            ensure!(
+                current_change_id.as_deref() == Some(forward_change_id),
+                "error undo-state-changed task_id={task_id} field=related"
+            );
+            let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
+            crate::operations::set_task_related_link_in_transaction(
+                conn,
+                &workspace,
+                task_id,
+                related_task_id,
+                !linked,
+            )
+            .await?;
             Ok(CommandOutcome {
                 task_id: Some(task_id.clone()),
                 include_deleted: None,

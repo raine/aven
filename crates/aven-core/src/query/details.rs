@@ -8,7 +8,8 @@ use crate::types::Task;
 
 use super::{
     SortDirection, TaskDependencySummary, TaskFilters, TaskIdFilter, TaskListItem, TaskQueryMode,
-    TaskSort, list_task_items_with_display_refs, task_dependency_summary_with_display_refs,
+    TaskRelatedLink, TaskSort, list_task_items_with_display_refs,
+    task_dependency_summary_with_display_refs,
 };
 
 #[derive(Debug)]
@@ -16,6 +17,7 @@ pub struct TaskDetail {
     pub item: TaskListItem,
     pub project_name: String,
     pub dependencies: TaskDependencySummary,
+    pub related: Vec<TaskRelatedLink>,
     pub notes: Vec<TaskDetailNote>,
     pub conflicts: Vec<TaskDetailConflict>,
 }
@@ -73,6 +75,7 @@ pub async fn task_detail_with_display_refs(
     let dependencies =
         task_dependency_summary_with_display_refs(conn, &task.workspace_id, &task.id, display_refs)
             .await?;
+    let related = item.related.clone();
     let notes = task_detail_notes(conn, &task.workspace_id, &task.id).await?;
     let conflicts = task_detail_conflicts(conn, &task.workspace_id, &task.id).await?;
 
@@ -80,6 +83,7 @@ pub async fn task_detail_with_display_refs(
         item,
         project_name,
         dependencies,
+        related,
         notes,
         conflicts,
     })

@@ -84,6 +84,10 @@ pub(crate) enum SearchIntent {
         selection: crate::tui::task_selection::TaskSelection,
         display_ref: String,
     },
+    AddRelated {
+        selection: crate::tui::task_selection::TaskSelection,
+        display_ref: String,
+    },
     AddEpicChild {
         epic_id: crate::ids::TaskId,
         display_ref: String,
@@ -617,6 +621,9 @@ pub(crate) enum PickerIntent {
     RemoveDependency {
         selection: crate::tui::task_selection::TaskSelection,
     },
+    RemoveRelated {
+        selection: crate::tui::task_selection::TaskSelection,
+    },
     RecurrenceActions {
         target: OverlayTarget,
     },
@@ -689,6 +696,10 @@ pub(crate) enum ConfirmIntent {
     UnlinkDependency {
         selection: TaskSelection,
         depends_on_task_id: crate::ids::TaskId,
+    },
+    UnlinkRelated {
+        selection: TaskSelection,
+        related_task_id: crate::ids::TaskId,
     },
     UnlinkEpicChild {
         epic_id: crate::ids::TaskId,

@@ -235,6 +235,18 @@ fn action_text(
             payload_string(payload, "depends_on_task_id"),
             "dim".to_string(),
         ),
+        ("task", op_type::RELATED_ADD) => (
+            "related link".to_string(),
+            title_summary("added related task", task_title),
+            payload_string(payload, "related_task_id"),
+            "blue".to_string(),
+        ),
+        ("task", op_type::RELATED_REMOVE) => (
+            "related link".to_string(),
+            title_summary("removed related task", task_title),
+            payload_string(payload, "related_task_id"),
+            "dim".to_string(),
+        ),
         ("task", op_type::EPIC_LINK_ADD) => (
             "epic".to_string(),
             title_summary("added to epic", task_title),

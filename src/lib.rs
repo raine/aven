@@ -38,8 +38,8 @@ use commands::{
     cmd_add, cmd_attachment, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context,
     cmd_delete_restore, cmd_demo, cmd_dep, cmd_doctor, cmd_edit, cmd_epic, cmd_export, cmd_import,
     cmd_internal_demo_snapshot, cmd_internal_natural_add, cmd_label, cmd_list, cmd_metadata,
-    cmd_note, cmd_note_delete, cmd_prime, cmd_project, cmd_recur, cmd_search, cmd_self_update,
-    cmd_show, cmd_skill, cmd_skill_install, cmd_text, cmd_workspace,
+    cmd_note, cmd_note_delete, cmd_prime, cmd_project, cmd_recur, cmd_related, cmd_search,
+    cmd_self_update, cmd_show, cmd_skill, cmd_skill_install, cmd_text, cmd_workspace,
 };
 use sync::{run_server, sync_client};
 use workspaces::resolve_active_workspace_with_database;
@@ -86,6 +86,7 @@ enum DatabaseCommand {
     Context(cli::ContextArgs),
     Delete(cli::RefArgs),
     Dep(cli::DepCommand),
+    Related(cli::RelatedCommand),
     Doctor(cli::DoctorArgs),
     Edit(cli::TaskEditArgs),
     Epic(cli::EpicCommand),
@@ -119,6 +120,7 @@ impl From<Commands> for CliDispatch {
             Commands::Add(args) => Self::database(DatabaseCommand::Add(args)),
             Commands::Attachment(args) => Self::database(DatabaseCommand::Attachment(args)),
             Commands::Dep(args) => Self::database(DatabaseCommand::Dep(args)),
+            Commands::Related(args) => Self::database(DatabaseCommand::Related(args)),
             Commands::Epic(args) => Self::database(DatabaseCommand::Epic(args)),
             Commands::Context(args) => Self::database(DatabaseCommand::Context(args)),
             Commands::Show(args) => Self::database(DatabaseCommand::Show(args)),
@@ -304,6 +306,15 @@ async fn dispatch_database(
             let workspace =
                 resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
             cmd_dep(&database, &workspace, args).await
+        }
+        DatabaseCommand::Related(args) => {
+            let workspace =
+                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+            let changed = cmd_related(&database, &workspace, args).await?;
+            if changed {
+                daemon::wake_if_enabled(&config);
+            }
+            Ok(())
         }
         DatabaseCommand::Epic(args) => {
             let workspace =

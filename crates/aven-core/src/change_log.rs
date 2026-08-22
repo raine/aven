@@ -16,6 +16,8 @@ pub mod op_type {
     pub const NOTE_DELETE: &str = "note_delete";
     pub const DEPENDENCY_ADD: &str = "dependency_add";
     pub const DEPENDENCY_REMOVE: &str = "dependency_remove";
+    pub const RELATED_ADD: &str = "related_add";
+    pub const RELATED_REMOVE: &str = "related_remove";
     pub const EPIC_LINK_ADD: &str = "epic_link_add";
     pub const EPIC_LINK_REMOVE: &str = "epic_link_remove";
     pub const ATTACHMENT_ADD: &str = "attachment_add";

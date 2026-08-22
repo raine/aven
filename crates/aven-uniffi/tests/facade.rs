@@ -140,6 +140,72 @@ fn local_task_flow_uses_typed_values_and_validates_ids() {
     assert!(!message.is_empty());
 }
 
+#[test]
+fn related_tasks_round_trip_through_uniffi_detail_records() {
+    let directory = tempfile::tempdir().unwrap();
+    let client = AvenClient::open(
+        directory
+            .path()
+            .join("related.sqlite")
+            .to_string_lossy()
+            .into_owned(),
+    )
+    .unwrap();
+    let workspace = client.resolve_workspace("default".to_string()).unwrap();
+    let create = |title: &str| CreateTask {
+        metadata: Vec::new(),
+        title: title.to_string(),
+        description: String::new(),
+        project: "swift-proof".to_string(),
+        status: TaskStatus::Todo,
+        priority: TaskPriority::None,
+        available_at: None,
+        due_on: None,
+    };
+    let first = client
+        .create_task(workspace.id.clone(), create("first"))
+        .unwrap();
+    let second = client
+        .create_task(workspace.id.clone(), create("second"))
+        .unwrap();
+
+    assert!(
+        client
+            .add_related_task(workspace.id.clone(), first.id.clone(), second.id.clone())
+            .unwrap()
+            .changed
+    );
+    assert_eq!(
+        client
+            .fetch_task(workspace.id.clone(), first.id.clone())
+            .unwrap()
+            .related[0]
+            .task_id,
+        second.id
+    );
+    assert_eq!(
+        client
+            .fetch_task(workspace.id.clone(), second.id.clone())
+            .unwrap()
+            .related[0]
+            .task_id,
+        first.id
+    );
+    assert!(
+        client
+            .list_tasks(workspace.id.clone())
+            .unwrap()
+            .iter()
+            .all(|task| task.related.is_empty())
+    );
+    assert!(
+        client
+            .remove_related_task(workspace.id, first.id, second.id)
+            .unwrap()
+            .changed
+    );
+}
+
 fn daily_series(title: &str) -> CreateRecurrenceSeries {
     CreateRecurrenceSeries {
         title: title.to_string(),

@@ -718,3 +718,114 @@ async fn consumer_recurrence_changes_survive_sync_round_trips() {
             .any(|row| row.kind == RecurrenceHistoryKind::Paused)
     );
 }
+
+#[tokio::test]
+async fn consumer_api_exposes_symmetric_related_links_on_detail_records() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path().join("related.sqlite"))
+        .await
+        .unwrap();
+    let workspace = store.resolve_workspace("default").await.unwrap();
+    let create = |title: &str| CreateTask {
+        metadata: Vec::new(),
+        title: title.to_string(),
+        description: String::new(),
+        project: "Core".to_string(),
+        status: TaskStatus::Inbox,
+        priority: TaskPriority::None,
+        available_at: None,
+        due_on: None,
+    };
+    let first = store
+        .create_task(&workspace.id, create("first"))
+        .await
+        .unwrap();
+    let second = store
+        .create_task(&workspace.id, create("second"))
+        .await
+        .unwrap();
+
+    assert!(
+        store
+            .add_related_task(&workspace.id, &first.id, &second.id)
+            .await
+            .unwrap()
+            .changed
+    );
+    let detail = store.fetch_task(&workspace.id, &second.id).await.unwrap();
+    assert_eq!(detail.related.len(), 1);
+    assert_eq!(detail.related[0].task_id, first.id);
+    assert_eq!(detail.related[0].title, "first");
+}
+
+#[tokio::test]
+async fn related_links_converge_across_remove_and_offline_remove_add_race() {
+    let directory = tempfile::tempdir().unwrap();
+    let first_path = directory.path().join("related-race-first.sqlite");
+    let second_path = directory.path().join("related-race-second.sqlite");
+    let server = Database::open(&directory.path().join("related-race-server.sqlite"))
+        .await
+        .unwrap();
+    let first = Store::open(&first_path).await.unwrap();
+    let workspace = first.resolve_workspace("default").await.unwrap();
+    let create = |title: &str| CreateTask {
+        metadata: Vec::new(),
+        title: title.to_string(),
+        description: String::new(),
+        project: "Core".to_string(),
+        status: TaskStatus::Inbox,
+        priority: TaskPriority::None,
+        available_at: None,
+        due_on: None,
+    };
+    let task = first
+        .create_task(&workspace.id, create("task"))
+        .await
+        .unwrap();
+    let related = first
+        .create_task(&workspace.id, create("related"))
+        .await
+        .unwrap();
+    first
+        .add_related_task(&workspace.id, &task.id, &related.id)
+        .await
+        .unwrap();
+    exchange(&first_path, &server).await;
+    exchange(&second_path, &server).await;
+    let second = Store::open(&second_path).await.unwrap();
+
+    first
+        .remove_related_task(&workspace.id, &task.id, &related.id)
+        .await
+        .unwrap();
+    second
+        .remove_related_task(&workspace.id, &task.id, &related.id)
+        .await
+        .unwrap();
+    second
+        .add_related_task(&workspace.id, &task.id, &related.id)
+        .await
+        .unwrap();
+    exchange(&first_path, &server).await;
+    exchange(&second_path, &server).await;
+    exchange(&first_path, &server).await;
+
+    assert_eq!(
+        first
+            .fetch_task(&workspace.id, &task.id)
+            .await
+            .unwrap()
+            .related
+            .len(),
+        1
+    );
+    assert_eq!(
+        second
+            .fetch_task(&workspace.id, &task.id)
+            .await
+            .unwrap()
+            .related
+            .len(),
+        1
+    );
+}

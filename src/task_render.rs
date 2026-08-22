@@ -271,6 +271,7 @@ pub(crate) fn task_markdown(report: &TaskFullReport) -> String {
         || !item.epic_children.is_empty()
         || !detail.dependencies.depends_on.is_empty()
         || !detail.dependencies.blocks.is_empty()
+        || !detail.related.is_empty()
     {
         output.push_str("\n## Relationships\n");
         if let Some(parent) = &item.epic_parent {
@@ -279,6 +280,19 @@ pub(crate) fn task_markdown(report: &TaskFullReport) -> String {
         markdown_link_section(&mut output, "Child tasks", &item.epic_children);
         markdown_dependency_section(&mut output, "Blocked by", &detail.dependencies.depends_on);
         markdown_dependency_section(&mut output, "Blocks", &detail.dependencies.blocks);
+        if !detail.related.is_empty() {
+            output.push_str("\n### Related\n\n");
+            for related in &detail.related {
+                output.push_str("- ");
+                output.push_str(&markdown_code(&related.display_ref));
+                output.push(' ');
+                output.push_str(&markdown_text(&single_line(&related.title)));
+                if related.deleted {
+                    output.push_str(" · deleted");
+                }
+                output.push('\n');
+            }
+        }
     }
 
     if let Some(recurrence) = &item.recurrence {
@@ -763,6 +777,17 @@ pub(crate) fn print_full_task_report(report: &TaskFullReport) {
     }
     print_attachment_section(&report.attachments);
     print_task_dependency_summary(&detail.dependencies);
+    println!("Related total={}", detail.related.len());
+    for related in &detail.related {
+        println!(
+            "- {} status={} priority={} deleted={} title={}",
+            related.display_ref,
+            related.status,
+            related.priority,
+            yes_no(related.deleted),
+            quote(&related.title)
+        );
+    }
     for note in &detail.notes {
         println!("note id={} created={}", note.id, note.created_at);
         print_multiline_block("body", &note.body);
@@ -803,6 +828,7 @@ pub(crate) fn task_full_json(report: &TaskFullReport) -> TaskFullJson {
             })
             .collect(),
         dependencies: task_dependency_summary_json(&detail.dependencies),
+        related: detail.related.iter().map(task_related_json).collect(),
         notes: detail
             .notes
             .iter()
@@ -1067,6 +1093,29 @@ pub(crate) fn attachment_metadata_json(item: AttachmentReadItem) -> AttachmentMe
 pub(crate) type AttachmentMetadataJson = crate::query::AttachmentMetadata;
 
 #[derive(Serialize)]
+pub(crate) struct TaskRelatedJson {
+    pub(crate) task_id: String,
+    pub(crate) display_ref: String,
+    pub(crate) title: String,
+    pub(crate) status: String,
+    pub(crate) priority: String,
+    pub(crate) deleted: bool,
+    pub(crate) linked_at: String,
+}
+
+pub(crate) fn task_related_json(link: &crate::query::TaskRelatedLink) -> TaskRelatedJson {
+    TaskRelatedJson {
+        task_id: link.task_id.to_string(),
+        display_ref: link.display_ref.clone(),
+        title: link.title.clone(),
+        status: link.status.as_str().to_string(),
+        priority: link.priority.as_str().to_string(),
+        deleted: link.deleted,
+        linked_at: link.linked_at.clone(),
+    }
+}
+
+#[derive(Serialize)]
 pub(crate) struct TaskFullJson {
     pub(crate) task: TaskLineJson,
     pub(crate) project_prefix: String,
@@ -1074,6 +1123,7 @@ pub(crate) struct TaskFullJson {
     pub(crate) metadata: BTreeMap<String, String>,
     pub(crate) metadata_details: Vec<MetadataDetailJson>,
     pub(crate) dependencies: TaskDependencySummaryJson,
+    pub(crate) related: Vec<TaskRelatedJson>,
     pub(crate) notes: Vec<TaskNoteJson>,
     pub(crate) conflicts: Vec<TaskConflictReport>,
     pub(crate) attachments: Vec<AttachmentMetadataJson>,

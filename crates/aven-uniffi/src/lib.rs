@@ -578,6 +578,44 @@ impl From<UpdateTask> for core_api::UpdateTask {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct RelatedTaskRecord {
+    pub task_id: String,
+    pub display_ref: String,
+    pub title: String,
+    pub status: TaskStatus,
+    pub priority: TaskPriority,
+    pub deleted: bool,
+    pub linked_at: String,
+}
+
+impl From<core_api::RelatedTaskRecord> for RelatedTaskRecord {
+    fn from(value: core_api::RelatedTaskRecord) -> Self {
+        Self {
+            task_id: value.task_id.to_string(),
+            display_ref: value.display_ref,
+            title: value.title,
+            status: value.status.into(),
+            priority: value.priority.into(),
+            deleted: value.deleted,
+            linked_at: value.linked_at,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct RelatedMutationResult {
+    pub changed: bool,
+}
+
+impl From<core_api::RelatedMutationResult> for RelatedMutationResult {
+    fn from(value: core_api::RelatedMutationResult) -> Self {
+        Self {
+            changed: value.changed,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct TaskRecord {
     pub id: String,
     pub workspace_id: String,
@@ -593,6 +631,7 @@ pub struct TaskRecord {
     pub available_at: Option<String>,
     pub due_on: Option<String>,
     pub metadata: Vec<MetadataValueRecord>,
+    pub related: Vec<RelatedTaskRecord>,
 }
 
 impl From<core_api::TaskRecord> for TaskRecord {
@@ -612,6 +651,7 @@ impl From<core_api::TaskRecord> for TaskRecord {
             available_at: value.available_at,
             due_on: value.due_on,
             metadata: value.metadata.into_iter().map(Into::into).collect(),
+            related: value.related.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -1219,6 +1259,42 @@ impl AvenClient {
         let task_id = parse_task_id(&task_id)?;
         runtime()?
             .block_on(self.store.fetch_task(&workspace_id, &task_id))
+            .map(Into::into)
+            .map_err(Into::into)
+    }
+
+    pub fn add_related_task(
+        &self,
+        workspace_id: String,
+        task_id: String,
+        related_task_id: String,
+    ) -> Result<RelatedMutationResult, AvenError> {
+        let workspace_id = parse_workspace_id(&workspace_id)?;
+        let task_id = parse_task_id(&task_id)?;
+        let related_task_id = parse_task_id(&related_task_id)?;
+        runtime()?
+            .block_on(
+                self.store
+                    .add_related_task(&workspace_id, &task_id, &related_task_id),
+            )
+            .map(Into::into)
+            .map_err(Into::into)
+    }
+
+    pub fn remove_related_task(
+        &self,
+        workspace_id: String,
+        task_id: String,
+        related_task_id: String,
+    ) -> Result<RelatedMutationResult, AvenError> {
+        let workspace_id = parse_workspace_id(&workspace_id)?;
+        let task_id = parse_task_id(&task_id)?;
+        let related_task_id = parse_task_id(&related_task_id)?;
+        runtime()?
+            .block_on(
+                self.store
+                    .remove_related_task(&workspace_id, &task_id, &related_task_id),
+            )
             .map(Into::into)
             .map_err(Into::into)
     }

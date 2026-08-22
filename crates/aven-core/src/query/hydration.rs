@@ -76,6 +76,10 @@ pub async fn build_task_list_items(
             .blocks_by_task
             .remove(&task_id)
             .unwrap_or_default();
+        let related = enrichment
+            .related_by_task
+            .remove(&task_id)
+            .unwrap_or_default();
         let epic_children = enrichment
             .epic_children_by_task
             .remove(&task_id)
@@ -123,6 +127,7 @@ pub async fn build_task_list_items(
             dependent_count,
             depends_on,
             blocks,
+            related,
             epic_children,
             epic_child_dependencies,
             epic_parent,

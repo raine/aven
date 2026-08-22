@@ -20,7 +20,7 @@ mod tables;
 use crate::db::{self, Database};
 
 const EXPORT_FORMAT: &str = "aven-export";
-const EXPORT_VERSION: i64 = 2;
+const EXPORT_VERSION: i64 = 3;
 
 #[derive(Debug, Clone)]
 pub struct IntegrityReport {
@@ -65,6 +65,8 @@ pub struct ExportTables {
     pub notes: Vec<NoteRow>,
     pub task_dependencies: Vec<TaskDependencyRow>,
     pub task_epic_links: Vec<TaskEpicLinkRow>,
+    #[serde(default)]
+    pub task_related_links: Vec<TaskRelatedLinkRow>,
     #[serde(default)]
     pub task_attachments: Vec<TaskAttachmentRow>,
     #[serde(default)]
@@ -211,6 +213,15 @@ pub struct TaskDependencyRow {
     pub task_id: TaskId,
     pub depends_on_task_id: TaskId,
     pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct TaskRelatedLinkRow {
+    pub workspace_id: WorkspaceId,
+    pub task_a_id: TaskId,
+    pub task_b_id: TaskId,
+    pub linked: i64,
+    pub last_change_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -361,9 +372,15 @@ impl Database {
     pub async fn export_data(&self, exported_at: String) -> Result<AvenExport> {
         let mut conn = self.acquire_writer().await?;
         let schema_version = db::current_schema_version(&mut conn).await?;
+        let task_related_links = scan_task_related_links(&mut conn).await?;
+        let version = if task_related_links.is_empty() {
+            2
+        } else {
+            EXPORT_VERSION
+        };
         Ok(AvenExport {
             format: EXPORT_FORMAT.to_string(),
-            version: EXPORT_VERSION,
+            version,
             exported_at,
             schema_version,
             blobs_included: false,
@@ -381,6 +398,7 @@ impl Database {
                 notes: scan_notes(&mut conn).await?,
                 task_dependencies: scan_task_dependencies(&mut conn).await?,
                 task_epic_links: scan_task_epic_links(&mut conn).await?,
+                task_related_links,
                 task_attachments: scan_task_attachments(&mut conn).await?,
                 blob_inventory: scan_blob_inventory(&mut conn).await?,
                 recurrence_series: scan_recurrence_series(&mut conn).await?,
@@ -572,6 +590,14 @@ async fn scan_task_epic_links(conn: &mut SqliteConnection) -> Result<Vec<TaskEpi
     .await
 }
 
+async fn scan_task_related_links(conn: &mut SqliteConnection) -> Result<Vec<TaskRelatedLinkRow>> {
+    tables::scan_rows(
+        conn,
+        "SELECT workspace_id, task_a_id, task_b_id, linked, last_change_id FROM task_related_links",
+    )
+    .await
+}
+
 async fn scan_task_attachments(conn: &mut SqliteConnection) -> Result<Vec<TaskAttachmentRow>> {
     tables::scan_rows(
         conn,
@@ -661,7 +687,7 @@ async fn ensure_supported_export(_conn: &mut SqliteConnection, export: &AvenExpo
     if export.format != EXPORT_FORMAT {
         bail!("error export-format-unsupported format={}", export.format);
     }
-    if !matches!(export.version, 1 | EXPORT_VERSION) {
+    if !matches!(export.version, 1 | 2 | EXPORT_VERSION) {
         bail!(
             "error export-version-unsupported version={}",
             export.version
@@ -815,6 +841,53 @@ fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
                 epic_link.workspace_id
             );
         }
+    }
+
+    let changes_by_id = export
+        .tables
+        .changes
+        .iter()
+        .map(|change| (change.change_id.as_str(), change))
+        .collect::<HashMap<_, _>>();
+    for link in &export.tables.task_related_links {
+        ensure!(
+            link.task_a_id < link.task_b_id,
+            "error invalid-export-snapshot related pair is not canonical"
+        );
+        ensure!(
+            matches!(link.linked, 0 | 1),
+            "error invalid-export-snapshot related linked value is invalid"
+        );
+        let tasks = task_ids
+            .get(&link.workspace_id)
+            .context("error invalid-export-snapshot related workspace is missing")?;
+        ensure!(
+            tasks.contains(&link.task_a_id) && tasks.contains(&link.task_b_id),
+            "error invalid-export-snapshot related endpoints are missing"
+        );
+        let change = changes_by_id
+            .get(link.last_change_id.as_str())
+            .context("error invalid-export-snapshot related change is missing")?;
+        let payload: Value = serde_json::from_str(&change.payload)?;
+        let related_id: TaskId = payload
+            .get("related_task_id")
+            .and_then(Value::as_str)
+            .context("error invalid-export-snapshot related payload is invalid")?
+            .parse()?;
+        let initiating_id: TaskId = change.entity_id.parse()?;
+        let (change_a, change_b) =
+            crate::operations::canonical_related_pair(&initiating_id, &related_id)?;
+        ensure!(
+            change.entity_type == "task"
+                && change.field.as_deref() == Some("related")
+                && payload.get("workspace_id").and_then(Value::as_str)
+                    == Some(link.workspace_id.as_str())
+                && change_a == &link.task_a_id
+                && change_b == &link.task_b_id
+                && ((link.linked == 1 && change.op_type == "related_add")
+                    || (link.linked == 0 && change.op_type == "related_remove")),
+            "error invalid-export-snapshot related change does not match state"
+        );
     }
 
     let mut inventory = HashMap::new();
@@ -1545,6 +1618,7 @@ async fn replace_from_export(
         "DELETE FROM task_metadata",
         "DELETE FROM task_attachments",
         "DELETE FROM blob_inventory",
+        "DELETE FROM task_related_links",
         "DELETE FROM task_epic_links",
         "DELETE FROM task_dependencies",
         "DELETE FROM task_labels",
@@ -1671,6 +1745,7 @@ async fn replace_from_export(
             .await?;
     }
     tables::import_changes(tx, &changes).await?;
+    tables::import_task_related_links(tx, &export.tables.task_related_links).await?;
     tables::import_field_versions(tx, &field_versions).await?;
     tables::import_conflicts(tx, &conflicts).await?;
 
@@ -1812,6 +1887,30 @@ async fn database_integrity_report_with_connection(
         conn,
         "dependency targets",
         "SELECT count(*) FROM task_dependencies d LEFT JOIN tasks t ON t.workspace_id = d.workspace_id AND t.id = d.depends_on_task_id WHERE t.id IS NULL",
+    )
+    .await?);
+    checks.push(count_check(
+        conn,
+        "related link first endpoints",
+        "SELECT count(*) FROM task_related_links r LEFT JOIN tasks t ON t.workspace_id = r.workspace_id AND t.id = r.task_a_id WHERE t.id IS NULL",
+    )
+    .await?);
+    checks.push(count_check(
+        conn,
+        "related link second endpoints",
+        "SELECT count(*) FROM task_related_links r LEFT JOIN tasks t ON t.workspace_id = r.workspace_id AND t.id = r.task_b_id WHERE t.id IS NULL",
+    )
+    .await?);
+    checks.push(count_check(
+        conn,
+        "related link canonical pairs",
+        "SELECT count(*) FROM task_related_links WHERE task_a_id >= task_b_id OR linked NOT IN (0, 1)",
+    )
+    .await?);
+    checks.push(count_check(
+        conn,
+        "related link changes",
+        "SELECT count(*) FROM task_related_links r LEFT JOIN changes c ON c.change_id = r.last_change_id WHERE c.change_id IS NULL",
     )
     .await?);
     checks.push(count_check(

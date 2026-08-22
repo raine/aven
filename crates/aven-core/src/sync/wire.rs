@@ -19,7 +19,7 @@ use crate::recurrence::{
 };
 use crate::task_fields::TaskField;
 
-pub const SYNC_PROTOCOL_VERSION: u32 = 14;
+pub const SYNC_PROTOCOL_VERSION: u32 = 15;
 const MAX_CHANGE_PAYLOAD_BYTES: usize = 64 * 1024;
 pub fn sync_server_url_is_valid(server: &str) -> bool {
     let Ok(url) = url::Url::parse(server) else {
@@ -574,6 +574,19 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             ensure_sync_id("depends_on_task_id", &depends_on_task_id)?;
             if change.entity_id == depends_on_task_id {
                 bail!("error invalid-sync-change dependency-self");
+            }
+        }
+        op_type::RELATED_ADD | op_type::RELATED_REMOVE => {
+            ensure_entity_type(change, "task")?;
+            ensure_sync_id("entity_id", &change.entity_id)?;
+            required_workspace_payload(&change.payload)?;
+            if change.field.as_deref() != Some("related") {
+                bail!("error invalid-sync-change field=related");
+            }
+            let related_task_id = required_string_payload("related_task_id", &change.payload)?;
+            ensure_sync_id("related_task_id", &related_task_id)?;
+            if change.entity_id == related_task_id {
+                bail!("error invalid-sync-change related-self");
             }
         }
         op_type::EPIC_LINK_ADD | op_type::EPIC_LINK_REMOVE => {
@@ -1795,6 +1808,25 @@ mod tests {
     }
 
     #[test]
+    fn related_payload_validation_requires_distinct_task_endpoints() {
+        let ws = test_workspace();
+        let payload = ChangePayload::workspace(&ws)
+            .set("related_task_id", "CCCCCCCCCCCCCCCC")
+            .into_value();
+        let mut change =
+            make_change_wire(op_type::RELATED_ADD, "task", "BBBBBBBBBBBBBBBB", payload);
+        change.field = Some("related".to_string());
+        validate_pushed_change(&change)
+            .expect("related_add payload built with ChangePayload should be wire-valid");
+
+        change.payload["related_task_id"] = serde_json::json!("BBBBBBBBBBBBBBBB");
+        assert_eq!(
+            validate_pushed_change(&change).unwrap_err().to_string(),
+            "error invalid-sync-change related-self"
+        );
+    }
+
+    #[test]
     fn constructed_note_edit_payload_passes_wire_validation() {
         let ws = test_workspace();
         let payload = ChangePayload::workspace(&ws)
@@ -1865,7 +1897,7 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(serde_json::to_value(delete).unwrap(), delete_value);
-        assert_eq!(SYNC_PROTOCOL_VERSION, 14);
+        assert_eq!(SYNC_PROTOCOL_VERSION, 15);
     }
 
     #[test]

@@ -7,8 +7,9 @@ use crate::cli::ContextArgs;
 use crate::query::{self, TaskDependencyItem};
 use crate::render::{print_json_pretty, print_multiline_block, quote};
 use crate::task_render::{
-    AttachmentMetadataJson, TaskEpicLinkJson, TaskRecurrenceJson, attachment_metadata_json,
-    print_attachment_section, task_epic_link_json, task_recurrence_json,
+    AttachmentMetadataJson, TaskEpicLinkJson, TaskRecurrenceJson, TaskRelatedJson,
+    attachment_metadata_json, print_attachment_section, task_epic_link_json, task_recurrence_json,
+    task_related_json,
 };
 use crate::types::Task;
 use crate::workspaces::Workspace;
@@ -35,6 +36,7 @@ struct TaskContextSnapshot {
     workspace: ContextWorkspace,
     labels: Vec<String>,
     dependencies: ContextDependencies,
+    related: Vec<TaskRelatedJson>,
     notes: Vec<ContextNote>,
     conflicts: Vec<ContextConflict>,
     has_conflicts: bool,
@@ -139,6 +141,7 @@ async fn task_context_snapshot(
         .iter()
         .map(task_epic_link_json)
         .collect();
+    let related = detail.related.iter().map(task_related_json).collect();
     let summary = detail.dependencies;
     let details = detail.conflicts;
     let attachments = database
@@ -204,6 +207,7 @@ async fn task_context_snapshot(
                 .map(context_dependency_task)
                 .collect(),
         },
+        related,
         notes: detail
             .notes
             .into_iter()
@@ -339,6 +343,16 @@ fn print_task_context(snapshot: &TaskContextSnapshot) {
             item.status,
             yes_no(item.unresolved),
             quote(&item.title),
+        );
+    }
+    println!("related total={}", snapshot.related.len());
+    for related in &snapshot.related {
+        println!(
+            "- {} status={} deleted={} title={}",
+            related.display_ref,
+            related.status,
+            yes_no(related.deleted),
+            quote(&related.title)
         );
     }
     if let Some(parent) = &snapshot.epic_parent {

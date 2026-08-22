@@ -218,8 +218,13 @@ impl Store {
             .task_metadata(workspace_id, task_id)
             .await
             .map_err(Error::from_internal)?;
+        let related = self
+            .database
+            .task_related_links(workspace_id, task_id)
+            .await
+            .map_err(Error::from_internal)?;
         Ok(TaskUpdateResult {
-            task: TaskRecord::with_metadata(outcome.task, metadata),
+            task: TaskRecord::with_metadata_and_related(outcome.task, metadata, related),
             changed: outcome.changed,
         })
     }
@@ -268,7 +273,46 @@ impl Store {
             .task_metadata(workspace_id, task_id)
             .await
             .map_err(Error::from_internal)?;
-        Ok(TaskRecord::with_metadata(task, metadata))
+        let related = self
+            .database
+            .task_related_links(workspace_id, task_id)
+            .await
+            .map_err(Error::from_internal)?;
+        Ok(TaskRecord::with_metadata_and_related(
+            task, metadata, related,
+        ))
+    }
+
+    pub async fn add_related_task(
+        &self,
+        workspace_id: &WorkspaceId,
+        task_id: &TaskId,
+        related_task_id: &TaskId,
+    ) -> Result<RelatedMutationResult, Error> {
+        let workspace = self.workspace(workspace_id).await?;
+        self.database
+            .add_task_related_link(&workspace, task_id, related_task_id)
+            .await
+            .map(|outcome| RelatedMutationResult {
+                changed: outcome.changed,
+            })
+            .map_err(Error::from_internal)
+    }
+
+    pub async fn remove_related_task(
+        &self,
+        workspace_id: &WorkspaceId,
+        task_id: &TaskId,
+        related_task_id: &TaskId,
+    ) -> Result<RelatedMutationResult, Error> {
+        let workspace = self.workspace(workspace_id).await?;
+        self.database
+            .remove_task_related_link(&workspace, task_id, related_task_id)
+            .await
+            .map(|outcome| RelatedMutationResult {
+                changed: outcome.changed,
+            })
+            .map_err(Error::from_internal)
     }
 
     pub async fn create_recurrence_series(
@@ -1246,6 +1290,36 @@ impl From<TaskListItem> for TaskSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelatedTaskRecord {
+    pub task_id: TaskId,
+    pub display_ref: String,
+    pub title: String,
+    pub status: TaskStatus,
+    pub priority: TaskPriority,
+    pub deleted: bool,
+    pub linked_at: String,
+}
+
+impl From<crate::query::TaskRelatedLink> for RelatedTaskRecord {
+    fn from(value: crate::query::TaskRelatedLink) -> Self {
+        Self {
+            task_id: value.task_id,
+            display_ref: value.display_ref,
+            title: value.title,
+            status: value.status,
+            priority: value.priority,
+            deleted: value.deleted,
+            linked_at: value.linked_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelatedMutationResult {
+    pub changed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskRecord {
     pub id: TaskId,
     pub workspace_id: WorkspaceId,
@@ -1261,6 +1335,7 @@ pub struct TaskRecord {
     pub available_at: Option<String>,
     pub due_on: Option<String>,
     pub metadata: Vec<MetadataValueRecord>,
+    pub related: Vec<RelatedTaskRecord>,
 }
 
 impl From<Task> for TaskRecord {
@@ -1280,14 +1355,24 @@ impl From<Task> for TaskRecord {
             available_at: task.available_at,
             due_on: task.due_on,
             metadata: Vec::new(),
+            related: Vec::new(),
         }
     }
 }
 
 impl TaskRecord {
     fn with_metadata(task: Task, metadata: Vec<TaskMetadataValue>) -> Self {
+        Self::with_metadata_and_related(task, metadata, Vec::new())
+    }
+
+    fn with_metadata_and_related(
+        task: Task,
+        metadata: Vec<TaskMetadataValue>,
+        related: Vec<crate::query::TaskRelatedLink>,
+    ) -> Self {
         let mut record = Self::from(task);
         record.metadata = metadata.into_iter().map(Into::into).collect();
+        record.related = related.into_iter().map(Into::into).collect();
         record
     }
 }

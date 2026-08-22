@@ -594,6 +594,7 @@ mod tests {
             dependent_count: 0,
             depends_on: Vec::new(),
             blocks: Vec::new(),
+            related: Vec::new(),
             epic_children: Vec::new(),
             epic_child_dependencies: Default::default(),
             epic_parent: None,

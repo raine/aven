@@ -101,6 +101,8 @@ EOF
 
 ```sh
 aven dep add APP-7KQ9 APP-7KQ0
+aven related add APP-7KQ9 APP-7KQ0
+aven related list APP-7KQ9
 aven add "Improve onboarding" --epic
 aven epic add APP-7KQ9 APP-7KQ0
 aven edit APP-7KQ9 --available-at tomorrow
@@ -108,6 +110,8 @@ aven edit APP-7KQ9 --due "next monday"
 ```
 
 - `dep add <blocked> <blocker>` expresses execution order.
+- `related add <task> <other>` creates a symmetric context link. Related links
+  imply neither execution order nor containment. Use `related remove` to unlink.
 - `epic add <child> <epic>` groups related work. Epic membership does not block
   the child, so do not use epics and dependencies interchangeably.
 - `available_at` defers attention until a date or time. `due_on` is a deadline

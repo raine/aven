@@ -450,7 +450,9 @@ fn search_hint_line(intent: &SearchKind, selected: Option<&SearchResultItem>) ->
     };
     let select_keys = match intent {
         SearchKind::Navigate => "↑/↓ ^N/^P",
-        SearchKind::AddDependency | SearchKind::AddEpicChild { .. } => "↑/↓ ^N/^P Tab/Shift+Tab",
+        SearchKind::AddDependency | SearchKind::AddRelated | SearchKind::AddEpicChild { .. } => {
+            "↑/↓ ^N/^P Tab/Shift+Tab"
+        }
     };
     let mut spans = vec![
         Span::styled(

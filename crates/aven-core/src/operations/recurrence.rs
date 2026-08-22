@@ -2294,8 +2294,22 @@ async fn ensure_successor_untouched(
     .bind(task_id)
     .fetch_one(&mut *conn)
     .await?;
+    let related: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM task_related_links
+         WHERE workspace_id = ? AND (task_a_id = ? OR task_b_id = ?)",
+    )
+    .bind(workspace_id)
+    .bind(task_id)
+    .bind(task_id)
+    .fetch_one(&mut *conn)
+    .await?;
     ensure!(
-        extra_changes == 0 && notes == 0 && attachments == 0 && dependencies == 0 && epics == 0,
+        extra_changes == 0
+            && notes == 0
+            && attachments == 0
+            && dependencies == 0
+            && epics == 0
+            && related == 0,
         "error recurrence-undo-successor-touched"
     );
     Ok(())

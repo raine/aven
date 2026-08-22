@@ -140,6 +140,21 @@ impl TuiStore {
             .collect()
     }
 
+    pub(crate) fn selected_related_picker_items(&self, index: Option<usize>) -> Vec<PickerItem> {
+        let Some(item) = self.selected_task(index) else {
+            return Vec::new();
+        };
+        item.related
+            .iter()
+            .filter(|link| !link.deleted)
+            .map(|link| PickerItem {
+                label: format!("{} {}", link.display_ref, link.title),
+                value: link.task_id.to_string(),
+                selected: false,
+            })
+            .collect()
+    }
+
     pub(crate) fn selected_dependency_picker_items(&self, index: Option<usize>) -> Vec<PickerItem> {
         let Some(item) = self.selected_task(index) else {
             return Vec::new();

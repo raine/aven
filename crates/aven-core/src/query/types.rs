@@ -303,6 +303,7 @@ pub struct TaskListItem {
     pub dependent_count: i64,
     pub depends_on: Vec<TaskDependencyLink>,
     pub blocks: Vec<TaskDependencyLink>,
+    pub related: Vec<super::TaskRelatedLink>,
     pub epic_children: Vec<TaskDependencyLink>,
     pub epic_child_dependencies: HashMap<TaskId, Vec<TaskDependencyLink>>,
     pub epic_parent: Option<TaskDependencyLink>,

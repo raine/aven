@@ -1670,6 +1670,18 @@ impl App {
             return None;
         };
         let item = self.store.selected_task(self.list.selected_task())?;
+        if *section == DetailSection::Related {
+            let link = item
+                .related
+                .iter()
+                .find(|link| (!link.deleted || item.task.deleted) && link.task_id == *task_id)?;
+            return Some(FocusedRelationship {
+                section: *section,
+                task_id: link.task_id.clone(),
+                display_ref: link.display_ref.clone(),
+                title: link.title.clone(),
+            });
+        }
         let link = match section {
             DetailSection::EpicParent => item
                 .epic_parent
@@ -1690,7 +1702,7 @@ impl App {
                 item.depends_on.iter().find(|link| link.task_id == *task_id)
             }
             DetailSection::Blocks => item.blocks.iter().find(|link| link.task_id == *task_id),
-            DetailSection::Attachments | DetailSection::Notes => None,
+            DetailSection::Related | DetailSection::Attachments | DetailSection::Notes => None,
         }?;
         Some(FocusedRelationship {
             section: *section,
@@ -1754,6 +1766,16 @@ impl App {
                 ConfirmIntent::UnlinkDependency {
                     selection,
                     depends_on_task_id,
+                }
+            }
+            DetailSection::Related => {
+                let Some(selection) = self.resolve_task_selection() else {
+                    self.set_info("no selected task to edit");
+                    return Ok(());
+                };
+                ConfirmIntent::UnlinkRelated {
+                    selection,
+                    related_task_id: relationship.task_id.clone(),
                 }
             }
             DetailSection::EpicParent => {
@@ -1963,7 +1985,9 @@ impl App {
                 Ok(true)
             }
             DetailShortcutResolution::Action(
-                Action::BeginRemoveDependency | Action::RemoveEpicChild,
+                Action::BeginRemoveDependency
+                | Action::BeginRemoveRelated
+                | Action::RemoveEpicChild,
             ) if relationship.is_some() => {
                 self.pending_shortcut_scroll = 0;
                 self.begin_unlink_focused_relationship(relationship.as_ref().unwrap())
@@ -2025,6 +2049,7 @@ impl App {
                 | Action::BeginStatusPicker
                 | Action::BeginAddNote
                 | Action::BeginAddDependency
+                | Action::BeginAddRelated
         )
     }
 

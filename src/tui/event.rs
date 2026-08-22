@@ -123,6 +123,8 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginConfigInit
             | Action::BeginAddDependency
             | Action::BeginRemoveDependency
+            | Action::BeginAddRelated
+            | Action::BeginRemoveRelated
             | Action::Undo
             | Action::ToggleMarkSelected
             | Action::ToggleMarkAllInView
@@ -341,12 +343,14 @@ mod tests {
                 "rename-project",
                 "remove-project-path",
                 "remove-dependency",
+                "remove-related",
                 "move-right",
                 "move-column-right",
                 "view-recurring",
                 "view-recent",
                 "workspace-rename",
                 "copy-ref",
+                "add-related",
                 "task-child-remove",
                 "filter-recurring-lifecycle",
                 "order-reverse",
