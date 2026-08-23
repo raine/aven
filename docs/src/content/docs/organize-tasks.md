@@ -1,6 +1,6 @@
 ---
 title: Organizing tasks
-description: Choose how workspaces, projects, labels, epics, and dependencies structure your work.
+description: Choose how workspaces, projects, labels, epics, dependencies, and related tasks structure your work.
 ---
 
 Aven has several ways to organize work, each meant for a different kind of
@@ -13,6 +13,7 @@ question:
 | Label | Which cross-project category describes it? |
 | Epic | Which larger outcome contains it? |
 | Dependency | Which task must finish before another can proceed? |
+| Related link | Which other task provides useful context? |
 
 Start with projects. Add the other structures only when they make work easier to
 find, prioritize, or hand off.
@@ -103,6 +104,16 @@ larger result. A task can participate in both relationships.
 
 <p class="media-caption">The selected task belongs to the scheduling epic and is blocked by another child task.</p>
 
+## Connect context with related tasks
+
+Use related tasks when two tasks are useful to find together but neither blocks
+or contains the other. Links are symmetric and stay within one workspace, but
+they may cross projects. They do not affect blocking, readiness, scheduling,
+queue order, or containment.
+
+Task detail lists related tasks for quick navigation. Add and remove actions are
+available through the TUI's contextual help and command palette.
+
 ## Related pages
 
 - [Using the TUI](/tui/) covers navigation, selection, and command discovery.
@@ -113,6 +124,7 @@ larger result. A task can participate in both relationships.
 ## Reference
 
 The command reference documents [workspaces, projects, and labels](/command-reference/#workspace-commands),
-[`aven epic`](/command-reference/#aven-epic), and
-[`aven dep`](/command-reference/#aven-dep) for scripts, agents, and terminal
-workflows outside the TUI.
+[`aven epic`](/command-reference/#aven-epic),
+[`aven dep`](/command-reference/#aven-dep), and
+[`aven related`](/command-reference/#aven-related) for scripts, agents, and
+terminal workflows outside the TUI.

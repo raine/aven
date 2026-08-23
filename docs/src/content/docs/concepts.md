@@ -18,7 +18,7 @@ A task is a unit of work inside a workspace and, usually, a project. It has a ti
 Labels are cross-cutting tags such as `bug`, `docs`, or `ux`. Label names are normalized before storage: uppercase letters become lowercase, and punctuation or spaces become dashes. Create a label explicitly, then assign it to tasks.
 
 See [Organizing tasks](/organize-tasks/) for guidance on choosing among workspaces,
-projects, labels, epics, and dependencies.
+projects, labels, epics, dependencies, and related tasks.
 
 ## Status and priority
 
@@ -62,7 +62,7 @@ A qualified ref has two parts:
 
 Prefer the qualified ref printed by command output. Bare suffix refs such as `7KQ9` work when they are unambiguous. When you type a suffix ref in a command, it must contain at least three characters.
 
-## Dependencies and epics
+## Dependencies, epics, and related tasks
 
 Dependencies model ordering. If task A depends on task B, task B must finish before task A can start. Tasks with unresolved open dependencies are blocked.
 
@@ -72,7 +72,9 @@ Epics group related work. An epic is a task that contains child tasks. Use epics
 
 Epic children belong to the same workspace and project as the epic. Each child belongs to one epic. An epic child is a regular task, and blocking behavior comes from dependencies.
 
-Use epics for grouping. Use dependencies for ordering.
+A related task link provides context without order or containment. The link is symmetric, stays within one workspace, and may cross projects. It does not affect blocking, readiness, scheduling, queue order, or containment.
+
+Use dependencies for ordering, epics for grouping under an outcome, and related tasks for a useful connection between otherwise independent tasks.
 
 ## Availability and due dates
 

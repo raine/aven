@@ -26,7 +26,7 @@ Use `?` for commands available in the current mode. Use `:` to search the comple
 
 ## Find work
 
-Queue is the default view. It groups open work by what needs attention across the active scope. See [Concepts](/concepts/) for queue groups, statuses, priorities, availability, due dates, dependencies, and epics.
+Queue is the default view. It groups open work by what needs attention across the active scope. See [Concepts](/concepts/) for queue groups, statuses, priorities, availability, due dates, dependencies, epics, and related tasks.
 
 Use the sidebar or the `v` command family to switch views.
 
@@ -238,8 +238,13 @@ and delete update tasks and recurring templates that use the label. The `t B` an
 `t U` actions add and remove blockers. Epic membership actions live under `t c`,
 and `v e` opens the Epics view.
 
+Related-task actions add or remove links from the selected task. In task detail,
+you can focus a relationship and open its task. An unlink action operates on the
+focused relationship, requires confirmation, and supports undo. Use contextual
+help or the command palette for the current shortcuts.
+
 See [Organizing tasks](/organize-tasks/) for choosing among workspaces, projects,
-labels, epics, and dependencies.
+labels, epics, dependencies, and related tasks.
 
 ## Recurring tasks
 

@@ -53,7 +53,7 @@ EOF
 
 ### Structured output
 
-The `--json` option is available on `context`, `show`, `list`, `search`, `recur list`, `recur show`, `recur history`, `attachment add`, `attachment list`, `attachment get`, `attachment delete`, `attachment prune`, `dep list`, `epic list`, `prime`, `label list`, `metadata list`, `metadata show`, `project list`, `conflict list`, `conflict show`, and `doctor`. JSON task objects from `list`, `show`, and `search` include scheduling in `available_at` and `due_on`, epic membership in `is_epic`, `epic_parent`, and `epic_children`, dependency counts in `blocked_by` and `blocks`, conflict state in `has_conflict`, and `created_at` and `updated_at` timestamps. Search results add `score`, `matched_field`, and `snippet` to this task shape. `context --json` and `show --full --json` expose custom task metadata as a key-value object and as detailed records with stable field IDs. They also expose attachment metadata without bytes, including deleted attachment tombstones. Consumers must inspect each attachment's `deleted` field. An empty `available_at` means immediate availability. An empty `due_on` means no deadline.
+The `--json` option is available on `context`, `show`, `list`, `search`, `recur list`, `recur show`, `recur history`, `attachment add`, `attachment list`, `attachment get`, `attachment delete`, `attachment prune`, `dep list`, `related list`, `epic list`, `prime`, `label list`, `metadata list`, `metadata show`, `project list`, `conflict list`, `conflict show`, and `doctor`. JSON task objects from `list`, `show`, and `search` include scheduling in `available_at` and `due_on`, epic membership in `is_epic`, `epic_parent`, and `epic_children`, dependency counts in `blocked_by` and `blocks`, conflict state in `has_conflict`, and `created_at` and `updated_at` timestamps. Search results add `score`, `matched_field`, and `snippet` to this task shape. `context --json` and `show --full --json` expose custom task metadata as a key-value object and as detailed records with stable field IDs. They also expose related tasks and attachment metadata without bytes, including deleted attachment tombstones. Consumers must inspect each attachment's `deleted` field. An empty `available_at` means immediate availability. An empty `due_on` means no deadline.
 
 ## Temporal input
 
@@ -291,7 +291,7 @@ Print a complete context snapshot for one task.
 aven context <task-ref> [--json]
 ```
 
-The snapshot includes stable identity, display reference, task fields, description, custom task metadata, project and workspace metadata, labels, notes, dependencies, dependents, epic membership, recurring-task metadata, deletion state, and unresolved conflicts. It also derives whether the task is blocked, has conflicts, or blocks open work.
+The snapshot includes stable identity, display reference, task fields, description, custom task metadata, project and workspace metadata, labels, notes, dependencies, dependents, related tasks, epic membership, recurring-task metadata, deletion state, and unresolved conflicts. It also derives whether the task is blocked, has conflicts, or blocks open work.
 
 ```sh
 aven context APP-7KQ9
@@ -589,6 +589,28 @@ Dependencies must stay within one workspace. A task cannot depend on itself, and
 aven dep add APP-7KQ9 APP-7KQ0
 aven dep list APP-7KQ9
 aven dep remove APP-7KQ9 APP-7KQ0
+```
+
+### `aven related`
+
+Explicitly link tasks that provide useful context without ordering or containment.
+
+```sh
+aven related add <task-ref> <related-ref>
+aven related remove <task-ref> <related-ref>
+aven related list <task-ref> [--json]
+```
+
+Links are symmetric and stay within one workspace, but may cross projects. They
+do not affect blocking, readiness, scheduling, queue order, or containment.
+References in titles, descriptions, or notes do not create links automatically.
+Use `related add` to create a link, `related remove` to unlink it from either
+endpoint, and `related list` to inspect one task's links.
+
+```sh
+aven related add APP-7KQ9 WEB-7KQ0
+aven related list APP-7KQ9 --json
+aven related remove APP-7KQ9 WEB-7KQ0
 ```
 
 ### `aven epic`
@@ -921,8 +943,8 @@ aven daemon restart
 ### `aven demo`
 
 Open the TUI with a fresh temporary database containing the curated sample
-projects, labels, tasks, dependencies, and epic membership used in product
-screenshots.
+projects, labels, tasks, dependencies, related links, and epic membership used
+in product screenshots.
 
 ```sh
 aven demo
