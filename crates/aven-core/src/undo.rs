@@ -484,7 +484,8 @@ fn classify_undo_commands(id: String, commands: &[UndoCommand]) -> PendingUndoPr
             | UndoCommand::DeleteCreatedNote { task_id, .. }
             | UndoCommand::RestoreConflictResolution { task_id, .. }
             | UndoCommand::AddTaskDependency { task_id, .. }
-            | UndoCommand::RemoveTaskDependency { task_id, .. } => {
+            | UndoCommand::RemoveTaskDependency { task_id, .. }
+            | UndoCommand::SetTaskRelatedLink { task_id, .. } => {
                 task_ids.insert(task_id.clone());
             }
             UndoCommand::AddEpicChild { child_id, .. }
@@ -563,6 +564,13 @@ fn undo_command_operation(command: &UndoCommand) -> Option<&'static str> {
         UndoCommand::RestoreConflictResolution { .. } => "conflict resolution",
         UndoCommand::AddTaskDependency { .. } => "dependency addition",
         UndoCommand::RemoveTaskDependency { .. } => "dependency removal",
+        UndoCommand::SetTaskRelatedLink { linked, .. } => {
+            if *linked {
+                "related link addition"
+            } else {
+                "related link removal"
+            }
+        }
         UndoCommand::AddEpicChild { .. } => "epic membership addition",
         UndoCommand::RemoveEpicChild { .. } => "epic membership removal",
     })
@@ -1944,6 +1952,30 @@ mod presentation_tests {
             let presentation = classify_undo_commands("entry".to_string(), &commands);
             assert_eq!(presentation.operation, operation);
             assert_eq!(presentation.task_ids.len(), task_count);
+        }
+    }
+
+    #[test]
+    fn classifier_describes_related_link_changes_on_the_initiating_task() {
+        let task_id = crate::ids::TaskId::new();
+        let related_task_id = crate::ids::TaskId::new();
+
+        for (linked, operation) in [
+            (true, "related link addition"),
+            (false, "related link removal"),
+        ] {
+            let presentation = classify_undo_commands(
+                "entry".to_string(),
+                &[UndoCommand::SetTaskRelatedLink {
+                    task_id: task_id.clone(),
+                    related_task_id: related_task_id.clone(),
+                    forward_change_id: "change".to_string(),
+                    linked,
+                }],
+            );
+
+            assert_eq!(presentation.operation, operation);
+            assert_eq!(presentation.task_ids, vec![task_id.clone()]);
         }
     }
 
