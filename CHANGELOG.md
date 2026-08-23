@@ -5,6 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- UX: Workspace controls keep workspaces in a stable order, and clicking the header switches directly when only two workspaces are available.
 - UX: Undoable TUI changes now offer `u undo` in toasts, while the command panel and shortcut help describe the operation and affected task count before it is undone.
 
 ## v0.1.30 (2026-08-19)
