@@ -88,8 +88,9 @@ EOF
 
 - Plain tasks default to `inbox`. Use `--status` when the task is already
   triaged.
-- Include enough description for a follow-up task to stand alone. Capture
-  rationale, scope, acceptance criteria, and related tasks when useful.
+- Include enough context for a follow-up task to stand alone. Capture rationale,
+  scope, acceptance criteria, and related tasks when established; do not invent
+  missing details.
 - Use `--description-stdin`, `--description-file`, `note --stdin`, or
   `note --file` for long Markdown instead of shell-escaping it.
 - Capture and report the ref printed by `aven add`.
