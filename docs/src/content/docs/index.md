@@ -16,6 +16,7 @@ aven is a local-first task manager for power users and coding agents. It keeps w
 - Move quickly through task management in a polished, keyboard-first TUI.
 - Work offline with tasks stored in SQLite. Optional self-hosted sync shares them across machines.
 - Keep the details needed to resume work with Jira/Linear-style IDs such as `APP-7KQ9`, Markdown descriptions, notes, and image attachments.
+- Copy a complete task report as Markdown or [publish it as an unlisted GitHub gist](/tui/#publish-a-task-report-as-a-github-gist) when you want to share its context.
 - Separate personal and work tasks into workspaces.
 
 ## Design principles

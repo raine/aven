@@ -39,8 +39,10 @@ a workspace. When you run aven from that directory, it selects the workspace aut
 
 Markdown descriptions, append-style notes, and
 [image attachments](https://aven.raine.dev/tui/#image-attachments) keep task context available to
-you and your agents. You can capture work through natural-language input, a tmux popup, or
-agent-friendly commands, then schedule it to appear when it needs your attention.
+you and your agents. Copy a complete task report as Markdown or
+[publish it as an unlisted GitHub gist](https://aven.raine.dev/tui/#publish-a-task-report-as-a-github-gist)
+when you want to share that context. You can capture work through natural-language input, a tmux
+popup, or agent-friendly commands, then schedule it to appear when it needs your attention.
 
 Inspired by Taskwarrior. See [aven and Taskwarrior](https://aven.raine.dev/taskwarrior/).
 

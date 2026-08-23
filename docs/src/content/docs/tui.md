@@ -218,7 +218,7 @@ In detail, drag across rendered title or description text and press `y` to copy 
 
 From task detail, press `t g` and confirm to publish the complete Markdown task report as a secret GitHub gist. This runs the authenticated GitHub CLI and sends the report's task content to GitHub over the network. A secret gist is unlisted rather than private: anyone with its URL can view it. After GitHub creates the gist, aven copies its URL to the clipboard.
 
-This action requires an installed and authenticated `gh` command. The confirmation appears before any task content is published.
+This action requires an installed and authenticated `gh` command. The confirmation appears before any task content is published. See an [example task report on GitHub](https://gist.github.com/raine/52e230cc05e4dc205e5e1394aa1b32a3).
 
 ### Image attachments
 
