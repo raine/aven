@@ -11,7 +11,7 @@ command = ["cargo", "clippy", "--message-format=json", "--target-dir", "target/c
 [[check]]
 name = "test"
 mode = "nextest"
-command = ["env", "SQLX_OFFLINE=true", "cargo", "nextest", "run", "--target-dir", "target/test", "--all-targets", "--locked", "--no-fail-fast", "--status-level", "fail"]
+command = ["env", "SQLX_OFFLINE=true", "RUST_MIN_STACK=4194304", "cargo", "nextest", "run", "--target-dir", "target/test", "--all-targets", "--locked", "--no-fail-fast", "--status-level", "fail"]
 
 [[check]]
 name = "doc-test"
