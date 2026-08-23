@@ -3,7 +3,7 @@ title: Changelog
 description: Release notes for aven.
 ---
 
-## Unreleased
+## v0.1.31 (2026-08-23)
 
 - New: With [Related tasks](/organize-tasks/#connect-context-with-related-tasks), you can link tasks that share context without making one block the other or putting them in the same epic. Links appear on both tasks and can be managed from the CLI or TUI.
 - UX: Workspace controls keep workspaces in a stable order, and clicking the header switches directly when only two workspaces are available.
