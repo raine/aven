@@ -57,7 +57,7 @@ const DETAIL_HELP_TOPICS: &[HelpTopic] = &[
     },
     HelpTopic {
         keys: "t U / t c r",
-        description: "unlink focused dependency / epic relationship",
+        description: "unlink focused relationship",
         section: "Task detail",
     },
     HelpTopic {

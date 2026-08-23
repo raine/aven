@@ -1313,7 +1313,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     ),
     CommandSpec::implemented_in_detail(
         "remove-dependency",
-        "remove blocker from selected task",
+        "remove blocker or unlink focused relationship",
         "Tasks",
         &[KeySequence {
             codes: &[KeyCode::Char('t'), KeyCode::Char('U')],
