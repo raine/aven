@@ -882,6 +882,151 @@ async fn focused_blocked_task_unlink_requires_confirmation() {
     );
 }
 
+async fn setup_related_detail(
+    app: &mut App,
+    related_count: usize,
+) -> (crate::ids::TaskId, Vec<crate::ids::TaskId>) {
+    let subject_index = create_and_select_task(app, test_task_draft("Related subject")).await;
+    let subject_id = app.store.tasks[subject_index].task.id.clone();
+    let mut related_ids = Vec::new();
+    for index in 0..related_count {
+        let target_index =
+            create_and_select_task(app, test_task_draft(&format!("Related target {index}"))).await;
+        let target_id = app.store.tasks[target_index].task.id.clone();
+        related_ids.push(target_id.clone());
+        let subject_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == subject_id)
+            .unwrap();
+        app.store
+            .add_related(Some(subject_index), &target_id)
+            .await
+            .unwrap();
+    }
+    app.store.refresh(Some(&subject_id)).await.unwrap();
+    let subject_index = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == subject_id)
+        .unwrap();
+    app.list.select_task(Some(subject_index));
+    app.show_detail(0);
+    let related_ids = app
+        .detail_focus_targets((80, 24).into())
+        .into_iter()
+        .filter_map(|target| match target {
+            DetailTargetId::Task {
+                section: DetailSection::Related,
+                task_id,
+            } => Some(task_id),
+            _ => None,
+        })
+        .collect();
+    (subject_id, related_ids)
+}
+
+async fn remove_focused_related_row(app: &mut App, related_id: crate::ids::TaskId) {
+    app.detail
+        .state_mut()
+        .unwrap()
+        .set_focused_target(Some(DetailTargetId::Task {
+            section: DetailSection::Related,
+            task_id: related_id,
+        }));
+    for code in [KeyCode::Char('t'), KeyCode::Char('k'), KeyCode::Char('r')] {
+        app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+    }
+    assert!(matches!(app.overlay, Some(OverlayState::Confirm(_))));
+    app.dispatch_key(key(KeyCode::Char('y')), (80, 24).into())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn focused_related_middle_removal_focuses_next_row() {
+    let (_dir, _pool, mut app) = test_app_with_pool().await;
+    let (_subject_id, related_ids) = setup_related_detail(&mut app, 3).await;
+    remove_focused_related_row(&mut app, related_ids[1].clone()).await;
+
+    assert_eq!(
+        app.detail
+            .state()
+            .and_then(|detail| detail.focused_target()),
+        Some(&DetailTargetId::Task {
+            section: DetailSection::Related,
+            task_id: related_ids[2].clone(),
+        })
+    );
+    app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
+        .await
+        .unwrap();
+    assert_eq!(
+        app.store
+            .selected_task(app.list.selected_task())
+            .map(|item| &item.task.id),
+        Some(&related_ids[2])
+    );
+}
+
+#[tokio::test]
+async fn focused_related_last_removal_focuses_previous_row() {
+    let (_dir, _pool, mut app) = test_app_with_pool().await;
+    let (_subject_id, related_ids) = setup_related_detail(&mut app, 3).await;
+    remove_focused_related_row(&mut app, related_ids[2].clone()).await;
+
+    assert_eq!(
+        app.detail
+            .state()
+            .and_then(|detail| detail.focused_target()),
+        Some(&DetailTargetId::Task {
+            section: DetailSection::Related,
+            task_id: related_ids[1].clone(),
+        })
+    );
+}
+
+#[tokio::test]
+async fn focused_only_related_removal_reconciles_to_another_detail_target() {
+    let (_dir, _pool, mut app) = test_app_with_pool().await;
+    let (subject_id, related_ids) = setup_related_detail(&mut app, 1).await;
+    let dependency_index =
+        create_and_select_task(&mut app, test_task_draft("Dependency target")).await;
+    let dependency_id = app.store.tasks[dependency_index].task.id.clone();
+    let subject_index = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == subject_id)
+        .unwrap();
+    app.store
+        .add_dependency(Some(subject_index), &dependency_id)
+        .await
+        .unwrap();
+    app.store.refresh(Some(&subject_id)).await.unwrap();
+    let subject_index = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == subject_id)
+        .unwrap();
+    app.list.select_task(Some(subject_index));
+    app.show_detail(0);
+    remove_focused_related_row(&mut app, related_ids[0].clone()).await;
+
+    assert_eq!(
+        app.detail
+            .state()
+            .and_then(|detail| detail.focused_target()),
+        Some(&DetailTargetId::Task {
+            section: DetailSection::DependsOn,
+            task_id: dependency_id,
+        })
+    );
+}
+
 #[tokio::test]
 async fn focused_relationship_delete_and_unsupported_actions_are_explicit() {
     let (_dir, _pool, mut app) = test_app_with_pool().await;

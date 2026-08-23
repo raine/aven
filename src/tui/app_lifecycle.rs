@@ -625,7 +625,10 @@ impl App {
         Ok(())
     }
 
-    fn reconcile_detail_focus(&mut self, previous_targets: &[crate::tui::app::DetailTargetId]) {
+    pub(super) fn reconcile_detail_focus(
+        &mut self,
+        previous_targets: &[crate::tui::app::DetailTargetId],
+    ) {
         let Some(focused) = self
             .detail
             .state()
@@ -647,8 +650,7 @@ impl App {
         let prior_section_index = previous_targets
             .iter()
             .filter(|target| target.section() == section)
-            .position(|target| target == &focused)
-            .unwrap_or(0);
+            .position(|target| target == &focused);
         let same_section = targets
             .iter()
             .filter(|target| target.section() == section)
@@ -656,7 +658,8 @@ impl App {
         if !same_section.is_empty() {
             if let Some(detail) = self.detail.state_mut() {
                 detail.set_focused_target(Some(
-                    (*same_section[prior_section_index.min(same_section.len() - 1)]).clone(),
+                    (*same_section[prior_section_index.unwrap_or(0).min(same_section.len() - 1)])
+                        .clone(),
                 ));
             }
             return;

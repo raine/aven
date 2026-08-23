@@ -1431,12 +1431,28 @@ impl App {
         selection: TaskSelection,
         related_task_id: crate::ids::TaskId,
     ) -> Result<()> {
+        let focused_related = matches!(
+            self.detail
+                .state()
+                .and_then(|detail| detail.focused_target()),
+            Some(crate::tui::app::DetailTargetId::Task {
+                section: crate::tui::app::DetailSection::Related,
+                task_id,
+            }) if task_id == &related_task_id
+        );
+        let previous_detail_targets =
+            focused_related.then(|| self.detail_focus_targets(ratatui::layout::Size::new(80, 24)));
         match self
             .store
             .remove_related_from_selection(&selection, &related_task_id)
             .await
         {
-            Ok(result) => self.apply_mutation_result(result),
+            Ok(result) => {
+                self.apply_mutation_result(result);
+                if let Some(previous_targets) = previous_detail_targets {
+                    self.reconcile_detail_focus(&previous_targets);
+                }
+            }
             Err(error) => self.set_error(format!("{error:#}")),
         }
         Ok(())
