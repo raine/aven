@@ -36,6 +36,49 @@ fn internal_demo_snapshot_materializes_current_demo_data() {
 
     let upcoming = ok(env.aven(&snapshot, ["search", "Parse natural-language dates"]));
     assert!(upcoming.contains("Parse natural-language dates when adding tasks"));
+
+    let onboarding: serde_json::Value = serde_json::from_str(&ok(env.aven(
+        &snapshot,
+        [
+            "search",
+            "Update onboarding screenshots",
+            "--limit",
+            "1",
+            "--json",
+        ],
+    )))
+    .unwrap();
+    let onboarding_ref = onboarding[0]["ref"].as_str().unwrap();
+    let website: serde_json::Value = serde_json::from_str(&ok(env.aven(
+        &snapshot,
+        [
+            "search",
+            "Add terminal UI screenshots",
+            "--limit",
+            "1",
+            "--json",
+        ],
+    )))
+    .unwrap();
+    let website_ref = website[0]["ref"].as_str().unwrap();
+    assert_ne!(
+        onboarding_ref.split_once('-').unwrap().0,
+        website_ref.split_once('-').unwrap().0
+    );
+
+    let related: serde_json::Value = serde_json::from_str(&ok(
+        env.aven(&snapshot, ["related", "list", onboarding_ref, "--json"])
+    ))
+    .unwrap();
+    assert_eq!(related.as_array().unwrap().len(), 1);
+    assert_eq!(related[0]["display_ref"], website_ref);
+    assert_eq!(related[0]["title"], "Add terminal UI screenshots");
+
+    let reciprocal: serde_json::Value = serde_json::from_str(&ok(
+        env.aven(&snapshot, ["related", "list", website_ref, "--json"])
+    ))
+    .unwrap();
+    assert_eq!(reciprocal[0]["display_ref"], onboarding_ref);
 }
 
 #[test]

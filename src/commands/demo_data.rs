@@ -28,6 +28,11 @@ pub(super) struct DemoEpicLink {
     pub child: &'static str,
 }
 
+pub(super) struct DemoRelatedLink {
+    pub task: &'static str,
+    pub related: &'static str,
+}
+
 pub(super) const PROJECTS: &[&str] = &[
     "api",
     "cli",
@@ -595,6 +600,17 @@ pub(super) const DEPENDENCIES: &[DemoDependency] = &[
     },
 ];
 
+pub(super) const RELATED_LINKS: &[DemoRelatedLink] = &[
+    DemoRelatedLink {
+        task: "create_tasks_from_clipboard_text",
+        related: "support_share_sheet_task_capture",
+    },
+    DemoRelatedLink {
+        task: "update_onboarding_screenshots",
+        related: "add_terminal_ui_screenshots",
+    },
+];
+
 pub(super) const EPIC_LINKS: &[DemoEpicLink] = &[
     DemoEpicLink {
         epic: "bring_dates_and_scheduling_into_the_task_flow",
@@ -708,6 +724,7 @@ mod tests {
         assert_eq!(TASKS.iter().filter(|task| task.is_epic).count(), 5);
         assert_eq!(DEPENDENCIES.len(), 6);
         assert_eq!(EPIC_LINKS.len(), 24);
+        assert_eq!(RELATED_LINKS.len(), 2);
 
         let keys: HashSet<_> = TASKS.iter().map(|task| task.key).collect();
         assert_eq!(keys.len(), TASKS.len());
@@ -733,6 +750,43 @@ mod tests {
                 .iter()
                 .all(|link| keys.contains(link.epic) && keys.contains(link.child))
         );
+        assert!(RELATED_LINKS.iter().all(|link| {
+            keys.contains(link.task) && keys.contains(link.related) && link.task != link.related
+        }));
+
+        let related_pairs: HashSet<_> = RELATED_LINKS
+            .iter()
+            .map(|link| {
+                if link.task < link.related {
+                    (link.task, link.related)
+                } else {
+                    (link.related, link.task)
+                }
+            })
+            .collect();
+        assert_eq!(related_pairs.len(), RELATED_LINKS.len());
+        assert!(RELATED_LINKS.iter().any(|link| {
+            let task_project = TASKS
+                .iter()
+                .find(|task| task.key == link.task)
+                .unwrap()
+                .project;
+            let related_project = TASKS
+                .iter()
+                .find(|task| task.key == link.related)
+                .unwrap()
+                .project;
+            task_project != related_project
+        }));
+        assert!(RELATED_LINKS.iter().all(|related| {
+            DEPENDENCIES.iter().all(|dependency| {
+                (dependency.task, dependency.depends_on) != (related.task, related.related)
+                    && (dependency.task, dependency.depends_on) != (related.related, related.task)
+            }) && EPIC_LINKS.iter().all(|epic| {
+                (epic.epic, epic.child) != (related.task, related.related)
+                    && (epic.epic, epic.child) != (related.related, related.task)
+            })
+        }));
     }
 
     #[test]

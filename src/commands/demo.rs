@@ -14,7 +14,7 @@ use crate::config::AppConfig;
 use crate::tui;
 use crate::workspaces::Workspace;
 
-use super::demo_data::{DEPENDENCIES, EPIC_LINKS, LABELS, NOTES, PROJECTS, TASKS};
+use super::demo_data::{DEPENDENCIES, EPIC_LINKS, LABELS, NOTES, PROJECTS, RELATED_LINKS, TASKS};
 
 #[derive(Clone, Copy)]
 struct DemoClock {
@@ -40,6 +40,7 @@ struct DemoSummary {
     notes: usize,
     dependencies: usize,
     epic_links: usize,
+    related_links: usize,
 }
 
 pub(crate) async fn cmd_demo(db: Option<PathBuf>, workspace: Option<String>) -> Result<()> {
@@ -147,6 +148,7 @@ async fn seed_demo(
         notes: NOTES.len(),
         dependencies: DEPENDENCIES.len(),
         epic_links: EPIC_LINKS.len(),
+        related_links: RELATED_LINKS.len(),
     })
 }
 
@@ -179,6 +181,15 @@ async fn seed_relationships(
                 workspace,
                 task_id(task_ids, link.child)?,
                 task_id(task_ids, link.epic)?,
+            )
+            .await?;
+    }
+    for link in RELATED_LINKS {
+        database
+            .add_task_related_link(
+                workspace,
+                task_id(task_ids, link.task)?,
+                task_id(task_ids, link.related)?,
             )
             .await?;
     }
@@ -271,6 +282,7 @@ mod tests {
                 notes: 2,
                 dependencies: 6,
                 epic_links: 24,
+                related_links: 2,
             }
         );
 
@@ -338,6 +350,29 @@ mod tests {
             24
         );
         assert_eq!(tasks.iter().filter(|item| item.task.is_epic).count(), 5);
+        assert_eq!(
+            tasks.iter().map(|item| item.related.len()).sum::<usize>(),
+            4
+        );
+
+        let clipboard = tasks
+            .iter()
+            .find(|item| item.task.title == "Create tasks from clipboard text")
+            .unwrap();
+        assert_eq!(clipboard.related.len(), 1);
+        assert_eq!(
+            clipboard.related[0].title,
+            "Support share-sheet task capture"
+        );
+        let share_sheet = tasks
+            .iter()
+            .find(|item| item.task.title == "Support share-sheet task capture")
+            .unwrap();
+        assert_eq!(share_sheet.related.len(), 1);
+        assert_eq!(
+            share_sheet.related[0].title,
+            "Create tasks from clipboard text"
+        );
 
         let overdue = database
             .list_task_items(
