@@ -87,6 +87,19 @@ impl App {
     pub(super) async fn show_workspace_menu(&mut self, column: u16, row: u16) -> Result<()> {
         self.pending_shortcut.clear();
         self.store.refresh(None).await?;
+        if self.store.workspaces.len() == 2 {
+            let other_workspace = self
+                .store
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id != self.store.active_workspace.id)
+                .map(|workspace| workspace.key.clone());
+            if let Some(workspace) = other_workspace {
+                return self
+                    .submit_header_menu(HeaderMenuAction::Workspace(workspace))
+                    .await;
+            }
+        }
         let items = self
             .store
             .workspace_picker_items()

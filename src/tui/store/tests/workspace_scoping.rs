@@ -302,7 +302,7 @@ async fn switch_workspace_refreshes_workspace_scoped_state() {
 }
 
 #[tokio::test]
-async fn workspace_picker_selects_first_inactive_workspace() {
+async fn workspace_picker_order_is_stable_when_active_workspace_changes() {
     let dir = tempfile::tempdir().unwrap();
     let pool = crate::test_support::open_db(&dir.path().join("test.db"))
         .await
@@ -321,19 +321,29 @@ async fn workspace_picker_selects_first_inactive_workspace() {
     crate::workspaces::create_workspace(&mut conn, "Client Work")
         .await
         .unwrap();
+    crate::workspaces::create_workspace(&mut conn, "Team Space")
+        .await
+        .unwrap();
     drop(conn);
     store.refresh(None).await.unwrap();
 
-    let items = store.workspace_picker_items();
-    assert_eq!(items[0].label, "default");
-    assert_eq!(items[0].value, "default");
-    assert!(!items[0].selected);
-    assert!(
-        items
-            .iter()
-            .find(|item| item.value == "client-work")
-            .is_some_and(|item| item.label == "Client Work (client-work)" && item.selected)
-    );
+    let before = store
+        .workspace_picker_items()
+        .into_iter()
+        .map(|item| item.value)
+        .collect::<Vec<_>>();
+    store
+        .switch_workspace("client-work".to_string())
+        .await
+        .unwrap();
+    let after = store
+        .workspace_picker_items()
+        .into_iter()
+        .map(|item| item.value)
+        .collect::<Vec<_>>();
+
+    assert_eq!(before, vec!["client-work", "default", "team-space"]);
+    assert_eq!(after, before);
 
     reset_default_workspace(&pool).await;
 }

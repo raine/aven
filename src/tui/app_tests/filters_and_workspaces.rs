@@ -697,10 +697,47 @@ async fn header_click_opens_view_menu_and_selects_view() {
 }
 
 #[tokio::test]
-async fn header_click_opens_workspace_menu_and_switches_workspace() {
+async fn header_click_switches_directly_when_two_workspaces_are_available() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
     let mut conn = pool.acquire().await.unwrap();
     crate::workspaces::create_workspace(&mut conn, "Client Work")
+        .await
+        .unwrap();
+    drop(conn);
+
+    let workspace_column = (0..140)
+        .find(|column| {
+            matches!(
+                crate::tui::ui::header_target_at(
+                    &app.store,
+                    None,
+                    ratatui::layout::Rect::new(0, 0, 140, 2),
+                    *column,
+                    0,
+                ),
+                Some(crate::tui::ui::HeaderTarget::Workspace { .. })
+            )
+        })
+        .unwrap();
+    app.dispatch_mouse(header_click(workspace_column), (140, 24).into())
+        .await
+        .unwrap();
+
+    assert_eq!(app.store.active_workspace.key, "client-work");
+    assert!(app.overlay.is_none());
+    assert_eq!(toast_message(&app), None);
+
+    reset_default_workspace(&pool).await;
+}
+
+#[tokio::test]
+async fn header_click_opens_workspace_menu_when_more_than_two_are_available() {
+    let (_dir, pool, mut app) = test_app_with_pool().await;
+    let mut conn = pool.acquire().await.unwrap();
+    crate::workspaces::create_workspace(&mut conn, "Client Work")
+        .await
+        .unwrap();
+    crate::workspaces::create_workspace(&mut conn, "Team Space")
         .await
         .unwrap();
     drop(conn);
@@ -724,28 +761,18 @@ async fn header_click_opens_workspace_menu_and_switches_workspace() {
     app.dispatch_mouse(header_click(workspace_column), (140, 24).into())
         .await
         .unwrap();
+
     assert!(matches!(
         &app.overlay,
         Some(OverlayState::HeaderMenu(state))
             if state.column == menu_column
                 && state.row == 0
-                && state.items.iter().any(|item| item.label.contains("Client Work"))
+                && state.items.iter().map(|item| item.label.as_str()).eq([
+                    "Client Work (client-work)",
+                    "default",
+                    "Team Space (team-space)",
+                ])
     ));
-
-    app.dispatch_mouse(
-        MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: menu_column.saturating_add(2),
-            row: 3,
-            modifiers: KeyModifiers::NONE,
-        },
-        (140, 24).into(),
-    )
-    .await
-    .unwrap();
-    assert_eq!(app.store.active_workspace.key, "client-work");
-    assert!(app.overlay.is_none());
-    assert_eq!(toast_message(&app), None);
 
     reset_default_workspace(&pool).await;
 }

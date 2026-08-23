@@ -122,12 +122,6 @@ impl TuiStore {
             .map(|workspace| workspace.key.as_str());
         self.workspaces
             .iter()
-            .filter(|workspace| workspace.key == self.active_workspace.key)
-            .chain(
-                self.workspaces
-                    .iter()
-                    .filter(|workspace| workspace.key != self.active_workspace.key),
-            )
             .map(|workspace| workspace_picker_item(workspace, selected_key))
             .collect()
     }
