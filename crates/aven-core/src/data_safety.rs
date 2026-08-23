@@ -371,46 +371,48 @@ pub struct MetaRow {
 impl Database {
     pub async fn export_data(&self, exported_at: String) -> Result<AvenExport> {
         let mut conn = self.acquire_writer().await?;
-        let schema_version = db::current_schema_version(&mut conn).await?;
-        let task_related_links = scan_task_related_links(&mut conn).await?;
-        let version = if task_related_links.is_empty() {
+        let mut tx = db::begin_immediate(&mut conn).await?;
+        let schema_version = db::current_schema_version(&mut tx).await?;
+        let tables = ExportTables {
+            workspaces: scan_workspaces(&mut tx).await?,
+            projects: scan_projects(&mut tx).await?,
+            project_paths: scan_project_paths(&mut tx).await?,
+            project_id_aliases: scan_project_id_aliases(&mut tx).await?,
+            labels: scan_labels(&mut tx).await?,
+            metadata_fields: scan_metadata_fields(&mut tx).await?,
+            metadata_field_id_aliases: scan_metadata_field_id_aliases(&mut tx).await?,
+            tasks: scan_tasks(&mut tx).await?,
+            task_metadata: scan_task_metadata(&mut tx).await?,
+            task_labels: scan_task_labels(&mut tx).await?,
+            notes: scan_notes(&mut tx).await?,
+            task_dependencies: scan_task_dependencies(&mut tx).await?,
+            task_epic_links: scan_task_epic_links(&mut tx).await?,
+            task_related_links: scan_task_related_links(&mut tx).await?,
+            task_attachments: scan_task_attachments(&mut tx).await?,
+            blob_inventory: scan_blob_inventory(&mut tx).await?,
+            recurrence_series: scan_recurrence_series(&mut tx).await?,
+            recurrence_series_labels: scan_recurrence_series_labels(&mut tx).await?,
+            recurrence_series_metadata: scan_recurrence_series_metadata(&mut tx).await?,
+            recurrence_occurrences: scan_recurrence_occurrences(&mut tx).await?,
+            recurrence_pause_intervals: scan_recurrence_pause_intervals(&mut tx).await?,
+            changes: scan_changes(&mut tx).await?,
+            field_versions: scan_field_versions(&mut tx).await?,
+            conflicts: scan_conflicts(&mut tx).await?,
+            meta: scan_meta(&mut tx).await?,
+        };
+        let version = if tables.task_related_links.is_empty() {
             2
         } else {
             EXPORT_VERSION
         };
+        tx.commit().await?;
         Ok(AvenExport {
             format: EXPORT_FORMAT.to_string(),
             version,
             exported_at,
             schema_version,
             blobs_included: false,
-            tables: ExportTables {
-                workspaces: scan_workspaces(&mut conn).await?,
-                projects: scan_projects(&mut conn).await?,
-                project_paths: scan_project_paths(&mut conn).await?,
-                project_id_aliases: scan_project_id_aliases(&mut conn).await?,
-                labels: scan_labels(&mut conn).await?,
-                metadata_fields: scan_metadata_fields(&mut conn).await?,
-                metadata_field_id_aliases: scan_metadata_field_id_aliases(&mut conn).await?,
-                tasks: scan_tasks(&mut conn).await?,
-                task_metadata: scan_task_metadata(&mut conn).await?,
-                task_labels: scan_task_labels(&mut conn).await?,
-                notes: scan_notes(&mut conn).await?,
-                task_dependencies: scan_task_dependencies(&mut conn).await?,
-                task_epic_links: scan_task_epic_links(&mut conn).await?,
-                task_related_links,
-                task_attachments: scan_task_attachments(&mut conn).await?,
-                blob_inventory: scan_blob_inventory(&mut conn).await?,
-                recurrence_series: scan_recurrence_series(&mut conn).await?,
-                recurrence_series_labels: scan_recurrence_series_labels(&mut conn).await?,
-                recurrence_series_metadata: scan_recurrence_series_metadata(&mut conn).await?,
-                recurrence_occurrences: scan_recurrence_occurrences(&mut conn).await?,
-                recurrence_pause_intervals: scan_recurrence_pause_intervals(&mut conn).await?,
-                changes: scan_changes(&mut conn).await?,
-                field_versions: scan_field_versions(&mut conn).await?,
-                conflicts: scan_conflicts(&mut conn).await?,
-                meta: scan_meta(&mut conn).await?,
-            },
+            tables,
         })
     }
 
@@ -698,8 +700,13 @@ async fn ensure_supported_export(_conn: &mut SqliteConnection, export: &AvenExpo
 
 fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
     ensure!(
-        export.version == EXPORT_VERSION || export.tables.task_related_links.is_empty(),
-        "error invalid-export-snapshot related links require version {EXPORT_VERSION}"
+        export.version == EXPORT_VERSION
+            || (export.tables.task_related_links.is_empty()
+                && !export.tables.changes.iter().any(|change| matches!(
+                    change.op_type.as_str(),
+                    "related_add" | "related_remove"
+                ))),
+        "error invalid-export-snapshot related links require version {EXPORT_VERSION}; related changes are not supported in older versions"
     );
     let mut workspace_ids = HashSet::new();
     for workspace in &export.tables.workspaces {
@@ -1911,12 +1918,24 @@ async fn database_integrity_report_with_connection(
         "SELECT count(*) FROM task_related_links WHERE task_a_id >= task_b_id OR linked NOT IN (0, 1)",
     )
     .await?);
-    checks.push(count_check(
-        conn,
-        "related link changes",
-        "SELECT count(*) FROM task_related_links r LEFT JOIN changes c ON c.change_id = r.last_change_id WHERE c.change_id IS NULL",
-    )
-    .await?);
+    checks.push(
+        count_check(
+            conn,
+            "related link changes",
+            "SELECT count(*) FROM task_related_links r
+         WHERE NOT EXISTS (
+             SELECT 1 FROM changes c
+             WHERE c.change_id = r.last_change_id
+               AND c.entity_type = 'task' AND c.field = 'related'
+               AND c.op_type = CASE r.linked WHEN 1 THEN 'related_add' ELSE 'related_remove' END
+               AND CASE WHEN json_valid(c.payload) THEN json_extract(c.payload, '$.workspace_id') END = r.workspace_id
+               AND CASE WHEN json_valid(c.payload) THEN json_extract(c.payload, '$.related_task_id') END IS NOT NULL
+               AND min(c.entity_id, CASE WHEN json_valid(c.payload) THEN json_extract(c.payload, '$.related_task_id') END) = r.task_a_id
+               AND max(c.entity_id, CASE WHEN json_valid(c.payload) THEN json_extract(c.payload, '$.related_task_id') END) = r.task_b_id
+         )",
+        )
+        .await?,
+    );
     checks.push(count_check(
         conn,
         "epic link children",

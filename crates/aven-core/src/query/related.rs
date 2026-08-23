@@ -93,7 +93,9 @@ pub(crate) async fn related_links_for_tasks(
         links.sort_by(|left, right| {
             left.deleted
                 .cmp(&right.deleted)
-                .then_with(|| status_order(left.status).cmp(&status_order(right.status)))
+                .then_with(|| {
+                    super::status_order(left.status).cmp(&super::status_order(right.status))
+                })
                 .then_with(|| left.title.cmp(&right.title))
                 .then_with(|| left.linked_at.cmp(&right.linked_at))
                 .then_with(|| left.task_id.cmp(&right.task_id))
@@ -125,15 +127,4 @@ pub(crate) async fn task_related_links(
     .await?
     .remove(task_id)
     .unwrap_or_default())
-}
-
-fn status_order(status: TaskStatus) -> u8 {
-    match status {
-        TaskStatus::Active => 0,
-        TaskStatus::Todo => 1,
-        TaskStatus::Inbox => 2,
-        TaskStatus::Backlog => 3,
-        TaskStatus::Done => 4,
-        TaskStatus::Canceled => 5,
-    }
 }

@@ -146,9 +146,12 @@ impl TuiStore {
         };
         item.related
             .iter()
-            .filter(|link| !link.deleted)
             .map(|link| PickerItem {
-                label: format!("{} {}", link.display_ref, link.title),
+                label: if link.deleted {
+                    format!("{} {} [deleted]", link.display_ref, link.title)
+                } else {
+                    format!("{} {}", link.display_ref, link.title)
+                },
                 value: link.task_id.to_string(),
                 selected: false,
             })

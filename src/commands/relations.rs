@@ -9,7 +9,7 @@ use crate::query::{SortDirection, TaskFilters, TaskQueryMode, TaskSort};
 use crate::render::{changed_text, print_json_pretty, quote};
 use crate::task_render::{
     print_task_dependency_summary, task_dependency_summary_json, task_epic_link_json,
-    task_line_json_item,
+    task_line_json_item, task_related_json,
 };
 use crate::workspaces::Workspace;
 
@@ -110,22 +110,7 @@ pub(crate) async fn cmd_related(
             let task = database.resolve_task_ref(workspace, &args.task_ref).await?;
             let links = database.task_related_links(&workspace.id, &task.id).await?;
             if args.json {
-                print_json_pretty(
-                    &links
-                        .iter()
-                        .map(|link| {
-                            json!({
-                                "task_id": link.task_id,
-                                "display_ref": link.display_ref,
-                                "title": link.title,
-                                "status": link.status.as_str(),
-                                "priority": link.priority.as_str(),
-                                "deleted": link.deleted,
-                                "linked_at": link.linked_at,
-                            })
-                        })
-                        .collect::<Vec<_>>(),
-                )?;
+                print_json_pretty(&links.iter().map(task_related_json).collect::<Vec<_>>())?;
             } else {
                 println!("Related");
                 for link in links {

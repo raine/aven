@@ -1,6 +1,7 @@
 use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
 
+use crate::choices::TaskStatus;
 use crate::db::Database;
 use crate::ids::{TaskId, WorkspaceId};
 use crate::recurrence::RecurrenceSeriesId;
@@ -64,6 +65,17 @@ pub use types::{
 };
 
 pub const MAX_RECURRENCE_HISTORY_LIMIT: usize = 500;
+
+pub(crate) fn status_order(status: TaskStatus) -> u8 {
+    match status {
+        TaskStatus::Active => 0,
+        TaskStatus::Todo => 1,
+        TaskStatus::Inbox => 2,
+        TaskStatus::Backlog => 3,
+        TaskStatus::Done => 4,
+        TaskStatus::Canceled => 5,
+    }
+}
 
 fn validate_search_limit(limit: usize) -> Result<()> {
     if limit == 0 {

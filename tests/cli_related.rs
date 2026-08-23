@@ -114,6 +114,23 @@ fn related_export_uses_v3_and_round_trips_tombstone_state() {
         &["invalid-export-snapshot", "related links require version 3"],
     );
 
+    let mut empty_register = snapshot.clone();
+    empty_register["version"] = serde_json::json!(2);
+    empty_register["tables"]["task_related_links"] = serde_json::json!([]);
+    let empty_register_export = env.path("related-v2-empty-register.json");
+    std::fs::write(
+        &empty_register_export,
+        serde_json::to_vec_pretty(&empty_register).unwrap(),
+    )
+    .unwrap();
+    contains_all(
+        &fail(env.aven(
+            &target,
+            ["import", "--yes", empty_register_export.to_str().unwrap()],
+        )),
+        &["invalid-export-snapshot", "related links require version 3"],
+    );
+
     ok(env.aven(&target, ["import", "--yes", export.to_str().unwrap()]));
     contains_all(
         &ok(env.aven(&target, ["doctor", "--integrity"])),

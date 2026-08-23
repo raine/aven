@@ -44,6 +44,32 @@ async fn related_actions_add_remove_and_undo() {
 }
 
 #[tokio::test]
+async fn related_removal_picker_includes_deleted_targets_with_marker() {
+    let (_dir, pool, mut store) = test_store_with_pool().await;
+    let (related_id, _) = create_selected_task(&mut store, "Deleted related").await;
+    let (_task_id, selected) = create_selected_task(&mut store, "Picker subject").await;
+    store
+        .add_related(Some(selected), &related_id)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE tasks SET deleted = 1 WHERE id = ?")
+        .bind(&related_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    store.refresh(None).await.unwrap();
+    let selected = store
+        .tasks
+        .iter()
+        .position(|item| item.task.title == "Picker subject")
+        .unwrap();
+    let items = store.selected_related_picker_items(Some(selected));
+    assert_eq!(items.len(), 1);
+    assert!(items[0].label.contains("[deleted]"));
+    assert_eq!(items[0].value, related_id.to_string());
+}
+
+#[tokio::test]
 async fn create_undo_soft_deletes_tasks_with_related_tombstones() {
     let (_dir, pool, mut store) = test_store_with_pool().await;
     let (related_id, _) = create_selected_task(&mut store, "Related guard").await;

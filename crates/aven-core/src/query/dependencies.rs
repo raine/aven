@@ -2,7 +2,6 @@ use crate::ids::WorkspaceId;
 use anyhow::Result;
 use sqlx::{Row, SqliteConnection};
 
-use crate::choices::TaskStatus;
 use crate::refs::DisplayRefContext;
 use crate::types::Task;
 
@@ -113,8 +112,8 @@ async fn query_dependency_items(
 
     items.sort_by(|a, b| {
         b.unresolved.cmp(&a.unresolved).then_with(|| {
-            status_order(a.task.status)
-                .cmp(&status_order(b.task.status))
+            super::status_order(a.task.status)
+                .cmp(&super::status_order(b.task.status))
                 .then_with(|| a.task.title.cmp(&b.task.title))
                 .then_with(|| a.created_at.cmp(&b.created_at))
                 .then_with(|| a.task.id.cmp(&b.task.id))
@@ -139,15 +138,4 @@ async fn subject_task_is_open(
         .fetch_one(&mut *conn)
         .await?;
     Ok(open > 0)
-}
-
-fn status_order(status: TaskStatus) -> u8 {
-    match status {
-        TaskStatus::Active => 0,
-        TaskStatus::Todo => 1,
-        TaskStatus::Inbox => 2,
-        TaskStatus::Backlog => 3,
-        TaskStatus::Done => 4,
-        TaskStatus::Canceled => 5,
-    }
 }
