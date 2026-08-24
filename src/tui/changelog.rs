@@ -139,7 +139,7 @@ impl App {
             .cached
             .as_ref()
             .and_then(|cache| cache.markdown(git_ref))
-            .map(str::to_string)
+            .map(omit_empty_unreleased_section)
     }
 
     fn start_changelog_fetch(&mut self, git_ref: String) {
@@ -369,12 +369,42 @@ fn parse_changelog(source: Option<&str>) -> Result<String> {
     } else {
         source
     };
+    let body = omit_empty_unreleased_section(body);
 
     if body.is_empty() || !body.lines().any(|line| line.starts_with("## ")) {
         bail!("changelog has no release sections");
     }
 
-    Ok(body.to_string())
+    Ok(body)
+}
+
+fn omit_empty_unreleased_section(markdown: &str) -> String {
+    let lines = markdown.lines().collect::<Vec<_>>();
+    let Some(start) = lines
+        .iter()
+        .position(|line| line.trim_end() == "## Unreleased")
+    else {
+        return markdown.to_string();
+    };
+    let end = lines[start + 1..]
+        .iter()
+        .position(|line| line.starts_with("## "))
+        .map_or(lines.len(), |offset| start + 1 + offset);
+    if lines[start + 1..end]
+        .iter()
+        .any(|line| !line.trim().is_empty())
+    {
+        return markdown.to_string();
+    }
+
+    lines[..start]
+        .iter()
+        .chain(&lines[end..])
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
 }
 
 #[cfg(test)]
@@ -428,13 +458,33 @@ mod tests {
     }
 
     #[test]
-    fn github_changelog_uses_release_content_without_front_matter() {
+    fn cached_changelog_omits_an_empty_unreleased_section() {
+        let cached = "## Unreleased\n\n## v0.1.19";
+
+        assert_eq!(omit_empty_unreleased_section(cached), "## v0.1.19");
+    }
+
+    #[test]
+    fn github_changelog_omits_an_empty_unreleased_section() {
         let body = parse_changelog(Some(
             "---\ntitle: Changelog\n---\n## Unreleased\n\n## v0.1.19",
         ))
         .unwrap();
 
-        assert_eq!(body, "## Unreleased\n\n## v0.1.19");
+        assert_eq!(body, "## v0.1.19");
+    }
+
+    #[test]
+    fn github_changelog_keeps_an_unreleased_section_with_entries() {
+        let body = parse_changelog(Some(
+            "## Unreleased\n\n- Fix changelog rendering.\n\n## v0.1.19",
+        ))
+        .unwrap();
+
+        assert_eq!(
+            body,
+            "## Unreleased\n\n- Fix changelog rendering.\n\n## v0.1.19"
+        );
     }
 
     #[test]
