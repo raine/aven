@@ -573,3 +573,67 @@ async fn timestamp_orders_default_to_descending_and_can_toggle() {
     store.reverse_sort().await.unwrap();
     assert_eq!(store.view_state.direction, SortDirection::Asc);
 }
+
+#[tokio::test]
+async fn query_anchor_preserves_task_identity_across_sorting() {
+    let mut store = test_store().await;
+    for title in ["Zulu task", "Alpha task", "Middle task"] {
+        store.create_task(task_draft(title), None).await.unwrap();
+    }
+    let selected_index = 1;
+    let task_id = store.tasks[selected_index].task.id.clone();
+    let restore = SelectionRestore::Anchor(MainRowAnchor {
+        identity: MainRowIdentity::Task(task_id.clone()),
+        position: MainRowPosition::Flat(selected_index),
+    });
+
+    let selected = store
+        .set_order_restoring(TaskOrder::Title, &restore)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(store.tasks[selected].task.id, task_id);
+    assert_ne!(selected, selected_index);
+}
+
+#[tokio::test]
+async fn query_anchor_uses_clamped_flat_position_when_task_is_hidden() {
+    let mut store = test_store().await;
+    for title in ["First urgent", "Second urgent"] {
+        store
+            .create_task(
+                TaskDraft {
+                    priority: "urgent".to_string(),
+                    ..task_draft(title)
+                },
+                None,
+            )
+            .await
+            .unwrap();
+    }
+    store
+        .create_task(task_draft("Hidden task"), None)
+        .await
+        .unwrap();
+    let selected_index = store
+        .tasks
+        .iter()
+        .position(|item| item.task.title == "Hidden task")
+        .unwrap();
+    let task_id = store.tasks[selected_index].task.id.clone();
+    let restore = SelectionRestore::Anchor(MainRowAnchor {
+        identity: MainRowIdentity::Task(task_id),
+        position: MainRowPosition::Flat(selected_index),
+    });
+
+    let selected = store
+        .filter_priority_restoring("urgent".to_string(), &restore)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(store.tasks.len(), 2);
+    assert_eq!(selected, selected_index.min(1));
+    assert!(store.tasks[selected].task.priority == TaskPriority::Urgent);
+}

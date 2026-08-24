@@ -119,15 +119,14 @@ impl App {
             Action::ToggleDeletedFilter => self.toggle_deleted_filter().await?,
             Action::CycleRecurringLifecycleFilter => {
                 if self.store.view_state.query == TaskQuery::Recurring {
-                    let selected_id = self
-                        .store
-                        .selected_recurrence_series(self.list.selected_task())
-                        .map(|item| item.series.id.clone());
+                    let previous = self.capture_navigation_state();
+                    let restore = self.query_selection_restore();
                     let selected = self
                         .store
-                        .cycle_recurring_lifecycle(selected_id.as_ref())
+                        .cycle_recurring_lifecycle_restoring(&restore)
                         .await?;
-                    self.list.select_task(selected);
+                    self.push_navigation_state(previous);
+                    self.apply_filter_selection(selected);
                 } else {
                     self.set_warning("recurring lifecycle filter is available in Recurring Tasks");
                 }

@@ -4,7 +4,9 @@ use crate::tui::app::App;
 use crate::tui::overlay::{
     HeaderMenuAction, HeaderMenuItem, HeaderMenuKind, OverlayState, PickerIntent,
 };
-use crate::tui::store::{TaskLayout, TaskOrder, TaskQuery, TaskScope, TaskScopeTarget};
+use crate::tui::store::{
+    SelectionRestore, TaskLayout, TaskOrder, TaskQuery, TaskScope, TaskScopeTarget,
+};
 
 pub(crate) const FILTER_LABEL_TITLE: &str = "Filter: label";
 pub(crate) const FILTER_PRIORITY_TITLE: &str = "Filter: priority";
@@ -69,15 +71,10 @@ impl App {
     }
 
     pub(super) async fn show_view(&mut self, view: TaskQuery) -> Result<()> {
-        let previous = self.store.view_state.clone();
-        let selected_id = self
-            .list
-            .selected_task()
-            .and_then(|index| self.store.tasks.get(index))
-            .map(|item| item.task.id.clone());
+        let previous = self.capture_navigation_state();
         let selected = self
             .store
-            .show_view_preserving(view, selected_id.as_ref())
+            .show_view_restoring(view, &navigation_restore(&previous))
             .await?;
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
@@ -100,8 +97,11 @@ impl App {
     }
 
     pub(super) async fn show_scope(&mut self, scope: TaskScopeTarget) -> Result<()> {
-        let previous = self.store.view_state.clone();
-        let selected = self.store.show_scope(scope).await?;
+        let previous = self.capture_navigation_state();
+        let selected = self
+            .store
+            .show_scope_restoring(scope, &navigation_restore(&previous))
+            .await?;
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
         Ok(())
@@ -251,8 +251,16 @@ impl App {
     }
 
     pub(super) async fn clear_filters(&mut self) -> Result<()> {
-        let previous = self.store.view_state.clone();
-        let selected = self.store.clear_filters().await?;
+        let previous = self.capture_navigation_state();
+        let mut target = self.store.view_state.clone();
+        target.filter_modifiers = crate::tui::store::TaskFilterModifiers::default();
+        target.reset_projection_origin();
+        target.recurring = crate::tui::store::RecurringSeriesViewState::default();
+        let historical = self.list.filter_history_identities(&target);
+        let selected = self
+            .store
+            .clear_filters_restoring_history(&navigation_restore(&previous), &historical)
+            .await?;
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
         Ok(())
@@ -263,16 +271,22 @@ impl App {
             self.set_warning("Closed visibility is available in Queue, Open, and Epics views");
             return Ok(());
         }
-        let previous = self.store.view_state.clone();
-        let selected = self.store.toggle_closed_filter().await?;
+        let previous = self.capture_navigation_state();
+        let selected = self
+            .store
+            .toggle_closed_filter_restoring(&navigation_restore(&previous))
+            .await?;
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
         Ok(())
     }
 
     pub(super) async fn toggle_deleted_filter(&mut self) -> Result<()> {
-        let previous = self.store.view_state.clone();
-        let selected = self.store.toggle_deleted_filter().await?;
+        let previous = self.capture_navigation_state();
+        let selected = self
+            .store
+            .toggle_deleted_filter_restoring(&navigation_restore(&previous))
+            .await?;
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
         Ok(())
@@ -297,8 +311,11 @@ impl App {
         else {
             return Ok(());
         };
-        let previous = self.store.view_state.clone();
-        let selected = self.store.filter_label(label).await?;
+        let previous = self.capture_navigation_state();
+        let selected = self
+            .store
+            .filter_label_restoring(label, &navigation_restore(&previous))
+            .await?;
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
         Ok(())
@@ -312,8 +329,11 @@ impl App {
         ) else {
             return Ok(());
         };
-        let previous = self.store.view_state.clone();
-        let selected = self.store.filter_priority(priority).await?;
+        let previous = self.capture_navigation_state();
+        let selected = self
+            .store
+            .filter_priority_restoring(priority, &navigation_restore(&previous))
+            .await?;
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
         Ok(())
@@ -338,4 +358,12 @@ impl App {
         self.apply_filter_selection(selected);
         Ok(())
     }
+}
+
+fn navigation_restore(state: &crate::tui::list_surface::NavigationState) -> SelectionRestore {
+    state
+        .anchor
+        .clone()
+        .map(SelectionRestore::Anchor)
+        .unwrap_or(SelectionRestore::Default)
 }

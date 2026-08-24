@@ -11,11 +11,14 @@ use crate::tui::event::SINGLE_TASK_COPY_ACTIONS;
 use crate::tui::gist_controller::GistController;
 use crate::tui::inline_image_surface::InlineImageSurface;
 use crate::tui::inline_images::{InlineImageBackend, active_backend_from_env};
-use crate::tui::list_surface::ListSurface;
 pub(crate) use crate::tui::list_surface::{Focus, LastChangeReturnState, RecentActionReturnState};
+use crate::tui::list_surface::{ListSurface, NavigationState};
 use crate::tui::overlay::OverlayState;
 use crate::tui::shortcut_buffer::ShortcutBuffer;
-use crate::tui::store::{TaskOrder, TaskViewState, TuiStore};
+use crate::tui::store::{
+    MainRowAnchor, MainRowIdentity, MainRowPosition, SelectionRestore, TaskOrder, TaskQuery,
+    TaskViewState, TuiStore,
+};
 use crate::tui::sync_controller::SyncController;
 use crate::tui::toast::{Toast, ToastSeverity};
 
@@ -626,7 +629,70 @@ impl App {
         self.overlay = Some(OverlayState::Command { state });
     }
 
-    pub(super) fn push_navigation_state(&mut self, previous: TaskViewState) {
+    pub(super) fn main_row_anchor(&self) -> Option<MainRowAnchor> {
+        let selected = self.list.selected_task()?;
+        let identity = match self.store.view_state.query {
+            TaskQuery::Recurring => MainRowIdentity::RecurrenceSeries(
+                self.store
+                    .selected_recurrence_series(Some(selected))?
+                    .series
+                    .id
+                    .clone(),
+            ),
+            TaskQuery::RecentActions => MainRowIdentity::RecentAction(
+                self.store
+                    .selected_recent_action(Some(selected))?
+                    .change_id
+                    .clone(),
+            ),
+            _ => MainRowIdentity::Task(self.store.selected_task(Some(selected))?.task.id.clone()),
+        };
+        let position = if self.store.view_state.is_columns() {
+            let (column, row) =
+                crate::tui::columns::ColumnBoard::new(&self.store.task_columns, &self.store.tasks)
+                    .position(selected)?;
+            MainRowPosition::Column { column, row }
+        } else if self.store.view_state.query == TaskQuery::Epics {
+            MainRowPosition::EpicVisualRow(crate::tui::ui::task_visual_row(&self.store, selected)?)
+        } else {
+            MainRowPosition::Flat(selected)
+        };
+        Some(MainRowAnchor { identity, position })
+    }
+
+    fn main_row_identity_at(&self, selected: usize) -> Option<MainRowIdentity> {
+        match self.store.view_state.query {
+            TaskQuery::Recurring => Some(MainRowIdentity::RecurrenceSeries(
+                self.store
+                    .selected_recurrence_series(Some(selected))?
+                    .series
+                    .id
+                    .clone(),
+            )),
+            TaskQuery::RecentActions => Some(MainRowIdentity::RecentAction(
+                self.store
+                    .selected_recent_action(Some(selected))?
+                    .change_id
+                    .clone(),
+            )),
+            _ => Some(MainRowIdentity::Task(
+                self.store.selected_task(Some(selected))?.task.id.clone(),
+            )),
+        }
+    }
+
+    pub(super) fn query_selection_restore(&self) -> SelectionRestore {
+        self.main_row_anchor()
+            .map(SelectionRestore::Anchor)
+            .unwrap_or(SelectionRestore::Default)
+    }
+
+    pub(super) fn capture_navigation_state(&self) -> NavigationState {
+        self.list
+            .capture_navigation(self.store.view_state.clone(), self.main_row_anchor())
+    }
+
+    pub(super) fn push_navigation_state(&mut self, previous: NavigationState) {
         self.list.push_navigation(previous, &self.store.view_state);
     }
 
@@ -733,45 +799,49 @@ impl App {
         Ok(false)
     }
 
-    fn apply_navigation_selection(
-        &mut self,
-        selected: Option<usize>,
-        fallback: Option<usize>,
-        table_offset: usize,
-    ) {
-        let row_count = match self.store.view_state.query {
-            crate::tui::store::TaskQuery::Recurring => self.store.recurrence_series.len(),
-            crate::tui::store::TaskQuery::RecentActions => self.store.recent_actions.len(),
-            _ => self.store.tasks.len(),
-        };
-        self.apply_filter_selection(selected.filter(|&index| index < row_count).or(fallback));
-        self.list.set_task_offset(table_offset);
+    fn apply_navigation_selection(&mut self, target: &NavigationState, selected: Option<usize>) {
+        let identity_recovered = target.anchor.as_ref().is_some_and(|anchor| {
+            selected
+                .and_then(|index| self.main_row_identity_at(index))
+                .is_some_and(|identity| identity == anchor.identity)
+        });
+        self.apply_filter_selection(selected);
+        if identity_recovered {
+            self.list.set_task_offset(target.table_offset);
+        }
     }
 
     pub(super) async fn go_back(&mut self) -> Result<()> {
-        let current = self.store.view_state.clone();
+        let current = self.capture_navigation_state();
         let Some(previous) = self.list.pop_navigation(current) else {
             self.set_info("no previous navigation state");
             return Ok(());
         };
-        let returns_to_series =
-            previous.view_state.query == crate::tui::store::TaskQuery::Recurring;
+        let returns_to_series = previous.view_state.query == TaskQuery::Recurring;
         let selected = returns_to_series
             .then_some(self.series_detail_return.as_ref())
             .flatten()
             .map(|anchor| {
                 crate::tui::store::MainRowSelection::RecurrenceSeries(anchor.series_id.clone())
             });
-        let result = self
+        let restore = previous
+            .anchor
+            .clone()
+            .map(SelectionRestore::Anchor)
+            .or_else(|| selected.map(SelectionRestore::Identity))
+            .unwrap_or(SelectionRestore::Default);
+        let result = match self
             .store
-            .restore_view_state(previous.view_state, selected.as_ref())
-            .await?;
-        let restored_selected = if returns_to_series && selected.is_some() {
-            result.selected
-        } else {
-            previous.selected_index
+            .restore_view_state_with_restore(previous.view_state.clone(), &restore)
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                let _ = self.list.pop_forward_navigation(previous.clone());
+                return Err(error);
+            }
         };
-        self.apply_navigation_selection(restored_selected, result.selected, previous.table_offset);
+        self.apply_navigation_selection(&previous, result.selected);
         if returns_to_series && let Some(anchor) = self.series_detail_return.take() {
             if self
                 .store
@@ -797,13 +867,32 @@ impl App {
     }
 
     pub(super) async fn go_forward(&mut self) -> Result<()> {
-        let current = self.store.view_state.clone();
+        let current = self.capture_navigation_state();
         let Some(next) = self.list.pop_forward_navigation(current) else {
             self.set_info("no next navigation state");
             return Ok(());
         };
-        let result = self.store.restore_view_state(next.view_state, None).await?;
-        self.apply_navigation_selection(next.selected_index, result.selected, next.table_offset);
+        let restore = next
+            .anchor
+            .clone()
+            .map(SelectionRestore::Anchor)
+            .unwrap_or_else(|| {
+                next.selected_index
+                    .map(SelectionRestore::Index)
+                    .unwrap_or(SelectionRestore::Default)
+            });
+        let result = match self
+            .store
+            .restore_view_state_with_restore(next.view_state.clone(), &restore)
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                let _ = self.list.pop_navigation(next.clone());
+                return Err(error);
+            }
+        };
+        self.apply_navigation_selection(&next, result.selected);
         if let Some(project) = result.fallback_scope {
             self.set_warning(format!("project scope {project} is no longer available"));
         }
@@ -819,16 +908,26 @@ impl App {
     }
 
     pub(super) async fn set_sort(&mut self, sort: TaskOrder) -> Result<()> {
-        let previous = self.store.view_state.clone();
-        let selected = self.store.set_order(sort).await?;
+        let previous = self.capture_navigation_state();
+        let restore = previous
+            .anchor
+            .clone()
+            .map(SelectionRestore::Anchor)
+            .unwrap_or(SelectionRestore::Default);
+        let selected = self.store.set_order_restoring(sort, &restore).await?;
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
         Ok(())
     }
 
     pub(super) async fn reverse_sort(&mut self) -> Result<()> {
-        let previous = self.store.view_state.clone();
-        let selected = self.store.reverse_sort().await?;
+        let previous = self.capture_navigation_state();
+        let restore = previous
+            .anchor
+            .clone()
+            .map(SelectionRestore::Anchor)
+            .unwrap_or(SelectionRestore::Default);
+        let selected = self.store.reverse_sort_restoring(&restore).await?;
         self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
         Ok(())

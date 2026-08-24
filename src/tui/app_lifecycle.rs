@@ -520,7 +520,10 @@ impl App {
                 )
             });
         let selected_id = match self.store.view_state.query {
-            TaskQuery::RecentActions => None,
+            TaskQuery::RecentActions => self
+                .store
+                .selected_recent_action(selected)
+                .map(|item| MainRowSelection::RecentAction(item.change_id.clone())),
             TaskQuery::Recurring => self
                 .store
                 .selected_recurrence_series(selected)
