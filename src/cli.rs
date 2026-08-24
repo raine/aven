@@ -97,7 +97,7 @@ fn render_top_level_help(command: &clap::Command) -> String {
         "{} aven {} {}",
         paint_heading("USAGE:"),
         paint("[OPTIONS]", LITERAL_STYLE),
-        paint("<COMMAND>", PLACEHOLDER_STYLE)
+        paint("[COMMAND]", PLACEHOLDER_STYLE)
     )
     .unwrap();
     writeln!(&mut help).unwrap();
@@ -241,7 +241,7 @@ pub struct Cli {
     #[arg(long, global = true, help = "Use a specific workspace by name or key")]
     pub(crate) workspace: Option<String>,
     #[command(subcommand)]
-    pub(crate) command: Commands,
+    pub(crate) command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -1465,15 +1465,24 @@ mod tests {
     }
 
     #[test]
+    fn omitted_command_is_accepted_for_default_tui_launch() {
+        let parsed = Cli::try_parse_from(["aven"]).unwrap();
+        assert!(parsed.command.is_none());
+
+        let parsed = Cli::try_parse_from(["aven", "--db", "local.db"]).unwrap();
+        assert!(parsed.command.is_none());
+    }
+
+    #[test]
     fn application_update_and_task_edit_are_distinct_commands() {
         let update = Cli::try_parse_from(["aven", "update"]).unwrap();
         assert!(matches!(
             update.command,
-            Commands::Update(SelfUpdateArgs { yes: false })
+            Some(Commands::Update(SelfUpdateArgs { yes: false }))
         ));
 
         let edit = Cli::try_parse_from(["aven", "edit", "APP-1234", "--status", "active"]).unwrap();
-        assert!(matches!(edit.command, Commands::Edit(_)));
+        assert!(matches!(edit.command, Some(Commands::Edit(_))));
         assert!(Cli::try_parse_from(["aven", "edit"]).is_err());
         assert!(Cli::try_parse_from(["aven", "update", "APP-1234"]).is_err());
     }
@@ -1484,7 +1493,7 @@ mod tests {
             "aven", "conflict", "resolve", "APP-1234", "title", "--use", "remote",
         ])
         .unwrap();
-        let Commands::Conflict(ConflictCommand {
+        let Some(Commands::Conflict(ConflictCommand {
             command:
                 ConflictSubcommand::Resolve {
                     task_ref,
@@ -1494,7 +1503,7 @@ mod tests {
                     value_file,
                     value_stdin,
                 },
-        }) = parsed.command
+        })) = parsed.command
         else {
             panic!("expected conflict resolve command");
         };
@@ -1529,9 +1538,9 @@ mod tests {
             "aven", "label", "list", "--search", "bug", "--limit", "3", "--json",
         ])
         .unwrap();
-        let Commands::Label(LabelCommand {
+        let Some(Commands::Label(LabelCommand {
             command: LabelSubcommand::List(label_args),
-        }) = label.command
+        })) = label.command
         else {
             panic!("expected label list command");
         };
@@ -1543,9 +1552,9 @@ mod tests {
             "aven", "project", "list", "--search", "agent", "--limit", "5", "--json",
         ])
         .unwrap();
-        let Commands::Project(ProjectCommand {
+        let Some(Commands::Project(ProjectCommand {
             command: ProjectSubcommand::List(project_args),
-        }) = project.command
+        })) = project.command
         else {
             panic!("expected project list command");
         };
@@ -1557,22 +1566,22 @@ mod tests {
     #[test]
     fn result_limits_preserve_defaults_and_validate_explicit_values() {
         let search = Cli::try_parse_from(["aven", "search", "task"]).unwrap();
-        let Commands::Search(search_args) = search.command else {
+        let Some(Commands::Search(search_args)) = search.command else {
             panic!("expected search command");
         };
         assert_eq!(search_args.limit, 50);
 
         let history = Cli::try_parse_from(["aven", "recur", "history", "RCR-1234"]).unwrap();
-        let Commands::Recur(RecurCommand {
+        let Some(Commands::Recur(RecurCommand {
             command: RecurSubcommand::History(history_args),
-        }) = history.command
+        })) = history.command
         else {
             panic!("expected recurrence history command");
         };
         assert_eq!(history_args.limit, 100);
 
         let list = Cli::try_parse_from(["aven", "list"]).unwrap();
-        let Commands::List(list_args) = list.command else {
+        let Some(Commands::List(list_args)) = list.command else {
             panic!("expected list command");
         };
         assert_eq!(list_args.limit, None);
@@ -1616,9 +1625,9 @@ mod tests {
             "task",
         ])
         .unwrap();
-        let Commands::Internal(InternalCommand {
+        let Some(Commands::Internal(InternalCommand {
             command: InternalSubcommand::NaturalAdd(args),
-        }) = parsed.command
+        })) = parsed.command
         else {
             panic!("expected internal natural-add command");
         };
@@ -1657,7 +1666,7 @@ mod tests {
             "--natural",
         ])
         .unwrap();
-        let Commands::Tui(args) = parsed.command else {
+        let Some(Commands::Tui(args)) = parsed.command else {
             panic!("expected tui command");
         };
         assert_eq!(args.project.as_deref(), Some("app"));
@@ -1701,21 +1710,21 @@ mod tests {
     #[test]
     fn tui_launch_parses_task_and_optional_project_value() {
         let parsed = Cli::try_parse_from(["aven", "tui", "APP-1234"]).unwrap();
-        let Commands::Tui(args) = parsed.command else {
+        let Some(Commands::Tui(args)) = parsed.command else {
             panic!("expected tui command");
         };
         assert_eq!(args.task_ref.as_deref(), Some("APP-1234"));
         assert_eq!(args.project, None);
 
         let parsed = Cli::try_parse_from(["aven", "tui", "-p", "app"]).unwrap();
-        let Commands::Tui(args) = parsed.command else {
+        let Some(Commands::Tui(args)) = parsed.command else {
             panic!("expected tui command");
         };
         assert_eq!(args.project.as_deref(), Some("app"));
         assert_eq!(args.task_ref, None);
 
         let parsed = Cli::try_parse_from(["aven", "tui", "-p", "--view", "inbox"]).unwrap();
-        let Commands::Tui(args) = parsed.command else {
+        let Some(Commands::Tui(args)) = parsed.command else {
             panic!("expected tui command");
         };
         assert_eq!(args.project.as_deref(), Some(""));

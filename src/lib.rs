@@ -46,10 +46,13 @@ use workspaces::resolve_active_workspace_with_database;
 
 pub async fn run_cli() -> Result<()> {
     let cli = cli::parse();
-    let metadata = cli.command.metadata();
+    let command = cli
+        .command
+        .unwrap_or_else(|| Commands::Tui(cli::TuiArgs::default()));
+    let metadata = command.metadata();
     logging::init(metadata.log_mode)?;
 
-    match CliDispatch::from(cli.command) {
+    match CliDispatch::from(command) {
         CliDispatch::Standalone(command) => {
             dispatch_standalone(cli.db, cli.workspace, command).await
         }
