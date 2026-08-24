@@ -500,7 +500,7 @@ fn add_task_validation_and_help_are_visible() {
     assert!(help.contains("Composer help"));
     assert!(help.contains("Shift+Tab"));
     assert!(help.contains("Ctrl-g"));
-    assert!(help.contains("one-off Available / Due"));
+    assert!(help.contains("one-off Due"));
     assert!(help.contains("Schedule editor"));
     assert!(help.contains("↑/↓ move"));
     assert!(help.contains("aven.raine.dev/tui/#capture-tasks"));

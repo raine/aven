@@ -1086,6 +1086,12 @@ async fn command_panel_add_related_keeps_the_captured_parent_task() {
     let subject_ref = app.store.tasks[subject_index].display_ref.clone();
     let other_index =
         create_and_select_task(&mut app, test_task_draft("Different live selection")).await;
+    let subject_index = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == subject_id)
+        .unwrap();
     app.list.select_task(Some(subject_index));
     app.show_detail(0);
 
