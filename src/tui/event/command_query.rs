@@ -144,6 +144,8 @@ pub(crate) fn command_availability(
             });
     };
     let domain = snapshot.routing_domain();
+    let activates_sidebar =
+        spec.action == Action::ToggleDetail && snapshot.sidebar_target().is_some();
     if spec.scope_policy() == CommandScopePolicy::ListOnly && domain != super::RoutingDomain::Normal
     {
         return disabled("available only in the task list".to_string());
@@ -211,7 +213,7 @@ pub(crate) fn command_availability(
         BulkSupport::SingleOnly(_) if marked > 1 => {
             return disabled("requires one task".to_string());
         }
-        BulkSupport::SingleOnly(_) | BulkSupport::Focused if !has_primary => {
+        BulkSupport::SingleOnly(_) | BulkSupport::Focused if !has_primary && !activates_sidebar => {
             return disabled("requires a selected task".to_string());
         }
         BulkSupport::BulkControl if spec.action == Action::ClearMarks && marked == 0 => {

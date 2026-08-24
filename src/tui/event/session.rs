@@ -203,6 +203,18 @@ impl CommandSessionSnapshot {
             _ => None,
         }
     }
+
+    pub(crate) fn sidebar_target(&self) -> Option<&SidebarCommandTarget> {
+        match &self.surface {
+            CommandSurfaceSnapshot::List {
+                focused_sidebar, ..
+            }
+            | CommandSurfaceSnapshot::RecurrenceList {
+                focused_sidebar, ..
+            } => focused_sidebar.as_ref(),
+            CommandSurfaceSnapshot::Detail { .. } | CommandSurfaceSnapshot::AddTaskOnly => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -215,6 +227,7 @@ pub(crate) enum ResolvedCommandTarget {
         related: TaskId,
         section: DetailSection,
     },
+    Sidebar(SidebarCommandTarget),
     SidebarProject(String),
     Attachment {
         owner: TaskId,

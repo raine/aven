@@ -288,6 +288,32 @@ impl App {
             .selected_sidebar()
             .and_then(|index| self.store.sidebar_entries.get(index))
             .and_then(|entry| entry.target.clone());
+        self.apply_sidebar_target(target).await
+    }
+
+    pub(super) async fn apply_sidebar_command_target(
+        &mut self,
+        target: crate::tui::event::SidebarCommandTarget,
+    ) -> Result<()> {
+        use crate::tui::event::SidebarCommandTarget;
+        use crate::tui::store::{SidebarEntryTarget, TaskScopeTarget};
+
+        let target = match target {
+            SidebarCommandTarget::View(view) => SidebarEntryTarget::View(view),
+            SidebarCommandTarget::Project(project) => {
+                SidebarEntryTarget::Scope(TaskScopeTarget::Project(project))
+            }
+            SidebarCommandTarget::Workspace => {
+                SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)
+            }
+        };
+        self.apply_sidebar_target(Some(target)).await
+    }
+
+    async fn apply_sidebar_target(
+        &mut self,
+        target: Option<crate::tui::store::SidebarEntryTarget>,
+    ) -> Result<()> {
         match target {
             Some(crate::tui::store::SidebarEntryTarget::View(view)) => self.show_view(view).await?,
             Some(crate::tui::store::SidebarEntryTarget::Scope(scope)) => {
