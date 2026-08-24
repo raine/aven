@@ -1907,21 +1907,19 @@ async fn recurrence_due_control_cycles_each_policy() {
 }
 
 #[tokio::test]
-async fn add_task_ctrl_a_opens_once_schedule_at_availability() {
+async fn add_task_ctrl_a_moves_title_cursor_to_start() {
     let mut app = test_app().await;
     app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    type_chars(&mut app, "Write docs").await;
 
     app.handle_overlay_key(ctrl_a()).await.unwrap();
 
     assert!(matches!(
         &app.overlay,
         Some(OverlayState::AddTask(state))
-            if matches!(
-                &state.mode,
-                crate::tui::overlay::AddTaskMode::Schedule(editor)
-                    if editor.mode == crate::tui::overlay::ScheduleEditorMode::Once
-                        && editor.focus == crate::tui::overlay::ScheduleEditorField::Available
-            )
+            if state.mode == crate::tui::overlay::AddTaskMode::Compose
+                && state.title.cursor == 0
+                && state.title.text == "Write docs"
     ));
 }
 

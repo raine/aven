@@ -584,7 +584,7 @@ const COMPOSER_HELP_TOPICS: &[(&str, &str)] = &[
         "Schedule examples",
         "tomorrow · due Friday · every Friday at 09:00",
     ),
-    ("Ctrl-a / Ctrl-u", "edit one-off Available / Due"),
+    ("Ctrl-u", "edit one-off Due"),
     (
         "Schedule editor",
         "↑/↓ move · ←/→ choose · Enter apply · Esc cancel",

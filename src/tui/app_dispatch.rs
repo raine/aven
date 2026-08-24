@@ -1479,20 +1479,6 @@ impl App {
                 return Ok(());
             }
             if key.modifiers.contains(KeyModifiers::CONTROL)
-                && key.code == KeyCode::Char('a')
-                && state.mode == AddTaskMode::Compose
-            {
-                self.overlay = Some(overlay);
-                if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
-                    let mut editor = state.schedule_editor(ScheduleEditorField::Available);
-                    editor.mode = ScheduleEditorMode::Once;
-                    editor.focus = ScheduleEditorField::Available;
-                    editor.refresh();
-                    state.mode = AddTaskMode::Schedule(editor);
-                }
-                return Ok(());
-            }
-            if key.modifiers.contains(KeyModifiers::CONTROL)
                 && key.code == KeyCode::Char('u')
                 && state.mode == AddTaskMode::Compose
             {
