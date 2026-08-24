@@ -144,6 +144,21 @@ impl<'a> ColumnBoard<'a> {
         }
     }
 
+    pub(crate) fn selection_at_or_near(&self, column: usize, row: usize) -> Option<usize> {
+        if let Some(tasks) = self.columns.get(column).map(|lane| &lane.task_indices)
+            && !tasks.is_empty()
+        {
+            return tasks.get(row.min(tasks.len() - 1)).copied();
+        }
+        self.columns
+            .iter()
+            .enumerate()
+            .filter(|(_, lane)| !lane.task_indices.is_empty())
+            .min_by_key(|(candidate, _)| (candidate.abs_diff(column), *candidate))
+            .and_then(|(_, lane)| lane.task_indices.get(row.min(lane.task_indices.len() - 1)))
+            .copied()
+    }
+
     pub(crate) fn first(&self) -> Option<usize> {
         self.columns
             .iter()
@@ -371,6 +386,8 @@ mod tests {
         assert_eq!(board.move_vertical_bounded(Some(0), -1), Some(0));
         assert_eq!(board.move_vertical_bounded(Some(1), 1), Some(1));
         assert_eq!(board.move_vertical_bounded(Some(0), 1), Some(1));
+        assert_eq!(board.selection_at_or_near(1, 1), Some(1));
+        assert_eq!(board.selection_at_or_near(2, 9), Some(2));
     }
 
     #[test]

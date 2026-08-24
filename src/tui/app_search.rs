@@ -242,20 +242,21 @@ impl App {
     }
 
     async fn accept_search_input(&mut self, input: String) -> Result<()> {
-        let previous = self.store.view_state.clone();
+        let previous = self.capture_navigation_state();
         let selected = if self.store.view_state.query == crate::tui::store::TaskQuery::Recurring {
-            let selected_id = self
-                .store
-                .selected_recurrence_series(self.list.selected_task())
-                .map(|item| item.series.id.clone());
+            let restore = previous
+                .anchor
+                .clone()
+                .map(crate::tui::store::SelectionRestore::Anchor)
+                .unwrap_or(crate::tui::store::SelectionRestore::Default);
             self.store
-                .set_recurring_search(input, selected_id.as_ref())
+                .set_recurring_search_restoring(input, &restore)
                 .await?
         } else {
             self.store.accept_search(&input).await?
         };
-        self.list.select_task(selected);
         self.push_navigation_state(previous);
+        self.list.select_task(selected);
         Ok(())
     }
 

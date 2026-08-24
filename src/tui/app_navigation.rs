@@ -325,8 +325,6 @@ impl App {
         self.overlay = None;
         self.restore_sidebar_selection();
         self.prune_task_marks();
-        self.list
-            .select_task((self.store.main_row_count() > 0).then_some(0));
         Ok(())
     }
 

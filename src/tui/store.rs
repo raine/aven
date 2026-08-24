@@ -41,11 +41,11 @@ pub(crate) use recurrence::recurrence_draft;
 pub(crate) use task_commands::{PriorityMutation, TaskDateField, TaskTextField};
 pub(crate) use task_creation::task_creation_committed;
 pub(crate) use types::{
-    ClosedTaskVisibility, ConflictTarget, MainRowSelection, MutationMessage,
-    RecurringSeriesViewState, SidebarEntry, SidebarEntryTarget, SyncStatusCheck,
-    TaskFilterModifiers, TaskLayout, TaskListRenderMode, TaskOrder, TaskProjectionOrigin,
-    TaskQuery, TaskScope, TaskScopeTarget, TaskViewState, TuiDatabaseStats, TuiSyncStatus,
-    UndoPresentation, mutation_committed,
+    ClosedTaskVisibility, ConflictTarget, MainRowAnchor, MainRowIdentity, MainRowPosition,
+    MainRowSelection, MutationMessage, RecurringSeriesViewState, SelectionRestore, SidebarEntry,
+    SidebarEntryTarget, SyncStatusCheck, TaskFilterModifiers, TaskLayout, TaskListRenderMode,
+    TaskOrder, TaskProjectionOrigin, TaskQuery, TaskScope, TaskScopeTarget, TaskViewState,
+    TuiDatabaseStats, TuiSyncStatus, UndoPresentation, mutation_committed,
 };
 #[cfg(test)]
 pub(crate) use types::{DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts};
@@ -413,7 +413,11 @@ impl TuiStore {
         &mut self,
         selected: Option<&MainRowSelection>,
     ) -> Result<ScopeRefreshResult> {
-        self.refresh_replacement(selected, None, None).await
+        let restore = selected
+            .cloned()
+            .map(SelectionRestore::Identity)
+            .unwrap_or(SelectionRestore::Default);
+        self.refresh_replacement(&restore, None, None).await
     }
 
     pub(crate) async fn refresh_preserving_visible_deleted(
@@ -454,7 +458,10 @@ impl TuiStore {
         selected_id: Option<&crate::ids::TaskId>,
     ) -> Result<ScopeRefreshResult> {
         let selected = selected_id.cloned().map(MainRowSelection::Task);
-        self.refresh_replacement(selected.as_ref(), Some(view_state), None)
+        let restore = selected
+            .map(SelectionRestore::Identity)
+            .unwrap_or(SelectionRestore::Default);
+        self.refresh_replacement(&restore, Some(view_state), None)
             .await
     }
 
@@ -463,13 +470,17 @@ impl TuiStore {
         active_workspace: Workspace,
         view_state: TaskViewState,
     ) -> Result<ScopeRefreshResult> {
-        self.refresh_replacement(None, Some(view_state), Some(active_workspace))
-            .await
+        self.refresh_replacement(
+            &SelectionRestore::Default,
+            Some(view_state),
+            Some(active_workspace),
+        )
+        .await
     }
 
     pub(super) async fn refresh_replacement(
         &mut self,
-        selected: Option<&MainRowSelection>,
+        restore: &SelectionRestore,
         view_state: Option<TaskViewState>,
         active_workspace: Option<Workspace>,
     ) -> Result<ScopeRefreshResult> {
@@ -490,7 +501,7 @@ impl TuiStore {
             replacement.fail_next_refresh = fail_next_refresh;
         }
         let result = match replacement
-            .refresh_in_place(selected, recurrence_detail_id.as_ref())
+            .refresh_in_place(restore, recurrence_detail_id.as_ref())
             .await
         {
             Ok(result) => result,
@@ -537,7 +548,7 @@ impl TuiStore {
 
     async fn refresh_in_place(
         &mut self,
-        selected: Option<&MainRowSelection>,
+        restore: &SelectionRestore,
         recurrence_detail_id: Option<&aven_core::recurrence::RecurrenceSeriesId>,
     ) -> Result<ScopeRefreshResult> {
         let workspace_id = self.active_workspace.id.clone();
@@ -616,7 +627,7 @@ impl TuiStore {
         self.rebuild_sidebar();
         self.last_refresh = Instant::now();
         Ok(ScopeRefreshResult {
-            selected: self.restored_main_selection(selected),
+            selected: self.restored_main_selection(restore),
             fallback_scope,
         })
     }

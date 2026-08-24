@@ -148,3 +148,123 @@ async fn sidebar_click_uses_scroll_offset_in_wide_layout() {
     );
     assert_eq!(app.list.selected_sidebar(), Some(project_index));
 }
+
+#[tokio::test]
+async fn compatible_query_transitions_follow_selected_task_identity() {
+    let mut app = test_app().await;
+    for title in ["Zulu task", "Alpha task", "Middle task"] {
+        app.store
+            .create_task(test_task_draft(title), None)
+            .await
+            .unwrap();
+    }
+    app.list.select_task(Some(1));
+    let selected_id = app.store.tasks[1].task.id.clone();
+
+    app.set_sort(TaskOrder::Title).await.unwrap();
+
+    let selected = app.list.selected_task().unwrap();
+    assert_eq!(app.store.tasks[selected].task.id, selected_id);
+    assert_eq!(app.store.view_state.order, TaskOrder::Title);
+}
+
+#[tokio::test]
+async fn sidebar_transition_keeps_refresh_selected_task() {
+    let mut app = test_app().await;
+    for title in ["Zulu task", "Alpha task", "Middle task"] {
+        app.store
+            .create_task(test_task_draft(title), None)
+            .await
+            .unwrap();
+    }
+    app.list.select_task(Some(1));
+    let selected_id = app.store.tasks[1].task.id.clone();
+    let open = app
+        .store
+        .sidebar_entries
+        .iter()
+        .position(|entry| entry.target == Some(SidebarEntryTarget::View(TaskQuery::Open)))
+        .unwrap();
+    app.list.select_sidebar(Some(open));
+
+    app.apply_sidebar_selection().await.unwrap();
+
+    let selected = app.list.selected_task().unwrap();
+    assert_eq!(app.store.tasks[selected].task.id, selected_id);
+}
+
+#[tokio::test]
+async fn clearing_filters_restores_applicable_historical_identity() {
+    let mut app = test_app().await;
+    for title in ["First urgent", "Second urgent"] {
+        app.store
+            .create_task(
+                TaskDraft {
+                    priority: "urgent".to_string(),
+                    ..test_task_draft(title)
+                },
+                None,
+            )
+            .await
+            .unwrap();
+    }
+    app.store
+        .create_task(test_task_draft("Hidden task"), None)
+        .await
+        .unwrap();
+    let hidden = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.title == "Hidden task")
+        .unwrap();
+    let hidden_id = app.store.tasks[hidden].task.id.clone();
+    app.list.select_task(Some(hidden));
+
+    app.submit_filter_priority(vec!["urgent".to_string()])
+        .await
+        .unwrap();
+    assert!(
+        app.store
+            .selected_task(app.list.selected_task())
+            .is_some_and(|item| item.task.id != hidden_id)
+    );
+
+    app.clear_filters().await.unwrap();
+
+    assert_eq!(
+        app.store
+            .selected_task(app.list.selected_task())
+            .unwrap()
+            .task
+            .id,
+        hidden_id
+    );
+}
+
+#[tokio::test]
+async fn failed_query_transition_preserves_selection_and_navigation() {
+    let mut app = test_app().await;
+    for title in ["First", "Second"] {
+        app.store
+            .create_task(test_task_draft(title), None)
+            .await
+            .unwrap();
+    }
+    app.list.select_task(Some(1));
+    let selected_id = app.store.tasks[1].task.id.clone();
+    app.store.fail_next_refresh();
+
+    assert!(app.set_sort(TaskOrder::Title).await.is_err());
+
+    assert_eq!(app.store.view_state.query, TaskQuery::Queue);
+    assert_eq!(
+        app.store
+            .selected_task(app.list.selected_task())
+            .unwrap()
+            .task
+            .id,
+        selected_id
+    );
+    assert!(app.list.navigation_is_empty());
+}

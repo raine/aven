@@ -141,9 +141,33 @@ pub(crate) struct RecurringSeriesViewState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum MainRowSelection {
+pub(crate) enum MainRowIdentity {
     Task(crate::ids::TaskId),
     RecurrenceSeries(aven_core::recurrence::RecurrenceSeriesId),
+    RecentAction(String),
+}
+
+pub(crate) type MainRowSelection = MainRowIdentity;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum MainRowPosition {
+    Flat(usize),
+    Column { column: usize, row: usize },
+    EpicVisualRow(usize),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MainRowAnchor {
+    pub(crate) identity: MainRowIdentity,
+    pub(crate) position: MainRowPosition,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SelectionRestore {
+    Default,
+    Identity(MainRowIdentity),
+    Anchor(MainRowAnchor),
+    Index(usize),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

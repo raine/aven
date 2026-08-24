@@ -25,6 +25,10 @@ impl<T> BoundedHistory<T> {
     pub(super) fn pop(&mut self) -> Option<T> {
         self.entries.pop_back()
     }
+
+    pub(super) fn iter_rev(&self) -> impl Iterator<Item = &T> {
+        self.entries.iter().rev()
+    }
 }
 
 impl<T: PartialEq> BoundedHistory<T> {

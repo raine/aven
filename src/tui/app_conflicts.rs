@@ -17,7 +17,13 @@ pub(crate) const CONFLICT_DETAILS_TITLE: &str = "Conflict details";
 
 impl App {
     pub(super) async fn open_conflict_list(&mut self) -> Result<()> {
-        let selected = self.store.show_view(TaskQuery::Conflicts).await?;
+        let previous = self.capture_navigation_state();
+        let restore = self.query_selection_restore();
+        let selected = self
+            .store
+            .show_view_restoring(TaskQuery::Conflicts, &restore)
+            .await?;
+        self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
         let count = self
             .store

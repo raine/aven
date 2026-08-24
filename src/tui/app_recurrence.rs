@@ -242,12 +242,12 @@ impl App {
         };
         let series_id = detail.series.id.clone();
         let scroll = self.detail.state().map_or(0, |detail| detail.scroll());
-        let previous = self.store.view_state.clone();
+        let previous = self.capture_navigation_state();
         let selected = self.store.show_task_by_id(task_id).await?;
         let Some(selected) = selected else {
             let restore = crate::tui::store::MainRowSelection::RecurrenceSeries(series_id.clone());
             self.store
-                .restore_view_state(previous, Some(&restore))
+                .restore_view_state(previous.view_state.clone(), Some(&restore))
                 .await?;
             self.store.load_recurrence_series_detail(&series_id).await?;
             self.set_warning("occurrence task is unavailable");
@@ -625,9 +625,11 @@ impl App {
                     self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
                     return Ok(());
                 };
-                let previous = self.store.view_state.clone();
+                let previous = self.capture_navigation_state();
                 let Some(selected) = self.store.show_task_by_id(task_id).await? else {
-                    self.store.restore_view_state(previous, None).await?;
+                    self.store
+                        .restore_view_state(previous.view_state.clone(), None)
+                        .await?;
                     self.set_warning("linked occurrence task is unavailable");
                     self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
                     return Ok(());

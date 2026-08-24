@@ -6,7 +6,7 @@ use ratatui::widgets::{ListState, TableState};
 use crate::ids::TaskId;
 use crate::tui::bounded_history::BoundedHistory;
 use crate::tui::detail_session::DetailSnapshot;
-use crate::tui::store::TaskViewState;
+use crate::tui::store::{MainRowAnchor, MainRowIdentity, TaskViewState};
 
 const NAVIGATION_HISTORY_LIMIT: usize = 32;
 const TASK_ROW_DOUBLE_CLICK: Duration = Duration::from_millis(500);
@@ -44,6 +44,7 @@ pub(crate) struct RecentActionReturnState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NavigationState {
     pub(crate) view_state: TaskViewState,
+    pub(crate) anchor: Option<MainRowAnchor>,
     pub(crate) selected_index: Option<usize>,
     pub(crate) table_offset: usize,
 }
@@ -203,37 +204,53 @@ impl ListSurface {
         self.marked_task_ids.insert(task_id);
     }
 
-    pub(crate) fn push_navigation(&mut self, previous: TaskViewState, current: &TaskViewState) {
-        if &previous != current {
-            let previous = self.navigation_state(previous);
+    pub(crate) fn capture_navigation(
+        &self,
+        view_state: TaskViewState,
+        anchor: Option<MainRowAnchor>,
+    ) -> NavigationState {
+        NavigationState {
+            view_state,
+            anchor,
+            selected_index: self.table.selected(),
+            table_offset: self.table.offset(),
+        }
+    }
+
+    pub(crate) fn push_navigation(&mut self, previous: NavigationState, current: &TaskViewState) {
+        if &previous.view_state != current {
             self.navigation_history.push(previous);
             self.forward_navigation_history.clear();
         }
     }
 
-    pub(crate) fn pop_navigation(&mut self, current: TaskViewState) -> Option<NavigationState> {
+    pub(crate) fn pop_navigation(&mut self, current: NavigationState) -> Option<NavigationState> {
         let previous = self.navigation_history.pop()?;
-        let current = self.navigation_state(current);
         self.forward_navigation_history.push(current);
         Some(previous)
     }
 
     pub(crate) fn pop_forward_navigation(
         &mut self,
-        current: TaskViewState,
+        current: NavigationState,
     ) -> Option<NavigationState> {
         let next = self.forward_navigation_history.pop()?;
-        let current = self.navigation_state(current);
         self.navigation_history.push(current);
         Some(next)
     }
 
-    fn navigation_state(&self, view_state: TaskViewState) -> NavigationState {
-        NavigationState {
-            view_state,
-            selected_index: self.table.selected(),
-            table_offset: self.table.offset(),
-        }
+    pub(crate) fn filter_history_identities(&self, target: &TaskViewState) -> Vec<MainRowIdentity> {
+        self.navigation_history
+            .iter_rev()
+            .filter(|state| {
+                state.view_state.query == target.query
+                    && state.view_state.layout == target.layout
+                    && state.view_state.scope == target.scope
+                    && state.view_state.order == target.order
+                    && state.view_state.direction == target.direction
+            })
+            .filter_map(|state| state.anchor.as_ref().map(|anchor| anchor.identity.clone()))
+            .collect()
     }
 
     pub(crate) fn clear_navigation(&mut self) {
