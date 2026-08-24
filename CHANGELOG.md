@@ -5,9 +5,12 @@ description: Release notes for aven.
 
 ## Unreleased
 
-- UX: [Task list](/tui/#find-work) selection uses a stable `›` cursor so the focused task remains clear across terminal themes, inactive panes, and monochrome output.
+## v0.1.32 (2026-08-24)
+
+- Running `aven` with no command opens the [TUI](/tui/) directly. Global options such as `--db` and `--workspace` still apply.
 - Use [Columns](/tui/#columns) as a layout for the active task view. Press `v l` to switch between Columns and List without changing which tasks are shown.
-- The [TUI command palette](/tui/#discover-commands) prioritizes actions for the focused task, marked tasks, detail row, or sidebar item and keeps that target through pickers and confirmations.
+- UX: The [TUI command palette](/tui/#discover-commands) prioritizes actions for the focused task, marked tasks, detail row, or sidebar item and keeps that target through pickers and confirmations.
+- UX: [Task list](/tui/#find-work) selection uses a stable `›` cursor so the focused task remains clear across terminal themes, inactive panes, and monochrome output.
 
 ## v0.1.31 (2026-08-23)
 
