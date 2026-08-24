@@ -40,6 +40,7 @@ use unicode_width::UnicodeWidthStr;
 pub(super) const EPIC_MARKER: &str = "\u{f04ce}";
 const EPIC_CHILD_MARKER: &str = "↳";
 const DEFERRED_MARKER: &str = "\u{f017}";
+const TASK_CURSOR_GLYPH: &str = "›";
 
 #[derive(Debug)]
 struct TaskListRenderModel {
@@ -66,6 +67,13 @@ struct TaskTimeContext {
     now_seconds: i64,
     render_mode: TaskListRenderMode,
     due_order: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TaskRowState {
+    selected: bool,
+    focused: bool,
+    marked: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -378,7 +386,11 @@ fn build_task_list_render_model(
                         store,
                         inline_title_editor.filter(|_| selected),
                         &column_widths,
-                        marked,
+                        TaskRowState {
+                            selected,
+                            focused: focus == Focus::Tasks,
+                            marked,
+                        },
                         epic_selection,
                     )
                 } else {
@@ -391,7 +403,11 @@ fn build_task_list_render_model(
                         },
                         inline_title_editor.filter(|_| selected),
                         &column_widths,
-                        marked,
+                        TaskRowState {
+                            selected,
+                            focused: focus == Focus::Tasks,
+                            marked,
+                        },
                         epic_selection,
                     )
                 };
@@ -425,7 +441,11 @@ fn build_task_list_render_model(
                         now,
                         due_order,
                         &column_widths,
-                        marked,
+                        TaskRowState {
+                            selected,
+                            focused: focus == Focus::Tasks,
+                            marked,
+                        },
                         epic_selection,
                     ),
                 }));
@@ -780,7 +800,7 @@ fn build_task_row_cells(
     time_context: TaskTimeContext,
     inline_title_editor: Option<&TextInputView>,
     column_widths: &[usize; 8],
-    marked: bool,
+    state: TaskRowState,
     epic_selection: EpicSelectionContext<'_>,
 ) -> Vec<Line<'static>> {
     let time = task_time_cell(
@@ -794,7 +814,7 @@ fn build_task_row_cells(
         .unwrap_or_else(|| title_cell(item, column_widths[1]));
     let labels = label_cell(&item.labels, column_widths[2]);
     vec![
-        task_ref_cell(item, marked),
+        task_ref_cell(item, column_widths[0], state),
         title,
         labels,
         metadata_cell(
@@ -990,31 +1010,24 @@ fn build_epic_parent_row_cells(
     store: &TuiStore,
     inline_title_editor: Option<&TextInputView>,
     column_widths: &[usize; 8],
-    marked: bool,
+    state: TaskRowState,
     epic_selection: EpicSelectionContext<'_>,
 ) -> Vec<Line<'static>> {
     let title = inline_title_editor
         .map(|editor| inline_title_edit_cell(editor, column_widths[1]))
         .unwrap_or_else(|| title_cell(item, column_widths[1]));
     let expanded = store.view_state.expanded_epic_ids.contains(&item.task.id);
-    let mut ref_spans = vec![
-        Span::styled(if marked { "●" } else { " " }, Style::new().fg(YELLOW)),
+    let mut ref_spans = task_state_prefix(state.selected, state.focused, state.marked);
+    ref_spans.extend([
         Span::styled(if expanded { "▾" } else { "▸" }, Style::new().fg(ACCENT)),
         Span::raw(" "),
-    ];
-    if let Some((project, suffix)) = item.display_ref.split_once('-') {
-        ref_spans.push(Span::styled(
-            project.to_string(),
-            Style::new().fg(theme::project_color(&item.task.project_key)),
-        ));
-        ref_spans.push(Span::styled("-", Style::new().fg(FG_DIM)));
-        ref_spans.push(Span::styled(suffix.to_string(), Style::new().fg(FG_MUTED)));
-    } else {
-        ref_spans.push(Span::styled(
-            item.display_ref.clone(),
-            Style::new().fg(FG_MUTED),
-        ));
-    }
+    ]);
+    let prefix_width = spans_width(&ref_spans);
+    let display_ref = truncate_width(
+        &item.display_ref,
+        column_widths[0].saturating_sub(prefix_width),
+    );
+    ref_spans.extend(task_ref_spans(item, display_ref));
     let summary = item
         .epic_rollup
         .as_ref()
@@ -1041,20 +1054,25 @@ fn build_epic_child_row_cells(
     now_seconds: i64,
     due_order: bool,
     column_widths: &[usize; 8],
-    marked: bool,
+    state: TaskRowState,
     epic_selection: EpicSelectionContext<'_>,
 ) -> Vec<Line<'static>> {
     let branch = if last { "└─" } else { "├─" };
-    let ref_prefix = format!("{}{branch} ", if marked { "●" } else { " " });
+    let mut ref_spans = task_state_prefix(state.selected, state.focused, state.marked);
+    ref_spans.extend([
+        Span::styled(branch, Style::new().fg(FG_DIM)),
+        Span::raw(" "),
+    ]);
+    let prefix_width = spans_width(&ref_spans);
     let display_ref = truncate_width(
         &item.display_ref,
-        column_widths[0].saturating_sub(ref_prefix.width() + 1),
+        column_widths[0].saturating_sub(prefix_width + 1),
     );
-    let ref_line = Line::from(vec![
-        Span::styled(ref_prefix, Style::new().fg(FG_DIM)),
+    ref_spans.extend([
         Span::styled(display_ref, Style::new().fg(FG_MUTED)),
         Span::raw(" "),
     ]);
+    let ref_line = Line::from(ref_spans);
     vec![
         ref_line,
         title_cell(item, column_widths[1]),
@@ -1181,24 +1199,51 @@ fn inline_title_edit_cell(editor: &TextInputView, max_width: usize) -> Line<'sta
     clipped_input_line(&editor.input, editor.cursor, max_width.saturating_sub(1))
 }
 
-fn task_ref_cell(item: &TaskListItem, marked: bool) -> Line<'static> {
-    let marker = if marked { "●" } else { " " };
-    if let Some((project, suffix)) = item.display_ref.split_once('-') {
-        Line::from(vec![
-            Span::styled(marker.to_string(), Style::new().fg(YELLOW)),
+fn task_state_prefix(selected: bool, focused: bool, marked: bool) -> Vec<Span<'static>> {
+    let cursor_style = if !selected {
+        Style::new()
+    } else if focused {
+        Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
+    } else {
+        SELECTED_INACTIVE
+    };
+    vec![
+        Span::styled(if selected { TASK_CURSOR_GLYPH } else { " " }, cursor_style),
+        Span::styled(if marked { "●" } else { " " }, Style::new().fg(YELLOW)),
+        Span::raw(" "),
+    ]
+}
+
+fn spans_width(spans: &[Span<'_>]) -> usize {
+    spans
+        .iter()
+        .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+        .sum()
+}
+
+fn task_ref_spans(item: &TaskListItem, display_ref: String) -> Vec<Span<'static>> {
+    if let Some((project, suffix)) = display_ref.split_once('-') {
+        vec![
             Span::styled(
                 project.to_string(),
                 Style::new().fg(theme::project_color(&item.task.project_key)),
             ),
             Span::styled("-", Style::new().fg(FG_DIM)),
             Span::styled(suffix.to_string(), Style::new().fg(FG_MUTED)),
-        ])
+        ]
     } else {
-        Line::from(vec![
-            Span::styled(marker.to_string(), Style::new().fg(YELLOW)),
-            Span::styled(item.display_ref.clone(), Style::new().fg(FG_MUTED)),
-        ])
+        vec![Span::styled(display_ref, Style::new().fg(FG_MUTED))]
     }
+}
+
+fn task_ref_cell(item: &TaskListItem, max_width: usize, state: TaskRowState) -> Line<'static> {
+    let mut spans = task_state_prefix(state.selected, state.focused, state.marked);
+    let display_ref = truncate_width(
+        &item.display_ref,
+        max_width.saturating_sub(spans_width(&spans)),
+    );
+    spans.extend(task_ref_spans(item, display_ref));
+    Line::from(spans)
 }
 
 fn task_seconds_since(value: &str, now_seconds: i64) -> Option<i64> {
@@ -1618,7 +1663,11 @@ mod tests {
                     },
                     inline_title_editor,
                     &column_widths,
-                    false,
+                    TaskRowState {
+                        selected: true,
+                        focused: true,
+                        marked: false,
+                    },
                     EpicSelectionContext::default(),
                 );
                 render_task_row_cells(frame, frame.area(), style, &columns, &cells);
@@ -2233,7 +2282,11 @@ mod tests {
             },
             None,
             &[12, 40, 12, 6, 9, 10, 3, 5],
-            false,
+            TaskRowState {
+                selected: false,
+                focused: false,
+                marked: false,
+            },
             EpicSelectionContext::default(),
         );
 
@@ -2254,7 +2307,11 @@ mod tests {
             },
             None,
             &[12, 40, 12, 6, 9, 10, 3, 5],
-            false,
+            TaskRowState {
+                selected: false,
+                focused: false,
+                marked: false,
+            },
             EpicSelectionContext::default(),
         );
 
@@ -2657,21 +2714,59 @@ mod tests {
     }
 
     #[test]
-    fn focused_marked_row_keeps_focus_style_and_mark_glyph() {
-        let item = task_list_item("focused marked");
-        let line = task_ref_cell(&item, true);
-        let style = row_style(true, true, true, false, false);
+    fn task_state_prefix_distinguishes_cursor_and_mark_states() {
+        let ordinary = Line::from(task_state_prefix(false, true, false));
+        let selected = Line::from(task_state_prefix(true, true, false));
+        let marked = Line::from(task_state_prefix(false, true, true));
+        let combined = Line::from(task_state_prefix(true, true, true));
+        let inactive = task_state_prefix(true, false, false);
 
-        assert!(line.to_string().starts_with("●"));
-        assert_eq!(style, SELECTED);
+        assert_eq!(ordinary.to_string(), "   ");
+        assert_eq!(selected.to_string(), "›  ");
+        assert_eq!(marked.to_string(), " ● ");
+        assert_eq!(combined.to_string(), "›● ");
+        assert_eq!(UnicodeWidthStr::width(TASK_CURSOR_GLYPH), 1);
+        assert_eq!(selected.spans[0].style.fg, Some(ACCENT));
+        assert!(
+            selected.spans[0]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+        assert_eq!(inactive[0].style, SELECTED_INACTIVE);
+        assert_eq!(combined.spans[1].style.fg, Some(YELLOW));
+        assert_eq!(row_style(true, true, true, false, false), SELECTED);
     }
 
     #[test]
-    fn marked_row_shows_ref_marker() {
-        let item = task_list_item("marked");
-        let line = task_ref_cell(&item, true);
+    fn selected_and_unselected_refs_start_at_the_same_cell() {
+        let item = task_list_item("aligned");
+        let selected = task_ref_cell(
+            &item,
+            11,
+            TaskRowState {
+                selected: true,
+                focused: true,
+                marked: false,
+            },
+        );
+        let ordinary = task_ref_cell(
+            &item,
+            11,
+            TaskRowState {
+                selected: false,
+                focused: true,
+                marked: false,
+            },
+        );
 
-        assert!(line.to_string().starts_with("●"));
+        assert_eq!(selected.to_string(), "›  APP-1");
+        assert_eq!(ordinary.to_string(), "   APP-1");
+        assert_eq!(selected.spans[3].content, ordinary.spans[3].content);
+        assert_eq!(
+            spans_width(&selected.spans[..3]),
+            spans_width(&ordinary.spans[..3])
+        );
     }
 
     #[test]
@@ -2700,7 +2795,11 @@ mod tests {
             },
             None,
             &[12, 40, 12, 6, 9, 10, 3, 5],
-            false,
+            TaskRowState {
+                selected: false,
+                focused: false,
+                marked: false,
+            },
             EpicSelectionContext::default(),
         );
 
@@ -2969,7 +3068,11 @@ mod tests {
             },
             None,
             &[12, 40, 12, 6, 9, 10, 3, 5],
-            false,
+            TaskRowState {
+                selected: false,
+                focused: false,
+                marked: false,
+            },
             EpicSelectionContext::default(),
         );
 
@@ -2987,7 +3090,11 @@ mod tests {
             },
             None,
             &[12, 40, 12, 6, 9, 10, 3, 5],
-            false,
+            TaskRowState {
+                selected: false,
+                focused: false,
+                marked: false,
+            },
             EpicSelectionContext::default(),
         );
         assert_eq!(cells[3].to_string(), "× ←1 →1 ✎");
@@ -3013,7 +3120,11 @@ mod tests {
             },
             Some(&editor),
             &[12, 40, 12, 6, 9, 10, 3, 5],
-            false,
+            TaskRowState {
+                selected: false,
+                focused: false,
+                marked: false,
+            },
             EpicSelectionContext::default(),
         );
 
@@ -3030,11 +3141,15 @@ mod tests {
             0,
             false,
             &[14, 40, 12, 6, 9, 10, 3, 5],
-            false,
+            TaskRowState {
+                selected: false,
+                focused: false,
+                marked: false,
+            },
             EpicSelectionContext::default(),
         );
 
-        assert_eq!(cells[0].to_string(), " ├─ APP-1 ");
+        assert_eq!(cells[0].to_string(), "   ├─ APP-1 ");
     }
 
     #[test]
