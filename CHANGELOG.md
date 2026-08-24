@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Fix: Recurring task occurrences that are projected into a deleted project now sync to other clients instead of stopping their sync with `payload missing project_key`.
+
 ## v0.1.32 (2026-08-24)
 
 - Running `aven` with no command opens the [TUI](/tui/) directly. Global options such as `--db` and `--workspace` still apply.

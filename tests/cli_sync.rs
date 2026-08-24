@@ -3825,6 +3825,87 @@ fn recurrence_same_slot_materialization_and_retries_are_idempotent() {
 }
 
 #[test]
+fn recurrence_occurrence_into_deleted_project_syncs_to_other_clients() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("recurrence-deleted-project-a.sqlite");
+    let b = env.db("recurrence-deleted-project-b.sqlite");
+    let today = chrono::Utc::now().date_naive().to_string();
+    let output = ok(env.aven(
+        &a,
+        [
+            "add",
+            "deleted project occurrence",
+            "--project",
+            "app",
+            "--repeat",
+            "daily",
+            "--repeat-due",
+            "same-day",
+            "--time-zone",
+            "UTC",
+            "--repeat-start-on",
+            &today,
+        ],
+    ));
+    let occurrence_ref = output
+        .split_whitespace()
+        .find_map(|part| part.strip_prefix("occurrence="))
+        .unwrap()
+        .trim_matches('"')
+        .to_string();
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    // The project still has tasks, so deleting it soft-deletes the row on every client.
+    ok(env.aven(&b, ["project", "delete", "app"]));
+    sync(&env, &b, &server);
+    sync(&env, &a, &server);
+    let project_id = query_sql_scalar(&a, "SELECT id FROM projects WHERE key = 'app'");
+    for db in [&a, &b] {
+        assert_eq!(
+            scalar_i64(db, "SELECT deleted FROM projects WHERE key = 'app'"),
+            1
+        );
+    }
+
+    // Completing the occurrence projects the next one into the deleted project.
+    ok(env.aven(&a, ["edit", &occurrence_ref, "--status", "done"]));
+    assert_eq!(scalar_i64(&a, "SELECT count(*) FROM tasks"), 2);
+    sync(&env, &a, &server);
+
+    // The projected create_task carries no project_key, so B must resolve the
+    // deleted project by id instead of rejecting the whole page.
+    sync(&env, &b, &server);
+    assert_eq!(scalar_i64(&b, "SELECT count(*) FROM tasks"), 2);
+    assert_eq!(
+        query_sql_scalar(&b, "SELECT group_concat(DISTINCT project_id) FROM tasks"),
+        project_id
+    );
+    assert_eq!(
+        scalar_i64(
+            &b,
+            "SELECT count(*) FROM projects WHERE key = 'app' AND deleted = 1"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar_i64(&b, "SELECT count(*) FROM changes WHERE server_seq IS NULL"),
+        0
+    );
+    assert_eq!(
+        query_sql_scalar(
+            &a,
+            "SELECT group_concat(slot_on || ':' || task_id, ',') FROM recurrence_occurrences ORDER BY slot_on",
+        ),
+        query_sql_scalar(
+            &b,
+            "SELECT group_concat(slot_on || ':' || task_id, ',') FROM recurrence_occurrences ORDER BY slot_on",
+        )
+    );
+}
+
+#[test]
 fn recurrence_dual_complete_merges_earliest_completion() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);

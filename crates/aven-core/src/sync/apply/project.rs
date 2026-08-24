@@ -145,10 +145,20 @@ pub(super) async fn ensure_project_for_payload(
     project_id: &ProjectId,
     change: &ChangeWire,
 ) -> Result<ProjectId> {
-    if change.payload.get("series_id").is_some()
-        && let Some(existing_id) = live_project_by_id(conn, workspace_id, project_id).await?
-    {
-        return Ok(existing_id);
+    if change.payload.get("series_id").is_some() {
+        if let Some(existing_id) = live_project_by_id(conn, workspace_id, project_id).await? {
+            return Ok(existing_id);
+        }
+        if let Some(local_id) = project_id_alias(conn, workspace_id, project_id).await? {
+            return Ok(local_id);
+        }
+        // Recurrence occurrence payloads carry only the series' project_id. When
+        // that project was deleted locally (soft-deleted because tasks still
+        // reference it) the originating client still projected into it, so
+        // mirror that instead of failing the whole sync page.
+        if deleted_project_by_id(conn, workspace_id, project_id).await? {
+            return Ok(project_id.clone());
+        }
     }
     let key = str_payload(&change.payload, "project_key")?;
     let name = str_payload(&change.payload, "project_name").unwrap_or_else(|_| key.clone());
