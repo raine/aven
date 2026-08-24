@@ -265,12 +265,17 @@ See [Back up and restore](/backups/) for recovery workflows.
 
 ## Run aven from tmux
 
-Bind the full TUI, the composer, or both to tmux popups:
+Bind the project-scoped TUI, workspace-wide TUI, composer, or any combination to
+tmux popups:
 
 ```text
+bind C-w display-popup -E -d '#{pane_current_path}' -w 80% -h 80% 'aven tui -p'
 bind C-a display-popup -E -d '#{pane_current_path}' -w 80% -h 80% 'aven tui'
 bind t display-popup -E -d '#{pane_current_path}' -w 120 -h 30 'aven tui --add-task-only'
 ```
+
+The `-p` flag scopes Aven to the project inferred from the active pane's current
+directory. Omit it to open Aven at workspace scope.
 
 ![aven TUI running in a tmux popup over terminal panes](/tui-tmux-popup.webp)
 
