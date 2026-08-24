@@ -6,6 +6,7 @@ description: Release notes for aven.
 ## Unreleased
 
 - Fix: Pressing `Enter` on a highlighted [sidebar](/tui/) row selects that view, project, or workspace again instead of opening the detail of the task selected in the list.
+- Fix: [TUI sorting, filtering, and compatible view changes](/tui/#search-filter-and-order) keep the same task selected when it remains visible, with predictable nearby selection when it does not.
 
 ## v0.1.32 (2026-08-24)
 
