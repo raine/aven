@@ -30,10 +30,11 @@ pub(crate) async fn cmd_project(
         ProjectSubcommand::Delete { project } => {
             let outcome = delete_project_operation(database, workspace, &project).await?;
             println!(
-                "deleted-project {} prefix={} name={}",
+                "deleted-project {} prefix={} name={} stopped-series={}",
                 outcome.project.key,
                 outcome.project.prefix,
-                quote(&outcome.project.name)
+                quote(&outcome.project.name),
+                outcome.stopped_series_count
             );
         }
         ProjectSubcommand::List(args) => cmd_projects(database, workspace, args).await?,

@@ -19,6 +19,7 @@ pub struct ProjectPathOutcome {
 
 pub struct ProjectDeleteOutcome {
     pub project: Project,
+    pub stopped_series_count: usize,
 }
 
 pub struct ProjectRenameOutcome {
@@ -53,6 +54,7 @@ pub async fn delete_project_operation(
     let outcome = database.delete_project(workspace, &project.key).await?;
     Ok(ProjectDeleteOutcome {
         project: outcome.project,
+        stopped_series_count: outcome.stopped_series_count,
     })
 }
 
