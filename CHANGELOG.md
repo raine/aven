@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Fix: Pressing `Enter` on a highlighted [sidebar](/tui/) row selects that view, project, or workspace again instead of opening the detail of the task selected in the list.
+
 ## v0.1.32 (2026-08-24)
 
 - Running `aven` with no command opens the [TUI](/tui/) directly. Global options such as `--db` and `--workspace` still apply.

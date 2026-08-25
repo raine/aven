@@ -2470,7 +2470,21 @@ impl App {
         {
             return Ok(Err(reason.message().to_string()));
         }
-        let target = if let CommandSituation::SidebarProject { project } = snapshot.situation()
+        let situation = snapshot.situation();
+        let target = if action == Action::ToggleDetail
+            && let Some(sidebar) = snapshot.sidebar_target().cloned()
+        {
+            if let crate::tui::event::SidebarCommandTarget::Project(project) = &sidebar
+                && !self
+                    .store
+                    .projects
+                    .iter()
+                    .any(|candidate| candidate.key == project.as_str())
+            {
+                return Ok(Err("captured sidebar project is stale".to_string()));
+            }
+            ResolvedCommandTarget::Sidebar(sidebar)
+        } else if let CommandSituation::SidebarProject { project } = situation
             && matches!(
                 action,
                 Action::BeginScopeProject
@@ -2479,7 +2493,8 @@ impl App {
                     | Action::BeginAddProjectPath
                     | Action::BeginRemoveProjectPath
                     | Action::BeginAddTask
-            ) {
+            )
+        {
             if !self
                 .store
                 .projects
@@ -2872,6 +2887,13 @@ impl App {
                 }
                 self.begin_unlink_captured_relationship(snapshot, section, &related)
                     .await?
+            }
+            ResolvedCommandTarget::Sidebar(sidebar) => {
+                if command.action != Action::ToggleDetail {
+                    self.set_warning("captured sidebar command is invalid");
+                    return Ok(());
+                }
+                self.apply_sidebar_command_target(sidebar).await?;
             }
             ResolvedCommandTarget::SidebarProject(project) => match command.action {
                 Action::BeginScopeProject => {

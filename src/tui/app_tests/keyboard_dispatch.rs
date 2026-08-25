@@ -179,6 +179,208 @@ async fn sidebar_selection_survives_focus_changes() {
 }
 
 #[tokio::test]
+async fn sidebar_enter_selects_the_highlighted_view() {
+    let mut app = test_app().await;
+    let view_index = app
+        .store
+        .sidebar_entries
+        .iter()
+        .position(|entry| {
+            matches!(
+                &entry.target,
+                Some(SidebarEntryTarget::View(TaskQuery::Open))
+            )
+        })
+        .unwrap();
+    app.list.focus_sidebar();
+    app.list.select_sidebar(Some(view_index));
+
+    app.handle_normal_key(KeyCode::Enter).await.unwrap();
+
+    assert_eq!(app.store.view_state.query, TaskQuery::Open);
+    assert_eq!(app.list.focus(), Focus::Tasks);
+    assert!(!app.detail.is_active());
+    assert_eq!(toast_message(&app), None);
+}
+
+#[tokio::test]
+async fn sidebar_enter_selects_the_highlighted_project_scope() {
+    let mut app = test_app().await;
+    app.store
+        .create_project("Mobile App".to_string())
+        .await
+        .unwrap();
+    app.refresh().await.unwrap();
+
+    let project_index = app
+        .store
+        .sidebar_entries
+        .iter()
+        .position(|entry| {
+            matches!(
+                &entry.target,
+                Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(project)))
+                    if project == "mobile-app"
+            )
+        })
+        .unwrap();
+    app.list.focus_sidebar();
+    app.list.select_sidebar(Some(project_index));
+
+    app.handle_normal_key(KeyCode::Enter).await.unwrap();
+
+    assert_eq!(
+        app.store.view_state.scope,
+        TaskScope::Project("mobile-app".to_string())
+    );
+    assert_eq!(app.list.focus(), Focus::Tasks);
+    assert!(!app.detail.is_active());
+    assert_eq!(toast_message(&app), None);
+}
+
+#[tokio::test]
+async fn sidebar_enter_selects_a_view_with_no_tasks_in_the_current_view() {
+    let mut app = test_app().await;
+    app.show_view(TaskQuery::Conflicts).await.unwrap();
+    assert!(app.store.tasks.is_empty());
+
+    let view_index = app
+        .store
+        .sidebar_entries
+        .iter()
+        .position(|entry| {
+            matches!(
+                &entry.target,
+                Some(SidebarEntryTarget::View(TaskQuery::Open))
+            )
+        })
+        .unwrap();
+    app.list.focus_sidebar();
+    app.list.select_sidebar(Some(view_index));
+
+    app.handle_normal_key(KeyCode::Enter).await.unwrap();
+
+    assert_eq!(app.store.view_state.query, TaskQuery::Open);
+    assert_eq!(app.list.focus(), Focus::Tasks);
+    assert!(!app.detail.is_active());
+    assert_eq!(toast_message(&app), None);
+}
+
+#[tokio::test]
+async fn sidebar_enter_selects_the_highlighted_workspace_scope() {
+    let mut app = test_app().await;
+    app.store
+        .create_project("Mobile App".to_string())
+        .await
+        .unwrap();
+    app.show_scope(TaskScopeTarget::Project("mobile-app".to_string()))
+        .await
+        .unwrap();
+
+    let workspace_index = app
+        .store
+        .sidebar_entries
+        .iter()
+        .position(|entry| {
+            matches!(
+                &entry.target,
+                Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace))
+            )
+        })
+        .unwrap();
+    app.list.focus_sidebar();
+    app.list.select_sidebar(Some(workspace_index));
+
+    app.handle_normal_key(KeyCode::Enter).await.unwrap();
+
+    assert_eq!(app.store.view_state.scope, TaskScope::Workspace);
+    assert_eq!(app.list.focus(), Focus::Tasks);
+    assert!(!app.detail.is_active());
+    assert_eq!(toast_message(&app), None);
+}
+
+#[tokio::test]
+async fn sidebar_detail_command_is_available_without_a_selected_task() {
+    let mut app = test_app().await;
+    app.show_view(TaskQuery::Conflicts).await.unwrap();
+    assert!(app.store.tasks.is_empty());
+
+    let view_index = app
+        .store
+        .sidebar_entries
+        .iter()
+        .position(|entry| {
+            matches!(
+                &entry.target,
+                Some(SidebarEntryTarget::View(TaskQuery::Open))
+            )
+        })
+        .unwrap();
+    app.list.focus_sidebar();
+    app.list.select_sidebar(Some(view_index));
+    let snapshot = app.capture_command_session(None);
+    let command = crate::tui::event::COMMANDS
+        .iter()
+        .find(|command| command.action == Action::ToggleDetail)
+        .unwrap();
+
+    assert_eq!(
+        crate::tui::event::command_availability(
+            crate::tui::event::CatalogCommand::BuiltIn(command),
+            &snapshot,
+            &[],
+        ),
+        crate::tui::event::CommandAvailability::Ready
+    );
+}
+
+#[tokio::test]
+async fn captured_sidebar_detail_uses_the_captured_row() {
+    let mut app = test_app().await;
+    let open_index = app
+        .store
+        .sidebar_entries
+        .iter()
+        .position(|entry| {
+            matches!(
+                &entry.target,
+                Some(SidebarEntryTarget::View(TaskQuery::Open))
+            )
+        })
+        .unwrap();
+    let inbox_index = app
+        .store
+        .sidebar_entries
+        .iter()
+        .position(|entry| {
+            matches!(
+                &entry.target,
+                Some(SidebarEntryTarget::View(TaskQuery::Inbox))
+            )
+        })
+        .unwrap();
+    app.list.focus_sidebar();
+    app.list.select_sidebar(Some(open_index));
+    let snapshot = app.capture_command_session(None);
+    let command = crate::tui::event::COMMANDS
+        .iter()
+        .find(|command| command.action == Action::ToggleDetail)
+        .unwrap();
+    let resolved = app
+        .resolve_builtin_command(&snapshot, command)
+        .await
+        .unwrap()
+        .unwrap();
+
+    app.list.select_sidebar(Some(inbox_index));
+    app.execute_resolved_builtin(resolved, &snapshot)
+        .await
+        .unwrap();
+
+    assert_eq!(app.store.view_state.query, TaskQuery::Open);
+}
+
+#[tokio::test]
 async fn sidebar_toggle_shortcut_expands_task_list_and_restores_sidebar_focus() {
     let mut app = test_app().await;
     app.list.focus_sidebar();
