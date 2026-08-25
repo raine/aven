@@ -1,4 +1,5 @@
 use crate::ids::{ProjectId, WorkspaceId};
+use crate::recurrence::RecurrenceSeriesId;
 
 use anyhow::{Result, bail};
 use sqlx::{Row, SqliteConnection};
@@ -46,6 +47,7 @@ pub struct ProjectOutcome {
 
 pub struct ProjectDeleteOutcome {
     pub project: Project,
+    pub stopped_series_count: usize,
 }
 
 pub struct ProjectRenameOutcome {
@@ -535,18 +537,43 @@ pub async fn delete_project_operation(
     let mut tx = begin_immediate(conn).await?;
     let project = resolve_existing_project_in_workspace(&mut tx, &workspace.id, project).await?;
     let deleted_at = now();
+    let series_ids = sqlx::query_scalar::<_, RecurrenceSeriesId>(
+        "SELECT id FROM recurrence_series
+         WHERE workspace_id = ? AND project_id = ? AND deleted = 0 AND state != 'stopped'
+         ORDER BY id",
+    )
+    .bind(&project.workspace_id)
+    .bind(&project.id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for series_id in &series_ids {
+        super::recurrence::stop_recurrence_series_for_project_delete_in_transaction(
+            &mut tx,
+            workspace,
+            series_id,
+            &deleted_at,
+        )
+        .await?;
+    }
     let task_refs: i64 =
         sqlx::query_scalar("SELECT count(*) FROM tasks WHERE workspace_id = ? AND project_id = ?")
             .bind(&project.workspace_id)
             .bind(&project.id)
             .fetch_one(&mut *tx)
             .await?;
+    let series_refs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM recurrence_series WHERE workspace_id = ? AND project_id = ?",
+    )
+    .bind(&project.workspace_id)
+    .bind(&project.id)
+    .fetch_one(&mut *tx)
+    .await?;
     sqlx::query("DELETE FROM project_paths WHERE workspace_id = ? AND project_id = ?")
         .bind(&project.workspace_id)
         .bind(&project.id)
         .execute(&mut *tx)
         .await?;
-    let deleted = if task_refs > 0 {
+    let deleted = if task_refs > 0 || series_refs > 0 {
         sqlx::query(
             "UPDATE projects SET deleted = 1, updated_at = ? WHERE workspace_id = ? AND key = ?",
         )
@@ -575,8 +602,11 @@ pub async fn delete_project_operation(
     )
     .await?;
     tx.commit().await?;
-    info!("project deleted");
-    Ok(ProjectDeleteOutcome { project })
+    info!(stopped_series_count = series_ids.len(), "project deleted");
+    Ok(ProjectDeleteOutcome {
+        project,
+        stopped_series_count: series_ids.len(),
+    })
 }
 
 pub async fn rename_project_operation(

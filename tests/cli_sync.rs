@@ -4275,3 +4275,80 @@ fn sync_server_rejects_unauthorized_compressed_request_before_body_parse() {
     let head = String::from_utf8_lossy(&raw[..split]);
     assert!(head.starts_with("HTTP/1.0 401"), "response head: {head}");
 }
+
+#[test]
+fn deleting_project_stops_recurrence_and_syncs_final_outcome() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("deleted-project-recurrence-a.sqlite");
+    let b = env.db("deleted-project-recurrence-b.sqlite");
+    ok(env.aven(&a, ["project", "create", "app"]));
+    let today = chrono::Utc::now().date_naive().to_string();
+    let add_output = ok(env.aven(
+        &a,
+        [
+            "add",
+            "deleted project recurrence",
+            "--project",
+            "app",
+            "--repeat",
+            "daily",
+            "--repeat-due",
+            "same-day",
+            "--time-zone",
+            "UTC",
+            "--repeat-start-on",
+            &today,
+        ],
+    ));
+    let occurrence_ref = add_output
+        .split_whitespace()
+        .find_map(|part| part.strip_prefix("occurrence="))
+        .unwrap()
+        .trim_matches('"')
+        .to_string();
+
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    let deleted = ok(env.aven(&a, ["project", "delete", "app"]));
+    contains_all(&deleted, &["deleted-project app", "stopped-series=1"]);
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    for db in [&a, &b] {
+        assert_eq!(
+            scalar_i64(db, "SELECT deleted FROM projects WHERE key = 'app'"),
+            1
+        );
+        assert_eq!(
+            query_sql_scalar(db, "SELECT state FROM recurrence_series"),
+            "stopped"
+        );
+        assert_eq!(scalar_i64(db, "SELECT count(*) FROM tasks"), 1);
+    }
+
+    let cursor_before = query_sql_scalar(&b, "SELECT value FROM meta WHERE key = 'sync_cursor'");
+    ok(env.aven(&a, ["edit", &occurrence_ref, "--status", "done"]));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    let cursor_after = query_sql_scalar(&b, "SELECT value FROM meta WHERE key = 'sync_cursor'");
+
+    assert!(
+        cursor_after.parse::<i64>().unwrap() > cursor_before.parse::<i64>().unwrap(),
+        "cursor did not advance: before={cursor_before} after={cursor_after}"
+    );
+    for db in [&a, &b] {
+        assert_eq!(scalar_i64(db, "SELECT count(*) FROM tasks"), 1);
+        assert_eq!(
+            scalar_i64(
+                db,
+                "SELECT count(*) FROM recurrence_occurrences WHERE outcome = 'completed'"
+            ),
+            1
+        );
+        assert_eq!(
+            scalar_i64(db, "SELECT count(*) FROM changes WHERE server_seq IS NULL"),
+            0
+        );
+    }
+}

@@ -1166,14 +1166,45 @@ pub async fn stop_recurrence_series(
     skip_current: bool,
     stopped_at: &str,
 ) -> Result<RecurrenceStateOutcome> {
-    let mut stopped_at = stopped_at.to_string();
     let mut tx = begin_immediate(conn).await?;
-    let series = load_series(&mut tx, &workspace.id, series_id).await?;
+    let outcome = stop_recurrence_series_in_transaction(
+        &mut tx,
+        workspace,
+        series_id,
+        skip_current,
+        stopped_at,
+        true,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(outcome)
+}
+
+pub(crate) async fn stop_recurrence_series_for_project_delete_in_transaction(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    series_id: &RecurrenceSeriesId,
+    stopped_at: &str,
+) -> Result<RecurrenceStateOutcome> {
+    stop_recurrence_series_in_transaction(conn, workspace, series_id, false, stopped_at, false)
+        .await
+}
+
+async fn stop_recurrence_series_in_transaction(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    series_id: &RecurrenceSeriesId,
+    skip_current: bool,
+    stopped_at: &str,
+    reconcile: bool,
+) -> Result<RecurrenceStateOutcome> {
+    let mut stopped_at = stopped_at.to_string();
+    let series = load_series(conn, &workspace.id, series_id).await?;
     ensure!(
         !matches!(series.state, RecurrenceSeriesState::Stopped),
         CoreError::validation("error recurrence-already-stopped")
     );
-    ensure_no_series_conflict(&mut tx, &workspace.id, series_id, "state").await?;
+    ensure_no_series_conflict(conn, &workspace.id, series_id, "state").await?;
     let open_pause = if matches!(series.state, RecurrenceSeriesState::Paused) {
         let interval = sqlx::query(
             "SELECT id, paused_at FROM recurrence_pause_intervals
@@ -1181,7 +1212,7 @@ pub async fn stop_recurrence_series(
         )
         .bind(&workspace.id)
         .bind(series_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut *conn)
         .await?
         .ok_or_else(|| CoreError::validation("error recurrence-open-pause-missing"))?;
         let interval_id: String = interval.get("id");
@@ -1194,11 +1225,13 @@ pub async fn stop_recurrence_series(
     let stopped_at_utc = DateTime::parse_from_rfc3339(&stopped_at)
         .context("invalid recurrence stop time")?
         .with_timezone(&Utc);
-    reconcile_recurrence_series_in_transaction(&mut tx, workspace, series_id, stopped_at_utc)
-        .await?;
+    if reconcile {
+        reconcile_recurrence_series_in_transaction(conn, workspace, series_id, stopped_at_utc)
+            .await?;
+    }
     if let Some((interval_id, paused_at)) = open_pause {
         let close_change_id = append_change(
-            &mut tx,
+            conn,
             ChangeEntity::RecurrenceSeries,
             series_id.as_str(),
             Some("pause"),
@@ -1217,11 +1250,11 @@ pub async fn stop_recurrence_series(
         .bind(&close_change_id)
         .bind(&workspace.id)
         .bind(&interval_id)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
     }
     set_series_state(
-        &mut tx,
+        conn,
         workspace,
         series_id,
         RecurrenceSeriesState::Stopped,
@@ -1230,7 +1263,7 @@ pub async fn stop_recurrence_series(
         op_type::STOP_RECURRENCE_SERIES,
     )
     .await?;
-    let projected = load_projected_occurrence(&mut tx, &workspace.id, series_id).await?;
+    let projected = load_projected_occurrence(conn, &workspace.id, series_id).await?;
     let occurrence = if skip_current {
         let projected = projected
             .ok_or_else(|| CoreError::validation("error recurrence-current-occurrence-missing"))?;
@@ -1240,7 +1273,7 @@ pub async fn stop_recurrence_series(
             .expect("projected occurrence has a task");
         Some(
             resolve_recurrence_occurrence_in_transaction(
-                &mut tx,
+                conn,
                 workspace,
                 task_id,
                 RecurrenceOutcome::Skipped,
@@ -1252,8 +1285,7 @@ pub async fn stop_recurrence_series(
     } else {
         projected
     };
-    let series = load_series(&mut tx, &workspace.id, series_id).await?;
-    tx.commit().await?;
+    let series = load_series(conn, &workspace.id, series_id).await?;
     Ok(RecurrenceStateOutcome { series, occurrence })
 }
 

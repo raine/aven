@@ -769,7 +769,7 @@ Creates a project with a normalized key and a unique display prefix. `--path` al
 
 #### `project delete`
 
-Deletes a project from normal use and removes its path mappings. Projects referenced by tasks remain stored so those tasks retain project identity.
+Deletes a project from normal use and removes its path mappings. Active and paused recurring series assigned to the project are stopped, retaining their final projected tasks. Projects referenced by tasks or recurring series remain stored so those records retain project identity.
 
 #### `project list`
 

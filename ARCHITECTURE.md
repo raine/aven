@@ -153,6 +153,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Project renames update key, name, and prefix on the same stable project ID.
 - Projects normalize names into keys with lowercase words joined by `-`.
 - Project prefixes are generated to be unique and are display context, not task identity.
+- Project deletion atomically stops active and paused recurrence series assigned to the project, closes their open pause intervals, retains their final projected tasks, and soft-deletes projects referenced by tasks or recurrence series.
 - Labels normalize before storage and must exist before assignment.
 - Metadata keys normalize to lowercase ASCII identifiers, are unique per workspace, and reject the reserved `aven.` prefix. Stable `MetadataFieldId` values, not keys, identify task and recurrence-template relations, sync versions, conflicts, and undo. Values are opaque UTF-8 strings, including the empty string, within per-value, count, and aggregate byte limits.
 - Task refs resolve by ID suffix, optionally qualified as `PREFIX-SUFFIX`.

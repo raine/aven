@@ -1,5 +1,6 @@
 use crate::ids::{ProjectId, WorkspaceId};
-use anyhow::Result;
+use anyhow::{Result, bail};
+use serde_json::Value;
 use sqlx::SqliteConnection;
 
 use crate::operations::{ProjectMetadata, set_project_metadata as apply_project_metadata};
@@ -145,10 +146,19 @@ pub(super) async fn ensure_project_for_payload(
     project_id: &ProjectId,
     change: &ChangeWire,
 ) -> Result<ProjectId> {
-    if change.payload.get("series_id").is_some()
-        && let Some(existing_id) = live_project_by_id(conn, workspace_id, project_id).await?
+    if change
+        .payload
+        .get("series_id")
+        .and_then(Value::as_str)
+        .is_some()
     {
-        return Ok(existing_id);
+        if let Some(local_id) = project_id_alias_any(conn, workspace_id, project_id).await? {
+            return Ok(local_id);
+        }
+        if let Some(existing_id) = project_by_id_any(conn, workspace_id, project_id).await? {
+            return Ok(existing_id);
+        }
+        bail!("error recurrence-project-not-found project_id={project_id}");
     }
     let key = str_payload(&change.payload, "project_key")?;
     let name = str_payload(&change.payload, "project_name").unwrap_or_else(|_| key.clone());
@@ -234,6 +244,19 @@ async fn live_project_by_id(
     .fetch_optional(&mut *conn)
     .await
     .map_err(Into::into)
+}
+
+async fn project_by_id_any(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    project_id: &ProjectId,
+) -> Result<Option<ProjectId>> {
+    sqlx::query_scalar::<_, ProjectId>("SELECT id FROM projects WHERE workspace_id = ? AND id = ?")
+        .bind(workspace_id)
+        .bind(project_id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(Into::into)
 }
 
 async fn live_project_by_key(
@@ -398,4 +421,121 @@ async fn project_id_alias(
     .bind(remote_project_id)
     .fetch_optional(&mut *conn)
     .await?)
+}
+
+async fn project_id_alias_any(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    remote_project_id: &ProjectId,
+) -> Result<Option<ProjectId>> {
+    Ok(sqlx::query_scalar::<_, ProjectId>(
+        "SELECT a.local_project_id
+         FROM project_id_aliases a
+         JOIN projects p ON p.workspace_id = a.workspace_id
+          AND p.id = a.local_project_id
+         WHERE a.workspace_id = ? AND a.remote_project_id = ?",
+    )
+    .bind(workspace_id)
+    .bind(remote_project_id)
+    .fetch_optional(&mut *conn)
+    .await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::projects::create_project;
+    use crate::test_support::test_conn;
+    use crate::workspaces::Workspace;
+
+    fn recurrence_task_change(workspace: &Workspace, project_id: &ProjectId) -> ChangeWire {
+        ChangeWire {
+            change_id: "AAAAAAAAAAAAAAAA".to_string(),
+            client_id: "remote".to_string(),
+            local_seq: 1,
+            entity_type: "task".to_string(),
+            entity_id: "BBBBBBBBBBBBBBBB".to_string(),
+            field: None,
+            op_type: "create_task".to_string(),
+            payload: json!({
+                "workspace_id": workspace.id,
+                "workspace_key": workspace.key,
+                "series_id": "CCCCCCCCCCCCCCCC",
+                "project_id": project_id,
+                "title": "projected task",
+            }),
+            base_version: None,
+            created_at: "2026-08-24T00:00:00Z".to_string(),
+            server_seq: Some(1),
+        }
+    }
+
+    #[tokio::test]
+    async fn recurrence_task_resolves_soft_deleted_project_without_restoring_it() {
+        let (_temp, mut conn) = test_conn().await;
+        let workspace = Workspace::default();
+        let project = create_project(&mut conn, &workspace, "app").await.unwrap();
+        sqlx::query("UPDATE projects SET deleted = 1 WHERE workspace_id = ? AND id = ?")
+            .bind(&workspace.id)
+            .bind(&project.id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let change = recurrence_task_change(&workspace, &project.id);
+
+        super::super::task::create_task(&mut conn, &change)
+            .await
+            .unwrap();
+
+        let task_project_id: ProjectId =
+            sqlx::query_scalar("SELECT project_id FROM tasks WHERE workspace_id = ? AND id = ?")
+                .bind(&workspace.id)
+                .bind(&change.entity_id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(task_project_id, project.id);
+        let deleted: bool =
+            sqlx::query_scalar("SELECT deleted FROM projects WHERE workspace_id = ? AND id = ?")
+                .bind(&workspace.id)
+                .bind(&project.id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert!(deleted);
+    }
+
+    #[tokio::test]
+    async fn recurrence_task_resolves_alias_to_soft_deleted_project() {
+        let (_temp, mut conn) = test_conn().await;
+        let workspace = Workspace::default();
+        let project = create_project(&mut conn, &workspace, "app").await.unwrap();
+        let remote_project_id: ProjectId = "DDDDDDDDDDDDDDDD".parse().unwrap();
+        sqlx::query("UPDATE projects SET deleted = 1 WHERE workspace_id = ? AND id = ?")
+            .bind(&workspace.id)
+            .bind(&project.id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO project_id_aliases(workspace_id, remote_project_id, local_project_id)
+             VALUES (?, ?, ?)",
+        )
+        .bind(&workspace.id)
+        .bind(&remote_project_id)
+        .bind(&project.id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let change = recurrence_task_change(&workspace, &remote_project_id);
+
+        let resolved =
+            ensure_project_for_payload(&mut conn, &workspace.id, &remote_project_id, &change)
+                .await
+                .unwrap();
+
+        assert_eq!(resolved, project.id);
+    }
 }

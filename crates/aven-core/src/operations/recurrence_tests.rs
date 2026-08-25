@@ -1147,3 +1147,71 @@ async fn immediate_undo_restores_paused_tip_without_creating_successor() {
     .unwrap();
     assert_eq!(count, 1);
 }
+
+#[tokio::test]
+async fn project_delete_stops_active_and_paused_series_atomically() {
+    let (_temp, mut conn, workspace) = setup().await;
+    let active = create_daily(&mut conn, &workspace).await;
+    let paused = create_recurrence_series(
+        &mut conn,
+        &workspace,
+        CreateRecurrenceSeriesParams::new(draft(20)).at(at(20, 13)),
+    )
+    .await
+    .unwrap();
+    pause_recurrence_series(
+        &mut conn,
+        &workspace,
+        &paused.series.id,
+        "2026-07-20T14:00:00Z",
+    )
+    .await
+    .unwrap();
+
+    let outcome =
+        crate::operations::projects::delete_project_operation(&mut conn, &workspace, "recurrence")
+            .await
+            .unwrap();
+
+    assert_eq!(outcome.stopped_series_count, 2);
+    let states: Vec<String> = sqlx::query_scalar(
+        "SELECT state FROM recurrence_series WHERE workspace_id = ? ORDER BY id",
+    )
+    .bind(&workspace.id)
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap();
+    assert_eq!(states, vec!["stopped", "stopped"]);
+    let stopped_changes: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM changes WHERE op_type = 'stop_recurrence_series'")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+    assert_eq!(stopped_changes, 2);
+    let open_pauses: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM recurrence_pause_intervals
+         WHERE workspace_id = ? AND resumed_at = ''",
+    )
+    .bind(&workspace.id)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+    assert_eq!(open_pauses, 0);
+    let deleted: bool =
+        sqlx::query_scalar("SELECT deleted FROM projects WHERE workspace_id = ? AND id = ?")
+            .bind(&workspace.id)
+            .bind(&active.series.project_id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+    assert!(deleted);
+    let projected: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM recurrence_occurrences
+         WHERE workspace_id = ? AND projection_state = 'projected'",
+    )
+    .bind(&workspace.id)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+    assert_eq!(projected, 2);
+}
