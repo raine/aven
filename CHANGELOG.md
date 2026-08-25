@@ -3,9 +3,10 @@ title: Changelog
 description: Release notes for aven.
 ---
 
-## Unreleased
+## v0.1.33 (2026-08-25)
 
-- Fix: Pressing `Enter` on a highlighted [sidebar](/tui/) row selects that view, project, or workspace again instead of opening the detail of the task selected in the list.
+- Fix: Sync keeps working when a recurring series projects an occurrence into a deleted project, and deleting a project stops its recurring series while keeping already projected tasks. ([#15](https://github.com/raine/aven/issues/15))
+- Fix: Pressing `Enter` on a highlighted [sidebar](/tui/) row selects that view, project, or workspace again instead of opening the detail of the task selected in the list. ([#16](https://github.com/raine/aven/pull/16))
 - Fix: [TUI sorting, filtering, and compatible view changes](/tui/#search-filter-and-order) keep the same task selected when it remains visible, with predictable nearby selection when it does not.
 
 ## v0.1.32 (2026-08-24)
