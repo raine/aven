@@ -3,6 +3,10 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.34 (2026-08-26)
+
+- Drag task cards between status lanes in the [Columns layout](/tui/#columns).
+
 ## v0.1.33 (2026-08-25)
 
 - Fix: Sync keeps working when a recurring series projects an occurrence into a deleted project, and deleting a project stops its recurring series while keeping already projected tasks. ([#15](https://github.com/raine/aven/issues/15))
