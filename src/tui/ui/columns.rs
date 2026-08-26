@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Padding, Paragraph, TableState};
+use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph, TableState};
 
 use crate::tui::app::Focus;
 use crate::tui::columns::ColumnBoard;
@@ -116,6 +116,20 @@ impl ColumnLayout {
         })
     }
 
+    fn lane_body_at(&self, column: u16, row: u16) -> Option<usize> {
+        self.lanes.iter().position(|lane| {
+            column >= lane.area.x
+                && column
+                    < lane
+                        .area
+                        .x
+                        .saturating_add(lane.area.width)
+                        .saturating_sub(1)
+                && row >= lane.area.y
+                && row < lane.area.y.saturating_add(lane.area.height)
+        })
+    }
+
     fn task_at(&self, board: &ColumnBoard<'_>, column: u16, row: u16) -> Option<(usize, u16)> {
         self.lanes
             .iter()
@@ -168,6 +182,11 @@ fn task_card_style(
     }
 }
 
+pub(super) struct ColumnInteraction<'a> {
+    pub(super) marked_task_ids: &'a BTreeSet<crate::ids::TaskId>,
+    pub(super) drag: Option<&'a crate::tui::list_surface::ColumnDrag>,
+}
+
 pub(super) fn render_columns(
     frame: &mut Frame,
     store: &TuiStore,
@@ -175,7 +194,7 @@ pub(super) fn render_columns(
     focus: Focus,
     area: Rect,
     inline_title_editor: Option<&TextInputView>,
-    marked_task_ids: &BTreeSet<crate::ids::TaskId>,
+    interaction: ColumnInteraction<'_>,
 ) {
     frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
     let board = ColumnBoard::new(&store.task_columns, &store.tasks);
@@ -195,7 +214,15 @@ pub(super) fn render_columns(
     for (index, column) in board.columns.iter().enumerate() {
         let lane = &layout.lanes[index];
         let active = active_column == Some(index);
-        let lane_bg = if active { BG_LANE_ACTIVE } else { BG_LANE };
+        let drop_target = interaction.drag.is_some_and(|drag| {
+            drag.is_active() && drag.hovered_lane == Some(index) && drag.origin_lane != index
+        });
+        let emphasized = if interaction.drag.is_some_and(|drag| drag.is_active()) {
+            drop_target
+        } else {
+            active
+        };
+        let lane_bg = if emphasized { BG_LANE_ACTIVE } else { BG_LANE };
         frame.render_widget(Block::new().style(Style::new().bg(lane_bg)), lane.area);
         if index + 1 < board.columns.len() {
             frame.render_widget(
@@ -206,7 +233,7 @@ pub(super) fn render_columns(
             );
         }
         let header = Rect::new(lane.area.x, lane.area.y, lane.area.width, HEADER_HEIGHT);
-        render_lane_header(frame, column, lane, active, header);
+        render_lane_header(frame, column, lane, emphasized, header);
         if board_has_tasks && column.task_indices.is_empty() {
             frame.render_widget(
                 Paragraph::new("(empty)").style(Style::new().fg(FG_DIM).bg(lane_bg)),
@@ -233,7 +260,13 @@ pub(super) fn render_columns(
             } else {
                 BG_ALT
             };
-            let style = task_card_style(item, selected, card_bg);
+            let mut style = task_card_style(item, selected, card_bg);
+            if interaction
+                .drag
+                .is_some_and(|drag| drag.is_active() && drag.task_id == item.task.id)
+            {
+                style = style.add_modifier(Modifier::DIM);
+            }
             let card = Rect::new(
                 lane.cards.x,
                 lane.cards.y + visible_row as u16 * CARD_HEIGHT,
@@ -260,7 +293,7 @@ pub(super) fn render_columns(
             let mut marker_spans = terminal_status_spans(item);
             marker_spans.extend(card_marker_spans(
                 item,
-                marked_task_ids.contains(&item.task.id),
+                interaction.marked_task_ids.contains(&item.task.id),
             ));
             let mut text = vec![card_heading_line(item, &[], width)];
             text.extend(title_lines);
@@ -307,6 +340,69 @@ pub(super) fn render_columns(
     if layout.preview.height > 0 {
         render_task_preview(frame, store, table_state.selected(), layout.preview);
     }
+    if let Some(drag) = interaction.drag.filter(|drag| drag.is_active())
+        && let Some(item) = store.tasks.iter().find(|item| item.task.id == drag.task_id)
+    {
+        let preferred_width = layout
+            .lanes
+            .get(drag.origin_lane)
+            .map_or(24, |lane| lane.area.width.saturating_sub(1));
+        render_drag_card(frame, item, layout.board, drag.pointer, preferred_width);
+    }
+}
+
+fn drag_card_area(board: Rect, pointer: (u16, u16), preferred_width: u16) -> Option<Rect> {
+    if board.width < 4 || board.height < 3 {
+        return None;
+    }
+    let width = preferred_width.clamp(12, 32).min(board.width);
+    let height = CARD_CONTENT_HEIGHT.min(board.height);
+    let max_x = board.right().saturating_sub(width);
+    let max_y = board.bottom().saturating_sub(height);
+    let x = pointer.0.saturating_sub(width / 2).clamp(board.x, max_x);
+    let y = pointer.1.saturating_sub(1).clamp(board.y, max_y);
+    Some(Rect::new(x, y, width, height))
+}
+
+fn render_drag_card(
+    frame: &mut Frame,
+    item: &crate::query::TaskListItem,
+    board: Rect,
+    pointer: (u16, u16),
+    preferred_width: u16,
+) {
+    let Some(area) = drag_card_area(board, pointer, preferred_width) else {
+        return;
+    };
+    let width = area.width.saturating_sub(2) as usize;
+    let label = item.labels.first().map(String::as_str).unwrap_or("");
+    let more = item.labels.len().saturating_sub(1);
+    let labels = if more > 0 {
+        format!("{label} +{more}")
+    } else {
+        label.to_string()
+    };
+    let markers = card_marker_spans(item, false);
+    let mut text = vec![card_heading_line(item, &[], width)];
+    text.extend(card_title_lines(&item.task.title, width));
+    text.push(card_metadata_line(&labels, &markers, width));
+    let style = Style::new().fg(FG).bg(SELECTED_BG);
+    frame.render_widget(Clear, area);
+    frame.render_widget(Block::new().style(style), area);
+    frame.render_widget(
+        Paragraph::new(vec![Line::from("▌"); area.height as usize])
+            .style(Style::new().fg(ACCENT).bg(SELECTED_BG)),
+        Rect::new(area.x, area.y, 1, area.height),
+    );
+    frame.render_widget(
+        Paragraph::new(text).style(style),
+        Rect::new(
+            area.x.saturating_add(1),
+            area.y,
+            area.width.saturating_sub(2),
+            area.height,
+        ),
+    );
 }
 
 fn render_card_separator(
@@ -536,6 +632,23 @@ pub(crate) fn column_lane_at_position(
     layout.lane_at(column, row)
 }
 
+pub(crate) fn column_lane_body_at_position(
+    store: &TuiStore,
+    table_state: &TableState,
+    area: Rect,
+    column: u16,
+    row: u16,
+) -> Option<usize> {
+    let board = ColumnBoard::new(&store.task_columns, &store.tasks);
+    let layout = ColumnLayout::new(
+        area,
+        &board,
+        table_state.selected(),
+        store.columns_preview_visible,
+    );
+    layout.lane_body_at(column, row)
+}
+
 pub(super) fn column_task_at_position(
     store: &TuiStore,
     table_state: &TableState,
@@ -744,6 +857,45 @@ mod tests {
         assert_eq!(layout.lane_at(10, 2), Some(0));
         assert_eq!(layout.lane_at(50, 3), Some(1));
         assert_eq!(layout.lane_at(10, 4), None);
+    }
+
+    #[test]
+    fn drag_card_geometry_follows_pointer_and_stays_inside_board() {
+        let board = Rect::new(10, 2, 80, 20);
+
+        assert_eq!(
+            drag_card_area(board, (50, 10), 20),
+            Some(Rect::new(40, 9, 20, 4))
+        );
+        assert_eq!(
+            drag_card_area(board, (10, 2), 20),
+            Some(Rect::new(10, 2, 20, 4))
+        );
+        assert_eq!(
+            drag_card_area(board, (89, 21), 20),
+            Some(Rect::new(70, 18, 20, 4))
+        );
+    }
+
+    #[test]
+    fn lane_body_hit_testing_includes_empty_lanes_and_excludes_preview() {
+        let config = vec![
+            crate::config::TaskColumnConfig {
+                name: "Inbox".into(),
+                statuses: vec!["inbox".into()],
+            },
+            crate::config::TaskColumnConfig {
+                name: "Ready".into(),
+                statuses: vec!["todo".into()],
+            },
+        ];
+        let tasks = vec![item(0)];
+        let board = ColumnBoard::new(&config, &tasks);
+        let layout = ColumnLayout::new(Rect::new(10, 2, 80, 32), &board, Some(0), true);
+
+        assert_eq!(layout.lane_body_at(50, 10), Some(1));
+        assert_eq!(layout.lane_body_at(50, layout.preview.y), None);
+        assert_eq!(layout.lane_body_at(9, 10), None);
     }
 
     #[test]

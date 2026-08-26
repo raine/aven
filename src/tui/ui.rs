@@ -27,8 +27,8 @@ mod truncate;
 pub(crate) use self::sidebar::sidebar_layout;
 pub(crate) use self::sidebar::{sidebar_click_at_for, sidebar_layout_for};
 
-pub(crate) use self::columns::column_lane_at_position;
-use self::columns::render_columns;
+use self::columns::{ColumnInteraction, render_columns};
+pub(crate) use self::columns::{column_lane_at_position, column_lane_body_at_position};
 use self::detail::{render_attachment_preview, render_detail_underlay};
 pub(crate) use self::footer::bulk_footer_action_at;
 use self::footer::{FooterMode, footer_bar};
@@ -424,6 +424,7 @@ fn render_main_surface(
         render_recurrence_series(frame, store, list, focus, area);
     } else if store.view_state.is_columns() {
         let marked_task_ids = list.marked_task_ids().clone();
+        let column_drag = list.column_drag().cloned();
         render_columns(
             frame,
             store,
@@ -431,7 +432,10 @@ fn render_main_surface(
             focus,
             area,
             inline_title_editor,
-            &marked_task_ids,
+            ColumnInteraction {
+                marked_task_ids: &marked_task_ids,
+                drag: column_drag.as_ref(),
+            },
         );
     } else {
         render_tasks(frame, store, list, focus, area, inline_title_editor);

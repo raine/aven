@@ -687,6 +687,87 @@ async fn column_lane_header_click_moves_selected_task() {
 }
 
 #[tokio::test]
+async fn column_card_drag_moves_task_and_undo_restores_status() {
+    let mut app = test_app().await;
+    let index = create_and_select_task(&mut app, test_task_draft("drag me")).await;
+    let task_id = app.store.tasks[index].task.id.clone();
+    app.store.show_view(TaskQuery::All).await.unwrap();
+    app.store
+        .view_state
+        .set_layout(TaskLayout::Columns)
+        .unwrap();
+
+    app.dispatch_mouse(left_click(1, 4), (80, 24).into())
+        .await
+        .unwrap();
+    app.dispatch_mouse(left_drag(16, 10), (80, 24).into())
+        .await
+        .unwrap();
+    assert_eq!(app.list.column_drag().unwrap().hovered_lane, Some(1));
+    app.dispatch_mouse(left_release(16, 10), (80, 24).into())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        app.store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == task_id)
+            .unwrap()
+            .task
+            .status,
+        TaskStatus::Backlog
+    );
+    assert!(app.list.column_drag().is_none());
+
+    app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
+    assert_eq!(
+        app.store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == task_id)
+            .unwrap()
+            .task
+            .status,
+        TaskStatus::Inbox
+    );
+}
+
+#[tokio::test]
+async fn column_card_drag_to_its_current_lane_is_a_no_op() {
+    let mut app = test_app().await;
+    let index = create_and_select_task(&mut app, test_task_draft("stay here")).await;
+    let task_id = app.store.tasks[index].task.id.clone();
+    app.store.show_view(TaskQuery::All).await.unwrap();
+    app.store
+        .view_state
+        .set_layout(TaskLayout::Columns)
+        .unwrap();
+
+    app.dispatch_mouse(left_click(1, 4), (80, 24).into())
+        .await
+        .unwrap();
+    app.dispatch_mouse(left_drag(2, 10), (80, 24).into())
+        .await
+        .unwrap();
+    app.dispatch_mouse(left_release(2, 10), (80, 24).into())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        app.store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == task_id)
+            .unwrap()
+            .task
+            .status,
+        TaskStatus::Inbox
+    );
+    assert!(app.list.column_drag().is_none());
+}
+
+#[tokio::test]
 async fn column_card_right_click_opens_status_choices() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("mouse status")).await;

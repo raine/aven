@@ -224,6 +224,53 @@ impl App {
         selection: TaskSelection,
         status: String,
     ) -> Result<()> {
+        self.move_tasks_to_column_with_retry(selection, status, true)
+            .await
+    }
+
+    pub(super) async fn drop_task_on_column(
+        &mut self,
+        task_id: crate::ids::TaskId,
+        target_lane: usize,
+    ) -> Result<()> {
+        let Some(target_status) =
+            crate::tui::columns::lane_entry_status(&self.store.task_columns, target_lane)
+        else {
+            self.set_warning("column is unavailable");
+            return Ok(());
+        };
+        let Some(task_index) = self
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+        else {
+            self.set_info("task is no longer in view");
+            return Ok(());
+        };
+        let selection = if self.list.marked_task_ids().contains(&task_id) {
+            TaskSelection::resolve(
+                &self.store.tasks,
+                self.list.marked_task_ids(),
+                Some(task_index),
+            )
+        } else {
+            TaskSelection::resolve_single(&self.store.tasks, Some(task_index))
+        };
+        let Some(selection) = selection else {
+            self.set_info("task is no longer in view");
+            return Ok(());
+        };
+        self.move_tasks_to_column_with_retry(selection, target_status.as_str().to_string(), false)
+            .await
+    }
+
+    async fn move_tasks_to_column_with_retry(
+        &mut self,
+        selection: TaskSelection,
+        status: String,
+        reopen_picker: bool,
+    ) -> Result<()> {
         let target_status = TaskStatus::parse(&status)?;
         let Some(target_lane) =
             crate::tui::columns::lane_index_for_status(&self.store.task_columns, target_status)
@@ -250,7 +297,7 @@ impl App {
         if let Err(error) = self.apply_column_moves(&selection, changes).await {
             let committed = crate::tui::store::mutation_committed(&error);
             self.set_error(format!("{error:#}"));
-            if !committed {
+            if !committed && reopen_picker {
                 self.open_move_to_column_picker(retry_selection);
             }
         }

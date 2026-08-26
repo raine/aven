@@ -18,6 +18,37 @@ struct TaskRowClick {
     at: Instant,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ColumnDrag {
+    pub(crate) task_id: TaskId,
+    pub(crate) origin_lane: usize,
+    pub(crate) hovered_lane: Option<usize>,
+    pub(crate) pointer: (u16, u16),
+    active: bool,
+}
+
+impl ColumnDrag {
+    fn new(task_id: TaskId, origin_lane: usize, pointer: (u16, u16)) -> Self {
+        Self {
+            task_id,
+            origin_lane,
+            hovered_lane: None,
+            pointer,
+            active: false,
+        }
+    }
+
+    pub(crate) fn is_active(&self) -> bool {
+        self.active
+    }
+
+    fn update(&mut self, hovered_lane: Option<usize>, pointer: (u16, u16)) {
+        self.active = true;
+        self.hovered_lane = hovered_lane;
+        self.pointer = pointer;
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Focus {
     Sidebar,
@@ -61,6 +92,7 @@ pub(crate) struct ListSurface {
     last_change_return: Option<LastChangeReturnState>,
     recent_action_return: Option<RecentActionReturnState>,
     last_task_click: Option<TaskRowClick>,
+    column_drag: Option<ColumnDrag>,
 }
 
 impl ListSurface {
@@ -79,6 +111,7 @@ impl ListSurface {
             last_change_return: None,
             recent_action_return: None,
             last_task_click: None,
+            column_drag: None,
         }
     }
 
@@ -319,6 +352,39 @@ impl ListSurface {
         self.last_task_click = None;
     }
 
+    pub(crate) fn begin_column_drag(
+        &mut self,
+        task_id: TaskId,
+        origin_lane: usize,
+        pointer: (u16, u16),
+    ) {
+        self.column_drag = Some(ColumnDrag::new(task_id, origin_lane, pointer));
+    }
+
+    pub(crate) fn update_column_drag(
+        &mut self,
+        hovered_lane: Option<usize>,
+        pointer: (u16, u16),
+    ) -> bool {
+        let Some(drag) = self.column_drag.as_mut() else {
+            return false;
+        };
+        drag.update(hovered_lane, pointer);
+        true
+    }
+
+    pub(crate) fn column_drag(&self) -> Option<&ColumnDrag> {
+        self.column_drag.as_ref()
+    }
+
+    pub(crate) fn take_column_drag(&mut self) -> Option<ColumnDrag> {
+        self.column_drag.take()
+    }
+
+    pub(crate) fn cancel_column_drag(&mut self) {
+        self.column_drag = None;
+    }
+
     pub(crate) fn expire_task_click(&mut self, at: Instant) {
         if self
             .last_task_click
@@ -409,5 +475,21 @@ mod tests {
         assert!(surface.marked_task_ids().contains(&task_id));
         surface.toggle_mark(task_id.clone());
         assert!(!surface.marked_task_ids().contains(&task_id));
+    }
+
+    #[test]
+    fn column_drag_activates_on_motion_and_can_be_canceled() {
+        let mut surface = ListSurface::new(true);
+        let task_id = TaskId::new();
+
+        surface.begin_column_drag(task_id.clone(), 1, (4, 5));
+        assert!(!surface.column_drag().unwrap().is_active());
+        assert!(surface.update_column_drag(Some(2), (20, 9)));
+        assert_eq!(surface.column_drag().unwrap().hovered_lane, Some(2));
+        assert_eq!(surface.column_drag().unwrap().pointer, (20, 9));
+        assert!(surface.column_drag().unwrap().is_active());
+
+        surface.cancel_column_drag();
+        assert!(surface.column_drag().is_none());
     }
 }

@@ -63,6 +63,7 @@ impl App {
     }
 
     pub(crate) async fn dispatch_key(&mut self, key: KeyEvent, terminal_size: Size) -> Result<()> {
+        self.list.cancel_column_drag();
         let input = route_key(
             key,
             KeyRouteState {
@@ -229,6 +230,7 @@ impl App {
         }
         if self.overlay.is_some() {
             self.list.clear_task_click();
+            self.list.cancel_column_drag();
             return self.dispatch_overlay_mouse(mouse, terminal_size).await;
         }
         match input {
@@ -259,11 +261,38 @@ impl App {
                 }
             }
             MouseInput::DetailDrag => {
-                self.update_detail_text_selection(mouse, terminal_size);
+                if self.list.column_drag().is_some() {
+                    let target_lane = crate::tui::ui::column_lane_body_at_position(
+                        &self.store,
+                        self.list.table_state(),
+                        self.task_area_for_mouse(terminal_size),
+                        mouse.column,
+                        mouse.row,
+                    );
+                    self.list
+                        .update_column_drag(target_lane, (mouse.column, mouse.row));
+                } else {
+                    self.update_detail_text_selection(mouse, terminal_size);
+                }
                 return Ok(());
             }
             MouseInput::DetailRelease => {
-                if let Some(detail) = self.detail.state_mut() {
+                if let Some(drag) = self.list.take_column_drag() {
+                    if drag.is_active() {
+                        let target_lane = crate::tui::ui::column_lane_body_at_position(
+                            &self.store,
+                            self.list.table_state(),
+                            self.task_area_for_mouse(terminal_size),
+                            mouse.column,
+                            mouse.row,
+                        );
+                        if let Some(target_lane) = target_lane
+                            && target_lane != drag.origin_lane
+                        {
+                            self.drop_task_on_column(drag.task_id, target_lane).await?;
+                        }
+                    }
+                } else if let Some(detail) = self.detail.state_mut() {
                     detail.finish_text_drag();
                 }
                 return Ok(());
@@ -459,11 +488,28 @@ impl App {
             PointerEvent::SelectTask(hit) => {
                 self.list.focus_tasks();
                 self.list.select_task(Some(hit.task_index));
-                let is_double_click =
-                    self.list
-                        .register_task_click(hit.task_id, hit.viewport_row, Instant::now());
+                let is_double_click = self.list.register_task_click(
+                    hit.task_id.clone(),
+                    hit.viewport_row,
+                    Instant::now(),
+                );
                 if is_double_click {
+                    self.list.cancel_column_drag();
                     self.show_detail(0);
+                } else if self.store.view_state.is_columns()
+                    && let Some(origin_lane) =
+                        self.store.tasks.get(hit.task_index).and_then(|item| {
+                            crate::tui::columns::lane_index_for_status(
+                                &self.store.task_columns,
+                                item.task.status,
+                            )
+                        })
+                {
+                    self.list.begin_column_drag(
+                        hit.task_id,
+                        origin_lane,
+                        (mouse.column, mouse.row),
+                    );
                 }
             }
             PointerEvent::SelectSidebar(entry_index) => {
