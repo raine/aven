@@ -28,8 +28,8 @@ use crate::tui::shortcut_buffer::DetailShortcutResolution;
 use crate::tui::store::TaskQuery;
 use crate::tui::ui::{
     composer_help_scroll_cap, database_stats_scroll_cap, detail_copy_target_at,
-    detail_help_scroll_cap, help_scroll_cap, prefix_hint_scroll_cap, task_at_position,
-    task_status_at_position,
+    detail_help_scroll_cap, help_scroll_cap, prefix_hint_scroll_cap, sync_status_scroll_cap,
+    task_at_position, task_status_at_position,
 };
 
 #[derive(Clone)]
@@ -1602,6 +1602,9 @@ impl App {
                     .and_then(|detail| detail.focused_target()),
             ),
             OverlayState::DatabaseStats { .. } => database_stats_scroll_cap(terminal_size.height),
+            OverlayState::SyncStatus(state) => {
+                sync_status_scroll_cap(&self.store.sync_status, state.details, terminal_size)
+            }
             OverlayState::Changelog(state) => {
                 crate::tui::changelog::changelog_scroll_cap(&state.markdown, terminal_size)
             }

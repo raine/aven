@@ -626,20 +626,6 @@ impl Default for TuiSyncStatus {
 }
 
 impl TuiSyncStatus {
-    pub(crate) fn has_sync_error(&self) -> bool {
-        self.config_error.is_some()
-            || self.last_error_value().is_some()
-            || (self.enabled
-                && self.runtime_allowed
-                && (!self
-                    .configured_server
-                    .as_ref()
-                    .is_some_and(|check| check.ok)
-                    || self.server_match.as_ref().is_some_and(|check| !check.ok)
-                    || self.daemon_server.as_ref().is_some_and(|check| !check.ok)
-                    || !self.daemon_wake.ok))
-    }
-
     pub(crate) fn last_error_value(&self) -> Option<&str> {
         self.last_error.as_deref().filter(|error| !error.is_empty())
     }

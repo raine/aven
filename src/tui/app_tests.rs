@@ -19,8 +19,8 @@ use crate::tui::event::Action;
 use crate::tui::overlay::{
     AddTaskMode, CommandState, ConfirmIntent, ConfirmState, LineEdit, MultilineInputMode,
     MultilineInputState, MultilineIntent, OverlayState, OverlayTarget, OverlayView, PickerIntent,
-    PickerItem, PickerMode, PickerState, SearchIntent, SearchState, TagComboboxIntent,
-    TextInputState, TextIntent, TextPanelState,
+    PickerItem, PickerMode, PickerState, SearchIntent, SearchState, SyncStatusState,
+    TagComboboxIntent, TextInputState, TextIntent, TextPanelState,
 };
 use crate::tui::store::{
     SidebarEntryTarget, TaskLayout, TaskOrder, TaskQuery, TaskScope, TaskScopeTarget, TaskViewState,

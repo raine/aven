@@ -9,7 +9,6 @@ use crate::tui::event::Action;
 use crate::tui::overlay::text_input::LineEdit;
 use crate::tui::store::{
     ConflictTarget, EpicChildTarget, EpicContext, TaskOrder, TaskQuery, TuiDatabaseStats,
-    TuiSyncStatus,
 };
 use crate::tui::task_selection::TaskSelection;
 use crate::tui::text::{char_boundary_at_or_before, normalize_pasted_newlines};
@@ -50,12 +49,18 @@ pub(crate) enum OverlayState {
     TextPanel(TextPanelState),
     Changelog(ChangelogState),
     RecurrenceHistory(Box<RecurrenceHistoryState>),
-    SyncStatus(Box<TuiSyncStatus>),
+    SyncStatus(SyncStatusState),
     DatabaseStats {
         stats: Box<TuiDatabaseStats>,
         scroll: u16,
     },
     Update(UpdateOverlayState),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct SyncStatusState {
+    pub(crate) details: bool,
+    pub(crate) scroll: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1503,6 +1508,12 @@ impl ConfirmState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SyncStatusAction {
+    SyncNow,
+    ShowConflicts,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlaySubmit {
     AddTask(Box<AddTaskState>),
@@ -1536,6 +1547,10 @@ pub(crate) enum OverlaySubmit {
     },
     Order {
         order: TaskOrder,
+    },
+    SyncStatus {
+        state: SyncStatusState,
+        action: SyncStatusAction,
     },
     Confirm {
         intent: ConfirmIntent,

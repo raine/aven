@@ -17,6 +17,27 @@ pub(super) fn optional_local_timestamp_display(value: Option<&str>, fallback: &s
         .unwrap_or_else(|| fallback.to_string())
 }
 
+pub(super) fn relative_timestamp_display(
+    value: Option<&str>,
+    now: OffsetDateTime,
+    fallback: &str,
+) -> String {
+    let Some(value) = value else {
+        return fallback.to_string();
+    };
+    let Ok(then) = OffsetDateTime::parse(value, &Rfc3339) else {
+        return local_timestamp_display(value);
+    };
+    let seconds = (now - then).whole_seconds().max(0);
+    match seconds {
+        0..=9 => "just now".to_string(),
+        10..=59 => format!("{seconds}s ago"),
+        60..=3_599 => format!("{}m ago", seconds / 60),
+        3_600..=86_399 => format!("{}h ago", seconds / 3_600),
+        _ => format!("{}d ago", seconds / 86_400),
+    }
+}
+
 fn timestamp_display_in_offset(datetime: OffsetDateTime, offset: UtcOffset) -> Option<String> {
     datetime
         .to_offset(offset)
@@ -52,5 +73,19 @@ mod tests {
     #[test]
     fn optional_local_timestamp_display_uses_fallback_for_absent_values() {
         assert_eq!(optional_local_timestamp_display(None, "never"), "never");
+    }
+
+    #[test]
+    fn relative_timestamp_display_formats_recent_values() {
+        let now = OffsetDateTime::parse("2026-08-28T12:00:00Z", &Rfc3339).unwrap();
+
+        assert_eq!(
+            relative_timestamp_display(Some("2026-08-28T11:59:48Z"), now, "never"),
+            "12s ago"
+        );
+        assert_eq!(
+            relative_timestamp_display(Some("2026-08-28T11:57:00Z"), now, "never"),
+            "3m ago"
+        );
     }
 }

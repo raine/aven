@@ -6,7 +6,7 @@ use super::picker::visible_picker_indices;
 use super::state::{
     AddTaskMode, HeaderMenuItem, HeaderMenuKind, HeaderMenuState, MultilineInputMode,
     MultilineIntent, OrderMenuState, OverlayState, OverlayState::*, PickerIntent, PickerItem,
-    PickerMode, SearchIntent, SearchResultItem, TagComboboxIntent, TextIntent,
+    PickerMode, SearchIntent, SearchResultItem, SyncStatusState, TagComboboxIntent, TextIntent,
 };
 use super::tag_combobox::{tag_combobox_completion, tag_combobox_matches};
 
@@ -117,12 +117,31 @@ pub(crate) enum OverlayView {
         scroll: u16,
     },
     RecurrenceHistory(RecurrenceHistoryView),
-    SyncStatus(Box<TuiSyncStatus>),
+    SyncStatus(Box<SyncStatusView>),
     DatabaseStats {
         stats: Box<TuiDatabaseStats>,
         scroll: u16,
     },
     Update(super::state::UpdateOverlayState),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SyncStatusView {
+    pub(crate) state: SyncStatusState,
+    pub(crate) status: Box<TuiSyncStatus>,
+    pub(crate) syncing: bool,
+    pub(crate) now: time::OffsetDateTime,
+}
+
+impl Default for SyncStatusView {
+    fn default() -> Self {
+        Self {
+            state: SyncStatusState::default(),
+            status: Box::default(),
+            syncing: false,
+            now: time::OffsetDateTime::UNIX_EPOCH,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -543,7 +562,12 @@ impl From<&OverlayState> for OverlayView {
                 page: state.page.clone(),
                 selected: state.selected,
             }),
-            SyncStatus(state) => Self::SyncStatus(state.clone()),
+            SyncStatus(state) => Self::SyncStatus(Box::new(SyncStatusView {
+                state: state.clone(),
+                status: Box::default(),
+                syncing: false,
+                now: time::OffsetDateTime::UNIX_EPOCH,
+            })),
             DatabaseStats { stats, scroll } => Self::DatabaseStats {
                 stats: stats.clone(),
                 scroll: *scroll,

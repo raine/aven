@@ -34,10 +34,16 @@ async fn sync_now_completes_without_daemon() {
 
     let mut app = test_app().await;
     let mut config = crate::config::AppConfig::default();
+    config.sync.enabled = true;
     config.sync.server_url = Some(format!("http://{address}"));
     app.set_config(config);
+    app.show_config_status().unwrap();
 
-    app.execute(Action::SyncNow).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Char('S')))
+        .await
+        .unwrap();
+    assert!(matches!(app.overlay, Some(OverlayState::SyncStatus(_))));
+    assert!(app.sync.work_pending());
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
             app.poll_sync().await.unwrap();
@@ -51,6 +57,12 @@ async fn sync_now_completes_without_daemon() {
     .expect("sync task settles");
     server_task.abort();
 
+    assert!(matches!(app.overlay, Some(OverlayState::SyncStatus(_))));
+    let view = app.view();
+    assert!(matches!(
+        view.overlay,
+        Some(OverlayView::SyncStatus(status)) if !status.syncing
+    ));
     assert!(toast_message(&app).unwrap().starts_with("sync complete"));
 }
 

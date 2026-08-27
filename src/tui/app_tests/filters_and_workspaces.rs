@@ -830,10 +830,10 @@ async fn header_click_opens_sync_status() {
         .await
         .unwrap();
 
-    let Some(OverlayState::SyncStatus(status)) = app.overlay else {
+    let Some(OverlayState::SyncStatus(state)) = &app.overlay else {
         panic!("expected sync status");
     };
-    assert_eq!(*status, app.store.sync_status);
+    assert_eq!(*state, SyncStatusState::default());
 }
 
 #[tokio::test]

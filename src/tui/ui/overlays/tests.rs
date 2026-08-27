@@ -6,14 +6,15 @@ use crate::tui::overlay::{
     AddTaskAttachmentsView, AddTaskMode, AddTaskView, ConfirmView, LineEdit, MultilineInputKind,
     MultilineInputMode, MultilineInputView, OverlayState, OverlayView, PickerIntent, PickerItem,
     PickerKind, PickerMode, PickerState, PickerView, ScheduleEditorField, ScheduleEditorMode,
-    ScheduleEditorState, SearchKind, SearchResultItem, TagComboboxIntent, TagComboboxKind,
-    TagComboboxView, TextInputKind, TextInputView, TextPanelView,
+    ScheduleEditorState, SearchKind, SearchResultItem, SyncStatusState, SyncStatusView,
+    TagComboboxIntent, TagComboboxKind, TagComboboxView, TextInputKind, TextInputView,
+    TextPanelView,
 };
 use crate::tui::store::{
     DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts, SyncStatusCheck, TuiDatabaseStats,
     TuiSyncStatus,
 };
-use crate::tui::theme::{self, ACCENT, BG_ALT, FG, FG_DIM, GREEN, RED};
+use crate::tui::theme::{self, ACCENT, BG_ALT, FG, FG_DIM, ORANGE, RED};
 use crate::tui::widgets::priority_icon;
 use ratatui::Frame;
 use ratatui::Terminal;

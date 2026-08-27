@@ -23,7 +23,7 @@ use crate::config::resolve_blob_dir;
 use crate::tui::app::App;
 use crate::tui::inline_image_surface::InlineImageSurface;
 use crate::tui::inline_images::InlineImageBackend;
-use crate::tui::overlay::OverlayView::AddTask;
+use crate::tui::overlay::OverlayView::{AddTask, SyncStatus};
 use crate::tui::overlay::{OverlayState, OverlayView};
 use crate::tui::platform::SystemTerminalTransition;
 use crate::tui::preview_controller::PreviewKey;
@@ -374,6 +374,11 @@ impl App {
         if let Some(AddTask(state)) = &mut overlay {
             state.status_prefix_active = self.pending_shortcut.has_add_task_status_prefix();
             state.priority_prefix_active = self.pending_shortcut.has_add_task_priority_prefix();
+        }
+        if let Some(SyncStatus(state)) = &mut overlay {
+            *state.status = self.store.sync_status.clone();
+            state.syncing = self.sync.work_pending();
+            state.now = time::OffsetDateTime::now_utc();
         }
 
         let selected_task = self.store.selected_task(self.list.selected_task());

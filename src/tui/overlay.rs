@@ -32,8 +32,9 @@ pub(crate) use state::{
     OverlayOutcome, OverlayState, OverlaySubmit, OverlayTarget, PickerIntent, PickerItem,
     PickerMode, PickerState, RECURRENCE_HISTORY_PAGE_SIZE, RecurrenceHistoryAction,
     RecurrenceHistoryEntryKey, RecurrenceHistoryState, ScheduleEditorField, ScheduleEditorMode,
-    ScheduleEditorState, SearchIntent, SearchResultItem, SearchState, TagComboboxIntent,
-    TextIntent, TextPanelState, UpdateActionFocus, UpdateNotesState, UpdateOverlayState,
+    ScheduleEditorState, SearchIntent, SearchResultItem, SearchState, SyncStatusAction,
+    SyncStatusState, TagComboboxIntent, TextIntent, TextPanelState, UpdateActionFocus,
+    UpdateNotesState, UpdateOverlayState,
 };
 #[cfg(test)]
 pub(crate) use state::{ConfirmState, TextInputState};
@@ -44,5 +45,5 @@ pub(crate) use view::{AddTaskAttachmentsView, TagComboboxKind};
 pub(crate) use view::{
     AddTaskView, ConfirmView, HeaderMenuView, MultilineInputKind, MultilineInputView,
     OrderMenuView, OverlayView, PickerKind, PickerView, RecurrenceHistoryView, SearchKind,
-    TagComboboxView, TextInputKind, TextInputView, TextPanelView,
+    SyncStatusView, TagComboboxView, TextInputKind, TextInputView, TextPanelView,
 };

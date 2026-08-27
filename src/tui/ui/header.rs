@@ -7,8 +7,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::tui::store::{TaskLayout, TaskQuery, TaskScope, TuiStore};
 use crate::tui::theme::{
-    self, ACCENT, BG, BG_PANEL, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, INVERSE_FG, ORANGE,
-    PINK, RED,
+    self, ACCENT, BG, BG_PANEL, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, INVERSE_FG, ORANGE, PINK,
 };
 
 const HEADER_STATUS_GAP: u16 = 2;
@@ -546,17 +545,7 @@ fn header_status(store: &TuiStore) -> Paragraph<'static> {
 }
 
 fn sync_status_label(store: &TuiStore) -> (Color, String) {
-    let status = &store.sync_status;
-    if status.has_sync_error() || status.conflicts > 0 {
-        return (RED, "sync!".to_string());
-    }
-    if !status.enabled {
-        return (FG_DIM, "local".to_string());
-    }
-    if status.pending_changes > 0 {
-        return (ORANGE, format!("sync {}", status.pending_changes));
-    }
-    (GREEN, "sync".to_string())
+    super::sync_status_model::sync_status_summary(&store.sync_status).badge()
 }
 
 #[cfg(test)]
@@ -596,6 +585,25 @@ mod tests {
 
     fn spans_text(spans: Vec<Span<'static>>) -> String {
         Line::from(spans).to_string()
+    }
+
+    #[tokio::test]
+    async fn sync_status_badge_distinguishes_errors_attention_and_disabled_sync() {
+        let (mut store, _dir) = test_store().await;
+        store.sync_status.enabled = true;
+        store.sync_status.last_error = Some("connection refused".to_string());
+        assert_eq!(
+            sync_status_label(&store),
+            (crate::tui::theme::RED, "sync!".to_string())
+        );
+
+        store.sync_status.last_error = None;
+        store.sync_status.conflicts = 2;
+        assert_eq!(sync_status_label(&store), (ORANGE, "sync!".to_string()));
+
+        store.sync_status.conflicts = 0;
+        store.sync_status.runtime_allowed = false;
+        assert_eq!(sync_status_label(&store), (FG_DIM, "sync off".to_string()));
     }
 
     #[tokio::test]

@@ -16,7 +16,7 @@ use super::state::ScheduleEditorMode;
 use super::state::{
     AddTaskMode, ConfirmState, HeaderMenuState, MultilineInputMode, OrderMenuState, OverlayOutcome,
     OverlayState, OverlaySubmit, PickerMode, PickerState, ScheduleEditorField, ScheduleEditorState,
-    TagComboboxState, TextPanelState,
+    SyncStatusAction, TagComboboxState, TextPanelState,
 };
 use super::tag_combobox::{
     handle_tag_combobox_key, normalize_tag_combobox_highlight, tag_combobox_matches,
@@ -525,9 +525,38 @@ pub(crate) fn handle_generic_overlay_key(
         OverlayState::RecurrenceHistory(state) => {
             OverlayOutcome::None(OverlayState::RecurrenceHistory(state))
         }
-        OverlayState::SyncStatus(state) => match key.code {
+        OverlayState::SyncStatus(mut state) => match key.code {
             KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
-            _ => OverlayOutcome::None(OverlayState::SyncStatus(state)),
+            KeyCode::Char('d') => {
+                state.details = !state.details;
+                state.scroll = 0;
+                OverlayOutcome::None(OverlayState::SyncStatus(state))
+            }
+            KeyCode::Char('S') => OverlayOutcome::Submitted(OverlaySubmit::SyncStatus {
+                state,
+                action: SyncStatusAction::SyncNow,
+            }),
+            KeyCode::Char('c') => OverlayOutcome::Submitted(OverlaySubmit::SyncStatus {
+                state,
+                action: SyncStatusAction::ShowConflicts,
+            }),
+            _ => match handle_scroll_key(
+                key,
+                ScrollState {
+                    scroll: state.scroll,
+                    cap: help_scroll_cap,
+                },
+                &[],
+                0,
+            ) {
+                ScrollKeyOutcome::Continue(scroll) => {
+                    state.scroll = scroll.scroll;
+                    OverlayOutcome::None(OverlayState::SyncStatus(state))
+                }
+                ScrollKeyOutcome::Cancelled | ScrollKeyOutcome::Ignored => {
+                    OverlayOutcome::None(OverlayState::SyncStatus(state))
+                }
+            },
         },
         OverlayState::DatabaseStats { stats, scroll } => {
             match handle_scroll_key(
@@ -968,6 +997,63 @@ mod tests {
 
     fn ctrl(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn sync_status_toggles_details_and_resets_scroll() {
+        let outcome = handle_generic_overlay_key(
+            key(KeyCode::Char('d')),
+            OverlayState::SyncStatus(crate::tui::overlay::SyncStatusState {
+                details: false,
+                scroll: 4,
+            }),
+            8,
+        );
+
+        assert_eq!(
+            outcome,
+            OverlayOutcome::None(OverlayState::SyncStatus(
+                crate::tui::overlay::SyncStatusState {
+                    details: true,
+                    scroll: 0,
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn sync_status_emits_retained_sync_action() {
+        let state = crate::tui::overlay::SyncStatusState {
+            details: true,
+            scroll: 2,
+        };
+        let outcome = handle_generic_overlay_key(
+            key(KeyCode::Char('S')),
+            OverlayState::SyncStatus(state.clone()),
+            8,
+        );
+
+        assert_eq!(
+            outcome,
+            OverlayOutcome::Submitted(OverlaySubmit::SyncStatus {
+                state,
+                action: SyncStatusAction::SyncNow,
+            })
+        );
+    }
+
+    #[test]
+    fn sync_status_scrolls_within_cap() {
+        let outcome = handle_generic_overlay_key(
+            key(KeyCode::Char('j')),
+            OverlayState::SyncStatus(Default::default()),
+            3,
+        );
+
+        assert!(matches!(
+            outcome,
+            OverlayOutcome::None(OverlayState::SyncStatus(state)) if state.scroll == 1
+        ));
     }
 
     fn add_note_intent() -> MultilineIntent {

@@ -32,6 +32,7 @@ pub(super) use recurrence_history::render_recurrence_history;
 pub(super) use search::{SearchRenderStatus, SearchRenderView, render_search};
 pub(super) use shared::tail_viewport_start;
 pub(super) use sync_status::render_sync_status;
+pub(crate) use sync_status::sync_status_scroll_cap;
 pub(super) use tag_combobox::render_tag_combobox;
 pub(super) use text_input::render_text_input;
 pub(super) use text_panel::render_text_panel;
