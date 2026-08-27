@@ -147,6 +147,7 @@ pub(crate) enum DetailSection {
     DependsOn,
     Blocks,
     Related,
+    Activity,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

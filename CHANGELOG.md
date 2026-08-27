@@ -5,6 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Task details include a collapsed activity log for inspecting the changes behind a task's idle age, with concise values for labels, statuses, notes, and relationships.
 - Install the bundled Aven agent skill for Pi with [`aven skill install --agent pi`](/agents/#install-the-aven-skill).
 - CLI help explains every command and argument with concise guidance and examples.
 - Use [`aven sync status`](/command-reference/#aven-sync-status) and [`aven daemon status`](/command-reference/#aven-daemon) to inspect sync health, pending work, conflicts, and background service operation in human-readable or JSON output without contacting the server or changing daemon state.

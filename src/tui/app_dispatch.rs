@@ -1725,7 +1725,10 @@ impl App {
                 item.depends_on.iter().find(|link| link.task_id == *task_id)
             }
             DetailSection::Blocks => item.blocks.iter().find(|link| link.task_id == *task_id),
-            DetailSection::Related | DetailSection::Attachments | DetailSection::Notes => None,
+            DetailSection::Related
+            | DetailSection::Attachments
+            | DetailSection::Notes
+            | DetailSection::Activity => None,
         }?;
         Some(FocusedRelationship {
             section: *section,
@@ -1844,7 +1847,7 @@ impl App {
                     },
                 }
             }
-            DetailSection::Attachments | DetailSection::Notes => {
+            DetailSection::Attachments | DetailSection::Notes | DetailSection::Activity => {
                 self.set_warning("focused row does not support unlink");
                 return Ok(());
             }
@@ -2397,7 +2400,10 @@ impl App {
                 .blocks
                 .iter()
                 .find(|link| link.task_id == *related_task_id),
-            DetailSection::Related | DetailSection::Attachments | DetailSection::Notes => None,
+            DetailSection::Related
+            | DetailSection::Attachments
+            | DetailSection::Notes
+            | DetailSection::Activity => None,
         };
         let Some(link) = link else {
             self.set_warning("captured relationship is stale");
@@ -2487,7 +2493,10 @@ impl App {
                     },
                 }
             }
-            DetailSection::Related | DetailSection::Attachments | DetailSection::Notes => {
+            DetailSection::Related
+            | DetailSection::Attachments
+            | DetailSection::Notes
+            | DetailSection::Activity => {
                 self.set_warning("captured row does not support unlink");
                 return Ok(());
             }

@@ -298,6 +298,7 @@ pub struct TaskListItem {
     pub notes: Vec<TaskNote>,
     pub attachments: Vec<AttachmentMetadata>,
     pub metadata: Vec<TaskMetadataValue>,
+    pub activity: Vec<RecentActionItem>,
     pub has_conflict: bool,
     pub unresolved_blocker_count: i64,
     pub dependent_count: i64,
@@ -350,7 +351,7 @@ pub struct TaskDependencyLink {
     pub unresolved: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecentActionItem {
     pub change_id: String,
     pub entity_type: String,
@@ -367,7 +368,7 @@ pub struct RecentActionItem {
     pub grouped_change_count: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecentActionTarget {
     pub display_ref: Option<String>,
     pub title: Option<String>,

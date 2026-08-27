@@ -12,7 +12,7 @@ use super::input::clipped_input_line;
 use super::scroll::{clamp_scroll_start, scrollbar_thumb_position};
 use super::task_display::{description_or_placeholder, labels_display};
 use super::task_list::EPIC_MARKER;
-use super::timestamps::local_timestamp_display;
+use super::timestamps::{local_activity_timestamp_display, local_timestamp_display};
 use super::truncate::truncate_line_width;
 use crate::query::TaskListItem;
 use crate::task_render::{AttachmentMetadataJson, attachment_state_placeholder, human_file_size};
@@ -50,7 +50,7 @@ pub(crate) fn detail_target_is_actionable(item: &TaskListItem, target: &DetailTa
                 .related
                 .iter()
                 .any(|link| (!link.deleted || item.task.deleted) && &link.task_id == task_id),
-            DetailSection::Attachments | DetailSection::Notes => false,
+            DetailSection::Attachments | DetailSection::Notes | DetailSection::Activity => false,
         },
         DetailTargetId::Note { note_id } => item.notes.iter().any(|note| note.id == *note_id),
         DetailTargetId::Attachment { attachment_id } => item
@@ -69,6 +69,7 @@ pub(crate) fn detail_target_is_actionable(item: &TaskListItem, target: &DetailTa
                     .count()
                     > DETAIL_DEPENDENCY_TREE_CAP
             }
+            DetailSection::Activity => !item.activity.is_empty(),
             DetailSection::EpicParent | DetailSection::Attachments | DetailSection::Notes => false,
         },
     }
@@ -1441,6 +1442,15 @@ fn build_detail_body_document(
         );
         section_body_indices.push(dependency_start.saturating_add(1));
     }
+    let activity_start = lines.len();
+    extend_activity_section(
+        &mut lines,
+        &mut interactive_rows,
+        item,
+        width,
+        expanded_sections.contains(&DetailSection::Activity),
+    );
+    section_body_indices.push(activity_start.saturating_add(1));
     section_body_indices.sort_unstable();
     section_body_indices.dedup();
 
@@ -1658,6 +1668,188 @@ fn extend_detail_note_section(
                 rendered,
             );
         }
+    }
+}
+
+fn extend_activity_section(
+    lines: &mut Vec<Line<'static>>,
+    rows: &mut Vec<DetailInteractiveRow>,
+    item: &TaskListItem,
+    width: usize,
+    expanded: bool,
+) {
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "ACTIVITY",
+        Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+    )));
+    if item.activity.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No recorded task activity.",
+            Style::new().fg(FG_MUTED),
+        )));
+        return;
+    }
+
+    let disclosure = DetailTargetId::Expand {
+        section: DetailSection::Activity,
+    };
+    if !expanded {
+        let count = item.activity.len();
+        let label = format!(
+            "Show {count} {}",
+            if count == 1 { "event" } else { "events" }
+        );
+        push_disclosure_row(lines, rows, disclosure, &label, None);
+        return;
+    }
+
+    let available = item.queue.band == crate::queue::QueueBand::Available;
+    let idle_index = (!available)
+        .then(|| {
+            item.activity.iter().position(|action| {
+                action.created_at == item.task.queue_activity_at
+                    && action_establishes_queue_activity(action)
+            })
+        })
+        .flatten();
+    let idle_tag = item
+        .queue
+        .idle_seconds
+        .map(crate::tui::time::compact_duration)
+        .map(|duration| format!("idle {duration}"));
+    let anchored_idle = idle_index
+        .zip(idle_tag.as_deref())
+        .filter(|(_, tag)| width.saturating_sub(19 + UnicodeWidthStr::width(*tag) + 2) >= 20);
+    if available && let Some(tag) = idle_tag.as_deref() {
+        lines.push(Line::from(Span::styled(
+            truncate_width(&format!("{tag} · since becoming available"), width),
+            Style::new().fg(FG_DIM),
+        )));
+    } else if anchored_idle.is_none()
+        && let Some((index, tag)) = idle_index.zip(idle_tag.as_deref())
+    {
+        lines.push(Line::from(Span::styled(
+            truncate_width(
+                &format!(
+                    "{tag} · since latest {}",
+                    idle_activity_noun(&item.activity[index])
+                ),
+                width,
+            ),
+            Style::new().fg(FG_DIM),
+        )));
+    } else if idle_index.is_none()
+        && let Some(tag) = idle_tag.as_deref()
+    {
+        lines.push(Line::from(Span::styled(
+            truncate_width(&format!("{tag} · based on recent task activity"), width),
+            Style::new().fg(FG_DIM),
+        )));
+    }
+
+    for (index, action) in item.activity.iter().enumerate() {
+        let timestamp = local_activity_timestamp_display(&action.created_at);
+        let icon = super::recent_actions::action_icon(action);
+        let prefix_width =
+            2 + UnicodeWidthStr::width(timestamp.as_str()) + 2 + UnicodeWidthStr::width(icon) + 1;
+        let show_idle = anchored_idle.is_some_and(|(idle_index, _)| idle_index == index);
+        let reserved = if show_idle {
+            idle_tag
+                .as_deref()
+                .map(|tag| UnicodeWidthStr::width(tag) + 2)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let summary = truncate_width(
+            &task_activity_summary(item, action),
+            width.saturating_sub(prefix_width + reserved),
+        );
+        let mut spans = vec![
+            Span::raw("  "),
+            Span::styled(timestamp, Style::new().fg(FG_DIM)),
+            Span::raw("  "),
+            Span::styled(icon, super::recent_actions::action_style(action)),
+            Span::raw(" "),
+            Span::styled(summary.clone(), Style::new().fg(FG)),
+        ];
+        if show_idle && let Some(tag) = idle_tag.as_deref() {
+            let padding = width.saturating_sub(
+                prefix_width
+                    + UnicodeWidthStr::width(summary.as_str())
+                    + UnicodeWidthStr::width(tag),
+            );
+            spans.push(Span::raw(" ".repeat(padding.max(2))));
+            spans.push(Span::styled(tag.to_string(), Style::new().fg(FG_DIM)));
+        }
+        lines.push(Line::from(spans));
+    }
+    push_disclosure_row(lines, rows, disclosure, "Hide activity", None);
+}
+
+fn task_activity_summary(item: &TaskListItem, action: &crate::query::RecentActionItem) -> String {
+    let summary = action
+        .summary
+        .strip_suffix(&format!(": {}", item.task.title))
+        .unwrap_or(&action.summary);
+    let Some(detail) = task_activity_detail(action) else {
+        return summary.to_string();
+    };
+    format!("{summary} · {detail}")
+}
+
+fn task_activity_detail(action: &crate::query::RecentActionItem) -> Option<&str> {
+    let detail = action
+        .detail
+        .as_deref()
+        .filter(|detail| !detail.is_empty())?;
+    let include = match action.op_type.as_str() {
+        crate::change_log::op_type::LABEL_ADD
+        | crate::change_log::op_type::LABEL_REMOVE
+        | crate::change_log::op_type::NOTE_ADD
+        | crate::change_log::op_type::NOTE_EDIT
+        | crate::change_log::op_type::NOTE_DELETE
+        | crate::change_log::op_type::DEPENDENCY_ADD
+        | crate::change_log::op_type::DEPENDENCY_REMOVE
+        | crate::change_log::op_type::RELATED_ADD
+        | crate::change_log::op_type::RELATED_REMOVE
+        | crate::change_log::op_type::EPIC_LINK_ADD
+        | crate::change_log::op_type::EPIC_LINK_REMOVE
+        | crate::change_log::op_type::ATTACHMENT_ADD
+        | crate::change_log::op_type::ATTACHMENT_DELETE
+        | crate::change_log::op_type::SET_TASK_METADATA
+        | crate::change_log::op_type::REMOVE_TASK_METADATA => true,
+        crate::change_log::op_type::SET_FIELD => !matches!(
+            action.field.as_deref(),
+            Some("description" | "status" | "priority" | "deleted" | "is_epic")
+        ),
+        _ => false,
+    };
+    include.then_some(detail)
+}
+
+fn idle_activity_noun(action: &crate::query::RecentActionItem) -> &'static str {
+    match action.op_type.as_str() {
+        crate::change_log::op_type::CREATE_TASK => "creation",
+        crate::change_log::op_type::NOTE_ADD
+        | crate::change_log::op_type::NOTE_EDIT
+        | crate::change_log::op_type::NOTE_DELETE => "note",
+        _ if action.field.as_deref() == Some("priority") => "priority change",
+        _ => "status change",
+    }
+}
+
+fn action_establishes_queue_activity(action: &crate::query::RecentActionItem) -> bool {
+    match action.op_type.as_str() {
+        crate::change_log::op_type::CREATE_TASK
+        | crate::change_log::op_type::NOTE_ADD
+        | crate::change_log::op_type::NOTE_EDIT
+        | crate::change_log::op_type::NOTE_DELETE => true,
+        crate::change_log::op_type::SET_FIELD | crate::change_log::op_type::RESOLVE_FIELD => {
+            matches!(action.field.as_deref(), Some("status" | "priority"))
+        }
+        _ => false,
     }
 }
 
@@ -4485,7 +4677,7 @@ mod tests {
     }
 
     #[test]
-    fn detail_section_targets_cycle_through_notes_and_dependencies() {
+    fn detail_section_targets_cycle_through_notes_dependencies_and_activity() {
         let mut item = detail_test_item();
         item.task.description = (0..20)
             .map(|index| format!("line {index}"))
@@ -4496,16 +4688,18 @@ mod tests {
 
         let notes = detail_section_scroll_target(&item, 0, 80, 10, false);
         let dependencies = detail_section_scroll_target(&item, notes, 80, 10, false);
+        let activity = detail_section_scroll_target(&item, dependencies, 80, 10, false);
 
         assert_eq!(notes, indices[1] as u16);
         assert_eq!(dependencies, indices[2] as u16);
+        assert_eq!(activity, indices[3] as u16);
         assert_eq!(
-            detail_section_scroll_target(&item, dependencies, 80, 10, false),
+            detail_section_scroll_target(&item, activity, 80, 10, false),
             0
         );
         assert_eq!(
             detail_section_scroll_target(&item, 0, 80, 10, true),
-            dependencies
+            activity
         );
     }
 
@@ -5030,7 +5224,8 @@ mod tests {
         let target =
             detail_attachment_scroll_target(&item, "ATTACHMENT000001", 0, width, height, &context)
                 .expect("attachment scroll target");
-        assert!(target > text_only_cap);
+        assert!(target > 0);
+        assert!(target <= preview_cap);
         let reached = (0..height).any(|row| {
             (0..width).any(|column| {
                 detail_attachment_at_position(&item, width, height, column, row, target, &context)
@@ -5309,9 +5504,105 @@ mod tests {
         assert_eq!(related_targets(&item), vec![live_id, deleted_id]);
     }
 
+    #[test]
+    fn task_activity_is_collapsed_by_default_and_expands_with_idle_context() {
+        let mut item = detail_test_item();
+        item.queue.idle_seconds = Some(12 * 60);
+        let target = crate::query::RecentActionTarget {
+            display_ref: Some(item.display_ref.clone()),
+            title: Some(item.task.title.clone()),
+            project_key: Some(item.task.project_key.clone()),
+            status: Some(item.task.status.as_str().to_string()),
+            deleted: false,
+        };
+        item.activity = vec![
+            crate::query::RecentActionItem {
+                change_id: "note-change-id".to_string(),
+                entity_type: "task".to_string(),
+                entity_id: item.task.id.to_string(),
+                op_type: crate::change_log::op_type::NOTE_ADD.to_string(),
+                field: Some("notes".to_string()),
+                created_at: item.task.queue_activity_at.clone(),
+                synced: false,
+                target: target.clone(),
+                verb: "note".to_string(),
+                summary: "added note: Fix token refresh race".to_string(),
+                detail: Some("Confirmed race".to_string()),
+                accent: "blue".to_string(),
+                grouped_change_count: 1,
+            },
+            crate::query::RecentActionItem {
+                change_id: "label-change-id".to_string(),
+                entity_type: "task".to_string(),
+                entity_id: item.task.id.to_string(),
+                op_type: crate::change_log::op_type::LABEL_ADD.to_string(),
+                field: Some("labels".to_string()),
+                created_at: "2026-06-20T11:59:00Z".to_string(),
+                synced: false,
+                target: target.clone(),
+                verb: "label".to_string(),
+                summary: "added label: Fix token refresh race".to_string(),
+                detail: Some("backend".to_string()),
+                accent: "green".to_string(),
+                grouped_change_count: 1,
+            },
+            crate::query::RecentActionItem {
+                change_id: "description-change-id".to_string(),
+                entity_type: "task".to_string(),
+                entity_id: item.task.id.to_string(),
+                op_type: crate::change_log::op_type::SET_FIELD.to_string(),
+                field: Some("description".to_string()),
+                created_at: "2026-06-20T11:58:00Z".to_string(),
+                synced: false,
+                target,
+                verb: "details".to_string(),
+                summary: "edited description: Fix token refresh race".to_string(),
+                detail: Some("## Goal Turn planning notes into tasks".to_string()),
+                accent: "blue".to_string(),
+                grouped_change_count: 1,
+            },
+        ];
+
+        let collapsed = detail_body_lines(&item, 100, None)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(collapsed.contains("ACTIVITY"));
+        assert!(collapsed.contains("Show 3 events"));
+        assert!(!collapsed.contains("added note"));
+        assert!(collapsed.find("ACTIVITY") > collapsed.find("BLOCKS"));
+
+        let expanded_sections = [DetailSection::Activity].into_iter().collect();
+        let rendered =
+            detail_body_lines_with_pending_images(&item, 100, None, &expanded_sections, None, &[])
+                .0
+                .into_iter()
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+
+        assert!(rendered.contains(&local_activity_timestamp_display(
+            &item.task.queue_activity_at
+        )));
+        let note_line = rendered
+            .lines()
+            .find(|line| line.contains("✎ added note"))
+            .unwrap();
+        assert!(note_line.contains("added note · Confirmed race"));
+        assert!(!note_line.contains("Fix token refresh race"));
+        assert!(rendered.contains("added label · backend"));
+        assert!(rendered.contains("edited description"));
+        assert!(!rendered.contains("Turn planning notes into tasks"));
+        assert!(rendered.contains("idle 12m"));
+        assert!(!rendered.contains("idle starts here"));
+        assert!(rendered.contains("Hide activity"));
+    }
+
     fn detail_test_item() -> TaskListItem {
         TaskListItem {
             metadata: Vec::new(),
+            activity: Vec::new(),
             task: crate::types::Task {
                 id: crate::test_support::task_id("7KQ9A1X"),
                 workspace_id: "0000000000000001".parse().unwrap(),

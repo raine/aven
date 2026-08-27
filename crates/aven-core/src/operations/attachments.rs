@@ -507,6 +507,8 @@ pub async fn delete_task_attachment(
         op_type::ATTACHMENT_DELETE,
         ChangePayload::workspace(workspace)
             .set("attachment_id", attachment_id)
+            .set("filename", attachment.filename.as_deref())
+            .set("media_type", &attachment.media_type)
             .set("deleted_at", &deleted_at),
     )
     .await?;

@@ -383,14 +383,14 @@ fn action_columns(width: u16) -> [Constraint; 5] {
     }
 }
 
-fn action_icon(action: &RecentActionItem) -> &'static str {
+pub(super) fn action_icon(action: &RecentActionItem) -> &'static str {
     match action.op_type.as_str() {
         op_type::CREATE_TASK => "+",
         op_type::SET_FIELD => field_action_icon(action),
         op_type::LABEL_ADD => "+",
         op_type::LABEL_REMOVE => "-",
         op_type::NOTE_ADD => "✎",
-        op_type::NOTE_DELETE => "⌫",
+        op_type::NOTE_DELETE => "×",
         op_type::DEPENDENCY_ADD => "←",
         op_type::DEPENDENCY_REMOVE => "-",
         op_type::EPIC_LINK_ADD => "★",
@@ -429,7 +429,7 @@ fn fallback_action_icon(action: &RecentActionItem) -> &'static str {
     }
 }
 
-fn action_style(action: &RecentActionItem) -> Style {
+pub(super) fn action_style(action: &RecentActionItem) -> Style {
     let color = match action.accent.as_str() {
         "green" => GREEN,
         "blue" => BLUE,
@@ -579,7 +579,7 @@ mod tests {
         let icon = &buffer[(9, 0)];
         let verb = &buffer[(11, 0)];
 
-        assert_eq!(icon.symbol(), "⌫");
+        assert_eq!(icon.symbol(), "×");
         assert_eq!(icon.style().fg, Some(RED));
         assert_eq!(icon.style().bg, SELECTED.bg);
         assert!(!icon.style().add_modifier.contains(Modifier::BOLD));

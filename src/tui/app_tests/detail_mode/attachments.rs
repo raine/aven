@@ -64,6 +64,17 @@ async fn detail_tab_focuses_locally_available_images_independent_of_preview_stat
         .unwrap();
     assert_eq!(
         app.detail
+            .state()
+            .and_then(|detail| detail.focused_target()),
+        Some(&DetailTargetId::Expand {
+            section: DetailSection::Activity,
+        })
+    );
+    app.dispatch_key(shift_key(KeyCode::Tab), (100, 30).into())
+        .await
+        .unwrap();
+    assert_eq!(
+        app.detail
             .state_mut()
             .unwrap()
             .focused_target

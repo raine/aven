@@ -35,7 +35,9 @@ pub(crate) use details::{conflict_display_value, task_detail, task_detail_with_d
 pub use doctor::WorkspaceTaskCounts;
 pub(crate) use doctor::{unresolved_conflict_count, workspace_task_counts};
 pub(crate) use projects::list_project_items_in_workspace;
-pub(crate) use recent_actions::list_recent_actions_in_workspace;
+pub(crate) use recent_actions::{
+    list_recent_actions_in_workspace, task_activity_for_tasks_in_workspace,
+};
 pub(crate) use recurrence::task_recurrence_summaries;
 pub use related::TaskRelatedLink;
 pub(crate) use related::{related_links_for_tasks, task_related_links};

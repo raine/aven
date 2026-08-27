@@ -181,6 +181,7 @@ mod tests {
     fn item(id: usize, status: &str) -> TaskListItem {
         TaskListItem {
             metadata: Vec::new(),
+            activity: Vec::new(),
             task: crate::types::Task {
                 id: crate::test_support::task_id(&id.to_string()),
                 workspace_id: "0000000000000001".parse().unwrap(),

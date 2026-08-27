@@ -11,6 +11,27 @@ pub(super) fn local_timestamp_display(value: &str) -> String {
     timestamp_display_in_offset(datetime, offset).unwrap_or_else(|| value.to_string())
 }
 
+pub(super) fn local_activity_timestamp_display(value: &str) -> String {
+    local_datetime_display(value, |datetime| {
+        datetime.format(&time::macros::format_description!(
+            "[month repr:short] [day padding:none]  [hour]:[minute]"
+        ))
+    })
+}
+
+fn local_datetime_display(
+    value: &str,
+    format: impl FnOnce(OffsetDateTime) -> Result<String, time::error::Format>,
+) -> String {
+    let Ok(datetime) = OffsetDateTime::parse(value, &Rfc3339) else {
+        return value.to_string();
+    };
+    let Ok(offset) = UtcOffset::local_offset_at(datetime) else {
+        return value.to_string();
+    };
+    format(datetime.to_offset(offset)).unwrap_or_else(|_| value.to_string())
+}
+
 pub(super) fn optional_local_timestamp_display(value: Option<&str>, fallback: &str) -> String {
     value
         .map(local_timestamp_display)
@@ -66,6 +87,10 @@ mod tests {
     fn local_timestamp_display_keeps_unparsed_values() {
         assert_eq!(
             local_timestamp_display("not-a-timestamp"),
+            "not-a-timestamp"
+        );
+        assert_eq!(
+            local_activity_timestamp_display("not-a-timestamp"),
             "not-a-timestamp"
         );
     }

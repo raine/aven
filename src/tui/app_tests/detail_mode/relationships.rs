@@ -1398,12 +1398,9 @@ async fn assert_six_child_removal_keyboard_reachability(removal_index: usize) {
         .cloned()
         .collect::<Vec<_>>();
     assert_eq!(collapsed_children, child_ids[..5]);
-    assert!(matches!(
-        collapsed_targets.last(),
-        Some(DetailTargetId::Expand {
-            section: DetailSection::EpicChildren
-        })
-    ));
+    assert!(collapsed_targets.contains(&DetailTargetId::Expand {
+        section: DetailSection::EpicChildren,
+    }));
     let parent = app
         .store
         .selected_task(app.list.selected_task())

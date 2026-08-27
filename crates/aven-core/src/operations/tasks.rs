@@ -1557,6 +1557,10 @@ async fn delete_note_operation(
             op_type::NOTE_DELETE,
             ChangePayload::workspace(workspace)
                 .set("note_id", note_id)
+                .set(
+                    "body",
+                    &before.as_ref().expect("deleted note has before state").0,
+                )
                 .set("deleted_at", deleted_at),
         )
         .await?;

@@ -422,6 +422,15 @@ pub(crate) async fn remove_task_metadata(
         bail!("error conflicted-field ref={task_id} field={identity}");
     }
     let base = field_version(conn, task_id, &identity).await?;
+    let removed_value = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM task_metadata
+         WHERE workspace_id = ? AND task_id = ? AND field_id = ?",
+    )
+    .bind(&workspace.id)
+    .bind(task_id)
+    .bind(&field.id)
+    .fetch_optional(&mut *conn)
+    .await?;
     let deleted = sqlx::query(
         "DELETE FROM task_metadata
          WHERE workspace_id = ? AND task_id = ? AND field_id = ?",
@@ -448,6 +457,7 @@ pub(crate) async fn remove_task_metadata(
             "workspace_key": &workspace.key,
             "field_id": &field.id,
             "key": &field.key,
+            "value": removed_value,
         }),
         base.as_deref(),
     )
