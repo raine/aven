@@ -2820,28 +2820,24 @@ fn detail_metadata_lines_with_children(
         item.task.available_at.as_deref().unwrap_or(""),
         item.queue.band == crate::queue::QueueBand::Available,
         now_seconds,
-    )
-    .unwrap_or_else(|| ["none".to_string(), String::new()]);
-    let availability_style = if item.task.available_at.is_some() {
+    );
+    let availability_style = if availability.is_some() {
         Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
     } else {
         Style::new().fg(FG_MUTED)
     };
-    lines.extend([
-        Line::from(""),
-        metadata_label("AVAILABILITY"),
-        Line::from(Span::styled(
-            truncate_width(&availability[0], width),
+    lines.extend([Line::from(""), metadata_label("AVAILABILITY")]);
+    for value in availability
+        .map(Vec::from)
+        .unwrap_or_else(|| vec!["none".to_string()])
+    {
+        lines.push(Line::from(Span::styled(
+            truncate_width(&value, width),
             availability_style,
-        )),
-        Line::from(Span::styled(
-            truncate_width(&availability[1], width),
-            availability_style,
-        )),
-    ]);
+        )));
+    }
     let due =
-        crate::tui::time::due_summary_lines(item.task.due_on.as_deref().unwrap_or(""), now_seconds)
-            .unwrap_or_else(|| ["none".to_string(), String::new()]);
+        crate::tui::time::due_summary_lines(item.task.due_on.as_deref().unwrap_or(""), now_seconds);
     let due_color = if item.task.due_on.is_none() || !item.task.status.is_open() {
         FG_MUTED
     } else {
@@ -2854,11 +2850,17 @@ fn detail_metadata_lines_with_children(
         }
     };
     let due_style = Style::new().fg(due_color).add_modifier(Modifier::BOLD);
+    lines.extend([Line::from(""), metadata_label("DUE")]);
+    for value in due
+        .map(Vec::from)
+        .unwrap_or_else(|| vec!["none".to_string()])
+    {
+        lines.push(Line::from(Span::styled(
+            truncate_width(&value, width),
+            due_style,
+        )));
+    }
     lines.extend([
-        Line::from(""),
-        metadata_label("DUE"),
-        Line::from(Span::styled(truncate_width(&due[0], width), due_style)),
-        Line::from(Span::styled(truncate_width(&due[1], width), due_style)),
         Line::from(""),
         metadata_label("REF"),
         Line::from(Span::styled(
@@ -3101,10 +3103,11 @@ pub(crate) fn detail_copy_target_at(
     }
     let body = detail_body_area(Rect::new(0, 0, terminal_width, terminal_height));
     let line = metadata_content_row(layout.metadata_area, body, column, row)?;
+    let rows = detail_metadata_rows(item);
     let value = match line {
-        23 => item.display_ref.clone(),
-        26 => local_timestamp_display(&item.task.created_at),
-        29 => local_timestamp_display(&item.task.updated_at),
+        value if value == rows.reference => item.display_ref.clone(),
+        value if value == rows.created => local_timestamp_display(&item.task.created_at),
+        value if value == rows.updated => local_timestamp_display(&item.task.updated_at),
         _ => return None,
     };
     let value_start = layout.metadata_area.x.saturating_add(2);
@@ -3113,6 +3116,7 @@ pub(crate) fn detail_copy_target_at(
 }
 
 pub(crate) fn detail_metadata_target_at(
+    item: &TaskListItem,
     terminal_width: u16,
     terminal_height: u16,
     column: u16,
@@ -3124,16 +3128,52 @@ pub(crate) fn detail_metadata_target_at(
     }
     let body = detail_body_area(Rect::new(0, 0, terminal_width, terminal_height));
     let line = metadata_content_row(layout.metadata_area, body, column, row)?;
+    let rows = detail_metadata_rows(item);
     let target = match line {
         3 => DetailMetadataTarget::Project,
         6 => DetailMetadataTarget::Status,
         9 => DetailMetadataTarget::Priority,
         12 => DetailMetadataTarget::Labels,
-        15 | 16 => DetailMetadataTarget::Availability,
-        19 | 20 => DetailMetadataTarget::Due,
+        value if rows.availability.contains(&value) => DetailMetadataTarget::Availability,
+        value if rows.due.contains(&value) => DetailMetadataTarget::Due,
         _ => return None,
     };
     Some((target, column, row))
+}
+
+struct DetailMetadataRows {
+    availability: std::ops::Range<u16>,
+    due: std::ops::Range<u16>,
+    reference: u16,
+    created: u16,
+    updated: u16,
+}
+
+fn detail_metadata_rows(item: &TaskListItem) -> DetailMetadataRows {
+    let now_seconds = crate::queue::now_seconds();
+    let availability_len = u16::from(
+        crate::tui::time::availability_summary_lines(
+            item.task.available_at.as_deref().unwrap_or(""),
+            item.queue.band == crate::queue::QueueBand::Available,
+            now_seconds,
+        )
+        .is_some(),
+    ) + 1;
+    let due_len = u16::from(
+        crate::tui::time::due_summary_lines(item.task.due_on.as_deref().unwrap_or(""), now_seconds)
+            .is_some(),
+    ) + 1;
+    let availability_start = 15;
+    let due_start = availability_start + availability_len + 2;
+    let reference = due_start + due_len + 2;
+
+    DetailMetadataRows {
+        availability: availability_start..availability_start + availability_len,
+        due: due_start..due_start + due_len,
+        reference,
+        created: reference + 3,
+        updated: reference + 6,
+    }
 }
 
 fn metadata_content_row(metadata_area: Rect, body: Rect, column: u16, row: u16) -> Option<u16> {
@@ -4247,8 +4287,7 @@ mod tests {
         assert!(rendered.contains("STATUS\n● active"));
         assert!(rendered.contains("PRIORITY\n▲ urgent"));
         assert!(rendered.contains("LABELS\nbug, mobile"));
-        assert!(rendered.contains("AVAILABILITY\nnone"));
-        assert!(rendered.contains("DUE\nnone"));
+        assert!(rendered.contains("AVAILABILITY\nnone\n\nDUE\nnone\n\nREF"));
         assert!(rendered.contains("CONFLICTS\nyes"));
     }
 
@@ -4387,9 +4426,9 @@ mod tests {
         let item = detail_test_item();
         let expected = [
             (2, 5, item.display_ref.clone()),
-            (88, 25, item.display_ref.clone()),
-            (88, 28, local_timestamp_display(&item.task.created_at)),
-            (88, 31, local_timestamp_display(&item.task.updated_at)),
+            (88, 23, item.display_ref.clone()),
+            (88, 26, local_timestamp_display(&item.task.created_at)),
+            (88, 29, local_timestamp_display(&item.task.updated_at)),
         ];
 
         for (column, row, value) in expected {
@@ -4398,33 +4437,51 @@ mod tests {
                 Some(value)
             );
         }
-        assert!(detail_copy_target_at(&item, 120, 40, 87, 25).is_none());
-        assert!(detail_copy_target_at(&item, 120, 40, 88, 24).is_none());
-        assert!(detail_copy_target_at(&item, 80, 40, 70, 28).is_none());
+        assert!(detail_copy_target_at(&item, 120, 40, 87, 23).is_none());
+        assert!(detail_copy_target_at(&item, 120, 40, 88, 22).is_none());
+        assert!(detail_copy_target_at(&item, 80, 40, 70, 26).is_none());
     }
 
     #[test]
     fn detail_metadata_target_maps_editable_values_without_body_conflicts() {
+        let item = detail_test_item();
         let expected = [
             (5, DetailMetadataTarget::Project),
             (8, DetailMetadataTarget::Status),
             (11, DetailMetadataTarget::Priority),
             (14, DetailMetadataTarget::Labels),
             (17, DetailMetadataTarget::Availability),
-            (18, DetailMetadataTarget::Availability),
-            (21, DetailMetadataTarget::Due),
-            (22, DetailMetadataTarget::Due),
+            (20, DetailMetadataTarget::Due),
         ];
 
         for (row, target) in expected {
             assert_eq!(
-                detail_metadata_target_at(120, 40, 88, row),
+                detail_metadata_target_at(&item, 120, 40, 88, row),
                 Some((target, 88, row))
             );
         }
-        assert_eq!(detail_metadata_target_at(120, 40, 88, 7), None);
-        assert_eq!(detail_metadata_target_at(120, 40, 50, 8), None);
-        assert_eq!(detail_metadata_target_at(80, 40, 70, 11), None);
+        assert_eq!(detail_metadata_target_at(&item, 120, 40, 88, 7), None);
+        assert_eq!(detail_metadata_target_at(&item, 120, 40, 50, 8), None);
+        assert_eq!(detail_metadata_target_at(&item, 80, 40, 70, 11), None);
+    }
+
+    #[test]
+    fn detail_metadata_target_maps_both_date_summary_lines() {
+        let mut item = detail_test_item();
+        item.task.available_at = Some("2999-07-17T12:30:00Z".to_string());
+        item.task.due_on = Some("2999-07-18".to_string());
+
+        for (row, target) in [
+            (17, DetailMetadataTarget::Availability),
+            (18, DetailMetadataTarget::Availability),
+            (21, DetailMetadataTarget::Due),
+            (22, DetailMetadataTarget::Due),
+        ] {
+            assert_eq!(
+                detail_metadata_target_at(&item, 120, 40, 88, row),
+                Some((target, 88, row))
+            );
+        }
     }
 
     #[test]

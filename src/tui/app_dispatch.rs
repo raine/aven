@@ -800,7 +800,11 @@ impl App {
             return Ok(true);
         }
 
+        let Some(item) = self.store.selected_task(self.list.selected_task()) else {
+            return Ok(false);
+        };
         let Some((target, _column, _row)) = crate::tui::ui::detail_metadata_target_at(
+            item,
             terminal_size.width,
             terminal_size.height,
             mouse.column,

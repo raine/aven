@@ -476,7 +476,7 @@ fn detail_metadata_click(target: crate::tui::ui::DetailMetadataTarget) -> MouseE
         crate::tui::ui::DetailMetadataTarget::Priority => 11,
         crate::tui::ui::DetailMetadataTarget::Labels => 14,
         crate::tui::ui::DetailMetadataTarget::Availability => 17,
-        crate::tui::ui::DetailMetadataTarget::Due => 21,
+        crate::tui::ui::DetailMetadataTarget::Due => 20,
     };
     left_click(88, row)
 }

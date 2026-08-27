@@ -646,7 +646,7 @@ async fn detail_copy_clicks_copy_displayed_values_and_show_toasts() {
     app.show_detail(4);
     let terminal_size: ratatui::layout::Size = (120, 40).into();
 
-    for (column, row) in [(2, 5), (88, 25), (88, 28), (88, 31)] {
+    for (column, row) in [(2, 5), (88, 23), (88, 26), (88, 29)] {
         let value = crate::tui::ui::detail_copy_target_at(
             app.store.selected_task(app.list.selected_task()).unwrap(),
             terminal_size.width,
@@ -1044,7 +1044,7 @@ async fn detail_status_menu_empty_click_returns_to_detail_without_selecting_task
     )
     .await
     .unwrap();
-    app.dispatch_mouse(left_click(110, 20), (120, 30).into())
+    app.dispatch_mouse(left_click(110, 22), (120, 30).into())
         .await
         .unwrap();
 
