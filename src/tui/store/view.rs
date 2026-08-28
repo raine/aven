@@ -79,7 +79,7 @@ impl TuiStore {
         if !query.supports_closed_filter() {
             view_state.filter_modifiers.closed = ClosedTaskVisibility::Default;
         }
-        if query == TaskQuery::Upcoming {
+        if matches!(query, TaskQuery::Upcoming | TaskQuery::Overdue) {
             view_state.direction = SortDirection::Asc;
         }
         if query == TaskQuery::Search

@@ -181,6 +181,9 @@ impl App {
         let selected = self.store.view_state.query;
         let items = [
             ("q", "queue", TaskQuery::Queue),
+            ("y", "ready", TaskQuery::Ready),
+            ("k", "blocked", TaskQuery::Blocked),
+            ("x", "overdue", TaskQuery::Overdue),
             ("l", "all", TaskQuery::All),
             ("o", "open", TaskQuery::Open),
             ("t", "todo", TaskQuery::Todo),
@@ -188,6 +191,7 @@ impl App {
             ("a", "active", TaskQuery::Active),
             ("b", "backlog", TaskQuery::Backlog),
             ("d", "done", TaskQuery::Done),
+            ("p", "upcoming", TaskQuery::Upcoming),
             ("e", "epics", TaskQuery::Epics),
             ("u", "recurring", TaskQuery::Recurring),
             ("r", "recent", TaskQuery::RecentActions),

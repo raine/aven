@@ -761,13 +761,43 @@ pub(crate) const COMMANDS: &[BuiltInCommand] = &[
     // Views
     BuiltInCommand::implemented(
         "view-queue",
-        "show queue view",
+        "show ranked available work, including blocked tasks",
         "Views",
         &[KeySequence {
             codes: &[KeyCode::Char('v'), KeyCode::Char('q')],
             label: "v q",
         }],
         Action::ShowView(TaskQuery::Queue),
+    ),
+    BuiltInCommand::implemented(
+        "view-ready",
+        "show work ready to start without unresolved blockers",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('v'), KeyCode::Char('y')],
+            label: "v y",
+        }],
+        Action::ShowView(TaskQuery::Ready),
+    ),
+    BuiltInCommand::implemented(
+        "view-blocked",
+        "show work with unresolved dependencies",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('v'), KeyCode::Char('k')],
+            label: "v k",
+        }],
+        Action::ShowView(TaskQuery::Blocked),
+    ),
+    BuiltInCommand::implemented(
+        "view-overdue",
+        "show open work due before today",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('v'), KeyCode::Char('x')],
+            label: "v x",
+        }],
+        Action::ShowView(TaskQuery::Overdue),
     ),
     BuiltInCommand::implemented(
         "layout-toggle",

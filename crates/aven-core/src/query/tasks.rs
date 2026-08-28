@@ -255,7 +255,7 @@ async fn query_task_items(
     push_availability_filter(&mut query, &mut filters_added, filters.availability);
     if filters.overdue_only {
         push_filter_prefix(&mut query, &mut filters_added);
-        query.push("t.deleted = 0 AND t.status NOT IN ('done', 'canceled') AND t.due_on != '' AND t.due_on < ");
+        query.push(fragments::overdue_task_prefix("t"));
         query.push_bind(Local::now().date_naive().format("%Y-%m-%d").to_string());
     }
     if filters.conflicts_only {
@@ -284,23 +284,11 @@ async fn query_task_items(
     }
     if filters.ready_only {
         push_filter_prefix(&mut query, &mut filters_added);
-        query.push(format!(
-                "NOT EXISTS (SELECT 1 FROM task_dependencies d
-                 JOIN tasks blocker ON blocker.workspace_id = d.workspace_id AND blocker.id = d.depends_on_task_id
-                 WHERE d.workspace_id = t.workspace_id AND d.task_id = t.id
-                   AND {})",
-                fragments::open_task_clause("blocker"),
-            ));
+        query.push(fragments::ready_dependency_clause("t"));
     }
     if filters.blocked_only {
         push_filter_prefix(&mut query, &mut filters_added);
-        query.push(format!(
-                "EXISTS (SELECT 1 FROM task_dependencies d
-                 JOIN tasks blocker ON blocker.workspace_id = d.workspace_id AND blocker.id = d.depends_on_task_id
-                 WHERE d.workspace_id = t.workspace_id AND d.task_id = t.id
-                   AND {})",
-                fragments::open_task_clause("blocker"),
-            ));
+        query.push(fragments::unresolved_blocker_clause("t"));
     }
     if filters.epics_only {
         push_filter_prefix(&mut query, &mut filters_added);
@@ -374,7 +362,7 @@ fn push_availability_filter(
         TaskAvailabilityFilter::All => {}
         TaskAvailabilityFilter::Available => {
             push_filter_prefix(query, filters_added);
-            query.push("(t.available_at = '' OR t.available_at <= ");
+            query.push(fragments::available_task_prefix("t"));
             query.push_bind(crate::ids::now());
             query.push(")");
         }

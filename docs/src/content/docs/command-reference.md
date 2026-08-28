@@ -961,7 +961,7 @@ aven tui [<task-ref>] [--view <view>] [--layout <layout>] [-p [<project>] | --pr
 | Argument or option | Description |
 | --- | --- |
 | `[<task-ref>]` | Open a task detail directly. Task refs cannot be combined with browse context or composer options. |
-| `--view <view>` | Start with the `queue`, `all`, `open`, `inbox`, `active`, `backlog`, `todo`, `done`, `upcoming`, `conflicts`, `epics`, `recurring`, or `recent-actions` query. |
+| `--view <view>` | Start with the `queue`, `ready`, `blocked`, `overdue`, `all`, `open`, `inbox`, `active`, `backlog`, `todo`, `done`, `upcoming`, `conflicts`, `epics`, `recurring`, or `recent-actions` query. |
 | `--layout <layout>` | Present a compatible query as `list` or `columns`. |
 | `-p`, `--project [<project>]` | Start in a project. Passing the flag without a value uses the project inferred from the current directory. Omitting the flag starts with workspace scope. |
 | `--label <label>` | Apply an initial label filter. |
@@ -970,7 +970,7 @@ aven tui [<task-ref>] [--view <view>] [--layout <layout>] [-p [<project>] | --pr
 | `--add-task-only` | Run only the add-task popup and exit after submission or cancellation. Project scope remains available. |
 | `--natural` | Use natural-language intake. Requires `--add-task` or `--add-task-only`. |
 
-Queries, layout, project scope, label, priority, and `--add-task` compose. Columns supports `all`, `open`, status, and `conflicts` queries. Incompatible query and layout pairs fail at launch. The `recent-actions` query rejects label and priority filters because it displays change-log entries rather than tasks. `--add-task` and `--add-task-only` are mutually exclusive.
+Queries, layout, project scope, label, priority, and `--add-task` compose. Columns supports `all`, `open`, `ready`, `blocked`, `overdue`, status, and `conflicts` queries. Incompatible query and layout pairs fail at launch. The `recent-actions` query rejects label and priority filters because it displays change-log entries rather than tasks. `--add-task` and `--add-task-only` are mutually exclusive.
 
 ```sh
 aven tui

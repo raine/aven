@@ -677,14 +677,26 @@ async fn header_click_opens_view_menu_and_selects_view() {
         Some(OverlayState::HeaderMenu(state))
             if state.column == menu_column
                 && state.row == 0
+                && state.items.iter().any(|item| item.label == "ready")
+                && state.items.iter().any(|item| item.label == "blocked")
+                && state.items.iter().any(|item| item.label == "overdue")
                 && state.items.iter().any(|item| item.label == "inbox")
     ));
+    let inbox_row = match &app.overlay {
+        Some(OverlayState::HeaderMenu(state)) => state
+            .items
+            .iter()
+            .position(|item| item.label == "inbox")
+            .map(|index| state.row.saturating_add(index as u16).saturating_add(2))
+            .unwrap(),
+        _ => unreachable!(),
+    };
 
     app.dispatch_mouse(
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: menu_column.saturating_add(2),
-            row: 6,
+            row: inbox_row,
             modifiers: KeyModifiers::NONE,
         },
         (140, 24).into(),

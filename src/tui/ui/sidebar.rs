@@ -18,6 +18,9 @@ use crate::tui::theme::{
 };
 
 const QUEUE_MARKER: &str = "\u{f03a}";
+const READY_MARKER: &str = "\u{f04b}";
+const BLOCKED_MARKER: &str = "\u{f05e}";
+const OVERDUE_MARKER: &str = "\u{f273}";
 const COLUMNS_MARKER: &str = "\u{f0db}";
 const INBOX_MARKER: &str = "\u{f01c}";
 const TODO_MARKER: &str = "\u{f0ae}";
@@ -282,6 +285,9 @@ fn sidebar_entry_active(entry: &SidebarEntry, store: &TuiStore) -> bool {
 fn sidebar_icon(entry: &SidebarEntry) -> &'static str {
     match entry.target {
         Some(SidebarEntryTarget::View(TaskQuery::Queue)) => QUEUE_MARKER,
+        Some(SidebarEntryTarget::View(TaskQuery::Ready)) => READY_MARKER,
+        Some(SidebarEntryTarget::View(TaskQuery::Blocked)) => BLOCKED_MARKER,
+        Some(SidebarEntryTarget::View(TaskQuery::Overdue)) => OVERDUE_MARKER,
         Some(SidebarEntryTarget::View(TaskQuery::All)) => COLUMNS_MARKER,
         Some(SidebarEntryTarget::View(TaskQuery::Inbox)) => INBOX_MARKER,
         Some(SidebarEntryTarget::View(TaskQuery::Todo)) => TODO_MARKER,
@@ -304,6 +310,9 @@ fn sidebar_icon(entry: &SidebarEntry) -> &'static str {
 fn sidebar_label(entry: &SidebarEntry) -> String {
     match entry.target {
         Some(SidebarEntryTarget::View(TaskQuery::Queue)) => "Queue".to_string(),
+        Some(SidebarEntryTarget::View(TaskQuery::Ready)) => "Ready".to_string(),
+        Some(SidebarEntryTarget::View(TaskQuery::Blocked)) => "Blocked".to_string(),
+        Some(SidebarEntryTarget::View(TaskQuery::Overdue)) => "Overdue".to_string(),
         Some(SidebarEntryTarget::View(TaskQuery::All)) => "All".to_string(),
         Some(SidebarEntryTarget::View(TaskQuery::Inbox)) => "Inbox".to_string(),
         Some(SidebarEntryTarget::View(TaskQuery::Active)) => "All active".to_string(),

@@ -109,7 +109,7 @@ availability, history, and future tasks.
 
 ## Queue
 
-The queue is the default attention view in the TUI. It answers: what should I look at next?
+The queue is the default attention view in the TUI. It answers: what should I look at next? Queue includes all available open work and ranks blocked tasks in context. Ready answers a narrower question: what can I start? It excludes epic containers, deferred tasks, and tasks with unresolved open dependencies.
 
 Tasks are grouped from most urgent to least urgent:
 

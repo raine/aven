@@ -109,6 +109,9 @@ impl From<TuiViewArg> for TaskQuery {
             TuiViewArg::Backlog => Self::Backlog,
             TuiViewArg::Todo => Self::Todo,
             TuiViewArg::Done => Self::Done,
+            TuiViewArg::Ready => Self::Ready,
+            TuiViewArg::Blocked => Self::Blocked,
+            TuiViewArg::Overdue => Self::Overdue,
             TuiViewArg::Upcoming => Self::Upcoming,
             TuiViewArg::Conflicts => Self::Conflicts,
             TuiViewArg::Epics => Self::Epics,
@@ -137,6 +140,9 @@ fn query_name(query: TaskQuery) -> &'static str {
         TaskQuery::Backlog => "backlog",
         TaskQuery::Todo => "todo",
         TaskQuery::Done => "done",
+        TaskQuery::Ready => "ready",
+        TaskQuery::Blocked => "blocked",
+        TaskQuery::Overdue => "overdue",
         TaskQuery::Upcoming => "upcoming",
         TaskQuery::Conflicts => "conflicts",
         TaskQuery::Search => "search",
@@ -258,6 +264,26 @@ mod tests {
             error.to_string(),
             "queue query does not support columns layout"
         );
+    }
+
+    #[tokio::test]
+    async fn resolves_work_browse_views() {
+        let (_temp, database, _conn) = setup().await;
+        for (arg, query) in [
+            (TuiViewArg::Ready, TaskQuery::Ready),
+            (TuiViewArg::Blocked, TaskQuery::Blocked),
+            (TuiViewArg::Overdue, TaskQuery::Overdue),
+        ] {
+            let mut input = args();
+            input.view = Some(arg);
+
+            let launch = TuiLaunch::resolve(&database, &Workspace::default(), input)
+                .await
+                .unwrap();
+
+            assert_eq!(launch.view_state.query, query);
+            assert_eq!(launch.startup, TuiStartup::Browse);
+        }
     }
 
     #[tokio::test]

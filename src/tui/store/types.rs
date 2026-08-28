@@ -89,6 +89,9 @@ pub(crate) enum TaskQuery {
     Backlog,
     Todo,
     Done,
+    Ready,
+    Blocked,
+    Overdue,
     Upcoming,
     Conflicts,
     Search,
@@ -113,6 +116,9 @@ impl TaskQuery {
                     | Self::Backlog
                     | Self::Todo
                     | Self::Done
+                    | Self::Ready
+                    | Self::Blocked
+                    | Self::Overdue
                     | Self::Conflicts
                     | Self::Search
             )
@@ -334,6 +340,19 @@ impl TaskViewState {
                 filters.availability = TaskAvailabilityFilter::Available;
             }
             TaskQuery::Done => filters.statuses = vec!["done".to_string(), "canceled".to_string()],
+            TaskQuery::Ready => {
+                filters.ready_only = true;
+                filters.exclude_epics = true;
+                filters.availability = TaskAvailabilityFilter::Available;
+            }
+            TaskQuery::Blocked => {
+                filters.blocked_only = true;
+                filters.availability = TaskAvailabilityFilter::Available;
+            }
+            TaskQuery::Overdue => {
+                filters.overdue_only = true;
+                filters.availability = TaskAvailabilityFilter::Available;
+            }
             TaskQuery::Upcoming => filters.availability = TaskAvailabilityFilter::Upcoming,
             TaskQuery::Conflicts => filters.conflicts_only = true,
             TaskQuery::Epics => {
@@ -379,15 +398,15 @@ impl TaskViewState {
     }
 
     pub(crate) fn sort(&self) -> TaskSort {
-        if self.query == TaskQuery::Upcoming {
-            TaskSort::AvailableAt
-        } else {
-            self.order.into()
+        match self.query {
+            TaskQuery::Upcoming => TaskSort::AvailableAt,
+            TaskQuery::Overdue => TaskSort::DueOn,
+            _ => self.order.into(),
         }
     }
 
     pub(crate) fn sort_direction(&self) -> SortDirection {
-        if self.query == TaskQuery::Upcoming {
+        if matches!(self.query, TaskQuery::Upcoming | TaskQuery::Overdue) {
             SortDirection::Asc
         } else {
             self.direction
@@ -419,6 +438,9 @@ mod tests {
             TaskQuery::Backlog,
             TaskQuery::Todo,
             TaskQuery::Done,
+            TaskQuery::Ready,
+            TaskQuery::Blocked,
+            TaskQuery::Overdue,
             TaskQuery::Conflicts,
             TaskQuery::Search,
         ] {

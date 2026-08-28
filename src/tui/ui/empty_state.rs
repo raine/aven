@@ -178,7 +178,7 @@ pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
     match store.view_state.query {
         TaskQuery::Queue => named_state(
             "Queue is clear",
-            "Nothing is actionable in this scope.",
+            "Queue ranks available work, including tasks with unresolved blockers.",
             Action::BeginAddTask,
             "Add a task",
             "add task",
@@ -228,6 +228,27 @@ pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
         TaskQuery::Done => named_state(
             "Nothing completed yet",
             "Finished and canceled tasks collect here.",
+            Action::ShowView(TaskQuery::Queue),
+            "View queue",
+            "queue",
+        ),
+        TaskQuery::Ready => named_state(
+            "No work is ready to start",
+            "Ready excludes epics, deferred tasks, and unresolved blockers.",
+            Action::ShowView(TaskQuery::Queue),
+            "View ranked queue",
+            "queue",
+        ),
+        TaskQuery::Blocked => named_state(
+            "No blocked tasks",
+            "Tasks with unresolved dependencies appear here.",
+            Action::ShowView(TaskQuery::Ready),
+            "View ready tasks",
+            "ready",
+        ),
+        TaskQuery::Overdue => named_state(
+            "Nothing overdue",
+            "Open deadlines before today appear here; due today is on time.",
             Action::ShowView(TaskQuery::Queue),
             "View queue",
             "queue",
@@ -551,6 +572,7 @@ mod tests {
             Action::ToggleDeletedFilter,
             Action::CycleRecurringLifecycleFilter,
             Action::ShowView(TaskQuery::Queue),
+            Action::ShowView(TaskQuery::Ready),
             Action::ShowView(TaskQuery::Upcoming),
             Action::Refresh,
             Action::ShowConfigInfo,

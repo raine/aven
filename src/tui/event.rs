@@ -416,6 +416,44 @@ mod tests {
     }
 
     #[test]
+    fn catalog_includes_work_view_commands() {
+        for (name, query, shortcut) in [
+            ("view-ready", TaskQuery::Ready, "v y"),
+            ("view-blocked", TaskQuery::Blocked, "v k"),
+            ("view-overdue", TaskQuery::Overdue, "v x"),
+        ] {
+            let command = COMMANDS
+                .iter()
+                .find(|command| command.name == name)
+                .expect("work view command");
+            assert_eq!(command.section, "Views");
+            assert_eq!(command.action, Action::ShowView(query));
+            assert_eq!(
+                command
+                    .keys(CommandContext::Normal)
+                    .iter()
+                    .map(|key| key.label)
+                    .collect::<Vec<_>>(),
+                vec![shortcut]
+            );
+        }
+    }
+
+    #[test]
+    fn resolves_work_view_shortcuts() {
+        for (key, query) in [
+            ('y', TaskQuery::Ready),
+            ('k', TaskQuery::Blocked),
+            ('x', TaskQuery::Overdue),
+        ] {
+            assert_eq!(
+                resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char(key)]),
+                ShortcutLookup::Found(Action::ShowView(query))
+            );
+        }
+    }
+
+    #[test]
     fn catalog_includes_upcoming_view_command() {
         let command = COMMANDS
             .iter()
