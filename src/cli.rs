@@ -12,6 +12,131 @@ const LITERAL_STYLE: Style = Style::new();
 const PLACEHOLDER_STYLE: Style = Style::new().effects(Effects::DIMMED);
 const DESCRIPTION_STYLE: Style = Style::new();
 
+const ADD_EXAMPLES: &str = r#"Examples:
+  aven add "Fix login redirect" --status todo --priority high --label bug
+  aven add "Write migration guide" --description-file guide.md
+  aven add "Daily journal" --repeat daily --repeat-at 09:00 --time-zone Europe/Stockholm
+
+Supply at most one description source: --description, --description-file, or
+--description-stdin. --natural uses the title as the complete request and cannot
+be combined with structured task fields other than --project.
+
+Defaults:
+  Plain tasks use status inbox. Recurring tasks use status todo. Priority is none.
+  Recurrence uses the local time zone, today's start date, and a same-day due date.
+
+Scheduling inputs:
+  --available-at accepts tomorrow, 2d, next monday at 9am, an ISO date or timestamp.
+  --due accepts tomorrow, 2w, next monday, an ISO date, none, or clear.
+
+Recurrence rules:
+  daily | weekdays | weekly | fortnightly | monthly | yearly
+  every N days | every N weeks | every N months | every N years
+  weekly on mon,wed,fri | every N weeks on mon,thu"#;
+
+const EDIT_EXAMPLES: &str = r#"Examples:
+  aven edit APP-7KQ9 --status active --priority high
+  aven edit APP-7KQ9 --available-at tomorrow --due "next monday"
+  aven edit APP-7KQ9 --description-file description.md
+
+--available-at accepts natural expressions, ISO dates, and ISO timestamps.
+--due accepts natural date expressions, ISO dates, none, or clear. Each scheduling
+value conflicts with its corresponding --clear option. Supply at most one
+description source: --description, --description-file, or --description-stdin."#;
+
+const BULK_UPDATE_EXAMPLES: &str = r#"Examples:
+  aven bulk-update --project app --filter-label bug --set-priority high --dry-run
+  aven bulk-update --status inbox --set-status backlog
+
+At least one selector is required unless --all is supplied, and at least one
+update option is always required. --all only bypasses the selector requirement;
+other filters still apply. Preview broad changes with --dry-run before applying."#;
+
+const TEXT_EXAMPLES: &str = r#"Safe edit workflow:
+  aven text get APP-7KQ9 description --output description.md
+  aven text diff APP-7KQ9 description --file description.md
+  aven text set APP-7KQ9 description --file description.md --if-sha256 HASH
+
+The hash guard prevents replacing text that changed after it was read. `text
+set` requires exactly one input source: --file or --stdin."#;
+
+const CONFLICT_EXAMPLES: &str = r#"Examples:
+  aven conflict show APP-7KQ9
+  aven conflict diff APP-7KQ9 description
+  aven conflict resolve APP-7KQ9 description --use VARIANT_TOKEN
+  aven conflict resolve APP-7KQ9 description --value-file resolved.md
+
+Inspect both variants before resolving. Variant tokens come from `conflict show`.
+--use takes precedence over explicit values. Without --use, supply exactly one
+of --value, --value-file, or --value-stdin."#;
+
+const BACKUP_HELP: &str = r#"Examples:
+  aven backup --output backup.aven-backup.tar.zst
+  aven backup restore backup.aven-backup.tar.zst --yes
+
+Backup archives include the SQLite database and attachment objects available on
+this device. Sync first when remote attachment objects may be missing. Restore
+replaces local data, creates a safety backup, and requires --yes."#;
+
+const EXPORT_HELP: &str = r#"Portable JSON contains task data but no attachment bytes. Use `aven backup` for
+attachment objects available on this device, and sync first when remote objects
+may be missing."#;
+
+const IMPORT_HELP: &str = r#"Import validates portable JSON before replacing local data, creates a safety
+backup, and requires --yes. Portable imports do not contain attachment bytes."#;
+
+const LIST_HELP: &str = r#"Examples:
+  aven list --ready
+  aven list --open --project app --label bug
+  aven list --upcoming
+
+By default, list shows available, nondeleted tasks of every status, newest
+updates first. --ready and --blocked are mutually exclusive. Dependency filters
+select open tasks and cannot be combined with --all or --deleted. --upcoming and
+--overdue select nondeleted, open tasks even when --all is supplied."#;
+
+const NOTE_HELP: &str = r#"Examples:
+  aven note APP-7KQ9 "Short update"
+  aven note APP-7KQ9 --file handoff.md
+  aven note APP-7KQ9 --stdin
+
+Supply exactly one text source: the TEXT argument, --file, or --stdin."#;
+
+const RECUR_HELP: &str = r#"Recurrence commands accept the stable RCR-... series ref printed by `aven add
+--repeat` or a linked occurrence task ref. Complete or edit the projected task
+with its ordinary task ref. Series template edits affect future occurrences."#;
+
+const RECUR_EDIT_HELP: &str = r#"Series edits affect future occurrences. Existing occurrence tasks retain their
+stored fields. Supply at most one description source: --description,
+--description-file, or --description-stdin."#;
+
+const SERVER_HELP: &str = r#"Loopback binds may run without authentication. Private and public binds require
+sync.auth_token in the configuration file. Public binds also require
+--unsafe-public-bind. Aven does not provide TLS termination."#;
+
+const CONFIG_HELP: &str = r#"`config get` and `config set` manage the listed scalar keys. `config show` prints
+the configuration file path and contents for settings that require direct file
+editing, including workspace routes, task-intake agents, TUI columns, and custom
+commands."#;
+
+const CONFIG_SET_HELP: &str = r#"Accepted values:
+  sync.enabled, update.automatic_checks       true | false
+  sync.server_url                             HTTP or HTTPS URL | null
+  sync.interval_seconds                       positive integer
+  local.db_path                               nonempty path | null
+  local.image_optimization                    off | paste | on
+
+Use `aven config show` to locate settings managed by direct file editing."#;
+
+const SYNC_HELP: &str = r#"The server URL comes from --server, AVEN_SYNC_SERVER, or sync.server_url, in
+that order. Authentication and other sync settings live in the configuration
+file. Run `aven config show` to inspect the active file and `aven doctor` to
+diagnose routing and sync configuration."#;
+
+const AGENT_HELP: &str = r#"`prime` emits the coding-agent guidance plus live project work. `skill install`
+installs the reusable guidance without live task context for detected or
+selected agents."#;
+
 const STYLES: Styles = Styles::styled()
     .header(HEADING_STYLE)
     .usage(HEADING_STYLE)
@@ -247,6 +372,7 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub(crate) enum Commands {
     /// Create a task
+    #[command(after_long_help = ADD_EXAMPLES)]
     Add(AddArgs),
     /// Inspect and modify task dependencies
     Dep(DepCommand),
@@ -259,18 +385,23 @@ pub(crate) enum Commands {
     /// Show task details
     Show(ShowArgs),
     /// List tasks
+    #[command(after_long_help = LIST_HELP)]
     List(ListArgs),
     /// Search tasks in the active workspace
     Search(TaskSearchArgs),
     /// Apply field updates across many tasks
+    #[command(after_long_help = BULK_UPDATE_EXAMPLES)]
     BulkUpdate(BulkUpdateArgs),
     /// Emit workspace context for AI agents
+    #[command(after_long_help = AGENT_HELP)]
     Prime(PrimeArgs),
     /// Edit task fields
+    #[command(after_long_help = EDIT_EXAMPLES)]
     Edit(TaskEditArgs),
     /// Check for and install an aven update
     Update(SelfUpdateArgs),
     /// Append a note to a task
+    #[command(after_long_help = NOTE_HELP)]
     Note(NoteArgs),
     /// Delete a note from a task
     NoteDelete(NoteDeleteArgs),
@@ -279,8 +410,10 @@ pub(crate) enum Commands {
     /// Restore a deleted task
     Restore(RefArgs),
     /// Manage recurring task series
+    #[command(after_long_help = RECUR_HELP)]
     Recur(RecurCommand),
     /// Get, diff, and set long text fields safely
+    #[command(after_long_help = TEXT_EXAMPLES)]
     Text(TextCommand),
     /// Manage labels
     Label(LabelCommand),
@@ -291,16 +424,22 @@ pub(crate) enum Commands {
     /// Manage workspaces
     Workspace(WorkspaceCommand),
     /// Inspect and resolve sync conflicts
+    #[command(after_long_help = CONFLICT_EXAMPLES)]
     Conflict(ConflictCommand),
     /// Manage local configuration
+    #[command(after_long_help = CONFIG_HELP)]
     Config(ConfigCommand),
-    /// Back up or restore the SQLite database
+    /// Back up or restore local data
+    #[command(after_long_help = BACKUP_HELP)]
     Backup(BackupCommand),
     /// Export user data as portable JSON
+    #[command(after_long_help = EXPORT_HELP)]
     Export(ExportArgs),
     /// Import portable JSON data
+    #[command(after_long_help = IMPORT_HELP)]
     Import(ImportArgs),
     /// Print or install the coding-agent skill
+    #[command(after_long_help = AGENT_HELP)]
     Skill(SkillCommand),
     /// Diagnose startup, configuration, database, and workspace state without repairs
     Doctor(DoctorArgs),
@@ -309,8 +448,10 @@ pub(crate) enum Commands {
     /// Run or manage the background daemon
     Daemon(DaemonArgs),
     /// Run the sync server
+    #[command(after_long_help = SERVER_HELP)]
     Server(ServerArgs),
     /// Sync with a remote server
+    #[command(after_long_help = SYNC_HELP)]
     Sync(SyncArgs),
     /// Open the terminal UI
     Tui(TuiArgs),
@@ -334,7 +475,7 @@ pub(crate) enum SkillSubcommand {
 
 #[derive(Args)]
 pub(crate) struct SkillInstallArgs {
-    /// Target a coding agent (default: all detected)
+    /// Target a coding agent; repeat for multiple (default: all detected)
     #[arg(long = "agent", value_enum)]
     pub(crate) agent: Vec<CodingAgentArg>,
 }
@@ -468,25 +609,35 @@ pub(crate) struct InternalNaturalAddArgs {
 
 #[derive(Args)]
 pub(crate) struct AddArgs {
+    /// Task title, or natural-language request with --natural
     pub(crate) title: String,
+    /// Assign the task to a project by key or name; otherwise infer it
     #[arg(long)]
     pub(crate) project: Option<String>,
+    /// Set the Markdown description from this argument
     #[arg(long)]
     pub(crate) description: Option<String>,
+    /// Read the Markdown description from a UTF-8 file
     #[arg(long)]
     pub(crate) description_file: Option<PathBuf>,
+    /// Read the Markdown description from standard input
     #[arg(long)]
     pub(crate) description_stdin: bool,
+    /// Set priority: none, low, medium, high, or urgent
     #[arg(long, default_value = "none")]
     pub(crate) priority: String,
+    /// Set status: inbox, backlog, todo, active, done, or canceled; --repeat excludes terminal values
     #[arg(long)]
     pub(crate) status: Option<String>,
+    /// Add a label; repeat for multiple labels
     #[arg(long)]
     pub(crate) label: Vec<String>,
+    /// Set metadata; repeat for multiple fields
     #[arg(long, value_name = "KEY=VALUE")]
     pub(crate) metadata: Vec<String>,
     #[arg(long, help = "Create the task as an epic container")]
     pub(crate) epic: bool,
+    /// Parse the title with the configured task-intake agent
     #[arg(
         long,
         conflicts_with_all = [
@@ -508,25 +659,34 @@ pub(crate) struct AddArgs {
         ]
     )]
     pub(crate) natural: bool,
+    /// Defer availability until a date, time, or natural expression
     #[arg(long, value_name = "WHEN")]
     pub(crate) available_at: Option<String>,
+    /// Set a deadline from a date or natural expression
     #[arg(long, value_name = "WHEN")]
     pub(crate) due: Option<String>,
+    /// Create a recurring series using the documented rule grammar
     #[arg(long, value_name = "RULE")]
     pub(crate) repeat: Option<String>,
-    #[arg(long, value_name = "HH:MM")]
+    /// Set a 24-hour local availability time, or none for start of day
+    #[arg(long, value_name = "HH:MM|none")]
     pub(crate) repeat_at: Option<String>,
+    /// Give each occurrence a same-day deadline, or no deadline
     #[arg(long, value_name = "same-day|none")]
     pub(crate) repeat_due: Option<String>,
+    /// Evaluate recurrence dates and times in this IANA time zone
     #[arg(long, value_name = "IANA_ZONE")]
     pub(crate) time_zone: Option<String>,
+    /// Anchor the recurrence on this date; defaults to today in its time zone
     #[arg(long, value_name = "YYYY-MM-DD")]
     pub(crate) repeat_start_on: Option<String>,
 }
 
 #[derive(Args)]
 pub(crate) struct ShowArgs {
+    /// Task ref, such as APP-7KQ9 or an unambiguous suffix
     pub(crate) task_ref: String,
+    /// Include descriptions, notes, relationships, metadata, and attachments
     #[arg(long)]
     pub(crate) full: bool,
     #[arg(long, help = "Print machine-readable JSON")]
@@ -535,6 +695,7 @@ pub(crate) struct ShowArgs {
 
 #[derive(Args)]
 pub(crate) struct ContextArgs {
+    /// Task ref, such as APP-7KQ9 or an unambiguous suffix
     pub(crate) task_ref: String,
     #[arg(long, help = "Print machine-readable JSON")]
     pub(crate) json: bool,
@@ -542,37 +703,52 @@ pub(crate) struct ContextArgs {
 
 #[derive(Args)]
 pub(crate) struct ListArgs {
+    /// Restrict tasks to a project by key or name
     #[arg(long)]
     pub(crate) project: Option<String>,
+    /// Restrict tasks to one status: inbox, backlog, todo, active, done, or canceled
     #[arg(long)]
     pub(crate) status: Option<String>,
+    /// Restrict tasks to one priority: none, low, medium, high, or urgent
     #[arg(long)]
     pub(crate) priority: Option<String>,
+    /// Restrict tasks to those carrying this label
     #[arg(long)]
     pub(crate) label: Option<String>,
+    /// Require an exact metadata key and value; repeat to require all
     #[arg(long, value_name = "KEY=VALUE")]
     pub(crate) metadata: Vec<String>,
+    /// Require a metadata key to be present; repeat to require all
     #[arg(long, value_name = "KEY")]
     pub(crate) has_metadata: Vec<String>,
+    /// Require a metadata key to be absent; repeat to require all
     #[arg(long, value_name = "KEY")]
     pub(crate) missing_metadata: Vec<String>,
+    /// Include all nonterminal statuses: inbox, backlog, todo, and active
     #[arg(
         long,
         conflicts_with_all = ["status", "all", "deleted", "upcoming"]
     )]
     pub(crate) open: bool,
+    /// Include deleted tasks, except with --upcoming or --overdue
     #[arg(long)]
     pub(crate) all: bool,
+    /// Show only soft-deleted tasks
     #[arg(long)]
     pub(crate) deleted: bool,
+    /// Show open, available, unblocked, non-epic tasks
     #[arg(long)]
     pub(crate) ready: bool,
+    /// Show open tasks with incomplete dependencies
     #[arg(long)]
     pub(crate) blocked: bool,
+    /// Show epic containers
     #[arg(long)]
     pub(crate) epics: bool,
+    /// Show nondeleted, open tasks that become available in the future
     #[arg(long)]
     pub(crate) upcoming: bool,
+    /// Show nondeleted, open tasks whose due date has passed
     #[arg(long)]
     pub(crate) overdue: bool,
     #[arg(long, help = "Show individual recurring occurrences")]
@@ -589,13 +765,17 @@ pub(crate) struct ListArgs {
 
 #[derive(Args)]
 pub(crate) struct TaskSearchArgs {
+    /// One or more search terms matched against task text
     pub(crate) query: Vec<String>,
     #[arg(long, help = "Restrict matches to a project by key or name")]
     pub(crate) project: Option<String>,
+    /// Require an exact metadata key and value; repeat to require all
     #[arg(long, value_name = "KEY=VALUE")]
     pub(crate) metadata: Vec<String>,
+    /// Require a metadata key to be present; repeat to require all
     #[arg(long, value_name = "KEY")]
     pub(crate) has_metadata: Vec<String>,
+    /// Require a metadata key to be absent; repeat to require all
     #[arg(long, value_name = "KEY")]
     pub(crate) missing_metadata: Vec<String>,
     #[arg(
@@ -628,6 +808,7 @@ pub(crate) enum RecurSubcommand {
     /// Show recurring series history
     History(RecurHistoryArgs),
     /// Edit the template used by future occurrences
+    #[command(after_long_help = RECUR_EDIT_HELP)]
     Edit(Box<RecurEditArgs>),
     /// Skip the current occurrence
     Skip(RecurRefArgs),
@@ -647,6 +828,7 @@ pub(crate) struct RecurListArgs {
 
 #[derive(Args)]
 pub(crate) struct RecurShowArgs {
+    /// Recurring-series ref or linked task ref; prefer a stable RCR-... ref
     pub(crate) series_ref: String,
     #[arg(long, help = "Print machine-readable JSON")]
     pub(crate) json: bool,
@@ -654,7 +836,9 @@ pub(crate) struct RecurShowArgs {
 
 #[derive(Args)]
 pub(crate) struct RecurHistoryArgs {
+    /// Recurring-series ref or linked task ref; prefer a stable RCR-... ref
     pub(crate) series_ref: String,
+    /// Skip this many newest history entries
     #[arg(long, default_value_t = 0)]
     pub(crate) offset: usize,
     #[arg(
@@ -670,41 +854,57 @@ pub(crate) struct RecurHistoryArgs {
 
 #[derive(Args)]
 pub(crate) struct RecurEditArgs {
+    /// Recurring-series ref or linked task ref; prefer a stable RCR-... ref
     pub(crate) series_ref: String,
+    /// Set the title for future occurrences
     #[arg(long)]
     pub(crate) title: Option<String>,
+    /// Set the future-occurrence description from this argument
     #[arg(long)]
     pub(crate) description: Option<String>,
+    /// Read the future-occurrence description from a UTF-8 file
     #[arg(long)]
     pub(crate) description_file: Option<PathBuf>,
+    /// Read the future-occurrence description from standard input
     #[arg(long)]
     pub(crate) description_stdin: bool,
+    /// Assign future occurrences to a project by key or name
     #[arg(long)]
     pub(crate) project: Option<String>,
+    /// Set future status: inbox, backlog, todo, or active
     #[arg(long)]
     pub(crate) status: Option<String>,
+    /// Set future priority: none, low, medium, high, or urgent
     #[arg(long)]
     pub(crate) priority: Option<String>,
+    /// Replace the future-occurrence label set; repeat for multiple labels
     #[arg(long, value_name = "LABEL")]
     pub(crate) label: Vec<String>,
+    /// Set future-occurrence metadata; repeat for multiple fields
     #[arg(long, value_name = "KEY=VALUE")]
     pub(crate) metadata: Vec<String>,
+    /// Remove future-occurrence metadata by key; repeat for multiple fields
     #[arg(long, value_name = "KEY")]
     pub(crate) remove_metadata: Vec<String>,
+    /// Set the local availability time, or none for start-of-day availability
     #[arg(long, value_name = "HH:MM|none")]
     pub(crate) repeat_at: Option<String>,
+    /// Give future occurrences a same-day deadline, or no deadline
     #[arg(long, value_name = "same-day|none")]
     pub(crate) repeat_due: Option<String>,
 }
 
 #[derive(Args)]
 pub(crate) struct RecurRefArgs {
+    /// Recurring-series ref or linked task ref; prefer a stable RCR-... ref
     pub(crate) series_ref: String,
 }
 
 #[derive(Args)]
 pub(crate) struct RecurStopArgs {
+    /// Recurring-series ref or linked task ref; prefer a stable RCR-... ref
     pub(crate) series_ref: String,
+    /// Mark the current occurrence skipped while stopping the series
     #[arg(long)]
     pub(crate) skip_current: bool,
 }
@@ -727,18 +927,23 @@ pub(crate) enum DepSubcommand {
 
 #[derive(Args)]
 pub(crate) struct DepAddArgs {
+    /// Blocked task ref
     pub(crate) task_ref: String,
+    /// Blocker task ref
     pub(crate) depends_on_ref: String,
 }
 
 #[derive(Args)]
 pub(crate) struct DepRemoveArgs {
+    /// Blocked task ref
     pub(crate) task_ref: String,
+    /// Blocker task ref
     pub(crate) depends_on_ref: String,
 }
 
 #[derive(Args)]
 pub(crate) struct DepListArgs {
+    /// Task whose blockers and dependents to list
     pub(crate) task_ref: String,
     #[arg(long, help = "Print machine-readable JSON")]
     pub(crate) json: bool,
@@ -762,12 +967,15 @@ pub(crate) enum RelatedSubcommand {
 
 #[derive(Args)]
 pub(crate) struct RelatedMutationArgs {
+    /// First task ref
     pub(crate) task_ref: String,
+    /// Other task ref in the symmetric link
     pub(crate) related_ref: String,
 }
 
 #[derive(Args)]
 pub(crate) struct RelatedListArgs {
+    /// Task whose related links to list
     pub(crate) task_ref: String,
     #[arg(long, help = "Print machine-readable JSON")]
     pub(crate) json: bool,
@@ -791,18 +999,23 @@ pub(crate) enum EpicSubcommand {
 
 #[derive(Args)]
 pub(crate) struct EpicAddArgs {
+    /// Child task ref
     pub(crate) child_ref: String,
+    /// Epic task ref
     pub(crate) epic_ref: String,
 }
 
 #[derive(Args)]
 pub(crate) struct EpicRemoveArgs {
+    /// Child task ref
     pub(crate) child_ref: String,
+    /// Epic task ref
     pub(crate) epic_ref: String,
 }
 
 #[derive(Args)]
 pub(crate) struct EpicListArgs {
+    /// Epic task ref whose children to list
     pub(crate) epic_ref: String,
     #[arg(long, help = "Print machine-readable JSON")]
     pub(crate) json: bool,
@@ -810,38 +1023,53 @@ pub(crate) struct EpicListArgs {
 
 #[derive(Args)]
 pub(crate) struct BulkUpdateArgs {
+    /// Match tasks in this project
     #[arg(long)]
     pub(crate) project: Option<String>,
+    /// Match tasks with this status: inbox, backlog, todo, active, done, or canceled
     #[arg(long)]
     pub(crate) status: Option<String>,
+    /// Match tasks with this priority: none, low, medium, high, or urgent
     #[arg(long)]
     pub(crate) priority: Option<String>,
+    /// Match tasks carrying this label
     #[arg(long)]
     pub(crate) filter_label: Option<String>,
+    /// Allow running without a selector; other filters still apply
     #[arg(long)]
     pub(crate) all: bool,
+    /// Allow soft-deleted tasks to match the filters
     #[arg(long)]
     pub(crate) include_deleted: bool,
+    /// Preview matching tasks and changes without writing them
     #[arg(long)]
     pub(crate) dry_run: bool,
+    /// Set status on matches: inbox, backlog, todo, active, done, or canceled
     #[arg(long)]
     pub(crate) set_status: Option<String>,
+    /// Set priority on matches: none, low, medium, high, or urgent
     #[arg(long)]
     pub(crate) set_priority: Option<String>,
+    /// Move every matched task to this project
     #[arg(long)]
     pub(crate) set_project: Option<String>,
+    /// Add a label to every matched task; repeat for multiple labels
     #[arg(long)]
     pub(crate) label: Vec<String>,
+    /// Remove a label from every matched task; repeat for multiple labels
     #[arg(long)]
     pub(crate) remove_label: Vec<String>,
+    /// Set metadata on every matched task; repeat for multiple fields
     #[arg(long, value_name = "KEY=VALUE")]
     pub(crate) metadata: Vec<String>,
+    /// Remove metadata from every matched task; repeat for multiple fields
     #[arg(long, value_name = "KEY")]
     pub(crate) remove_metadata: Vec<String>,
 }
 
 #[derive(Args)]
 pub(crate) struct PrimeArgs {
+    /// Restrict agent context to a project by key or name
     #[arg(long)]
     pub(crate) project: Option<String>,
     #[arg(
@@ -856,37 +1084,54 @@ pub(crate) struct PrimeArgs {
 
 #[derive(Args)]
 pub(crate) struct TaskEditArgs {
+    /// Task ref, such as APP-7KQ9 or an unambiguous suffix
     pub(crate) task_ref: String,
+    /// Replace the task title
     #[arg(long)]
     pub(crate) title: Option<String>,
+    /// Replace the Markdown description from this argument
     #[arg(long)]
     pub(crate) description: Option<String>,
+    /// Replace the Markdown description from a UTF-8 file
     #[arg(long)]
     pub(crate) description_file: Option<PathBuf>,
+    /// Replace the Markdown description from standard input
     #[arg(long)]
     pub(crate) description_stdin: bool,
+    /// Move the task to a project by key or name
     #[arg(long)]
     pub(crate) project: Option<String>,
+    /// Set status: inbox, backlog, todo, active, done, or canceled
     #[arg(long)]
     pub(crate) status: Option<String>,
+    /// Set priority: none, low, medium, high, or urgent
     #[arg(long)]
     pub(crate) priority: Option<String>,
+    /// Defer availability until a date, time, or natural expression
     #[arg(long, value_name = "WHEN")]
     pub(crate) available_at: Option<String>,
+    /// Remove the availability date and make the task immediately available
     #[arg(long)]
     pub(crate) clear_available_at: bool,
+    /// Set a deadline from a date or natural expression
     #[arg(long, value_name = "WHEN")]
     pub(crate) due: Option<String>,
+    /// Remove the task deadline
     #[arg(long)]
     pub(crate) clear_due: bool,
+    /// Enable with on, true, or 1; disable with off, false, or 0
     #[arg(long, value_name = "on|off")]
     pub(crate) epic: Option<String>,
+    /// Add a label; repeat for multiple labels
     #[arg(long)]
     pub(crate) label: Vec<String>,
+    /// Remove a label; repeat for multiple labels
     #[arg(long)]
     pub(crate) remove_label: Vec<String>,
+    /// Set metadata; repeat for multiple fields
     #[arg(long, value_name = "KEY=VALUE")]
     pub(crate) metadata: Vec<String>,
+    /// Remove metadata by key; repeat for multiple fields
     #[arg(long, value_name = "KEY")]
     pub(crate) remove_metadata: Vec<String>,
 }
@@ -899,22 +1144,29 @@ pub(crate) struct SelfUpdateArgs {
 
 #[derive(Args)]
 pub(crate) struct NoteArgs {
+    /// Task ref to receive the note
     pub(crate) task_ref: String,
+    /// Note text; omit when using --file or --stdin
     pub(crate) text: Option<String>,
+    /// Read note text from a UTF-8 file
     #[arg(long)]
     pub(crate) file: Option<PathBuf>,
+    /// Read note text from standard input
     #[arg(long)]
     pub(crate) stdin: bool,
 }
 
 #[derive(Args)]
 pub(crate) struct NoteDeleteArgs {
+    /// Task ref containing the note
     pub(crate) task_ref: String,
+    /// Exact note ID printed by `aven show --full`
     pub(crate) note_id: String,
 }
 
 #[derive(Args)]
 pub(crate) struct LabelListArgs {
+    /// Restrict labels to names containing this text
     #[arg(long)]
     pub(crate) search: Option<String>,
     #[arg(
@@ -929,6 +1181,7 @@ pub(crate) struct LabelListArgs {
 
 #[derive(Args)]
 pub(crate) struct ProjectListArgs {
+    /// Restrict projects to keys or names containing this text
     #[arg(long)]
     pub(crate) search: Option<String>,
     #[arg(
@@ -943,6 +1196,7 @@ pub(crate) struct ProjectListArgs {
 
 #[derive(Args)]
 pub(crate) struct RefArgs {
+    /// Task ref, such as APP-7KQ9 or an unambiguous suffix
     pub(crate) task_ref: String,
 }
 
@@ -955,9 +1209,15 @@ pub(crate) struct LabelCommand {
 #[derive(Subcommand)]
 pub(crate) enum LabelSubcommand {
     /// Create a label
-    Create { name: String },
+    Create {
+        /// Label name; normalization is applied before storage
+        name: String,
+    },
     /// Delete a label
-    Delete { name: String },
+    Delete {
+        /// Label name to delete
+        name: String,
+    },
     /// List or search labels
     List(LabelListArgs),
 }
@@ -977,12 +1237,18 @@ pub(crate) enum MetadataSubcommand {
     },
     /// Show a metadata field
     Show {
+        /// Metadata key to inspect
         key: String,
         #[arg(long, help = "Print machine-readable JSON")]
         json: bool,
     },
     /// Rename a metadata field
-    Rename { key: String, new_key: String },
+    Rename {
+        /// Existing metadata key
+        key: String,
+        /// Replacement metadata key
+        new_key: String,
+    },
 }
 
 #[derive(Args)]
@@ -995,18 +1261,26 @@ pub(crate) struct ProjectCommand {
 pub(crate) enum ProjectSubcommand {
     /// Create a project
     Create {
+        /// Project display name; its key is derived by normalization
         name: String,
+        /// Map this directory to the project for inference
         #[arg(long)]
         path: Option<PathBuf>,
     },
     /// Delete a project
-    Delete { project: String },
+    Delete {
+        /// Project key or name
+        project: String,
+    },
     /// List or search projects
     List(ProjectListArgs),
     /// Rename a project
     Rename {
+        /// Existing project key or name
         project: String,
+        /// Replacement display name
         new_name: String,
+        /// Replacement task-ref prefix; otherwise derive it from the name
         #[arg(long)]
         prefix: Option<String>,
     },
@@ -1020,11 +1294,24 @@ pub(crate) enum ProjectSubcommand {
 #[derive(Subcommand)]
 pub(crate) enum ProjectPathSubcommand {
     /// Add a path mapping to a project
-    Add { project: String, path: PathBuf },
+    Add {
+        /// Project key or name
+        project: String,
+        /// Directory from which this project should be inferred
+        path: PathBuf,
+    },
     /// Remove a path mapping from a project
-    Remove { project: String, path: PathBuf },
+    Remove {
+        /// Project key or name
+        project: String,
+        /// Mapped directory to remove
+        path: PathBuf,
+    },
     /// List project path mappings
-    List { project: Option<String> },
+    List {
+        /// Optional project key or name to restrict the list
+        project: Option<String>,
+    },
 }
 
 #[derive(Args)]
@@ -1037,6 +1324,7 @@ pub(crate) struct WorkspaceCommand {
 pub(crate) struct BackupCommand {
     #[command(subcommand)]
     pub(crate) command: Option<BackupSubcommand>,
+    /// Write the backup archive to this path instead of the generated path
     #[arg(long)]
     pub(crate) output: Option<PathBuf>,
 }
@@ -1044,25 +1332,31 @@ pub(crate) struct BackupCommand {
 #[derive(Subcommand)]
 pub(crate) enum BackupSubcommand {
     /// Restore the database from a backup
+    #[command(after_long_help = BACKUP_HELP)]
     Restore(BackupRestoreArgs),
 }
 
 #[derive(Args)]
 pub(crate) struct BackupRestoreArgs {
+    /// Backup archive or SQLite database file to restore
     pub(crate) path: PathBuf,
+    /// Confirm replacement of local data
     #[arg(long)]
     pub(crate) yes: bool,
 }
 
 #[derive(Args)]
 pub(crate) struct ExportArgs {
+    /// Destination for portable JSON without attachment bytes
     #[arg(long)]
     pub(crate) output: PathBuf,
 }
 
 #[derive(Args)]
 pub(crate) struct ImportArgs {
+    /// Portable JSON export to validate and import
     pub(crate) path: PathBuf,
+    /// Confirm replacement of local data
     #[arg(long)]
     pub(crate) yes: bool,
 }
@@ -1085,9 +1379,17 @@ pub(crate) enum WorkspaceSubcommand {
     /// List workspaces
     List,
     /// Create a workspace
-    Create { name: String },
+    Create {
+        /// Workspace display name; its key is derived by normalization
+        name: String,
+    },
     /// Rename a workspace
-    Rename { workspace: String, new_name: String },
+    Rename {
+        /// Existing workspace key or name
+        workspace: String,
+        /// Replacement display name
+        new_name: String,
+    },
 }
 
 #[derive(Args)]
@@ -1100,8 +1402,10 @@ pub(crate) struct ConflictCommand {
 pub(crate) enum ConflictSubcommand {
     /// List unresolved sync conflicts
     List {
+        /// Restrict conflicts to a project by key or name
         #[arg(long)]
         project: Option<String>,
+        /// Restrict conflicts to a field name
         #[arg(long)]
         field: Option<String>,
         #[arg(
@@ -1114,32 +1418,49 @@ pub(crate) enum ConflictSubcommand {
         json: bool,
     },
     /// Show a conflict as a text diff
-    Diff { task_ref: String, field: String },
+    Diff {
+        /// Task ref with the conflict
+        task_ref: String,
+        /// Conflicted field name
+        field: String,
+    },
     /// Export conflicting values to files
     Export {
+        /// Task ref with the conflict
         task_ref: String,
+        /// Conflicted field name
         field: String,
+        /// Directory to receive one file per variant
         #[arg(long)]
         dir: PathBuf,
     },
     /// Show conflict details for a task
     Show {
+        /// Task or recurring-series ref with conflicts
         task_ref: String,
+        /// Restrict output to one field
         #[arg(long)]
         field: Option<String>,
         #[arg(long, help = "Print machine-readable JSON")]
         json: bool,
     },
     /// Resolve a sync conflict
+    #[command(after_long_help = CONFLICT_EXAMPLES)]
     Resolve {
+        /// Task or recurring-series ref with the conflict
         task_ref: String,
+        /// Conflicted field name
         field: String,
+        /// Select an exact variant token printed by `conflict show`
         #[arg(long = "use")]
         use_variant: Option<String>,
+        /// Resolve with this explicit value
         #[arg(long)]
         value: Option<String>,
+        /// Read the explicit resolution value from a UTF-8 file
         #[arg(long)]
         value_file: Option<PathBuf>,
+        /// Read the explicit resolution value from standard input
         #[arg(long)]
         value_stdin: bool,
     },
@@ -1173,7 +1494,9 @@ pub(crate) enum AttachmentSubcommand {
 
 #[derive(Args)]
 pub(crate) struct AttachmentAddArgs {
+    /// Task ref to receive the attachment
     pub(crate) task_ref: String,
+    /// Image file to attach
     pub(crate) path: PathBuf,
     /// Alternative text for the image
     #[arg(long)]
@@ -1197,6 +1520,7 @@ pub(crate) struct AttachmentAddArgs {
 
 #[derive(Args)]
 pub(crate) struct AttachmentListArgs {
+    /// Task ref whose attachments to list
     pub(crate) task_ref: String,
     /// Include deleted (tombstoned) attachments
     #[arg(long)]
@@ -1208,6 +1532,7 @@ pub(crate) struct AttachmentListArgs {
 
 #[derive(Args)]
 pub(crate) struct AttachmentGetArgs {
+    /// Exact attachment ID printed by `attachment add` or `attachment list`
     pub(crate) attachment_id: String,
     /// Write bytes to this path
     #[arg(long)]
@@ -1222,6 +1547,7 @@ pub(crate) struct AttachmentGetArgs {
 
 #[derive(Args)]
 pub(crate) struct AttachmentDeleteArgs {
+    /// Exact attachment ID to tombstone
     pub(crate) attachment_id: String,
     /// Print machine-readable JSON
     #[arg(long)]
@@ -1260,35 +1586,48 @@ pub(crate) enum TextSubcommand {
     /// Compare a long text field with a file
     Diff(TextDiffArgs),
     /// Update a long text field safely
+    #[command(after_long_help = TEXT_EXAMPLES)]
     Set(TextSetArgs),
 }
 
 #[derive(Args)]
 pub(crate) struct TextGetArgs {
+    /// Task ref to read
     pub(crate) task_ref: String,
+    /// Long text field; currently description
     pub(crate) field: String,
+    /// Print only field bytes when --output is omitted
     #[arg(long)]
     pub(crate) raw: bool,
+    /// Write field bytes to this file while printing the hash
     #[arg(long)]
     pub(crate) output: Option<PathBuf>,
 }
 
 #[derive(Args)]
 pub(crate) struct TextDiffArgs {
+    /// Task ref to compare
     pub(crate) task_ref: String,
+    /// Long text field; currently description
     pub(crate) field: String,
+    /// UTF-8 file containing the proposed value
     #[arg(long)]
     pub(crate) file: PathBuf,
 }
 
 #[derive(Args)]
 pub(crate) struct TextSetArgs {
+    /// Task ref to update
     pub(crate) task_ref: String,
+    /// Long text field; currently description
     pub(crate) field: String,
+    /// Read the replacement value from a UTF-8 file
     #[arg(long)]
     pub(crate) file: Option<PathBuf>,
+    /// Read the replacement value from standard input
     #[arg(long)]
     pub(crate) stdin: bool,
+    /// Require the stored value to match this SHA-256 before replacing it
     #[arg(long)]
     pub(crate) if_sha256: String,
 }
@@ -1302,16 +1641,19 @@ pub(crate) enum ConfigSubcommand {
     /// Get a configuration value
     Get(ConfigGetArgs),
     /// Set a configuration value
+    #[command(after_long_help = CONFIG_SET_HELP)]
     Set(ConfigSetArgs),
 }
 
 #[derive(Args)]
 pub(crate) struct ConfigGetArgs {
+    /// Configuration key to print
     pub(crate) key: ConfigKey,
 }
 
 #[derive(Args)]
 pub(crate) struct ConfigSetArgs {
+    /// Configuration key to update
     pub(crate) key: ConfigKey,
     /// New value, or null to clear an optional setting
     pub(crate) value: String,
@@ -1376,10 +1718,13 @@ pub(crate) struct DaemonRepairArgs {
 }
 #[derive(Args)]
 pub(crate) struct ServerArgs {
+    /// Listen address; port 0 asks the OS to choose a free port
     #[arg(long, default_value = "127.0.0.1:0")]
     pub(crate) bind: SocketAddr,
+    /// SQLite path; blobs use local.blob_dir or a path derived from this path
     #[arg(long)]
     pub(crate) data: PathBuf,
+    /// Confirm an authenticated public bind without built-in TLS
     #[arg(long)]
     pub(crate) unsafe_public_bind: bool,
 }
@@ -1388,6 +1733,7 @@ pub(crate) struct ServerArgs {
 pub(crate) struct SyncArgs {
     #[command(subcommand)]
     pub(crate) command: Option<SyncSubcommand>,
+    /// Override the configured sync server URL
     #[arg(long)]
     pub(crate) server: Option<String>,
 }
@@ -1461,32 +1807,127 @@ mod tests {
     }
 
     #[test]
-    fn visible_subcommands_have_help_descriptions() {
-        fn collect_missing(command: &clap::Command, parent_path: &str, missing: &mut Vec<String>) {
+    fn visible_command_tree_has_help_descriptions() {
+        fn collect_missing(command: &clap::Command, path: &str, missing: &mut Vec<String>) {
+            for argument in command
+                .get_arguments()
+                .filter(|argument| !argument.is_hide_set())
+            {
+                let description = argument
+                    .get_long_help()
+                    .or_else(|| argument.get_help())
+                    .map(|help| help.to_string())
+                    .unwrap_or_default();
+                if description.trim().is_empty() {
+                    missing.push(format!("{path} <{}>", argument.get_id()));
+                }
+            }
+
             for subcommand in command
                 .get_subcommands()
                 .filter(|subcommand| !subcommand.is_hide_set())
             {
-                let path = format!("{parent_path} {}", subcommand.get_name());
+                let subcommand_path = format!("{path} {}", subcommand.get_name());
                 let description = subcommand
-                    .get_about()
+                    .get_long_about()
+                    .or_else(|| subcommand.get_about())
                     .map(|about| about.to_string())
                     .unwrap_or_default();
                 if description.trim().is_empty() {
-                    missing.push(path.clone());
+                    missing.push(subcommand_path.clone());
                 }
-                collect_missing(subcommand, &path, missing);
+                collect_missing(subcommand, &subcommand_path, missing);
             }
         }
 
+        let mut command = Cli::command();
+        command.build();
         let mut missing = Vec::new();
-        collect_missing(&Cli::command(), "aven", &mut missing);
+        collect_missing(&command, "aven", &mut missing);
 
         assert!(
             missing.is_empty(),
-            "visible subcommands missing help descriptions: {}",
-            missing.join(", ")
+            "visible commands or arguments missing help descriptions:\n{}",
+            missing.join("\n")
         );
+    }
+
+    #[test]
+    fn every_visible_command_renders_short_and_long_help() {
+        fn check(command: &clap::Command, path: &str) {
+            let mut rendered_command = command.clone();
+            let mut short = Vec::new();
+            rendered_command.write_help(&mut short).unwrap();
+            assert!(!short.is_empty(), "{path} rendered empty short help");
+
+            let mut rendered_command = command.clone();
+            let mut long = Vec::new();
+            rendered_command.write_long_help(&mut long).unwrap();
+            assert!(!long.is_empty(), "{path} rendered empty long help");
+
+            for subcommand in command
+                .get_subcommands()
+                .filter(|subcommand| !subcommand.is_hide_set())
+            {
+                check(subcommand, &format!("{path} {}", subcommand.get_name()));
+            }
+        }
+
+        let mut command = Cli::command();
+        command.build();
+        check(&command, "aven");
+    }
+
+    #[test]
+    fn complex_commands_keep_examples_and_safety_guidance() {
+        fn long_help(path: &[&str]) -> String {
+            let mut command = Cli::command();
+            for name in path {
+                command = command
+                    .find_subcommand(name)
+                    .unwrap_or_else(|| panic!("missing command path component {name}"))
+                    .clone();
+            }
+            let mut output = Vec::new();
+            command.write_long_help(&mut output).unwrap();
+            String::from_utf8(output).unwrap()
+        }
+
+        let expectations = [
+            (&["add"][..], "weekly on mon,wed,fri"),
+            (&["add"][..], "--repeat excludes terminal values"),
+            (&["list"][..], "nondeleted, open tasks"),
+            (&["edit"][..], "--due accepts natural date expressions"),
+            (&["note"][..], "exactly one text source"),
+            (&["bulk-update"][..], "at least one\nupdate option"),
+            (&["recur"][..], "linked occurrence task ref"),
+            (&["recur", "edit"][..], "future occurrences"),
+            (&["text", "get"][..], "when --output is omitted"),
+            (&["text", "set"][..], "hash guard"),
+            (&["conflict", "resolve"][..], "--use takes precedence"),
+            (&["config", "set"][..], "HTTP or HTTPS URL"),
+            (
+                &["backup", "restore"][..],
+                "attachment objects available on",
+            ),
+            (&["export"][..], "no attachment bytes"),
+            (&["import"][..], "requires --yes"),
+            (&["prime"][..], "live project work"),
+            (&["skill"][..], "without live task context"),
+            (&["skill", "install"][..], "repeat for multiple"),
+            (&["sync"][..], "AVEN_SYNC_SERVER"),
+            (&["server"][..], "Public binds also require"),
+            (&["server"][..], "local.blob_dir"),
+        ];
+
+        for (path, expected) in expectations {
+            let help = long_help(path);
+            assert!(
+                help.contains(expected),
+                "{} help omitted {expected:?}",
+                path.join(" ")
+            );
+        }
     }
 
     #[test]
