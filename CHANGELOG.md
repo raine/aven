@@ -3,6 +3,10 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## Unreleased
+
+- Fix: [`aven doctor`](/command-reference/#aven-doctor) produces redacted, non-mutating diagnostics when configuration, database access, or schema migrations prevent normal startup, with structured JSON and an optional nonzero exit status for automation.
+
 ## v0.1.34 (2026-08-26)
 
 - Drag task cards between status lanes in the [Columns layout](/tui/#columns).
