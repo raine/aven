@@ -116,6 +116,7 @@ fn quota_failure_recovers_after_reference_pruning() {
 fn doctor_reports_attachment_lifecycle_categories() {
     let env = TestEnv::new();
     let db = env.db("doctor-lifecycle.sqlite");
+    ok(env.aven(&db, ["list"]));
     let output = ok(env.aven(&db, ["doctor"]));
     contains_all(
         &output,

@@ -302,7 +302,7 @@ pub(crate) enum Commands {
     Import(ImportArgs),
     /// Print or install the coding-agent skill
     Skill(SkillCommand),
-    /// Diagnose configuration and workspace state
+    /// Diagnose startup, configuration, database, and workspace state without repairs
     Doctor(DoctorArgs),
     /// Manage task attachments
     Attachment(AttachmentCommand),
@@ -1066,10 +1066,15 @@ pub(crate) struct ImportArgs {
 
 #[derive(Args)]
 pub(crate) struct DoctorArgs {
+    /// Run deeper read-only SQLite, relationship, and attachment checks
     #[arg(long)]
     pub(crate) integrity: bool,
-    #[arg(long, help = "Print machine-readable JSON")]
+    /// Print machine-readable JSON
+    #[arg(long)]
     pub(crate) json: bool,
+    /// Exit nonzero when the report contains error-level findings
+    #[arg(long)]
+    pub(crate) fail_on_error: bool,
 }
 
 #[derive(Subcommand)]

@@ -1042,20 +1042,28 @@ for the supported keys and value formats. The config directory comes from
 
 ### `aven doctor`
 
-Diagnose active configuration, routing, storage, sync, and daemon state.
+Diagnose startup, configuration, routing, storage, sync, and daemon state without changing user data.
 
 ```sh
-aven doctor [--integrity] [--json]
+aven doctor [--integrity] [--json] [--fail-on-error]
 ```
 
-The report includes config and database paths and their sources, current directory, workspace and project routing, database and workspace counts, client and sequence metadata, sync configuration and recent sync state, unresolved conflict count, daemon wake settings, and macOS service status. Attachment checks report image storage, cleanup eligibility, quotas, operations in progress, and inconsistencies.
+Doctor has a standalone bootstrap path. It can report malformed or invalid configuration, an unreadable or missing database path, invalid SQLite files, pending or failed migrations, and unsupported future schemas even when ordinary commands cannot start. Database path precedence remains `--db`, `AVEN_DEV_DB` in debug builds, `AVEN_DB`, `local.db_path`, and the platform default. When strict config loading fails, doctor can still use a syntactically readable `local.db_path` while marking config-dependent checks as skipped.
 
-Normal doctor checks attachment records and local image availability. `--integrity` also runs SQLite and relationship checks across the database, verifies recurring schedules, generated tasks, history, pauses, and active, paused, or stopped state, verifies stored image hashes and sizes, decodes the images, and confirms their formats and dimensions. A missing current recurring task is a repairable warning with guidance to run `aven recur list`. Other recurring-task integrity failures include guidance to preserve the database and recover from a known-good backup. `--json` preserves each result as a labeled row with `ok`, `warning`, `error`, or `info` status.
+Database inspection uses an isolated snapshot and never creates or changes the selected database, initializes metadata or a workspace, enables WAL, runs migrations, or removes sidecars. Checks that reconcile derived state operate only on the disposable snapshot. Doctor performs no sync, daemon wakeup, update check, network request, or repair. A missing database remains missing. Pending migrations are reported with backup and normal-startup guidance.
+
+The report includes config and database paths and their sources, schema and sidecar state, workspace counts, client and sequence metadata, sync configuration and recent sync state, unresolved conflict count, daemon wake settings, and macOS service status. Attachment checks report image storage, cleanup eligibility, quotas, operations in progress, and inconsistencies. Independent sections continue after failures, while dependent checks use `skipped` status and include a reason.
+
+Normal doctor checks attachment records and local image availability. `--integrity` also runs read-only SQLite and relationship checks, verifies recurring schedules, generated tasks, history, pauses, and lifecycle state, verifies stored image hashes and sizes, decodes images, and confirms formats and dimensions. A missing current recurring task is a repairable warning with guidance to run `aven recur list`. Other recurring-task integrity failures include guidance to preserve the database and recover from a known-good backup.
+
+`--json` emits a typed report with `overall_status`, section and check status, stable check codes, values, and explicit `skipped_reason` fields. Doctor keeps its compatible zero exit status by default so findings remain report data. Add `--fail-on-error` when automation needs a nonzero exit status for error-level findings. Warnings alone do not make this mode fail.
+
+Configuration diagnostics include the config path and available YAML line and column context. They never print auth tokens or raw secret values. Doctor output also excludes task content and raw sync payloads.
 
 ```sh
 aven doctor
 aven doctor --integrity
-aven doctor --json
+aven doctor --json --fail-on-error
 ```
 
 ### `aven update`

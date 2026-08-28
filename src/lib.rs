@@ -74,6 +74,7 @@ enum StandaloneCommand {
     Config(cli::ConfigCommand),
     Daemon(cli::DaemonArgs),
     Demo,
+    Doctor(cli::DoctorArgs),
     Internal(cli::InternalCommand),
     Server(cli::ServerArgs),
     Skill(cli::SkillCommand),
@@ -90,7 +91,6 @@ enum DatabaseCommand {
     Delete(cli::RefArgs),
     Dep(cli::DepCommand),
     Related(cli::RelatedCommand),
-    Doctor(cli::DoctorArgs),
     Edit(cli::TaskEditArgs),
     Epic(cli::EpicCommand),
     Export(cli::ExportArgs),
@@ -156,7 +156,7 @@ impl From<Commands> for CliDispatch {
             Commands::Export(args) => Self::database(DatabaseCommand::Export(args)),
             Commands::Import(args) => Self::database(DatabaseCommand::Import(args)),
             Commands::Skill(args) => Self::Standalone(StandaloneCommand::Skill(args)),
-            Commands::Doctor(args) => Self::database(DatabaseCommand::Doctor(args)),
+            Commands::Doctor(args) => Self::Standalone(StandaloneCommand::Doctor(args)),
             Commands::Daemon(args) => Self::Standalone(StandaloneCommand::Daemon(args)),
             Commands::Demo => Self::Standalone(StandaloneCommand::Demo),
             Commands::Server(args) => Self::Standalone(StandaloneCommand::Server(args)),
@@ -188,6 +188,7 @@ async fn dispatch_standalone(
         },
         StandaloneCommand::Config(args) => cmd_config(args).await,
         StandaloneCommand::Demo => cmd_demo(db, workspace).await,
+        StandaloneCommand::Doctor(args) => cmd_doctor(db, workspace.as_deref(), args).await,
         StandaloneCommand::Update(args) => cmd_self_update(args).await,
         StandaloneCommand::Internal(args) => match args.command {
             InternalSubcommand::DemoSnapshot(args) => {
@@ -257,7 +258,6 @@ async fn dispatch_database(
     metadata: command_metadata::CommandMetadata,
     command: DatabaseCommand,
 ) -> Result<()> {
-    let db_flag_set = db.is_some();
     let config = config::AppConfig::load()?;
     let db_path = config::resolve_db_path(db, &config)?;
     let database = db::Database::open(&db_path).await?;
@@ -392,18 +392,6 @@ async fn dispatch_database(
             let workspace =
                 resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
             cmd_text(&database, &workspace, args).await
-        }
-        DatabaseCommand::Doctor(args) => {
-            cmd_doctor(
-                &database,
-                &config,
-                &db_path,
-                db_flag_set,
-                workspace.as_deref(),
-                args.integrity,
-                args.json,
-            )
-            .await
         }
     };
     if result.is_ok() && should_wake {

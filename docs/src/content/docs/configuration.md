@@ -37,7 +37,9 @@ the file atomically. Use `null` to clear `sync.server_url` or `local.db_path`.
 Configuration keys containing secrets, including `sync.auth_token`, are not
 available through `config get` or `config set`.
 
-Use `aven doctor` to inspect the active config, database path, workspace, project, sync cursor, daemon wake address, and routing decisions.
+Use `aven doctor` to inspect the active config, database path, workspace, project, sync cursor, daemon wake address, and routing decisions. Doctor still produces a redacted report when this file is malformed, unreadable, or contains an invalid value. It includes available YAML line and column context without printing config values that may contain secrets.
+
+When configuration prevents startup, run `aven doctor --db /expected/path/to/db.sqlite` to bypass database path resolution while retaining the config finding. Doctor does not rewrite the config, create the selected database, or run database migrations. After correcting the file, rerun doctor before starting an ordinary command. Use `aven doctor --json --fail-on-error` in recovery automation.
 
 ## Config shape
 

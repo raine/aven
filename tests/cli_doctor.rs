@@ -14,6 +14,7 @@ use sqlx::sqlite::SqliteConnectOptions;
 fn doctor_reports_default_database_health() {
     let env = TestEnv::new();
     let db = env.db("doctor.sqlite");
+    initialize_db(&env, &db);
 
     let output = ok(env.aven(&db, ["doctor"]));
 
@@ -26,6 +27,7 @@ fn doctor_reports_default_database_health() {
             "Workspace",
             "Sync",
             "Daemon",
+            "Attachment lifecycle",
             "database source    --db",
             "ok sqlite",
             "ok client id",
@@ -33,14 +35,17 @@ fn doctor_reports_default_database_health() {
             "tasks",
             "server             not configured",
             "daemon wake",
+            "referenced",
         ],
     );
+    contains_none(&output, &["!! lifecycle"]);
 }
 
 #[test]
 fn doctor_reports_workspace_resolution_failures() {
     let env = TestEnv::new();
     let db = env.db("missing-workspace-doctor.sqlite");
+    initialize_db(&env, &db);
 
     let output = ok(env.aven(&db, ["--workspace", "missing", "doctor"]));
 
@@ -275,7 +280,7 @@ sync:
 "#,
         db.display()
     ));
-    ok(env.aven_config(["doctor"]));
+    initialize_db(&env, &db);
     assert_eq!(meta_value(&db, "sync_server_url"), None);
 
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -358,7 +363,7 @@ fn doctor_workspace_flag_affects_active_workspace_and_task_counts() {
 fn doctor_reports_sync_history_stats() {
     let env = TestEnv::new();
     let db = env.db("sync-history-doctor.sqlite");
-    ok(env.aven(&db, ["doctor"]));
+    initialize_db(&env, &db);
     run_sql(
         &db,
         "INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field, op_type, payload, base_version, created_at, server_seq)
@@ -471,7 +476,7 @@ fn doctor_with_integrity_reports_attachment_sidecar_issues() {
 fn doctor_with_integrity_decodes_unattached_available_objects() {
     let env = TestEnv::new();
     let db = env.db("integrity-unattached-attachment.sqlite");
-    ok(env.aven(&db, ["doctor"]));
+    initialize_db(&env, &db);
     let sha = "a".repeat(64);
     run_sql(
         &db,
@@ -539,6 +544,7 @@ fn doctor_distinguishes_repairable_recurrence_gap_from_identity_corruption() {
 fn doctor_json_reports_default_database_health() {
     let env = TestEnv::new();
     let db = env.db("doctor-json.sqlite");
+    initialize_db(&env, &db);
 
     let output = ok(env.aven(&db, ["doctor", "--json"]));
     let report: serde_json::Value = serde_json::from_str(&output).unwrap();
@@ -558,6 +564,259 @@ fn doctor_json_reports_default_database_health() {
 }
 
 #[test]
+fn doctor_reports_malformed_yaml_without_exposing_config_values() {
+    let env = TestEnv::new();
+    let db = env.db("malformed-config.sqlite");
+    initialize_db(&env, &db);
+    let secret = "doctor-secret-token";
+    env.write_config(&format!(
+        "sync:\n  auth_token: \"{secret}\nlocal:\n  db_path: [\n"
+    ));
+
+    let human = ok(env.aven(&db, ["doctor"]));
+    contains_all(
+        &human,
+        &[
+            "!! config file",
+            "configuration is invalid at line",
+            "Database",
+            "Workspace",
+            "Daemon",
+        ],
+    );
+    contains_none(&human, &[secret]);
+
+    let json = ok(env.aven(&db, ["doctor", "--json"]));
+    serde_json::from_str::<serde_json::Value>(&json).expect("doctor JSON report");
+    contains_none(&json, &[secret]);
+}
+
+#[test]
+fn doctor_uses_loose_database_path_when_unrelated_config_is_invalid() {
+    let env = TestEnv::new();
+    let db = env.db("invalid-unrelated-config.sqlite");
+    initialize_db(&env, &db);
+    env.write_config(&format!(
+        "local:\n  db_path: '{}'\n  image_optimization: invalid-secret-value\n",
+        db.display()
+    ));
+
+    let output = ok(env.aven_config(["doctor"]));
+    contains_all(
+        &output,
+        &[
+            "!! config file",
+            "database source    config local.db_path",
+            "ok sqlite",
+            "active workspace",
+        ],
+    );
+    contains_none(&output, &["invalid-secret-value"]);
+}
+
+#[test]
+fn doctor_missing_database_inspection_creates_nothing() {
+    let env = TestEnv::new();
+    let db = env.path("absent/parent/db.sqlite");
+
+    let output = ok(env.aven(&db, ["doctor"]));
+
+    contains_all(
+        &output,
+        &[
+            "!! exists",
+            "database file is missing",
+            "skipped: database file does not exist",
+            "Sync",
+            "Daemon",
+        ],
+    );
+    assert!(!db.exists());
+    assert!(!db.parent().unwrap().exists());
+}
+
+#[test]
+fn doctor_reports_old_schema_without_migrating_or_mutating_it() {
+    let env = TestEnv::new();
+    let db = env.db("old-schema.sqlite");
+    initialize_db(&env, &db);
+    let previous = query_i64(
+        &db,
+        "SELECT MAX(version) FROM _sqlx_migrations WHERE version < (SELECT MAX(version) FROM _sqlx_migrations)",
+    );
+    run_sql(
+        &db,
+        "DELETE FROM _sqlx_migrations WHERE version = (SELECT MAX(version) FROM _sqlx_migrations)",
+    );
+    let output = ok(env.aven(&db, ["doctor"]));
+
+    contains_all(
+        &output,
+        &[
+            "!! migrations",
+            "pending",
+            "skipped: database schema is unavailable, pending migration, or unsupported",
+            "Daemon",
+        ],
+    );
+    assert_eq!(
+        query_i64(&db, "SELECT MAX(version) FROM _sqlx_migrations"),
+        previous
+    );
+}
+
+#[test]
+fn doctor_reports_failed_migration_without_retrying_it() {
+    let env = TestEnv::new();
+    let db = env.db("failed-migration.sqlite");
+    initialize_db(&env, &db);
+    let version = query_i64(&db, "SELECT MAX(version) FROM _sqlx_migrations");
+    run_sql(
+        &db,
+        "UPDATE _sqlx_migrations SET success = 0 WHERE version = (SELECT MAX(version) FROM _sqlx_migrations)",
+    );
+
+    let output = ok(env.aven(&db, ["doctor"]));
+
+    contains_all(
+        &output,
+        &[
+            "!! migration state",
+            &format!("migration {version} is marked failed"),
+            "preserve the database",
+            "Daemon",
+        ],
+    );
+    assert_eq!(
+        query_i64(
+            &db,
+            "SELECT success FROM _sqlx_migrations WHERE version = (SELECT MAX(version) FROM _sqlx_migrations)",
+        ),
+        0
+    );
+}
+
+#[test]
+fn doctor_reports_future_schema_as_unsupported() {
+    let env = TestEnv::new();
+    let db = env.db("future-schema.sqlite");
+    initialize_db(&env, &db);
+    run_sql(
+        &db,
+        "UPDATE _sqlx_migrations SET version = 999999999999999 WHERE version = (SELECT MAX(version) FROM _sqlx_migrations)",
+    );
+
+    let output = ok(env.aven(&db, ["doctor"]));
+
+    contains_all(
+        &output,
+        &[
+            "!! schema support",
+            "newer than this Aven supports",
+            "Workspace",
+            "Sync",
+            "Daemon",
+        ],
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_reports_unreadable_database_and_continues() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let env = TestEnv::new();
+    let db = env.db("unreadable.sqlite");
+    initialize_db(&env, &db);
+    let original_mode = fs::metadata(&db).unwrap().permissions().mode();
+    fs::set_permissions(&db, fs::Permissions::from_mode(0o000)).unwrap();
+
+    let output = ok(env.aven(&db, ["doctor"]));
+
+    contains_all(&output, &["Database", "!! SQLite header", "Sync", "Daemon"]);
+    fs::set_permissions(&db, fs::Permissions::from_mode(original_mode)).unwrap();
+}
+
+#[test]
+fn doctor_open_failures_preserve_independent_sections_and_skipped_reasons() {
+    let env = TestEnv::new();
+    let db = env.path("database-directory");
+    fs::create_dir(&db).unwrap();
+
+    let output = ok(env.aven(&db, ["doctor", "--integrity"]));
+
+    contains_all(
+        &output,
+        &[
+            "!! file type",
+            "Workspace",
+            "skipped: database schema is unavailable, pending migration, or unsupported",
+            "Sync",
+            "Daemon",
+            "Integrity",
+        ],
+    );
+}
+
+#[test]
+fn doctor_does_not_mutate_healthy_database_or_config() {
+    let env = TestEnv::new();
+    let db = env.db("immutable-doctor.sqlite");
+    initialize_db(&env, &db);
+    env.write_config(&format!("local:\n  db_path: '{}'\n", db.display()));
+    let database_before = fs::read(&db).unwrap();
+    let config_before = fs::read(env.config_file()).unwrap();
+    let wal_before = PathBuf::from(format!("{}-wal", db.display())).exists();
+    let shm_before = PathBuf::from(format!("{}-shm", db.display())).exists();
+
+    ok(env.aven_config(["doctor", "--integrity"]));
+
+    assert_eq!(fs::read(&db).unwrap(), database_before);
+    assert_eq!(fs::read(env.config_file()).unwrap(), config_before);
+    assert_eq!(
+        PathBuf::from(format!("{}-wal", db.display())).exists(),
+        wal_before
+    );
+    assert_eq!(
+        PathBuf::from(format!("{}-shm", db.display())).exists(),
+        shm_before
+    );
+}
+
+#[test]
+fn doctor_json_has_stable_codes_statuses_and_skipped_reasons() {
+    let env = TestEnv::new();
+    let db = env.db("missing-json.sqlite");
+
+    let output = ok(env.aven(&db, ["doctor", "--json"]));
+    let report: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+    assert_eq!(report["overall_status"], "error");
+    let checks = report["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|section| section["rows"].as_array().unwrap())
+        .collect::<Vec<_>>();
+    assert!(checks.iter().any(|check| {
+        check["code"] == "workspace.resolve_skipped"
+            && check["status"] == "skipped"
+            && check["skipped_reason"].as_str().is_some()
+    }));
+}
+
+#[test]
+fn doctor_fail_on_error_supports_automation() {
+    let env = TestEnv::new();
+    let db = env.db("missing-fail-status.sqlite");
+
+    let output = env.aven(&db, ["doctor", "--json", "--fail-on-error"]);
+
+    assert!(!output.status.success());
+    serde_json::from_slice::<serde_json::Value>(&output.stdout).expect("JSON remains valid");
+}
+
+#[test]
 fn doctor_json_with_integrity_reports_integrity_section() {
     let env = TestEnv::new();
     let db = env.db("integrity-json-doctor.sqlite");
@@ -571,6 +830,10 @@ fn doctor_json_with_integrity_reports_integrity_section() {
             .iter()
             .any(|section| section["title"] == "Integrity")
     );
+}
+
+fn initialize_db(env: &TestEnv, db: &Path) {
+    ok(env.aven(db, ["list"]));
 }
 
 fn run_sql(db: &Path, sql: &'static str) {
@@ -588,6 +851,26 @@ fn run_sql(db: &Path, sql: &'static str) {
             .expect("open test db");
         sqlx::query(sql).execute(&mut conn).await.expect("run sql");
     });
+}
+
+fn query_i64(db: &Path, sql: &'static str) -> i64 {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("create runtime");
+    runtime.block_on(async {
+        let mut conn = SqliteConnectOptions::new()
+            .filename(db)
+            .create_if_missing(false)
+            .foreign_keys(true)
+            .connect()
+            .await
+            .expect("open db");
+        sqlx::query_scalar::<_, i64>(sql)
+            .fetch_one(&mut conn)
+            .await
+            .expect("read integer")
+    })
 }
 
 fn query_string(db: &Path, sql: &'static str) -> String {
