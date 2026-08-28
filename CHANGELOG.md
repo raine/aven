@@ -3,12 +3,15 @@ title: Changelog
 description: Release notes for aven.
 ---
 
-## Unreleased
+## v0.1.35 (2026-08-28)
 
 - Task details include a collapsed activity log for inspecting the changes behind a task's idle age, with concise values for labels, statuses, notes, and relationships.
 - Install the bundled Aven agent skill for Pi with [`aven skill install --agent pi`](/agents/#install-the-aven-skill).
 - CLI help explains every command and argument with concise guidance and examples.
 - Use [`aven sync status`](/command-reference/#aven-sync-status) and [`aven daemon status`](/command-reference/#aven-daemon) to inspect sync health, pending work, conflicts, and background service operation in human-readable or JSON output without contacting the server or changing daemon state.
+- Open Ready, Blocked, and Overdue views from the TUI sidebar, command palette, keyboard shortcuts, or `aven tui --view`.
+- The TUI sync status view highlights health and pending work, stays up to date while open, and provides direct actions to sync or review conflicts.
+- Inline image previews work automatically in Warp Terminal. ([#19](https://github.com/raine/aven/pull/19))
 - Fix: [`aven doctor`](/command-reference/#aven-doctor) remains available when startup configuration or database checks fail.
 
 ## v0.1.34 (2026-08-26)
