@@ -848,6 +848,23 @@ aven sync
 aven sync --server http://127.0.0.1:3000
 ```
 
+#### `aven sync status`
+
+Inspect local sync state without contacting the server or starting a sync.
+
+```sh
+aven sync status
+aven sync status --json
+```
+
+The report distinguishes `disabled`, `unconfigured`, `healthy`, `degraded`,
+`blocked`, and `failed`. It includes the effective and database-pinned server
+identities, pending change and attachment counts, unresolved conflicts, cursor
+progress, and last attempt, success, transfer counts, and privacy-safe error.
+The versioned JSON report uses the same field names and adds `version` for
+compatibility checks. Authentication values, task content, payloads, and raw
+server responses are omitted.
+
 ### `aven server`
 
 Run an HTTP sync server backed by its own SQLite database.
@@ -916,6 +933,7 @@ Run synchronization continuously or manage the macOS LaunchAgent service.
 
 ```sh
 aven daemon
+aven daemon status [--json]
 aven daemon install [--program <path>]
 aven daemon uninstall
 aven daemon restart
@@ -923,6 +941,11 @@ aven daemon repair [--if-installed] [--program <path>]
 ```
 
 Running `aven daemon` in the foreground requires `sync.enabled: true` and `sync.server_url`. It syncs immediately, then on the configured interval and whenever a local mutation sends a UDP wake signal. Failed syncs use exponential backoff up to five minutes. Bounded rounds with more work remaining resume promptly. The process exits when its executable changes so a service manager can restart the updated binary.
+
+`daemon status` is observational. It reports platform support, installation,
+loaded and running state, executable consistency, configuration validity,
+service and log paths, and a recovery action. Its JSON states are
+`unavailable`, `unconfigured`, `healthy`, `degraded`, `blocked`, and `failed`.
 
 Service management is available on macOS:
 
@@ -933,6 +956,8 @@ Service management is available on macOS:
 
 ```sh
 aven daemon
+aven daemon status
+aven daemon status --json
 aven daemon install
 aven daemon repair --if-installed
 aven daemon restart

@@ -144,6 +144,11 @@ impl Database {
         missing_local_blob_page(&mut conn, blob_dir, limit).await
     }
 
+    pub async fn missing_sync_attachment_counts(&self, blob_dir: &Path) -> Result<ByteCount> {
+        let mut conn = self.acquire_reader().await?;
+        Ok(missing_local_blob_page(&mut conn, blob_dir, 0).await?.total)
+    }
+
     pub(super) async fn store_downloaded_blob(
         &self,
         blob_dir: &Path,

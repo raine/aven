@@ -19,7 +19,8 @@ use crate::sync::{DaemonSyncOutcome, SyncHttpClient};
 mod service;
 
 pub use service::{
-    ServiceInstallArgs, ServiceRepairArgs, install, repair, restart, status_snapshot, uninstall,
+    ServiceInstallArgs, ServiceRepairArgs, ServiceStatus, install, repair, restart,
+    status_snapshot, uninstall,
 };
 
 const BINARY_CHECK_INTERVAL: Duration = Duration::from_secs(30);

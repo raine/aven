@@ -1341,6 +1341,8 @@ pub(crate) struct DaemonArgs {
 
 #[derive(Subcommand)]
 pub(crate) enum DaemonSubcommand {
+    /// Report daemon installation and runtime health without changing it
+    Status(StatusArgs),
     /// Install the background daemon
     Install(DaemonInstallArgs),
     /// Uninstall the background daemon
@@ -1384,8 +1386,23 @@ pub(crate) struct ServerArgs {
 
 #[derive(Args)]
 pub(crate) struct SyncArgs {
+    #[command(subcommand)]
+    pub(crate) command: Option<SyncSubcommand>,
     #[arg(long)]
     pub(crate) server: Option<String>,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum SyncSubcommand {
+    /// Report sync configuration, health, progress, and pending work
+    Status(StatusArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct StatusArgs {
+    /// Emit the versioned status report as JSON
+    #[arg(long)]
+    pub(crate) json: bool,
 }
 
 #[cfg(test)]

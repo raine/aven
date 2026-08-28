@@ -16,6 +16,7 @@ mod recurrence;
 mod relations;
 mod self_update;
 mod skill;
+mod status;
 mod tasks;
 mod text;
 mod validation;
@@ -38,6 +39,7 @@ pub(crate) use self::recurrence::{cmd_recur, recurrence_schedule};
 pub(crate) use self::relations::{cmd_dep, cmd_epic, cmd_related};
 pub(crate) use self::self_update::run as cmd_self_update;
 pub(crate) use self::skill::{install as cmd_skill_install, print as cmd_skill};
+pub(crate) use self::status::{cmd_daemon_status, cmd_sync_status};
 pub(crate) use self::tasks::{
     cmd_add, cmd_delete_restore, cmd_edit, cmd_internal_natural_add, cmd_list, cmd_search, cmd_show,
 };

@@ -1,5 +1,6 @@
 use ratatui::style::Color;
 
+use crate::status::{StatusState, SyncStateInput, classify_sync_state};
 use crate::tui::store::TuiSyncStatus;
 use crate::tui::theme::{FG_DIM, GREEN, ORANGE, RED};
 
@@ -92,20 +93,39 @@ pub(super) fn sync_status_summary(status: &TuiSyncStatus) -> SyncStatusSummary {
         issues.push(issue("wake address", &status.daemon_wake.value, false));
     }
 
+    let configured = status.config_error.is_none()
+        && status
+            .configured_server
+            .as_ref()
+            .is_some_and(|check| check.ok);
+    let state = classify_sync_state(SyncStateInput {
+        enabled: status.enabled,
+        runtime_allowed: status.runtime_allowed,
+        configured,
+        server_mismatch: status.server_match.as_ref().is_some_and(|check| !check.ok),
+        conflicts: status.conflicts,
+        current_failure: status.last_error_value().is_some(),
+        pending: status.pending_changes > 0,
+        ever_succeeded: status.last_success.is_some(),
+    });
     let health = if issues.iter().any(|issue| issue.error) {
         SyncHealth::Error
-    } else if !status.runtime_allowed {
-        SyncHealth::RuntimeDisabled
-    } else if !status.enabled {
-        SyncHealth::LocalOnly
     } else if status.conflicts > 0 || !issues.is_empty() {
         SyncHealth::Attention
-    } else if status.pending_changes > 0 {
-        SyncHealth::Pending(status.pending_changes)
-    } else if status.last_success.is_some() {
-        SyncHealth::Synced
     } else {
-        SyncHealth::NeverSynced
+        match state {
+            StatusState::Disabled if !status.runtime_allowed => SyncHealth::RuntimeDisabled,
+            StatusState::Disabled => SyncHealth::LocalOnly,
+            StatusState::Unconfigured | StatusState::Failed | StatusState::Unavailable => {
+                SyncHealth::Error
+            }
+            StatusState::Blocked => SyncHealth::Attention,
+            StatusState::Degraded if status.pending_changes > 0 => {
+                SyncHealth::Pending(status.pending_changes)
+            }
+            StatusState::Degraded => SyncHealth::NeverSynced,
+            StatusState::Healthy => SyncHealth::Synced,
+        }
     };
 
     let server = status

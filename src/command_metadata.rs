@@ -1,5 +1,5 @@
 use crate::cli::{
-    Commands, ConflictSubcommand, DepSubcommand, EpicSubcommand, LabelSubcommand,
+    Commands, ConflictSubcommand, DaemonSubcommand, DepSubcommand, EpicSubcommand, LabelSubcommand,
     MetadataSubcommand, ProjectPathSubcommand, ProjectSubcommand, RecurSubcommand, TextSubcommand,
 };
 use crate::logging;
@@ -111,7 +111,10 @@ impl Commands {
             Self::Skill(_) => CommandMetadata::cli(),
             Self::Sync(_) => CommandMetadata::cli(),
             Self::Server(_) => CommandMetadata::server(),
-            Self::Daemon(_) => CommandMetadata::daemon(),
+            Self::Daemon(args) => match &args.command {
+                Some(DaemonSubcommand::Status(_)) => CommandMetadata::cli(),
+                _ => CommandMetadata::daemon(),
+            },
             Self::Tui(_) => CommandMetadata::tui(),
             Self::Demo => CommandMetadata::tui(),
             Self::Internal(_) => CommandMetadata::cli(),

@@ -93,6 +93,19 @@ When `sync.server_url` is configured, `aven sync` can omit `--server`:
 aven sync
 ```
 
+Check local health and remaining work without contacting the server:
+
+```sh
+aven sync status
+aven sync status --json
+```
+
+The status report shows whether sync is disabled, unconfigured, healthy,
+degraded, blocked, or failed. It also shows server pinning, pending changes and
+images, conflicts, cursor progress, and last attempt and success times. JSON is
+a versioned report intended for scripts and omits authentication values, task
+content, sync payloads, and raw server responses.
+
 ### Image attachments during sync
 
 #### How attachment sync works
@@ -130,6 +143,14 @@ aven daemon
 Daemon sync requires `sync.enabled = true` and `sync.server_url`. The wake address must be loopback.
 
 The daemon wakes after successful local mutations when possible, syncs periodically, reschedules incomplete sync quickly, and backs off after failures.
+
+Inspect service installation, configuration, executable consistency, runtime,
+and log paths without changing the service:
+
+```sh
+aven daemon status
+aven daemon status --json
+```
 
 On macOS, install it as a user LaunchAgent:
 

@@ -689,7 +689,7 @@ pub(crate) async fn cmd_doctor(
         args.integrity,
     )
     .await;
-    add_daemon_section(&mut report);
+    add_daemon_section(&mut report, config);
 
     report.finish();
     let has_errors = report.has_errors();
@@ -1148,10 +1148,12 @@ async fn add_runtime_database_sections(
     }
 }
 
-fn add_daemon_section(report: &mut DoctorReport) {
+fn add_daemon_section(report: &mut DoctorReport, config: &AppConfig) {
     let daemon_section = report.section("daemon", "Daemon");
     match crate::daemon::status_snapshot() {
-        Ok(status) => {
+        Ok(snapshot) => {
+            let status = crate::status::build_daemon_status(config, snapshot);
+            daemon_section.info("daemon.state", "state", status.state.as_str());
             daemon_section.info(
                 "daemon.installed",
                 "installed",
@@ -1164,35 +1166,45 @@ fn add_daemon_section(report: &mut DoctorReport) {
                     loaded,
                     if loaded { "yes" } else { "no" },
                 ),
-                None => daemon_section.info("daemon.loaded", "loaded", "unknown"),
+                None => daemon_section.info("daemon.loaded", "loaded", "unavailable"),
             }
-            daemon_section.info(
-                "daemon.plist",
-                "plist",
-                status.plist_path.display().to_string(),
-            );
+            match status.running {
+                Some(running) => daemon_section.check(
+                    "daemon.running",
+                    "running",
+                    running,
+                    if running { "yes" } else { "no" },
+                ),
+                None => daemon_section.info("daemon.running", "running", "unavailable"),
+            }
+            if let Some(path) = &status.paths.service {
+                daemon_section.info("daemon.plist", "plist", path.display().to_string());
+            }
             daemon_section.info(
                 "daemon.program",
                 "program",
                 status
+                    .paths
                     .program
                     .as_ref()
                     .map(|path| path.display().to_string())
                     .unwrap_or_else(|| "missing".to_string()),
             );
-            daemon_section.info(
-                "daemon.current_executable",
-                "current exe",
-                status.current_executable.display().to_string(),
-            );
-            match status.program_matches_current {
+            if let Some(path) = &status.paths.current_executable {
+                daemon_section.info(
+                    "daemon.current_executable",
+                    "current exe",
+                    path.display().to_string(),
+                );
+            }
+            match status.executable_matches {
                 Some(matches) => daemon_section.check(
                     "daemon.program_match",
                     "program match",
                     matches,
                     if matches { "yes" } else { "no" },
                 ),
-                None => daemon_section.info("daemon.program_match", "program match", "unknown"),
+                None => daemon_section.info("daemon.program_match", "program match", "unavailable"),
             }
         }
         Err(_) => daemon_section.check(

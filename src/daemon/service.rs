@@ -46,12 +46,16 @@ pub struct ServiceRepairArgs {
 
 #[derive(Debug, Clone)]
 pub struct ServiceStatus {
+    pub platform_supported: bool,
     pub installed: bool,
     pub loaded: Option<bool>,
+    pub running: Option<bool>,
     pub plist_path: PathBuf,
     pub program: Option<PathBuf>,
     pub current_executable: PathBuf,
     pub program_matches_current: Option<bool>,
+    pub stdout_path: Option<PathBuf>,
+    pub stderr_path: Option<PathBuf>,
 }
 pub fn install(args: ServiceInstallArgs) -> Result<()> {
     install_with_runner(args, &SystemRunner, &SystemSleeper)
@@ -236,25 +240,34 @@ fn status_with_runner(runner: &impl LaunchctlRunner) -> Result<ServiceStatus> {
     let program_matches_current = program
         .as_ref()
         .map(|program| paths_resolve_to_same_file(program, &current_executable));
+    let runtime = service_runtime(runner, &spec)?;
     Ok(ServiceStatus {
+        platform_supported: true,
         installed: spec.plist_path.exists(),
-        loaded: Some(service_is_loaded(runner, &spec)?),
+        loaded: Some(runtime.loaded),
+        running: runtime.running,
         plist_path: spec.plist_path,
         program,
         current_executable,
         program_matches_current,
+        stdout_path: Some(spec.stdout_path),
+        stderr_path: Some(spec.stderr_path),
     })
 }
 
 #[cfg(not(target_os = "macos"))]
 fn status_with_runner(_runner: &impl LaunchctlRunner) -> Result<ServiceStatus> {
     Ok(ServiceStatus {
+        platform_supported: false,
         installed: false,
         loaded: None,
+        running: None,
         plist_path: PathBuf::new(),
         program: None,
         current_executable: std::env::current_exe().unwrap_or_default(),
         program_matches_current: None,
+        stdout_path: None,
+        stderr_path: None,
     })
 }
 
@@ -429,6 +442,33 @@ fn service_presence(runner: &impl LaunchctlRunner, spec: &ServiceSpec) -> Result
 #[cfg(target_os = "macos")]
 fn service_is_loaded(runner: &impl LaunchctlRunner, spec: &ServiceSpec) -> Result<bool> {
     Ok(service_presence(runner, spec)? == ServicePresence::Loaded)
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ServiceRuntime {
+    loaded: bool,
+    running: Option<bool>,
+}
+
+#[cfg(target_os = "macos")]
+fn service_runtime(runner: &impl LaunchctlRunner, spec: &ServiceSpec) -> Result<ServiceRuntime> {
+    let args = ["print", spec.service_target.as_str()];
+    let output = runner.run(&args)?;
+    if output.status.success() {
+        let text = String::from_utf8_lossy(&output.stdout);
+        return Ok(ServiceRuntime {
+            loaded: true,
+            running: Some(text.lines().any(|line| line.trim() == "state = running")),
+        });
+    }
+    if output.status.code() == Some(113) {
+        return Ok(ServiceRuntime {
+            loaded: false,
+            running: Some(false),
+        });
+    }
+    Err(launchctl_failure(&args, &output))
 }
 
 #[cfg(target_os = "macos")]
@@ -810,6 +850,35 @@ mod tests {
     }
 
     #[test]
+    fn service_runtime_distinguishes_running_loaded_and_absent() {
+        let spec = test_spec();
+        let running = FakeRunner::new(vec![success_with_stdout("state = running\n")]);
+        assert_eq!(
+            service_runtime(&running, &spec).unwrap(),
+            ServiceRuntime {
+                loaded: true,
+                running: Some(true),
+            }
+        );
+        let loaded = FakeRunner::new(vec![success_with_stdout("state = waiting\n")]);
+        assert_eq!(
+            service_runtime(&loaded, &spec).unwrap(),
+            ServiceRuntime {
+                loaded: true,
+                running: Some(false),
+            }
+        );
+        let absent = FakeRunner::new(vec![absent()]);
+        assert_eq!(
+            service_runtime(&absent, &spec).unwrap(),
+            ServiceRuntime {
+                loaded: false,
+                running: Some(false),
+            }
+        );
+    }
+
+    #[test]
     fn restart_uses_kickstart() {
         let runner = FakeRunner::new(vec![success()]);
         let spec = test_spec();
@@ -918,9 +987,13 @@ mod tests {
     }
 
     fn success() -> Output {
+        success_with_stdout("")
+    }
+
+    fn success_with_stdout(stdout: &str) -> Output {
         Output {
             status: ExitStatus::from_raw(0),
-            stdout: Vec::new(),
+            stdout: stdout.as_bytes().to_vec(),
             stderr: Vec::new(),
         }
     }

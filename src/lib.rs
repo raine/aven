@@ -20,6 +20,7 @@ mod recurrence_input;
 mod render;
 mod schedule_input;
 mod signals;
+mod status;
 mod sync;
 mod task_intake;
 mod task_render;
@@ -33,13 +34,17 @@ mod test_support;
 
 pub use cli::Cli;
 
-use cli::{BackupSubcommand, Commands, DaemonSubcommand, InternalSubcommand, SkillSubcommand};
+use cli::{
+    BackupSubcommand, Commands, DaemonSubcommand, InternalSubcommand, SkillSubcommand,
+    SyncSubcommand,
+};
 use commands::{
     cmd_add, cmd_attachment, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context,
-    cmd_delete_restore, cmd_demo, cmd_dep, cmd_doctor, cmd_edit, cmd_epic, cmd_export, cmd_import,
-    cmd_internal_demo_snapshot, cmd_internal_natural_add, cmd_label, cmd_list, cmd_metadata,
-    cmd_note, cmd_note_delete, cmd_prime, cmd_project, cmd_recur, cmd_related, cmd_search,
-    cmd_self_update, cmd_show, cmd_skill, cmd_skill_install, cmd_text, cmd_workspace,
+    cmd_daemon_status, cmd_delete_restore, cmd_demo, cmd_dep, cmd_doctor, cmd_edit, cmd_epic,
+    cmd_export, cmd_import, cmd_internal_demo_snapshot, cmd_internal_natural_add, cmd_label,
+    cmd_list, cmd_metadata, cmd_note, cmd_note_delete, cmd_prime, cmd_project, cmd_recur,
+    cmd_related, cmd_search, cmd_self_update, cmd_show, cmd_skill, cmd_skill_install,
+    cmd_sync_status, cmd_text, cmd_workspace,
 };
 use sync::{run_server, sync_client};
 use workspaces::resolve_active_workspace_with_database;
@@ -206,6 +211,7 @@ async fn dispatch_standalone(
             let db_path = config::resolve_db_path(db, &config)?;
             match args.command {
                 None => daemon::run(daemon::DaemonRunArgs { db_path, config }).await,
+                Some(DaemonSubcommand::Status(args)) => cmd_daemon_status(&config, args.json),
                 Some(DaemonSubcommand::Install(args)) => {
                     daemon::install(daemon::ServiceInstallArgs {
                         db_path,
@@ -386,7 +392,12 @@ async fn dispatch_database(
                 resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
             cmd_conflict(&database, &workspace, args).await
         }
-        DatabaseCommand::Sync(args) => sync_client(&database, args, &config).await,
+        DatabaseCommand::Sync(args) => match &args.command {
+            Some(SyncSubcommand::Status(status)) => {
+                cmd_sync_status(&database, &config, &db_path, status.json).await
+            }
+            None => sync_client(&database, args, &config).await,
+        },
         DatabaseCommand::Workspace(args) => cmd_workspace(&database, args).await,
         DatabaseCommand::Text(args) => {
             let workspace =

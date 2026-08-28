@@ -16,6 +16,8 @@ use crate::db::{Database, begin_immediate, get_meta, set_meta};
 pub struct SyncPersistenceStatus {
     pub pinned_server: Option<String>,
     pub pending_changes: i64,
+    pub pending_attachment_uploads: i64,
+    pub pending_attachment_upload_bytes: i64,
     pub conflicts: i64,
     pub sync_cursor: Option<String>,
     pub local_sequence: Option<String>,
@@ -60,17 +62,33 @@ pub struct ServerSyncResult {
 
 impl Database {
     pub async fn sync_persistence_status(&self) -> Result<SyncPersistenceStatus> {
-        let mut conn = self.acquire_writer().await?;
+        let mut conn = self.acquire_reader().await?;
         let pending_changes =
             sqlx::query_scalar("SELECT count(*) FROM changes WHERE server_seq IS NULL")
                 .fetch_one(&mut *conn)
                 .await?;
+        let (pending_attachment_uploads, pending_attachment_upload_bytes): (i64, i64) =
+            sqlx::query_as(
+                "SELECT COUNT(*), COALESCE(SUM(byte_size), 0)
+                 FROM (
+                   SELECT json_extract(payload, '$.workspace_id') AS workspace_id,
+                          json_extract(payload, '$.sha256') AS sha256,
+                          MAX(CAST(json_extract(payload, '$.byte_size') AS INTEGER)) AS byte_size
+                   FROM changes
+                   WHERE server_seq IS NULL AND op_type = 'attachment_add'
+                   GROUP BY workspace_id, sha256
+                 )",
+            )
+            .fetch_one(&mut *conn)
+            .await?;
         let conflicts = sqlx::query_scalar("SELECT count(*) FROM conflicts WHERE resolved = 0")
             .fetch_one(&mut *conn)
             .await?;
         Ok(SyncPersistenceStatus {
             pinned_server: get_meta(&mut conn, "sync_server_url").await?,
             pending_changes,
+            pending_attachment_uploads,
+            pending_attachment_upload_bytes,
             conflicts,
             sync_cursor: get_meta(&mut conn, "sync_cursor").await?,
             local_sequence: get_meta(&mut conn, "local_seq").await?,
