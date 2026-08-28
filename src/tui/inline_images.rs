@@ -24,6 +24,7 @@ pub(crate) struct InlineImageTerminal<'a> {
     pub(crate) kitty_window_id: Option<&'a str>,
     pub(crate) wezterm_pane: Option<&'a str>,
     pub(crate) ghostty_resources_dir: Option<&'a str>,
+    pub(crate) warp_terminal_session_uuid: Option<&'a str>,
     pub(crate) in_tmux: bool,
 }
 
@@ -59,6 +60,7 @@ pub(crate) fn active_backend_from_env(config: InlineImagesConfig) -> InlineImage
     let kitty_window_id = std::env::var("KITTY_WINDOW_ID").ok();
     let wezterm_pane = std::env::var("WEZTERM_PANE").ok();
     let ghostty_resources_dir = std::env::var("GHOSTTY_RESOURCES_DIR").ok();
+    let warp_terminal_session_uuid = std::env::var("WARP_TERMINAL_SESSION_UUID").ok();
     let in_tmux = std::env::var_os("TMUX").is_some();
     active_backend(
         config,
@@ -68,6 +70,7 @@ pub(crate) fn active_backend_from_env(config: InlineImagesConfig) -> InlineImage
             kitty_window_id: kitty_window_id.as_deref(),
             wezterm_pane: wezterm_pane.as_deref(),
             ghostty_resources_dir: ghostty_resources_dir.as_deref(),
+            warp_terminal_session_uuid: warp_terminal_session_uuid.as_deref(),
             in_tmux,
         },
     )
@@ -81,12 +84,14 @@ fn active_protocol(terminal: InlineImageTerminal<'_>) -> Option<InlineImageProto
         term_program.eq_ignore_ascii_case("kitty")
             || term_program.eq_ignore_ascii_case("WezTerm")
             || term_program.eq_ignore_ascii_case("ghostty")
+            || term_program.eq_ignore_ascii_case("WarpTerminal")
     });
     if matches!(terminal.term, Some("xterm-kitty" | "xterm-ghostty"))
         || terminal.kitty_window_id.is_some()
         || kitty_term_program
         || terminal.wezterm_pane.is_some()
         || terminal.ghostty_resources_dir.is_some()
+        || terminal.warp_terminal_session_uuid.is_some()
     {
         return Some(InlineImageProtocol::Kitty);
     }
@@ -259,6 +264,14 @@ mod tests {
             self
         }
 
+        fn warp_terminal_session_uuid(
+            mut self,
+            warp_terminal_session_uuid: Option<&'a str>,
+        ) -> Self {
+            self.warp_terminal_session_uuid = warp_terminal_session_uuid;
+            self
+        }
+
         fn in_tmux(mut self, in_tmux: bool) -> Self {
             self.in_tmux = in_tmux;
             self
@@ -289,6 +302,9 @@ mod tests {
             terminal().term_program(Some("ghostty")),
             terminal().ghostty_resources_dir(Some("/Applications/Ghostty.app/Contents/Resources")),
             terminal().kitty_window_id(Some("3")),
+            terminal().term_program(Some("WarpTerminal")),
+            terminal().term_program(Some("warpterminal")),
+            terminal().warp_terminal_session_uuid(Some("00000000-0000-0000-0000-000000000000")),
         ] {
             assert_eq!(
                 active_backend(InlineImagesConfig::Auto, terminal),

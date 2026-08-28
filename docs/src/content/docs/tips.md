@@ -87,7 +87,7 @@ aven attachment get 7KQ9A1X4MV2P8D6R --json
 
 ### The terminal shows labels instead of previews
 
-Inline previews work in iTerm2, Kitty, WezTerm, and Ghostty. Other terminals, including Sixel-only terminals, show labels instead. In task detail, use `Tab` to focus a locally available image and press `Enter` or `o` to open it in the operating system's default viewer. Clicking the image label performs the same external open. You can also save a regular copy with `aven attachment get --output`.
+Inline previews work in iTerm2, Kitty, WezTerm, Ghostty, and Warp. Other terminals, including Sixel-only terminals, show labels instead. In task detail, use `Tab` to focus a locally available image and press `Enter` or `o` to open it in the operating system's default viewer. Clicking the image label performs the same external open. You can also save a regular copy with `aven attachment get --output`.
 
 Check the preview mode in `~/.config/aven/config.yaml`:
 
@@ -100,9 +100,9 @@ local:
 - `auto` shows previews in supported terminals outside tmux and labels inside tmux.
 - `on` also enables tmux passthrough for a supported outer terminal.
 
-Inside tmux, try `on` only when the outer terminal and tmux support the same image protocol. Aven uses the iTerm2 inline-image protocol in iTerm2 and the Kitty graphics protocol in Kitty, WezTerm, and Ghostty. See [Image previews](/configuration/#image-previews) for the complete setting behavior.
+Inside tmux, try `on` only when the outer terminal and tmux support the same image protocol. Aven uses the iTerm2 inline-image protocol in iTerm2 and the Kitty graphics protocol in Kitty, WezTerm, Ghostty, and Warp. See [Image previews](/configuration/#image-previews) for the complete setting behavior.
 
-For detection problems, check that the terminal exports its normal markers into the shell that launches Aven. Aven recognizes `TERM_PROGRAM`, `TERM`, `KITTY_WINDOW_ID`, `WEZTERM_PANE`, and `GHOSTTY_RESOURCES_DIR`.
+For detection problems, check that the terminal exports its normal markers into the shell that launches Aven. Aven recognizes `TERM_PROGRAM`, `TERM`, `KITTY_WINDOW_ID`, `WEZTERM_PANE`, `GHOSTTY_RESOURCES_DIR`, and `WARP_TERMINAL_SESSION_UUID`.
 
 ### The image is available but the preview still fails
 

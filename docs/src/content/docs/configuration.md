@@ -137,9 +137,9 @@ All image attachment settings are optional. The defaults support normal use with
 | `auto` | Show previews in supported terminals outside tmux and labels everywhere else. This is the default. |
 | `on` | Show previews in supported terminals and enable tmux passthrough. |
 
-Aven uses the iTerm2 inline-image protocol in iTerm2 and the Kitty graphics protocol in Kitty, WezTerm, and Ghostty. Setting `on` helps these protocols pass through tmux, but cannot add image support to another terminal. Sixel-only terminals show text labels.
+Aven uses the iTerm2 inline-image protocol in iTerm2 and the Kitty graphics protocol in Kitty, WezTerm, Ghostty, and Warp. Setting `on` helps these protocols pass through tmux, but cannot add image support to another terminal. Sixel-only terminals show text labels.
 
-Detection uses terminal markers such as `TERM_PROGRAM`, `TERM`, `KITTY_WINDOW_ID`, `WEZTERM_PANE`, and `GHOSTTY_RESOURCES_DIR`. See [Image attachments](/tui/#image-attachments) for controls and [Troubleshoot image previews](/tips/#troubleshoot-image-previews) for setup help.
+Detection uses terminal markers such as `TERM_PROGRAM`, `TERM`, `KITTY_WINDOW_ID`, `WEZTERM_PANE`, `GHOSTTY_RESOURCES_DIR`, and `WARP_TERMINAL_SESSION_UUID`. See [Image attachments](/tui/#image-attachments) for controls and [Troubleshoot image previews](/tips/#troubleshoot-image-previews) for setup help.
 
 ### PNG optimization
 
