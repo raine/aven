@@ -15,7 +15,7 @@ through the CLI and sync them to your other devices.
 aven skill install
 ```
 
-`aven skill install` writes the bundled skill to every detected coding-agent skill directory. Detection checks Claude Code, OpenCode, and Codex user directories, plus matching agent config directories in the current workspace.
+`aven skill install` writes the bundled skill to every detected coding-agent skill directory. Detection checks Claude Code, OpenCode, Codex, and Pi user directories, plus matching agent config directories in the current workspace.
 
 Use `--agent` to choose explicit targets:
 
@@ -23,7 +23,15 @@ Use `--agent` to choose explicit targets:
 aven skill install --agent claude
 aven skill install --agent opencode
 aven skill install --agent codex
+aven skill install --agent pi
 ```
+
+The user skill locations are:
+
+- Claude Code: `~/.claude/skills/aven/SKILL.md`
+- OpenCode: `~/.config/opencode/skills/aven/SKILL.md`
+- Codex: `~/.codex/skills/aven/SKILL.md`
+- Pi: `~/.pi/agent/skills/aven/SKILL.md`
 
 Explicit targets are installed even when the agent directory is absent. The command reports a clear error when no supported agent is detected and no target is provided.
 

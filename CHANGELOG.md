@@ -5,6 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Install the bundled Aven agent skill for Pi with [`aven skill install --agent pi`](/agents/#install-the-aven-skill).
 - CLI help explains every command and argument with concise guidance and examples.
 - Use [`aven sync status`](/command-reference/#aven-sync-status) and [`aven daemon status`](/command-reference/#aven-daemon) to inspect sync health, pending work, conflicts, and background service operation in human-readable or JSON output without contacting the server or changing daemon state.
 - Fix: [`aven doctor`](/command-reference/#aven-doctor) produces redacted, non-mutating diagnostics when configuration, database access, or schema migrations prevent normal startup, with structured JSON and an optional nonzero exit status for automation.

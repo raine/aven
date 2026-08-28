@@ -1035,13 +1035,16 @@ aven skill
 aven skill install [--agent <agent>]...
 ```
 
-With no subcommand, `aven skill` prints the embedded skill Markdown to standard output. `skill install` writes the skill into detected coding-agent skill directories. `--agent` is repeatable and accepts `claude`, `opencode`, or `codex`. Without explicit targets, aven installs to all detected supported agents.
+With no subcommand, `aven skill` prints the embedded skill Markdown to standard output. `skill install` writes the skill into detected coding-agent skill directories. `--agent` is repeatable and accepts `claude`, `opencode`, `codex`, or `pi`. Without explicit targets, aven installs to all detected supported agents.
 
 ```sh
 aven skill > /tmp/aven-skill.md
 aven skill install
 aven skill install --agent claude --agent codex
+aven skill install --agent pi
 ```
+
+Pi receives the bundled skill at `~/.pi/agent/skills/aven/SKILL.md`. The other user locations are `~/.claude/skills/aven/SKILL.md` for Claude Code, `~/.config/opencode/skills/aven/SKILL.md` for OpenCode, and `~/.codex/skills/aven/SKILL.md` for Codex.
 
 ## Setup commands
 

@@ -69,7 +69,7 @@ pub(crate) fn install(args: SkillInstallArgs) -> Result<()> {
 
     if targets.is_empty() {
         bail!(
-            "no supported coding agents detected (expected ~/.claude, ~/.config/opencode, ~/.codex, or workspace agent config); use --agent to choose a target"
+            "no supported coding agents detected (expected ~/.claude, ~/.config/opencode, ~/.codex, ~/.pi/agent, or workspace agent config); use --agent to choose a target"
         );
     }
 
@@ -107,6 +107,12 @@ fn all_agents(home: &Path) -> Vec<CodingAgent> {
             "Codex",
             home.join(".codex"),
             &[".codex"],
+        ),
+        CodingAgent::new(
+            CodingAgentArg::Pi,
+            "Pi",
+            home.join(".pi").join("agent"),
+            &[".pi"],
         ),
     ]
 }

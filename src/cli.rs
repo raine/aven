@@ -485,6 +485,7 @@ pub(crate) enum CodingAgentArg {
     Claude,
     Opencode,
     Codex,
+    Pi,
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
