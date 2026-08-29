@@ -484,6 +484,38 @@ pub async fn reconcile_staging(blob_dir: &Path) -> Result<ByteCount> {
     Ok(removed)
 }
 
+pub async fn reconcile_missing_objects(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+    clock: &dyn Clock,
+) -> Result<ByteCount> {
+    let rows = sqlx::query(
+        "SELECT sha256, byte_size FROM blob_inventory
+         WHERE available = 1 ORDER BY sha256",
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let verified_at = timestamp(clock.now());
+    let mut missing = ByteCount::default();
+    for row in rows {
+        let sha256: String = row.get("sha256");
+        if object_path(blob_dir, &sha256)?.exists() {
+            continue;
+        }
+        sqlx::query(
+            "UPDATE blob_inventory SET available = 0, last_verified_at = ?
+             WHERE sha256 = ? AND available = 1",
+        )
+        .bind(&verified_at)
+        .bind(&sha256)
+        .execute(&mut *conn)
+        .await?;
+        missing.count += 1;
+        missing.bytes += u64::try_from(row.get::<i64, _>("byte_size"))?;
+    }
+    Ok(missing)
+}
+
 pub async fn reconcile_orphan_objects(
     conn: &mut SqliteConnection,
     blob_dir: &Path,
@@ -541,6 +573,7 @@ pub async fn prune(
     if apply {
         reconcile_trash(conn, blob_dir).await?;
         reconcile_staging(blob_dir).await?;
+        reconcile_missing_objects(conn, blob_dir, clock).await?;
     }
     reconcile_liveness(conn, clock).await?;
     if apply {

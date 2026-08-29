@@ -72,6 +72,10 @@ const READ_PATH_INDEXES: &[(&str, &str)] = &[
         "CREATE INDEX idx_task_attachments_sha256_deleted_workspace_task ON task_attachments(sha256, deleted, workspace_id, task_id)",
     ),
     (
+        "idx_task_attachments_live_sha256",
+        "CREATE INDEX idx_task_attachments_live_sha256 ON task_attachments(sha256) WHERE deleted = 0",
+    ),
+    (
         "idx_server_blob_references_sha256_deleted_workspace_task",
         "CREATE INDEX idx_server_blob_references_sha256_deleted_workspace_task ON server_blob_references(sha256, deleted, workspace_id, task_id)",
     ),
@@ -387,6 +391,128 @@ fn attachment_liveness_probes_use_hash_indexes() {
             }),
             "expected affected update to use server hash index\n{}",
             details.join("\n")
+        );
+    });
+}
+
+#[test]
+fn missing_blob_queries_use_bounded_hash_paths() {
+    let env = TestEnv::new();
+    let db = env.db("missing-blob-plans.sqlite");
+    ok(env.aven(&db, ["project", "create", "app"]));
+
+    runtime().block_on(async {
+        let mut conn = open_db(&db).await;
+        seed_plan_rows(&mut conn).await;
+        seed_attachment_liveness_plan_rows(&mut conn).await;
+        sqlx::query("ANALYZE")
+            .execute(&mut conn)
+            .await
+            .expect("analyze");
+
+        let page_plan = sqlx::query(
+            "EXPLAIN QUERY PLAN
+             SELECT ta.sha256, MAX(ta.byte_size) AS byte_size,
+                    MAX(ta.media_type) AS media_type, MAX(ta.width) AS width,
+                    MAX(ta.height) AS height
+             FROM task_attachments AS ta INDEXED BY idx_task_attachments_live_sha256
+             JOIN tasks t ON t.workspace_id = ta.workspace_id AND t.id = ta.task_id
+             LEFT JOIN blob_inventory bi ON bi.sha256 = ta.sha256
+             WHERE ta.deleted = 0 AND t.deleted = 0
+             GROUP BY ta.sha256
+             HAVING MAX(COALESCE(bi.available, 0)) = 0
+             ORDER BY ta.sha256 LIMIT ?",
+        )
+        .bind(17_i64)
+        .fetch_all(&mut conn)
+        .await
+        .expect("explain missing blob page");
+        let page_details = page_plan
+            .iter()
+            .map(|row| row.get::<String, _>("detail"))
+            .collect::<Vec<_>>();
+        assert!(
+            page_details
+                .iter()
+                .any(|detail| { detail.contains("idx_task_attachments_live_sha256") }),
+            "expected missing blob page to use the hash index\n{}",
+            page_details.join("\n")
+        );
+        assert!(
+            page_details
+                .iter()
+                .all(|detail| !detail.contains("TEMP B-TREE")),
+            "expected missing blob page to avoid a temporary tree\n{}",
+            page_details.join("\n")
+        );
+
+        let aggregate_plan = sqlx::query(
+            "EXPLAIN QUERY PLAN
+             SELECT COUNT(*), COALESCE(SUM(byte_size), 0) FROM (
+               SELECT ta.sha256, MAX(ta.byte_size) AS byte_size
+               FROM task_attachments AS ta INDEXED BY idx_task_attachments_live_sha256
+               JOIN tasks t ON t.workspace_id = ta.workspace_id AND t.id = ta.task_id
+               LEFT JOIN blob_inventory bi ON bi.sha256 = ta.sha256
+               WHERE ta.deleted = 0 AND t.deleted = 0
+               GROUP BY ta.sha256
+               HAVING MAX(COALESCE(bi.available, 0)) = 0
+             )",
+        )
+        .fetch_all(&mut conn)
+        .await
+        .expect("explain missing blob aggregate");
+        let aggregate_details = aggregate_plan
+            .iter()
+            .map(|row| row.get::<String, _>("detail"))
+            .collect::<Vec<_>>();
+        assert!(
+            aggregate_details
+                .iter()
+                .any(|detail| { detail.contains("idx_task_attachments_live_sha256") }),
+            "expected missing blob aggregate to use the hash index\n{}",
+            aggregate_details.join("\n")
+        );
+        assert!(
+            aggregate_details
+                .iter()
+                .all(|detail| !detail.contains("TEMP B-TREE")),
+            "expected missing blob aggregate to avoid a temporary tree\n{}",
+            aggregate_details.join("\n")
+        );
+
+        let audit_plan = sqlx::query(
+            "EXPLAIN QUERY PLAN
+             SELECT bi.sha256
+             FROM blob_inventory bi
+             JOIN task_attachments AS ta INDEXED BY idx_task_attachments_live_sha256
+               ON ta.sha256 = bi.sha256
+             JOIN tasks t ON t.workspace_id = ta.workspace_id AND t.id = ta.task_id
+             WHERE bi.available = 1 AND ta.deleted = 0 AND t.deleted = 0
+               AND bi.sha256 > ?
+             GROUP BY bi.sha256 ORDER BY bi.sha256 LIMIT ?",
+        )
+        .bind("")
+        .bind(17_i64)
+        .fetch_all(&mut conn)
+        .await
+        .expect("explain missing blob audit");
+        let audit_details = audit_plan
+            .iter()
+            .map(|row| row.get::<String, _>("detail"))
+            .collect::<Vec<_>>();
+        assert!(
+            audit_details
+                .iter()
+                .any(|detail| { detail.contains("idx_task_attachments_live_sha256") }),
+            "expected missing blob audit to use the hash index\n{}",
+            audit_details.join("\n")
+        );
+        assert!(
+            audit_details
+                .iter()
+                .all(|detail| !detail.contains("TEMP B-TREE")),
+            "expected missing blob audit to avoid a temporary tree\n{}",
+            audit_details.join("\n")
         );
     });
 }

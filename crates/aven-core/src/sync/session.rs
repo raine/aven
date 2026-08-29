@@ -20,7 +20,7 @@ use super::wire::{
     MAX_PUSH_BATCH, MissingBlobsRequest, MissingBlobsResponse, SyncResponse,
     sync_server_url_is_valid, validate_blob_hashes,
 };
-use crate::attachments::lifecycle::LifecyclePolicy;
+use crate::attachments::lifecycle::{ByteCount, LifecyclePolicy};
 use crate::db::Database;
 use crate::ids::{new_id, now};
 
@@ -628,10 +628,9 @@ impl SyncSession {
                 self.summary.apply_ms += apply_ms;
                 let missing_page = self
                     .database
-                    .missing_local_blob_page(&self.blob_dir, MAX_BLOB_TRANSFER_OBJECTS)
+                    .missing_local_blob_page(MAX_BLOB_TRANSFER_OBJECTS)
                     .await?;
-                let has_more_missing =
-                    missing_page.total.count > u64::try_from(missing_page.blobs.len())?;
+                let has_more_missing = missing_page.has_more;
                 let missing = missing_page.blobs;
                 let objects = missing
                     .iter()
@@ -706,20 +705,7 @@ impl SyncSession {
         self.last_has_more = active.has_more;
         let local_more = self.database.pending_sync_change_count().await? > 0;
         self.last_local_more = local_more;
-        let download_counts = self
-            .database
-            .missing_local_blob_page(&self.blob_dir, 0)
-            .await?
-            .total;
-        self.summary.blob_download_remaining = usize::try_from(download_counts.count)?;
-        self.summary.blob_download_remaining_bytes = download_counts.bytes;
-        let upload_counts = self
-            .database
-            .pending_blob_counts(&self.known_server_blobs)
-            .await?;
-        self.summary.blob_upload_remaining = usize::try_from(upload_counts.count)?;
-        self.summary.blob_upload_remaining_bytes = upload_counts.bytes;
-        let complete = !local_more && !active.has_more && download_counts.count == 0;
+        let complete = !local_more && !active.has_more && !active.transfer_budget_blocked;
         self.summary.complete = complete;
         let budget_exhausted = self
             .page_budget
@@ -729,6 +715,19 @@ impl SyncSession {
             || self.transfer_budget.bytes == 0;
         let should_stop = complete || budget_exhausted || transfer_stalled;
         if should_stop {
+            let download_counts = if complete {
+                ByteCount::default()
+            } else {
+                self.database.missing_local_blob_counts().await?
+            };
+            self.summary.blob_download_remaining = usize::try_from(download_counts.count)?;
+            self.summary.blob_download_remaining_bytes = download_counts.bytes;
+            let upload_counts = self
+                .database
+                .pending_blob_counts(&self.known_server_blobs)
+                .await?;
+            self.summary.blob_upload_remaining = usize::try_from(upload_counts.count)?;
+            self.summary.blob_upload_remaining_bytes = upload_counts.bytes;
             self.stop();
         }
         Ok(())

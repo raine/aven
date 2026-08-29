@@ -8,10 +8,9 @@ use crate::status::{DaemonStatusReport, SyncStatusReport};
 pub(crate) async fn cmd_sync_status(
     database: &Database,
     config: &AppConfig,
-    db_path: &std::path::Path,
     json: bool,
 ) -> Result<()> {
-    let report = crate::status::build_sync_status(database, config, db_path).await?;
+    let report = crate::status::build_sync_status(database, config).await?;
     if json {
         print_json_pretty(&report)
     } else {

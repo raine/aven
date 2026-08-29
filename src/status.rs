@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Result;
 use aven_core::db::Database;
@@ -86,11 +86,9 @@ pub(crate) struct SyncLastRun {
 pub(crate) async fn build_sync_status(
     database: &Database,
     config: &AppConfig,
-    db_path: &Path,
 ) -> Result<SyncStatusReport> {
     let persistence = database.sync_persistence_status().await?;
-    let blob_dir = config::resolve_blob_dir(db_path, config)?;
-    let missing = database.missing_sync_attachment_counts(&blob_dir).await?;
+    let missing = database.missing_sync_attachment_counts().await?;
     let effective_server_value = config::resolve_sync_server(None, config)
         .ok()
         .filter(|server| sync_server_url_is_valid(server));

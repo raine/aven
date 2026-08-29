@@ -394,7 +394,7 @@ async fn dispatch_database(
         }
         DatabaseCommand::Sync(args) => match &args.command {
             Some(SyncSubcommand::Status(status)) => {
-                cmd_sync_status(&database, &config, &db_path, status.json).await
+                cmd_sync_status(&database, &config, status.json).await
             }
             None => sync_client(&database, args, &config).await,
         },
