@@ -270,7 +270,7 @@ async fn unresolved_task_conflict_fields(
     let mut fields_by_task = HashMap::new();
     for task_ids in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
         let mut query = QueryBuilder::<Sqlite>::new(
-            "SELECT task_id, field FROM conflicts WHERE workspace_id = ",
+            "SELECT DISTINCT task_id, field FROM conflicts WHERE workspace_id = ",
         );
         query.push_bind(workspace_id);
         query.push(

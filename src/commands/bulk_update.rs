@@ -243,6 +243,7 @@ async fn resolve_bulk_metadata_fields(
     planned: &[PlannedBulkUpdate],
 ) -> Result<HashMap<String, MetadataFieldId>> {
     let mut fields = HashMap::new();
+    let mut seen = HashSet::new();
     for planned in planned {
         for key in planned
             .update
@@ -253,7 +254,7 @@ async fn resolve_bulk_metadata_fields(
         {
             let key = aven_core::metadata::normalize_metadata_key(key)
                 .expect("bulk metadata keys were validated");
-            if fields.contains_key(&key) {
+            if !seen.insert(key.clone()) {
                 continue;
             }
             if let Some(field) = database.find_metadata_field(workspace_id, &key).await? {
