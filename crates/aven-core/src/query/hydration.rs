@@ -5,7 +5,9 @@ use sqlx::SqliteConnection;
 
 use crate::queue::queue_meta_on;
 use crate::refs::DisplayRefContext;
-use crate::task_enrichment::{load_task_enrichment, load_task_list_enrichment};
+use crate::task_enrichment::{
+    load_task_enrichment, load_task_enrichment_without_activity, load_task_list_enrichment,
+};
 use crate::types::Task;
 
 use super::TaskListItem;
@@ -14,6 +16,7 @@ use super::TaskListItem;
 pub(super) enum TaskHydration {
     List,
     Detail,
+    DetailWithoutActivity,
 }
 
 /// Build a `Vec<TaskListItem>` from tasks by loading enrichment and display refs.
@@ -36,6 +39,10 @@ pub async fn build_task_list_items(
         }
         TaskHydration::Detail => {
             load_task_enrichment(conn, workspace_id, &task_ids, display_refs).await?
+        }
+        TaskHydration::DetailWithoutActivity => {
+            load_task_enrichment_without_activity(conn, workspace_id, &task_ids, display_refs)
+                .await?
         }
     };
 

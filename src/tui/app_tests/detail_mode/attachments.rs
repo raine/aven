@@ -21,6 +21,8 @@ async fn detail_tab_focuses_locally_available_images_independent_of_preview_stat
         test_attachment("FIRSTIMAGE", "image/png", true, Some((640, 480))),
         test_attachment("LASTIMAGE", "image/jpeg", true, Some((800, 600))),
     ];
+    let task_id = app.store.tasks[selected].task.id.clone();
+    app.store.hydrate_task_activity(&task_id).await.unwrap();
     app.show_detail(3);
 
     app.dispatch_key(key(KeyCode::Tab), (100, 30).into())

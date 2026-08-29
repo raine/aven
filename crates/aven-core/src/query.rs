@@ -53,7 +53,7 @@ pub use sync_history::SyncHistoryStats;
 pub(crate) use sync_history::sync_history_stats;
 pub(crate) use tasks::{
     list_task_items_in_workspace, list_task_items_with_display_refs,
-    list_task_summary_items_in_workspace,
+    list_task_items_without_activity_in_workspace, list_task_summary_items_in_workspace,
 };
 pub use types::RecentActionTarget;
 pub use types::{
@@ -322,6 +322,26 @@ impl Database {
         list_task_items_in_workspace(&mut conn, workspace_id, filters, mode, sort, direction).await
     }
 
+    pub async fn list_task_items_without_activity_from_current_projection(
+        &self,
+        workspace_id: &WorkspaceId,
+        filters: TaskFilters,
+        mode: TaskQueryMode,
+        sort: TaskSort,
+        direction: SortDirection,
+    ) -> Result<Vec<TaskListItem>> {
+        let mut conn = self.acquire_reader().await?;
+        list_task_items_without_activity_in_workspace(
+            &mut conn,
+            workspace_id,
+            filters,
+            mode,
+            sort,
+            direction,
+        )
+        .await
+    }
+
     pub async fn list_task_summary_items(
         &self,
         workspace_id: &WorkspaceId,
@@ -389,6 +409,22 @@ impl Database {
     ) -> Result<Vec<RecentActionItem>> {
         let mut conn = self.acquire_reader().await?;
         list_recent_actions_in_workspace(&mut conn, workspace_id, project_scope).await
+    }
+
+    pub async fn task_activity_for_task(
+        &self,
+        workspace_id: &WorkspaceId,
+        task_id: &TaskId,
+    ) -> Result<Vec<RecentActionItem>> {
+        let mut conn = self.acquire_reader().await?;
+        Ok(task_activity_for_tasks_in_workspace(
+            &mut conn,
+            workspace_id,
+            std::slice::from_ref(task_id),
+        )
+        .await?
+        .remove(task_id)
+        .unwrap_or_default())
     }
 
     pub async fn search_task_items(

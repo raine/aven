@@ -108,103 +108,131 @@ pub(crate) async fn task_activity_for_tasks_in_workspace(
     let series_refs = super::recurrence::SeriesRefContext::load(conn, workspace_id).await?;
 
     for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
-        let mut query = QueryBuilder::<Sqlite>::new(
-            "WITH ranked AS (
-               SELECT c.change_id, c.entity_type, c.entity_id, c.field, c.op_type, c.payload,
-                      c.created_at, c.server_seq, t.queue_activity_at AS task_queue_activity_at,
-                      t.title AS task_title, t.status AS task_status, t.deleted AS task_deleted,
-                      p.key AS project_key, p.name AS project_name, p.prefix AS project_prefix,
-                      rs.id AS recurrence_series_id, rs.title AS recurrence_series_title,
-                      related.id AS related_task_id,
-                      related_project.prefix AS related_project_prefix,
-                      ROW_NUMBER() OVER (
-                        PARTITION BY c.entity_id
-                        ORDER BY c.created_at DESC, c.local_seq DESC
-                      ) AS activity_rank
-               FROM changes c
-               JOIN tasks t
-                 ON c.entity_type = 'task'
-                AND t.workspace_id = ",
+        let mut query = QueryBuilder::<Sqlite>::new("WITH requested(task_id) AS (VALUES ");
+        for (index, task_id) in chunk.iter().enumerate() {
+            if index > 0 {
+                query.push(", ");
+            }
+            query.push("(");
+            query.push_bind(task_id);
+            query.push(")");
+        }
+        query.push(
+            "), top_changes AS (
+                 SELECT c.change_id, c.entity_type, c.entity_id, c.field, c.op_type,
+                        c.payload, c.created_at, c.local_seq, c.server_seq
+                 FROM requested r
+                 JOIN changes c
+                   ON c.entity_type = 'task' AND c.entity_id = r.task_id
+                 WHERE c.rowid IN (
+                   SELECT candidate.rowid
+                   FROM changes candidate
+                   WHERE candidate.entity_type = 'task'
+                     AND candidate.entity_id = r.task_id
+                     AND json_extract(candidate.payload, '$.workspace_id') = ",
+        );
+        query.push_bind(workspace_id);
+        push_unsuppressed_task_change(&mut query, "candidate");
+        query.push(
+            " ORDER BY candidate.created_at DESC, candidate.local_seq DESC
+                   LIMIT ",
+        );
+        query.push_bind(TASK_ACTIVITY_LIMIT);
+        query.push(
+            " )
+             ), driver_changes AS (
+                 SELECT c.change_id, c.entity_type, c.entity_id, c.field, c.op_type,
+                        c.payload, c.created_at, c.local_seq, c.server_seq
+                 FROM requested r
+                 JOIN tasks t
+                   ON t.workspace_id = ",
         );
         query.push_bind(workspace_id);
         query.push(
-            " AND t.id = c.entity_id
-               LEFT JOIN recurrence_occurrences ro
-                 ON ro.workspace_id = ",
+            " AND t.id = r.task_id
+                 JOIN changes c
+                   ON c.entity_type = 'task' AND c.entity_id = r.task_id
+                 WHERE json_extract(c.payload, '$.workspace_id') = ",
         );
         query.push_bind(workspace_id);
         query.push(
-            " AND ro.task_id = c.entity_id
-               LEFT JOIN recurrence_series rs
-                 ON rs.workspace_id = ",
+            " AND c.rowid = (
+                   SELECT driver.rowid
+                   FROM changes driver
+                   WHERE driver.entity_type = 'task'
+                     AND driver.entity_id = r.task_id
+                     AND json_extract(driver.payload, '$.workspace_id') = ",
+        );
+        query.push_bind(workspace_id);
+        query.push(
+            " AND driver.created_at = t.queue_activity_at
+                     AND (
+                       driver.op_type IN ('create_task', 'note_add', 'note_edit', 'note_delete')
+                       OR (driver.op_type IN ('set_field', 'resolve_field')
+                           AND driver.field IN ('status', 'priority'))
+                     )",
+        );
+        push_unsuppressed_task_change(&mut query, "driver");
+        query.push(
+            " ORDER BY driver.created_at DESC, driver.local_seq DESC
+                   LIMIT 1
+                 )
+             ), selected AS (
+                 SELECT * FROM top_changes
+                 UNION
+                 SELECT * FROM driver_changes
+             )
+             SELECT selected.change_id, selected.entity_type, selected.entity_id,
+                    selected.field, selected.op_type, selected.payload,
+                    selected.created_at, selected.server_seq,
+                    t.queue_activity_at AS task_queue_activity_at,
+                    t.title AS task_title, t.status AS task_status, t.deleted AS task_deleted,
+                    p.key AS project_key, p.name AS project_name, p.prefix AS project_prefix,
+                    rs.id AS recurrence_series_id, rs.title AS recurrence_series_title,
+                    related.id AS related_task_id,
+                    related_project.prefix AS related_project_prefix
+             FROM selected
+             JOIN tasks t
+               ON t.workspace_id = ",
+        );
+        query.push_bind(workspace_id);
+        query.push(
+            " AND t.id = selected.entity_id
+             LEFT JOIN recurrence_occurrences ro
+               ON ro.workspace_id = ",
+        );
+        query.push_bind(workspace_id);
+        query.push(
+            " AND ro.task_id = selected.entity_id
+             LEFT JOIN recurrence_series rs
+               ON rs.workspace_id = ",
         );
         query.push_bind(workspace_id);
         query.push(
             " AND rs.id = ro.series_id
-               LEFT JOIN projects p
-                 ON p.workspace_id = ",
+             LEFT JOIN projects p
+               ON p.workspace_id = ",
         );
         query.push_bind(workspace_id);
         query.push(
             " AND p.id = t.project_id
-               LEFT JOIN tasks related
-                 ON related.workspace_id = ",
+             LEFT JOIN tasks related
+               ON related.workspace_id = ",
         );
         query.push_bind(workspace_id);
         query.push(
             " AND related.id = COALESCE(
-                   json_extract(c.payload, '$.depends_on_task_id'),
-                   json_extract(c.payload, '$.related_task_id'),
-                   json_extract(c.payload, '$.epic_task_id')
+                   json_extract(selected.payload, '$.depends_on_task_id'),
+                   json_extract(selected.payload, '$.related_task_id'),
+                   json_extract(selected.payload, '$.epic_task_id')
                )
-               LEFT JOIN projects related_project
-                 ON related_project.workspace_id = ",
+             LEFT JOIN projects related_project
+               ON related_project.workspace_id = ",
         );
         query.push_bind(workspace_id);
         query.push(
             " AND related_project.id = related.project_id
-               WHERE json_extract(c.payload, '$.workspace_id') = ",
-        );
-        query.push_bind(workspace_id);
-        query.push(" AND c.entity_type = 'task' AND c.entity_id IN (");
-        {
-            let mut separated = query.separated(", ");
-            for task_id in chunk {
-                separated.push_bind(task_id);
-            }
-        }
-        query.push(
-            ") AND NOT EXISTS (
-                 SELECT 1 FROM changes resolving
-                 WHERE resolving.entity_type = 'recurrence_series'
-                   AND resolving.op_type = 'resolve_recurrence_occurrence'
-                   AND (
-                     json_extract(resolving.payload, '$.task_status_change_id') = c.change_id
-                     OR (c.op_type = 'create_task'
-                         AND json_extract(resolving.payload, '$.successor_task_id') = c.entity_id)
-                     OR (c.op_type = 'project_recurrence_occurrence'
-                         AND json_extract(resolving.payload, '$.successor_task_id') =
-                             json_extract(c.payload, '$.task_id'))
-                   )
-               )
-             )
-             SELECT * FROM ranked
-             WHERE activity_rank <= ",
-        );
-        query.push_bind(TASK_ACTIVITY_LIMIT);
-        query.push(
-            " OR activity_rank = (
-                 SELECT MIN(driver.activity_rank)
-                 FROM ranked driver
-                 WHERE driver.entity_id = ranked.entity_id
-                   AND driver.created_at = driver.task_queue_activity_at
-                   AND (
-                     driver.op_type IN ('create_task', 'note_add', 'note_edit', 'note_delete')
-                     OR (driver.op_type IN ('set_field', 'resolve_field')
-                         AND driver.field IN ('status', 'priority'))
-                   )
-               )
-             ORDER BY entity_id, created_at DESC, activity_rank",
+             ORDER BY selected.entity_id, selected.created_at DESC, selected.local_seq DESC",
         );
 
         for row in query.build().fetch_all(&mut *conn).await? {
@@ -217,6 +245,34 @@ pub(crate) async fn task_activity_for_tasks_in_workspace(
         }
     }
     Ok(activity_by_task)
+}
+
+fn push_unsuppressed_task_change(query: &mut QueryBuilder<Sqlite>, alias: &str) {
+    query.push(" AND NOT EXISTS (");
+    query.push("SELECT 1 FROM changes resolving WHERE resolving.entity_type = ");
+    query.push("'recurrence_series' AND resolving.op_type = ");
+    query.push("'resolve_recurrence_occurrence' AND json_extract(resolving.payload, ");
+    query.push("'$.task_status_change_id') = ");
+    query.push(alias);
+    query.push(".change_id)");
+    query.push(" AND (");
+    query.push(alias);
+    query.push(".op_type != 'create_task' OR NOT EXISTS (");
+    query.push("SELECT 1 FROM changes resolving WHERE resolving.entity_type = ");
+    query.push("'recurrence_series' AND resolving.op_type = ");
+    query.push("'resolve_recurrence_occurrence' AND json_extract(resolving.payload, ");
+    query.push("'$.successor_task_id') = ");
+    query.push(alias);
+    query.push(".entity_id))");
+    query.push(" AND (");
+    query.push(alias);
+    query.push(".op_type != 'project_recurrence_occurrence' OR NOT EXISTS (");
+    query.push("SELECT 1 FROM changes resolving WHERE resolving.entity_type = ");
+    query.push("'recurrence_series' AND resolving.op_type = ");
+    query.push("'resolve_recurrence_occurrence' AND json_extract(resolving.payload, ");
+    query.push("'$.successor_task_id') = json_extract(");
+    query.push(alias);
+    query.push(".payload, '$.task_id')))");
 }
 
 fn action_from_row(
@@ -766,6 +822,34 @@ mod tests {
             .await
             .unwrap();
         }
+        let suppressed_change_id = crate::db::insert_change(
+            &mut conn,
+            "task",
+            &first.task.id,
+            Some("title"),
+            op_type::SET_FIELD,
+            json!({
+                "workspace_id": workspace.id,
+                "value": "suppressed"
+            }),
+            None,
+        )
+        .await
+        .unwrap();
+        crate::db::insert_change(
+            &mut conn,
+            "recurrence_series",
+            "series",
+            None,
+            op_type::RESOLVE_RECURRENCE_OCCURRENCE,
+            json!({
+                "workspace_id": workspace.id,
+                "task_status_change_id": suppressed_change_id
+            }),
+            None,
+        )
+        .await
+        .unwrap();
         crate::test_support::update_task(
             &mut conn,
             &workspace,
@@ -821,6 +905,11 @@ mod tests {
             activity[&first.task.id]
                 .iter()
                 .all(|action| action.entity_id == first.task.id.to_string())
+        );
+        assert!(
+            activity[&first.task.id]
+                .iter()
+                .all(|action| action.change_id != suppressed_change_id)
         );
         assert!(activity[&first.task.id].iter().any(|action| {
             action.field.as_deref() == Some("priority") && action.created_at == queue_activity

@@ -1,6 +1,36 @@
 use super::*;
 
 #[tokio::test]
+async fn task_activity_loads_only_for_the_visible_detail_task() {
+    let mut store = test_store().await;
+    let (first_id, _) = create_selected_task(&mut store, "First task").await;
+    let (second_id, _) = create_selected_task(&mut store, "Second task").await;
+
+    assert!(store.tasks.iter().all(|item| item.activity.is_empty()));
+
+    store.hydrate_task_activity(&first_id).await.unwrap();
+
+    assert!(
+        !store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == first_id)
+            .unwrap()
+            .activity
+            .is_empty()
+    );
+    assert!(
+        store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == second_id)
+            .unwrap()
+            .activity
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn exact_task_load_ignores_active_view_filters() {
     let mut store = test_store().await;
     let (task_id, index) = create_selected_task(&mut store, "Filtered detail").await;

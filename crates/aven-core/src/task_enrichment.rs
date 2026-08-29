@@ -40,7 +40,16 @@ pub async fn load_task_enrichment(
     task_ids: &[TaskId],
     display_refs: &DisplayRefContext,
 ) -> Result<TaskEnrichment> {
-    load_task_enrichment_with_detail(conn, workspace_id, task_ids, display_refs, true).await
+    load_task_enrichment_with_detail(conn, workspace_id, task_ids, display_refs, true, true).await
+}
+
+pub(crate) async fn load_task_enrichment_without_activity(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    task_ids: &[TaskId],
+    display_refs: &DisplayRefContext,
+) -> Result<TaskEnrichment> {
+    load_task_enrichment_with_detail(conn, workspace_id, task_ids, display_refs, true, false).await
 }
 
 pub(crate) async fn load_task_list_enrichment(
@@ -49,7 +58,7 @@ pub(crate) async fn load_task_list_enrichment(
     task_ids: &[TaskId],
     display_refs: &DisplayRefContext,
 ) -> Result<TaskEnrichment> {
-    load_task_enrichment_with_detail(conn, workspace_id, task_ids, display_refs, false).await
+    load_task_enrichment_with_detail(conn, workspace_id, task_ids, display_refs, false, false).await
 }
 
 async fn load_task_enrichment_with_detail(
@@ -58,23 +67,21 @@ async fn load_task_enrichment_with_detail(
     task_ids: &[TaskId],
     display_refs: &DisplayRefContext,
     include_detail: bool,
+    include_activity: bool,
 ) -> Result<TaskEnrichment> {
-    let (notes_by_task, attachments_by_task, metadata_by_task, activity_by_task) = if include_detail
-    {
+    let (notes_by_task, attachments_by_task, metadata_by_task) = if include_detail {
         (
             notes_for_tasks(conn, workspace_id, task_ids).await?,
             attachments_for_tasks(conn, workspace_id, task_ids).await?,
             crate::metadata::metadata_by_task_ids(conn, workspace_id, task_ids).await?,
-            crate::query::task_activity_for_tasks_in_workspace(conn, workspace_id, task_ids)
-                .await?,
         )
     } else {
-        (
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-        )
+        (HashMap::new(), HashMap::new(), HashMap::new())
+    };
+    let activity_by_task = if include_activity {
+        crate::query::task_activity_for_tasks_in_workspace(conn, workspace_id, task_ids).await?
+    } else {
+        HashMap::new()
     };
     let epic_children_by_task =
         epic_children_for_tasks(conn, workspace_id, task_ids, display_refs).await?;

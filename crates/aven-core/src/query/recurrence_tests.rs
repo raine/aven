@@ -785,7 +785,7 @@ async fn recurrence_hydration_statement_shapes_stay_bounded() {
     assert_eq!(items.len(), 24);
     assert!(items.iter().all(|item| item.recurrence.is_some()));
     let statement_count = conn.cached_statements_size();
-    assert!(statement_count <= 17, "statement count: {statement_count}");
+    assert!(statement_count <= 18, "statement count: {statement_count}");
 }
 
 #[tokio::test]

@@ -163,6 +163,22 @@ impl App {
                 needs_redraw = true;
             }
 
+            let detail_task_id = self
+                .detail
+                .is_active()
+                .then(|| {
+                    self.store
+                        .selected_task(self.list.selected_task())
+                        .map(|item| item.task.id.clone())
+                })
+                .flatten();
+            if let Some(task_id) = detail_task_id
+                && let Err(error) = self.store.hydrate_task_activity(&task_id).await
+            {
+                self.set_error(format!("activity load failed: {error:#}"));
+                needs_redraw = true;
+            }
+
             if needs_redraw {
                 self.draw(terminal)?;
                 needs_redraw = self.render_inline_images_after_draw(terminal).is_err();

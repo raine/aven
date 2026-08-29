@@ -52,6 +52,18 @@ const READ_PATH_INDEXES: &[(&str, &str)] = &[
         "CREATE INDEX idx_changes_recurrence_resolution ON changes(change_id) WHERE entity_type = 'recurrence_series' AND op_type = 'resolve_recurrence_occurrence'",
     ),
     (
+        "idx_changes_task_activity",
+        "CREATE INDEX idx_changes_task_activity ON changes(entity_id, created_at DESC, local_seq DESC) WHERE entity_type = 'task'",
+    ),
+    (
+        "idx_changes_recurrence_task_status_change",
+        "CREATE INDEX idx_changes_recurrence_task_status_change ON changes(json_extract(payload, '$.task_status_change_id')) WHERE entity_type = 'recurrence_series' AND op_type = 'resolve_recurrence_occurrence'",
+    ),
+    (
+        "idx_changes_recurrence_successor_task",
+        "CREATE INDEX idx_changes_recurrence_successor_task ON changes(json_extract(payload, '$.successor_task_id')) WHERE entity_type = 'recurrence_series' AND op_type = 'resolve_recurrence_occurrence'",
+    ),
+    (
         "idx_task_attachments_sha256_deleted_workspace_task",
         "CREATE INDEX idx_task_attachments_sha256_deleted_workspace_task ON task_attachments(sha256, deleted, workspace_id, task_id)",
     ),
@@ -470,11 +482,52 @@ fn common_read_filters_have_workspace_scoped_query_plans() {
         assert_plan_uses(
             &mut conn,
             "EXPLAIN QUERY PLAN
-             SELECT 1 FROM changes
+             SELECT 1 FROM changes INDEXED BY idx_changes_recurrence_resolution
              WHERE entity_type = 'recurrence_series'
                AND op_type = 'resolve_recurrence_occurrence'",
             &[],
             "idx_changes_recurrence_resolution",
+        )
+        .await;
+
+        assert_plan_uses_alias(
+            &mut conn,
+            "EXPLAIN QUERY PLAN
+             SELECT candidate.rowid FROM changes candidate
+             WHERE candidate.entity_type = 'task'
+               AND candidate.entity_id = ?
+               AND json_extract(candidate.payload, '$.workspace_id') = ?
+             ORDER BY candidate.created_at DESC, candidate.local_seq DESC
+             LIMIT 8",
+            &["0000000000001001", "0000000000000000"],
+            "candidate",
+            "idx_changes_task_activity",
+        )
+        .await;
+
+        assert_plan_uses_alias(
+            &mut conn,
+            "EXPLAIN QUERY PLAN
+             SELECT 1 FROM changes resolving INDEXED BY idx_changes_recurrence_task_status_change
+             WHERE resolving.entity_type = 'recurrence_series'
+               AND resolving.op_type = 'resolve_recurrence_occurrence'
+               AND json_extract(resolving.payload, '$.task_status_change_id') = ?",
+            &["activity-change"],
+            "resolving",
+            "idx_changes_recurrence_task_status_change",
+        )
+        .await;
+
+        assert_plan_uses_alias(
+            &mut conn,
+            "EXPLAIN QUERY PLAN
+             SELECT 1 FROM changes resolving INDEXED BY idx_changes_recurrence_successor_task
+             WHERE resolving.entity_type = 'recurrence_series'
+               AND resolving.op_type = 'resolve_recurrence_occurrence'
+               AND json_extract(resolving.payload, '$.successor_task_id') = ?",
+            &["0000000000001001"],
+            "resolving",
+            "idx_changes_recurrence_successor_task",
         )
         .await;
     });
