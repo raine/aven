@@ -231,14 +231,29 @@ impl Store {
     }
 
     pub async fn list_tasks(&self, workspace_id: &WorkspaceId) -> Result<Vec<TaskRecord>, Error> {
+        self.workspace(workspace_id).await?;
+        self.database
+            .reconcile_recurrence_reports(workspace_id)
+            .await
+            .map_err(Error::from_internal)?;
         let mut offset = 0;
         let mut items = Vec::new();
         loop {
             let page = self
-                .list_tasks_page(workspace_id, offset, MAX_CONSUMER_TASK_PAGE_LIMIT)
-                .await?;
+                .database
+                .list_consumer_tasks_page_from_current_projection(
+                    workspace_id,
+                    offset,
+                    MAX_CONSUMER_TASK_PAGE_LIMIT,
+                )
+                .await
+                .map_err(Error::from_internal)?;
             let count = page.items.len();
-            items.extend(page.items);
+            items.extend(
+                page.items
+                    .into_iter()
+                    .map(TaskRecord::from_consumer_projection),
+            );
             if !page.has_more {
                 return Ok(items);
             }
@@ -567,19 +582,26 @@ impl Store {
         workspace_id: &WorkspaceId,
         expand_recurring: bool,
     ) -> Result<Vec<TaskSummary>, Error> {
+        self.workspace(workspace_id).await?;
+        self.database
+            .reconcile_recurrence_reports(workspace_id)
+            .await
+            .map_err(Error::from_internal)?;
         let mut offset = 0;
         let mut items = Vec::new();
         loop {
             let page = self
-                .recurrence_task_report_page(
+                .database
+                .list_consumer_task_summaries_page_from_current_projection(
                     workspace_id,
                     expand_recurring,
                     offset,
                     MAX_CONSUMER_TASK_PAGE_LIMIT,
                 )
-                .await?;
+                .await
+                .map_err(Error::from_internal)?;
             let count = page.items.len();
-            items.extend(page.items);
+            items.extend(page.items.into_iter().map(TaskSummary::from));
             if !page.has_more {
                 return Ok(items);
             }

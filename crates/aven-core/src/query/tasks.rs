@@ -138,60 +138,54 @@ async fn select_consumer_tasks(
     let fetch_limit = i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX);
     let offset = i64::try_from(offset).unwrap_or(i64::MAX);
     let mut query = QueryBuilder::<Sqlite>::new("");
+    query.push("SELECT ");
+    query.push(CONSUMER_TASK_COLUMNS);
+    query.push(
+        " FROM tasks t
+          JOIN projects p
+            ON p.workspace_id = t.workspace_id AND p.id = t.project_id",
+    );
     if group_terminal_recurrences {
         query.push(
-            "WITH candidates AS (
-                SELECT t.rowid AS task_rowid, ",
+            " LEFT JOIN recurrence_occurrences ro
+                ON ro.workspace_id = t.workspace_id AND ro.task_id = t.id
+               AND ro.task_id != ''",
         );
-        query.push(CONSUMER_TASK_COLUMNS);
-        query.push(
-            ", CASE
-                    WHEN t.status IN ('done', 'canceled') AND ro.series_id IS NOT NULL
-                    THEN 'series:' || ro.series_id
-                    ELSE 'task:' || t.id
-                END AS consumer_group
-             FROM tasks t
-             JOIN projects p
-               ON p.workspace_id = t.workspace_id AND p.id = t.project_id
-             LEFT JOIN recurrence_occurrences ro
-               ON ro.workspace_id = t.workspace_id AND ro.task_id = t.id
-              AND ro.task_id != ''
-             WHERE t.workspace_id = ",
-        );
-        query.push_bind(workspace_id);
-        query.push(" AND t.deleted = 0 AND t.is_epic = 0 AND ");
-        query.push(fragments::ordinary_task_clause("t"));
-        query.push(
-            "), ranked AS (
-                SELECT candidates.*,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY consumer_group
-                           ORDER BY created_at ASC, task_rowid ASC
-                       ) AS consumer_group_rank
-                FROM candidates
-            )
-            SELECT id, workspace_id, title, description, project_id,
-                   project_key, project_prefix, status, priority,
-                   created_at, updated_at, available_at, due_on
-            FROM ranked
-            WHERE consumer_group_rank = 1
-            ORDER BY created_at ASC, task_rowid ASC
-            LIMIT ",
-        );
-    } else {
-        query.push("SELECT ");
-        query.push(CONSUMER_TASK_COLUMNS);
-        query.push(
-            " FROM tasks t
-              JOIN projects p
-                ON p.workspace_id = t.workspace_id AND p.id = t.project_id
-              WHERE t.workspace_id = ",
-        );
-        query.push_bind(workspace_id);
-        query.push(" AND t.deleted = 0 AND t.is_epic = 0 AND ");
-        query.push(fragments::ordinary_task_clause("t"));
-        query.push(" ORDER BY t.created_at ASC, t.rowid ASC LIMIT ");
     }
+    query.push(" WHERE t.workspace_id = ");
+    query.push_bind(workspace_id);
+    query.push(" AND t.deleted = 0 AND t.is_epic = 0 AND ");
+    query.push(fragments::ordinary_task_clause("t"));
+    if group_terminal_recurrences {
+        query.push(
+            " AND NOT (
+                t.status IN ('done', 'canceled')
+                AND ro.series_id IS NOT NULL
+                AND EXISTS (
+                    SELECT 1
+                    FROM tasks prior
+                    JOIN recurrence_occurrences prior_ro
+                      ON prior_ro.workspace_id = prior.workspace_id
+                     AND prior_ro.task_id = prior.id
+                     AND prior_ro.task_id != ''
+                    WHERE prior.workspace_id = t.workspace_id
+                      AND prior.deleted = 0
+                      AND prior.is_epic = 0
+                      AND prior.status IN ('done', 'canceled')
+                      AND prior_ro.series_id = ro.series_id
+                      AND (prior.created_at < t.created_at
+                           OR (prior.created_at = t.created_at
+                               AND prior.rowid < t.rowid))
+                      AND ",
+        );
+        query.push(fragments::ordinary_task_clause("prior"));
+        query.push(
+            "
+                )
+            )",
+        );
+    }
+    query.push(" ORDER BY t.created_at ASC, t.rowid ASC LIMIT ");
     query.push_bind(fetch_limit);
     query.push(" OFFSET ");
     query.push_bind(offset);

@@ -303,6 +303,16 @@ impl Database {
         limit: usize,
     ) -> Result<ConsumerTaskPage> {
         self.reconcile_recurrence_reports(workspace_id).await?;
+        self.list_consumer_tasks_page_from_current_projection(workspace_id, offset, limit)
+            .await
+    }
+
+    pub(crate) async fn list_consumer_tasks_page_from_current_projection(
+        &self,
+        workspace_id: &WorkspaceId,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ConsumerTaskPage> {
         let mut conn = self.acquire_reader().await?;
         list_consumer_tasks_page_in_workspace(&mut conn, workspace_id, offset, limit).await
     }
@@ -315,6 +325,22 @@ impl Database {
         limit: usize,
     ) -> Result<ConsumerTaskSummaryPage> {
         self.reconcile_recurrence_reports(workspace_id).await?;
+        self.list_consumer_task_summaries_page_from_current_projection(
+            workspace_id,
+            expand_recurring,
+            offset,
+            limit,
+        )
+        .await
+    }
+
+    pub(crate) async fn list_consumer_task_summaries_page_from_current_projection(
+        &self,
+        workspace_id: &WorkspaceId,
+        expand_recurring: bool,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ConsumerTaskSummaryPage> {
         let mut conn = self.acquire_reader().await?;
         list_consumer_task_summaries_page_in_workspace(
             &mut conn,
