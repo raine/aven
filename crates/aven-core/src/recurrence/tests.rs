@@ -335,6 +335,10 @@ fn schedule_rank_handles_partial_week_anchor() {
             date(2026, 8, 10)
         ]
     );
+    assert_eq!(
+        super::schedule::slot_count_before(&rule, start_on, date(2026, 7, 20)),
+        Some(1)
+    );
 }
 
 #[test]

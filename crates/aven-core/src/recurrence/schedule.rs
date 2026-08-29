@@ -327,11 +327,22 @@ fn weekly_slot_count_before(
             .count(),
     )
     .ok()?;
-    let block = target_week.checked_div(i64::from(rule.interval()))?;
-    let complete = block
-        .checked_mul(weekday_count)?
-        .checked_sub(if block == 0 { 0 } else { first_block_excluded })?;
-    let current = if target_week % i64::from(rule.interval()) == 0 {
+    let interval = i64::from(rule.interval());
+    let block = target_week.checked_div(interval)?;
+    let complete_blocks = if target_week % interval == 0 {
+        block
+    } else {
+        block.checked_add(1)?
+    };
+    let complete =
+        complete_blocks
+            .checked_mul(weekday_count)?
+            .checked_sub(if complete_blocks == 0 {
+                0
+            } else {
+                first_block_excluded
+            })?;
+    let current = if target_week % interval == 0 {
         weekdays
             .iter()
             .filter(|weekday| {
