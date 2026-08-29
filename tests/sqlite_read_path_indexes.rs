@@ -180,20 +180,20 @@ fn recurrence_task_lookups_use_task_index() {
               AND ro.workspace_id = ?
               AND ro.task_id = c.entity_id
              WHERE json_extract(c.payload, '$.workspace_id') = ?
-               AND c.entity_type = 'task'
-               AND c.entity_id = ?",
-            &["0000000000000000", "0000000000000000", "0000000000001001"],
+               AND c.entity_type = 'task'",
+            &["0000000000000000", "0000000000000000"],
             "ro",
             "idx_recurrence_occurrences_task",
         )
         .await;
 
-        assert_plan_uses(
+        assert_plan_uses_alias(
             &mut conn,
             "EXPLAIN QUERY PLAN
              SELECT EXISTS(SELECT 1 FROM recurrence_occurrences
                            WHERE workspace_id = ? AND task_id = ?)",
             &["0000000000000000", "0000000000001001"],
+            "recurrence_occurrences",
             "idx_recurrence_occurrences_task",
         )
         .await;
@@ -452,12 +452,19 @@ async fn assert_plan_uses_alias(
         .collect::<Vec<_>>();
     let alias_marker = format!(" {alias} ");
     assert!(
-        details
-            .iter()
-            .any(|detail| detail.contains(&alias_marker) && detail.contains(index_name)),
+        details.iter().any(|detail| {
+            detail.contains(&alias_marker) && plan_uses_search_index(detail, index_name)
+        }),
         "expected {alias} to use {index_name}\n{}",
         details.join("\n")
     );
+}
+
+fn plan_uses_search_index(detail: &str, index_name: &str) -> bool {
+    let index_marker = format!("USING INDEX {index_name}");
+    let covering_index_marker = format!("USING COVERING INDEX {index_name}");
+    detail.contains("SEARCH ")
+        && (detail.contains(&index_marker) || detail.contains(&covering_index_marker))
 }
 
 fn normalize_sql(sql: &str) -> String {
