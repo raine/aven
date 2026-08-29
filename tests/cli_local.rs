@@ -1743,6 +1743,35 @@ fn bulk_update_sets_and_removes_metadata() {
 }
 
 #[test]
+fn bulk_update_rejects_conflicted_field_before_mutation() {
+    let env = TestEnv::new();
+    let db = env.db("bulk-update-conflict.sqlite");
+    let first = extract_ref(&ok(env.aven(&db, ["add", "first", "--project", "app"])));
+    let second = extract_ref(&ok(env.aven(&db, ["add", "second", "--project", "app"])));
+    execute_sql(
+        &db,
+        "INSERT INTO conflicts(workspace_id, task_id, field, local_value, remote_value,
+         remote_change_id, variant_a, variant_b, created_at)
+         SELECT workspace_id, id, 'priority', 'none', 'high', 'bulk-conflict',
+                'none', 'high', 't'
+         FROM tasks WHERE title = 'first'",
+    );
+
+    let error = fail(env.aven(&db, ["bulk-update", "--all", "--set-priority", "high"]));
+
+    contains_all(
+        &error,
+        &[
+            "error bulk-update-conflicted-field",
+            &first,
+            "field=priority",
+        ],
+    );
+    contains_all(&ok(env.aven(&db, ["show", &first])), &["priority=none"]);
+    contains_all(&ok(env.aven(&db, ["show", &second])), &["priority=none"]);
+}
+
+#[test]
 fn bulk_update_rolls_back_when_a_later_task_update_fails() {
     let env = TestEnv::new();
     let db = env.db("bulk-update-atomic.sqlite");

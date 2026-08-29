@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, bail};
 use aven_core::db::Database;
@@ -6,7 +6,7 @@ use aven_core::metadata::TaskMetadataInput;
 
 use super::validation::{validate_optional_priority, validate_optional_status};
 use crate::cli::BulkUpdateArgs;
-use crate::ids::WorkspaceId;
+use crate::ids::{MetadataFieldId, WorkspaceId};
 use crate::operations::TaskUpdate;
 use crate::query::{
     self, SortDirection, TaskAvailabilityFilter, TaskFilters, TaskQueryMode, TaskSort,
@@ -208,18 +208,60 @@ async fn plan_bulk_updates(
     args: &BulkUpdateArgs,
     mutations: &BulkResolvedMutations,
 ) -> Result<Vec<PlannedBulkUpdate>> {
-    let mut planned = Vec::with_capacity(items.len());
-    for item in items {
-        let update = bulk_update_for_item(&item, args, mutations);
-        let will_change = bulk_update_has_changes(&update);
-        preflight_bulk_update_item(database, workspace_id, &item, &update).await?;
-        planned.push(PlannedBulkUpdate {
-            item,
-            update,
-            will_change,
-        });
+    let planned = items
+        .into_iter()
+        .map(|item| {
+            let update = bulk_update_for_item(&item, args, mutations);
+            let will_change = bulk_update_has_changes(&update);
+            PlannedBulkUpdate {
+                item,
+                update,
+                will_change,
+            }
+        })
+        .collect::<Vec<_>>();
+    let metadata_fields = resolve_bulk_metadata_fields(database, workspace_id, &planned).await?;
+    let task_ids = planned
+        .iter()
+        .filter(|planned| planned.will_change)
+        .map(|planned| planned.item.task.id.clone())
+        .collect::<Vec<_>>();
+    let conflicts = database
+        .unresolved_task_conflict_fields(workspace_id, &task_ids)
+        .await?;
+    for planned in &planned {
+        if planned.will_change {
+            preflight_bulk_update_item(planned, &metadata_fields, &conflicts)?;
+        }
     }
     Ok(planned)
+}
+
+async fn resolve_bulk_metadata_fields(
+    database: &Database,
+    workspace_id: &WorkspaceId,
+    planned: &[PlannedBulkUpdate],
+) -> Result<HashMap<String, MetadataFieldId>> {
+    let mut fields = HashMap::new();
+    for planned in planned {
+        for key in planned
+            .update
+            .set_metadata
+            .iter()
+            .map(|input| input.key.as_str())
+            .chain(planned.update.remove_metadata.iter().map(String::as_str))
+        {
+            let key = aven_core::metadata::normalize_metadata_key(key)
+                .expect("bulk metadata keys were validated");
+            if fields.contains_key(&key) {
+                continue;
+            }
+            if let Some(field) = database.find_metadata_field(workspace_id, &key).await? {
+                fields.insert(key, field.id);
+            }
+        }
+    }
+    Ok(fields)
 }
 
 fn print_dry_run_bulk_update(item: &query::TaskListItem, will_change: bool) {
@@ -374,51 +416,24 @@ fn bulk_update_has_changes(update: &TaskUpdate) -> bool {
         || !update.remove_metadata.is_empty()
 }
 
-async fn preflight_bulk_update_item(
-    database: &Database,
-    workspace_id: &WorkspaceId,
-    item: &query::TaskListItem,
-    update: &TaskUpdate,
+fn preflight_bulk_update_item(
+    planned: &PlannedBulkUpdate,
+    metadata_fields: &HashMap<String, MetadataFieldId>,
+    conflicts: &HashMap<crate::ids::TaskId, HashSet<String>>,
 ) -> Result<()> {
+    let item = &planned.item;
+    let update = &planned.update;
     if update.status.is_some() {
-        ensure_bulk_field_clear(
-            database,
-            workspace_id,
-            &item.display_ref,
-            &item.task.id,
-            "status",
-        )
-        .await?;
+        ensure_bulk_field_clear(conflicts, &item.display_ref, &item.task.id, "status")?;
     }
     if update.priority.is_some() {
-        ensure_bulk_field_clear(
-            database,
-            workspace_id,
-            &item.display_ref,
-            &item.task.id,
-            "priority",
-        )
-        .await?;
+        ensure_bulk_field_clear(conflicts, &item.display_ref, &item.task.id, "priority")?;
     }
     if update.project.is_some() {
-        ensure_bulk_field_clear(
-            database,
-            workspace_id,
-            &item.display_ref,
-            &item.task.id,
-            "project",
-        )
-        .await?;
+        ensure_bulk_field_clear(conflicts, &item.display_ref, &item.task.id, "project")?;
     }
     if !update.add_labels.is_empty() || !update.remove_labels.is_empty() {
-        ensure_bulk_field_clear(
-            database,
-            workspace_id,
-            &item.display_ref,
-            &item.task.id,
-            "labels",
-        )
-        .await?;
+        ensure_bulk_field_clear(conflicts, &item.display_ref, &item.task.id, "labels")?;
     }
     for key in update
         .set_metadata
@@ -426,30 +441,25 @@ async fn preflight_bulk_update_item(
         .map(|input| input.key.as_str())
         .chain(update.remove_metadata.iter().map(String::as_str))
     {
-        if let Some(field) = database.find_metadata_field(workspace_id, key).await? {
-            ensure_bulk_field_clear(
-                database,
-                workspace_id,
-                &item.display_ref,
-                &item.task.id,
-                &format!("metadata:{}", field.id),
-            )
-            .await?;
+        let key = aven_core::metadata::normalize_metadata_key(key)
+            .expect("bulk metadata keys were validated");
+        if let Some(field_id) = metadata_fields.get(&key) {
+            let field = format!("metadata:{field_id}");
+            ensure_bulk_field_clear(conflicts, &item.display_ref, &item.task.id, &field)?;
         }
     }
     Ok(())
 }
 
-async fn ensure_bulk_field_clear(
-    database: &Database,
-    workspace_id: &WorkspaceId,
+fn ensure_bulk_field_clear(
+    conflicts: &HashMap<crate::ids::TaskId, HashSet<String>>,
     display_ref: &str,
     task_id: &crate::ids::TaskId,
     field: &str,
 ) -> Result<()> {
-    if database
-        .conflict_exists(workspace_id, task_id, field)
-        .await?
+    if conflicts
+        .get(task_id)
+        .is_some_and(|fields| fields.contains(field))
     {
         bail!("error bulk-update-conflicted-field ref={display_ref} field={field}");
     }

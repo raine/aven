@@ -1,11 +1,13 @@
+use std::collections::{HashMap, HashSet};
+
 use anyhow::{Context, Result, bail, ensure};
-use sqlx::{Row, SqliteConnection};
+use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 use tracing::info;
 
 use crate::change_log::op_type;
 use crate::db::{Database, begin_immediate, insert_change, set_field_version};
 use crate::error::CoreError;
-use crate::ids::{MetadataFieldId, TaskId, now};
+use crate::ids::{MetadataFieldId, TaskId, WorkspaceId, now};
 use crate::metadata::{
     decode_metadata_conflict_value, encode_metadata_conflict_value, metadata_field_by_id,
 };
@@ -37,6 +39,15 @@ impl Database {
     ) -> Result<Vec<ConflictDetail>> {
         let mut conn = self.acquire_reader().await?;
         task_conflicts(&mut conn, workspace, task_id, field).await
+    }
+
+    pub async fn unresolved_task_conflict_fields(
+        &self,
+        workspace_id: &WorkspaceId,
+        task_ids: &[TaskId],
+    ) -> Result<HashMap<TaskId, HashSet<String>>> {
+        let mut conn = self.acquire_reader().await?;
+        unresolved_task_conflict_fields(&mut conn, workspace_id, task_ids).await
     }
 
     pub async fn conflict_variant_value(
@@ -247,6 +258,40 @@ pub async fn task_conflicts(
             remote_value: row.get("remote_value"),
         })
         .collect())
+}
+
+const SQLITE_BIND_CHUNK_SIZE: usize = 900;
+
+async fn unresolved_task_conflict_fields(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    task_ids: &[TaskId],
+) -> Result<HashMap<TaskId, HashSet<String>>> {
+    let mut fields_by_task = HashMap::new();
+    for task_ids in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT task_id, field FROM conflicts WHERE workspace_id = ",
+        );
+        query.push_bind(workspace_id);
+        query.push(
+            " AND entity_type = 'task' AND resolved = 0 AND entity_id = task_id AND task_id IN (",
+        );
+        {
+            let mut separated = query.separated(", ");
+            for task_id in task_ids {
+                separated.push_bind(task_id);
+            }
+        }
+        query.push(")");
+
+        for row in query.build().fetch_all(&mut *conn).await? {
+            fields_by_task
+                .entry(row.get("task_id"))
+                .or_insert_with(HashSet::new)
+                .insert(row.get("field"));
+        }
+    }
+    Ok(fields_by_task)
 }
 
 pub async fn recurrence_series_conflicts(
