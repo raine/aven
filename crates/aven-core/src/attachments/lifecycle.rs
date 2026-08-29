@@ -137,7 +137,8 @@ pub(crate) async fn reconcile_liveness_in_transaction(
     let live_blob_references = live_blob_references_sql("blob_lifecycle.sha256");
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE blob_lifecycle SET unreferenced_at = NULL
-         WHERE {live_blob_references}"
+         WHERE unreferenced_at IS NOT NULL
+           AND ({live_blob_references})"
     )))
     .execute(&mut *conn)
     .await?;
@@ -147,6 +148,53 @@ pub(crate) async fn reconcile_liveness_in_transaction(
            AND NOT ({live_blob_references})"
     )))
     .bind(&now)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+pub(crate) async fn reconcile_liveness_for_hashes_in_transaction(
+    conn: &mut SqliteConnection,
+    hashes: &[String],
+    clock: &dyn Clock,
+) -> Result<()> {
+    if hashes.is_empty() {
+        return Ok(());
+    }
+    let now = timestamp(clock.now());
+    let hashes = serde_json::to_string(hashes)?;
+    let live_inventory_references = live_blob_references_sql("bi.sha256");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT OR IGNORE INTO blob_lifecycle(sha256, unreferenced_at)
+         SELECT bi.sha256,
+                CASE WHEN ({live_inventory_references}) THEN NULL ELSE ? END
+         FROM blob_inventory bi
+         JOIN (SELECT DISTINCT value AS sha256 FROM json_each(?)) affected
+           ON affected.sha256 = bi.sha256"
+    )))
+    .bind(&now)
+    .bind(&hashes)
+    .execute(&mut *conn)
+    .await?;
+
+    let live_blob_references = live_blob_references_sql("blob_lifecycle.sha256");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE blob_lifecycle SET unreferenced_at = NULL
+         WHERE unreferenced_at IS NOT NULL
+           AND sha256 IN (SELECT value FROM json_each(?))
+           AND ({live_blob_references})"
+    )))
+    .bind(&hashes)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE blob_lifecycle SET unreferenced_at = ?
+         WHERE unreferenced_at IS NULL
+           AND sha256 IN (SELECT value FROM json_each(?))
+           AND NOT ({live_blob_references})"
+    )))
+    .bind(&now)
+    .bind(&hashes)
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -845,6 +893,126 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(restored, None);
+    }
+
+    #[tokio::test]
+    async fn affected_liveness_reconciliation_is_scoped_and_write_minimal() {
+        let temp = tempfile::tempdir().unwrap();
+        let pool = open_db(&temp.path().join("test.sqlite")).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let affected =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string();
+        let unrelated =
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string();
+        let clock = TestClock::at("2026-07-01T00:00:00Z");
+        for hash in [&affected, &unrelated] {
+            upsert_inventory_available(&mut conn, hash, 4, "image/png")
+                .await
+                .unwrap();
+        }
+        insert_task(&mut conn, "0000000000000001").await;
+        insert_attachment(
+            &mut conn,
+            "0000000000000011",
+            "0000000000000001",
+            &affected,
+            false,
+        )
+        .await;
+        for hash in [&affected, &unrelated] {
+            sqlx::query("INSERT INTO blob_lifecycle(sha256, unreferenced_at) VALUES (?, ?)")
+                .bind(hash)
+                .bind("2026-06-01T00:00:00Z")
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+        }
+        sqlx::query(
+            "CREATE TABLE lifecycle_updates(count INTEGER NOT NULL DEFAULT 0);
+             CREATE TRIGGER count_lifecycle_updates
+             AFTER UPDATE OF unreferenced_at ON blob_lifecycle
+             BEGIN
+                 INSERT INTO lifecycle_updates(count) VALUES (1);
+             END",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        reconcile_liveness_for_hashes_in_transaction(&mut conn, &[affected.clone()], &clock)
+            .await
+            .unwrap();
+        let unrelated_at: String =
+            sqlx::query_scalar("SELECT unreferenced_at FROM blob_lifecycle WHERE sha256 = ?")
+                .bind(&unrelated)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(unrelated_at, "2026-06-01T00:00:00Z");
+        let updates: i64 = sqlx::query_scalar("SELECT count(*) FROM lifecycle_updates")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(updates, 1, "the live affected row changes once");
+
+        reconcile_liveness_for_hashes_in_transaction(&mut conn, &[affected.clone()], &clock)
+            .await
+            .unwrap();
+        let repeated_updates: i64 = sqlx::query_scalar("SELECT count(*) FROM lifecycle_updates")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(repeated_updates, 1, "an already-live row is not rewritten");
+
+        sqlx::query(
+            "UPDATE task_attachments SET deleted = 1, deleted_at = 'x'
+             WHERE attachment_id = '0000000000000011'",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        reconcile_liveness_for_hashes_in_transaction(&mut conn, &[affected.clone()], &clock)
+            .await
+            .unwrap();
+        let first_unreferenced: String =
+            sqlx::query_scalar("SELECT unreferenced_at FROM blob_lifecycle WHERE sha256 = ?")
+                .bind(&affected)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(first_unreferenced, "2026-07-01T00:00:00Z");
+        clock.advance(chrono::Duration::days(1));
+        reconcile_liveness_for_hashes_in_transaction(&mut conn, &[affected.clone()], &clock)
+            .await
+            .unwrap();
+        let second_unreferenced: String =
+            sqlx::query_scalar("SELECT unreferenced_at FROM blob_lifecycle WHERE sha256 = ?")
+                .bind(&affected)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(first_unreferenced, second_unreferenced);
+
+        sqlx::query(
+            "UPDATE task_attachments SET deleted = 0, deleted_at = NULL
+             WHERE attachment_id = '0000000000000011'",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        reconcile_liveness(&mut conn, &clock).await.unwrap();
+        let restored: Option<String> =
+            sqlx::query_scalar("SELECT unreferenced_at FROM blob_lifecycle WHERE sha256 = ?")
+                .bind(&affected)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(restored, None);
+        let full_updates: i64 = sqlx::query_scalar("SELECT count(*) FROM lifecycle_updates")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(full_updates, 3, "the full reset writes only the transition");
     }
 
     #[tokio::test]

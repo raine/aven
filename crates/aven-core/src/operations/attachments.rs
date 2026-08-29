@@ -411,6 +411,12 @@ async fn add_task_attachment_inner(
                     .first()
         {
             let attachment_id = existing.attachment_id.clone();
+            crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
+                &mut tx,
+                std::slice::from_ref(&stored.sha256),
+                &crate::attachments::lifecycle::SystemClock,
+            )
+            .await?;
             tx.commit().await?;
             return Ok::<_, anyhow::Error>((attachment_id, false));
         }
@@ -432,6 +438,12 @@ async fn add_task_attachment_inner(
                 height: stored.facts.height,
                 created_at: &created_at,
             },
+        )
+        .await?;
+        crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
+            &mut tx,
+            std::slice::from_ref(&stored.sha256),
+            &crate::attachments::lifecycle::SystemClock,
         )
         .await?;
         tx.commit().await?;
@@ -523,12 +535,13 @@ pub async fn delete_task_attachment(
     .execute(&mut *tx)
     .await?;
 
-    tx.commit().await?;
-    crate::attachments::lifecycle::reconcile_liveness(
-        conn,
+    crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
+        &mut tx,
+        std::slice::from_ref(&attachment.sha256),
         &crate::attachments::lifecycle::SystemClock,
     )
     .await?;
+    tx.commit().await?;
 
     attachment_by_id(conn, workspace, attachment_id).await
 }

@@ -51,6 +51,18 @@ const READ_PATH_INDEXES: &[(&str, &str)] = &[
         "idx_changes_recurrence_resolution",
         "CREATE INDEX idx_changes_recurrence_resolution ON changes(change_id) WHERE entity_type = 'recurrence_series' AND op_type = 'resolve_recurrence_occurrence'",
     ),
+    (
+        "idx_task_attachments_sha256_deleted_workspace_task",
+        "CREATE INDEX idx_task_attachments_sha256_deleted_workspace_task ON task_attachments(sha256, deleted, workspace_id, task_id)",
+    ),
+    (
+        "idx_server_blob_references_sha256_deleted_workspace_task",
+        "CREATE INDEX idx_server_blob_references_sha256_deleted_workspace_task ON server_blob_references(sha256, deleted, workspace_id, task_id)",
+    ),
+    (
+        "idx_changes_pending_attachment_add_sha256",
+        "CREATE INDEX idx_changes_pending_attachment_add_sha256 ON changes(json_extract(payload, '$.sha256')) WHERE server_seq IS NULL AND op_type = 'attachment_add'",
+    ),
 ];
 
 #[test]
@@ -258,6 +270,112 @@ fn task_note_lookups_use_notes_index() {
 }
 
 #[test]
+fn attachment_liveness_probes_use_hash_indexes() {
+    let env = TestEnv::new();
+    let db = env.db("attachment-liveness-plans.sqlite");
+    ok(env.aven(&db, ["project", "create", "app"]));
+
+    runtime().block_on(async {
+        let mut conn = open_db(&db).await;
+        seed_plan_rows(&mut conn).await;
+        seed_attachment_liveness_plan_rows(&mut conn).await;
+        sqlx::query("ANALYZE")
+            .execute(&mut conn)
+            .await
+            .expect("analyze");
+
+        assert_plan_uses_alias(
+            &mut conn,
+            "EXPLAIN QUERY PLAN
+             SELECT ta.workspace_id, ta.task_id FROM task_attachments ta
+             WHERE ta.sha256 = ? AND ta.deleted = 0",
+            &["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+            "ta",
+            "idx_task_attachments_sha256_deleted_workspace_task",
+        )
+        .await;
+
+        assert_plan_uses_alias(
+            &mut conn,
+            "EXPLAIN QUERY PLAN
+             SELECT sbr.workspace_id, sbr.task_id
+             FROM server_blob_references sbr
+             WHERE sbr.sha256 = ? AND sbr.deleted = 0",
+            &["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+            "sbr",
+            "idx_server_blob_references_sha256_deleted_workspace_task",
+        )
+        .await;
+
+        assert_plan_uses(
+            &mut conn,
+            "EXPLAIN QUERY PLAN
+             SELECT change_id FROM changes
+             WHERE server_seq IS NULL AND op_type = 'attachment_add'
+               AND json_extract(payload, '$.sha256') = ?",
+            &["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+            "idx_changes_pending_attachment_add_sha256",
+        )
+        .await;
+
+        let rows = sqlx::query(
+            "EXPLAIN QUERY PLAN
+             UPDATE blob_lifecycle SET unreferenced_at = NULL
+             WHERE unreferenced_at IS NOT NULL
+               AND sha256 IN (SELECT value FROM json_each(?))
+               AND (EXISTS(
+                   SELECT 1 FROM task_attachments ta
+                   JOIN tasks t ON t.workspace_id = ta.workspace_id AND t.id = ta.task_id
+                   WHERE ta.sha256 = blob_lifecycle.sha256
+                     AND ta.deleted = 0 AND t.deleted = 0
+               ) OR EXISTS(
+                   SELECT 1 FROM server_blob_references sbr
+                   LEFT JOIN server_task_tombstones st
+                     ON st.workspace_id = sbr.workspace_id AND st.task_id = sbr.task_id
+                   WHERE sbr.sha256 = blob_lifecycle.sha256
+                     AND sbr.deleted = 0 AND COALESCE(st.deleted, 0) = 0
+               ))",
+        )
+        .bind("[\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"]")
+        .fetch_all(&mut conn)
+        .await
+        .expect("explain affected liveness update");
+        let details = rows
+            .iter()
+            .map(|row| row.get::<String, _>("detail"))
+            .collect::<Vec<_>>();
+        assert!(
+            details
+                .iter()
+                .any(|detail| detail.contains("SEARCH blob_lifecycle")),
+            "expected affected update to search lifecycle by hash\n{}",
+            details.join("\n")
+        );
+        assert!(
+            details
+                .iter()
+                .all(|detail| !detail.contains("SCAN blob_lifecycle")),
+            "expected affected update to avoid a lifecycle sweep\n{}",
+            details.join("\n")
+        );
+        assert!(
+            details.iter().any(|detail| {
+                detail.contains("idx_task_attachments_sha256_deleted_workspace_task")
+            }),
+            "expected affected update to use local hash index\n{}",
+            details.join("\n")
+        );
+        assert!(
+            details.iter().any(|detail| {
+                detail.contains("idx_server_blob_references_sha256_deleted_workspace_task")
+            }),
+            "expected affected update to use server hash index\n{}",
+            details.join("\n")
+        );
+    });
+}
+
+#[test]
 fn common_read_filters_have_workspace_scoped_query_plans() {
     let env = TestEnv::new();
     let db = env.db("plans.sqlite");
@@ -429,6 +547,55 @@ async fn seed_recurrence_plan_rows(conn: &mut SqliteConnection) {
     .execute(&mut *conn)
     .await
     .expect("insert activity change");
+}
+
+async fn seed_attachment_liveness_plan_rows(conn: &mut SqliteConnection) {
+    for index in 0..200 {
+        let hash = if index == 0 {
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        } else {
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        };
+        sqlx::query(
+            "INSERT INTO blob_inventory(sha256, byte_size, media_type, available, first_seen_at)
+             VALUES (?, 4, 'image/png', 1, 't')",
+        )
+        .bind(hash)
+        .execute(&mut *conn)
+        .await
+        .ok();
+        sqlx::query(
+            "INSERT OR IGNORE INTO task_attachments(
+                 workspace_id, attachment_id, task_id, sha256, byte_size, media_type,
+                 width, height, created_at
+             ) VALUES ('0000000000000000', ?, '0000000000001001', ?, 4, 'image/png', 1, 1, 't')",
+        )
+        .bind(format!("{index:016X}"))
+        .bind(hash)
+        .execute(&mut *conn)
+        .await
+        .expect("insert task attachment");
+        sqlx::query(
+            "INSERT OR IGNORE INTO server_blob_references(
+                 workspace_id, attachment_id, task_id, sha256, byte_size
+             ) VALUES ('server', ?, '0000000000001001', ?, 4)",
+        )
+        .bind(format!("{index:016X}"))
+        .bind(hash)
+        .execute(&mut *conn)
+        .await
+        .expect("insert server attachment");
+    }
+    sqlx::query(
+        "INSERT INTO changes(
+             change_id, client_id, local_seq, entity_type, entity_id, op_type, payload, created_at
+         ) VALUES ('attachment-plan-change', 'client', 1, 'task', '0000000000001001',
+                   'attachment_add', ?, 't')",
+    )
+    .bind("{\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}")
+    .execute(&mut *conn)
+    .await
+    .expect("insert pending attachment change");
 }
 
 async fn seed_note_plan_rows(conn: &mut SqliteConnection) {

@@ -309,12 +309,15 @@ async fn apply_sync_response(conn: &mut SqliteConnection, page: ApplySyncPage) -
     update_change_server_seqs_if_missing(&mut tx, &page.response.push_acks).await?;
     let existing_change_ids = load_existing_change_ids(&mut tx, &page.response.changes).await?;
     let mut affected_series = HashSet::new();
+    let mut affected_attachment_hashes = HashSet::new();
     for change in &page.response.changes {
         if existing_change_ids.contains(change.change_id.as_str()) {
             verify_existing_change(&mut tx, change).await?;
             update_change_server_seq(&mut tx, &change.change_id, change.server_seq).await?;
             continue;
         }
+        collect_attachment_liveness_hashes(&mut tx, change, &mut affected_attachment_hashes)
+            .await?;
         let related_mutation = matches!(
             change.op_type.as_str(),
             op_type::RELATED_ADD | op_type::RELATED_REMOVE
@@ -358,6 +361,13 @@ async fn apply_sync_response(conn: &mut SqliteConnection, page: ApplySyncPage) -
         )
         .await?;
     }
+    let affected_attachment_hashes = affected_attachment_hashes.into_iter().collect::<Vec<_>>();
+    crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
+        &mut tx,
+        &affected_attachment_hashes,
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await?;
     let pushed = page.previous_pushed + page.response.push_acks.len() as i64;
     let pulled = page.previous_pulled + applied;
     set_meta(&mut tx, "sync_cursor", &page.response.cursor.to_string()).await?;
@@ -540,6 +550,7 @@ async fn assign_server_sequences(
     let mut next_server_seq = next_available_server_seq(&mut tx).await?;
     let mut accepted_count = 0_i64;
     let mut push_acks = Vec::with_capacity(changes.len());
+    let mut affected_attachment_hashes = HashSet::new();
     for change in changes {
         let existing_server_seq = sqlx::query_scalar::<_, Option<i64>>(
             "SELECT server_seq FROM changes WHERE change_id = ?",
@@ -572,7 +583,7 @@ async fn assign_server_sequences(
             .bind(server_seq)
             .execute(&mut *tx)
             .await?;
-            apply_server_blob_reference(&mut tx, &change).await?;
+            apply_server_blob_reference(&mut tx, &change, &mut affected_attachment_hashes).await?;
             accepted_count += 1;
             server_seq
         };
@@ -581,6 +592,13 @@ async fn assign_server_sequences(
             server_seq,
         });
     }
+    let affected_attachment_hashes = affected_attachment_hashes.into_iter().collect::<Vec<_>>();
+    crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
+        &mut tx,
+        &affected_attachment_hashes,
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await?;
     tx.commit().await?;
     Ok((accepted_count, push_acks))
 }
@@ -596,10 +614,12 @@ async fn next_available_server_seq(conn: &mut SqliteConnection) -> Result<i64> {
 async fn apply_server_blob_reference(
     conn: &mut SqliteConnection,
     change: &ChangeWire,
+    affected_attachment_hashes: &mut HashSet<String>,
 ) -> Result<()> {
     match change.op_type.as_str() {
         op_type::ATTACHMENT_ADD => {
             let payload = AttachmentAddPayload::from_change(change)?;
+            affected_attachment_hashes.insert(payload.sha256.clone());
             sqlx::query(
                 "INSERT INTO server_blob_references(
                    workspace_id, attachment_id, task_id, sha256, byte_size, deleted
@@ -624,24 +644,47 @@ async fn apply_server_blob_reference(
             .await?;
         }
         op_type::ATTACHMENT_DELETE => {
+            let workspace_id = change.payload["workspace_id"]
+                .as_str()
+                .context("payload missing workspace_id")?;
+            let attachment_id = change.payload["attachment_id"]
+                .as_str()
+                .context("payload missing attachment_id")?;
+            let sha256: Option<String> = sqlx::query_scalar(
+                "SELECT sha256 FROM server_blob_references
+                 WHERE workspace_id = ? AND attachment_id = ?",
+            )
+            .bind(workspace_id)
+            .bind(attachment_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+            if let Some(sha256) = sha256 {
+                affected_attachment_hashes.insert(sha256);
+            }
             sqlx::query(
                 "UPDATE server_blob_references SET deleted = 1
                  WHERE workspace_id = ? AND attachment_id = ?",
             )
-            .bind(
-                change.payload["workspace_id"]
-                    .as_str()
-                    .context("payload missing workspace_id")?,
-            )
-            .bind(
-                change.payload["attachment_id"]
-                    .as_str()
-                    .context("payload missing attachment_id")?,
-            )
+            .bind(workspace_id)
+            .bind(attachment_id)
             .execute(&mut *conn)
             .await?;
         }
-        op_type::SET_FIELD if change.field.as_deref() == Some("deleted") => {
+        op_type::SET_FIELD | op_type::RESOLVE_FIELD
+            if change.field.as_deref() == Some("deleted") =>
+        {
+            let workspace_id = change.payload["workspace_id"]
+                .as_str()
+                .context("payload missing workspace_id")?;
+            let hashes: Vec<String> = sqlx::query_scalar(
+                "SELECT DISTINCT sha256 FROM server_blob_references
+                 WHERE workspace_id = ? AND task_id = ?",
+            )
+            .bind(workspace_id)
+            .bind(&change.entity_id)
+            .fetch_all(&mut *conn)
+            .await?;
+            affected_attachment_hashes.extend(hashes);
             let deleted = change.payload["value"]
                 .as_str()
                 .is_some_and(|value| value == "1");
@@ -650,15 +693,61 @@ async fn apply_server_blob_reference(
                  VALUES (?, ?, ?)
                  ON CONFLICT(workspace_id, task_id) DO UPDATE SET deleted = excluded.deleted",
             )
-            .bind(
-                change.payload["workspace_id"]
-                    .as_str()
-                    .context("payload missing workspace_id")?,
-            )
+            .bind(workspace_id)
             .bind(&change.entity_id)
             .bind(i64::from(deleted))
             .execute(&mut *conn)
             .await?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+async fn collect_attachment_liveness_hashes(
+    conn: &mut SqliteConnection,
+    change: &ChangeWire,
+    affected_attachment_hashes: &mut HashSet<String>,
+) -> Result<()> {
+    match change.op_type.as_str() {
+        op_type::ATTACHMENT_ADD => {
+            let payload = AttachmentAddPayload::from_change(change)?;
+            affected_attachment_hashes.insert(payload.sha256);
+        }
+        op_type::ATTACHMENT_DELETE => {
+            let workspace_id = change.payload["workspace_id"]
+                .as_str()
+                .context("payload missing workspace_id")?;
+            let attachment_id = change.payload["attachment_id"]
+                .as_str()
+                .context("payload missing attachment_id")?;
+            let sha256: Option<String> = sqlx::query_scalar(
+                "SELECT sha256 FROM task_attachments
+                 WHERE workspace_id = ? AND attachment_id = ?",
+            )
+            .bind(workspace_id)
+            .bind(attachment_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+            if let Some(sha256) = sha256 {
+                affected_attachment_hashes.insert(sha256);
+            }
+        }
+        op_type::SET_FIELD | op_type::RESOLVE_FIELD
+            if change.field.as_deref() == Some("deleted") =>
+        {
+            let workspace_id = change.payload["workspace_id"]
+                .as_str()
+                .context("payload missing workspace_id")?;
+            let hashes: Vec<String> = sqlx::query_scalar(
+                "SELECT DISTINCT sha256 FROM task_attachments
+                 WHERE workspace_id = ? AND task_id = ?",
+            )
+            .bind(workspace_id)
+            .bind(&change.entity_id)
+            .fetch_all(&mut *conn)
+            .await?;
+            affected_attachment_hashes.extend(hashes);
         }
         _ => {}
     }

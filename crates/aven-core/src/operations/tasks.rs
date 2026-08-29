@@ -427,6 +427,7 @@ impl Database {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let mut outcomes = Vec::with_capacity(updates.len());
+        let mut affected_attachment_hashes = BTreeSet::new();
         let mut undo_commands = Vec::new();
         let mut created_labels = Vec::new();
         for (task_id, update) in &updates {
@@ -440,8 +441,14 @@ impl Database {
                 Some(before) => materialize_task_update(update, before)?,
                 None => update.clone(),
             };
-            let (changed, task_created_labels) =
-                apply_task_update(&mut tx, workspace, task_id, &update).await?;
+            let (changed, task_created_labels) = apply_task_update(
+                &mut tx,
+                workspace,
+                task_id,
+                &update,
+                &mut affected_attachment_hashes,
+            )
+            .await?;
             created_labels.extend(task_created_labels);
             let task = get_task_in_workspace(&mut tx, workspace, task_id).await?;
             let after = if detail == TaskMutationDetail::Report {
@@ -459,6 +466,13 @@ impl Database {
                 after,
             });
         }
+        let affected_attachment_hashes = affected_attachment_hashes.into_iter().collect::<Vec<_>>();
+        crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
+            &mut tx,
+            &affected_attachment_hashes,
+            &crate::attachments::lifecycle::SystemClock,
+        )
+        .await?;
         let changed_count = outcomes.iter().filter(|outcome| outcome.changed).count();
         append_created_label_undo_commands(&mut undo_commands, &created_labels);
         if let Some(summary) = undo.task_mutation_summary(changed_count) {
@@ -649,6 +663,7 @@ async fn create_task_with_attachments_and_epic(
             .entry(attachment.sha256.clone())
             .or_insert_with(|| attachment.clone());
     }
+    let attachment_hashes = unique.keys().cloned().collect::<Vec<_>>();
 
     let mut capacity_reservations = Vec::new();
     for attachment in unique.values() {
@@ -769,6 +784,12 @@ async fn create_task_with_attachments_and_epic(
                 .await?,
             );
         }
+        crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
+            &mut tx,
+            &attachment_hashes,
+            &crate::attachments::lifecycle::SystemClock,
+        )
+        .await?;
         let task = get_task_in_workspace(&mut tx, workspace, &inserted.id).await?;
         let attachment_ids = prepared
             .iter()
@@ -798,14 +819,6 @@ async fn create_task_with_attachments_and_epic(
         }
     };
     cleanup_attachment_guards(conn, &staging_leases, &capacity_reservations).await;
-    if let Err(error) = crate::attachments::lifecycle::reconcile_liveness(
-        conn,
-        &crate::attachments::lifecycle::SystemClock,
-    )
-    .await
-    {
-        warn!(%error, "failed to reconcile attachment liveness");
-    }
     info!(
         task_id = %inserted.id,
         project_key = %inserted.project_key,
@@ -1027,7 +1040,22 @@ pub async fn update_task(
 ) -> Result<TaskUpdateOutcome> {
     validate_task_update(&update)?;
     let mut tx = begin_immediate(conn).await?;
-    let (changed, _) = apply_task_update(&mut tx, workspace, task_id, &update).await?;
+    let mut affected_attachment_hashes = BTreeSet::new();
+    let (changed, _) = apply_task_update(
+        &mut tx,
+        workspace,
+        task_id,
+        &update,
+        &mut affected_attachment_hashes,
+    )
+    .await?;
+    let affected_attachment_hashes = affected_attachment_hashes.into_iter().collect::<Vec<_>>();
+    crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
+        &mut tx,
+        &affected_attachment_hashes,
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await?;
     tx.commit().await?;
     Ok(TaskUpdateOutcome {
         task: get_task_in_workspace(conn, workspace, task_id).await?,
@@ -1195,6 +1223,7 @@ async fn apply_task_update(
     workspace: &Workspace,
     task_id: &crate::ids::TaskId,
     update: &TaskUpdate,
+    affected_attachment_hashes: &mut BTreeSet<String>,
 ) -> Result<(bool, Vec<CreatedLabel>)> {
     let created_labels = if update.create_missing_labels {
         resolve_or_create_labels_in_workspace(conn, workspace, &update.add_labels)
@@ -1240,6 +1269,17 @@ async fn apply_task_update(
         )
         .await?;
     }
+    if update.deleted.is_some() {
+        let attachment_hashes: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT sha256 FROM task_attachments
+             WHERE workspace_id = ? AND task_id = ?",
+        )
+        .bind(&workspace.id)
+        .bind(task_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        affected_attachment_hashes.extend(attachment_hashes);
+    }
     if let Some(deleted) = update.deleted {
         changed |= update_task_field(
             conn,
@@ -1247,11 +1287,6 @@ async fn apply_task_update(
             task_id,
             "deleted",
             if deleted { "1" } else { "0" },
-        )
-        .await?;
-        crate::attachments::lifecycle::reconcile_liveness_in_transaction(
-            conn,
-            &crate::attachments::lifecycle::SystemClock,
         )
         .await?;
     }

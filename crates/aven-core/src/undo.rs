@@ -706,8 +706,11 @@ async fn apply_undo_commands(
     let mut include_deleted = None;
     let mut project_rename = None;
     let mut label_rename = None;
+    let mut affected_attachment_hashes = BTreeSet::new();
     for command in commands {
-        let outcome = apply_undo_command(conn, workspace_id, command).await?;
+        let outcome =
+            apply_undo_command(conn, workspace_id, command, &mut affected_attachment_hashes)
+                .await?;
         if outcome.task_id.is_some() {
             task_id = outcome.task_id;
         }
@@ -721,6 +724,13 @@ async fn apply_undo_commands(
             label_rename = outcome.label_rename;
         }
     }
+    let affected_attachment_hashes = affected_attachment_hashes.into_iter().collect::<Vec<_>>();
+    crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
+        conn,
+        &affected_attachment_hashes,
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await?;
     Ok(CommandOutcome {
         task_id,
         include_deleted,
@@ -733,6 +743,7 @@ async fn apply_undo_command(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     command: &UndoCommand,
+    affected_attachment_hashes: &mut BTreeSet<String>,
 ) -> Result<CommandOutcome> {
     match command {
         UndoCommand::SetTaskField {
@@ -775,6 +786,15 @@ async fn apply_undo_command(
                     if !project_id_exists(conn, workspace_id, &project_id).await? {
                         bail!("error undo-state-changed task_id={task_id} field={field}");
                     }
+                }
+                if task_field == TaskField::Deleted {
+                    collect_task_attachment_hashes(
+                        conn,
+                        workspace_id,
+                        task_id,
+                        affected_attachment_hashes,
+                    )
+                    .await?;
                 }
                 set_task_field_in_workspace(conn, workspace_id, task_id, task_field, before)
                     .await?;
@@ -899,6 +919,7 @@ async fn apply_undo_command(
                         task_id,
                         change_id,
                         attachment_change_ids,
+                        affected_attachment_hashes,
                     )
                     .await?;
                     return Ok(CommandOutcome {
@@ -909,6 +930,8 @@ async fn apply_undo_command(
                     });
                 }
             }
+            collect_task_attachment_hashes(conn, workspace_id, task_id, affected_attachment_hashes)
+                .await?;
             set_task_field_in_workspace(conn, workspace_id, task_id, TaskField::Deleted, "1")
                 .await?;
             Ok(CommandOutcome {
@@ -1159,6 +1182,15 @@ async fn apply_undo_command(
                 task_field_value_for_field(conn, workspace_id, task_id, task_field).await?;
             if current != *after {
                 bail!("error undo-state-changed task_id={task_id} field={field}");
+            }
+            if task_field == TaskField::Deleted && before != after {
+                collect_task_attachment_hashes(
+                    conn,
+                    workspace_id,
+                    task_id,
+                    affected_attachment_hashes,
+                )
+                .await?;
             }
             set_task_field_in_workspace(conn, workspace_id, task_id, task_field, before).await?;
             let restored = sqlx::query(
@@ -1441,13 +1473,33 @@ async fn labels_match_create_change(
     Ok(label_sets_equal(labels, &payload_labels))
 }
 
+async fn collect_task_attachment_hashes(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    task_id: &crate::ids::TaskId,
+    affected_attachment_hashes: &mut BTreeSet<String>,
+) -> Result<()> {
+    let hashes: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT sha256 FROM task_attachments
+         WHERE workspace_id = ? AND task_id = ?",
+    )
+    .bind(workspace_id)
+    .bind(task_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    affected_attachment_hashes.extend(hashes);
+    Ok(())
+}
+
 async fn hard_delete_created_task(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     task_id: &crate::ids::TaskId,
     create_change_id: &str,
     attachment_change_ids: &[String],
+    affected_attachment_hashes: &mut BTreeSet<String>,
 ) -> Result<()> {
+    collect_task_attachment_hashes(conn, workspace_id, task_id, affected_attachment_hashes).await?;
     sqlx::query("DELETE FROM task_attachments WHERE workspace_id = ? AND task_id = ?")
         .bind(workspace_id)
         .bind(task_id)
@@ -1482,11 +1534,6 @@ async fn hard_delete_created_task(
         .bind(create_change_id)
         .execute(&mut *conn)
         .await?;
-    crate::attachments::lifecycle::reconcile_liveness_in_transaction(
-        conn,
-        &crate::attachments::lifecycle::SystemClock,
-    )
-    .await?;
     Ok(())
 }
 
