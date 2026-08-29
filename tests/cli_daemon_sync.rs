@@ -244,6 +244,7 @@ fn daemon_attachment_maintenance_prunes_grace_expired_attachment() {
         .join("sha256")
         .join(sha256);
     assert!(blob_path.exists());
+    ok(env.aven(&db, ["sync", "--server", &server.url]));
     ok(env.aven(&db, ["attachment", "delete", &attachment_id]));
     env.write_config(&format!(
         r#"
@@ -264,14 +265,19 @@ daemon:
         server.url,
         wake_addr
     ));
-    exec_sql(
-        &db,
-        "UPDATE changes SET server_seq = local_seq WHERE op_type = 'attachment_add';",
-    );
 
     let daemon = TestProcess::start_daemon(&env);
     daemon.wait_for_log("daemon-maintained", Duration::from_secs(5));
 
+    let mark = daemon.log_mark();
+    ok(env.aven(
+        &db,
+        ["add", "daemon maintenance follow-up", "--project", "app"],
+    ));
+    daemon.wait_for_log_after(mark, "daemon-synced", Duration::from_secs(5));
+    let output = daemon.output();
+    assert_eq!(output.matches("daemon-maintained").count(), 1, "{output}");
+    contains_none(&output, &["daemon sync failed"]);
     assert!(!blob_path.exists());
 }
 
