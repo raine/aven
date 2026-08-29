@@ -148,8 +148,7 @@ async fn select_consumer_tasks(
     if group_terminal_recurrences {
         query.push(
             " LEFT JOIN recurrence_occurrences ro
-                ON ro.workspace_id = t.workspace_id AND ro.task_id = t.id
-               AND ro.task_id != ''",
+                ON ro.workspace_id = t.workspace_id AND ro.task_id = t.id",
         );
     }
     query.push(" WHERE t.workspace_id = ");
@@ -167,7 +166,6 @@ async fn select_consumer_tasks(
                     JOIN recurrence_occurrences prior_ro
                       ON prior_ro.workspace_id = prior.workspace_id
                      AND prior_ro.task_id = prior.id
-                     AND prior_ro.task_id != ''
                     WHERE prior.workspace_id = t.workspace_id
                       AND prior.deleted = 0
                       AND prior.is_epic = 0
