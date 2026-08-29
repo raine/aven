@@ -144,21 +144,37 @@ async fn scan_directory_page(dir: PathBuf, limit: usize) -> Result<Vec<ScannedFi
         let mut cursors = DIRECTORY_CURSORS
             .lock()
             .map_err(|_| anyhow::anyhow!("attachment directory cursor poisoned"))?;
+        if cursors
+            .get(&key)
+            .is_none_or(|cursor| cursor.entries.is_none())
+        {
+            let entries = match fs::read_dir(&dir) {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    cursors.remove(&key);
+                    return Ok(Vec::new());
+                }
+                Err(error) => {
+                    cursors.remove(&key);
+                    return Err(error.into());
+                }
+            };
+            cursors.insert(
+                key.clone(),
+                DirectoryCursor {
+                    entries: Some(entries),
+                },
+            );
+        }
         let result = {
-            let cursor = cursors.entry(key.clone()).or_default();
-            if cursor.entries.is_none() {
-                cursor.entries = match fs::read_dir(&dir) {
-                    Ok(entries) => Some(entries),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                        return Ok(Vec::new());
-                    }
-                    Err(error) => return Err(error.into()),
-                };
-            }
+            let cursor = cursors
+                .get_mut(&key)
+                .expect("attachment directory cursor should be open");
             let mut files = Vec::new();
+            let mut exhausted = false;
             for _ in 0..limit {
                 let Some(entry) = cursor.entries.as_mut().and_then(Iterator::next) else {
-                    cursor.entries = None;
+                    exhausted = true;
                     break;
                 };
                 let entry = entry?;
@@ -173,12 +189,19 @@ async fn scan_directory_page(dir: PathBuf, limit: usize) -> Result<Vec<ScannedFi
                     modified: metadata.modified()?,
                 });
             }
-            Ok(files)
+            Ok((files, exhausted))
         };
-        if result.is_err() {
-            cursors.remove(&key);
+        match result {
+            Ok((files, true)) => {
+                cursors.remove(&key);
+                Ok(files)
+            }
+            Ok((files, false)) => Ok(files),
+            Err(error) => {
+                cursors.remove(&key);
+                Err(error)
+            }
         }
-        result
     })
     .await
 }
