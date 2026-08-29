@@ -1,10 +1,12 @@
 #![allow(dead_code)]
 
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, SystemTime};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use chrono::{DateTime, SecondsFormat, Utc};
 use sqlx::{Row, SqliteConnection};
 
@@ -90,6 +92,156 @@ fn trash_dir(blob_dir: &Path) -> PathBuf {
 
 fn staging_dir(blob_dir: &Path) -> PathBuf {
     blob_dir.join("objects").join("sha256")
+}
+
+struct ScannedFile {
+    path: PathBuf,
+    name: String,
+    len: u64,
+    modified: SystemTime,
+}
+
+#[derive(Default)]
+struct DirectoryCursor {
+    entries: Option<fs::ReadDir>,
+}
+
+static DIRECTORY_CURSORS: LazyLock<Mutex<HashMap<PathBuf, DirectoryCursor>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+async fn scan_directory_all(dir: PathBuf) -> Result<Vec<ScannedFile>> {
+    crate::attachments::blocking::run(move || {
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error.into()),
+        };
+        let mut files = Vec::new();
+        for entry in entries {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let metadata = entry.metadata()?;
+            files.push(ScannedFile {
+                path: entry.path(),
+                name: entry.file_name().to_string_lossy().into_owned(),
+                len: metadata.len(),
+                modified: metadata.modified()?,
+            });
+        }
+        Ok(files)
+    })
+    .await
+}
+
+async fn scan_directory_page(dir: PathBuf, limit: usize) -> Result<Vec<ScannedFile>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    crate::attachments::blocking::run(move || {
+        let key = fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
+        let mut cursors = DIRECTORY_CURSORS
+            .lock()
+            .map_err(|_| anyhow::anyhow!("attachment directory cursor poisoned"))?;
+        let result = {
+            let cursor = cursors.entry(key.clone()).or_default();
+            if cursor.entries.is_none() {
+                cursor.entries = match fs::read_dir(&dir) {
+                    Ok(entries) => Some(entries),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        return Ok(Vec::new());
+                    }
+                    Err(error) => return Err(error.into()),
+                };
+            }
+            let mut files = Vec::new();
+            for _ in 0..limit {
+                let Some(entry) = cursor.entries.as_mut().and_then(Iterator::next) else {
+                    cursor.entries = None;
+                    break;
+                };
+                let entry = entry?;
+                if !entry.file_type()?.is_file() {
+                    continue;
+                }
+                let metadata = entry.metadata()?;
+                files.push(ScannedFile {
+                    path: entry.path(),
+                    name: entry.file_name().to_string_lossy().into_owned(),
+                    len: metadata.len(),
+                    modified: metadata.modified()?,
+                });
+            }
+            Ok(files)
+        };
+        if result.is_err() {
+            cursors.remove(&key);
+        }
+        result
+    })
+    .await
+}
+
+async fn remove_files(files: Vec<PathBuf>) -> Result<()> {
+    crate::attachments::blocking::run(move || {
+        for path in files {
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileMove {
+    Moved,
+    SourceMissing,
+    TargetExists,
+}
+
+fn move_file_without_replacing(source: &Path, target: &Path) -> Result<FileMove> {
+    match fs::hard_link(source, target) {
+        Ok(()) => {
+            if let Err(error) = fs::remove_file(source) {
+                let _ = fs::remove_file(target);
+                return Err(error.into());
+            }
+            Ok(FileMove::Moved)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Ok(FileMove::TargetExists)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if source.exists() {
+                Err(error.into())
+            } else {
+                Ok(FileMove::SourceMissing)
+            }
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+async fn restore_trashed_files(files: Vec<(PathBuf, PathBuf)>) {
+    let _ = crate::attachments::blocking::run(move || {
+        for (source, target) in files {
+            if !target.exists() {
+                continue;
+            }
+            if source.exists() {
+                fs::remove_file(target)?;
+            } else {
+                let _ = move_file_without_replacing(&target, &source)?;
+            }
+        }
+        Ok(())
+    })
+    .await;
 }
 
 fn live_blob_references_sql(sha256_expr: &str) -> String {
@@ -418,69 +570,96 @@ pub async fn ensure_local_capacity(
     Ok(Some(reservation_id))
 }
 
-pub async fn reconcile_trash(conn: &mut SqliteConnection, blob_dir: &Path) -> Result<()> {
-    let trash = trash_dir(blob_dir);
-    if !trash.exists() {
-        return Ok(());
-    }
-    for entry in fs::read_dir(&trash)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-        let Some(sha256) = entry.file_name().to_str().map(str::to_owned) else {
-            continue;
-        };
-        if validate_sha256(&sha256).is_err() {
-            continue;
-        }
-        let available: bool = sqlx::query_scalar(
-            "SELECT COALESCE((SELECT available FROM blob_inventory WHERE sha256 = ?), 0)",
+async fn reconcile_trash_files(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+    files: Vec<ScannedFile>,
+) -> Result<()> {
+    let hashes = files
+        .iter()
+        .filter(|file| validate_sha256(&file.name).is_ok())
+        .map(|file| file.name.clone())
+        .collect::<Vec<_>>();
+    let available = if hashes.is_empty() {
+        HashSet::new()
+    } else {
+        sqlx::query_scalar::<_, String>(
+            "SELECT sha256 FROM blob_inventory
+             WHERE available = 1 AND sha256 IN (SELECT value FROM json_each(?))",
         )
-        .bind(&sha256)
-        .fetch_one(&mut *conn)
-        .await?;
-        if available {
-            let target = object_path(blob_dir, &sha256)?;
-            if !target.exists() {
-                if let Some(parent) = target.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::rename(entry.path(), target)?;
-            } else {
-                fs::remove_file(entry.path())?;
+        .bind(serde_json::to_string(&hashes)?)
+        .fetch_all(&mut *conn)
+        .await?
+        .into_iter()
+        .collect()
+    };
+    let blob_dir = blob_dir.to_path_buf();
+    crate::attachments::blocking::run(move || {
+        for file in files {
+            if validate_sha256(&file.name).is_err() {
+                continue;
             }
-        } else {
-            fs::remove_file(entry.path())?;
+            let target = object_path(&blob_dir, &file.name)?;
+            if available.contains(&file.name) {
+                if target.exists() {
+                    fs::remove_file(file.path)?;
+                } else {
+                    if let Some(parent) = target.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    match move_file_without_replacing(&file.path, &target)? {
+                        FileMove::Moved | FileMove::SourceMissing | FileMove::TargetExists => {}
+                    }
+                }
+            } else {
+                match fs::remove_file(file.path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
         }
-    }
-    Ok(())
+        Ok(())
+    })
+    .await
+}
+
+pub async fn reconcile_trash(conn: &mut SqliteConnection, blob_dir: &Path) -> Result<()> {
+    reconcile_trash_files(
+        conn,
+        blob_dir,
+        scan_directory_all(trash_dir(blob_dir)).await?,
+    )
+    .await
+}
+
+async fn reconcile_trash_page(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+    limit: usize,
+) -> Result<()> {
+    reconcile_trash_files(
+        conn,
+        blob_dir,
+        scan_directory_page(trash_dir(blob_dir), limit).await?,
+    )
+    .await
 }
 
 pub async fn reconcile_staging(blob_dir: &Path) -> Result<ByteCount> {
-    let mut removed = ByteCount::default();
-    let dir = staging_dir(blob_dir);
-    if !dir.exists() {
-        return Ok(removed);
-    }
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        if !name.to_string_lossy().starts_with(".aven-stage-") {
-            continue;
-        }
-        let metadata = entry.metadata()?;
-        let stale = metadata
-            .modified()?
-            .elapsed()
-            .is_ok_and(|age| age >= LEASE_TTL);
-        if !stale {
-            continue;
-        }
-        removed.count += 1;
-        removed.bytes += metadata.len();
-        fs::remove_file(entry.path())?;
-    }
+    let files = scan_directory_all(staging_dir(blob_dir)).await?;
+    let stale = files
+        .into_iter()
+        .filter(|file| {
+            file.name.starts_with(".aven-stage-")
+                && file.modified.elapsed().is_ok_and(|age| age >= LEASE_TTL)
+        })
+        .collect::<Vec<_>>();
+    let removed = ByteCount {
+        count: u64::try_from(stale.len())?,
+        bytes: stale.iter().map(|file| file.len).sum(),
+    };
+    remove_files(stale.into_iter().map(|file| file.path).collect()).await?;
     Ok(removed)
 }
 
@@ -516,51 +695,99 @@ pub async fn reconcile_missing_objects(
     Ok(missing)
 }
 
+async fn reconcile_object_directory(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+    grace: Duration,
+    limit: usize,
+    clock: &dyn Clock,
+) -> Result<ByteCount> {
+    let files = scan_directory_page(staging_dir(blob_dir), limit).await?;
+    let stale_staging = files
+        .iter()
+        .filter(|file| {
+            file.name.starts_with(".aven-stage-")
+                && file.modified.elapsed().is_ok_and(|age| age >= LEASE_TTL)
+        })
+        .map(|file| file.path.clone())
+        .collect::<Vec<_>>();
+    remove_files(stale_staging).await?;
+
+    let cutoff = clock.now() - chrono::Duration::from_std(grace)?;
+    let canonical = files
+        .iter()
+        .filter(|file| {
+            validate_sha256(&file.name).is_ok() && DateTime::<Utc>::from(file.modified) <= cutoff
+        })
+        .collect::<Vec<_>>();
+    if canonical.is_empty() {
+        return Ok(ByteCount::default());
+    }
+    let hashes = canonical
+        .iter()
+        .map(|file| file.name.clone())
+        .collect::<Vec<_>>();
+    let candidates = serde_json::to_string(&hashes)?;
+    let now = timestamp(clock.now());
+    let live_blob_references = live_blob_references_sql("candidate.value");
+    let protected = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(format!(
+        "SELECT candidate.value FROM json_each(?) candidate
+         WHERE EXISTS(SELECT 1 FROM blob_inventory bi WHERE bi.sha256 = candidate.value)
+            OR {live_blob_references}
+            OR EXISTS(
+              SELECT 1 FROM changes
+              WHERE server_seq IS NULL AND op_type = 'attachment_add'
+                AND json_extract(payload, '$.sha256') = candidate.value
+            )
+            OR EXISTS(
+              SELECT 1 FROM blob_leases
+              WHERE sha256 = candidate.value AND expires_at > ?
+            )
+            OR EXISTS(
+              SELECT 1 FROM blob_upload_reservations
+              WHERE sha256 = candidate.value AND expires_at > ?
+            )"
+    )))
+    .bind(candidates)
+    .bind(&now)
+    .bind(&now)
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .collect::<HashSet<_>>();
+    let removable = canonical
+        .into_iter()
+        .filter(|file| !protected.contains(&file.name))
+        .map(|file| (file.path.clone(), file.name.clone(), file.len))
+        .collect::<Vec<_>>();
+    if removable.is_empty() {
+        return Ok(ByteCount::default());
+    }
+    let blob_dir = blob_dir.to_path_buf();
+    crate::attachments::blocking::run(move || {
+        let trash = trash_dir(&blob_dir);
+        fs::create_dir_all(&trash)?;
+        let mut removed = ByteCount::default();
+        for (source, name, len) in removable {
+            let target = trash.join(name);
+            if move_file_without_replacing(&source, &target)? == FileMove::Moved {
+                fs::remove_file(target)?;
+                removed.count += 1;
+                removed.bytes += len;
+            }
+        }
+        Ok(removed)
+    })
+    .await
+}
+
 pub async fn reconcile_orphan_objects(
     conn: &mut SqliteConnection,
     blob_dir: &Path,
     grace: Duration,
     clock: &dyn Clock,
 ) -> Result<ByteCount> {
-    let mut removed = ByteCount::default();
-    let dir = staging_dir(blob_dir);
-    if !dir.exists() {
-        return Ok(removed);
-    }
-    let cutoff = clock.now() - chrono::Duration::from_std(grace)?;
-    let now = timestamp(clock.now());
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-        let Some(sha256) = entry.file_name().to_str().map(str::to_owned) else {
-            continue;
-        };
-        if validate_sha256(&sha256).is_err() {
-            continue;
-        }
-        let tracked: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM blob_inventory WHERE sha256 = ?)")
-                .bind(&sha256)
-                .fetch_one(&mut *conn)
-                .await?;
-        let metadata = entry.metadata()?;
-        if tracked
-            || DateTime::<Utc>::from(metadata.modified()?) > cutoff
-            || is_protected(conn, &sha256, &now).await?
-        {
-            continue;
-        }
-        let trash = trash_dir(blob_dir);
-        fs::create_dir_all(&trash)?;
-        let trashed = trash.join(&sha256);
-        fs::rename(entry.path(), &trashed)?;
-        fs::remove_file(trashed)?;
-        removed.count += 1;
-        removed.bytes += metadata.len();
-    }
-    Ok(removed)
+    reconcile_object_directory(conn, blob_dir, grace, usize::MAX, clock).await
 }
 
 pub async fn prune(
@@ -571,14 +798,18 @@ pub async fn prune(
     clock: &dyn Clock,
 ) -> Result<PruneSummary> {
     if apply {
-        reconcile_trash(conn, blob_dir).await?;
-        reconcile_staging(blob_dir).await?;
+        reconcile_trash_page(conn, blob_dir, policy.maintenance_limit).await?;
+        reconcile_object_directory(
+            conn,
+            blob_dir,
+            policy.grace,
+            policy.maintenance_limit,
+            clock,
+        )
+        .await?;
         reconcile_missing_objects(conn, blob_dir, clock).await?;
     }
-    reconcile_liveness(conn, clock).await?;
-    if apply {
-        reconcile_orphan_objects(conn, blob_dir, policy.grace, clock).await?;
-    }
+    reconcile_liveness_bounded(conn, policy.maintenance_limit, clock).await?;
     let now = timestamp(clock.now());
     let cutoff = cutoff(clock.now(), policy.grace)?;
     let rows = sqlx::query(
@@ -624,10 +855,17 @@ pub async fn prune(
         }
         let source = object_path(blob_dir, &sha256)?;
         let trash = trash_dir(blob_dir);
-        fs::create_dir_all(&trash)?;
         let trashed = trash.join(&sha256);
-        if source.exists() {
-            fs::rename(&source, &trashed).with_context(|| "could not move attachment to trash")?;
+        let source_for_move = source.clone();
+        let trashed_for_move = trashed.clone();
+        let moved = crate::attachments::blocking::run(move || {
+            fs::create_dir_all(&trash)?;
+            move_file_without_replacing(&source_for_move, &trashed_for_move)
+        })
+        .await?;
+        if moved == FileMove::TargetExists {
+            tx.rollback().await?;
+            continue;
         }
         if let Err(error) = sqlx::query(
             "UPDATE blob_inventory SET available = 0, last_verified_at = ? WHERE sha256 = ?",
@@ -637,19 +875,31 @@ pub async fn prune(
         .execute(&mut *tx)
         .await
         {
-            if trashed.exists() {
-                let _ = fs::rename(&trashed, &source);
+            let _ = tx.rollback().await;
+            if moved == FileMove::Moved {
+                restore_trashed_files(vec![(source, trashed)]).await;
             }
             return Err(error.into());
         }
-        tx.commit().await?;
-        if trashed.exists() {
-            fs::remove_file(&trashed)?;
+        if let Err(error) = tx.commit().await {
+            if moved == FileMove::Moved {
+                restore_trashed_files(vec![(source, trashed)]).await;
+            }
+            return Err(error.into());
+        }
+        if moved == FileMove::Moved {
+            remove_files(vec![trashed]).await?;
         }
         summary.pruned.count += 1;
         summary.pruned.bytes += u64::try_from(byte_size)?;
     }
-    prune_preview_cache(blob_dir, policy.preview_quota_bytes)?;
+    if apply {
+        let blob_dir = blob_dir.to_path_buf();
+        crate::attachments::blocking::run(move || {
+            prune_preview_cache(&blob_dir, policy.preview_quota_bytes)
+        })
+        .await?;
+    }
     Ok(summary)
 }
 
@@ -1234,6 +1484,39 @@ mod tests {
             .await
             .unwrap();
         assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn orphan_traversal_obeys_limit_and_resumes_between_steps() {
+        let temp = tempfile::tempdir().unwrap();
+        let pool = open_db(&temp.path().join("test.sqlite")).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let blob_dir = temp.path().join("blobs");
+        for digit in ['6', '7', '8', '9', 'a'] {
+            let hash = digit.to_string().repeat(64);
+            let path = object_path(&blob_dir, &hash).unwrap();
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, b"orphan").unwrap();
+        }
+        let clock = TestClock::at("2030-07-01T00:00:00Z");
+        let policy = LifecyclePolicy {
+            grace: Duration::ZERO,
+            maintenance_limit: 2,
+            ..LifecyclePolicy::default()
+        };
+
+        prune(&mut conn, &blob_dir, policy, true, &clock)
+            .await
+            .unwrap();
+        let after_one = fs::read_dir(staging_dir(&blob_dir)).unwrap().count();
+        assert!(after_one >= 3);
+
+        for _ in 0..4 {
+            prune(&mut conn, &blob_dir, policy, true, &clock)
+                .await
+                .unwrap();
+        }
+        assert_eq!(fs::read_dir(staging_dir(&blob_dir)).unwrap().count(), 0);
     }
 
     #[tokio::test]
