@@ -220,7 +220,7 @@ fn daemon_wake_syncs_representative_mutations() {
 }
 
 #[test]
-fn daemon_successful_sync_prunes_grace_expired_attachment() {
+fn daemon_attachment_maintenance_prunes_grace_expired_attachment() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let db = env.db("daemon-prune.sqlite");
@@ -264,9 +264,13 @@ daemon:
         server.url,
         wake_addr
     ));
+    exec_sql(
+        &db,
+        "UPDATE changes SET server_seq = local_seq WHERE op_type = 'attachment_add';",
+    );
 
     let daemon = TestProcess::start_daemon(&env);
-    daemon.wait_for_log("daemon-synced", Duration::from_secs(5));
+    daemon.wait_for_log("daemon-maintained", Duration::from_secs(5));
 
     assert!(!blob_path.exists());
 }

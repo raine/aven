@@ -104,6 +104,7 @@ async fn run_loop(
     let mut wake_buf = [0_u8; 16];
     let mut backoff_seconds = 1_u64;
     let mut next_sync = Instant::now();
+    let mut next_attachment_maintenance = Instant::now();
     let mut next_binary_check = Instant::now() + BINARY_CHECK_INTERVAL;
     loop {
         tokio::select! {
@@ -128,6 +129,11 @@ async fn run_loop(
                     break;
                 }
                 next_binary_check = Instant::now() + BINARY_CHECK_INTERVAL;
+            }
+            _ = sleep_until(next_attachment_maintenance) => {
+                maintain_attachments(&database, &blob_dir, lifecycle_policy).await;
+                next_attachment_maintenance =
+                    Instant::now() + crate::sync::ATTACHMENT_MAINTENANCE_INTERVAL;
             }
             _ = sleep_until(next_sync) => {
                 match sync_once(
@@ -220,12 +226,6 @@ async fn sync_once(
         DaemonSyncOutcome::Completed(summary) => summary,
         deferred @ DaemonSyncOutcome::Deferred => return Ok(deferred),
     };
-    if let Err(err) = database
-        .prune_attachments(blob_dir, lifecycle_policy, true)
-        .await
-    {
-        warn!(error = %err, "attachment maintenance failed");
-    }
     info!(
         pushed = summary.pushed,
         pulled = summary.pulled,
@@ -256,6 +256,35 @@ async fn sync_once(
         summary.pages,
     );
     Ok(DaemonSyncOutcome::Completed(summary))
+}
+
+async fn maintain_attachments(
+    database: &Database,
+    blob_dir: &Path,
+    lifecycle_policy: aven_core::attachments::LifecyclePolicy,
+) {
+    match database
+        .prune_attachments(blob_dir, lifecycle_policy, true)
+        .await
+    {
+        Ok(summary) => {
+            info!(
+                eligible = summary.eligible.count,
+                eligible_bytes = summary.eligible.bytes,
+                pruned = summary.pruned.count,
+                pruned_bytes = summary.pruned.bytes,
+                "attachment maintenance completed"
+            );
+            println!(
+                "daemon-maintained eligible={} eligible_bytes={} pruned={} pruned_bytes={}",
+                summary.eligible.count,
+                summary.eligible.bytes,
+                summary.pruned.count,
+                summary.pruned.bytes,
+            );
+        }
+        Err(err) => warn!(error = %err, "attachment maintenance failed"),
+    }
 }
 
 pub(crate) fn wake_if_enabled(config: &AppConfig) {

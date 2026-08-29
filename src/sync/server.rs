@@ -1,7 +1,6 @@
 use std::fmt;
 use std::net::IpAddr;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use anyhow::{Result, bail};
 use aven_core::db::Database;
@@ -26,8 +25,6 @@ use super::wire::{
 use crate::cli::ServerArgs;
 use crate::config;
 use crate::signals::shutdown_signal;
-
-const SERVER_BLOB_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
 struct ServerState {
@@ -173,7 +170,7 @@ fn spawn_blob_maintenance(state: ServerState) -> tokio::task::JoinHandle<()> {
                 ),
                 Err(err) => warn!(error = %err, "attachment maintenance failed"),
             }
-            tokio::time::sleep(SERVER_BLOB_MAINTENANCE_INTERVAL).await;
+            tokio::time::sleep(crate::sync::ATTACHMENT_MAINTENANCE_INTERVAL).await;
         }
     })
 }

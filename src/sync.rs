@@ -1,6 +1,11 @@
+use std::time::Duration;
+
 mod client;
 mod coordination;
 mod server;
+
+pub(crate) const ATTACHMENT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
 pub(crate) use aven_core::sync::wire;
 
 pub(crate) use client::{

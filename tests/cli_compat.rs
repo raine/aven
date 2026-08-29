@@ -198,7 +198,10 @@ async fn taskless_outcomes_return_to_derived_gaps_on_upgrade() {
     assert_eq!(conflict_count, 0);
     assert!(table_sql.contains("projection_state IN ('projected', 'resolved', 'archived')"));
     assert_eq!(
-        task_index_sql.split_whitespace().collect::<Vec<_>>().join(" "),
+        task_index_sql
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" "),
         "CREATE UNIQUE INDEX idx_recurrence_occurrences_task ON recurrence_occurrences(workspace_id, task_id)"
     );
 }
