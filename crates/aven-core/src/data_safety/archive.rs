@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::future::Future;
 use std::io::Read;
@@ -165,10 +165,11 @@ pub(super) async fn restore_backup_archive(
             .with_context(|| format!("could not read {}", manifest_path.display()))?,
     )
     .context("could not parse backup manifest")?;
-    validate_manifest(&manifest)?;
+    let manifest_by_hash = validate_manifest(&manifest)?;
     validate_archive_entries(&entries, &manifest)?;
     let database_path = staging.path().join(&manifest.database);
     validate_sqlite_file(&database_path).await?;
+    let mut facts_by_hash = HashMap::with_capacity(manifest.objects.len());
     for object in &manifest.objects {
         let path = staging
             .path()
@@ -176,9 +177,12 @@ pub(super) async fn restore_backup_archive(
             .join("sha256")
             .join(&object.sha256);
         let bytes = fs::read(&path).context("error backup-blob-read")?;
-        validate_object_bytes(&object.sha256, object.byte_size, &object.media_type, &bytes).await?;
+        let facts =
+            validate_object_bytes(&object.sha256, object.byte_size, &object.media_type, &bytes)
+                .await?;
+        facts_by_hash.insert(object.sha256.as_str(), facts);
     }
-    validate_archive_attachment_metadata(&database_path, staging.path(), &manifest).await?;
+    validate_archive_attachment_metadata(&database_path, &manifest_by_hash, &facts_by_hash).await?;
 
     let safety = db::create_restore_safety_backup(db_path).await?;
     let sidecar_safety = db::default_sqlite_backup_path(db_path, "before-restore-blobs")?;
@@ -254,7 +258,7 @@ fn validate_archive_entries(entries: &HashSet<PathBuf>, manifest: &BackupManifes
     Ok(())
 }
 
-fn validate_manifest(manifest: &BackupManifest) -> Result<()> {
+fn validate_manifest(manifest: &BackupManifest) -> Result<HashMap<&str, &BackupObjectManifest>> {
     if manifest.format != BACKUP_FORMAT || manifest.version != BACKUP_VERSION {
         bail!("error backup-format-unsupported");
     }
@@ -264,21 +268,24 @@ fn validate_manifest(manifest: &BackupManifest) -> Result<()> {
             manifest.database
         );
     }
-    let mut seen = HashSet::new();
+    let mut objects_by_hash = HashMap::with_capacity(manifest.objects.len());
     for object in &manifest.objects {
         crate::attachments::validation::validate_sha256(&object.sha256)?;
         crate::attachments::validation::validate_media_type(&object.media_type)?;
         crate::attachments::validation::validate_blob_size(
             usize::try_from(object.byte_size).unwrap_or(0),
         )?;
-        if !seen.insert(object.sha256.clone()) {
+        if objects_by_hash
+            .insert(object.sha256.as_str(), object)
+            .is_some()
+        {
             bail!(
                 "error backup-manifest-duplicate-object sha256={}",
                 object.sha256
             );
         }
     }
-    Ok(())
+    Ok(objects_by_hash)
 }
 
 async fn validate_object_bytes(
@@ -318,8 +325,8 @@ fn validate_object_bytes_blocking(
 
 async fn validate_archive_attachment_metadata(
     database_path: &Path,
-    staging: &Path,
-    manifest: &BackupManifest,
+    manifest_by_hash: &HashMap<&str, &BackupObjectManifest>,
+    facts_by_hash: &HashMap<&str, crate::attachments::decode::ImageFacts>,
 ) -> Result<()> {
     let mut conn = SqliteConnection::connect_with(
         &SqliteConnectOptions::new()
@@ -336,16 +343,13 @@ async fn validate_archive_attachment_metadata(
     let available = inventory
         .iter()
         .filter(|row| row.available == 1)
-        .map(|row| row.sha256.clone())
+        .map(|row| row.sha256.as_str())
         .collect::<HashSet<_>>();
-    let manifested = manifest
-        .objects
-        .iter()
-        .map(|object| object.sha256.clone())
-        .collect::<HashSet<_>>();
+    let manifested = manifest_by_hash.keys().copied().collect::<HashSet<_>>();
     if available != manifested {
         bail!("error backup-inventory-object-set-mismatch");
     }
+    let mut inventory_by_hash = HashMap::with_capacity(inventory.len());
     for row in &inventory {
         crate::attachments::validation::validate_sha256(&row.sha256)?;
         crate::attachments::validation::validate_blob_size(
@@ -356,14 +360,18 @@ async fn validate_archive_attachment_metadata(
             bail!("error backup-inventory-availability-invalid");
         }
         if row.available == 1 {
-            let object = manifest
-                .objects
-                .iter()
-                .find(|object| object.sha256 == row.sha256)
+            let object = manifest_by_hash
+                .get(row.sha256.as_str())
                 .context("error backup-inventory-object-missing")?;
             if object.byte_size != row.byte_size || object.media_type != row.media_type {
                 bail!("error backup-inventory-metadata-mismatch");
             }
+        }
+        if inventory_by_hash.insert(row.sha256.as_str(), row).is_some() {
+            bail!(
+                "error backup-inventory-duplicate-object sha256={}",
+                row.sha256
+            );
         }
     }
 
@@ -386,9 +394,8 @@ async fn validate_archive_attachment_metadata(
         if attachment.deleted != 0 && attachment.deleted != 1 {
             bail!("error backup-attachment-deletion-state-invalid");
         }
-        let inventory_row = inventory
-            .iter()
-            .find(|row| row.sha256 == attachment.sha256)
+        let inventory_row = inventory_by_hash
+            .get(attachment.sha256.as_str())
             .context("error backup-attachment-inventory-missing")?;
         if inventory_row.byte_size != attachment.byte_size
             || inventory_row.media_type != attachment.media_type
@@ -396,18 +403,9 @@ async fn validate_archive_attachment_metadata(
             bail!("error backup-attachment-metadata-mismatch");
         }
         if inventory_row.available == 1 {
-            let path = staging
-                .join("objects")
-                .join("sha256")
-                .join(&attachment.sha256);
-            let bytes = fs::read(path).context("error backup-attachment-object-read")?;
-            let facts = validate_object_bytes(
-                &attachment.sha256,
-                attachment.byte_size,
-                &attachment.media_type,
-                &bytes,
-            )
-            .await?;
+            let facts = facts_by_hash
+                .get(attachment.sha256.as_str())
+                .context("error backup-attachment-object-unvalidated")?;
             if (attachment.width, attachment.height) != (Some(facts.width), Some(facts.height)) {
                 bail!("error backup-attachment-dimensions-mismatch");
             }
@@ -582,10 +580,12 @@ mod tests {
             entries,
             HashSet::from([PathBuf::from(MANIFEST_ENTRY), PathBuf::from(DATABASE_ENTRY)])
         );
+        let manifest_by_hash = validate_manifest(&manifest).unwrap();
+        let facts_by_hash = HashMap::new();
         validate_archive_attachment_metadata(
             &extracted.path().join(DATABASE_ENTRY),
-            extracted.path(),
-            &manifest,
+            &manifest_by_hash,
+            &facts_by_hash,
         )
         .await
         .unwrap();
