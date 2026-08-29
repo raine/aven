@@ -40,6 +40,10 @@ const READ_PATH_INDEXES: &[(&str, &str)] = &[
         "CREATE INDEX idx_task_labels_workspace_label_task ON task_labels(workspace_id, label, task_id)",
     ),
     (
+        "idx_notes_workspace_task_created_id",
+        "CREATE INDEX idx_notes_workspace_task_created_id ON notes(workspace_id, task_id, created_at DESC, id DESC)",
+    ),
+    (
         "idx_recurrence_occurrences_task",
         "CREATE UNIQUE INDEX idx_recurrence_occurrences_task ON recurrence_occurrences(workspace_id, task_id)",
     ),
@@ -195,6 +199,59 @@ fn recurrence_task_lookups_use_task_index() {
             &["0000000000000000", "0000000000001001"],
             "recurrence_occurrences",
             "idx_recurrence_occurrences_task",
+        )
+        .await;
+    });
+}
+
+#[test]
+fn task_note_lookups_use_notes_index() {
+    let env = TestEnv::new();
+    let db = env.db("note-plans.sqlite");
+    ok(env.aven(&db, ["project", "create", "app"]));
+
+    runtime().block_on(async {
+        let mut conn = open_db(&db).await;
+        seed_plan_rows(&mut conn).await;
+        seed_note_plan_rows(&mut conn).await;
+        sqlx::query("ANALYZE")
+            .execute(&mut conn)
+            .await
+            .expect("analyze");
+
+        assert_plan_uses_search_without_temp_sort(
+            &mut conn,
+            "EXPLAIN QUERY PLAN
+             SELECT body FROM notes n
+             WHERE n.workspace_id = ? AND n.task_id = ?
+             ORDER BY n.created_at DESC, n.id DESC",
+            &["0000000000000000", "0000000000001001"],
+            "n",
+            "idx_notes_workspace_task_created_id",
+        )
+        .await;
+
+        assert_plan_uses_search_without_temp_sort(
+            &mut conn,
+            "EXPLAIN QUERY PLAN
+             SELECT task_id, id, body, created_at FROM notes
+             WHERE workspace_id = ? AND task_id IN (?, ?)
+             ORDER BY task_id, created_at DESC, id DESC",
+            &["0000000000000000", "0000000000001001", "0000000000001002"],
+            "notes",
+            "idx_notes_workspace_task_created_id",
+        )
+        .await;
+
+        assert_plan_uses_search_without_temp_sort(
+            &mut conn,
+            "EXPLAIN QUERY PLAN
+             SELECT id, body, created_at FROM notes
+             WHERE workspace_id = ? AND task_id = ?
+             ORDER BY created_at, id",
+            &["0000000000000000", "0000000000001001"],
+            "notes",
+            "idx_notes_workspace_task_created_id",
         )
         .await;
     });
@@ -374,6 +431,43 @@ async fn seed_recurrence_plan_rows(conn: &mut SqliteConnection) {
     .expect("insert activity change");
 }
 
+async fn seed_note_plan_rows(conn: &mut SqliteConnection) {
+    for index in 0..256 {
+        let task_id = match index % 4 {
+            0 | 1 => "0000000000001001",
+            2 => "0000000000001002",
+            _ => "0000000000001003",
+        };
+        let created_at = if index % 8 == 0 {
+            "2026-08-29T00:00:00Z".to_owned()
+        } else {
+            format!("2026-08-29T00:{:02}:00Z", index % 60)
+        };
+        sqlx::query(
+            "INSERT INTO notes(workspace_id, id, task_id, body, created_at, change_id)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("0000000000000000")
+        .bind(format!("note-{index}"))
+        .bind(task_id)
+        .bind(format!("note body {index}"))
+        .bind(created_at)
+        .bind(format!("note-change-{index}"))
+        .execute(&mut *conn)
+        .await
+        .expect("insert note");
+    }
+
+    sqlx::query(
+        "INSERT INTO notes(workspace_id, id, task_id, body, created_at, change_id)
+         VALUES ('0000000000000001', 'other-workspace-note', '0000000000001001',
+                 'other workspace note', '2026-08-29T00:00:00Z', 'other-workspace-change')",
+    )
+    .execute(&mut *conn)
+    .await
+    .expect("insert other workspace note");
+}
+
 async fn seed_plan_rows(conn: &mut SqliteConnection) {
     sqlx::query(
         "INSERT INTO projects(id, workspace_id, key, name, prefix, created_at, updated_at)
@@ -428,6 +522,40 @@ async fn assert_plan_uses(
     assert!(
         plan.contains(index_name),
         "expected plan to use {index_name}\n{plan}"
+    );
+}
+
+async fn assert_plan_uses_search_without_temp_sort(
+    conn: &mut SqliteConnection,
+    sql: &str,
+    binds: &[&str],
+    alias: &str,
+    index_name: &str,
+) {
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+    for bind in binds {
+        query = query.bind(*bind);
+    }
+    let rows = query
+        .fetch_all(&mut *conn)
+        .await
+        .expect("explain query plan");
+    let details = rows
+        .iter()
+        .map(|row| row.get::<String, _>("detail"))
+        .collect::<Vec<_>>();
+    let alias_marker = format!(" {alias} ");
+    assert!(
+        details.iter().any(|detail| {
+            detail.contains(&alias_marker) && plan_uses_search_index(detail, index_name)
+        }),
+        "expected {alias} to SEARCH {index_name}\n{}",
+        details.join("\n")
+    );
+    assert!(
+        details.iter().all(|detail| !detail.contains("TEMP B-TREE")),
+        "expected {alias} plan to avoid temporary ordering\n{}",
+        details.join("\n")
     );
 }
 
