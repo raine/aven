@@ -57,11 +57,11 @@ const READ_PATH_INDEXES: &[(&str, &str)] = &[
     ),
     (
         "idx_changes_recurrence_task_status_change",
-        "CREATE INDEX idx_changes_recurrence_task_status_change ON changes(json_extract(payload, '$.task_status_change_id')) WHERE entity_type = 'recurrence_series' AND op_type = 'resolve_recurrence_occurrence'",
+        "CREATE INDEX idx_changes_recurrence_task_status_change ON changes(recurrence_task_status_change_id) WHERE recurrence_task_status_change_id IS NOT NULL",
     ),
     (
         "idx_changes_recurrence_successor_task",
-        "CREATE INDEX idx_changes_recurrence_successor_task ON changes(json_extract(payload, '$.successor_task_id')) WHERE entity_type = 'recurrence_series' AND op_type = 'resolve_recurrence_occurrence'",
+        "CREATE INDEX idx_changes_recurrence_successor_task ON changes(recurrence_successor_task_id) WHERE recurrence_successor_task_id IS NOT NULL",
     ),
     (
         "idx_task_attachments_sha256_deleted_workspace_task",
@@ -509,35 +509,58 @@ fn common_read_filters_have_workspace_scoped_query_plans() {
         assert_plan_contains(
             &mut conn,
             "EXPLAIN QUERY PLAN
-             WITH resolved_recurrence_changes(status_change_id, successor_task_id) AS MATERIALIZED (
-                 SELECT json_extract(payload, '$.task_status_change_id'),
-                        json_extract(payload, '$.successor_task_id')
-                 FROM changes
-                 WHERE entity_type = 'recurrence_series'
-                   AND op_type = 'resolve_recurrence_occurrence'
-             )
              SELECT candidate.rowid FROM changes candidate
              WHERE candidate.entity_type = 'task'
                AND candidate.entity_id = ?
                AND json_extract(candidate.payload, '$.workspace_id') = ?
-               AND candidate.change_id NOT IN (
-                   SELECT status_change_id FROM resolved_recurrence_changes
-                   WHERE status_change_id IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM changes resolving
+                   WHERE resolving.recurrence_task_status_change_id = candidate.change_id
                )
-               AND (candidate.op_type != 'create_task' OR candidate.entity_id NOT IN (
-                   SELECT successor_task_id FROM resolved_recurrence_changes
-                   WHERE successor_task_id IS NOT NULL
+               AND (candidate.op_type != 'create_task' OR NOT EXISTS (
+                   SELECT 1 FROM changes resolving
+                   WHERE resolving.recurrence_successor_task_id = candidate.entity_id
                ))
                AND (candidate.op_type != 'project_recurrence_occurrence'
-                    OR json_extract(candidate.payload, '$.task_id') IS NULL
-                    OR json_extract(candidate.payload, '$.task_id') NOT IN (
-                        SELECT successor_task_id FROM resolved_recurrence_changes
-                        WHERE successor_task_id IS NOT NULL
+                    OR NOT EXISTS (
+                        SELECT 1 FROM changes resolving
+                        WHERE resolving.recurrence_successor_task_id =
+                              json_extract(candidate.payload, '$.task_id')
                     ))
              ORDER BY candidate.created_at DESC, candidate.local_seq DESC
              LIMIT 8",
             &["0000000000001001", "0000000000000000"],
             "SEARCH candidate USING INDEX idx_changes_task_activity",
+        )
+        .await;
+
+        assert_plan_contains(
+            &mut conn,
+            "EXPLAIN QUERY PLAN
+             SELECT candidate.rowid FROM changes candidate
+             WHERE candidate.entity_type = 'task'
+               AND candidate.entity_id = ?
+               AND NOT EXISTS (
+                   SELECT 1 FROM changes resolving
+                   WHERE resolving.recurrence_task_status_change_id = candidate.change_id
+               )",
+            &["0000000000001001"],
+            "SEARCH resolving USING INDEX idx_changes_recurrence_task_status_change",
+        )
+        .await;
+
+        assert_plan_contains(
+            &mut conn,
+            "EXPLAIN QUERY PLAN
+             SELECT candidate.rowid FROM changes candidate
+             WHERE candidate.entity_type = 'task'
+               AND candidate.entity_id = ?
+               AND NOT EXISTS (
+                   SELECT 1 FROM changes resolving
+                   WHERE resolving.recurrence_successor_task_id = candidate.entity_id
+               )",
+            &["0000000000001001"],
+            "SEARCH resolving USING INDEX idx_changes_recurrence_successor_task",
         )
         .await;
 
@@ -765,6 +788,24 @@ async fn seed_activity_plan_rows(conn: &mut SqliteConnection) {
         .execute(&mut *conn)
         .await
         .expect("insert activity change");
+    }
+    for sequence in 0..1_000 {
+        sqlx::query(
+            "INSERT INTO changes(
+                 change_id, client_id, local_seq, entity_type, entity_id,
+                 op_type, payload, created_at
+             ) VALUES (?, 'client', ?, 'recurrence_series', 'series',
+                       'resolve_recurrence_occurrence', ?, ?)",
+        )
+        .bind(format!("resolution-change-{sequence}"))
+        .bind(2_000 + sequence)
+        .bind(format!(
+            "{{\"task_status_change_id\":\"activity-change-{sequence}\",\"successor_task_id\":\"0000000000001001\"}}"
+        ))
+        .bind(format!("r{sequence:04}"))
+        .execute(&mut *conn)
+        .await
+        .expect("insert recurrence resolution");
     }
 }
 
