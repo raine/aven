@@ -29,7 +29,7 @@ fn confirm_overlay_wraps_long_prompt() {
 
 #[test]
 fn available_update_combines_release_notes_and_actions() {
-    let rendered = render_overlay_view(OverlayView::Update(
+    let rendered = render_overlay_view(OverlayView::Update(borrow_value(
         crate::tui::overlay::UpdateOverlayState::Available {
             plan: crate::update::InstallPlan {
                 release: crate::update::Release {
@@ -50,7 +50,7 @@ fn available_update_combines_release_notes_and_actions() {
             focus: crate::tui::overlay::UpdateActionFocus::Primary,
             cached: false,
         },
-    ));
+    )));
 
     assert!(rendered.contains("Software Update"));
     assert!(rendered.contains("Aven v1.2.3 is available"));
@@ -64,11 +64,11 @@ fn available_update_combines_release_notes_and_actions() {
 
 #[test]
 fn update_overlay_explains_restart_and_cancellation() {
-    let success = render_overlay_view(OverlayView::Update(
+    let success = render_overlay_view(OverlayView::Update(borrow_value(
         crate::tui::overlay::UpdateOverlayState::Success {
             version: "1.2.3".to_string(),
         },
-    ));
+    )));
     assert!(success.contains("Installed aven v1.2.3"));
     assert!(success.contains("Restart aven"));
     assert!(success.contains("q quit"));

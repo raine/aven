@@ -68,7 +68,7 @@ impl SearchKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum OverlayView {
+pub(crate) enum OverlayView<'a> {
     Onboarding {
         splash_underlay: bool,
     },
@@ -88,7 +88,7 @@ pub(crate) enum OverlayView {
     Search {
         input: String,
         cursor: usize,
-        results: Vec<SearchResultItem>,
+        results: &'a [SearchResultItem],
         selected: usize,
         total_matches: usize,
         stale: bool,
@@ -98,76 +98,65 @@ pub(crate) enum OverlayView {
     Command {
         input: String,
         cursor: usize,
-        session: crate::tui::event::CommandSessionSnapshot,
-        catalog: std::sync::Arc<crate::tui::event::CommandCatalog>,
-        candidates: Vec<crate::tui::event::CommandCandidate>,
+        session: &'a crate::tui::event::CommandSessionSnapshot,
+        catalog: &'a crate::tui::event::CommandCatalog,
+        candidates: &'a [crate::tui::event::CommandCandidate],
         highlighted: Option<usize>,
     },
-    AddTask(Box<AddTaskView>),
+    AddTask(Box<AddTaskView<'a>>),
     TextInput(TextInputView),
-    MultilineInput(MultilineInputView),
-    Picker(PickerView),
-    TagCombobox(Box<TagComboboxView>),
-    HeaderMenu(HeaderMenuView),
+    MultilineInput(MultilineInputView<'a>),
+    Picker(PickerView<'a>),
+    TagCombobox(Box<TagComboboxView<'a>>),
+    HeaderMenu(HeaderMenuView<'a>),
     OrderMenu(OrderMenuView),
     Confirm(ConfirmView),
-    TextPanel(TextPanelView),
+    TextPanel(TextPanelView<'a>),
     Changelog {
-        markdown: String,
+        markdown: &'a str,
         scroll: u16,
     },
-    RecurrenceHistory(RecurrenceHistoryView),
-    SyncStatus(Box<SyncStatusView>),
+    RecurrenceHistory(RecurrenceHistoryView<'a>),
+    SyncStatus(Box<SyncStatusView<'a>>),
     DatabaseStats {
-        stats: Box<TuiDatabaseStats>,
+        stats: &'a TuiDatabaseStats,
         scroll: u16,
     },
-    Update(super::state::UpdateOverlayState),
+    Update(&'a super::state::UpdateOverlayState),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SyncStatusView {
+pub(crate) struct SyncStatusView<'a> {
     pub(crate) state: SyncStatusState,
-    pub(crate) status: Box<TuiSyncStatus>,
+    pub(crate) status: &'a TuiSyncStatus,
     pub(crate) syncing: bool,
     pub(crate) now: time::OffsetDateTime,
 }
 
-impl Default for SyncStatusView {
-    fn default() -> Self {
-        Self {
-            state: SyncStatusState::default(),
-            status: Box::default(),
-            syncing: false,
-            now: time::OffsetDateTime::UNIX_EPOCH,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TextPanelView {
+pub(crate) struct TextPanelView<'a> {
     pub(crate) title: String,
-    pub(crate) lines: Vec<String>,
+    pub(crate) lines: &'a [String],
     pub(crate) scroll: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AddTaskAttachmentsView {
-    pub(crate) items: Box<[PendingTaskAttachmentSummary]>,
+pub(crate) struct AddTaskAttachmentsView<'a> {
+    pub(crate) items: &'a [PendingTaskAttachmentSummary],
     pub(crate) selected: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RecurrenceHistoryView {
-    pub(crate) page: aven_core::query::RecurrenceHistoryPage,
+pub(crate) struct RecurrenceHistoryView<'a> {
+    pub(crate) page: &'a aven_core::query::RecurrenceHistoryPage,
     pub(crate) selected: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AddTaskView {
+pub(crate) struct AddTaskView<'a> {
     pub(crate) title: String,
     pub(crate) title_cursor: usize,
-    pub(crate) description: Vec<String>,
+    pub(crate) description: &'a [String],
     pub(crate) description_row: usize,
     pub(crate) description_column: usize,
     pub(crate) focus: AddTaskStep,
@@ -175,7 +164,7 @@ pub(crate) struct AddTaskView {
     pub(crate) status: String,
     pub(crate) status_automatic: bool,
     pub(crate) priority: String,
-    pub(crate) labels: Vec<String>,
+    pub(crate) labels: &'a [String],
     pub(crate) is_epic: bool,
     pub(crate) create_more: bool,
     pub(crate) create_more_available: bool,
@@ -187,7 +176,7 @@ pub(crate) struct AddTaskView {
     pub(crate) schedule_input_cursor: usize,
     pub(crate) schedule_error: Option<String>,
     pub(crate) schedule_validation_requested: bool,
-    pub(crate) attachments: Box<AddTaskAttachmentsView>,
+    pub(crate) attachments: Box<AddTaskAttachmentsView<'a>>,
     pub(crate) recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
     pub(crate) editing_template: bool,
     pub(crate) repeat_rule: String,
@@ -199,9 +188,9 @@ pub(crate) struct AddTaskView {
     pub(crate) repeat_start_on: String,
     pub(crate) repeat_start_on_cursor: usize,
     pub(crate) schedule_expanded: bool,
-    pub(crate) recurrence_preview: Vec<String>,
+    pub(crate) recurrence_preview: &'a [String],
     pub(crate) recurrence_error: Option<String>,
-    pub(crate) mode: Box<AddTaskMode>,
+    pub(crate) mode: &'a AddTaskMode,
     pub(crate) title_error: bool,
     pub(crate) status_prefix_active: bool,
     pub(crate) priority_prefix_active: bool,
@@ -277,11 +266,11 @@ impl From<&MultilineIntent> for MultilineInputKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MultilineInputView {
+pub(crate) struct MultilineInputView<'a> {
     pub(crate) kind: MultilineInputKind,
     pub(crate) title: String,
     pub(crate) prompt: String,
-    pub(crate) lines: Vec<String>,
+    pub(crate) lines: &'a [String],
     pub(crate) row: usize,
     pub(crate) column: usize,
     pub(crate) mode: MultilineInputMode,
@@ -325,12 +314,12 @@ impl From<&PickerIntent> for PickerKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PickerView {
+pub(crate) struct PickerView<'a> {
     pub(crate) kind: PickerKind,
     pub(crate) title: String,
     pub(crate) filter: String,
     pub(crate) filter_cursor: usize,
-    pub(crate) items: Vec<PickerItem>,
+    pub(crate) items: &'a [PickerItem],
     pub(crate) selected: usize,
     pub(crate) scroll: usize,
     pub(crate) multi: bool,
@@ -356,37 +345,37 @@ impl From<&TagComboboxIntent> for TagComboboxKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TagComboboxView {
+pub(crate) struct TagComboboxView<'a> {
     pub(crate) kind: TagComboboxKind,
     pub(crate) title: String,
     pub(crate) input: String,
     pub(crate) input_cursor: usize,
     pub(crate) completion: Option<String>,
-    pub(crate) options: Vec<String>,
-    pub(crate) selected: Vec<String>,
-    pub(crate) partial: Vec<String>,
+    pub(crate) options: &'a [String],
+    pub(crate) selected: &'a [String],
+    pub(crate) partial: &'a [String],
     pub(crate) highlighted: usize,
     pub(crate) visible_indices: Vec<usize>,
     pub(crate) visible_start: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct HeaderMenuView {
+pub(crate) struct HeaderMenuView<'a> {
     pub(crate) kind: HeaderMenuKind,
     pub(crate) column: u16,
     pub(crate) row: u16,
     pub(crate) selected: usize,
-    pub(crate) items: Vec<HeaderMenuItem>,
+    pub(crate) items: &'a [HeaderMenuItem],
 }
 
-impl From<&HeaderMenuState> for HeaderMenuView {
-    fn from(state: &HeaderMenuState) -> Self {
+impl<'a> From<&'a HeaderMenuState> for HeaderMenuView<'a> {
+    fn from(state: &'a HeaderMenuState) -> Self {
         Self {
             kind: state.kind,
             column: state.column,
             row: state.row,
             selected: state.selected,
-            items: state.items.clone(),
+            items: &state.items,
         }
     }
 }
@@ -414,8 +403,92 @@ pub(crate) struct ConfirmView {
     pub(crate) prompt: String,
 }
 
-impl From<&OverlayState> for OverlayView {
-    fn from(state: &OverlayState) -> Self {
+impl TextInputView {
+    pub(crate) fn from_state(state: &super::state::TextInputState) -> Self {
+        Self {
+            kind: (&state.intent).into(),
+            title: state.title.clone(),
+            prompt: state.prompt.clone(),
+            input: state.input.as_str().to_string(),
+            cursor: state.input.cursor,
+        }
+    }
+}
+
+impl<'a> MultilineInputView<'a> {
+    pub(crate) fn from_state(state: &'a super::state::MultilineInputState) -> Self {
+        Self {
+            kind: (&state.intent).into(),
+            title: state.title.clone(),
+            prompt: state.prompt.clone(),
+            lines: &state.lines,
+            row: state.row,
+            column: state.column,
+            mode: state.mode,
+        }
+    }
+}
+
+impl<'a> PickerView<'a> {
+    pub(crate) fn from_state(state: &'a super::state::PickerState) -> Self {
+        Self {
+            kind: (&state.intent).into(),
+            title: state.title.clone(),
+            filter: state.filter.as_str().to_string(),
+            filter_cursor: state.filter.cursor,
+            items: &state.items,
+            selected: state.selected,
+            scroll: state.scroll,
+            multi: state.multi,
+            mode: state.mode,
+            visible_indices: visible_picker_indices(state),
+        }
+    }
+}
+
+impl<'a> TagComboboxView<'a> {
+    pub(crate) fn from_state(state: &'a super::state::TagComboboxState) -> Self {
+        let visible_indices = tag_combobox_matches(state);
+        Self {
+            kind: (&state.intent).into(),
+            title: state.title.clone(),
+            input: state.input.as_str().to_string(),
+            input_cursor: state.input.cursor,
+            completion: tag_combobox_completion(state),
+            options: &state.options,
+            selected: &state.selected,
+            partial: &state.partial,
+            highlighted: state.highlighted,
+            visible_start: visible_indices
+                .iter()
+                .position(|index| *index == state.highlighted)
+                .unwrap_or(0)
+                .saturating_sub(TAG_COMBOBOX_VIEWPORT_ROWS.saturating_sub(1)),
+            visible_indices,
+        }
+    }
+}
+
+impl<'a> RecurrenceHistoryView<'a> {
+    pub(crate) fn from_state(state: &'a super::state::RecurrenceHistoryState) -> Self {
+        Self {
+            page: &state.page,
+            selected: state.selected,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct OverlayViewContext<'a> {
+    pub(crate) sync_status: &'a TuiSyncStatus,
+    pub(crate) syncing: bool,
+    pub(crate) now: time::OffsetDateTime,
+    pub(crate) status_prefix_active: bool,
+    pub(crate) priority_prefix_active: bool,
+}
+
+impl<'a> OverlayView<'a> {
+    pub(crate) fn project(state: &'a OverlayState, context: OverlayViewContext<'a>) -> Self {
         match state {
             Onboarding { persist_on_exit } => Self::Onboarding {
                 splash_underlay: *persist_on_exit,
@@ -431,9 +504,9 @@ impl From<&OverlayState> for OverlayView {
             },
             DetailHelp { scroll } => Self::DetailHelp { scroll: *scroll },
             Search(state) => Self::Search {
-                input: state.input.text.clone(),
+                input: state.input.as_str().to_string(),
                 cursor: state.input.cursor,
-                results: state.results.clone(),
+                results: &state.results,
                 selected: state.selected,
                 total_matches: state.total_matches,
                 stale: !state.results_are_current(),
@@ -443,17 +516,17 @@ impl From<&OverlayState> for OverlayView {
                 intent: (&state.intent).into(),
             },
             Command { state } => Self::Command {
-                input: state.input.text.clone(),
+                input: state.input.as_str().to_string(),
                 cursor: state.input.cursor,
-                session: state.session.clone(),
-                catalog: state.catalog.clone(),
-                candidates: state.candidates.clone(),
+                session: &state.session,
+                catalog: &state.catalog,
+                candidates: &state.candidates,
                 highlighted: state.highlighted,
             },
             AddTask(state) => Self::AddTask(Box::new(AddTaskView {
-                title: state.title.text.clone(),
+                title: state.title.as_str().to_string(),
                 title_cursor: state.title.cursor,
-                description: state.description.lines.clone(),
+                description: &state.description.lines,
                 description_row: state.description.row,
                 description_column: state.description.column,
                 focus: state.focus,
@@ -461,88 +534,44 @@ impl From<&OverlayState> for OverlayView {
                 status: state.effective_status().to_string(),
                 status_automatic: state.status_is_automatic(),
                 priority: state.priority.value().to_string(),
-                labels: state.labels.clone(),
+                labels: &state.labels,
                 is_epic: state.is_epic,
                 create_more: state.create_more,
                 create_more_available: state.create_more_available && !state.recurrence_enabled(),
-                available_at: state.available_at.text.clone(),
+                available_at: state.available_at.as_str().to_string(),
                 available_at_cursor: state.available_at.cursor,
-                due_on: state.due_on.text.clone(),
+                due_on: state.due_on.as_str().to_string(),
                 due_on_cursor: state.due_on.cursor,
-                schedule_input: state.schedule_input.text.clone(),
+                schedule_input: state.schedule_input.as_str().to_string(),
                 schedule_input_cursor: state.schedule_input.cursor,
                 schedule_error: state.schedule_error.clone(),
                 schedule_validation_requested: state.schedule_validation_requested,
                 attachments: Box::new(AddTaskAttachmentsView {
-                    items: state.attachments.clone().into_boxed_slice(),
+                    items: &state.attachments,
                     selected: state.selected_attachment,
                 }),
                 recurrence_series_id: state.recurrence_series_id.clone(),
                 editing_template: state.template_schedule.is_some(),
-                repeat_rule: state.repeat_rule.text.clone(),
+                repeat_rule: state.repeat_rule.as_str().to_string(),
                 repeat_rule_cursor: state.repeat_rule.cursor,
-                repeat_at: state.repeat_at.text.clone(),
+                repeat_at: state.repeat_at.as_str().to_string(),
                 repeat_at_cursor: state.repeat_at.cursor,
                 repeat_due: state.repeat_due.clone(),
                 time_zone: state.time_zone.clone(),
-                repeat_start_on: state.repeat_start_on.text.clone(),
+                repeat_start_on: state.repeat_start_on.as_str().to_string(),
                 repeat_start_on_cursor: state.repeat_start_on.cursor,
                 schedule_expanded: state.schedule_expanded,
-                recurrence_preview: state.recurrence_preview.clone(),
+                recurrence_preview: &state.recurrence_preview,
                 recurrence_error: state.recurrence_error.clone(),
-                mode: Box::new(state.mode.clone()),
+                mode: &state.mode,
                 title_error: state.title_error,
-                status_prefix_active: false,
-                priority_prefix_active: false,
+                status_prefix_active: context.status_prefix_active,
+                priority_prefix_active: context.priority_prefix_active,
             })),
-            TextInput(state) => Self::TextInput(TextInputView {
-                kind: (&state.intent).into(),
-                title: state.title.clone(),
-                prompt: state.prompt.clone(),
-                input: state.input.text.clone(),
-                cursor: state.input.cursor,
-            }),
-            MultilineInput(state) => Self::MultilineInput(MultilineInputView {
-                kind: (&state.intent).into(),
-                title: state.title.clone(),
-                prompt: state.prompt.clone(),
-                lines: state.lines.clone(),
-                row: state.row,
-                column: state.column,
-                mode: state.mode,
-            }),
-            Picker(state) => Self::Picker(PickerView {
-                kind: (&state.intent).into(),
-                title: state.title.clone(),
-                filter: state.filter.text.clone(),
-                filter_cursor: state.filter.cursor,
-                items: state.items.clone(),
-                selected: state.selected,
-                scroll: state.scroll,
-                multi: state.multi,
-                mode: state.mode,
-                visible_indices: visible_picker_indices(state),
-            }),
-            TagCombobox(state) => {
-                let visible_indices = tag_combobox_matches(state);
-                Self::TagCombobox(Box::new(TagComboboxView {
-                    kind: (&state.intent).into(),
-                    title: state.title.clone(),
-                    input: state.input.text.clone(),
-                    input_cursor: state.input.cursor,
-                    completion: tag_combobox_completion(state),
-                    options: state.options.clone(),
-                    selected: state.selected.clone(),
-                    partial: state.partial.clone(),
-                    highlighted: state.highlighted,
-                    visible_start: visible_indices
-                        .iter()
-                        .position(|index| *index == state.highlighted)
-                        .unwrap_or(0)
-                        .saturating_sub(TAG_COMBOBOX_VIEWPORT_ROWS.saturating_sub(1)),
-                    visible_indices,
-                }))
-            }
+            TextInput(state) => Self::TextInput(TextInputView::from_state(state)),
+            MultilineInput(state) => Self::MultilineInput(MultilineInputView::from_state(state)),
+            Picker(state) => Self::Picker(PickerView::from_state(state)),
+            TagCombobox(state) => Self::TagCombobox(Box::new(TagComboboxView::from_state(state))),
             HeaderMenu(state) => Self::HeaderMenu(HeaderMenuView::from(state)),
             OrderMenu(state) => Self::OrderMenu(OrderMenuView::from(state)),
             Confirm(state) => Self::Confirm(ConfirmView {
@@ -551,28 +580,27 @@ impl From<&OverlayState> for OverlayView {
             }),
             TextPanel(state) => Self::TextPanel(TextPanelView {
                 title: state.title.clone(),
-                lines: state.lines.clone(),
+                lines: &state.lines,
                 scroll: state.scroll,
             }),
             Changelog(state) => Self::Changelog {
-                markdown: state.markdown.clone(),
+                markdown: &state.markdown,
                 scroll: state.scroll,
             },
-            RecurrenceHistory(state) => Self::RecurrenceHistory(RecurrenceHistoryView {
-                page: state.page.clone(),
-                selected: state.selected,
-            }),
+            RecurrenceHistory(state) => {
+                Self::RecurrenceHistory(RecurrenceHistoryView::from_state(state))
+            }
             SyncStatus(state) => Self::SyncStatus(Box::new(SyncStatusView {
                 state: state.clone(),
-                status: Box::default(),
-                syncing: false,
-                now: time::OffsetDateTime::UNIX_EPOCH,
+                status: context.sync_status,
+                syncing: context.syncing,
+                now: context.now,
             })),
             DatabaseStats { stats, scroll } => Self::DatabaseStats {
-                stats: stats.clone(),
+                stats,
                 scroll: *scroll,
             },
-            Update(state) => Self::Update(state.clone()),
+            Update(state) => Self::Update(state),
         }
     }
 }
@@ -588,7 +616,7 @@ mod tests {
             (PickerIntent::RenameProject, PickerKind::RenameProject),
             (PickerIntent::DeleteProject, PickerKind::DeleteProject),
         ] {
-            let picker = OverlayView::from(&OverlayState::Picker(PickerState {
+            let state = OverlayState::Picker(PickerState {
                 intent,
                 title: "Manage project".to_string(),
                 filter: LineEdit::blank(),
@@ -601,7 +629,18 @@ mod tests {
                 scroll: 0,
                 multi: false,
                 mode: PickerMode::Filter,
-            }));
+            });
+            let sync_status = TuiSyncStatus::default();
+            let picker = OverlayView::project(
+                &state,
+                OverlayViewContext {
+                    sync_status: &sync_status,
+                    syncing: false,
+                    now: time::OffsetDateTime::UNIX_EPOCH,
+                    status_prefix_active: false,
+                    priority_prefix_active: false,
+                },
+            );
             assert!(matches!(
                 picker,
                 OverlayView::Picker(PickerView { kind, .. }) if kind == expected_kind

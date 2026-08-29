@@ -454,48 +454,62 @@ pub(crate) struct HeaderMenuItem {
     pub(crate) action: HeaderMenuAction,
 }
 
+pub(crate) fn header_menu_area(
+    kind: HeaderMenuKind,
+    column: u16,
+    row: u16,
+    items: &[HeaderMenuItem],
+    terminal_width: u16,
+    terminal_height: u16,
+) -> ratatui::layout::Rect {
+    let width = header_menu_width(kind, items).min(terminal_width);
+    let height = (items.len() as u16).saturating_add(2).min(terminal_height);
+    let x = column.min(terminal_width.saturating_sub(width));
+    let y = row
+        .saturating_add(1)
+        .min(terminal_height.saturating_sub(height));
+    ratatui::layout::Rect {
+        x,
+        y,
+        width,
+        height,
+    }
+}
+
+fn header_menu_width(kind: HeaderMenuKind, items: &[HeaderMenuItem]) -> u16 {
+    let title_width = header_menu_title(kind).width() as u16;
+    let item_width = items
+        .iter()
+        .map(HeaderMenuItem::line_width)
+        .max()
+        .unwrap_or(0);
+    title_width.max(item_width).saturating_add(4).max(16)
+}
+
+fn header_menu_title(kind: HeaderMenuKind) -> &'static str {
+    match kind {
+        HeaderMenuKind::Workspace => "workspace",
+        HeaderMenuKind::Scope => "scope",
+        HeaderMenuKind::View => "view",
+    }
+}
+
 impl HeaderMenuState {
     pub(crate) fn area(&self, terminal_width: u16, terminal_height: u16) -> ratatui::layout::Rect {
-        let width = self.width().min(terminal_width);
-        let height = (self.items.len() as u16)
-            .saturating_add(2)
-            .min(terminal_height);
-        let x = self.column.min(terminal_width.saturating_sub(width));
-        let y = self
-            .row
-            .saturating_add(1)
-            .min(terminal_height.saturating_sub(height));
-        ratatui::layout::Rect {
-            x,
-            y,
-            width,
-            height,
-        }
+        header_menu_area(
+            self.kind,
+            self.column,
+            self.row,
+            &self.items,
+            terminal_width,
+            terminal_height,
+        )
     }
 
     pub(crate) fn selected_action(&self) -> Option<HeaderMenuAction> {
         self.items
             .get(self.selected)
             .map(|item| item.action.clone())
-    }
-
-    fn width(&self) -> u16 {
-        let title_width = self.title().width() as u16;
-        let item_width = self
-            .items
-            .iter()
-            .map(|item| item.line_width())
-            .max()
-            .unwrap_or(0);
-        title_width.max(item_width).saturating_add(4).max(16)
-    }
-
-    fn title(&self) -> &'static str {
-        match self.kind {
-            HeaderMenuKind::Workspace => "workspace",
-            HeaderMenuKind::Scope => "scope",
-            HeaderMenuKind::View => "view",
-        }
     }
 }
 

@@ -6,7 +6,7 @@ fn picker_navigation_mode_hides_filter_input() {
         title: "Project".to_string(),
         filter: "needle".to_string(),
         filter_cursor: 6,
-        items: vec![picker_item("APP app", "app")],
+        items: borrow_slice(vec![picker_item("APP app", "app")]),
         multi: true,
         visible_indices: vec![0],
         ..picker_view()
@@ -25,7 +25,7 @@ fn picker_filter_mode_hints_show_text_entry() {
         title: "Project".to_string(),
         filter: "app".to_string(),
         filter_cursor: 3,
-        items: vec![picker_item("APP app", "app")],
+        items: borrow_slice(vec![picker_item("APP app", "app")]),
         mode: PickerMode::Filter,
         visible_indices: vec![0],
         ..picker_view()
@@ -63,7 +63,7 @@ fn priority_picker_shows_priority_icons() {
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
             kind,
             title: title.to_string(),
-            items: vec![picker_item("urgent", "urgent")],
+            items: borrow_slice(vec![picker_item("urgent", "urgent")]),
             visible_indices: vec![0],
             ..picker_view()
         }));
@@ -85,7 +85,7 @@ fn picker_viewport_uses_scroll_position() {
         .collect::<Vec<_>>();
     let rendered = render_overlay_view(OverlayView::Picker(PickerView {
         title: "Project".to_string(),
-        items,
+        items: borrow_slice(items),
         selected: 10,
         scroll: 3,
         visible_indices: (0..12).collect(),
@@ -166,10 +166,10 @@ fn label_picker_uses_structured_usage_columns() {
     let rendered = render_overlay_view(OverlayView::Picker(PickerView {
         kind: PickerKind::LabelAdministration,
         title: "Labels".to_string(),
-        items: vec![
+        items: borrow_slice(vec![
             picker_item("backend  6 tasks  2 recurring series", "backend"),
             picker_item("bug  1 task  0 recurring series", "bug"),
-        ],
+        ]),
         visible_indices: vec![0, 1],
         mode: PickerMode::Filter,
         ..picker_view()
@@ -193,9 +193,9 @@ fn tag_combobox_shows_selected_labels_input_completion_and_matches() {
         input: "bu".to_string(),
         input_cursor: 2,
         completion: Some("g".to_string()),
-        options: vec!["bug".to_string(), "feature".to_string()],
-        selected: vec!["feature".to_string()],
-        partial: Vec::new(),
+        options: borrow_slice(vec!["bug".to_string(), "feature".to_string()]),
+        selected: borrow_slice(vec!["feature".to_string()]),
+        partial: &[],
         highlighted: 0,
         visible_indices: vec![0],
         visible_start: 0,
@@ -218,9 +218,9 @@ fn tag_combobox_shows_partial_label_membership() {
         input: String::new(),
         input_cursor: 0,
         completion: None,
-        options: vec!["urgent".to_string()],
-        selected: Vec::new(),
-        partial: vec!["urgent".to_string()],
+        options: borrow_slice(vec!["urgent".to_string()]),
+        selected: &[],
+        partial: borrow_slice(vec!["urgent".to_string()]),
         highlighted: 0,
         visible_indices: vec![0],
         visible_start: 0,

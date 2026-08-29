@@ -238,10 +238,7 @@ fn dispatch_recurrence_history_mouse(
     ) {
         return OverlayMouseOutcome::Retained(OverlayState::RecurrenceHistory(Box::new(state)));
     }
-    let view = super::RecurrenceHistoryView {
-        page: state.page.clone(),
-        selected: state.selected,
-    };
+    let view = super::RecurrenceHistoryView::from_state(&state);
     let Some(index) =
         crate::tui::ui::recurrence_history_entry_at(&view, terminal_size, mouse.column, mouse.row)
     else {

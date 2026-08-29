@@ -17,7 +17,7 @@ use crate::tui::theme::{BG_ALT, FG, FG_DIM, FG_MUTED, ORANGE, RED};
 const LABEL_WIDTH: usize = 16;
 const MAX_DIALOG_WIDTH: u16 = 64;
 
-pub(in crate::tui::ui) fn render_sync_status(frame: &mut Frame, view: &SyncStatusView) {
+pub(in crate::tui::ui) fn render_sync_status(frame: &mut Frame, view: &SyncStatusView<'_>) {
     let size = frame.area().as_size();
     let width = sync_status_dialog_width(size.width);
     let body_width = width.saturating_sub(5).max(1) as usize;
@@ -67,8 +67,8 @@ pub(in crate::tui::ui) fn render_sync_status(frame: &mut Frame, view: &SyncStatu
     }
 }
 
-fn sync_status_lines(view: &SyncStatusView, width: usize) -> Vec<Line<'static>> {
-    let status = &view.status;
+fn sync_status_lines(view: &SyncStatusView<'_>, width: usize) -> Vec<Line<'static>> {
+    let status = view.status;
     let summary = sync_status_summary(status);
     let color = summary.color();
     let headline = summary.headline();
@@ -290,9 +290,9 @@ fn wrapped_row(label: &str, value: &str, style: Style, width: usize) -> Vec<Line
         .collect()
 }
 
-fn hint_line(view: &SyncStatusView, scrolling: bool) -> Line<'static> {
+fn hint_line(view: &SyncStatusView<'_>, scrolling: bool) -> Line<'static> {
     let mut hints = Vec::new();
-    let summary = sync_status_summary(&view.status);
+    let summary = sync_status_summary(view.status);
     if scrolling {
         hints.push(("j/k", "scroll"));
     }
@@ -340,7 +340,7 @@ pub(crate) fn sync_status_scroll_cap(
     let body_width = width.saturating_sub(5).max(1) as usize;
     let view = SyncStatusView {
         state: crate::tui::overlay::SyncStatusState { details, scroll: 0 },
-        status: Box::new(status.clone()),
+        status,
         syncing: false,
         now: time::OffsetDateTime::UNIX_EPOCH,
     };
@@ -356,6 +356,8 @@ pub(crate) fn sync_status_scroll_cap(
 }
 
 #[cfg(test)]
-pub(in crate::tui::ui) fn sync_status_lines_for_test(view: &SyncStatusView) -> Vec<Line<'static>> {
+pub(in crate::tui::ui) fn sync_status_lines_for_test(
+    view: &SyncStatusView<'_>,
+) -> Vec<Line<'static>> {
     sync_status_lines(view, 60)
 }

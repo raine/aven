@@ -23,8 +23,7 @@ use crate::config::resolve_blob_dir;
 use crate::tui::app::App;
 use crate::tui::inline_image_surface::InlineImageSurface;
 use crate::tui::inline_images::InlineImageBackend;
-use crate::tui::overlay::OverlayView::{AddTask, SyncStatus};
-use crate::tui::overlay::{OverlayState, OverlayView};
+use crate::tui::overlay::{OverlayState, OverlayView, OverlayViewContext};
 use crate::tui::platform::SystemTerminalTransition;
 use crate::tui::preview_controller::PreviewKey;
 use crate::tui::store::{MainRowSelection, TaskQuery};
@@ -51,10 +50,7 @@ impl App {
     /// cursor, so Korean, Japanese, and Chinese preedit text would appear at an
     /// unrelated cell instead of at the caret.
     fn draw(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        let view = self.view();
-        terminal.draw(|frame| {
-            ui::render(frame, &self.store, &mut self.widgets, &mut self.list, &view)
-        })?;
+        terminal.draw(|frame| self.render_frame(frame))?;
         self.park_terminal_cursor(terminal);
         Ok(())
     }
@@ -375,19 +371,26 @@ impl App {
         InlineImageSurface::write_cleanup(&mut stdout, placements, backend)
     }
 
-    pub(crate) fn view(&self) -> ViewState {
-        let detail = self.detail.state();
-        let mut overlay = self.overlay.as_ref().map(OverlayView::from);
-        if let Some(AddTask(state)) = &mut overlay {
-            state.status_prefix_active = self.pending_shortcut.has_add_task_status_prefix();
-            state.priority_prefix_active = self.pending_shortcut.has_add_task_priority_prefix();
-        }
-        if let Some(SyncStatus(state)) = &mut overlay {
-            *state.status = self.store.sync_status.clone();
-            state.syncing = self.sync.work_pending();
-            state.now = time::OffsetDateTime::now_utc();
-        }
+    #[cfg(test)]
+    pub(crate) fn view(&self) -> ViewState<'_> {
+        let mut view = self.view_base();
+        view.overlay = self.overlay.as_ref().map(|state| {
+            OverlayView::project(
+                state,
+                OverlayViewContext {
+                    sync_status: &self.store.sync_status,
+                    syncing: self.sync.work_pending(),
+                    now: time::OffsetDateTime::now_utc(),
+                    status_prefix_active: self.pending_shortcut.has_add_task_status_prefix(),
+                    priority_prefix_active: self.pending_shortcut.has_add_task_priority_prefix(),
+                },
+            )
+        });
+        view
+    }
 
+    fn view_base<'a>(&self) -> ViewState<'a> {
+        let detail = self.detail.state();
         let selected_task = self.store.selected_task(self.list.selected_task());
         let detail_focus = detail.and_then(|detail| detail.focused_target()).filter(|focused| {
             selected_task.is_some_and(|item| {
@@ -410,7 +413,7 @@ impl App {
             .unwrap_or_else(|| "nothing to undo".to_string());
         ViewState {
             focus: self.list.focus(),
-            overlay,
+            overlay: None,
             onboarding_intro: self.onboarding_intro_visual(),
             detail_underlay: self.detail_underlay(),
             detail_underlay_scroll: detail.map_or(0, |detail| detail.scroll()),
@@ -455,6 +458,26 @@ impl App {
             has_primary_task: selected_task.is_some(),
             undo_description,
         }
+    }
+
+    pub(crate) fn render_frame(&mut self, frame: &mut ratatui::Frame) {
+        let mut view = self.view_base();
+        view.overlay = self.overlay.as_ref().map(|state| {
+            OverlayView::project(
+                state,
+                OverlayViewContext {
+                    sync_status: &self.store.sync_status,
+                    syncing: self.sync.work_pending(),
+                    now: time::OffsetDateTime::now_utc(),
+                    status_prefix_active: self.pending_shortcut.has_add_task_status_prefix(),
+                    priority_prefix_active: self.pending_shortcut.has_add_task_priority_prefix(),
+                },
+            )
+        });
+        let store = &self.store;
+        let widgets = &mut self.widgets;
+        let list = &mut self.list;
+        ui::render(frame, store, widgets, list, &view);
     }
 
     pub(super) fn inline_image_context(&self) -> Option<ui::DetailInlineImageContext> {

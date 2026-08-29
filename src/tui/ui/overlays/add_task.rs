@@ -20,8 +20,7 @@ use crate::task_render::human_file_size;
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::{
     AddTaskMode, AddTaskView, ConfirmView, PickerKind, PickerView, ScheduleEditorField,
-    ScheduleEditorMode, ScheduleEditorState, TAG_COMBOBOX_VIEWPORT_ROWS, TagComboboxView,
-    tag_combobox_completion, tag_combobox_matches, visible_picker_indices,
+    ScheduleEditorMode, ScheduleEditorState, TagComboboxView,
 };
 use crate::tui::text::{cell_width_ranges, truncate_width};
 use crate::tui::theme::{self, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, SELECTED};
@@ -786,12 +785,12 @@ fn schedule_editor_input_line(
 }
 
 fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect, dialog_area: Rect) {
-    if matches!(state.mode.as_ref(), AddTaskMode::Compose) {
+    if matches!(state.mode, AddTaskMode::Compose) {
         return;
     }
     dim_rendered_area(frame, dialog_area);
 
-    if matches!(state.mode.as_ref(), AddTaskMode::ConfirmDiscard) {
+    if matches!(state.mode, AddTaskMode::ConfirmDiscard) {
         render_confirm(
             frame,
             &ConfirmView {
@@ -801,12 +800,12 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect, 
         );
         return;
     }
-    if let AddTaskMode::Help { scroll } = state.mode.as_ref() {
+    if let AddTaskMode::Help { scroll } = state.mode {
         render_composer_help(frame, content, *scroll);
         return;
     }
 
-    let (title, lines, width, background) = match state.mode.as_ref() {
+    let (title, lines, width, background) = match state.mode {
         AddTaskMode::Compose => unreachable!("composer has no child dialog"),
         AddTaskMode::Schedule(editor) => (
             "Schedule".to_string(),
@@ -815,47 +814,19 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect, 
             BG_ALT,
         ),
         AddTaskMode::Picker { state, .. } => {
-            let view = PickerView {
-                kind: (&state.intent).into(),
-                title: state.title.clone(),
-                filter: state.filter.text.clone(),
-                filter_cursor: state.filter.cursor,
-                items: state.items.clone(),
-                selected: state.selected,
-                scroll: state.scroll,
-                multi: state.multi,
-                mode: state.mode,
-                visible_indices: visible_picker_indices(state),
-            };
+            let view = PickerView::from_state(state);
             (
-                view.title.clone(),
+                view.title.to_string(),
                 add_task_picker_lines(&view, content.height.saturating_sub(2) as usize),
                 54,
                 BG_ALT,
             )
         }
         AddTaskMode::Labels(state) => {
-            let visible_indices = tag_combobox_matches(state);
-            let view = TagComboboxView {
-                kind: (&state.intent).into(),
-                title: state.title.clone(),
-                input: state.input.text.clone(),
-                input_cursor: state.input.cursor,
-                completion: tag_combobox_completion(state),
-                options: state.options.clone(),
-                selected: state.selected.clone(),
-                partial: state.partial.clone(),
-                highlighted: state.highlighted,
-                visible_start: visible_indices
-                    .iter()
-                    .position(|index| *index == state.highlighted)
-                    .unwrap_or(0)
-                    .saturating_sub(TAG_COMBOBOX_VIEWPORT_ROWS.saturating_sub(1)),
-                visible_indices,
-            };
+            let view = TagComboboxView::from_state(state);
             let viewport_rows = content.height.saturating_sub(2).saturating_sub(4).max(1) as usize;
             (
-                view.title.clone(),
+                view.title.to_string(),
                 tag_combobox_lines_with_viewport(&view, viewport_rows),
                 64,
                 BG_PANEL,

@@ -18,9 +18,9 @@ use crate::tui::detail_session::DetailSnapshot;
 use crate::tui::event::Action;
 use crate::tui::overlay::{
     AddTaskMode, CommandState, ConfirmIntent, ConfirmState, LineEdit, MultilineInputMode,
-    MultilineInputState, MultilineIntent, OverlayState, OverlayTarget, OverlayView, PickerIntent,
-    PickerItem, PickerMode, PickerState, SearchIntent, SearchState, SyncStatusState,
-    TagComboboxIntent, TextInputState, TextIntent, TextPanelState,
+    MultilineInputState, MultilineIntent, OverlayState, OverlayTarget, OverlayView,
+    OverlayViewContext, PickerIntent, PickerItem, PickerMode, PickerState, SearchIntent,
+    SearchState, SyncStatusState, TagComboboxIntent, TextInputState, TextIntent, TextPanelState,
 };
 use crate::tui::store::{
     SidebarEntryTarget, TaskLayout, TaskOrder, TaskQuery, TaskScope, TaskScopeTarget, TaskViewState,
@@ -442,7 +442,16 @@ fn picker_row_click(app: &App, visible_row: u16, size: ratatui::layout::Size) ->
     let Some(overlay) = app.overlay.as_ref() else {
         panic!("expected overlay");
     };
-    match OverlayView::from(overlay) {
+    match OverlayView::project(
+        overlay,
+        OverlayViewContext {
+            sync_status: &app.store.sync_status,
+            syncing: app.sync.work_pending(),
+            now: time::OffsetDateTime::UNIX_EPOCH,
+            status_prefix_active: false,
+            priority_prefix_active: false,
+        },
+    ) {
         OverlayView::Picker(view) => {
             let layout = crate::tui::overlay::picker_layout(&view, size);
             left_click(
@@ -484,12 +493,7 @@ fn detail_metadata_click(target: crate::tui::ui::DetailMetadataTarget) -> MouseE
 fn render_app_buffer(app: &mut App, width: u16, height: u16) -> ratatui::buffer::Buffer {
     let backend = ratatui::backend::TestBackend::new(width, height);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
-    let view = app.view();
-    terminal
-        .draw(|frame| {
-            crate::tui::ui::render(frame, &app.store, &mut app.widgets, &mut app.list, &view)
-        })
-        .unwrap();
+    terminal.draw(|frame| app.render_frame(frame)).unwrap();
     terminal.backend().buffer().clone()
 }
 

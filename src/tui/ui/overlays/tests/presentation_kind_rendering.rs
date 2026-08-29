@@ -1,4 +1,5 @@
 use super::*;
+use time::OffsetDateTime;
 
 #[test]
 fn overlay_kinds_use_shared_dialog_chrome() {
@@ -6,7 +7,7 @@ fn overlay_kinds_use_shared_dialog_chrome() {
         OverlayView::Search {
             input: "query".to_string(),
             cursor: 5,
-            results: Vec::new(),
+            results: &[],
             selected: 0,
             total_matches: 12,
             stale: false,
@@ -30,7 +31,7 @@ fn overlay_kinds_use_shared_dialog_chrome() {
             kind: MultilineInputKind::EditDescription,
             title: "Description".to_string(),
             prompt: "Body".to_string(),
-            lines: vec!["line one".to_string()],
+            lines: borrow_slice(vec!["line one".to_string()]),
             row: 0,
             column: 4,
             mode: MultilineInputMode::Compose,
@@ -39,7 +40,7 @@ fn overlay_kinds_use_shared_dialog_chrome() {
             title: "Project".to_string(),
             filter: "app".to_string(),
             filter_cursor: 3,
-            items: vec![picker_item("APP app", "app")],
+            items: borrow_slice(vec![picker_item("APP app", "app")]),
             multi: true,
             visible_indices: vec![0],
             ..picker_view()
@@ -50,9 +51,9 @@ fn overlay_kinds_use_shared_dialog_chrome() {
             input: String::new(),
             input_cursor: 0,
             completion: None,
-            options: vec!["bug".to_string()],
-            selected: Vec::new(),
-            partial: Vec::new(),
+            options: borrow_slice(vec!["bug".to_string()]),
+            selected: &[],
+            partial: &[],
             highlighted: 0,
             visible_indices: vec![0],
             visible_start: 0,
@@ -63,10 +64,18 @@ fn overlay_kinds_use_shared_dialog_chrome() {
         }),
         OverlayView::TextPanel(TextPanelView {
             title: "Conflict details".to_string(),
-            lines: vec!["field=title".to_string()],
+            lines: borrow_slice(vec!["field=title".to_string()]),
             scroll: 0,
         }),
-        OverlayView::SyncStatus(Box::default()),
+        OverlayView::SyncStatus(Box::new(SyncStatusView {
+            state: SyncStatusState {
+                details: false,
+                scroll: 0,
+            },
+            status: borrow_value(TuiSyncStatus::default()),
+            syncing: false,
+            now: OffsetDateTime::UNIX_EPOCH,
+        })),
     ];
 
     for (overlay, title) in overlays.into_iter().zip([
@@ -90,7 +99,7 @@ fn add_note_kind_uses_specialized_renderer_with_changed_title() {
         kind: MultilineInputKind::AddNote,
         title: "Changed note title".to_string(),
         prompt: "note body:".to_string(),
-        lines: vec![String::new()],
+        lines: borrow_slice(vec![String::new()]),
         row: 0,
         column: 0,
         mode: MultilineInputMode::Compose,
@@ -106,7 +115,7 @@ fn edit_description_kind_uses_specialized_renderer_with_changed_title() {
         kind: MultilineInputKind::EditDescription,
         title: "Changed description title".to_string(),
         prompt: String::new(),
-        lines: vec!["a".repeat(160)],
+        lines: borrow_slice(vec!["a".repeat(160)]),
         row: 0,
         column: 150,
         mode: MultilineInputMode::Compose,
@@ -122,7 +131,7 @@ fn add_task_description_kind_uses_specialized_renderer_with_changed_title() {
         kind: MultilineInputKind::AddTaskDescription,
         title: "Changed add task description".to_string(),
         prompt: String::new(),
-        lines: vec![String::new()],
+        lines: borrow_slice(vec![String::new()]),
         row: 0,
         column: 0,
         mode: MultilineInputMode::Compose,
@@ -169,7 +178,7 @@ fn project_picker_kinds_control_submit_hints_with_changed_titles() {
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
             kind,
             title: title.to_string(),
-            items: vec![picker_item("AVN aven", "aven")],
+            items: borrow_slice(vec![picker_item("AVN aven", "aven")]),
             ..project_picker_view()
         }));
         assert!(rendered.contains(title), "{kind:?}");
@@ -183,7 +192,7 @@ fn priority_picker_kind_controls_icon_rendering_with_changed_title() {
     let rendered = render_overlay_view(OverlayView::Picker(PickerView {
         kind: PickerKind::EditPriority,
         title: "Changed priority title".to_string(),
-        items: vec![picker_item("urgent", "urgent")],
+        items: borrow_slice(vec![picker_item("urgent", "urgent")]),
         visible_indices: vec![0],
         ..picker_view()
     }));
@@ -196,7 +205,7 @@ fn add_task_priority_kind_uses_priority_renderer() {
     let rendered = render_overlay_view(OverlayView::Picker(PickerView {
         kind: PickerKind::AddTaskPriority,
         title: "Changed add task priority".to_string(),
-        items: vec![picker_item("urgent", "urgent")],
+        items: borrow_slice(vec![picker_item("urgent", "urgent")]),
         visible_indices: vec![0],
         ..picker_view()
     }));

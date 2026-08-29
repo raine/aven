@@ -119,12 +119,7 @@ async fn sidebar_click_uses_scroll_offset_in_wide_layout() {
     let terminal_size: ratatui::layout::Size = (120, 24).into();
     let backend = ratatui::backend::TestBackend::new(terminal_size.width, terminal_size.height);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
-    let view = app.view();
-    terminal
-        .draw(|frame| {
-            crate::tui::ui::render(frame, &app.store, &mut app.widgets, &mut app.list, &view)
-        })
-        .unwrap();
+    terminal.draw(|frame| app.render_frame(frame)).unwrap();
 
     let offset = app.list.sidebar_state().offset();
     assert!(offset > 0);

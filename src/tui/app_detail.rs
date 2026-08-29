@@ -3,7 +3,7 @@ use crossterm::event::MouseEvent;
 use ratatui::layout::{Rect, Size};
 
 use crate::tui::app::{App, DetailSection, DetailTargetId, Notification};
-use crate::tui::overlay::{ConfirmIntent, OverlayState, OverlayView, TextInputKind};
+use crate::tui::overlay::{ConfirmIntent, OverlayState, TextInputKind, TextInputView};
 use crate::tui::ui::{
     DetailRenderContext, attachment_is_locally_previewable, detail_selected_text,
 };
@@ -14,10 +14,11 @@ impl App {
         terminal_size: Size,
     ) -> Option<std::rc::Rc<crate::tui::ui::DetailDocument>> {
         let item = self.store.selected_task(self.list.selected_task())?;
-        let overlay = self.overlay.as_ref().map(OverlayView::from);
-        let inline_title_editor = match overlay.as_ref() {
-            Some(OverlayView::TextInput(state)) if state.kind == TextInputKind::EditTitle => {
-                Some(state)
+        let inline_title_editor = match self.overlay.as_ref() {
+            Some(OverlayState::TextInput(state))
+                if TextInputKind::from(&state.intent) == TextInputKind::EditTitle =>
+            {
+                Some(TextInputView::from_state(state))
             }
             _ => None,
         };
@@ -28,7 +29,7 @@ impl App {
             terminal_area: Rect::new(0, 0, terminal_size.width, terminal_size.height),
             scroll: detail.scroll(),
             detail_revision: self.store.tasks.revision(),
-            inline_title_editor,
+            inline_title_editor: inline_title_editor.as_ref(),
             active_target: detail.focused_target(),
             hovered_target: detail.hovered_target(),
             expanded_sections: detail.expanded_sections(),

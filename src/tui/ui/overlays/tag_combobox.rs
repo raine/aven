@@ -72,7 +72,7 @@ fn tag_chip(label: &str) -> Vec<Span<'static>> {
 
 fn tag_combobox_input_line(state: &TagComboboxView) -> Line<'static> {
     let mut spans = Vec::new();
-    for label in &state.selected {
+    for label in state.selected {
         spans.extend(tag_chip(label));
         spans.push(Span::raw(" "));
     }

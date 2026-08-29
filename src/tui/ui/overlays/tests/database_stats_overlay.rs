@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn database_stats_overlay_renders_like_sync_status() {
     let rendered = render_overlay_view(OverlayView::DatabaseStats {
-        stats: Box::new(database_stats()),
+        stats: borrow_value(database_stats()),
         scroll: 0,
     });
 
@@ -27,7 +27,7 @@ fn database_stats_overlay_scroll_changes_visible_content() {
             render_non_help_overlay_content(
                 frame,
                 &OverlayView::DatabaseStats {
-                    stats: Box::new(database_stats()),
+                    stats: borrow_value(database_stats()),
                     scroll: 14,
                 },
             )

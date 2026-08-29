@@ -99,9 +99,9 @@ pub(crate) enum ViewSurface {
 }
 
 #[derive(Clone)]
-pub(crate) struct ViewState {
+pub(crate) struct ViewState<'a> {
     pub(crate) focus: Focus,
-    pub(crate) overlay: Option<OverlayView>,
+    pub(crate) overlay: Option<OverlayView<'a>>,
     pub(crate) onboarding_intro: Option<crate::tui::app_onboarding::OnboardingIntroVisual>,
     pub(crate) detail_underlay: bool,
     pub(crate) detail_underlay_scroll: u16,
@@ -130,7 +130,7 @@ pub(crate) struct ViewState {
     pub(crate) undo_description: String,
 }
 
-impl ViewState {
+impl ViewState<'_> {
     fn footer_mode(&self, width: u16) -> FooterMode {
         match self.footer_choice_mode {
             Some(FooterChoiceMode::Status) => return FooterMode::StatusChoice,
@@ -547,7 +547,7 @@ fn render_add_task_multiline_full_frame(
     );
 }
 
-fn edit_title_view(view: &ViewState) -> Option<&TextInputView> {
+fn edit_title_view<'a>(view: &'a ViewState<'a>) -> Option<&'a TextInputView> {
     match &view.overlay {
         Some(OverlayView::TextInput(state)) if state.kind == TextInputKind::EditTitle => {
             Some(state)
@@ -556,31 +556,31 @@ fn edit_title_view(view: &ViewState) -> Option<&TextInputView> {
     }
 }
 
-fn inline_title_editor(view: &ViewState) -> Option<&TextInputView> {
+fn inline_title_editor<'a>(view: &'a ViewState<'a>) -> Option<&'a TextInputView> {
     if view.focus != Focus::Tasks || view.detail_underlay {
         return None;
     }
     edit_title_view(view)
 }
 
-fn inline_detail_title_editor(view: &ViewState) -> Option<&TextInputView> {
+fn inline_detail_title_editor<'a>(view: &'a ViewState<'a>) -> Option<&'a TextInputView> {
     if !view.detail_underlay {
         return None;
     }
     edit_title_view(view)
 }
 
-fn render_header_menu(frame: &mut Frame, state: &HeaderMenuView) {
+fn render_header_menu(frame: &mut Frame, state: &HeaderMenuView<'_>) {
     use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
-    let menu_state = crate::tui::overlay::HeaderMenuState {
-        kind: state.kind,
-        column: state.column,
-        row: state.row,
-        selected: state.selected,
-        items: state.items.clone(),
-    };
-    let area = menu_state.area(frame.area().width, frame.area().height);
+    let area = crate::tui::overlay::header_menu_area(
+        state.kind,
+        state.column,
+        state.row,
+        state.items,
+        frame.area().width,
+        frame.area().height,
+    );
     frame.render_widget(Clear, area);
     let block = Block::new()
         .title(menu_title(header_menu_title(state.kind)))

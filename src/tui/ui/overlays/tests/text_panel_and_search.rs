@@ -4,10 +4,10 @@ use super::*;
 fn overlay_render_includes_text_panel_content_and_hint() {
     let rendered = render_overlay_view(OverlayView::TextPanel(TextPanelView {
         title: "Conflict details".to_string(),
-        lines: vec![
+        lines: borrow_slice(vec![
             "field=title".to_string(),
             "local a: local title".to_string(),
-        ],
+        ]),
         scroll: 0,
     }));
     assert!(rendered.contains("Conflict details"));
@@ -18,7 +18,7 @@ fn overlay_render_includes_text_panel_content_and_hint() {
 #[test]
 fn changelog_renders_markdown_and_reader_controls() {
     let rendered = render_overlay_view(OverlayView::Changelog {
-        markdown: "## v1.2.3\n\n- Added **reader** support.".to_string(),
+        markdown: "## v1.2.3\n\n- Added **reader** support.",
         scroll: 0,
     });
 
@@ -33,7 +33,11 @@ fn changelog_renders_markdown_and_reader_controls() {
 #[test]
 fn changelog_draws_shared_scrollbar_when_content_overflows() {
     let rendered = render_overlay_view(OverlayView::Changelog {
-        markdown: format!("## Unreleased\n\n{}", "- release note\n".repeat(40)),
+        markdown: borrow_value(format!(
+            "## Unreleased\n\n{}",
+            "- release note\n".repeat(40)
+        ))
+        .as_str(),
         scroll: 0,
     });
 
@@ -46,7 +50,7 @@ fn overlay_render_includes_search_title_and_input() {
     let rendered = render_overlay_view(OverlayView::Search {
         input: "query".to_string(),
         cursor: 5,
-        results: vec![search_result_item("Query result")],
+        results: borrow_slice(vec![search_result_item("Query result")]),
         selected: 0,
         total_matches: 12,
         stale: false,
@@ -65,7 +69,7 @@ fn search_overlay_shows_empty_result_summary() {
     let rendered = render_overlay_view(OverlayView::Search {
         input: "missing".to_string(),
         cursor: 7,
-        results: Vec::new(),
+        results: &[],
         selected: 0,
         total_matches: 0,
         stale: false,
@@ -82,7 +86,7 @@ fn stale_search_overlay_keeps_empty_state_blank() {
     let rendered = render_overlay_view(OverlayView::Search {
         input: "query".to_string(),
         cursor: 5,
-        results: Vec::new(),
+        results: &[],
         selected: 0,
         total_matches: 0,
         stale: true,
@@ -100,7 +104,7 @@ fn stale_search_overlay_preserves_cached_empty_summary() {
     let rendered = render_overlay_view(OverlayView::Search {
         input: "quer".to_string(),
         cursor: 4,
-        results: Vec::new(),
+        results: &[],
         selected: 0,
         total_matches: 0,
         stale: true,
@@ -118,7 +122,7 @@ fn add_dependency_search_explains_blocker_selection() {
     let rendered = render_overlay_view(OverlayView::Search {
         input: String::new(),
         cursor: 0,
-        results: Vec::new(),
+        results: &[],
         selected: 0,
         total_matches: 0,
         stale: false,
@@ -143,7 +147,7 @@ fn add_epic_child_create_action_spans_row_and_updates_enter_hint() {
     let buffer = overlay_buffer(OverlayView::Search {
         input: "Ship account security".to_string(),
         cursor: 21,
-        results: vec![create, search_result_item("Ship account security")],
+        results: borrow_slice(vec![create, search_result_item("Ship account security")]),
         selected: 0,
         total_matches: 1,
         stale: false,
@@ -174,7 +178,7 @@ fn add_epic_child_task_selection_uses_add_enter_hint() {
     let rendered = render_overlay_view(OverlayView::Search {
         input: String::new(),
         cursor: 0,
-        results: vec![create, search_result_item("Existing task")],
+        results: borrow_slice(vec![create, search_result_item("Existing task")]),
         selected: 1,
         total_matches: 1,
         stale: false,
@@ -196,7 +200,7 @@ fn search_overlay_marks_epic_results_with_star() {
     let rendered = render_overlay_view(OverlayView::Search {
         input: "query".to_string(),
         cursor: 5,
-        results: vec![result],
+        results: borrow_slice(vec![result]),
         selected: 0,
         total_matches: 1,
         stale: false,
@@ -212,7 +216,7 @@ fn search_overlay_colors_project_prefix() {
     let buffer = overlay_buffer(OverlayView::Search {
         input: "query".to_string(),
         cursor: 5,
-        results: vec![search_result_item("Query result")],
+        results: borrow_slice(vec![search_result_item("Query result")]),
         selected: 0,
         total_matches: 12,
         stale: false,
@@ -233,7 +237,7 @@ fn search_overlay_vertical_position_ignores_result_count() {
     let empty = overlay_buffer(OverlayView::Search {
         input: "query".to_string(),
         cursor: 5,
-        results: Vec::new(),
+        results: &[],
         selected: 0,
         total_matches: 0,
         stale: false,
@@ -243,10 +247,10 @@ fn search_overlay_vertical_position_ignores_result_count() {
     let populated = overlay_buffer(OverlayView::Search {
         input: "query".to_string(),
         cursor: 5,
-        results: vec![
+        results: borrow_slice(vec![
             search_result_item("First result"),
             search_result_item("Second result"),
-        ],
+        ]),
         selected: 0,
         total_matches: 12,
         stale: false,
@@ -266,7 +270,7 @@ fn search_overlay_vertical_position_ignores_result_count() {
 fn text_panel_scroll_offset_changes_visible_content() {
     let rendered = render_overlay_view(OverlayView::TextPanel(TextPanelView {
         title: "Long panel".to_string(),
-        lines: (0..20).map(|index| format!("Line {index}")).collect(),
+        lines: borrow_slice((0..20).map(|index| format!("Line {index}")).collect()),
         scroll: 8,
     }));
     assert!(rendered.contains("Line 8"));

@@ -9,7 +9,6 @@ use crate::tui::ui::text_panel_scroll_cap;
 use super::multiline::edit_multiline_input;
 use super::picker::{
     handle_picker_key, normalize_picker_scroll, normalize_picker_selection, picker_submit_outcome,
-    visible_picker_indices,
 };
 #[cfg(test)]
 use super::state::ScheduleEditorMode;
@@ -22,7 +21,10 @@ use super::tag_combobox::{
     handle_tag_combobox_key, normalize_tag_combobox_highlight, tag_combobox_matches,
     toggle_tag_combobox_label,
 };
-use crate::tui::overlay::{confirm_layout, picker_layout, tag_combobox_layout, text_panel_layout};
+use crate::tui::overlay::{
+    PickerView, TagComboboxView, confirm_layout, picker_layout, tag_combobox_layout,
+    text_panel_layout,
+};
 use crate::tui::store::TaskOrder;
 
 pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) -> OverlayState {
@@ -682,19 +684,7 @@ fn tag_combobox_mouse_target(
     row: u16,
     terminal_size: Size,
 ) -> TagComboboxMouseTarget {
-    let view = crate::tui::overlay::TagComboboxView {
-        kind: (&state.intent).into(),
-        title: state.title.clone(),
-        input: state.input.text.clone(),
-        input_cursor: state.input.cursor,
-        completion: None,
-        options: state.options.clone(),
-        selected: state.selected.clone(),
-        partial: state.partial.clone(),
-        highlighted: state.highlighted,
-        visible_indices: tag_combobox_matches(state),
-        visible_start: 0,
-    };
+    let view = TagComboboxView::from_state(state);
     let layout = tag_combobox_layout(&view, terminal_size);
     if !contains(layout.area, column, row) {
         return TagComboboxMouseTarget::Outside;
@@ -713,8 +703,8 @@ fn tag_combobox_mouse_target(
                 .saturating_add(layout.viewport_rows as u16)
     {
         let offset = (inner_row - layout.list_start) as usize;
-        let visible = tag_combobox_matches(state);
-        return visible
+        return view
+            .visible_indices
             .get(layout.visible_start + offset)
             .copied()
             .map(TagComboboxMouseTarget::Row)
@@ -779,18 +769,7 @@ fn picker_mouse_target(
     row: u16,
     terminal_size: Size,
 ) -> PickerMouseTarget {
-    let view = crate::tui::overlay::PickerView {
-        kind: (&state.intent).into(),
-        title: state.title.clone(),
-        filter: state.filter.text.clone(),
-        filter_cursor: state.filter.cursor,
-        items: state.items.clone(),
-        selected: state.selected,
-        multi: state.multi,
-        mode: state.mode,
-        visible_indices: visible_picker_indices(state),
-        scroll: state.scroll,
-    };
+    let view = PickerView::from_state(state);
     let layout = picker_layout(&view, terminal_size);
     if !contains(layout.area, column, row) {
         return PickerMouseTarget::Outside;
@@ -1184,23 +1163,8 @@ mod tests {
         state: &TagComboboxState,
         terminal_size: Size,
     ) -> crate::tui::overlay::layout::TagComboboxLayout {
-        let visible_indices = tag_combobox_matches(state);
-        tag_combobox_layout(
-            &TagComboboxView {
-                kind: (&state.intent).into(),
-                title: state.title.clone(),
-                input: state.input.text.clone(),
-                input_cursor: state.input.cursor,
-                completion: None,
-                options: state.options.clone(),
-                selected: state.selected.clone(),
-                partial: state.partial.clone(),
-                highlighted: state.highlighted,
-                visible_indices,
-                visible_start: 0,
-            },
-            terminal_size,
-        )
+        let view = TagComboboxView::from_state(state);
+        tag_combobox_layout(&view, terminal_size)
     }
 
     fn retained_tag_combobox(outcome: OverlayOutcome) -> TagComboboxState {

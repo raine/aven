@@ -31,7 +31,7 @@ fn buffer_text(backend: &TestBackend) -> String {
         .collect()
 }
 
-fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
+fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView<'_>) {
     match overlay {
         OverlayView::Onboarding { .. } => render_onboarding(frame),
         OverlayView::Search {
@@ -76,7 +76,7 @@ fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
     }
 }
 
-fn render_overlay_view_at(overlay: OverlayView, width: u16, height: u16) -> String {
+fn render_overlay_view_at(overlay: OverlayView<'_>, width: u16, height: u16) -> String {
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
@@ -85,15 +85,15 @@ fn render_overlay_view_at(overlay: OverlayView, width: u16, height: u16) -> Stri
     buffer_text(terminal.backend())
 }
 
-fn render_overlay_view(overlay: OverlayView) -> String {
+fn render_overlay_view(overlay: OverlayView<'_>) -> String {
     render_overlay_view_at(overlay, 100, 30)
 }
 
-fn add_task_overlay(view: AddTaskView) -> OverlayView {
+fn add_task_overlay(view: AddTaskView<'_>) -> OverlayView<'_> {
     OverlayView::AddTask(Box::new(view))
 }
 
-fn overlay_buffer(overlay: OverlayView) -> ratatui::buffer::Buffer {
+fn overlay_buffer(overlay: OverlayView<'_>) -> ratatui::buffer::Buffer {
     let backend = TestBackend::new(100, 30);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
@@ -108,7 +108,7 @@ fn buffer_row(buffer: &ratatui::buffer::Buffer, row: u16) -> String {
         .collect()
 }
 
-fn assert_overlay_uses_dialog_chrome(overlay: OverlayView, title: &str) {
+fn assert_overlay_uses_dialog_chrome(overlay: OverlayView<'_>, title: &str) {
     let buffer = overlay_buffer(overlay);
     let title_row = (0..buffer.area.height)
         .map(|row| buffer_row(&buffer, row))
@@ -125,6 +125,14 @@ fn styled_key_contents(line: Line<'static>) -> Vec<String> {
         .filter(|span| span.style.fg == Some(FG))
         .map(|span| span.content.to_string())
         .collect()
+}
+
+fn borrow_slice<T>(items: Vec<T>) -> &'static [T] {
+    Box::leak(items.into_boxed_slice())
+}
+
+fn borrow_value<T>(value: T) -> &'static T {
+    Box::leak(Box::new(value))
 }
 
 // -- Fixture helpers --
@@ -149,11 +157,12 @@ fn pending_attachment(
     }
 }
 
-fn add_task_view() -> AddTaskView {
+fn add_task_view() -> AddTaskView<'static> {
+    static COMPOSE_MODE: AddTaskMode = AddTaskMode::Compose;
     AddTaskView {
         title: String::new(),
         title_cursor: 0,
-        description: vec![String::new()],
+        description: borrow_slice(vec![String::new()]),
         description_row: 0,
         description_column: 0,
         focus: AddTaskStep::Title,
@@ -161,7 +170,7 @@ fn add_task_view() -> AddTaskView {
         status: "inbox".to_string(),
         status_automatic: true,
         priority: "none".to_string(),
-        labels: Vec::new(),
+        labels: &[],
         is_epic: false,
         create_more: false,
         create_more_available: true,
@@ -174,7 +183,7 @@ fn add_task_view() -> AddTaskView {
         schedule_error: None,
         schedule_validation_requested: false,
         attachments: Box::new(AddTaskAttachmentsView {
-            items: Vec::new().into_boxed_slice(),
+            items: &[],
             selected: 0,
         }),
         recurrence_series_id: None,
@@ -188,9 +197,9 @@ fn add_task_view() -> AddTaskView {
         repeat_start_on: "2026-07-20".to_string(),
         repeat_start_on_cursor: 0,
         schedule_expanded: false,
-        recurrence_preview: Vec::new(),
+        recurrence_preview: &[],
         recurrence_error: None,
-        mode: Box::new(crate::tui::overlay::AddTaskMode::Compose),
+        mode: &COMPOSE_MODE,
         title_error: false,
         status_prefix_active: false,
         priority_prefix_active: false,
@@ -215,13 +224,13 @@ fn schedule_editor(mode: ScheduleEditorMode) -> ScheduleEditorState {
     }
 }
 
-fn picker_view() -> PickerView {
+fn picker_view() -> PickerView<'static> {
     PickerView {
         kind: PickerKind::Generic,
         title: String::new(),
         filter: String::new(),
         filter_cursor: 0,
-        items: vec![],
+        items: &[],
         selected: 0,
         scroll: 0,
         multi: false,
@@ -230,13 +239,13 @@ fn picker_view() -> PickerView {
     }
 }
 
-fn project_picker_view() -> PickerView {
+fn project_picker_view() -> PickerView<'static> {
     PickerView {
         kind: PickerKind::ScopeProject,
         title: "Scope: project".to_string(),
         filter: String::new(),
         filter_cursor: 0,
-        items: vec![picker_item("CC claude-code", "claude-code")],
+        items: Box::leak(vec![picker_item("CC claude-code", "claude-code")].into_boxed_slice()),
         selected: 0,
         scroll: 0,
         multi: false,

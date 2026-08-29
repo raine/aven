@@ -23,7 +23,6 @@ pub(crate) use layout::{
 pub(crate) use mouse::{OverlayMouseContext, OverlayMouseOutcome, dispatch_overlay_mouse};
 pub(crate) use picker::{
     normalize_picker_selection, picker_viewport_start, sync_project_creation_item,
-    visible_picker_indices,
 };
 pub(crate) use state::{
     AddTaskMode, AddTaskState, ChangelogState, CommandAvailabilityOverride, CommandState,
@@ -34,16 +33,16 @@ pub(crate) use state::{
     RecurrenceHistoryEntryKey, RecurrenceHistoryState, ScheduleEditorField, ScheduleEditorMode,
     ScheduleEditorState, SearchIntent, SearchResultItem, SearchState, SyncStatusAction,
     SyncStatusState, TagComboboxIntent, TextIntent, TextPanelState, UpdateActionFocus,
-    UpdateNotesState, UpdateOverlayState,
+    UpdateNotesState, UpdateOverlayState, header_menu_area,
 };
 #[cfg(test)]
 pub(crate) use state::{ConfirmState, TextInputState};
-pub(crate) use tag_combobox::{tag_combobox_completion, tag_combobox_matches};
+
 pub(crate) use text_input::LineEdit;
 #[cfg(test)]
 pub(crate) use view::{AddTaskAttachmentsView, TagComboboxKind};
 pub(crate) use view::{
     AddTaskView, ConfirmView, HeaderMenuView, MultilineInputKind, MultilineInputView,
-    OrderMenuView, OverlayView, PickerKind, PickerView, RecurrenceHistoryView, SearchKind,
-    SyncStatusView, TagComboboxView, TextInputKind, TextInputView, TextPanelView,
+    OrderMenuView, OverlayView, OverlayViewContext, PickerKind, PickerView, RecurrenceHistoryView,
+    SearchKind, SyncStatusView, TagComboboxView, TextInputKind, TextInputView, TextPanelView,
 };

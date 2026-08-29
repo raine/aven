@@ -396,7 +396,7 @@ impl DetailDocument {
             scroll: context.scroll,
             inline_title_editor: context
                 .inline_title_editor
-                .map(|editor| (editor.input.clone(), editor.cursor)),
+                .map(|editor| (editor.input.to_string(), editor.cursor)),
             model,
             #[cfg(test)]
             projection_id: next_detail_projection_id(),

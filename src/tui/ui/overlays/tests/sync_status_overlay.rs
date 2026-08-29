@@ -126,14 +126,14 @@ fn expanded_details_scroll_on_short_terminals() {
     assert!(rendered.contains("j/k scroll"));
 }
 
-fn sync_status_overlay(status: TuiSyncStatus, details: bool) -> OverlayView {
+fn sync_status_overlay(status: TuiSyncStatus, details: bool) -> OverlayView<'static> {
     OverlayView::SyncStatus(Box::new(sync_status_view(status, details)))
 }
 
-fn sync_status_view(status: TuiSyncStatus, details: bool) -> SyncStatusView {
+fn sync_status_view(status: TuiSyncStatus, details: bool) -> SyncStatusView<'static> {
     SyncStatusView {
         state: SyncStatusState { details, scroll: 0 },
-        status: Box::new(status),
+        status: borrow_value(status),
         syncing: false,
         now: OffsetDateTime::parse("2026-06-25T10:20:12Z", &Rfc3339).unwrap(),
     }

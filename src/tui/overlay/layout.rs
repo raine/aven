@@ -235,19 +235,22 @@ pub(crate) fn text_panel_layout(terminal_size: Size, line_count: usize) -> TextP
 mod tests {
     use super::*;
 
-    fn project_picker_view(item_count: usize, visible_count: usize) -> PickerView {
+    fn project_picker_view(item_count: usize, visible_count: usize) -> PickerView<'static> {
         PickerView {
             kind: PickerKind::ScopeProject,
             title: "Scope: project".to_string(),
             filter: String::new(),
             filter_cursor: 0,
-            items: (0..item_count)
-                .map(|index| super::super::PickerItem {
-                    label: format!("Project {index}"),
-                    value: index.to_string(),
-                    selected: false,
-                })
-                .collect(),
+            items: Box::leak(
+                (0..item_count)
+                    .map(|index| super::super::PickerItem {
+                        label: format!("Project {index}"),
+                        value: index.to_string(),
+                        selected: false,
+                    })
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            ),
             selected: 0,
             scroll: 0,
             multi: false,

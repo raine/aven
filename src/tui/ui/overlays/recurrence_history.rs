@@ -254,15 +254,16 @@ mod tests {
             archived_projection: true,
             resolved_at: Some("2026-07-20T12:34:56Z".to_string()),
         };
+        let page = RecurrenceHistoryPage {
+            series_ref: "RCR-TEST".to_string(),
+            items: vec![entry],
+            offset: 0,
+            limit: 10,
+            total: 1,
+            has_more: false,
+        };
         let view = RecurrenceHistoryView {
-            page: RecurrenceHistoryPage {
-                series_ref: "RCR-TEST".to_string(),
-                items: vec![entry],
-                offset: 0,
-                limit: 10,
-                total: 1,
-                has_more: false,
-            },
+            page: &page,
             selected: Some(0),
         };
 
@@ -309,15 +310,16 @@ mod tests {
                 resolved_at: None,
             })
             .collect::<Vec<_>>();
+        let page = RecurrenceHistoryPage {
+            series_ref: "RCR-TEST".to_string(),
+            items,
+            offset: 0,
+            limit: 10,
+            total: 10,
+            has_more: false,
+        };
         let view = RecurrenceHistoryView {
-            page: RecurrenceHistoryPage {
-                series_ref: "RCR-TEST".to_string(),
-                items,
-                offset: 0,
-                limit: 10,
-                total: 10,
-                has_more: false,
-            },
+            page: &page,
             selected: Some(0),
         };
         let terminal_size = Size::new(120, 24);
