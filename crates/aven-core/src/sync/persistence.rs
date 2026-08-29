@@ -918,6 +918,96 @@ mod tests {
     use crate::sync::wire::{ChangeWire, SYNC_PROTOCOL_VERSION, SyncRequest};
 
     #[tokio::test]
+    async fn server_task_deletion_operations_reconcile_attachment_liveness() {
+        let (_temp, mut conn) = crate::test_support::test_conn().await;
+        for (index, operation) in [op_type::SET_FIELD, op_type::RESOLVE_FIELD]
+            .into_iter()
+            .enumerate()
+        {
+            let task_id = format!("BBBBBBBBBBBBBBB{index}");
+            let attachment_id = format!("CCCCCCCCCCCCCCC{index}");
+            let sha256 = format!("{index:064x}");
+            upsert_inventory_available(&mut conn, &sha256, 1, "image/png")
+                .await
+                .unwrap();
+            sqlx::query("INSERT INTO blob_lifecycle(sha256, unreferenced_at) VALUES (?, NULL)")
+                .bind(&sha256)
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+            sqlx::query(
+                "INSERT INTO server_blob_references(
+                   workspace_id, attachment_id, task_id, sha256, byte_size, deleted
+                 ) VALUES ('0000000000000000', ?, ?, ?, 1, 0)",
+            )
+            .bind(attachment_id)
+            .bind(&task_id)
+            .bind(&sha256)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+            let deletion_change = |value: &str| ChangeWire {
+                change_id: format!("AAAAAAAAAAAAAA{index}{value}"),
+                client_id: "client".to_string(),
+                local_seq: 1,
+                entity_type: "task".to_string(),
+                entity_id: task_id.clone(),
+                field: Some("deleted".to_string()),
+                op_type: operation.to_string(),
+                payload: json!({
+                    "workspace_id": "0000000000000000",
+                    "workspace_key": "default",
+                    "value": value,
+                }),
+                base_version: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                server_seq: None,
+            };
+
+            apply_server_blob_reference(&mut conn, &deletion_change("1"))
+                .await
+                .unwrap();
+            let deleted: bool = sqlx::query_scalar(
+                "SELECT deleted FROM server_task_tombstones
+                 WHERE workspace_id = '0000000000000000' AND task_id = ?",
+            )
+            .bind(&task_id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+            let unreferenced_at: Option<String> =
+                sqlx::query_scalar("SELECT unreferenced_at FROM blob_lifecycle WHERE sha256 = ?")
+                    .bind(&sha256)
+                    .fetch_one(&mut *conn)
+                    .await
+                    .unwrap();
+            assert!(deleted, "{operation} must apply live-to-deleted state");
+            assert!(unreferenced_at.is_some());
+
+            apply_server_blob_reference(&mut conn, &deletion_change("0"))
+                .await
+                .unwrap();
+            let deleted: bool = sqlx::query_scalar(
+                "SELECT deleted FROM server_task_tombstones
+                 WHERE workspace_id = '0000000000000000' AND task_id = ?",
+            )
+            .bind(&task_id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+            let unreferenced_at: Option<String> =
+                sqlx::query_scalar("SELECT unreferenced_at FROM blob_lifecycle WHERE sha256 = ?")
+                    .bind(&sha256)
+                    .fetch_one(&mut *conn)
+                    .await
+                    .unwrap();
+            assert!(!deleted, "{operation} must apply deleted-to-live state");
+            assert_eq!(unreferenced_at, None);
+        }
+    }
+
+    #[tokio::test]
     async fn related_comparison_observes_push_acknowledgement_first() {
         let (_temp, mut conn) = crate::test_support::test_conn().await;
         let workspace = crate::workspaces::Workspace::default();
