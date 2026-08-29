@@ -893,13 +893,11 @@ pub async fn prune(
         summary.pruned.count += 1;
         summary.pruned.bytes += u64::try_from(byte_size)?;
     }
-    if apply {
-        let blob_dir = blob_dir.to_path_buf();
-        crate::attachments::blocking::run(move || {
-            prune_preview_cache(&blob_dir, policy.preview_quota_bytes)
-        })
-        .await?;
-    }
+    let blob_dir = blob_dir.to_path_buf();
+    crate::attachments::blocking::run(move || {
+        prune_preview_cache(&blob_dir, policy.preview_quota_bytes)
+    })
+    .await?;
     Ok(summary)
 }
 
