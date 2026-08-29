@@ -259,6 +259,15 @@ pub(crate) async fn set_task_field(
         crate::operations::route_recurrence_task_field(conn, workspace, task_id, field, value)
             .await?
     {
+        if changed && field == TaskField::Deleted.as_str() {
+            crate::attachments::lifecycle::reconcile_task_liveness_in_transaction(
+                conn,
+                workspace.id.as_str(),
+                task_id.as_str(),
+                &crate::attachments::lifecycle::SystemClock,
+            )
+            .await?;
+        }
         return Ok(changed);
     }
     let task_field = TaskField::parse_or_unknown(field)?;
@@ -326,6 +335,15 @@ async fn set_task_scalar_field(
     debug!(task_id = %task_id, field = %field, "task field mutation started");
     let base = field_version(conn, task_id, field).await?;
     apply_scalar_field_value_in_workspace(conn, &workspace.id, task_id, task_field, value).await?;
+    if task_field == TaskField::Deleted {
+        crate::attachments::lifecycle::reconcile_task_liveness_in_transaction(
+            conn,
+            workspace.id.as_str(),
+            task_id.as_str(),
+            &crate::attachments::lifecycle::SystemClock,
+        )
+        .await?;
+    }
     let payload = task_field.scalar_payload(&workspace.id, &workspace.key, value)?;
     finish_task_field_change(conn, task_id, field, payload, base.as_deref()).await?;
     Ok(true)
