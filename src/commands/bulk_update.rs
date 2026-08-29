@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use anyhow::{Result, bail};
 use aven_core::db::Database;
-use aven_core::metadata::{TaskMetadataInput, TaskMetadataValue};
+use aven_core::metadata::TaskMetadataInput;
 
 use super::validation::{validate_optional_priority, validate_optional_status};
 use crate::cli::BulkUpdateArgs;
@@ -39,7 +39,7 @@ pub(crate) async fn cmd_bulk_update(
 
     let filters = bulk_update_filters(&args);
     let items = database
-        .list_task_items(
+        .list_bulk_update_task_items(
             &workspace.id,
             filters,
             TaskQueryMode::Flat,
@@ -210,8 +210,7 @@ async fn plan_bulk_updates(
 ) -> Result<Vec<PlannedBulkUpdate>> {
     let mut planned = Vec::with_capacity(items.len());
     for item in items {
-        let current_metadata = database.task_metadata(workspace_id, &item.task.id).await?;
-        let update = bulk_update_for_item(&item, args, mutations, &current_metadata);
+        let update = bulk_update_for_item(&item, args, mutations);
         let will_change = bulk_update_has_changes(&update);
         preflight_bulk_update_item(database, workspace_id, &item, &update).await?;
         planned.push(PlannedBulkUpdate {
@@ -297,7 +296,6 @@ fn bulk_update_for_item(
     item: &query::TaskListItem,
     args: &BulkUpdateArgs,
     mutations: &BulkResolvedMutations,
-    current_metadata: &[TaskMetadataValue],
 ) -> TaskUpdate {
     TaskUpdate {
         title: None,
@@ -342,7 +340,7 @@ fn bulk_update_for_item(
             .filter(|input| {
                 let key = aven_core::metadata::normalize_metadata_key(&input.key)
                     .expect("bulk metadata keys were validated");
-                current_metadata
+                item.metadata
                     .iter()
                     .find(|metadata| metadata.key == key)
                     .is_none_or(|metadata| metadata.value != input.value)
@@ -355,7 +353,7 @@ fn bulk_update_for_item(
             .filter(|input| {
                 let key = aven_core::metadata::normalize_metadata_key(input)
                     .expect("bulk metadata keys were validated");
-                current_metadata.iter().any(|metadata| metadata.key == key)
+                item.metadata.iter().any(|metadata| metadata.key == key)
             })
             .cloned()
             .collect(),
