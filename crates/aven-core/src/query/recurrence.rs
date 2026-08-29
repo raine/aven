@@ -511,6 +511,26 @@ pub(crate) async fn recurrence_history(
             next_rank.and_then(|rank| slot_at_rank(&series.rule, series.start_on, rank));
         let source =
             newest_history_source(next_occurrence.as_ref(), next_pause.as_ref(), derived_slot);
+        if remaining_offset != 0
+            && counts.pause_intervals == 0
+            && matches!(source, Some(HistorySource::Derived))
+        {
+            let lower_rank = next_occurrence
+                .as_ref()
+                .and_then(|occurrence| slot_rank(&series.rule, series.start_on, occurrence.slot_on))
+                .and_then(|rank| rank.checked_add(1))
+                .unwrap_or(0);
+            if let Some(rank) = next_rank {
+                let available = rank.saturating_add(1).saturating_sub(lower_rank);
+                let skipped =
+                    remaining_offset.min(usize::try_from(available).unwrap_or(usize::MAX));
+                if skipped != 0 {
+                    next_rank = rank.checked_sub(u64::try_from(skipped).unwrap());
+                    remaining_offset -= skipped;
+                    continue;
+                }
+            }
+        }
         let entry = match source {
             Some(HistorySource::Occurrence) => {
                 let occurrence = next_occurrence
@@ -1035,6 +1055,7 @@ fn history_entry_for_pause(pause: RecurrencePauseInterval) -> RecurrenceHistoryE
     }
 }
 
+#[derive(Clone, Copy)]
 enum HistorySource {
     Occurrence,
     Pause,

@@ -570,6 +570,13 @@ async fn history_pagination_seeks_over_an_ancient_schedule() {
     );
     assert!(history.total > 40_000);
     assert!(history.has_more);
+
+    let deep = database
+        .recurrence_history_at(&workspace.id, &created.series.id, at(24, 12), 40_000, 2)
+        .await
+        .unwrap();
+    assert_eq!(deep.items.len(), 2);
+    assert_eq!(deep.total, history.total);
 }
 
 #[tokio::test]
