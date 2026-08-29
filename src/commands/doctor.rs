@@ -441,6 +441,25 @@ fn stable_check_code(prefix: &str, label: &str) -> String {
     format!("{prefix}.{suffix}")
 }
 
+async fn run_integrity_scans<DatabaseScan, DatabaseFuture, AttachmentScan, AttachmentFuture>(
+    database_scan: DatabaseScan,
+    attachment_scan: AttachmentScan,
+) -> (
+    Result<aven_core::data_safety::IntegrityReport>,
+    Result<Vec<aven_core::data_safety::IntegrityCheck>>,
+)
+where
+    DatabaseScan: FnOnce() -> DatabaseFuture,
+    DatabaseFuture: std::future::Future<Output = Result<aven_core::data_safety::IntegrityReport>>,
+    AttachmentScan: FnOnce() -> AttachmentFuture,
+    AttachmentFuture:
+        std::future::Future<Output = Result<Vec<aven_core::data_safety::IntegrityCheck>>>,
+{
+    let database_result = database_scan().await;
+    let attachment_result = attachment_scan().await;
+    (database_result, attachment_result)
+}
+
 fn add_integrity_check(
     section: &mut DoctorSection,
     check: &aven_core::data_safety::IntegrityCheck,
@@ -714,7 +733,7 @@ async fn add_runtime_database_sections(
     integrity: bool,
 ) {
     let reason = "database schema is unavailable, pending migration, or unsupported";
-    let mut deep_attachment_checks = None;
+    let mut integrity_blob_dir = None;
     let workspace_section = report.section("workspace", "Workspace");
     let mut resolved_workspace = None;
     if let Some(database) = database {
@@ -1061,33 +1080,31 @@ async fn add_runtime_database_sections(
                         "could not inspect attachment lifecycle",
                     ),
                 }
-                match attachment_integrity_checks(database, &blob_dir, integrity).await {
-                    Ok(checks) if !integrity => {
-                        for check in checks {
-                            attachment_section.check(
-                                stable_check_code("attachments", check.label),
-                                check.label,
-                                check.ok,
-                                check.value,
-                            );
+                if integrity {
+                    integrity_blob_dir = Some(blob_dir);
+                    attachment_section.info(
+                        "attachments.integrity_deferred",
+                        "integrity",
+                        "reported in the Integrity section",
+                    );
+                } else {
+                    match attachment_integrity_checks(database, &blob_dir, false).await {
+                        Ok(checks) => {
+                            for check in checks {
+                                attachment_section.check(
+                                    stable_check_code("attachments", check.label),
+                                    check.label,
+                                    check.ok,
+                                    check.value,
+                                );
+                            }
                         }
-                    }
-                    Ok(checks) => {
-                        deep_attachment_checks = Some(Ok(checks));
-                        attachment_section.info(
-                            "attachments.integrity_deferred",
-                            "integrity",
-                            "reported in the Integrity section",
-                        );
-                    }
-                    Err(error) => {
-                        deep_attachment_checks = Some(Err(error));
-                        attachment_section.check(
+                        Err(_) => attachment_section.check(
                             "attachments.integrity",
                             "integrity",
                             false,
                             "could not inspect attachments",
-                        );
+                        ),
                     }
                 }
             }
@@ -1114,19 +1131,45 @@ async fn add_runtime_database_sections(
     if integrity {
         let integrity_section = report.section("integrity", "Integrity");
         match (database, db_path) {
-            (Some(database), Some(_)) => match database_integrity_report(database).await {
-                Ok(integrity_report) => {
-                    integrity_section.check(
-                        "integrity.quick_check",
-                        "quick check",
-                        integrity_report.quick_check_ok,
-                        &integrity_report.quick_check_value,
-                    );
-                    for check in &integrity_report.checks {
-                        add_integrity_check(integrity_section, check);
+            (Some(database), Some(_)) => {
+                let (database_result, attachment_result) =
+                    if let Some(blob_dir) = integrity_blob_dir.as_deref() {
+                        run_integrity_scans(
+                            || database_integrity_report(database),
+                            || attachment_integrity_checks(database, blob_dir, true),
+                        )
+                        .await
+                    } else {
+                        (
+                            database_integrity_report(database).await,
+                            Err(anyhow::anyhow!("attachment path could not be resolved")),
+                        )
+                    };
+                let mut combined = match database_result {
+                    Ok(integrity_report) => {
+                        integrity_section.check(
+                            "integrity.quick_check",
+                            "quick check",
+                            integrity_report.quick_check_ok,
+                            &integrity_report.quick_check_value,
+                        );
+                        for check in &integrity_report.checks {
+                            add_integrity_check(integrity_section, check);
+                        }
+                        Some(integrity_report)
                     }
-                    let mut combined = integrity_report.clone();
-                    if let Some(Ok(checks)) = deep_attachment_checks.take() {
+                    Err(_) => {
+                        integrity_section.check(
+                            "integrity.failed",
+                            "result",
+                            false,
+                            "integrity checks could not complete; preserve the database and restore a known-good backup",
+                        );
+                        None
+                    }
+                };
+                match attachment_result {
+                    Ok(checks) => {
                         for check in &checks {
                             integrity_section.check(
                                 stable_check_code("integrity", check.label),
@@ -1135,19 +1178,28 @@ async fn add_runtime_database_sections(
                                 &check.value,
                             );
                         }
-                        combined.checks.extend(checks);
+                        if let Some(combined) = &mut combined {
+                            combined.checks.extend(checks);
+                        }
                     }
-                    if let Err(error) = ensure_integrity_ok(&combined) {
-                        integrity_section.check("integrity.result", "result", false, format!("{error:#}"));
-                    }
+                    Err(_) => integrity_section.check(
+                        "integrity.attachments",
+                        "attachment integrity",
+                        false,
+                        "could not inspect attachments",
+                    ),
                 }
-                Err(_) => integrity_section.check(
-                    "integrity.failed",
-                    "result",
-                    false,
-                    "integrity checks could not complete; preserve the database and restore a known-good backup",
-                ),
-            },
+                if let Some(combined) = combined
+                    && let Err(error) = ensure_integrity_ok(&combined)
+                {
+                    integrity_section.check(
+                        "integrity.result",
+                        "result",
+                        false,
+                        format!("{error:#}"),
+                    );
+                }
+            }
             _ => integrity_section.skipped("integrity.skipped", "result", reason),
         }
     }
@@ -1218,5 +1270,75 @@ fn add_daemon_section(report: &mut DoctorReport, config: &AppConfig) {
             false,
             "daemon status is unavailable; inspect the service manager directly",
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::{Cell, RefCell};
+    use std::fs;
+
+    use aven_core::data_safety::{IntegrityCheck, IntegrityReport};
+
+    use super::run_integrity_scans;
+
+    fn healthy_database_report() -> IntegrityReport {
+        IntegrityReport {
+            quick_check_ok: true,
+            quick_check_value: "ok".to_string(),
+            checks: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn integrity_scans_attachments_once() {
+        let attachment_calls = Cell::new(0);
+
+        let (_, attachment_result) = run_integrity_scans(
+            || async { Ok(healthy_database_report()) },
+            || async {
+                attachment_calls.set(attachment_calls.get() + 1);
+                Ok(Vec::new())
+            },
+        )
+        .await;
+
+        assert!(attachment_result.is_ok());
+        assert_eq!(attachment_calls.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn integrity_attachment_scan_observes_changes_after_database_work() {
+        let temp = tempfile::tempdir().expect("create temp directory");
+        let object = temp.path().join("attachment-object");
+        fs::write(&object, b"attachment").expect("write attachment object");
+        let events = RefCell::new(Vec::new());
+
+        let (_, attachment_result) = run_integrity_scans(
+            || async {
+                events.borrow_mut().push("database");
+                fs::remove_file(&object).expect("remove attachment during database work");
+                Ok(healthy_database_report())
+            },
+            || async {
+                events.borrow_mut().push("attachments");
+                Ok(vec![IntegrityCheck {
+                    label: "attachment objects",
+                    ok: object.exists(),
+                    value: if object.exists() {
+                        "all present".to_string()
+                    } else {
+                        "1 missing".to_string()
+                    },
+                }])
+            },
+        )
+        .await;
+
+        assert_eq!(&*events.borrow(), &["database", "attachments"]);
+        let checks = attachment_result.expect("attachment scan result");
+        assert_eq!(checks.len(), 1);
+        assert!(!checks[0].ok);
+        assert_eq!(checks[0].value, "1 missing");
     }
 }

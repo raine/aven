@@ -399,6 +399,7 @@ fn doctor_with_integrity_reports_passed_checks() {
     contains_all(
         &output,
         &[
+            "integrity          reported in the Integrity section",
             "Integrity",
             "quick check",
             "task projects",
