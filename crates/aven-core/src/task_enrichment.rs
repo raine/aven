@@ -15,6 +15,7 @@ use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 
 const SQLITE_BIND_CHUNK_SIZE: usize = 900;
 
+#[derive(Default)]
 pub struct TaskEnrichment {
     pub labels_by_task: HashMap<TaskId, Vec<String>>,
     pub notes_by_task: HashMap<TaskId, Vec<TaskNote>>,
@@ -59,6 +60,21 @@ pub(crate) async fn load_task_list_enrichment(
     display_refs: &DisplayRefContext,
 ) -> Result<TaskEnrichment> {
     load_task_enrichment_with_detail(conn, workspace_id, task_ids, display_refs, false, false).await
+}
+
+pub(crate) async fn load_task_bulk_update_enrichment(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    task_ids: &[TaskId],
+) -> Result<TaskEnrichment> {
+    Ok(TaskEnrichment {
+        labels_by_task: labels_for_tasks(conn, workspace_id, task_ids).await?,
+        metadata_by_task: crate::metadata::metadata_by_task_ids(conn, workspace_id, task_ids)
+            .await?,
+        recurrence_by_task: crate::query::task_recurrence_summaries(conn, workspace_id, task_ids)
+            .await?,
+        ..TaskEnrichment::default()
+    })
 }
 
 async fn load_task_enrichment_with_detail(

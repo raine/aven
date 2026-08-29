@@ -6,7 +6,8 @@ use sqlx::SqliteConnection;
 use crate::queue::queue_meta_on;
 use crate::refs::DisplayRefContext;
 use crate::task_enrichment::{
-    load_task_enrichment, load_task_enrichment_without_activity, load_task_list_enrichment,
+    load_task_bulk_update_enrichment, load_task_enrichment,
+    load_task_enrichment_without_activity, load_task_list_enrichment,
 };
 use crate::types::Task;
 
@@ -15,6 +16,7 @@ use super::TaskListItem;
 #[derive(Clone, Copy)]
 pub(super) enum TaskHydration {
     List,
+    BulkUpdate,
     Detail,
     DetailWithoutActivity,
 }
@@ -36,6 +38,9 @@ pub async fn build_task_list_items(
     let mut enrichment = match hydration {
         TaskHydration::List => {
             load_task_list_enrichment(conn, workspace_id, &task_ids, display_refs).await?
+        }
+        TaskHydration::BulkUpdate => {
+            load_task_bulk_update_enrichment(conn, workspace_id, &task_ids).await?
         }
         TaskHydration::Detail => {
             load_task_enrichment(conn, workspace_id, &task_ids, display_refs).await?

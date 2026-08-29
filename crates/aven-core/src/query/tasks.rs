@@ -119,6 +119,31 @@ pub async fn list_task_items_without_activity_with_display_refs(
     .await
 }
 
+pub async fn list_bulk_update_task_items_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    filters: TaskFilters,
+    mode: TaskQueryMode,
+    sort: TaskSort,
+    direction: SortDirection,
+) -> Result<Vec<TaskListItem>> {
+    let display_refs = DisplayRefContext::for_workspace(conn, workspace_id).await?;
+    query_task_items(
+        conn,
+        workspace_id,
+        &display_refs,
+        TaskListRead {
+            filters,
+            mode,
+            sort,
+            direction,
+            limit: None,
+            hydration: TaskHydration::BulkUpdate,
+        },
+    )
+    .await
+}
+
 pub async fn list_task_summary_items_in_workspace(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,

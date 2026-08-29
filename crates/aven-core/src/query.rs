@@ -52,8 +52,9 @@ pub(crate) use sidebar::sidebar_counts_for_scope_in_workspace;
 pub use sync_history::SyncHistoryStats;
 pub(crate) use sync_history::sync_history_stats;
 pub(crate) use tasks::{
-    list_task_items_in_workspace, list_task_items_with_display_refs,
-    list_task_items_without_activity_in_workspace, list_task_summary_items_in_workspace,
+    list_bulk_update_task_items_in_workspace, list_task_items_in_workspace,
+    list_task_items_with_display_refs, list_task_items_without_activity_in_workspace,
+    list_task_summary_items_in_workspace,
 };
 pub use types::RecentActionTarget;
 pub use types::{
@@ -304,6 +305,27 @@ impl Database {
         self.reconcile_recurrence_reports(workspace_id).await?;
         self.list_task_items_from_current_projection(workspace_id, filters, mode, sort, direction)
             .await
+    }
+
+    pub async fn list_bulk_update_task_items(
+        &self,
+        workspace_id: &WorkspaceId,
+        filters: TaskFilters,
+        mode: TaskQueryMode,
+        sort: TaskSort,
+        direction: SortDirection,
+    ) -> Result<Vec<TaskListItem>> {
+        self.reconcile_recurrence_reports(workspace_id).await?;
+        let mut conn = self.acquire_reader().await?;
+        list_bulk_update_task_items_in_workspace(
+            &mut conn,
+            workspace_id,
+            filters,
+            mode,
+            sort,
+            direction,
+        )
+        .await
     }
 
     /// Reads the persisted recurrence projection as-is.
