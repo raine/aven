@@ -275,6 +275,69 @@ fn direct_navigation_handles_partial_weeks_large_intervals_and_overflow() {
 }
 
 #[test]
+fn schedule_rank_and_seek_round_trip_across_frequencies() {
+    let cases = [
+        (
+            RecurrenceRule::every_n_days(3).unwrap(),
+            date(2026, 8, 10),
+            400,
+        ),
+        (
+            RecurrenceRule::every_n_weeks_on(3, [Weekday::Mon, Weekday::Thu]).unwrap(),
+            date(2026, 8, 12),
+            120,
+        ),
+        (
+            RecurrenceRule::every_n_months(3).unwrap(),
+            date(2027, 1, 31),
+            80,
+        ),
+        (
+            RecurrenceRule::every_n_years(2).unwrap(),
+            date(2028, 2, 29),
+            40,
+        ),
+    ];
+    for (rule, start_on, count) in cases {
+        for rank in 0..count {
+            let slot = super::schedule::slot_at_rank(&rule, start_on, rank).unwrap();
+            assert_eq!(
+                super::schedule::slot_rank(&rule, start_on, slot),
+                Some(rank),
+                "rank={rank} start_on={start_on} slot={slot} frequency={:?}",
+                rule.frequency()
+            );
+            assert_eq!(
+                super::schedule::slot_count_before(&rule, start_on, slot),
+                Some(rank)
+            );
+            assert!(
+                super::schedule::slot_count_before(&rule, start_on, slot.succ_opt().unwrap())
+                    .unwrap()
+                    > rank
+            );
+        }
+    }
+}
+
+#[test]
+fn schedule_rank_handles_partial_week_anchor() {
+    let rule = RecurrenceRule::every_n_weeks_on(2, [Weekday::Mon, Weekday::Thu]).unwrap();
+    let start_on = date(2026, 7, 15);
+    assert_eq!(
+        (0..4)
+            .map(|rank| super::schedule::slot_at_rank(&rule, start_on, rank).unwrap())
+            .collect::<Vec<_>>(),
+        [
+            date(2026, 7, 16),
+            date(2026, 7, 27),
+            date(2026, 7, 30),
+            date(2026, 8, 10)
+        ]
+    );
+}
+
+#[test]
 fn monthly_iteration_clamps_to_each_month_without_drifting() {
     let monthly = schedule(
         RecurrenceRule::monthly(),

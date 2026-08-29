@@ -219,17 +219,6 @@ pub enum RecurrenceHistoryKind {
     Paused,
 }
 
-impl RecurrenceHistoryKind {
-    pub(crate) const fn order(self) -> u8 {
-        match self {
-            Self::Completed => 0,
-            Self::Skipped => 1,
-            Self::Missed => 2,
-            Self::Paused => 3,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecurrenceHistoryEntry {
     pub kind: RecurrenceHistoryKind,
@@ -241,15 +230,6 @@ pub struct RecurrenceHistoryEntry {
     pub openable: bool,
     pub archived_projection: bool,
     pub resolved_at: Option<String>,
-}
-
-impl RecurrenceHistoryEntry {
-    pub(crate) fn sort_key(&self) -> &str {
-        self.slot_on
-            .as_deref()
-            .or(self.interval_started_at.as_deref())
-            .unwrap_or("")
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

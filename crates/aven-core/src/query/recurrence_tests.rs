@@ -543,6 +543,36 @@ async fn recurrence_history_pages_preserve_metadata_and_boundaries() {
 }
 
 #[tokio::test]
+async fn history_pagination_seeks_over_an_ancient_schedule() {
+    let (_temp, database, workspace) = setup().await;
+    let mut long_draft = draft("ancient history", 1);
+    long_draft.schedule.start_on = NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
+    let created = database
+        .create_recurrence_series(
+            &workspace,
+            CreateRecurrenceSeriesParams::new(long_draft).at(at(24, 12)),
+        )
+        .await
+        .unwrap();
+
+    let history = database
+        .recurrence_history_at(&workspace.id, &created.series.id, at(24, 12), 0, 2)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        history
+            .items
+            .iter()
+            .filter_map(|entry| entry.slot_on.as_deref())
+            .collect::<Vec<_>>(),
+        ["2026-07-23", "2026-07-22"]
+    );
+    assert!(history.total > 40_000);
+    assert!(history.has_more);
+}
+
+#[tokio::test]
 async fn history_includes_lattice_slots_before_series_creation() {
     let (_temp, database, workspace) = setup().await;
     let created = database

@@ -1,5 +1,5 @@
 use crate::ids::{TaskId, WorkspaceId};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, bail};
 use sqlx::SqliteConnection;
@@ -68,6 +68,43 @@ impl DisplayRefContext {
         workspace_id: &WorkspaceId,
     ) -> Result<Self> {
         Self::load(conn, std::slice::from_ref(workspace_id)).await
+    }
+
+    pub(crate) async fn for_task_ids(
+        conn: &mut SqliteConnection,
+        workspace_id: &WorkspaceId,
+        task_ids: &[TaskId],
+    ) -> Result<Self> {
+        let mut ids = task_ids.iter().cloned().collect::<HashSet<_>>();
+        for task_id in task_ids {
+            if let Some(previous) = sqlx::query_scalar::<_, TaskId>(
+                "SELECT id FROM tasks
+                 WHERE workspace_id = ? AND id < ? ORDER BY id DESC LIMIT 1",
+            )
+            .bind(workspace_id)
+            .bind(task_id)
+            .fetch_optional(&mut *conn)
+            .await?
+            {
+                ids.insert(previous);
+            }
+            if let Some(next) = sqlx::query_scalar::<_, TaskId>(
+                "SELECT id FROM tasks
+                 WHERE workspace_id = ? AND id > ? ORDER BY id LIMIT 1",
+            )
+            .bind(workspace_id)
+            .bind(task_id)
+            .fetch_optional(&mut *conn)
+            .await?
+            {
+                ids.insert(next);
+            }
+        }
+        let mut ids = ids.into_iter().collect::<Vec<_>>();
+        ids.sort();
+        Ok(Self {
+            task_ids_by_workspace: HashMap::from([(workspace_id.clone(), ids)]),
+        })
     }
 
     async fn load(conn: &mut SqliteConnection, workspace_ids: &[WorkspaceId]) -> Result<Self> {
