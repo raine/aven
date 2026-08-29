@@ -56,6 +56,10 @@ const READ_PATH_INDEXES: &[(&str, &str)] = &[
         "CREATE INDEX idx_changes_task_activity ON changes(entity_id, created_at DESC, local_seq DESC) WHERE entity_type = 'task'",
     ),
     (
+        "idx_changes_workspace_recent_actions",
+        "CREATE INDEX idx_changes_workspace_recent_actions ON changes(CASE WHEN json_valid(payload) THEN json_extract(payload, '$.workspace_id') END, created_at DESC, local_seq DESC)",
+    ),
+    (
         "idx_changes_recurrence_task_status_change",
         "CREATE INDEX idx_changes_recurrence_task_status_change ON changes(recurrence_task_status_change_id) WHERE recurrence_task_status_change_id IS NOT NULL",
     ),
@@ -491,10 +495,59 @@ fn common_read_filters_have_workspace_scoped_query_plans() {
         )
         .await;
 
+        let recent_actions_plan = "EXPLAIN QUERY PLAN
+             SELECT c.change_id
+             FROM changes c INDEXED BY idx_changes_workspace_recent_actions
+             LEFT JOIN changes resolving_status
+               ON resolving_status.recurrence_task_status_change_id = c.change_id
+             LEFT JOIN changes resolving_create
+               ON c.op_type = 'create_task'
+              AND resolving_create.recurrence_successor_task_id = c.entity_id
+             LEFT JOIN changes resolving_projection
+               ON c.op_type = 'project_recurrence_occurrence'
+              AND resolving_projection.recurrence_successor_task_id =
+                  json_extract(c.payload, '$.task_id')
+             WHERE CASE WHEN json_valid(c.payload)
+                        THEN json_extract(c.payload, '$.workspace_id') END = ?
+               AND resolving_status.rowid IS NULL
+               AND resolving_create.rowid IS NULL
+               AND resolving_projection.rowid IS NULL
+             ORDER BY c.created_at DESC, c.local_seq DESC
+             LIMIT 80";
+        assert_plan_uses_search_without_temp_sort(
+            &mut conn,
+            recent_actions_plan,
+            &["0000000000000000"],
+            "c",
+            "idx_changes_workspace_recent_actions",
+        )
+        .await;
+        assert_plan_contains(
+            &mut conn,
+            recent_actions_plan,
+            &["0000000000000000"],
+            "SEARCH resolving_status USING INDEX idx_changes_recurrence_task_status_change",
+        )
+        .await;
+        assert_plan_contains(
+            &mut conn,
+            recent_actions_plan,
+            &["0000000000000000"],
+            "SEARCH resolving_create USING INDEX idx_changes_recurrence_successor_task",
+        )
+        .await;
+        assert_plan_contains(
+            &mut conn,
+            recent_actions_plan,
+            &["0000000000000000"],
+            "SEARCH resolving_projection USING INDEX idx_changes_recurrence_successor_task",
+        )
+        .await;
+
         assert_plan_uses_alias(
             &mut conn,
             "EXPLAIN QUERY PLAN
-             SELECT candidate.rowid FROM changes candidate
+             SELECT candidate.rowid FROM changes candidate INDEXED BY idx_changes_task_activity
              WHERE candidate.entity_type = 'task'
                AND candidate.entity_id = ?
                AND json_extract(candidate.payload, '$.workspace_id') = ?
@@ -509,7 +562,7 @@ fn common_read_filters_have_workspace_scoped_query_plans() {
         assert_plan_contains(
             &mut conn,
             "EXPLAIN QUERY PLAN
-             SELECT candidate.rowid FROM changes candidate
+             SELECT candidate.rowid FROM changes candidate INDEXED BY idx_changes_task_activity
              WHERE candidate.entity_type = 'task'
                AND candidate.entity_id = ?
                AND json_extract(candidate.payload, '$.workspace_id') = ?

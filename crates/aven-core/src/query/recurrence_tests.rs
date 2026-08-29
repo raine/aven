@@ -724,6 +724,37 @@ async fn refs_and_recent_actions_resolve_and_group_successor_projection() {
     .await;
     let successor = resolved.successor.unwrap();
     let mut conn = database.acquire_writer().await.unwrap();
+    let status_change_id: String = sqlx::query_scalar(
+        "SELECT json_extract(payload, '$.task_status_change_id')
+         FROM changes
+         WHERE entity_type = 'recurrence_series'
+           AND entity_id = ?
+           AND op_type = 'resolve_recurrence_occurrence'",
+    )
+    .bind(&created.series.id)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+    let successor_create_id: String = sqlx::query_scalar(
+        "SELECT change_id FROM changes
+         WHERE entity_type = 'task' AND entity_id = ? AND op_type = 'create_task'",
+    )
+    .bind(&successor.id)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+    let successor_projection_id: String = sqlx::query_scalar(
+        "SELECT change_id FROM changes
+         WHERE entity_type = 'recurrence_series'
+           AND entity_id = ?
+           AND op_type = 'project_recurrence_occurrence'
+           AND json_extract(payload, '$.task_id') = ?",
+    )
+    .bind(&created.series.id)
+    .bind(&successor.id)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
     let actions = super::super::recent_actions::list_recent_actions_in_workspace(
         &mut conn,
         &workspace.id,
@@ -740,10 +771,17 @@ async fn refs_and_recent_actions_resolve_and_group_successor_projection() {
         Some(created.series_ref.as_str())
     );
     assert_eq!(resolution.grouped_change_count, 4);
-    assert!(!actions.iter().any(|item| {
-        item.entity_id == successor.id.as_str()
-            && item.op_type == crate::change_log::op_type::CREATE_TASK
-    }));
+    for suppressed_change_id in [
+        status_change_id,
+        successor_create_id,
+        successor_projection_id,
+    ] {
+        assert!(
+            !actions
+                .iter()
+                .any(|item| item.change_id == suppressed_change_id)
+        );
+    }
 }
 
 #[tokio::test]

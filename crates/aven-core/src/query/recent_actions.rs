@@ -27,7 +27,16 @@ pub async fn list_recent_actions_in_workspace(
                 p.key AS project_key, p.name AS project_name, p.prefix AS project_prefix,
                 rs.id AS recurrence_series_id, rs.title AS recurrence_series_title,
                 related.id AS related_task_id, related_project.prefix AS related_project_prefix
-         FROM changes c
+         FROM changes c INDEXED BY idx_changes_workspace_recent_actions
+         LEFT JOIN changes resolving_status
+           ON resolving_status.recurrence_task_status_change_id = c.change_id
+         LEFT JOIN changes resolving_create
+           ON c.op_type = 'create_task'
+          AND resolving_create.recurrence_successor_task_id = c.entity_id
+         LEFT JOIN changes resolving_projection
+           ON c.op_type = 'project_recurrence_occurrence'
+          AND resolving_projection.recurrence_successor_task_id =
+              json_extract(c.payload, '$.task_id')
          LEFT JOIN tasks t
            ON c.entity_type = 'task'
           AND t.workspace_id = ?
@@ -56,20 +65,11 @@ pub async fn list_recent_actions_in_workspace(
          LEFT JOIN projects related_project
            ON related_project.workspace_id = ?
           AND related_project.id = related.project_id
-         WHERE json_extract(c.payload, '$.workspace_id') = ?
-           AND NOT EXISTS (
-             SELECT 1 FROM changes resolving
-             WHERE resolving.entity_type = 'recurrence_series'
-               AND resolving.op_type = 'resolve_recurrence_occurrence'
-               AND (
-                 json_extract(resolving.payload, '$.task_status_change_id') = c.change_id
-                 OR (c.op_type = 'create_task'
-                     AND json_extract(resolving.payload, '$.successor_task_id') = c.entity_id)
-                 OR (c.op_type = 'project_recurrence_occurrence'
-                     AND json_extract(resolving.payload, '$.successor_task_id') =
-                         json_extract(c.payload, '$.task_id'))
-               )
-           )
+         WHERE CASE WHEN json_valid(c.payload)
+                    THEN json_extract(c.payload, '$.workspace_id') END = ?
+           AND resolving_status.rowid IS NULL
+           AND resolving_create.rowid IS NULL
+           AND resolving_projection.rowid IS NULL
            AND (? IS NULL
                 OR p.key = ?
                 OR json_extract(c.payload, '$.project_key') = ?)
@@ -125,7 +125,7 @@ pub(crate) async fn task_activity_for_tasks_in_workspace(
                  JOIN changes c
                    ON c.rowid IN (
                    SELECT candidate.rowid
-                   FROM changes candidate
+                   FROM changes candidate INDEXED BY idx_changes_task_activity
                    WHERE candidate.entity_type = 'task'
                      AND candidate.entity_id = r.task_id
                      AND json_extract(candidate.payload, '$.workspace_id') = ",
@@ -157,7 +157,7 @@ pub(crate) async fn task_activity_for_tasks_in_workspace(
         query.push(
             " AND c.rowid = (
                    SELECT driver.rowid
-                   FROM changes driver
+                   FROM changes driver INDEXED BY idx_changes_task_activity
                    WHERE driver.entity_type = 'task'
                      AND driver.entity_id = r.task_id
                      AND json_extract(driver.payload, '$.workspace_id') = ",
@@ -736,6 +736,76 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[tokio::test]
+    async fn recent_actions_limit_is_applied_to_ordered_visible_changes() {
+        let (_temp, mut conn) = crate::test_support::test_conn().await;
+        let workspace = crate::test_support::ensure_default_workspace(&mut conn)
+            .await
+            .unwrap();
+        let project = crate::test_support::resolve_or_create_project_in_workspace(
+            &mut conn,
+            &workspace.id,
+            "App",
+        )
+        .await
+        .unwrap();
+        let task = crate::test_support::create_task(
+            &mut conn,
+            &workspace,
+            crate::operations::TaskDraft {
+                title: "recent actions task".to_string(),
+                description: String::new(),
+                project: Some(project.key),
+                status: "todo".to_string(),
+                priority: "none".to_string(),
+                source: crate::choices::TaskSource::Tui,
+                labels: Vec::new(),
+                metadata: Vec::new(),
+                available_at: None,
+                due_on: None,
+                is_epic: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        for index in 0..=RECENT_ACTION_LIMIT {
+            crate::db::insert_change(
+                &mut conn,
+                "task",
+                &task.task.id,
+                Some("title"),
+                op_type::SET_FIELD,
+                json!({
+                    "workspace_id": workspace.id,
+                    "value": format!("title {index}")
+                }),
+                None,
+            )
+            .await
+            .unwrap();
+        }
+
+        let actions = list_recent_actions_in_workspace(&mut conn, &workspace.id, None)
+            .await
+            .unwrap();
+
+        assert_eq!(actions.len(), RECENT_ACTION_LIMIT as usize);
+        assert_eq!(
+            actions.first().and_then(|item| item.detail.as_deref()),
+            Some("title 80")
+        );
+        assert_eq!(
+            actions.last().and_then(|item| item.detail.as_deref()),
+            Some("title 1")
+        );
+        assert!(
+            !actions
+                .iter()
+                .any(|item| item.detail.as_deref() == Some("title 0"))
+        );
+    }
 
     #[tokio::test]
     async fn task_activity_is_scoped_and_bounded_per_task() {
