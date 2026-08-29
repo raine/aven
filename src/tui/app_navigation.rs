@@ -25,11 +25,9 @@ impl App {
         match self.list.focus() {
             Focus::Tasks => {
                 let next = if self.store.view_state.is_columns() {
-                    crate::tui::columns::ColumnBoard::new(
-                        &self.store.task_columns,
-                        &self.store.tasks,
-                    )
-                    .move_vertical(self.list.selected_task(), delta)
+                    self.store
+                        .column_board()
+                        .move_vertical(self.list.selected_task(), delta)
                 } else if self.store.view_state.query == crate::tui::store::TaskQuery::Epics {
                     let current = self
                         .list
@@ -69,11 +67,10 @@ impl App {
         match self.list.focus() {
             Focus::Tasks => {
                 if self.store.view_state.is_columns() {
-                    let next = crate::tui::columns::ColumnBoard::new(
-                        &self.store.task_columns,
-                        &self.store.tasks,
-                    )
-                    .edge(self.list.selected_task(), last);
+                    let next = self
+                        .store
+                        .column_board()
+                        .edge(self.list.selected_task(), last);
                     self.list.select_task(next);
                 } else if self.store.view_state.query == crate::tui::store::TaskQuery::Epics {
                     let row_count = crate::tui::ui::task_visual_row_count(&self.store);
@@ -130,9 +127,10 @@ impl App {
 
     pub(super) fn move_left(&mut self) {
         if self.list.focus() == Focus::Tasks && self.store.view_state.is_columns() {
-            let next =
-                crate::tui::columns::ColumnBoard::new(&self.store.task_columns, &self.store.tasks)
-                    .move_horizontal(self.list.selected_task(), -1);
+            let next = self
+                .store
+                .column_board()
+                .move_horizontal(self.list.selected_task(), -1);
             if next.is_some() {
                 self.list.select_task(next);
                 return;
@@ -157,9 +155,10 @@ impl App {
             return Ok(());
         }
         if self.list.focus() == Focus::Tasks && self.store.view_state.is_columns() {
-            let next =
-                crate::tui::columns::ColumnBoard::new(&self.store.task_columns, &self.store.tasks)
-                    .move_horizontal(self.list.selected_task(), 1);
+            let next = self
+                .store
+                .column_board()
+                .move_horizontal(self.list.selected_task(), 1);
             if next.is_some() {
                 self.list.select_task(next);
             }
@@ -167,10 +166,7 @@ impl App {
         }
         self.list.focus_tasks();
         if self.store.view_state.is_columns() && self.list.selected_task().is_none() {
-            self.list.select_task(
-                crate::tui::columns::ColumnBoard::new(&self.store.task_columns, &self.store.tasks)
-                    .first(),
-            );
+            self.list.select_task(self.store.column_board().first());
         }
         self.overlay = None;
         Ok(())

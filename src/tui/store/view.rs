@@ -452,7 +452,7 @@ impl TuiStore {
 
     fn first_visible_selection(&self) -> Option<usize> {
         if self.view_state.is_columns() {
-            return crate::tui::columns::ColumnBoard::new(&self.task_columns, &self.tasks).first();
+            return self.column_board().first();
         }
         match self.view_state.query {
             TaskQuery::Epics => self.epic_selection_at_or_near_visual_row(0),
@@ -464,8 +464,7 @@ impl TuiStore {
         if self.view_state.is_columns() {
             return match position {
                 MainRowPosition::Column { column, row } => {
-                    crate::tui::columns::ColumnBoard::new(&self.task_columns, &self.tasks)
-                        .selection_at_or_near(*column, *row)
+                    self.column_board().selection_at_or_near(*column, *row)
                 }
                 _ => None,
             };

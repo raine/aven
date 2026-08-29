@@ -497,13 +497,11 @@ impl App {
                     self.list.cancel_column_drag();
                     self.show_detail(0);
                 } else if self.store.view_state.is_columns()
-                    && let Some(origin_lane) =
-                        self.store.tasks.get(hit.task_index).and_then(|item| {
-                            crate::tui::columns::lane_index_for_status(
-                                &self.store.task_columns,
-                                item.task.status,
-                            )
-                        })
+                    && let Some(origin_lane) = self
+                        .store
+                        .column_board()
+                        .position(hit.task_index)
+                        .map(|(lane, _)| lane)
                 {
                     self.list.begin_column_drag(
                         hit.task_id,
@@ -880,7 +878,8 @@ impl App {
         }
 
         let next = if self.store.view_state.is_columns() {
-            crate::tui::columns::ColumnBoard::new(&self.store.task_columns, &self.store.tasks)
+            self.store
+                .column_board()
                 .move_vertical_bounded(self.list.selected_task(), delta)
         } else {
             next_index(

@@ -32,7 +32,7 @@ async fn constructor_applies_supplied_configuration_to_every_owner() {
     .await
     .unwrap();
 
-    assert_eq!(app.store.task_columns[0].name, "Configured");
+    assert_eq!(app.store.task_columns()[0].name, "Configured");
     assert_eq!(
         app.store.config().agent.task_intake.command.as_deref(),
         Some("configured-intake")

@@ -374,7 +374,6 @@ impl App {
         self.custom_command_planning.blob_dir =
             crate::config::resolve_blob_dir(self.store.database_path(), &config).ok();
         self.store.set_config(config.clone());
-        self.store.task_columns = config.tui.columns.clone();
         self.inline_image_backend = active_backend_from_env(config.local.inline_images);
         self.update
             .set_automatic_checks(config.update.automatic_checks);
@@ -649,9 +648,7 @@ impl App {
             _ => MainRowIdentity::Task(self.store.selected_task(Some(selected))?.task.id.clone()),
         };
         let position = if self.store.view_state.is_columns() {
-            let (column, row) =
-                crate::tui::columns::ColumnBoard::new(&self.store.task_columns, &self.store.tasks)
-                    .position(selected)?;
+            let (column, row) = self.store.column_board().position(selected)?;
             MainRowPosition::Column { column, row }
         } else if self.store.view_state.query == TaskQuery::Epics {
             MainRowPosition::EpicVisualRow(crate::tui::ui::task_visual_row(&self.store, selected)?)

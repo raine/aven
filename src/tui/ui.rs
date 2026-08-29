@@ -49,7 +49,7 @@ use self::shortcuts::{
 use self::sidebar::{render_sidebar, render_sidebar_overlay};
 use self::task_list::render_tasks;
 pub(crate) use self::task_list::{
-    task_index_at_visual_row, task_visual_row, task_visual_row_count,
+    TaskListView, task_index_at_visual_row, task_visual_row, task_visual_row_count,
 };
 use self::toast::render_toast;
 

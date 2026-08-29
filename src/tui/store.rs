@@ -22,6 +22,7 @@ mod workspaces;
 #[cfg(test)]
 mod tests;
 
+use std::cell::OnceCell;
 use std::ops::{Deref, DerefMut};
 use std::time::Instant;
 
@@ -54,6 +55,8 @@ use crate::query::{
     ProjectListItem, RecurrenceSeriesDetail, RecurrenceSeriesListItem, SidebarCounts,
     TaskItemHydration, TaskListItem,
 };
+use crate::tui::columns::ColumnBoard;
+use crate::tui::ui::TaskListView;
 use crate::workspaces::Workspace;
 
 // The summary row owns task identity, visibility, ordering, conflict, and recurrence fields.
@@ -76,7 +79,8 @@ pub(crate) struct TuiStore {
     projection: TuiProjection,
     activity_hydrated_task: Option<crate::ids::TaskId>,
     activity_failed_task: Option<crate::ids::TaskId>,
-    pub(crate) task_columns: Vec<crate::config::TaskColumnConfig>,
+    task_columns: Vec<crate::config::TaskColumnConfig>,
+    derived: DerivedTaskProjections,
     pub(crate) columns_preview_visible: bool,
     pub(crate) db_stats: TuiDatabaseStats,
     refresh_health: RefreshHealth,
@@ -84,6 +88,12 @@ pub(crate) struct TuiStore {
     fail_next_refresh: Option<RefreshFailureStage>,
     #[cfg(test)]
     _test_database_dir: Option<std::sync::Arc<tempfile::TempDir>>,
+}
+
+#[derive(Default)]
+struct DerivedTaskProjections {
+    task_list: OnceCell<TaskListView>,
+    columns: OnceCell<ColumnBoard>,
 }
 
 struct RefreshRetainedState {
@@ -155,6 +165,7 @@ impl Deref for TuiStore {
 
 impl DerefMut for TuiStore {
     fn deref_mut(&mut self) -> &mut Self::Target {
+        self.derived = DerivedTaskProjections::default();
         &mut self.projection
     }
 }
@@ -202,6 +213,7 @@ impl RefreshRetainedState {
             activity_hydrated_task: None,
             activity_failed_task: None,
             task_columns: self.task_columns,
+            derived: DerivedTaskProjections::default(),
             columns_preview_visible: self.columns_preview_visible,
             db_stats: self.db_stats,
             refresh_health: self.refresh_health,
@@ -261,6 +273,7 @@ impl TuiStore {
             activity_hydrated_task: None,
             activity_failed_task: None,
             task_columns,
+            derived: DerivedTaskProjections::default(),
             columns_preview_visible: true,
             db_stats: TuiDatabaseStats::default(),
             refresh_health: RefreshHealth::Healthy,
@@ -279,7 +292,34 @@ impl TuiStore {
     }
 
     pub(crate) fn set_config(&mut self, config: AppConfig) {
+        let task_columns = config.tui.columns.clone();
         self.app_config = config;
+        self.set_task_columns(task_columns);
+    }
+
+    pub(crate) fn task_columns(&self) -> &[crate::config::TaskColumnConfig] {
+        &self.task_columns
+    }
+
+    pub(crate) fn set_task_columns(&mut self, columns: Vec<crate::config::TaskColumnConfig>) {
+        self.task_columns = columns;
+        self.derived = DerivedTaskProjections::default();
+    }
+
+    pub(crate) fn task_list_view(&self) -> &TaskListView {
+        self.derived.task_list.get_or_init(|| {
+            TaskListView::from_tasks(
+                self.view_state.render_mode(),
+                &self.tasks,
+                &self.view_state.expanded_epic_ids,
+            )
+        })
+    }
+
+    pub(crate) fn column_board(&self) -> &ColumnBoard {
+        self.derived
+            .columns
+            .get_or_init(|| ColumnBoard::new(&self.task_columns, &self.tasks))
     }
 
     pub(crate) fn database(&self) -> Database {
@@ -555,7 +595,7 @@ impl TuiStore {
         {
             replacement.fail_next_refresh = fail_next_refresh;
         }
-        let result = match replacement
+        let mut result = match replacement
             .refresh_in_place(restore, recurrence_detail_id.as_ref())
             .await
         {
@@ -571,6 +611,7 @@ impl TuiStore {
             .map(|undo| undo.entry_id.clone())
             .filter(|id| Some(id) != previous_undo_entry_id.as_ref());
         replacement.refresh_health = RefreshHealth::Healthy;
+        result.selected = replacement.restored_main_selection(restore);
         #[cfg(test)]
         {
             replacement.fail_next_refresh = None;
@@ -684,7 +725,7 @@ impl TuiStore {
         self.rebuild_sidebar();
         self.last_refresh = Instant::now();
         Ok(ScopeRefreshResult {
-            selected: self.restored_main_selection(restore),
+            selected: None,
             fallback_scope,
         })
     }

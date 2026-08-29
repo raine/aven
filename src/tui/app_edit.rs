@@ -141,7 +141,7 @@ impl App {
         let mut changes = Vec::with_capacity(selection.len());
         for item in selection.targets() {
             let Some(status) = crate::tui::columns::adjacent_lane_entry_status(
-                &self.store.task_columns,
+                self.store.task_columns(),
                 item.task.status,
                 delta,
             ) else {
@@ -180,7 +180,7 @@ impl App {
     pub(super) fn open_move_to_column_picker(&mut self, selection: TaskSelection) {
         let selected_lane = if selection.is_single() {
             crate::tui::columns::lane_index_for_status(
-                &self.store.task_columns,
+                self.store.task_columns(),
                 selection.targets()[0].task.status,
             )
         } else {
@@ -188,12 +188,12 @@ impl App {
         };
         let items = self
             .store
-            .task_columns
+            .task_columns()
             .iter()
             .enumerate()
             .filter_map(|(index, column)| {
                 let status =
-                    crate::tui::columns::lane_entry_status(&self.store.task_columns, index)?;
+                    crate::tui::columns::lane_entry_status(self.store.task_columns(), index)?;
                 let label = if column.name.eq_ignore_ascii_case(status.as_str()) {
                     column.name.clone()
                 } else {
@@ -234,7 +234,7 @@ impl App {
         target_lane: usize,
     ) -> Result<()> {
         let Some(target_status) =
-            crate::tui::columns::lane_entry_status(&self.store.task_columns, target_lane)
+            crate::tui::columns::lane_entry_status(self.store.task_columns(), target_lane)
         else {
             self.set_warning("column is unavailable");
             return Ok(());
@@ -273,7 +273,7 @@ impl App {
     ) -> Result<()> {
         let target_status = TaskStatus::parse(&status)?;
         let Some(target_lane) =
-            crate::tui::columns::lane_index_for_status(&self.store.task_columns, target_status)
+            crate::tui::columns::lane_index_for_status(self.store.task_columns(), target_status)
         else {
             self.set_warning("column is unavailable");
             return Ok(());
@@ -283,7 +283,7 @@ impl App {
             .iter()
             .filter_map(|item| {
                 let source_lane = crate::tui::columns::lane_index_for_status(
-                    &self.store.task_columns,
+                    self.store.task_columns(),
                     item.task.status,
                 )?;
                 (source_lane != target_lane).then(|| (item.task.id.clone(), target_status))

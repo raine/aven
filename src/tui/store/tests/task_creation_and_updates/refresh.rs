@@ -133,10 +133,10 @@ async fn refresh_replacement_preserves_retained_state_without_cloning_projection
     let mut store = test_store().await;
     create_selected_task(&mut store, "Hydrated projection").await;
     store.app_config.sync.server_url = Some("https://sync.example.test".to_string());
-    store.task_columns = vec![crate::config::TaskColumnConfig {
+    store.set_task_columns(vec![crate::config::TaskColumnConfig {
         name: "Work".to_string(),
         statuses: vec!["todo".to_string(), "active".to_string()],
-    }];
+    }]);
     store.columns_preview_visible = false;
     store.db_stats.total_tasks = 42;
     let database_dir = store._test_database_dir.as_ref().unwrap().clone();
@@ -148,8 +148,8 @@ async fn refresh_replacement_preserves_retained_state_without_cloning_projection
         store.config().sync.server_url.as_deref(),
         Some("https://sync.example.test")
     );
-    assert_eq!(store.task_columns.len(), 1);
-    assert_eq!(store.task_columns[0].name, "Work");
+    assert_eq!(store.task_columns().len(), 1);
+    assert_eq!(store.task_columns()[0].name, "Work");
     assert!(!store.columns_preview_visible);
     assert_eq!(store.db_stats.total_tasks, 42);
     assert!(std::sync::Arc::ptr_eq(
@@ -160,4 +160,27 @@ async fn refresh_replacement_preserves_retained_state_without_cloning_projection
         projection_clone_count.load(std::sync::atomic::Ordering::Relaxed),
         0
     );
+}
+
+#[tokio::test]
+async fn task_surface_projections_invalidate_after_task_and_column_changes() {
+    let mut store = test_store().await;
+    let _ = create_selected_task(&mut store, "Cached task").await;
+
+    assert!(store.task_list_view().row_count() > 0);
+    store.tasks.clear();
+    assert_eq!(store.task_list_view().row_count(), 0);
+
+    let _ = create_selected_task(&mut store, "Cached task again").await;
+    store.set_task_columns(vec![crate::config::TaskColumnConfig {
+        name: "Inbox".to_string(),
+        statuses: vec!["inbox".to_string()],
+    }]);
+    assert_eq!(store.column_board().columns[0].task_indices, [0, 1]);
+
+    store.set_task_columns(vec![crate::config::TaskColumnConfig {
+        name: "Todo".to_string(),
+        statuses: vec!["todo".to_string()],
+    }]);
+    assert!(store.column_board().columns[0].task_indices.is_empty());
 }

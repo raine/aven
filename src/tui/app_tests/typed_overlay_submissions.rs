@@ -333,7 +333,7 @@ async fn column_view_installs_custom_configuration() {
 
     app.set_config(config);
 
-    assert_eq!(app.store.task_columns[0].name, "Done");
+    assert_eq!(app.store.task_columns()[0].name, "Done");
 }
 
 #[tokio::test]

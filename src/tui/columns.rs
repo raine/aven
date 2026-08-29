@@ -1,16 +1,19 @@
+use std::collections::HashMap;
+
 use crate::choices::TaskStatus;
 use crate::config::TaskColumnConfig;
 use crate::query::TaskListItem;
 
 #[derive(Debug)]
-pub(crate) struct TaskColumn<'a> {
-    pub(crate) config: &'a TaskColumnConfig,
+pub(crate) struct TaskColumn {
+    pub(crate) config: TaskColumnConfig,
     pub(crate) task_indices: Vec<usize>,
 }
 
 #[derive(Debug)]
-pub(crate) struct ColumnBoard<'a> {
-    pub(crate) columns: Vec<TaskColumn<'a>>,
+pub(crate) struct ColumnBoard {
+    pub(crate) columns: Vec<TaskColumn>,
+    positions: Vec<Option<(usize, usize)>>,
 }
 
 pub(crate) fn lane_index_for_status(
@@ -49,38 +52,53 @@ pub(crate) fn adjacent_lane_entry_status(
     lane_entry_status(columns, target)
 }
 
-impl<'a> ColumnBoard<'a> {
-    pub(crate) fn new(columns: &'a [TaskColumnConfig], tasks: &[TaskListItem]) -> Self {
-        let columns = columns
-            .iter()
-            .map(|config| {
-                let task_indices = tasks
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, item)| {
-                        config
-                            .statuses
-                            .iter()
-                            .any(|status| status == item.task.status.as_str())
-                    })
-                    .map(|(index, _)| index)
-                    .collect::<Vec<_>>();
-                TaskColumn {
-                    config,
-                    task_indices,
+impl ColumnBoard {
+    pub(crate) fn new(columns: &[TaskColumnConfig], tasks: &[TaskListItem]) -> Self {
+        let mut lanes_by_status = HashMap::<&str, Vec<usize>>::new();
+        for (column_index, config) in columns.iter().enumerate() {
+            for status in &config.statuses {
+                let lanes = lanes_by_status.entry(status.as_str()).or_default();
+                if !lanes.contains(&column_index) {
+                    lanes.push(column_index);
                 }
+            }
+        }
+
+        let mut columns = columns
+            .iter()
+            .cloned()
+            .map(|config| TaskColumn {
+                config,
+                task_indices: Vec::new(),
             })
-            .collect();
-        Self { columns }
+            .collect::<Vec<_>>();
+        let mut positions = vec![None; tasks.len()];
+        for (task_index, item) in tasks.iter().enumerate() {
+            let Some(lane_indices) = lanes_by_status.get(item.task.status.as_str()) else {
+                continue;
+            };
+            for &column_index in lane_indices {
+                let row = columns[column_index].task_indices.len();
+                columns[column_index].task_indices.push(task_index);
+                if positions[task_index].is_none() {
+                    positions[task_index] = Some((column_index, row));
+                }
+            }
+        }
+        Self { columns, positions }
     }
 
     pub(crate) fn position(&self, task_index: usize) -> Option<(usize, usize)> {
-        self.columns.iter().enumerate().find_map(|(column, lane)| {
-            lane.task_indices
-                .iter()
-                .position(|index| *index == task_index)
-                .map(|row| (column, row))
-        })
+        self.positions.get(task_index).copied().flatten()
+    }
+
+    pub(crate) fn lane_entry_status(&self, column_index: usize) -> Option<TaskStatus> {
+        self.columns
+            .get(column_index)?
+            .config
+            .statuses
+            .first()
+            .and_then(|status| TaskStatus::parse(status).ok())
     }
 
     pub(crate) fn move_vertical(&self, selected: Option<usize>, delta: isize) -> Option<usize> {

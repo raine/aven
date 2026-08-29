@@ -76,7 +76,7 @@ pub(super) fn task_list_hit_in_view(
 ) -> Option<TaskListHitCandidate> {
     let viewport_rows = table_area.height.saturating_sub(1) as usize;
     let projection = TaskListProjection::from_view(
-        view.clone(),
+        view,
         table_state.offset(),
         table_state.selected(),
         viewport_rows,

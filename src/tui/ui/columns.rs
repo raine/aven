@@ -43,7 +43,7 @@ struct ColumnLayout {
 impl ColumnLayout {
     fn new(
         area: Rect,
-        board: &ColumnBoard<'_>,
+        board: &ColumnBoard,
         selected: Option<usize>,
         preview_visible: bool,
     ) -> Self {
@@ -130,7 +130,7 @@ impl ColumnLayout {
         })
     }
 
-    fn task_at(&self, board: &ColumnBoard<'_>, column: u16, row: u16) -> Option<(usize, u16)> {
+    fn task_at(&self, board: &ColumnBoard, column: u16, row: u16) -> Option<(usize, u16)> {
         self.lanes
             .iter()
             .enumerate()
@@ -197,14 +197,14 @@ pub(super) fn render_columns(
     interaction: ColumnInteraction<'_>,
 ) {
     frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
-    let board = ColumnBoard::new(&store.task_columns, &store.tasks);
+    let board = store.column_board();
     let board_has_tasks = board
         .columns
         .iter()
         .any(|column| !column.task_indices.is_empty());
     let layout = ColumnLayout::new(
         area,
-        &board,
+        board,
         table_state.selected(),
         store.columns_preview_visible && board_has_tasks,
     );
@@ -433,7 +433,7 @@ fn render_card_separator(
 
 fn render_lane_header(
     frame: &mut Frame,
-    column: &crate::tui::columns::TaskColumn<'_>,
+    column: &crate::tui::columns::TaskColumn,
     lane: &LaneLayout,
     active: bool,
     area: Rect,
@@ -622,10 +622,10 @@ pub(crate) fn column_lane_at_position(
     column: u16,
     row: u16,
 ) -> Option<usize> {
-    let board = ColumnBoard::new(&store.task_columns, &store.tasks);
+    let board = store.column_board();
     let layout = ColumnLayout::new(
         area,
-        &board,
+        board,
         table_state.selected(),
         store.columns_preview_visible,
     );
@@ -639,10 +639,10 @@ pub(crate) fn column_lane_body_at_position(
     column: u16,
     row: u16,
 ) -> Option<usize> {
-    let board = ColumnBoard::new(&store.task_columns, &store.tasks);
+    let board = store.column_board();
     let layout = ColumnLayout::new(
         area,
-        &board,
+        board,
         table_state.selected(),
         store.columns_preview_visible,
     );
@@ -656,14 +656,14 @@ pub(super) fn column_task_at_position(
     column: u16,
     row: u16,
 ) -> Option<TaskListHit> {
-    let board = ColumnBoard::new(&store.task_columns, &store.tasks);
+    let board = store.column_board();
     let layout = ColumnLayout::new(
         area,
-        &board,
+        board,
         table_state.selected(),
         store.columns_preview_visible,
     );
-    let (task_index, viewport_row) = layout.task_at(&board, column, row)?;
+    let (task_index, viewport_row) = layout.task_at(board, column, row)?;
     Some(TaskListHit {
         task_index,
         task_id: store.tasks.get(task_index)?.task.id.clone(),

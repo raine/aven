@@ -23,23 +23,24 @@ pub(super) enum TaskListRow {
     },
 }
 
-#[derive(Debug, Clone)]
-pub(super) struct TaskListView {
+#[derive(Debug)]
+pub(crate) struct TaskListView {
     pub(super) rows: Vec<TaskListRow>,
     pub(super) render_mode: TaskListRenderMode,
+    visual_rows: Vec<Option<usize>>,
 }
 
 #[derive(Debug)]
-pub(super) struct TaskListProjection {
-    pub(super) view: TaskListView,
+pub(super) struct TaskListProjection<'a> {
+    pub(super) view: &'a TaskListView,
     pub(super) selected_task: Option<usize>,
     pub(super) scroll: usize,
     pub(super) viewport_rows: usize,
 }
 
-impl TaskListProjection {
+impl<'a> TaskListProjection<'a> {
     pub(super) fn from_view(
-        view: TaskListView,
+        view: &'a TaskListView,
         offset: usize,
         selected_task: Option<usize>,
         viewport_rows: usize,
@@ -47,7 +48,7 @@ impl TaskListProjection {
         let selected_row = selected_task
             .map(|selected| view.visual_row(selected))
             .unwrap_or(0);
-        let scroll = task_list_scroll(offset, selected_row, &view, viewport_rows);
+        let scroll = task_list_scroll(offset, selected_row, view, viewport_rows);
         Self {
             view,
             selected_task,
@@ -57,12 +58,12 @@ impl TaskListProjection {
     }
 
     pub(super) fn from_table_state(
-        store: &TuiStore,
+        store: &'a TuiStore,
         table_state: &TableState,
         viewport_rows: usize,
     ) -> Self {
         Self::from_view(
-            TaskListView::new(store),
+            store.task_list_view(),
             table_state.offset(),
             table_state.selected(),
             viewport_rows,
@@ -70,7 +71,7 @@ impl TaskListProjection {
     }
 
     pub(super) fn visible_rows(&self) -> Vec<(usize, &TaskListRow)> {
-        task_list_visible_rows(&self.view, self.scroll, self.viewport_rows)
+        task_list_visible_rows(self.view, self.scroll, self.viewport_rows)
     }
 
     pub(super) fn row_count(&self) -> usize {
@@ -78,7 +79,7 @@ impl TaskListProjection {
     }
 
     pub(super) fn top_scroll(&self) -> usize {
-        task_list_top_scroll(&self.view)
+        task_list_top_scroll(self.view)
     }
 
     pub(super) fn commit_scroll(&self, table_state: &mut TableState) {
@@ -87,15 +88,7 @@ impl TaskListProjection {
 }
 
 impl TaskListView {
-    pub(super) fn new(store: &TuiStore) -> Self {
-        Self::from_tasks(
-            store.view_state.render_mode(),
-            &store.tasks,
-            &store.view_state.expanded_epic_ids,
-        )
-    }
-
-    pub(super) fn from_tasks(
+    pub(crate) fn from_tasks(
         render_mode: TaskListRenderMode,
         tasks: &[TaskListItem],
         expanded_epic_ids: &BTreeSet<crate::ids::TaskId>,
@@ -106,23 +99,38 @@ impl TaskListView {
             TaskListRenderMode::Flat => task_rows(tasks),
             TaskListRenderMode::Epics => epics_rows(tasks, expanded_epic_ids),
         };
-        Self { rows, render_mode }
+        let mut visual_rows = vec![None; tasks.len()];
+        for (visual_row, row) in rows.iter().enumerate() {
+            let task_index = match row {
+                TaskListRow::EpicChild { task_index, .. } | TaskListRow::Task { task_index } => {
+                    *task_index
+                }
+                TaskListRow::Group(_) => continue,
+            };
+            if let Some(slot) = visual_rows.get_mut(task_index) {
+                slot.get_or_insert(visual_row);
+            }
+        }
+        Self {
+            rows,
+            render_mode,
+            visual_rows,
+        }
     }
 
     pub(super) fn visual_row(&self, selected_task: usize) -> usize {
         self.visual_row_for(selected_task).unwrap_or(0)
     }
 
-    pub(super) fn visual_row_for(&self, selected_task: usize) -> Option<usize> {
-        self.rows.iter().position(|row| match row {
-            TaskListRow::EpicChild { task_index, .. } | TaskListRow::Task { task_index } => {
-                *task_index == selected_task
-            }
-            _ => false,
-        })
+    pub(crate) fn visual_row_for(&self, selected_task: usize) -> Option<usize> {
+        self.visual_rows.get(selected_task).copied().flatten()
     }
 
-    pub(super) fn task_index_at_visual_row(&self, visual_row: usize) -> Option<usize> {
+    pub(crate) fn row_count(&self) -> usize {
+        self.rows.len()
+    }
+
+    pub(crate) fn task_index_at_visual_row(&self, visual_row: usize) -> Option<usize> {
         match self.rows.get(visual_row)? {
             TaskListRow::EpicChild { task_index, .. } | TaskListRow::Task { task_index } => {
                 Some(*task_index)

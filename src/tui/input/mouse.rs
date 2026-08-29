@@ -96,9 +96,7 @@ pub(crate) fn route_task_surface(view: TaskSurfaceView<'_>, column: u16, row: u1
                     column,
                     row,
                 )
-                .and_then(|lane_index| {
-                    crate::tui::columns::lane_entry_status(&store.task_columns, lane_index)
-                })
+                .and_then(|lane_index| store.column_board().lane_entry_status(lane_index))
             })
             .flatten(),
         recent_action: (outside_sidebar && store.view_state.query == TaskQuery::RecentActions)

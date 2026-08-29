@@ -4,9 +4,8 @@ mod view_model;
 use std::collections::BTreeSet;
 
 use self::hit_test::{task_list_hit, task_list_hit_in_projection};
-use self::view_model::{
-    TaskGroupRow, TaskListProjection, TaskListRow, TaskListView, scrollbar_position,
-};
+pub(crate) use self::view_model::TaskListView;
+use self::view_model::{TaskGroupRow, TaskListProjection, TaskListRow, scrollbar_position};
 
 pub(crate) use self::hit_test::TaskListHit;
 
@@ -193,15 +192,15 @@ fn task_list_status_area(
 }
 
 pub(crate) fn task_visual_row(store: &TuiStore, task_index: usize) -> Option<usize> {
-    TaskListView::new(store).visual_row_for(task_index)
+    store.task_list_view().visual_row_for(task_index)
 }
 
 pub(crate) fn task_index_at_visual_row(store: &TuiStore, visual_row: usize) -> Option<usize> {
-    TaskListView::new(store).task_index_at_visual_row(visual_row)
+    store.task_list_view().task_index_at_visual_row(visual_row)
 }
 
 pub(crate) fn task_visual_row_count(store: &TuiStore) -> usize {
-    TaskListView::new(store).rows.len()
+    store.task_list_view().row_count()
 }
 
 pub(super) fn render_tasks(
@@ -2139,10 +2138,10 @@ mod tests {
         );
 
         store.tasks.push(task_list_item("Unassigned status"));
-        store.task_columns = vec![crate::config::TaskColumnConfig {
+        store.set_task_columns(vec![crate::config::TaskColumnConfig {
             name: "Inbox".to_string(),
             statuses: vec!["inbox".to_string()],
-        }];
+        }]);
         assert_eq!(
             column_board_empty_state(&store).reason,
             EmptyStateReason::ColumnConfiguration
