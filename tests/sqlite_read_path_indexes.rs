@@ -397,6 +397,7 @@ fn common_read_filters_have_workspace_scoped_query_plans() {
     runtime.block_on(async {
         let mut conn = open_db(&db).await;
         seed_plan_rows(&mut conn).await;
+        seed_activity_plan_rows(&mut conn).await;
         sqlx::query("ANALYZE").execute(&mut conn).await.expect("analyze");
 
         assert_plan_uses(
@@ -505,29 +506,58 @@ fn common_read_filters_have_workspace_scoped_query_plans() {
         )
         .await;
 
-        assert_plan_uses_alias(
+        assert_plan_contains(
             &mut conn,
             "EXPLAIN QUERY PLAN
-             SELECT 1 FROM changes resolving INDEXED BY idx_changes_recurrence_task_status_change
-             WHERE resolving.entity_type = 'recurrence_series'
-               AND resolving.op_type = 'resolve_recurrence_occurrence'
-               AND json_extract(resolving.payload, '$.task_status_change_id') = ?",
-            &["activity-change"],
-            "resolving",
-            "idx_changes_recurrence_task_status_change",
+             WITH resolved_recurrence_changes(status_change_id, successor_task_id) AS MATERIALIZED (
+                 SELECT json_extract(payload, '$.task_status_change_id'),
+                        json_extract(payload, '$.successor_task_id')
+                 FROM changes
+                 WHERE entity_type = 'recurrence_series'
+                   AND op_type = 'resolve_recurrence_occurrence'
+             )
+             SELECT candidate.rowid FROM changes candidate
+             WHERE candidate.entity_type = 'task'
+               AND candidate.entity_id = ?
+               AND json_extract(candidate.payload, '$.workspace_id') = ?
+               AND candidate.change_id NOT IN (
+                   SELECT status_change_id FROM resolved_recurrence_changes
+                   WHERE status_change_id IS NOT NULL
+               )
+               AND (candidate.op_type != 'create_task' OR candidate.entity_id NOT IN (
+                   SELECT successor_task_id FROM resolved_recurrence_changes
+                   WHERE successor_task_id IS NOT NULL
+               ))
+               AND (candidate.op_type != 'project_recurrence_occurrence'
+                    OR json_extract(candidate.payload, '$.task_id') IS NULL
+                    OR json_extract(candidate.payload, '$.task_id') NOT IN (
+                        SELECT successor_task_id FROM resolved_recurrence_changes
+                        WHERE successor_task_id IS NOT NULL
+                    ))
+             ORDER BY candidate.created_at DESC, candidate.local_seq DESC
+             LIMIT 8",
+            &["0000000000001001", "0000000000000000"],
+            "SEARCH candidate USING INDEX idx_changes_task_activity",
         )
         .await;
 
-        assert_plan_uses_alias(
+        assert_plan_contains(
             &mut conn,
             "EXPLAIN QUERY PLAN
-             SELECT 1 FROM changes resolving INDEXED BY idx_changes_recurrence_successor_task
-             WHERE resolving.entity_type = 'recurrence_series'
-               AND resolving.op_type = 'resolve_recurrence_occurrence'
-               AND json_extract(resolving.payload, '$.successor_task_id') = ?",
-            &["0000000000001001"],
-            "resolving",
-            "idx_changes_recurrence_successor_task",
+             WITH requested(task_id) AS (VALUES (?))
+             SELECT c.rowid
+             FROM requested r
+             JOIN changes c ON c.rowid IN (
+                 SELECT candidate.rowid
+                 FROM changes candidate
+                 WHERE candidate.entity_type = 'task'
+                   AND candidate.entity_id = r.task_id
+                   AND json_extract(candidate.payload, '$.workspace_id') = ?
+                 ORDER BY candidate.created_at DESC, candidate.local_seq DESC
+                 LIMIT 8
+             )",
+            &["0000000000001001", "0000000000000000"],
+            "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
         )
         .await;
     });
@@ -720,6 +750,24 @@ async fn seed_plan_rows(conn: &mut SqliteConnection) {
     .expect("insert conflict");
 }
 
+async fn seed_activity_plan_rows(conn: &mut SqliteConnection) {
+    for sequence in 0..1_000 {
+        sqlx::query(
+            "INSERT INTO changes(
+                 change_id, client_id, local_seq, entity_type, entity_id, field,
+                 op_type, payload, created_at
+             ) VALUES (?, 'client', ?, 'task', '0000000000001001', 'title',
+                       'set_field', '{\"workspace_id\":\"0000000000000000\"}', ?)",
+        )
+        .bind(format!("activity-change-{sequence}"))
+        .bind(sequence + 1)
+        .bind(format!("{sequence:04}"))
+        .execute(&mut *conn)
+        .await
+        .expect("insert activity change");
+    }
+}
+
 async fn assert_plan_uses(
     conn: &mut SqliteConnection,
     sql: &str,
@@ -805,6 +853,30 @@ async fn assert_plan_uses_alias(
         }),
         "expected {alias} to use {index_name}\n{}",
         details.join("\n")
+    );
+}
+
+async fn assert_plan_contains(
+    conn: &mut SqliteConnection,
+    sql: &str,
+    binds: &[&str],
+    expected: &str,
+) {
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+    for bind in binds {
+        query = query.bind(*bind);
+    }
+    let plan = query
+        .fetch_all(&mut *conn)
+        .await
+        .expect("explain query plan")
+        .iter()
+        .map(|row| row.get::<String, _>("detail"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        plan.contains(expected),
+        "expected plan to contain {expected}\n{plan}"
     );
 }
 

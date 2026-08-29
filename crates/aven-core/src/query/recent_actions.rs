@@ -108,7 +108,15 @@ pub(crate) async fn task_activity_for_tasks_in_workspace(
     let series_refs = super::recurrence::SeriesRefContext::load(conn, workspace_id).await?;
 
     for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
-        let mut query = QueryBuilder::<Sqlite>::new("WITH requested(task_id) AS (VALUES ");
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "WITH resolved_recurrence_changes(status_change_id, successor_task_id) AS MATERIALIZED (
+                 SELECT json_extract(payload, '$.task_status_change_id'),
+                        json_extract(payload, '$.successor_task_id')
+                 FROM changes
+                 WHERE entity_type = 'recurrence_series'
+                   AND op_type = 'resolve_recurrence_occurrence'
+             ), requested(task_id) AS (VALUES ",
+        );
         for (index, task_id) in chunk.iter().enumerate() {
             if index > 0 {
                 query.push(", ");
@@ -123,8 +131,7 @@ pub(crate) async fn task_activity_for_tasks_in_workspace(
                         c.payload, c.created_at, c.local_seq, c.server_seq
                  FROM requested r
                  JOIN changes c
-                   ON c.entity_type = 'task' AND c.entity_id = r.task_id
-                 WHERE c.rowid IN (
+                   ON c.rowid IN (
                    SELECT candidate.rowid
                    FROM changes candidate
                    WHERE candidate.entity_type = 'task'
@@ -248,31 +255,21 @@ pub(crate) async fn task_activity_for_tasks_in_workspace(
 }
 
 fn push_unsuppressed_task_change(query: &mut QueryBuilder<Sqlite>, alias: &str) {
-    query.push(" AND NOT EXISTS (");
-    query.push("SELECT 1 FROM changes resolving WHERE resolving.entity_type = ");
-    query.push("'recurrence_series' AND resolving.op_type = ");
-    query.push("'resolve_recurrence_occurrence' AND json_extract(resolving.payload, ");
-    query.push("'$.task_status_change_id') = ");
+    query.push(" AND ");
     query.push(alias);
-    query.push(".change_id)");
+    query.push(".change_id NOT IN (SELECT status_change_id FROM resolved_recurrence_changes WHERE status_change_id IS NOT NULL)");
     query.push(" AND (");
     query.push(alias);
-    query.push(".op_type != 'create_task' OR NOT EXISTS (");
-    query.push("SELECT 1 FROM changes resolving WHERE resolving.entity_type = ");
-    query.push("'recurrence_series' AND resolving.op_type = ");
-    query.push("'resolve_recurrence_occurrence' AND json_extract(resolving.payload, ");
-    query.push("'$.successor_task_id') = ");
+    query.push(".op_type != 'create_task' OR ");
     query.push(alias);
-    query.push(".entity_id))");
+    query.push(".entity_id NOT IN (SELECT successor_task_id FROM resolved_recurrence_changes WHERE successor_task_id IS NOT NULL))");
     query.push(" AND (");
     query.push(alias);
-    query.push(".op_type != 'project_recurrence_occurrence' OR NOT EXISTS (");
-    query.push("SELECT 1 FROM changes resolving WHERE resolving.entity_type = ");
-    query.push("'recurrence_series' AND resolving.op_type = ");
-    query.push("'resolve_recurrence_occurrence' AND json_extract(resolving.payload, ");
-    query.push("'$.successor_task_id') = json_extract(");
+    query.push(".op_type != 'project_recurrence_occurrence' OR json_extract(");
     query.push(alias);
-    query.push(".payload, '$.task_id')))");
+    query.push(".payload, '$.task_id') IS NULL OR json_extract(");
+    query.push(alias);
+    query.push(".payload, '$.task_id') NOT IN (SELECT successor_task_id FROM resolved_recurrence_changes WHERE successor_task_id IS NOT NULL))");
 }
 
 fn action_from_row(
