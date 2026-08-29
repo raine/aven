@@ -67,11 +67,85 @@ pub(crate) struct ConflictTarget {
 }
 
 use std::collections::BTreeSet;
+use std::ops::{Deref, DerefMut};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::query::{
     RecurrenceSeriesLifecycleFilter, RecurrenceSeriesListQuery, SortDirection, SyncHistoryStats,
-    TaskAvailabilityFilter, TaskFilters, TaskIdFilter, TaskQueryMode, TaskSort,
+    TaskAvailabilityFilter, TaskFilters, TaskIdFilter, TaskListItem, TaskQueryMode, TaskSort,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DetailRevision(u64);
+
+impl DetailRevision {
+    pub(crate) const UNCACHED: Self = Self(0);
+
+    pub(crate) fn next() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TaskProjection {
+    items: Vec<TaskListItem>,
+    revision: DetailRevision,
+}
+
+impl Default for TaskProjection {
+    fn default() -> Self {
+        Self {
+            items: Vec::new(),
+            revision: DetailRevision::UNCACHED,
+        }
+    }
+}
+
+impl From<Vec<TaskListItem>> for TaskProjection {
+    fn from(items: Vec<TaskListItem>) -> Self {
+        Self {
+            items,
+            revision: DetailRevision::next(),
+        }
+    }
+}
+
+impl Deref for TaskProjection {
+    type Target = Vec<TaskListItem>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.items
+    }
+}
+
+impl DerefMut for TaskProjection {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.revision = DetailRevision::next();
+        &mut self.items
+    }
+}
+
+impl TaskProjection {
+    pub(crate) fn revision(&self) -> DetailRevision {
+        self.revision
+    }
+}
+
+#[cfg(test)]
+mod task_projection_tests {
+    use super::{DetailRevision, TaskProjection};
+
+    #[test]
+    fn mutable_access_advances_detail_revision() {
+        let mut projection = TaskProjection::default();
+        assert_eq!(projection.revision(), DetailRevision::UNCACHED);
+
+        projection.clear();
+
+        assert_ne!(projection.revision(), DetailRevision::UNCACHED);
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TaskScope {

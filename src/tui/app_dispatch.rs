@@ -1410,8 +1410,8 @@ impl App {
                 return Ok(());
             }
 
-            let task = self.store.selected_task(self.list.selected_task());
-            let scroll = if let Some(document) = self.detail_document_for_query(terminal_size) {
+            let document = self.detail_document_for_query(terminal_size);
+            let scroll = if let Some(document) = document {
                 handle_detail_scroll_key_with_cap(
                     key,
                     scroll,
@@ -1419,6 +1419,7 @@ impl App {
                     document.scroll_cap(),
                 )
             } else {
+                let task = self.store.selected_task(self.list.selected_task());
                 handle_detail_scroll_key_with_images(
                     key,
                     scroll,

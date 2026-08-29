@@ -283,7 +283,7 @@ impl TuiStore {
             return None;
         }
         let selected_task_id = self.tasks.get(selected?)?.task.id.clone();
-        for item in &self.tasks {
+        for item in self.tasks.iter() {
             if !self.view_state.expanded_epic_ids.contains(&item.task.id) {
                 continue;
             }

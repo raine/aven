@@ -42,11 +42,12 @@ pub(crate) use recurrence::recurrence_draft;
 pub(crate) use task_commands::{PriorityMutation, TaskDateField, TaskTextField};
 pub(crate) use task_creation::task_creation_committed;
 pub(crate) use types::{
-    ClosedTaskVisibility, ConflictTarget, MainRowAnchor, MainRowIdentity, MainRowPosition,
-    MainRowSelection, MutationMessage, RecurringSeriesViewState, SelectionRestore, SidebarEntry,
-    SidebarEntryTarget, SyncStatusCheck, TaskFilterModifiers, TaskLayout, TaskListRenderMode,
-    TaskOrder, TaskProjectionOrigin, TaskQuery, TaskScope, TaskScopeTarget, TaskViewState,
-    TuiDatabaseStats, TuiSyncStatus, UndoPresentation, mutation_committed,
+    ClosedTaskVisibility, ConflictTarget, DetailRevision, MainRowAnchor, MainRowIdentity,
+    MainRowPosition, MainRowSelection, MutationMessage, RecurringSeriesViewState, SelectionRestore,
+    SidebarEntry, SidebarEntryTarget, SyncStatusCheck, TaskFilterModifiers, TaskLayout,
+    TaskListRenderMode, TaskOrder, TaskProjection, TaskProjectionOrigin, TaskQuery, TaskScope,
+    TaskScopeTarget, TaskViewState, TuiDatabaseStats, TuiSyncStatus, UndoPresentation,
+    mutation_committed,
 };
 #[cfg(test)]
 pub(crate) use types::{DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts};
@@ -109,7 +110,7 @@ struct RefreshRetainedState {
 
 #[cfg_attr(test, derive(Clone))]
 pub(crate) struct TuiProjection {
-    pub(crate) tasks: Vec<TaskListItem>,
+    pub(crate) tasks: TaskProjection,
     pub(crate) recurrence_series: Vec<RecurrenceSeriesListItem>,
     pub(crate) recurrence_detail: Option<RecurrenceSeriesDetail>,
     pub(crate) recent_actions: Vec<RecentActionItem>,
@@ -252,7 +253,7 @@ impl TuiStore {
             database,
             app_config,
             projection: TuiProjection {
-                tasks: Vec::new(),
+                tasks: TaskProjection::default(),
                 recurrence_series: Vec::new(),
                 recurrence_detail: None,
                 recent_actions: Vec::new(),
@@ -464,7 +465,7 @@ impl TuiStore {
         self.activity_hydrated_task = Some(item.task.id.clone());
         self.activity_failed_task = None;
         self.view_state = TaskViewState::for_exact_task(item.task.id.clone());
-        self.tasks = vec![item];
+        self.tasks = vec![item].into();
     }
 
     pub(crate) fn selected_task(&self, selected: Option<usize>) -> Option<&TaskListItem> {
@@ -622,7 +623,7 @@ impl TuiStore {
 
     fn fresh_projection(active_workspace: Workspace, view_state: TaskViewState) -> TuiProjection {
         TuiProjection {
-            tasks: Vec::new(),
+            tasks: TaskProjection::default(),
             recurrence_series: Vec::new(),
             recurrence_detail: None,
             recent_actions: Vec::new(),
@@ -712,7 +713,8 @@ impl TuiStore {
                     self.view_state.sort_direction(),
                     None,
                 )
-                .await?;
+                .await?
+                .into();
             if self.view_state.query == TaskQuery::Conflicts {
                 self.append_recurrence_conflict_tasks().await?;
             }

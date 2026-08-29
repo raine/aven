@@ -7,6 +7,7 @@ use ratatui::widgets::{
     Block, Borders, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
 use std::collections::{BTreeSet, HashSet};
+use std::rc::Rc;
 
 use super::input::clipped_input_line;
 use super::scroll::{clamp_scroll_start, scrollbar_thumb_position};
@@ -23,7 +24,7 @@ use crate::tui::markdown::{
     render_markdown_without_link_urls,
 };
 use crate::tui::overlay::TextInputView;
-use crate::tui::store::TuiStore;
+use crate::tui::store::{DetailRevision, TuiStore};
 use crate::tui::text::truncate_width;
 use crate::tui::theme::{
     self, ACCENT, BG, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, INVERSE_FG, ORANGE, RED, YELLOW,
@@ -101,6 +102,7 @@ struct DetailContentLayout {
 pub(crate) struct DetailRenderContext<'a> {
     pub(crate) terminal_area: Rect,
     pub(crate) scroll: u16,
+    pub(crate) detail_revision: DetailRevision,
     pub(crate) inline_title_editor: Option<&'a TextInputView>,
     pub(crate) active_target: Option<&'a DetailTargetId>,
     pub(crate) hovered_target: Option<&'a DetailTargetId>,
@@ -125,8 +127,8 @@ struct DetailContentRenderModel {
     content_height: usize,
     body_start: usize,
     scrollbar_position: usize,
-    image_placements: Vec<DetailBodyImagePlacement>,
-    interactive_rows: Vec<DetailInteractiveRow>,
+    image_placements: Rc<Vec<DetailBodyImagePlacement>>,
+    interactive_rows: Rc<Vec<DetailInteractiveRow>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,8 +203,8 @@ struct EpicChildCounts {
 #[derive(Debug, Clone)]
 struct DetailBodyDocument {
     lines: Vec<Line<'static>>,
-    image_placements: Vec<DetailBodyImagePlacement>,
-    interactive_rows: Vec<DetailInteractiveRow>,
+    image_placements: Rc<Vec<DetailBodyImagePlacement>>,
+    interactive_rows: Rc<Vec<DetailInteractiveRow>>,
     hyperlinks: Vec<DetailHyperlink>,
     selectable_description: Vec<SelectableLine>,
     selectable_text: String,
@@ -244,19 +246,28 @@ struct DetailSelectableDocument {
 }
 
 #[derive(Debug)]
-pub(crate) struct DetailDocument {
-    source: TaskListItem,
-    epic_children: Vec<DetailEpicChild>,
-    layout: DetailContentLayout,
-    scroll: u16,
+struct DetailBodyGeometry {
+    task_id: crate::ids::TaskId,
+    detail_revision: DetailRevision,
+    content_width: usize,
     expanded_sections: BTreeSet<DetailSection>,
     inline_images: Option<DetailInlineImageContext>,
     pending_attachments: Vec<crate::tui::attachment_controller::PendingAttachmentView>,
+    removed_epic_child: Option<crate::tui::app::RemovedEpicChild>,
+    epic_children: Vec<DetailEpicChild>,
+    body: DetailBodyDocument,
+    selectable: DetailSelectableDocument,
+    #[cfg(test)]
+    geometry_id: usize,
+}
+
+#[derive(Debug)]
+pub(crate) struct DetailDocument {
+    geometry: Rc<DetailBodyGeometry>,
+    layout: DetailContentLayout,
+    scroll: u16,
     inline_title_editor: Option<(String, usize)>,
     model: DetailContentRenderModel,
-    hyperlinks: Vec<DetailHyperlink>,
-    selectable: DetailSelectableDocument,
-    section_body_indices: Vec<usize>,
     #[cfg(test)]
     projection_id: usize,
 }
@@ -322,57 +333,122 @@ fn detail_epic_children(
     children
 }
 
-impl DetailDocument {
-    pub(crate) fn build(item: &TaskListItem, context: &DetailRenderContext<'_>) -> Self {
-        let layout = context.content_layout();
+impl DetailBodyGeometry {
+    fn build(item: &TaskListItem, context: &DetailRenderContext<'_>) -> Self {
+        let content_width = context.content_layout().content_area.width as usize;
         let inline_images = context.inline_images.cloned().map(|mut images| {
             images.focused_attachment_id = None;
             images
         });
         let epic_children = detail_epic_children(item, context.removed_epic_child);
+        let body = build_detail_body_document(
+            item,
+            &epic_children,
+            content_width,
+            context.expanded_sections,
+            inline_images.as_ref(),
+            context.pending_attachments,
+        );
+        let selectable = detail_selectable_document_from_body(item, content_width, true, &body);
+        Self {
+            task_id: item.task.id.clone(),
+            detail_revision: context.detail_revision,
+            content_width,
+            expanded_sections: context.expanded_sections.clone(),
+            inline_images,
+            pending_attachments: context.pending_attachments.to_vec(),
+            removed_epic_child: context.removed_epic_child.cloned(),
+            epic_children,
+            body,
+            selectable,
+            #[cfg(test)]
+            geometry_id: next_detail_geometry_id(),
+        }
+    }
+}
+
+impl DetailDocument {
+    pub(crate) fn build(item: &TaskListItem, context: &DetailRenderContext<'_>) -> Self {
+        let geometry = Rc::new(DetailBodyGeometry::build(item, context));
+        Self::from_geometry(geometry, item, context)
+    }
+
+    fn from_geometry(
+        geometry: Rc<DetailBodyGeometry>,
+        item: &TaskListItem,
+        context: &DetailRenderContext<'_>,
+    ) -> Self {
+        let layout = context.content_layout();
         let sticky_lines = detail_header_options(
             item,
             layout.content_area.width as usize,
             context.inline_title_editor,
         );
-        let body = build_detail_body_document(
-            item,
-            &epic_children,
-            layout.content_area.width as usize,
-            context.expanded_sections,
-            inline_images.as_ref(),
-            context.pending_attachments,
-        );
         let model = project_detail_content_model(
             sticky_lines,
-            &body,
+            &geometry.body,
             layout.content_area.height as usize,
             context.scroll,
         );
-        let selectable = detail_selectable_document_from_body(
-            item,
-            layout.content_area.width as usize,
-            context.inline_title_editor.is_none(),
-            &body,
-        );
         Self {
-            source: item.clone(),
-            epic_children,
+            geometry,
             layout,
             scroll: context.scroll,
-            expanded_sections: context.expanded_sections.clone(),
-            inline_images,
-            pending_attachments: context.pending_attachments.to_vec(),
             inline_title_editor: context
                 .inline_title_editor
                 .map(|editor| (editor.input.clone(), editor.cursor)),
             model,
-            hyperlinks: body.hyperlinks,
-            selectable,
-            section_body_indices: body.section_body_indices,
             #[cfg(test)]
             projection_id: next_detail_projection_id(),
         }
+    }
+
+    fn reproject(&self, item: &TaskListItem, context: &DetailRenderContext<'_>) -> Self {
+        Self::from_geometry(Rc::clone(&self.geometry), item, context)
+    }
+
+    pub(crate) fn reuse_or_build(
+        cached: Option<&Rc<Self>>,
+        item: &TaskListItem,
+        context: &DetailRenderContext<'_>,
+    ) -> Rc<Self> {
+        let Some(cached) = cached else {
+            return Rc::new(Self::build(item, context));
+        };
+        if !cached.geometry_matches(item, context) {
+            return Rc::new(Self::build(item, context));
+        }
+        if cached.view_matches(context) {
+            Rc::clone(cached)
+        } else {
+            Rc::new(cached.reproject(item, context))
+        }
+    }
+
+    fn geometry_matches(&self, item: &TaskListItem, context: &DetailRenderContext<'_>) -> bool {
+        let layout = context.content_layout();
+        let geometry = &self.geometry;
+        geometry.task_id == item.task.id
+            && geometry.detail_revision == context.detail_revision
+            && geometry.content_width == layout.content_area.width as usize
+            && geometry.expanded_sections == *context.expanded_sections
+            && detail_inline_image_geometry_matches(
+                geometry.inline_images.as_ref(),
+                context.inline_images,
+            )
+            && geometry.pending_attachments == context.pending_attachments
+            && geometry.removed_epic_child.as_ref() == context.removed_epic_child
+    }
+
+    fn view_matches(&self, context: &DetailRenderContext<'_>) -> bool {
+        self.layout == context.content_layout()
+            && self.scroll == context.scroll
+            && self.inline_title_editor.as_ref()
+                == context
+                    .inline_title_editor
+                    .map(|editor| (&editor.input, editor.cursor))
+                    .map(|(input, cursor)| (input.clone(), cursor))
+                    .as_ref()
     }
 
     fn render(
@@ -406,40 +482,36 @@ impl DetailDocument {
             })
         {
             apply_detail_selection_from_document(
-                &self.selectable,
+                &self.geometry.selectable,
                 selection,
                 &mut model.sticky_lines,
                 &mut model.lines,
                 model.body_start,
             );
         }
-        render_detail_content_from_model(frame, self.layout.content_area, &model, widgets);
+        render_detail_content_from_model(frame, self.layout.content_area, model, widgets);
         if self.layout.metadata_area.width > 0 {
-            render_detail_metadata(frame, item, &self.epic_children, self.layout.metadata_area);
+            render_detail_metadata(
+                frame,
+                item,
+                &self.geometry.epic_children,
+                self.layout.metadata_area,
+            );
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn matches_frame(
         &self,
         item: &TaskListItem,
         context: &DetailRenderContext<'_>,
     ) -> bool {
-        self.source == *item
-            && self.epic_children == detail_epic_children(item, context.removed_epic_child)
-            && self.layout == context.content_layout()
-            && self.scroll == context.scroll
-            && self.expanded_sections == *context.expanded_sections
-            && detail_inline_image_geometry_matches(
-                self.inline_images.as_ref(),
-                context.inline_images,
-            )
-            && self.pending_attachments == context.pending_attachments
-            && self.inline_title_editor.as_ref()
-                == context
-                    .inline_title_editor
-                    .map(|editor| (&editor.input, editor.cursor))
-                    .map(|(input, cursor)| (input.clone(), cursor))
-                    .as_ref()
+        self.geometry_matches(item, context) && self.view_matches(context)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn geometry_id(&self) -> usize {
+        self.geometry.geometry_id
     }
 
     fn sticky_height(&self) -> usize {
@@ -461,11 +533,12 @@ impl DetailDocument {
 
     #[cfg(test)]
     pub(crate) fn interactive_rows(&self) -> &[DetailInteractiveRow] {
-        &self.model.interactive_rows
+        self.geometry.body.interactive_rows.as_slice()
     }
 
     pub(crate) fn focus_targets(&self, item: &TaskListItem) -> Vec<DetailTargetId> {
-        self.model
+        self.geometry
+            .body
             .interactive_rows
             .iter()
             .map(|row| &row.target)
@@ -474,12 +547,13 @@ impl DetailDocument {
                     section: DetailSection::EpicChildren,
                     task_id,
                 } => self
+                    .geometry
                     .epic_children
                     .iter()
                     .any(|child| &child.link.task_id == task_id),
                 DetailTargetId::Expand {
                     section: DetailSection::EpicChildren,
-                } => self.epic_children.len() > 5,
+                } => self.geometry.epic_children.len() > 5,
                 _ => detail_target_is_actionable(item, target),
             })
             .cloned()
@@ -508,7 +582,9 @@ impl DetailDocument {
             .body_start
             .saturating_add(row.saturating_sub(body_y) as usize);
         let local_column = column.saturating_sub(self.layout.content_area.x) as usize;
-        self.hyperlinks
+        self.geometry
+            .body
+            .hyperlinks
             .iter()
             .find(|link| {
                 link.line_index == line_index
@@ -547,7 +623,8 @@ impl DetailDocument {
             .model
             .body_start
             .saturating_add(row.saturating_sub(body_y) as usize);
-        self.model
+        self.geometry
+            .body
             .interactive_rows
             .iter()
             .find(|target| {
@@ -593,7 +670,8 @@ impl DetailDocument {
     pub(crate) fn target_scroll_target(&self, target: &DetailTargetId, scroll: u16) -> Option<u16> {
         let visible = self.body_visible();
         let row = self
-            .model
+            .geometry
+            .body
             .interactive_rows
             .iter()
             .find(|row| &row.target == target)?;
@@ -619,6 +697,8 @@ impl DetailDocument {
             .content_height
             .saturating_sub(self.body_visible());
         let mut targets = self
+            .geometry
+            .body
             .section_body_indices
             .iter()
             .map(|index| (*index).min(scroll_cap) as u16)
@@ -661,7 +741,7 @@ impl DetailDocument {
             return None;
         }
         let title_row = row.saturating_sub(self.layout.content_area.y) as usize;
-        let selectable = if let Some(title) = self.selectable.title.get(title_row) {
+        let selectable = if let Some(title) = self.geometry.selectable.title.get(title_row) {
             title
         } else {
             let body_y = self
@@ -676,7 +756,8 @@ impl DetailDocument {
                 .model
                 .body_start
                 .saturating_add(row.saturating_sub(body_y) as usize);
-            self.selectable
+            self.geometry
+                .selectable
                 .description
                 .iter()
                 .find(|line| line.body_index == Some(body_index))?
@@ -702,10 +783,11 @@ impl DetailDocument {
     }
 
     pub(crate) fn selected_text(&self, selection: &DetailTextSelection) -> Option<String> {
-        if selection.task_id != self.source.task.id {
+        if selection.task_id != self.geometry.task_id {
             return None;
         }
-        self.selectable
+        self.geometry
+            .selectable
             .text
             .get(selection.range())
             .map(str::to_string)
@@ -725,18 +807,21 @@ fn next_detail_projection_id() -> usize {
     NEXT_ID.fetch_add(1, Ordering::Relaxed)
 }
 
+#[cfg(test)]
+fn next_detail_geometry_id() -> usize {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+    NEXT_ID.fetch_add(1, Ordering::Relaxed)
+}
+
 fn render_detail(
     frame: &mut Frame,
     item: &TaskListItem,
     context: &DetailRenderContext<'_>,
     widgets: &mut WidgetState,
 ) {
-    let document = widgets
-        .detail_document
-        .as_ref()
-        .filter(|document| document.matches_frame(item, context))
-        .cloned()
-        .unwrap_or_else(|| std::rc::Rc::new(DetailDocument::build(item, context)));
+    let document = DetailDocument::reuse_or_build(widgets.detail_document.as_ref(), item, context);
     document.render(frame, item, context, widgets);
     widgets.detail_document = Some(document);
 }
@@ -751,6 +836,7 @@ fn detail_query_context<'a>(
     DetailRenderContext {
         terminal_area: Rect::new(0, 0, terminal_width, terminal_height),
         scroll,
+        detail_revision: DetailRevision::UNCACHED,
         inline_title_editor: None,
         active_target: None,
         hovered_target: None,
@@ -1004,7 +1090,8 @@ fn project_detail_content_model(
     let sticky_height = sticky_lines.len().min(area_height);
     let visible = area_height.saturating_sub(sticky_height);
     let start = clamp_scroll_start(scroll, content_height, visible.max(1));
-    let lines = body.lines.iter().skip(start).cloned().collect();
+    let end = start.saturating_add(visible).min(body.lines.len());
+    let lines = body.lines[start.min(body.lines.len())..end].to_vec();
     let scrollbar_position = if content_height > visible {
         scrollbar_thumb_position(start, content_height, visible.max(1))
     } else {
@@ -1016,8 +1103,8 @@ fn project_detail_content_model(
         content_height,
         body_start: start,
         scrollbar_position,
-        image_placements: body.image_placements.clone(),
-        interactive_rows: body.interactive_rows.clone(),
+        image_placements: Rc::clone(&body.image_placements),
+        interactive_rows: Rc::clone(&body.interactive_rows),
     }
 }
 
@@ -1043,10 +1130,14 @@ fn interactive_row_lines_mut<'a>(
         .interactive_rows
         .iter()
         .find(|row| &row.target == target)?;
-    let start = row.line_index.saturating_sub(model.body_start);
-    let end = start.saturating_add(row.height).min(model.lines.len());
-    let lines_len = model.lines.len();
-    Some(&mut model.lines[start.min(lines_len)..end])
+    let visible_start = model.body_start;
+    let visible_end = visible_start.saturating_add(model.lines.len());
+    let row_start = row.line_index.max(visible_start);
+    let row_end = row.line_index.saturating_add(row.height).min(visible_end);
+    if row_start >= row_end {
+        return None;
+    }
+    Some(&mut model.lines[row_start - visible_start..row_end - visible_start])
 }
 
 fn apply_active_style(model: &mut DetailContentRenderModel, target: &DetailTargetId) {
@@ -1143,7 +1234,7 @@ fn visible_detail_image_rect(
 fn render_detail_content_from_model(
     frame: &mut Frame,
     area: Rect,
-    model: &DetailContentRenderModel,
+    model: DetailContentRenderModel,
     widgets: &mut WidgetState,
 ) {
     let visible = area.height as usize;
@@ -1153,12 +1244,27 @@ fn render_detail_content_from_model(
         Constraint::Fill(1),
     ])
     .areas(area);
+    let images = model
+        .image_placements
+        .iter()
+        .filter_map(|placement| {
+            let image = visible_detail_image_rect(body_area, &model, placement)?;
+            Some(DetailInlineImagePlacement {
+                attachment_id: placement.attachment_id.clone(),
+                source_hash: placement.source_hash.clone(),
+                x: image.x,
+                y: image.y,
+                width: image.width,
+                height: image.height,
+            })
+        })
+        .collect::<Vec<_>>();
     frame.render_widget(
-        Paragraph::new(Text::from(model.sticky_lines.clone())).style(Style::new().fg(FG).bg(BG)),
+        Paragraph::new(Text::from(model.sticky_lines)).style(Style::new().fg(FG).bg(BG)),
         sticky_area,
     );
     frame.render_widget(
-        Paragraph::new(Text::from(model.lines.clone())).style(Style::new().fg(FG).bg(BG)),
+        Paragraph::new(Text::from(model.lines)).style(Style::new().fg(FG).bg(BG)),
         body_area,
     );
     let body_visible = body_area.height as usize;
@@ -1173,19 +1279,7 @@ fn render_detail_content_from_model(
                 .viewport_content_length(body_visible.max(1)),
         );
     }
-    widgets
-        .inline_image_placements
-        .extend(model.image_placements.iter().filter_map(|placement| {
-            let image = visible_detail_image_rect(body_area, model, placement)?;
-            Some(DetailInlineImagePlacement {
-                attachment_id: placement.attachment_id.clone(),
-                source_hash: placement.source_hash.clone(),
-                x: image.x,
-                y: image.y,
-                width: image.width,
-                height: image.height,
-            })
-        }));
+    widgets.inline_image_placements.extend(images);
 }
 
 #[cfg(test)]
@@ -1275,9 +1369,9 @@ fn detail_body_lines_with_pending_images(
         .collect();
     (
         model.lines,
-        body.image_placements,
+        body.image_placements.to_vec(),
         attachment_placements,
-        body.interactive_rows,
+        body.interactive_rows.to_vec(),
     )
 }
 
@@ -1456,8 +1550,8 @@ fn build_detail_body_document(
 
     DetailBodyDocument {
         lines,
-        image_placements,
-        interactive_rows,
+        image_placements: Rc::new(image_placements),
+        interactive_rows: Rc::new(interactive_rows),
         hyperlinks,
         selectable_description,
         selectable_text,
@@ -1533,7 +1627,14 @@ fn apply_detail_selection_from_document(
     for (line, selectable) in sticky_lines.iter_mut().zip(&document.title) {
         highlight_selectable_line(line, selectable, &range, 0);
     }
-    for selectable in &document.description {
+    let body_end = body_start.saturating_add(body_lines.len());
+    let first = document
+        .description
+        .partition_point(|line| line.body_index.is_some_and(|index| index < body_start));
+    let last = document.description[first..]
+        .partition_point(|line| line.body_index.is_some_and(|index| index < body_end))
+        + first;
+    for selectable in &document.description[first..last] {
         if let Some(line) = selectable
             .body_index
             .and_then(|index| index.checked_sub(body_start))
@@ -3499,6 +3600,7 @@ pub(super) fn render_detail_underlay(
         let context = DetailRenderContext {
             terminal_area: frame.area(),
             scroll,
+            detail_revision: store.tasks.revision(),
             inline_title_editor,
             active_target,
             hovered_target,
@@ -3711,7 +3813,7 @@ mod tests {
                 format!("│ {}", line.text)
             );
         }
-        for row in &body.interactive_rows {
+        for row in body.interactive_rows.iter() {
             assert!(row.line_index < body.lines.len());
             assert!(row.line_index + row.height <= body.lines.len());
         }
@@ -4158,7 +4260,12 @@ mod tests {
             .map(Line::to_string)
             .collect::<Vec<_>>()
             .join("\n");
-        let link = document.hyperlinks.first().expect("description link");
+        let link = document
+            .geometry
+            .body
+            .hyperlinks
+            .first()
+            .expect("description link");
         let row = document
             .layout
             .content_area
@@ -4176,6 +4283,8 @@ mod tests {
         assert!(!rendered.contains("https://"));
         assert_eq!(
             document
+                .geometry
+                .body
                 .hyperlinks
                 .iter()
                 .map(|link| link.url.as_str())
@@ -4731,7 +4840,11 @@ mod tests {
             detail_header_options(&item, 60, None).len()
         );
         assert_eq!(model.sticky_lines[0].to_string(), "Fix token refresh race");
-        assert_eq!(model.lines.len(), model.content_height.saturating_sub(4));
+        let visible = 5usize.saturating_sub(model.sticky_lines.len().min(5));
+        assert_eq!(
+            model.lines.len(),
+            model.content_height.saturating_sub(4).min(visible)
+        );
         assert!(model.scrollbar_position > 0);
     }
 
@@ -5057,8 +5170,9 @@ mod tests {
                 line_index: 3,
                 width: 30,
                 height: 12,
-            }],
-            interactive_rows: Vec::new(),
+            }]
+            .into(),
+            interactive_rows: Vec::new().into(),
         };
         let mut widgets = WidgetState::default();
         let backend = TestBackend::new(20, 5);
@@ -5069,7 +5183,7 @@ mod tests {
                 render_detail_content_from_model(
                     frame,
                     Rect::new(0, 0, 20, 5),
-                    &model,
+                    model,
                     &mut widgets,
                 );
             })
@@ -5251,6 +5365,7 @@ mod tests {
                 let render_context = DetailRenderContext {
                     terminal_area: frame.area(),
                     scroll: 0,
+                    detail_revision: DetailRevision::UNCACHED,
                     inline_title_editor: None,
                     active_target: None,
                     hovered_target: None,
@@ -5293,6 +5408,37 @@ mod tests {
     }
 
     #[test]
+    fn cached_geometry_reuses_body_across_scroll_positions() {
+        let mut item = detail_test_item();
+        item.task.description = (0..100)
+            .map(|index| format!("line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let expanded_sections = BTreeSet::new();
+        let base = DetailRenderContext {
+            terminal_area: Rect::new(0, 0, 80, 12),
+            scroll: 0,
+            detail_revision: DetailRevision::UNCACHED,
+            inline_title_editor: None,
+            active_target: None,
+            hovered_target: None,
+            expanded_sections: &expanded_sections,
+            selection: None,
+            inline_images: None,
+            pending_attachments: &[],
+            removed_epic_child: None,
+        };
+        let first = Rc::new(DetailDocument::build(&item, &base));
+        let scrolled = DetailRenderContext { scroll: 1, ..base };
+        let second = DetailDocument::reuse_or_build(Some(&first), &item, &scrolled);
+
+        assert_eq!(first.geometry_id(), second.geometry_id());
+        assert_ne!(first.projection_id(), second.projection_id());
+        assert!(second.model.body_start > first.model.body_start);
+        assert!(second.model.lines.len() <= second.body_visible());
+    }
+
+    #[test]
     fn cached_geometry_accepts_frame_specific_detail_styles() {
         let item = detail_test_item();
         let expanded_sections = BTreeSet::new();
@@ -5300,6 +5446,7 @@ mod tests {
         let base = DetailRenderContext {
             terminal_area: Rect::new(0, 0, 80, 24),
             scroll: 0,
+            detail_revision: DetailRevision::UNCACHED,
             inline_title_editor: None,
             active_target: None,
             hovered_target: None,
@@ -5327,6 +5474,7 @@ mod tests {
         let styled = DetailRenderContext {
             terminal_area: base.terminal_area,
             scroll: 0,
+            detail_revision: base.detail_revision,
             inline_title_editor: None,
             active_target: Some(&active),
             hovered_target: Some(&hovered),
@@ -5348,6 +5496,7 @@ mod tests {
         let base = DetailRenderContext {
             terminal_area: Rect::new(0, 0, 80, 24),
             scroll: 0,
+            detail_revision: DetailRevision::UNCACHED,
             inline_title_editor: None,
             active_target: None,
             hovered_target: None,
@@ -5360,20 +5509,24 @@ mod tests {
         let document = DetailDocument::build(&item, &base);
         assert!(document.matches_frame(&item, &base));
 
+        let changed_context = DetailRenderContext {
+            detail_revision: DetailRevision::next(),
+            ..base
+        };
         let mut changed_item = item.clone();
         changed_item.task.status = crate::choices::TaskStatus::Done;
-        assert!(!document.matches_frame(&changed_item, &base));
+        assert!(!document.matches_frame(&changed_item, &changed_context));
 
         changed_item = item.clone();
         changed_item.notes[0].body = "Updated note".to_string();
-        assert!(!document.matches_frame(&changed_item, &base));
+        assert!(!document.matches_frame(&changed_item, &changed_context));
 
         let epic = detail_test_epic_item();
         let epic_document = DetailDocument::build(&epic, &base);
         let mut changed_epic = epic.clone();
         changed_epic.epic_children[0].status = "done".to_string();
         changed_epic.epic_children[0].unresolved = false;
-        assert!(!epic_document.matches_frame(&changed_epic, &base));
+        assert!(!epic_document.matches_frame(&changed_epic, &changed_context));
 
         let pending = [crate::tui::attachment_controller::PendingAttachmentView {
             attachment_id: "pending".to_string(),

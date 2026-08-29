@@ -202,7 +202,7 @@ impl DetailTargetId {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RemovedEpicChild {
     pub(crate) epic_id: crate::ids::TaskId,
     pub(crate) child: crate::query::TaskDependencyLink,

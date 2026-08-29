@@ -10,7 +10,7 @@ use crate::tui::ui::{
 
 impl App {
     pub(super) fn detail_document_for_query(
-        &self,
+        &mut self,
         terminal_size: Size,
     ) -> Option<std::rc::Rc<crate::tui::ui::DetailDocument>> {
         let item = self.store.selected_task(self.list.selected_task())?;
@@ -27,6 +27,7 @@ impl App {
         let context = DetailRenderContext {
             terminal_area: Rect::new(0, 0, terminal_size.width, terminal_size.height),
             scroll: detail.scroll(),
+            detail_revision: self.store.tasks.revision(),
             inline_title_editor,
             active_target: detail.focused_target(),
             hovered_target: detail.hovered_target(),
@@ -36,17 +37,13 @@ impl App {
             pending_attachments: &pending_attachments,
             removed_epic_child: detail.removed_epic_child(),
         };
-        if let Some(document) = self
-            .widgets
-            .detail_document
-            .as_ref()
-            .filter(|document| document.matches_frame(item, &context))
-        {
-            return Some(std::rc::Rc::clone(document));
-        }
-        Some(std::rc::Rc::new(crate::tui::ui::DetailDocument::build(
-            item, &context,
-        )))
+        let document = crate::tui::ui::DetailDocument::reuse_or_build(
+            self.widgets.detail_document.as_ref(),
+            item,
+            &context,
+        );
+        self.widgets.detail_document = Some(std::rc::Rc::clone(&document));
+        Some(document)
     }
 
     pub(super) fn begin_detail_text_selection(
@@ -57,7 +54,11 @@ impl App {
         if self.detail.is_inactive() || self.overlay.is_some() {
             return false;
         }
-        let Some(item) = self.store.selected_task(self.list.selected_task()) else {
+        let Some(task_id) = self
+            .store
+            .selected_task(self.list.selected_task())
+            .map(|item| item.task.id.clone())
+        else {
             return false;
         };
         let cell = self
@@ -67,7 +68,7 @@ impl App {
             return false;
         };
         if let Some(detail) = self.detail.state_mut() {
-            detail.begin_text_selection(item.task.id.clone(), terminal_size.width, cell);
+            detail.begin_text_selection(task_id, terminal_size.width, cell);
         }
         self.list.clear_task_click();
         true
@@ -84,7 +85,11 @@ impl App {
         if self.detail.is_inactive() || self.overlay.is_some() {
             return;
         }
-        let Some(item) = self.store.selected_task(self.list.selected_task()) else {
+        let Some(task_id) = self
+            .store
+            .selected_task(self.list.selected_task())
+            .map(|item| item.task.id.clone())
+        else {
             return;
         };
         let cell = self
@@ -94,7 +99,7 @@ impl App {
             return;
         };
         if let Some(detail) = self.detail.state_mut() {
-            detail.update_text_selection(&item.task.id, terminal_size.width, cell);
+            detail.update_text_selection(&task_id, terminal_size.width, cell);
         }
     }
 
@@ -210,17 +215,18 @@ impl App {
         }
     }
 
-    pub(super) fn detail_focus_targets(&self, terminal_size: Size) -> Vec<DetailTargetId> {
-        let Some(item) = self.store.selected_task(self.list.selected_task()) else {
+    pub(super) fn detail_focus_targets(&mut self, terminal_size: Size) -> Vec<DetailTargetId> {
+        let Some(document) = self.detail_document_for_query(terminal_size) else {
             return Vec::new();
         };
-        self.detail_document_for_query(terminal_size)
-            .map(|document| document.focus_targets(item))
+        self.store
+            .selected_task(self.list.selected_task())
+            .map(|item| document.focus_targets(item))
             .unwrap_or_default()
     }
 
     pub(super) fn selected_detail_focus_target(
-        &self,
+        &mut self,
         terminal_size: Size,
     ) -> Option<DetailTargetId> {
         let targets = self.detail_focus_targets(terminal_size);
@@ -279,7 +285,7 @@ impl App {
         Some(attachment_id)
     }
 
-    pub(super) fn detail_focus_scroll(&self, scroll: u16, terminal_size: Size) -> u16 {
+    pub(super) fn detail_focus_scroll(&mut self, scroll: u16, terminal_size: Size) -> u16 {
         let Some(target) = self
             .detail
             .state()
@@ -287,8 +293,9 @@ impl App {
         else {
             return scroll;
         };
+        let target = target.clone();
         self.detail_document_for_query(terminal_size)
-            .and_then(|document| document.target_scroll_target(target, scroll))
+            .and_then(|document| document.target_scroll_target(&target, scroll))
             .unwrap_or(scroll)
     }
 

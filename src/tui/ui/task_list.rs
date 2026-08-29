@@ -1791,7 +1791,7 @@ mod tests {
                 .expanded_epic_ids
                 .insert(parent.task.id.clone());
         }
-        store.tasks = vec![parent, child];
+        store.tasks = vec![parent, child].into();
         store.view_state.query = TaskQuery::Epics;
         store
     }
