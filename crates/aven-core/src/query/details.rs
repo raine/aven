@@ -7,8 +7,8 @@ use crate::task_fields::TaskField;
 use crate::types::Task;
 
 use super::{
-    SortDirection, TaskDependencySummary, TaskFilters, TaskIdFilter, TaskListItem, TaskQueryMode,
-    TaskRelatedLink, TaskSort, list_task_items_with_display_refs,
+    SortDirection, TaskDependencySummary, TaskFilters, TaskIdFilter, TaskListItem, TaskNote,
+    TaskQueryMode, TaskRelatedLink, TaskSort, list_task_items_with_display_refs,
     task_dependency_summary_with_display_refs,
 };
 
@@ -18,15 +18,8 @@ pub struct TaskDetail {
     pub project_name: String,
     pub dependencies: TaskDependencySummary,
     pub related: Vec<TaskRelatedLink>,
-    pub notes: Vec<TaskDetailNote>,
+    pub notes: Vec<TaskNote>,
     pub conflicts: Vec<TaskDetailConflict>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskDetailNote {
-    pub id: String,
-    pub body: String,
-    pub created_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,7 +69,7 @@ pub async fn task_detail_with_display_refs(
         task_dependency_summary_with_display_refs(conn, &task.workspace_id, &task.id, display_refs)
             .await?;
     let related = item.related.clone();
-    let notes = task_detail_notes(conn, &task.workspace_id, &task.id).await?;
+    let notes = item.notes.iter().rev().cloned().collect();
     let conflicts = task_detail_conflicts(conn, &task.workspace_id, &task.id).await?;
 
     Ok(TaskDetail {
@@ -87,30 +80,6 @@ pub async fn task_detail_with_display_refs(
         notes,
         conflicts,
     })
-}
-
-async fn task_detail_notes(
-    conn: &mut SqliteConnection,
-    workspace_id: &WorkspaceId,
-    task_id: &crate::ids::TaskId,
-) -> Result<Vec<TaskDetailNote>> {
-    let rows = sqlx::query(
-        "SELECT id, body, created_at FROM notes
-         WHERE workspace_id = ? AND task_id = ? ORDER BY created_at, id",
-    )
-    .bind(workspace_id)
-    .bind(task_id)
-    .fetch_all(&mut *conn)
-    .await?;
-
-    Ok(rows
-        .into_iter()
-        .map(|row| TaskDetailNote {
-            id: row.get("id"),
-            body: row.get("body"),
-            created_at: row.get("created_at"),
-        })
-        .collect())
 }
 
 async fn task_detail_conflicts(
@@ -212,7 +181,7 @@ mod tests {
         }
         sqlx::query(
             "INSERT INTO notes(workspace_id, id, task_id, body, created_at, change_id)
-             VALUES (?, 'note-b', 'D3TA100000000001', 'second', '002', 'change-b'),
+             VALUES (?, 'note-b', 'D3TA100000000001', 'second', '001', 'change-b'),
                     (?, 'note-a', 'D3TA100000000001', 'first', '001', 'change-a')",
         )
         .bind(&workspace_id)
