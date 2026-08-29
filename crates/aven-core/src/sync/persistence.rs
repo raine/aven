@@ -619,6 +619,17 @@ async fn apply_server_blob_reference(
     match change.op_type.as_str() {
         op_type::ATTACHMENT_ADD => {
             let payload = AttachmentAddPayload::from_change(change)?;
+            let previous_sha256: Option<String> = sqlx::query_scalar(
+                "SELECT sha256 FROM server_blob_references
+                 WHERE workspace_id = ? AND attachment_id = ?",
+            )
+            .bind(&payload.workspace_id)
+            .bind(&payload.attachment_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+            if let Some(previous_sha256) = previous_sha256 {
+                affected_attachment_hashes.insert(previous_sha256);
+            }
             affected_attachment_hashes.insert(payload.sha256.clone());
             sqlx::query(
                 "INSERT INTO server_blob_references(

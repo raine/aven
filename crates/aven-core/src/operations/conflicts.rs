@@ -927,6 +927,18 @@ async fn resolve_conflict_value(
     {
         bail!("error epic-has-children task_id={task_id}");
     }
+    let affected_attachment_hashes: Vec<String> = if task_field == TaskField::Deleted {
+        sqlx::query_scalar(
+            "SELECT DISTINCT sha256 FROM task_attachments
+             WHERE workspace_id = ? AND task_id = ?",
+        )
+        .bind(&workspace.id)
+        .bind(task_id)
+        .fetch_all(&mut *tx)
+        .await?
+    } else {
+        Vec::new()
+    };
     let result = sqlx::query(
         "UPDATE conflicts SET resolved = 1 WHERE workspace_id = ? AND task_id = ? AND field = ? AND resolved = 0",
     )
@@ -960,6 +972,12 @@ async fn resolve_conflict_value(
     )
     .await?;
     set_field_version(&mut tx, task_id, field, &change_id).await?;
+    crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
+        &mut tx,
+        &affected_attachment_hashes,
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await?;
     let task = get_task_in_workspace(&mut tx, workspace, task_id).await?;
     let after = crate::undo::task_field_value(&mut tx, &workspace.id, task_id, field).await?;
     if let Some(summary) = tui_summary {

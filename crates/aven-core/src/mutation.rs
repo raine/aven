@@ -1,6 +1,7 @@
 use crate::ids::{ProjectId, WorkspaceId};
 use anyhow::{Result, bail, ensure};
 use sqlx::SqliteConnection;
+use std::collections::BTreeSet;
 use tracing::{debug, info};
 
 use crate::change_log::op_type;
@@ -66,7 +67,16 @@ impl Database {
     ) -> Result<Task> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
+        let mut affected_attachment_hashes = BTreeSet::new();
+        collect_task_attachment_hashes(
+            &mut tx,
+            &workspace.id,
+            &task.id,
+            &mut affected_attachment_hashes,
+        )
+        .await?;
         let task = set_deleted(&mut tx, workspace, task, deleted).await?;
+        reconcile_task_attachment_liveness(&mut tx, affected_attachment_hashes).await?;
         tx.commit().await?;
         Ok(task)
     }
@@ -80,7 +90,18 @@ impl Database {
     ) -> Result<bool> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
+        let mut affected_attachment_hashes = BTreeSet::new();
+        if field == "deleted" {
+            collect_task_attachment_hashes(
+                &mut tx,
+                &workspace.id,
+                task_id,
+                &mut affected_attachment_hashes,
+            )
+            .await?;
+        }
         let changed = set_task_field(&mut tx, workspace, task_id, field, value).await?;
+        reconcile_task_attachment_liveness(&mut tx, affected_attachment_hashes).await?;
         tx.commit().await?;
         Ok(changed)
     }
@@ -106,9 +127,20 @@ impl Database {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let mut outcomes = Vec::with_capacity(updates.len());
+        let mut affected_attachment_hashes = BTreeSet::new();
         for (task_id, field, value) in updates {
+            if field == "deleted" {
+                collect_task_attachment_hashes(
+                    &mut tx,
+                    &workspace.id,
+                    task_id,
+                    &mut affected_attachment_hashes,
+                )
+                .await?;
+            }
             outcomes.push(set_task_field(&mut tx, workspace, task_id, field, value).await?);
         }
+        reconcile_task_attachment_liveness(&mut tx, affected_attachment_hashes).await?;
         tx.commit().await?;
         Ok(outcomes)
     }
@@ -128,6 +160,37 @@ impl Database {
         tx.commit().await?;
         Ok(outcomes)
     }
+}
+
+async fn collect_task_attachment_hashes(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    task_id: &crate::ids::TaskId,
+    affected_attachment_hashes: &mut BTreeSet<String>,
+) -> Result<()> {
+    let hashes: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT sha256 FROM task_attachments
+         WHERE workspace_id = ? AND task_id = ?",
+    )
+    .bind(workspace_id)
+    .bind(task_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    affected_attachment_hashes.extend(hashes);
+    Ok(())
+}
+
+async fn reconcile_task_attachment_liveness(
+    conn: &mut SqliteConnection,
+    affected_attachment_hashes: BTreeSet<String>,
+) -> Result<()> {
+    let affected_attachment_hashes = affected_attachment_hashes.into_iter().collect::<Vec<_>>();
+    crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
+        conn,
+        &affected_attachment_hashes,
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await
 }
 
 pub(crate) async fn set_status(
