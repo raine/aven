@@ -1,6 +1,86 @@
 use super::*;
 
 #[tokio::test]
+async fn opening_detail_rebinds_after_the_summary_task_disappears() {
+    let mut app = test_app().await;
+    let created = create_and_select_task(&mut app, test_task_draft("Vanishing detail")).await;
+    let task_id = app.store.tasks[created].task.id.clone();
+    app.store.refresh(None).await.unwrap();
+    let selected = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == task_id)
+        .unwrap();
+    app.list.select_task(Some(selected));
+    assert_eq!(
+        app.store.tasks[selected].hydration,
+        crate::query::TaskItemHydration::Summary
+    );
+
+    let database = app.store.database();
+    let mut conn = aven_core::test_support::acquire(&database).await.unwrap();
+    sqlx::query("DELETE FROM tasks WHERE id = ?")
+        .bind(&task_id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    drop(conn);
+
+    app.execute(crate::tui::event::Action::ToggleDetail)
+        .await
+        .unwrap();
+
+    assert!(app.detail.is_inactive());
+    assert!(app.store.tasks.iter().all(|item| item.task.id != task_id));
+    assert_eq!(
+        toast_message(&app),
+        Some("task is no longer available".to_string())
+    );
+}
+
+#[tokio::test]
+async fn detail_sibling_navigation_rebinds_when_the_summary_task_disappears() {
+    let mut app = test_app().await;
+    let first = create_and_select_task(&mut app, test_task_draft("Resident detail")).await;
+    let first_id = app.store.tasks[first].task.id.clone();
+    let second = create_and_select_task(&mut app, test_task_draft("Vanishing sibling")).await;
+    let second_id = app.store.tasks[second].task.id.clone();
+    app.store.refresh(Some(&first_id)).await.unwrap();
+    let first = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == first_id)
+        .unwrap();
+    let second = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == second_id)
+        .unwrap();
+    app.list.select_task(Some(first));
+    app.show_detail(0);
+
+    let database = app.store.database();
+    let mut conn = aven_core::test_support::acquire(&database).await.unwrap();
+    sqlx::query("DELETE FROM tasks WHERE id = ?")
+        .bind(&second_id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    drop(conn);
+
+    let delta = if second > first { 1 } else { -1 };
+    app.select_detail_task(delta).await.unwrap();
+
+    assert!(app.detail.is_inactive());
+    assert_eq!(app.store.tasks.len(), 1);
+    assert_eq!(app.store.tasks[0].task.id, first_id);
+    assert_eq!(app.list.selected_task(), Some(0));
+}
+
+#[tokio::test]
 async fn detail_next_and_previous_task_stay_in_detail() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("First")).await;

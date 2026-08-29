@@ -31,14 +31,33 @@ pub(crate) struct TaskListView {
 }
 
 #[derive(Debug)]
+pub(super) enum TaskListProjectionView<'a> {
+    #[cfg(test)]
+    Borrowed(&'a TaskListView),
+    Cached(crate::tui::store::TaskListViewRef<'a>),
+}
+
+impl std::ops::Deref for TaskListProjectionView<'_> {
+    type Target = TaskListView;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            #[cfg(test)]
+            Self::Borrowed(view) => view,
+            Self::Cached(view) => view,
+        }
+    }
+}
+
 pub(super) struct TaskListProjection<'a> {
-    pub(super) view: &'a TaskListView,
+    pub(super) view: TaskListProjectionView<'a>,
     pub(super) selected_task: Option<usize>,
     pub(super) scroll: usize,
     pub(super) viewport_rows: usize,
 }
 
 impl<'a> TaskListProjection<'a> {
+    #[cfg(test)]
     pub(super) fn from_view(
         view: &'a TaskListView,
         offset: usize,
@@ -50,7 +69,7 @@ impl<'a> TaskListProjection<'a> {
             .unwrap_or(0);
         let scroll = task_list_scroll(offset, selected_row, view, viewport_rows);
         Self {
-            view,
+            view: TaskListProjectionView::Borrowed(view),
             selected_task,
             scroll,
             viewport_rows,
@@ -62,16 +81,22 @@ impl<'a> TaskListProjection<'a> {
         table_state: &TableState,
         viewport_rows: usize,
     ) -> Self {
-        Self::from_view(
-            store.task_list_view(),
-            table_state.offset(),
-            table_state.selected(),
+        let view = store.task_list_view();
+        let selected_task = table_state.selected();
+        let selected_row = selected_task
+            .map(|selected| view.visual_row(selected))
+            .unwrap_or(0);
+        let scroll = task_list_scroll(table_state.offset(), selected_row, &view, viewport_rows);
+        Self {
+            view: TaskListProjectionView::Cached(view),
+            selected_task,
+            scroll,
             viewport_rows,
-        )
+        }
     }
 
     pub(super) fn visible_rows(&self) -> Vec<(usize, &TaskListRow)> {
-        task_list_visible_rows(self.view, self.scroll, self.viewport_rows)
+        task_list_visible_rows(&self.view, self.scroll, self.viewport_rows)
     }
 
     pub(super) fn row_count(&self) -> usize {
@@ -79,7 +104,7 @@ impl<'a> TaskListProjection<'a> {
     }
 
     pub(super) fn top_scroll(&self) -> usize {
-        task_list_top_scroll(self.view)
+        task_list_top_scroll(&self.view)
     }
 
     pub(super) fn commit_scroll(&self, table_state: &mut TableState) {
@@ -93,9 +118,23 @@ impl TaskListView {
         tasks: &[TaskListItem],
         expanded_epic_ids: &BTreeSet<crate::ids::TaskId>,
     ) -> Self {
+        Self::from_tasks_at(
+            render_mode,
+            tasks,
+            expanded_epic_ids,
+            crate::queue::now_seconds(),
+        )
+    }
+
+    pub(crate) fn from_tasks_at(
+        render_mode: TaskListRenderMode,
+        tasks: &[TaskListItem],
+        expanded_epic_ids: &BTreeSet<crate::ids::TaskId>,
+        now_seconds: i64,
+    ) -> Self {
         let rows = match render_mode {
             TaskListRenderMode::Queue => queue_rows(tasks),
-            TaskListRenderMode::Upcoming => upcoming_rows(tasks, crate::queue::now_seconds()),
+            TaskListRenderMode::Upcoming => upcoming_rows(tasks, now_seconds),
             TaskListRenderMode::Flat => task_rows(tasks),
             TaskListRenderMode::Epics => epics_rows(tasks, expanded_epic_ids),
         };
@@ -128,6 +167,17 @@ impl TaskListView {
 
     pub(crate) fn row_count(&self) -> usize {
         self.rows.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn group_labels(&self) -> Vec<&str> {
+        self.rows
+            .iter()
+            .filter_map(|row| match row {
+                TaskListRow::Group(group) => Some(group.label.as_str()),
+                TaskListRow::Task { .. } | TaskListRow::EpicChild { .. } => None,
+            })
+            .collect()
     }
 
     pub(crate) fn task_index_at_visual_row(&self, visual_row: usize) -> Option<usize> {

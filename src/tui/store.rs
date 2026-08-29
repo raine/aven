@@ -97,6 +97,44 @@ struct DerivedTaskProjections {
     columns: OnceCell<ColumnBoard>,
 }
 
+#[derive(Debug)]
+pub(crate) enum TaskListViewRef<'a> {
+    Stable(&'a TaskListView),
+    Upcoming(TaskListView),
+}
+
+impl Deref for TaskListViewRef<'_> {
+    type Target = TaskListView;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Stable(view) => view,
+            Self::Upcoming(view) => view,
+        }
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct TaskDetailHydration {
+    ready: std::collections::BTreeSet<crate::ids::TaskId>,
+    missing: std::collections::BTreeSet<crate::ids::TaskId>,
+    unresolved: std::collections::BTreeSet<crate::ids::TaskId>,
+}
+
+impl TaskDetailHydration {
+    pub(crate) fn is_ready(&self, task_id: &crate::ids::TaskId) -> bool {
+        self.ready.contains(task_id)
+    }
+
+    pub(crate) fn is_complete(&self) -> bool {
+        self.missing.is_empty() && self.unresolved.is_empty()
+    }
+
+    pub(crate) fn stale_ids(&self) -> impl Iterator<Item = &crate::ids::TaskId> {
+        self.missing.iter().chain(&self.unresolved)
+    }
+}
+
 struct RefreshRetainedState {
     database: Database,
     app_config: AppConfig,
@@ -307,14 +345,28 @@ impl TuiStore {
         self.derived = DerivedTaskProjections::default();
     }
 
-    pub(crate) fn task_list_view(&self) -> &TaskListView {
-        self.derived.task_list.get_or_init(|| {
-            TaskListView::from_tasks(
-                self.view_state.render_mode(),
-                &self.tasks,
-                &self.view_state.expanded_epic_ids,
-            )
-        })
+    pub(crate) fn task_list_view(&self) -> TaskListViewRef<'_> {
+        self.task_list_view_at(crate::queue::now_seconds())
+    }
+
+    fn task_list_view_at(&self, now_seconds: i64) -> TaskListViewRef<'_> {
+        let render_mode = self.view_state.render_mode();
+        if render_mode != TaskListRenderMode::Upcoming {
+            return TaskListViewRef::Stable(self.derived.task_list.get_or_init(|| {
+                TaskListView::from_tasks(
+                    render_mode,
+                    &self.tasks,
+                    &self.view_state.expanded_epic_ids,
+                )
+            }));
+        }
+
+        TaskListViewRef::Upcoming(TaskListView::from_tasks_at(
+            render_mode,
+            &self.tasks,
+            &self.view_state.expanded_epic_ids,
+            now_seconds,
+        ))
     }
 
     pub(crate) fn column_board(&self) -> &ColumnBoard {
@@ -745,8 +797,12 @@ impl TuiStore {
             | SelectionRestore::Index(_) => None,
         };
         if let Some(task_id) = task_id {
-            self.ensure_task_details(std::slice::from_ref(task_id))
+            let hydration = self
+                .ensure_task_details(std::slice::from_ref(task_id))
                 .await?;
+            let stale = hydration.stale_ids().cloned().collect::<Vec<_>>();
+            self.tasks
+                .retain(|item| !stale.contains(&item.task.id));
         }
         Ok(())
     }
@@ -754,44 +810,76 @@ impl TuiStore {
     pub(crate) async fn ensure_task_details(
         &mut self,
         task_ids: &[crate::ids::TaskId],
-    ) -> Result<()> {
-        let missing = task_ids
+    ) -> Result<TaskDetailHydration> {
+        let requested = task_ids
             .iter()
-            .filter(|task_id| {
-                self.tasks.iter().any(|item| {
-                    &item.task.id == *task_id && item.hydration == TaskItemHydration::Summary
-                })
-            })
             .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        let resident = self
+            .tasks
+            .iter()
+            .filter(|item| requested.contains(&item.task.id))
+            .map(|item| item.task.id.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        let missing = requested
+            .difference(&resident)
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        let summaries = self
+            .tasks
+            .iter()
+            .filter(|item| {
+                requested.contains(&item.task.id) && item.hydration == TaskItemHydration::Summary
+            })
+            .map(|item| item.task.id.clone())
             .collect::<Vec<_>>();
-        if missing.is_empty() {
-            return Ok(());
-        }
-        let hydrated = self
-            .database
-            .list_task_items_from_current_projection(
-                &self.active_workspace.id,
-                crate::query::TaskFilters {
-                    include_deleted: true,
-                    expand_recurring: true,
-                    task_ids: crate::query::TaskIdFilter::Only(missing),
-                    ..crate::query::TaskFilters::default()
-                },
-                crate::query::TaskQueryMode::Flat,
-                crate::query::TaskSort::Created,
-                crate::query::SortDirection::Asc,
-            )
-            .await?;
+        let hydrated = if summaries.is_empty() {
+            Vec::new()
+        } else {
+            self.database
+                .list_task_items_from_current_projection(
+                    &self.active_workspace.id,
+                    crate::query::TaskFilters {
+                        include_deleted: true,
+                        expand_recurring: true,
+                        task_ids: crate::query::TaskIdFilter::Only(summaries),
+                        ..crate::query::TaskFilters::default()
+                    },
+                    crate::query::TaskQueryMode::Flat,
+                    crate::query::TaskSort::Created,
+                    crate::query::SortDirection::Asc,
+                )
+                .await?
+        };
         for detail in hydrated {
-            if let Some(summary) = self
-                .tasks
-                .iter_mut()
-                .find(|item| item.task.id == detail.task.id)
-            {
+            if detail.hydration != TaskItemHydration::Detail {
+                continue;
+            }
+            if let Some(summary) = self.tasks.iter_mut().find(|item| {
+                requested.contains(&item.task.id)
+                    && item.task.id == detail.task.id
+                    && item.hydration == TaskItemHydration::Summary
+            }) {
                 absorb_task_detail(summary, detail);
             }
         }
-        Ok(())
+        let ready = self
+            .tasks
+            .iter()
+            .filter(|item| {
+                requested.contains(&item.task.id) && item.hydration == TaskItemHydration::Detail
+            })
+            .map(|item| item.task.id.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        let unresolved = resident
+            .difference(&ready)
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        Ok(TaskDetailHydration {
+            ready,
+            missing,
+            unresolved,
+        })
     }
 
     #[cfg(test)]

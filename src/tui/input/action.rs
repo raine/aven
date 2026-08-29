@@ -27,12 +27,17 @@ impl App {
         if action == Action::BeginRemoveRelated {
             if let Some(selection) = self.resolve_task_selection() {
                 let task_ids = selection.ids().cloned().collect::<Vec<_>>();
-                self.store.ensure_task_details(&task_ids).await?;
+                let hydration = self.store.ensure_task_details(&task_ids).await?;
+                if !hydration.is_complete() {
+                    self.rebind_after_stale_task_hydration(&hydration);
+                    return Ok(());
+                }
             }
-        } else if (action == Action::ToggleDetail && self.detail.is_inactive())
-            || action == Action::CopyTaskNotes
+        } else if ((action == Action::ToggleDetail && self.detail.is_inactive())
+            || action == Action::CopyTaskNotes)
+            && !self.ensure_selected_task_detail().await?
         {
-            self.ensure_selected_task_detail().await?;
+            return Ok(());
         }
 
         match action {

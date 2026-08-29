@@ -672,17 +672,42 @@ impl App {
         Ok(())
     }
 
-    pub(in crate::tui) async fn ensure_selected_task_detail(&mut self) -> Result<()> {
+    pub(in crate::tui) async fn ensure_selected_task_detail(&mut self) -> Result<bool> {
         let Some(task_id) = self
             .store
             .selected_task(self.list.selected_task())
             .map(|item| item.task.id.clone())
         else {
-            return Ok(());
+            return Ok(false);
         };
-        self.store
+        let hydration = self
+            .store
             .ensure_task_details(std::slice::from_ref(&task_id))
-            .await
+            .await?;
+        if hydration.is_ready(&task_id) {
+            return Ok(true);
+        }
+        self.rebind_after_stale_task_hydration(&hydration);
+        Ok(false)
+    }
+
+    pub(in crate::tui) fn rebind_after_stale_task_hydration(
+        &mut self,
+        hydration: &crate::tui::store::TaskDetailHydration,
+    ) {
+        let selected = self.list.selected_task().unwrap_or(0);
+        let stale = hydration.stale_ids().cloned().collect::<Vec<_>>();
+        self.store
+            .tasks
+            .retain(|item| !stale.contains(&item.task.id));
+        let rebound = (!self.store.tasks.is_empty())
+            .then_some(selected.min(self.store.tasks.len().saturating_sub(1)));
+        self.list.select_task(rebound);
+        self.prune_task_marks();
+        if self.detail.is_active() {
+            self.clear_detail_session();
+        }
+        self.set_warning("task is no longer available");
     }
 
     pub(super) fn reconcile_detail_focus(

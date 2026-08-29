@@ -238,10 +238,11 @@ impl App {
         let next = next_index(current, self.store.tasks.len(), delta, true);
         self.list.select_task(next);
         self.list.focus_tasks();
-        if current != next
-            && let Some(detail) = self.detail.state_mut()
-        {
-            detail.reset_task_state(0);
+        if current != next {
+            if let Some(detail) = self.detail.state_mut() {
+                detail.reset_task_state(0);
+            }
+            self.ensure_selected_task_detail().await?;
         }
         Ok(())
     }

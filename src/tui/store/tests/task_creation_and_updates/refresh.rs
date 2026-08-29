@@ -1,4 +1,5 @@
 use super::*;
+use chrono::TimeZone;
 
 #[tokio::test]
 async fn repeat_entry_creation_reports_committed_refresh_failure_as_completion() {
@@ -160,6 +161,56 @@ async fn refresh_replacement_preserves_retained_state_without_cloning_projection
         projection_clone_count.load(std::sync::atomic::Ordering::Relaxed),
         0
     );
+}
+
+#[tokio::test]
+async fn upcoming_cache_rebuilds_at_the_local_date_boundary_after_refresh_failure() {
+    let mut store = test_store().await;
+    let before = chrono::Local
+        .with_ymd_and_hms(2035, 1, 15, 23, 59, 0)
+        .single()
+        .unwrap();
+    let after = chrono::Local
+        .with_ymd_and_hms(2035, 1, 16, 0, 1, 0)
+        .single()
+        .unwrap();
+    let available = chrono::Local
+        .with_ymd_and_hms(2035, 1, 16, 12, 0, 0)
+        .single()
+        .unwrap()
+        .with_timezone(&chrono::Utc)
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    store
+        .create_task(
+            TaskDraft {
+                available_at: Some(available),
+                ..task_draft("Boundary task")
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    store.show_view(TaskQuery::Upcoming).await.unwrap();
+
+    let before_labels = store
+        .task_list_view_at(before.timestamp())
+        .group_labels()
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    assert_eq!(before_labels, vec!["tomorrow"]);
+
+    store.fail_next_refresh_at(RefreshFailureStage::Projects);
+    assert!(store.refresh(None).await.is_err());
+
+    let after_labels = store
+        .task_list_view_at(after.timestamp())
+        .group_labels()
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    assert_eq!(after_labels, vec!["today"]);
 }
 
 #[tokio::test]

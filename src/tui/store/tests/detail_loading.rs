@@ -127,6 +127,45 @@ async fn task_markdown_omits_empty_optional_sections() {
 }
 
 #[tokio::test]
+async fn detail_hydration_reports_a_resident_task_deleted_before_detail_read() {
+    let (_dir, pool, mut store) = test_store_with_pool().await;
+    let (task_id, _) = create_selected_task(&mut store, "Vanishing summary").await;
+    store.refresh(None).await.unwrap();
+    assert_eq!(store.tasks[0].hydration, TaskItemHydration::Summary);
+
+    sqlx::query("DELETE FROM tasks WHERE id = ?")
+        .bind(&task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let hydration = store
+        .ensure_task_details(std::slice::from_ref(&task_id))
+        .await
+        .unwrap();
+
+    assert!(!hydration.is_ready(&task_id));
+    assert!(!hydration.is_complete());
+    assert_eq!(hydration.stale_ids().collect::<Vec<_>>(), vec![&task_id]);
+    assert_eq!(store.tasks[0].hydration, TaskItemHydration::Summary);
+}
+
+#[tokio::test]
+async fn detail_hydration_distinguishes_ids_absent_from_the_projection() {
+    let mut store = test_store().await;
+    let missing = crate::test_support::task_id("missing-resident-task");
+
+    let hydration = store
+        .ensure_task_details(std::slice::from_ref(&missing))
+        .await
+        .unwrap();
+
+    assert!(!hydration.is_ready(&missing));
+    assert!(!hydration.is_complete());
+    assert_eq!(hydration.stale_ids().collect::<Vec<_>>(), vec![&missing]);
+}
+
+#[tokio::test]
 async fn exact_task_load_returns_none_for_missing_id() {
     let store = test_store().await;
     let missing = crate::test_support::task_id("missing-detail-task");
