@@ -714,6 +714,7 @@ async fn add_runtime_database_sections(
     integrity: bool,
 ) {
     let reason = "database schema is unavailable, pending migration, or unsupported";
+    let mut deep_attachment_checks = None;
     let workspace_section = report.section("workspace", "Workspace");
     let mut resolved_workspace = None;
     if let Some(database) = database {
@@ -1071,17 +1072,23 @@ async fn add_runtime_database_sections(
                             );
                         }
                     }
-                    Ok(_) => attachment_section.info(
-                        "attachments.integrity_deferred",
-                        "integrity",
-                        "reported in the Integrity section",
-                    ),
-                    Err(_) => attachment_section.check(
-                        "attachments.integrity",
-                        "integrity",
-                        false,
-                        "could not inspect attachments",
-                    ),
+                    Ok(checks) => {
+                        deep_attachment_checks = Some(Ok(checks));
+                        attachment_section.info(
+                            "attachments.integrity_deferred",
+                            "integrity",
+                            "reported in the Integrity section",
+                        );
+                    }
+                    Err(error) => {
+                        deep_attachment_checks = Some(Err(error));
+                        attachment_section.check(
+                            "attachments.integrity",
+                            "integrity",
+                            false,
+                            "could not inspect attachments",
+                        );
+                    }
                 }
             }
             Err(_) => {
@@ -1107,7 +1114,7 @@ async fn add_runtime_database_sections(
     if integrity {
         let integrity_section = report.section("integrity", "Integrity");
         match (database, db_path) {
-            (Some(database), Some(db_path)) => match database_integrity_report(database).await {
+            (Some(database), Some(_)) => match database_integrity_report(database).await {
                 Ok(integrity_report) => {
                     integrity_section.check(
                         "integrity.quick_check",
@@ -1119,9 +1126,7 @@ async fn add_runtime_database_sections(
                         add_integrity_check(integrity_section, check);
                     }
                     let mut combined = integrity_report.clone();
-                    if let Ok(blob_dir) = app_config::resolve_blob_dir(db_path, config)
-                        && let Ok(checks) = attachment_integrity_checks(database, &blob_dir, true).await
-                    {
+                    if let Some(Ok(checks)) = deep_attachment_checks.take() {
                         for check in &checks {
                             integrity_section.check(
                                 stable_check_code("integrity", check.label),
