@@ -583,13 +583,15 @@ pub(crate) async fn recurrence_history(
         })?;
     let series_ref = recurrence_series_display_ref_for_id(conn, workspace_id, series_id).await?;
     let bounds = history_bounds(conn, workspace_id, &series, at).await?;
-    let counts = recurrence_counts_for_series(conn, workspace_id, &series, &bounds).await?;
+    let pauses = PauseIndex::load(conn, workspace_id, &series, bounds.derived_end_rank).await?;
+    let counts =
+        recurrence_counts_for_series(conn, workspace_id, &series, &bounds, &pauses).await?;
     let mut occurrence_cursor = OccurrenceHistoryCursor::default();
-    let mut pause_cursor = PauseHistoryCursor::default();
     let mut next_occurrence = occurrence_cursor
         .next(conn, workspace_id, series_id)
         .await?;
-    let mut next_pause = pause_cursor.next(conn, workspace_id, series_id).await?;
+    let mut pause_entries = pauses.intervals.iter().cloned();
+    let mut next_pause = pause_entries.next();
     let mut next_rank = bounds.derived_end_rank.checked_sub(1);
     let mut remaining_offset = offset;
     let mut items = Vec::with_capacity(limit);
@@ -597,28 +599,44 @@ pub(crate) async fn recurrence_history(
     while items.len() < limit
         && (next_occurrence.is_some() || next_pause.is_some() || next_rank.is_some())
     {
+        if let Some(rank) = next_rank
+            && let Some((start, _)) = pauses.span_containing(rank)
+        {
+            next_rank = start.checked_sub(1);
+            continue;
+        }
         let derived_slot =
             next_rank.and_then(|rank| slot_at_rank(&series.rule, series.start_on, rank));
         let source =
             newest_history_source(next_occurrence.as_ref(), next_pause.as_ref(), derived_slot);
         if remaining_offset != 0
-            && counts.pause_intervals == 0
             && matches!(source, Some(HistorySource::Derived))
+            && let Some(rank) = next_rank
         {
-            let lower_rank = next_occurrence
+            let occurrence_lower = next_occurrence
                 .as_ref()
                 .and_then(|occurrence| slot_rank(&series.rule, series.start_on, occurrence.slot_on))
                 .and_then(|rank| rank.checked_add(1))
                 .unwrap_or(0);
-            if let Some(rank) = next_rank {
-                let available = rank.saturating_add(1).saturating_sub(lower_rank);
-                let skipped =
-                    remaining_offset.min(usize::try_from(available).unwrap_or(usize::MAX));
-                if skipped != 0 {
-                    next_rank = rank.checked_sub(u64::try_from(skipped).unwrap());
-                    remaining_offset -= skipped;
-                    continue;
-                }
+            let pause_lower = next_pause
+                .as_ref()
+                .map(|pause| {
+                    first_slot_rank_on_or_after(
+                        &series.schedule(),
+                        bounds.derived_end_rank,
+                        &pause.paused_at,
+                    )
+                    .map(|rank| rank.saturating_add(1))
+                })
+                .transpose()?
+                .unwrap_or(0);
+            let lower_rank = occurrence_lower.max(pause_lower);
+            let (rank_after_skip, skipped) =
+                pauses.skip_visible_descending(rank, lower_rank, remaining_offset);
+            if skipped != 0 {
+                next_rank = rank_after_skip;
+                remaining_offset -= skipped;
+                continue;
             }
         }
         let entry = match source {
@@ -634,11 +652,11 @@ pub(crate) async fn recurrence_history(
                 next_occurrence = occurrence_cursor
                     .next(conn, workspace_id, series_id)
                     .await?;
-                history_entry_for_occurrence(conn, workspace_id, &series, &occurrence).await?
+                history_entry_for_occurrence(&series, &occurrence, &pauses)?
             }
             Some(HistorySource::Pause) => {
                 let pause = next_pause.take().expect("history source has pause");
-                next_pause = pause_cursor.next(conn, workspace_id, series_id).await?;
+                next_pause = pause_entries.next();
                 Some(history_entry_for_pause(pause))
             }
             Some(HistorySource::Derived) => {
@@ -646,9 +664,7 @@ pub(crate) async fn recurrence_history(
                 next_rank = rank.checked_sub(1);
                 let slot_on = slot_at_rank(&series.rule, series.start_on, rank)
                     .context("history derived slot rank exceeded date range")?;
-                if slot_is_paused_at(conn, workspace_id, series_id, &series.schedule(), slot_on)
-                    .await?
-                {
+                if pauses.is_paused_at(&series.schedule(), slot_on)? {
                     None
                 } else {
                     Some(RecurrenceHistoryEntry {
@@ -736,6 +752,90 @@ struct HistoryBounds {
     derived_end_rank: u64,
 }
 
+struct PauseIndex {
+    intervals: Vec<RecurrencePauseInterval>,
+    spans: Vec<(u64, u64)>,
+}
+
+impl PauseIndex {
+    async fn load(
+        conn: &mut SqliteConnection,
+        workspace_id: &WorkspaceId,
+        series: &RecurrenceSeries,
+        upper_rank: u64,
+    ) -> Result<Self> {
+        let intervals = sqlx::query(
+            "SELECT workspace_id, id, series_id, paused_at, resumed_at, suspended_slot_on,
+                    suspended_task_id, created_by_change_id, resolved_by_change_id
+             FROM recurrence_pause_intervals
+             WHERE workspace_id = ? AND series_id = ?
+             ORDER BY paused_at DESC, id DESC",
+        )
+        .bind(workspace_id)
+        .bind(&series.id)
+        .fetch_all(&mut *conn)
+        .await?
+        .into_iter()
+        .map(|row| recurrence_pause_interval_from_row(&row))
+        .collect::<Result<Vec<_>>>()?;
+        let schedule = series.schedule();
+        let mut spans = intervals
+            .iter()
+            .filter_map(|pause| pause_rank_span(&schedule, pause, upper_rank).transpose())
+            .collect::<Result<Vec<_>>>()?;
+        spans.sort_unstable_by_key(|span| span.0);
+        Ok(Self { intervals, spans })
+    }
+
+    fn is_paused_at(&self, schedule: &RecurrenceSchedule, slot_on: NaiveDate) -> Result<bool> {
+        let boundary = slot_values(schedule, slot_on)?.boundary_at;
+        Ok(self.intervals.iter().any(|pause| {
+            pause.paused_at <= boundary
+                && pause
+                    .resumed_at
+                    .as_ref()
+                    .is_none_or(|resumed_at| resumed_at.is_empty() || resumed_at > &boundary)
+        }))
+    }
+
+    fn span_containing(&self, rank: u64) -> Option<(u64, u64)> {
+        self.spans
+            .iter()
+            .copied()
+            .find(|(start, end)| *start <= rank && rank < *end)
+    }
+
+    fn skip_visible_descending(
+        &self,
+        rank: u64,
+        lower_rank: u64,
+        requested: usize,
+    ) -> (Option<u64>, usize) {
+        let mut current = Some(rank);
+        let mut remaining = requested;
+        while let Some(rank) = current.filter(|rank| *rank >= lower_rank) {
+            if let Some((start, _)) = self.span_containing(rank) {
+                current = start.checked_sub(1);
+                continue;
+            }
+            let visible_lower = self
+                .spans
+                .iter()
+                .rev()
+                .find(|(_, end)| *end <= rank && *end > lower_rank)
+                .map_or(lower_rank, |(_, end)| *end);
+            let available = usize::try_from(rank - visible_lower + 1).unwrap_or(usize::MAX);
+            let skipped = remaining.min(available);
+            current = rank.checked_sub(u64::try_from(skipped).unwrap());
+            remaining -= skipped;
+            if remaining == 0 {
+                break;
+            }
+        }
+        (current, requested - remaining)
+    }
+}
+
 impl RecurrenceCounts {
     fn total(&self) -> usize {
         self.completed
@@ -791,6 +891,30 @@ async fn history_bounds(
     Ok(HistoryBounds { derived_end_rank })
 }
 
+fn first_slot_rank_on_or_after(
+    schedule: &RecurrenceSchedule,
+    upper: u64,
+    boundary_at: &str,
+) -> Result<u64> {
+    let boundary_on = boundary_at
+        .get(..10)
+        .context("history boundary timestamp has no date")?
+        .parse::<NaiveDate>()?;
+    let mut low = 0;
+    let mut high = upper;
+    while low < high {
+        let rank = low + (high - low) / 2;
+        let slot_on = slot_at_rank(&schedule.rule, schedule.start_on, rank)
+            .context("history boundary rank exceeded date range")?;
+        if slot_on >= boundary_on {
+            high = rank;
+        } else {
+            low = rank + 1;
+        }
+    }
+    Ok(low)
+}
+
 fn first_slot_rank_at_or_after(
     schedule: &RecurrenceSchedule,
     upper: u64,
@@ -817,6 +941,7 @@ async fn recurrence_counts_for_series(
     workspace_id: &WorkspaceId,
     series: &RecurrenceSeries,
     bounds: &HistoryBounds,
+    pauses: &PauseIndex,
 ) -> Result<RecurrenceCounts> {
     let schedule = series.schedule();
     let explicit_in_derived = count_occurrences_in_rank_range(
@@ -865,9 +990,8 @@ async fn recurrence_counts_for_series(
     let mut paused_in_derived = 0usize;
     let mut explicit_in_pauses = 0usize;
     let mut archived_in_pauses = 0usize;
-    let mut pause_cursor = PauseHistoryCursor::default();
-    while let Some(pause) = pause_cursor.next(conn, workspace_id, &series.id).await? {
-        if let Some((start, end)) = pause_rank_span(&schedule, &pause, bounds.derived_end_rank)? {
+    for pause in &pauses.intervals {
+        if let Some((start, end)) = pause_rank_span(&schedule, pause, bounds.derived_end_rank)? {
             paused_in_derived = paused_in_derived
                 .saturating_add(usize::try_from(end.saturating_sub(start)).unwrap_or(usize::MAX));
             explicit_in_pauses = explicit_in_pauses.saturating_add(
@@ -876,7 +1000,7 @@ async fn recurrence_counts_for_series(
             );
         }
         if archived_total != 0
-            && let Some((start, end)) = pause_rank_span(&schedule, &pause, max_occurrence_rank)?
+            && let Some((start, end)) = pause_rank_span(&schedule, pause, max_occurrence_rank)?
         {
             archived_in_pauses = archived_in_pauses.saturating_add(
                 count_occurrences_in_rank_range(conn, workspace_id, series, start, end, true)
@@ -884,16 +1008,7 @@ async fn recurrence_counts_for_series(
             );
         }
     }
-    counts.pause_intervals = usize::try_from(
-        sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM recurrence_pause_intervals
-             WHERE workspace_id = ? AND series_id = ?",
-        )
-        .bind(workspace_id)
-        .bind(&series.id)
-        .fetch_one(&mut *conn)
-        .await?,
-    )?;
+    counts.pause_intervals = pauses.intervals.len();
     counts.missed = bounds
         .derived_end_rank
         .try_into()
@@ -903,7 +1018,7 @@ async fn recurrence_counts_for_series(
         .saturating_add(explicit_in_pauses)
         .saturating_add(archived_total.saturating_sub(archived_in_pauses));
 
-    let latest_explicit = latest_visible_occurrence(conn, workspace_id, series).await?;
+    let latest_explicit = latest_visible_occurrence(conn, workspace_id, series, pauses).await?;
     let latest_derived = match bounds
         .derived_end_rank
         .checked_sub(1)
@@ -916,7 +1031,9 @@ async fn recurrence_counts_for_series(
         {
             None
         }
-        Some(_) => latest_derived_slot(conn, workspace_id, series, bounds.derived_end_rank).await?,
+        Some(_) => {
+            latest_derived_slot(conn, workspace_id, series, bounds.derived_end_rank, pauses).await?
+        }
         None => None,
     };
     match (latest_explicit, latest_derived) {
@@ -1008,6 +1125,7 @@ async fn latest_visible_occurrence(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     series: &RecurrenceSeries,
+    pauses: &PauseIndex,
 ) -> Result<Option<(NaiveDate, Option<RecurrenceOutcome>)>> {
     let mut cursor = OccurrenceHistoryCursor::default();
     while let Some(occurrence) = cursor.next(conn, workspace_id, &series.id).await? {
@@ -1016,14 +1134,7 @@ async fn latest_visible_occurrence(
                 return Ok(Some((occurrence.slot_on, occurrence.outcome)));
             }
             RecurrenceProjectionState::Archived
-                if !slot_is_paused_at(
-                    conn,
-                    workspace_id,
-                    &series.id,
-                    &series.schedule(),
-                    occurrence.slot_on,
-                )
-                .await? =>
+                if !pauses.is_paused_at(&series.schedule(), occurrence.slot_on)? =>
             {
                 return Ok(Some((occurrence.slot_on, None)));
             }
@@ -1038,62 +1149,47 @@ async fn latest_derived_slot(
     workspace_id: &WorkspaceId,
     series: &RecurrenceSeries,
     end_rank: u64,
+    pauses: &PauseIndex,
 ) -> Result<Option<NaiveDate>> {
-    let schedule = series.schedule();
-    let mut rank = end_rank;
-    while let Some(previous) = rank.checked_sub(1) {
-        rank = previous;
-        let slot_on = slot_at_rank(&series.rule, series.start_on, rank)
-            .context("history derived slot rank exceeded date range")?;
-        let explicit = sqlx::query_scalar::<_, i64>(
-            "SELECT EXISTS(
-                SELECT 1 FROM recurrence_occurrences
-                WHERE workspace_id = ? AND series_id = ? AND slot_on = ?
-            )",
-        )
-        .bind(workspace_id)
-        .bind(&series.id)
-        .bind(slot_on.to_string())
-        .fetch_one(&mut *conn)
+    let mut occurrence_cursor = OccurrenceHistoryCursor::default();
+    let mut next_occurrence = occurrence_cursor
+        .next(conn, workspace_id, &series.id)
         .await?;
-        if explicit == 0
-            && !slot_is_paused_at(conn, workspace_id, &series.id, &schedule, slot_on).await?
-        {
-            return Ok(Some(slot_on));
+    let mut rank = end_rank.checked_sub(1);
+    while let Some(candidate) = rank {
+        if let Some((start, _)) = pauses.span_containing(candidate) {
+            rank = start.checked_sub(1);
+            continue;
         }
+        while next_occurrence.as_ref().is_some_and(|occurrence| {
+            slot_rank(&series.rule, series.start_on, occurrence.slot_on)
+                .is_some_and(|occurrence_rank| occurrence_rank > candidate)
+        }) {
+            next_occurrence = occurrence_cursor
+                .next(conn, workspace_id, &series.id)
+                .await?;
+        }
+        let explicit = next_occurrence.as_ref().is_some_and(|occurrence| {
+            slot_rank(&series.rule, series.start_on, occurrence.slot_on) == Some(candidate)
+        });
+        if explicit {
+            next_occurrence = occurrence_cursor
+                .next(conn, workspace_id, &series.id)
+                .await?;
+            rank = candidate.checked_sub(1);
+            continue;
+        }
+        return slot_at_rank(&series.rule, series.start_on, candidate)
+            .context("history derived slot rank exceeded date range")
+            .map(Some);
     }
     Ok(None)
 }
 
-async fn slot_is_paused_at(
-    conn: &mut SqliteConnection,
-    workspace_id: &WorkspaceId,
-    series_id: &RecurrenceSeriesId,
-    schedule: &RecurrenceSchedule,
-    slot_on: NaiveDate,
-) -> Result<bool> {
-    let boundary = slot_values(schedule, slot_on)?.boundary_at;
-    Ok(sqlx::query_scalar::<_, i64>(
-        "SELECT EXISTS(
-            SELECT 1 FROM recurrence_pause_intervals
-            WHERE workspace_id = ? AND series_id = ? AND paused_at <= ?
-              AND (resumed_at = '' OR resumed_at > ?)
-        )",
-    )
-    .bind(workspace_id)
-    .bind(series_id)
-    .bind(&boundary)
-    .bind(&boundary)
-    .fetch_one(&mut *conn)
-    .await?
-        != 0)
-}
-
-async fn history_entry_for_occurrence(
-    conn: &mut SqliteConnection,
-    workspace_id: &WorkspaceId,
+fn history_entry_for_occurrence(
     series: &RecurrenceSeries,
     occurrence: &RecurrenceOccurrence,
+    pauses: &PauseIndex,
 ) -> Result<Option<RecurrenceHistoryEntry>> {
     let kind = match occurrence.outcome {
         Some(RecurrenceOutcome::Completed) => RecurrenceHistoryKind::Completed,
@@ -1101,14 +1197,7 @@ async fn history_entry_for_occurrence(
         None if matches!(
             occurrence.projection_state,
             RecurrenceProjectionState::Archived
-        ) && !slot_is_paused_at(
-            conn,
-            workspace_id,
-            &series.id,
-            &series.schedule(),
-            occurrence.slot_on,
-        )
-        .await? =>
+        ) && !pauses.is_paused_at(&series.schedule(), occurrence.slot_on)? =>
         {
             RecurrenceHistoryKind::Missed
         }
@@ -1216,56 +1305,6 @@ impl OccurrenceHistoryCursor {
     }
 }
 
-#[derive(Default)]
-struct PauseHistoryCursor {
-    after: Option<(String, String)>,
-    buffer: VecDeque<RecurrencePauseInterval>,
-    exhausted: bool,
-}
-
-impl PauseHistoryCursor {
-    async fn next(
-        &mut self,
-        conn: &mut SqliteConnection,
-        workspace_id: &WorkspaceId,
-        series_id: &RecurrenceSeriesId,
-    ) -> Result<Option<RecurrencePauseInterval>> {
-        if self.buffer.is_empty() && !self.exhausted {
-            let mut query = QueryBuilder::<Sqlite>::new(
-                "SELECT workspace_id, id, series_id, paused_at, resumed_at, suspended_slot_on,
-                        suspended_task_id, created_by_change_id, resolved_by_change_id
-                 FROM recurrence_pause_intervals
-                 WHERE workspace_id = ",
-            );
-            query.push_bind(workspace_id);
-            query.push(" AND series_id = ");
-            query.push_bind(series_id);
-            if let Some((at, id)) = self.after.as_ref() {
-                query.push(" AND (paused_at < ");
-                query.push_bind(at);
-                query.push(" OR (paused_at = ");
-                query.push_bind(at);
-                query.push(" AND id < ");
-                query.push_bind(id);
-                query.push("))");
-            }
-            query.push(" ORDER BY paused_at DESC, id DESC LIMIT ");
-            query.push_bind(i64::try_from(HISTORY_CURSOR_CHUNK_SIZE).unwrap());
-            let rows = query.build().fetch_all(&mut *conn).await?;
-            self.exhausted = rows.len() < HISTORY_CURSOR_CHUNK_SIZE;
-            for row in rows {
-                self.buffer
-                    .push_back(recurrence_pause_interval_from_row(&row)?);
-            }
-            self.after = self
-                .buffer
-                .back()
-                .map(|pause| (pause.paused_at.clone(), pause.id.clone()));
-        }
-        Ok(self.buffer.pop_front())
-    }
-}
-
 const HISTORY_CURSOR_CHUNK_SIZE: usize = 64;
 
 async fn summaries_for_series(
@@ -1320,10 +1359,11 @@ async fn recurrence_counts_batch(
     let mut result = HashMap::with_capacity(series.len());
     for item in series {
         let bounds = history_bounds(conn, workspace_id, item, at).await?;
-        result.insert(
-            item.id.clone(),
-            recurrence_counts_for_series(conn, workspace_id, item, &bounds).await?,
-        );
+        result.insert(item.id.clone(), {
+            let pauses =
+                PauseIndex::load(conn, workspace_id, item, bounds.derived_end_rank).await?;
+            recurrence_counts_for_series(conn, workspace_id, item, &bounds, &pauses).await?
+        });
     }
     Ok(result)
 }
@@ -1447,19 +1487,24 @@ impl SeriesRefContext {
                 ")
                  SELECT id FROM requested
                  UNION
-                 SELECT MAX(s.id) FROM recurrence_series s
-                 JOIN requested r ON s.id < r.id
-                 WHERE s.workspace_id = ",
+                 SELECT (
+                     SELECT s.id FROM recurrence_series s
+                     WHERE s.workspace_id = ",
             );
             query.push_bind(workspace_id);
             query.push(
-                " GROUP BY r.id
-                  UNION
-                  SELECT MIN(s.id) FROM recurrence_series s
-                  JOIN requested r ON s.id > r.id
-                  WHERE s.workspace_id = ",
+                " AND s.id < requested.id ORDER BY s.id DESC LIMIT 1
+                 ) FROM requested
+                 UNION
+                 SELECT (
+                     SELECT s.id FROM recurrence_series s
+                     WHERE s.workspace_id = ",
             );
             query.push_bind(workspace_id);
+            query.push(
+                " AND s.id > requested.id ORDER BY s.id ASC LIMIT 1
+                 ) FROM requested",
+            );
             for series_id in query
                 .build_query_scalar::<Option<RecurrenceSeriesId>>()
                 .fetch_all(&mut *conn)

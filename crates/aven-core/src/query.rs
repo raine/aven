@@ -54,7 +54,8 @@ pub(crate) use sync_history::sync_history_stats;
 pub(crate) use tasks::{
     ConsumerTaskPage, ConsumerTaskProjection, ConsumerTaskSummaryPage,
     ConsumerTaskSummaryProjection, list_bulk_update_task_items_in_workspace,
-    list_consumer_task_summaries_page_in_workspace, list_consumer_tasks_page_in_workspace,
+    list_consumer_task_summaries_in_workspace, list_consumer_task_summaries_page_in_workspace,
+    list_consumer_tasks_in_workspace, list_consumer_tasks_page_in_workspace,
     list_task_items_in_workspace, list_task_items_with_display_refs,
     list_task_items_without_activity_in_workspace, list_task_summary_items_in_workspace,
 };
@@ -307,6 +308,14 @@ impl Database {
             .await
     }
 
+    pub(crate) async fn list_consumer_tasks_from_current_projection(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<Vec<ConsumerTaskProjection>> {
+        let mut conn = self.acquire_reader().await?;
+        list_consumer_tasks_in_workspace(&mut conn, workspace_id).await
+    }
+
     pub(crate) async fn list_consumer_tasks_page_from_current_projection(
         &self,
         workspace_id: &WorkspaceId,
@@ -315,6 +324,15 @@ impl Database {
     ) -> Result<ConsumerTaskPage> {
         let mut conn = self.acquire_reader().await?;
         list_consumer_tasks_page_in_workspace(&mut conn, workspace_id, offset, limit).await
+    }
+
+    pub(crate) async fn list_consumer_task_summaries_from_current_projection(
+        &self,
+        workspace_id: &WorkspaceId,
+        expand_recurring: bool,
+    ) -> Result<Vec<ConsumerTaskSummaryProjection>> {
+        let mut conn = self.acquire_reader().await?;
+        list_consumer_task_summaries_in_workspace(&mut conn, workspace_id, expand_recurring).await
     }
 
     pub(crate) async fn list_consumer_task_summaries_page(

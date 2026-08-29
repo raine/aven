@@ -236,31 +236,16 @@ impl Store {
             .reconcile_recurrence_reports(workspace_id)
             .await
             .map_err(Error::from_internal)?;
-        let mut offset = 0;
-        let mut items = Vec::new();
-        loop {
-            let page = self
-                .database
-                .list_consumer_tasks_page_from_current_projection(
-                    workspace_id,
-                    offset,
-                    MAX_CONSUMER_TASK_PAGE_LIMIT,
-                )
-                .await
-                .map_err(Error::from_internal)?;
-            let count = page.items.len();
-            items.extend(
-                page.items
+        self.database
+            .list_consumer_tasks_from_current_projection(workspace_id)
+            .await
+            .map(|items| {
+                items
                     .into_iter()
-                    .map(TaskRecord::from_consumer_projection),
-            );
-            if !page.has_more {
-                return Ok(items);
-            }
-            offset = offset.checked_add(count).ok_or_else(|| {
-                Error::new(ErrorCode::Internal, "task page offset overflow".to_string())
-            })?;
-        }
+                    .map(TaskRecord::from_consumer_projection)
+                    .collect()
+            })
+            .map_err(Error::from_internal)
     }
 
     pub async fn list_tasks_page(
@@ -587,28 +572,11 @@ impl Store {
             .reconcile_recurrence_reports(workspace_id)
             .await
             .map_err(Error::from_internal)?;
-        let mut offset = 0;
-        let mut items = Vec::new();
-        loop {
-            let page = self
-                .database
-                .list_consumer_task_summaries_page_from_current_projection(
-                    workspace_id,
-                    expand_recurring,
-                    offset,
-                    MAX_CONSUMER_TASK_PAGE_LIMIT,
-                )
-                .await
-                .map_err(Error::from_internal)?;
-            let count = page.items.len();
-            items.extend(page.items.into_iter().map(TaskSummary::from));
-            if !page.has_more {
-                return Ok(items);
-            }
-            offset = offset.checked_add(count).ok_or_else(|| {
-                Error::new(ErrorCode::Internal, "task page offset overflow".to_string())
-            })?;
-        }
+        self.database
+            .list_consumer_task_summaries_from_current_projection(workspace_id, expand_recurring)
+            .await
+            .map(|items| items.into_iter().map(TaskSummary::from).collect())
+            .map_err(Error::from_internal)
     }
 
     pub async fn recurrence_task_report_page(

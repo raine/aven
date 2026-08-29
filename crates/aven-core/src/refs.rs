@@ -9,6 +9,7 @@ use crate::types::Task;
 use crate::workspaces::Workspace;
 
 const DISPLAY_SUFFIX_FLOOR: usize = 4;
+const SQLITE_BIND_CHUNK_SIZE: usize = 900;
 
 fn quote(input: &str) -> String {
     serde_json::to_string(input).unwrap_or_else(|_| "\"\"".to_string())
@@ -80,38 +81,47 @@ impl DisplayRefContext {
                 task_ids_by_workspace: HashMap::new(),
             });
         }
-        let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new("WITH requested(id) AS (VALUES ");
-        for (index, task_id) in task_ids.iter().enumerate() {
-            if index != 0 {
-                query.push(", ");
+        let mut ids = HashSet::new();
+        for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE.saturating_sub(2)) {
+            let mut query =
+                sqlx::QueryBuilder::<sqlx::Sqlite>::new("WITH requested(id) AS (VALUES ");
+            for (index, task_id) in chunk.iter().enumerate() {
+                if index != 0 {
+                    query.push(", ");
+                }
+                query.push("(").push_bind(task_id).push(")");
             }
-            query.push("(").push_bind(task_id).push(")");
+            query.push(
+                ")
+                 SELECT id FROM requested
+                 UNION
+                 SELECT (
+                     SELECT t.id FROM tasks t INDEXED BY idx_tasks_workspace_id
+                     WHERE t.workspace_id = ",
+            );
+            query.push_bind(workspace_id);
+            query.push(
+                " AND t.id < requested.id ORDER BY t.id DESC LIMIT 1
+                 ) FROM requested
+                 UNION
+                 SELECT (
+                     SELECT t.id FROM tasks t INDEXED BY idx_tasks_workspace_id
+                     WHERE t.workspace_id = ",
+            );
+            query.push_bind(workspace_id);
+            query.push(
+                " AND t.id > requested.id ORDER BY t.id ASC LIMIT 1
+                 ) FROM requested",
+            );
+            ids.extend(
+                query
+                    .build_query_scalar::<Option<TaskId>>()
+                    .fetch_all(&mut *conn)
+                    .await?
+                    .into_iter()
+                    .flatten(),
+            );
         }
-        query.push(
-            ")
-            SELECT id FROM requested
-            UNION
-            SELECT MAX(t.id) FROM tasks t
-            JOIN requested r ON t.id < r.id
-            WHERE t.workspace_id = ",
-        );
-        query.push_bind(workspace_id);
-        query.push(
-            " GROUP BY r.id
-            UNION
-            SELECT MIN(t.id) FROM tasks t
-            JOIN requested r ON t.id > r.id
-            WHERE t.workspace_id = ",
-        );
-        query.push_bind(workspace_id);
-        query.push(" GROUP BY r.id");
-        let ids = query
-            .build_query_scalar::<Option<TaskId>>()
-            .fetch_all(&mut *conn)
-            .await?
-            .into_iter()
-            .flatten()
-            .collect::<HashSet<_>>();
         let mut ids = ids.into_iter().collect::<Vec<_>>();
         ids.sort();
         Ok(Self {

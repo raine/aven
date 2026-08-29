@@ -68,13 +68,35 @@ struct TaskListRead {
     hydration: TaskHydration,
 }
 
+pub(crate) async fn list_consumer_tasks_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+) -> Result<Vec<ConsumerTaskProjection>> {
+    Ok(select_consumer_tasks(conn, workspace_id, 0, None, true)
+        .await?
+        .items)
+}
+
 pub(crate) async fn list_consumer_tasks_page_in_workspace(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     offset: usize,
     limit: usize,
 ) -> Result<ConsumerTaskPage> {
-    select_consumer_tasks(conn, workspace_id, offset, limit, true).await
+    select_consumer_tasks(conn, workspace_id, offset, Some(limit), true).await
+}
+
+pub(crate) async fn list_consumer_task_summaries_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    expand_recurring: bool,
+) -> Result<Vec<ConsumerTaskSummaryProjection>> {
+    let page = select_consumer_tasks(conn, workspace_id, 0, None, !expand_recurring).await?;
+    Ok(
+        hydrate_consumer_task_summaries(conn, workspace_id, expand_recurring, page)
+            .await?
+            .items,
+    )
 }
 
 pub(crate) async fn list_consumer_task_summaries_page_in_workspace(
@@ -84,7 +106,17 @@ pub(crate) async fn list_consumer_task_summaries_page_in_workspace(
     offset: usize,
     limit: usize,
 ) -> Result<ConsumerTaskSummaryPage> {
-    let page = select_consumer_tasks(conn, workspace_id, offset, limit, !expand_recurring).await?;
+    let page =
+        select_consumer_tasks(conn, workspace_id, offset, Some(limit), !expand_recurring).await?;
+    hydrate_consumer_task_summaries(conn, workspace_id, expand_recurring, page).await
+}
+
+async fn hydrate_consumer_task_summaries(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    expand_recurring: bool,
+    page: ConsumerTaskPage,
+) -> Result<ConsumerTaskSummaryPage> {
     let task_ids = page
         .items
         .iter()
@@ -132,11 +164,9 @@ async fn select_consumer_tasks(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     offset: usize,
-    limit: usize,
+    limit: Option<usize>,
     group_terminal_recurrences: bool,
 ) -> Result<ConsumerTaskPage> {
-    let fetch_limit = i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX);
-    let offset = i64::try_from(offset).unwrap_or(i64::MAX);
     let mut query = QueryBuilder::<Sqlite>::new("");
     query.push("SELECT ");
     query.push(CONSUMER_TASK_COLUMNS);
@@ -183,14 +213,19 @@ async fn select_consumer_tasks(
             )",
         );
     }
-    query.push(" ORDER BY t.created_at ASC, t.rowid ASC LIMIT ");
-    query.push_bind(fetch_limit);
-    query.push(" OFFSET ");
-    query.push_bind(offset);
+    query.push(" ORDER BY t.created_at ASC, t.rowid ASC");
+    if let Some(limit) = limit {
+        query.push(" LIMIT ");
+        query.push_bind(i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX));
+        query.push(" OFFSET ");
+        query.push_bind(i64::try_from(offset).unwrap_or(i64::MAX));
+    }
 
     let mut rows = query.build().fetch_all(&mut *conn).await?;
-    let has_more = rows.len() > limit;
-    if has_more {
+    let has_more = limit.is_some_and(|limit| rows.len() > limit);
+    if let Some(limit) = limit
+        && has_more
+    {
         rows.truncate(limit);
     }
     let items = rows

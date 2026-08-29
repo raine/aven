@@ -215,6 +215,89 @@ async fn consumer_api_pages_are_bounded_and_skip_detail_tables() {
 }
 
 #[tokio::test]
+async fn compatibility_vectors_match_pages_beyond_one_internal_batch() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("compatibility-vector.sqlite");
+    let store = Store::open(&path).await.unwrap();
+    let workspace = store.resolve_workspace("default").await.unwrap();
+    store
+        .create_task(
+            &workspace.id,
+            CreateTask {
+                title: "seed task".to_string(),
+                description: String::new(),
+                project: "Core".to_string(),
+                status: TaskStatus::Todo,
+                priority: TaskPriority::None,
+                metadata: Vec::new(),
+                available_at: None,
+                due_on: None,
+            },
+        )
+        .await
+        .unwrap();
+    let mut connection = SqliteConnection::connect_with(
+        &SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(false),
+    )
+    .await
+    .unwrap();
+    let project_id: String =
+        sqlx::query_scalar("SELECT id FROM projects WHERE workspace_id = ? ORDER BY id LIMIT 1")
+            .bind(&workspace.id)
+            .fetch_one(&mut connection)
+            .await
+            .unwrap();
+    sqlx::query(
+        "WITH RECURSIVE seq(i) AS (
+             SELECT 0 UNION ALL SELECT i + 1 FROM seq WHERE i < 1198
+         )
+         INSERT INTO tasks(
+             workspace_id, id, title, description, project_id, status, priority,
+             source, created_at, updated_at
+         )
+         SELECT ?, printf('%016d', i), printf('task %04d', i), '', ?,
+                'todo', 'none', 'api', printf('%016d', i), printf('%016d', i)
+         FROM seq",
+    )
+    .bind(&workspace.id)
+    .bind(project_id)
+    .execute(&mut connection)
+    .await
+    .unwrap();
+    drop(connection);
+
+    let all = store.list_tasks(&workspace.id).await.unwrap();
+    let summaries = store
+        .recurrence_task_report(&workspace.id, true)
+        .await
+        .unwrap();
+    let mut paged = Vec::new();
+    for offset in [0, 500, 1000] {
+        paged.extend(
+            store
+                .list_tasks_page(&workspace.id, offset, 500)
+                .await
+                .unwrap()
+                .items,
+        );
+    }
+
+    assert_eq!(all.len(), 1200);
+    assert_eq!(paged, all);
+    assert_eq!(summaries.len(), all.len());
+    assert_eq!(
+        summaries
+            .iter()
+            .map(|item| &item.task.id)
+            .collect::<Vec<_>>(),
+        all.iter().map(|item| &item.id).collect::<Vec<_>>()
+    );
+    assert!(summaries.iter().all(|item| !item.display_ref.is_empty()));
+}
+
+#[tokio::test]
 async fn consumer_api_completes_local_task_and_conflict_flows() {
     let directory = tempfile::tempdir().unwrap();
     let first_path = directory.path().join("first.sqlite");

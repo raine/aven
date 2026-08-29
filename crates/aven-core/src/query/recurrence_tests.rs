@@ -87,6 +87,37 @@ async fn resolve_at(
     result
 }
 
+async fn insert_pause(
+    database: &crate::db::Database,
+    workspace: &Workspace,
+    series_id: &RecurrenceSeriesId,
+    id: &str,
+    paused_at: &str,
+    resumed_at: &str,
+) {
+    let mut conn = database.acquire_writer().await.unwrap();
+    sqlx::query(
+        "INSERT INTO recurrence_pause_intervals(
+             workspace_id, id, series_id, paused_at, resumed_at,
+             created_by_change_id, resolved_by_change_id
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&workspace.id)
+    .bind(id)
+    .bind(series_id)
+    .bind(paused_at)
+    .bind(resumed_at)
+    .bind(format!("created-{id}"))
+    .bind(if resumed_at.is_empty() {
+        String::new()
+    } else {
+        format!("resolved-{id}")
+    })
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+}
+
 async fn stop_at(
     database: &crate::db::Database,
     workspace: &Workspace,
@@ -577,6 +608,102 @@ async fn history_pagination_seeks_over_an_ancient_schedule() {
         .unwrap();
     assert_eq!(deep.items.len(), 2);
     assert_eq!(deep.total, history.total);
+}
+
+#[tokio::test]
+async fn historical_pause_does_not_disable_deep_rank_pagination() {
+    let (_temp, database, workspace) = setup().await;
+    let mut long_draft = draft("paused ancient history", 1);
+    long_draft.schedule.start_on = NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
+    let created = database
+        .create_recurrence_series(
+            &workspace,
+            CreateRecurrenceSeriesParams::new(long_draft).at(at(24, 12)),
+        )
+        .await
+        .unwrap();
+    insert_pause(
+        &database,
+        &workspace,
+        &created.series.id,
+        "pause-ancient",
+        "1900-01-10T00:00:00Z",
+        "1900-12-31T00:00:00Z",
+    )
+    .await;
+
+    let history = database
+        .recurrence_history_at(&workspace.id, &created.series.id, at(24, 12), 40_000, 2)
+        .await
+        .unwrap();
+
+    assert_eq!(history.items.len(), 2);
+    assert!(history.total > 40_000);
+    assert!(history.has_more);
+}
+
+#[tokio::test]
+async fn pause_intervals_preserve_boundaries_counts_and_offset_pages() {
+    let (_temp, database, workspace) = setup().await;
+    let bounded = database
+        .create_recurrence_series(
+            &workspace,
+            CreateRecurrenceSeriesParams::new(draft("bounded pause", 20)).at(at(24, 12)),
+        )
+        .await
+        .unwrap();
+    insert_pause(
+        &database,
+        &workspace,
+        &bounded.series.id,
+        "pause-bounded",
+        "2026-07-22T00:00:00Z",
+        "2026-07-23T00:00:00Z",
+    )
+    .await;
+
+    let all = database
+        .recurrence_history_at(&workspace.id, &bounded.series.id, at(24, 12), 0, 20)
+        .await
+        .unwrap();
+    let page = database
+        .recurrence_history_at(&workspace.id, &bounded.series.id, at(24, 12), 1, 2)
+        .await
+        .unwrap();
+    assert_eq!(all.total, 4);
+    assert_eq!(all.items.len(), 4);
+    assert_eq!(page.items, all.items[1..3]);
+    assert_eq!(all.items[0].slot_on.as_deref(), Some("2026-07-23"));
+    assert_eq!(all.items[1].kind, RecurrenceHistoryKind::Paused);
+    assert_eq!(all.items[2].slot_on.as_deref(), Some("2026-07-21"));
+
+    let active = database
+        .create_recurrence_series(
+            &workspace,
+            CreateRecurrenceSeriesParams::new(draft("active pause", 20)).at(at(24, 12)),
+        )
+        .await
+        .unwrap();
+    insert_pause(
+        &database,
+        &workspace,
+        &active.series.id,
+        "pause-active",
+        "1900-01-01T00:00:00Z",
+        "2026-07-23T00:00:00Z",
+    )
+    .await;
+    let active_history = database
+        .recurrence_history_at(&workspace.id, &active.series.id, at(24, 12), 0, 20)
+        .await
+        .unwrap();
+    assert_eq!(active_history.total, 2);
+    assert_eq!(active_history.items.len(), 2);
+    assert_eq!(
+        active_history.items[0].slot_on.as_deref(),
+        Some("2026-07-23")
+    );
+    assert_eq!(active_history.items[1].kind, RecurrenceHistoryKind::Paused);
 }
 
 #[tokio::test]
