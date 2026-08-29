@@ -801,8 +801,7 @@ impl TuiStore {
                 .ensure_task_details(std::slice::from_ref(task_id))
                 .await?;
             let stale = hydration.stale_ids().cloned().collect::<Vec<_>>();
-            self.tasks
-                .retain(|item| !stale.contains(&item.task.id));
+            self.tasks.retain(|item| !stale.contains(&item.task.id));
         }
         Ok(())
     }

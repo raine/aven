@@ -13,7 +13,7 @@ pub(in crate::tui::ui) fn render_text_panel(frame: &mut Frame, state: &TextPanel
     let visible_rows = TEXT_PANEL_VISIBLE_ROWS;
     let content_rows = state.lines.len().clamp(1, visible_rows);
     let height = (content_rows as u16).saturating_add(4).min(16);
-    let start = (state.scroll as usize).min(text_panel_scroll_cap(&state.lines) as usize);
+    let start = (state.scroll as usize).min(text_panel_scroll_cap(state.lines) as usize);
     let mut lines = state
         .lines
         .iter()

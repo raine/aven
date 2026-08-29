@@ -290,8 +290,8 @@ fn schedule_hit_testing_uses_the_summary_row() {
                 terminal,
                 false,
                 AddTaskLayout {
-                    description: &state.description,
-                    mode: &state.mode,
+                    description: state.description,
+                    mode: state.mode,
                     has_attachments: false,
                     show_schedule_error: false,
                 },

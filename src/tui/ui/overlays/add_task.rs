@@ -167,8 +167,8 @@ pub(in crate::tui::ui) fn render_add_task(frame: &mut Frame, state: &AddTaskView
     let height = add_task_dialog_height(
         frame.area(),
         AddTaskLayout {
-            description: &state.description,
-            mode: &state.mode,
+            description: state.description,
+            mode: state.mode,
             has_attachments: !state.attachments.items.is_empty(),
             show_schedule_error: state.schedule_error.is_some()
                 && state.schedule_validation_requested,
@@ -404,7 +404,7 @@ fn add_task_metadata_lines(state: &AddTaskView, width: u16) -> Vec<Line<'static>
         metadata_field(
             AddTaskStep::Labels,
             "Labels",
-            &labels_display(&state.labels),
+            &labels_display(state.labels),
             state.focus,
         ),
         schedule_metadata_field(state),

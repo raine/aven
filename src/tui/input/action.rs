@@ -33,11 +33,19 @@ impl App {
                     return Ok(());
                 }
             }
-        } else if ((action == Action::ToggleDetail && self.detail.is_inactive())
-            || action == Action::CopyTaskNotes)
-            && !self.ensure_selected_task_detail().await?
-        {
-            return Ok(());
+        } else {
+            let opens_task_detail = action == Action::ToggleDetail
+                && self.detail.is_inactive()
+                && !matches!(
+                    self.store.view_state.query,
+                    crate::tui::store::TaskQuery::RecentActions
+                        | crate::tui::store::TaskQuery::Recurring
+                );
+            if (opens_task_detail || action == Action::CopyTaskNotes)
+                && !self.ensure_selected_task_detail().await?
+            {
+                return Ok(());
+            }
         }
 
         match action {
