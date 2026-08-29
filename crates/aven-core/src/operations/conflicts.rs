@@ -44,10 +44,10 @@ impl Database {
     pub async fn unresolved_task_conflict_fields(
         &self,
         workspace_id: &WorkspaceId,
-        task_ids: &[TaskId],
+        candidates: &[(TaskId, String)],
     ) -> Result<HashMap<TaskId, HashSet<String>>> {
         let mut conn = self.acquire_reader().await?;
-        unresolved_task_conflict_fields(&mut conn, workspace_id, task_ids).await
+        unresolved_task_conflict_fields(&mut conn, workspace_id, candidates).await
     }
 
     pub async fn conflict_variant_value(
@@ -260,30 +260,24 @@ pub async fn task_conflicts(
         .collect())
 }
 
-const SQLITE_BIND_CHUNK_SIZE: usize = 900;
+const SQLITE_BIND_BUDGET: usize = 900;
+const CONFLICT_CANDIDATE_BIND_COUNT: usize = 2;
+const CONFLICT_CANDIDATE_CHUNK_SIZE: usize =
+    (SQLITE_BIND_BUDGET - 1) / CONFLICT_CANDIDATE_BIND_COUNT;
 
 async fn unresolved_task_conflict_fields(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_ids: &[TaskId],
+    candidates: &[(TaskId, String)],
 ) -> Result<HashMap<TaskId, HashSet<String>>> {
+    let mut unique_candidates = HashSet::new();
+    let candidates = candidates
+        .iter()
+        .filter(|candidate| unique_candidates.insert((*candidate).clone()))
+        .collect::<Vec<_>>();
     let mut fields_by_task = HashMap::new();
-    for task_ids in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
-        let mut query = QueryBuilder::<Sqlite>::new(
-            "SELECT DISTINCT task_id, field FROM conflicts WHERE workspace_id = ",
-        );
-        query.push_bind(workspace_id);
-        query.push(
-            " AND entity_type = 'task' AND resolved = 0 AND entity_id = task_id AND task_id IN (",
-        );
-        {
-            let mut separated = query.separated(", ");
-            for task_id in task_ids {
-                separated.push_bind(task_id);
-            }
-        }
-        query.push(")");
-
+    for candidates in candidates.chunks(CONFLICT_CANDIDATE_CHUNK_SIZE) {
+        let mut query = unresolved_task_conflict_query(workspace_id, candidates, false);
         for row in query.build().fetch_all(&mut *conn).await? {
             fields_by_task
                 .entry(row.get("task_id"))
@@ -292,6 +286,46 @@ async fn unresolved_task_conflict_fields(
         }
     }
     Ok(fields_by_task)
+}
+
+fn unresolved_task_conflict_query(
+    workspace_id: &WorkspaceId,
+    candidates: &[&(TaskId, String)],
+    explain: bool,
+) -> QueryBuilder<Sqlite> {
+    let mut query = QueryBuilder::<Sqlite>::new(if explain {
+        "EXPLAIN QUERY PLAN WITH candidates(task_id, field) AS (VALUES "
+    } else {
+        "WITH candidates(task_id, field) AS (VALUES "
+    });
+    {
+        let mut separated = query.separated(", ");
+        for (task_id, field) in candidates {
+            separated
+                .push("(")
+                .push_bind_unseparated(task_id)
+                .push_unseparated(", ")
+                .push_bind_unseparated(field)
+                .push_unseparated(")");
+        }
+    }
+    query.push(
+        ") SELECT DISTINCT candidate.task_id, candidate.field
+         FROM candidates candidate
+         WHERE EXISTS (
+             SELECT 1 FROM conflicts c INDEXED BY sqlite_autoindex_conflicts_1
+             WHERE c.workspace_id = ",
+    );
+    query.push_bind(workspace_id);
+    query.push(
+        " AND c.entity_type = 'task'
+           AND c.entity_id = candidate.task_id
+           AND c.task_id = c.entity_id
+           AND c.field = candidate.field
+           AND c.resolved = 0
+         )",
+    );
+    query
 }
 
 pub async fn recurrence_series_conflicts(
@@ -1171,4 +1205,187 @@ async fn resolve_metadata_conflict_value(
         after: encoded,
         conflict_id: conflict.0,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::Row;
+
+    use super::{
+        CONFLICT_CANDIDATE_CHUNK_SIZE, TaskId, WorkspaceId, unresolved_task_conflict_fields,
+        unresolved_task_conflict_query,
+    };
+
+    async fn insert_task_conflict(
+        conn: &mut sqlx::SqliteConnection,
+        workspace_id: &WorkspaceId,
+        task_id: &TaskId,
+        field: &str,
+        remote_change_id: &str,
+        resolved: bool,
+    ) {
+        sqlx::query(
+            "INSERT INTO conflicts(
+                 workspace_id, entity_type, entity_id, task_id, field,
+                 local_value, remote_value, remote_change_id, variant_a,
+                 variant_b, created_at, resolved
+             ) VALUES (?, 'task', ?, ?, ?, 'local', 'remote', ?, 'a', 'b', 't', ?)",
+        )
+        .bind(workspace_id)
+        .bind(task_id)
+        .bind(task_id)
+        .bind(field)
+        .bind(remote_change_id)
+        .bind(resolved)
+        .execute(conn)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn candidate_conflicts_preserve_scope_fields_and_distinct_semantics() {
+        let (_temp, mut conn) = crate::test_support::test_conn().await;
+        let workspace_id: WorkspaceId = "0000000000000000".parse().unwrap();
+        let other_workspace_id: WorkspaceId = "0000000000000001".parse().unwrap();
+        let task_id: TaskId = "0000000000001000".parse().unwrap();
+
+        insert_task_conflict(
+            &mut conn,
+            &workspace_id,
+            &task_id,
+            "priority",
+            "priority-a",
+            false,
+        )
+        .await;
+        insert_task_conflict(
+            &mut conn,
+            &workspace_id,
+            &task_id,
+            "priority",
+            "priority-b",
+            false,
+        )
+        .await;
+        insert_task_conflict(
+            &mut conn,
+            &workspace_id,
+            &task_id,
+            "labels",
+            "resolved-labels",
+            true,
+        )
+        .await;
+        insert_task_conflict(
+            &mut conn,
+            &other_workspace_id,
+            &task_id,
+            "status",
+            "other-workspace",
+            false,
+        )
+        .await;
+        sqlx::query(
+            "WITH RECURSIVE seq(i) AS (
+                 VALUES(0) UNION ALL SELECT i + 1 FROM seq WHERE i < 1999
+             )
+             INSERT INTO conflicts(
+                 workspace_id, entity_type, entity_id, task_id, field,
+                 local_value, remote_value, remote_change_id, variant_a,
+                 variant_b, created_at
+             )
+             SELECT ?, 'task', ?, ?, printf('metadata:irrelevant-%04d', i),
+                    'local', 'remote', printf('irrelevant-%04d', i), 'a', 'b', 't'
+             FROM seq",
+        )
+        .bind(&workspace_id)
+        .bind(&task_id)
+        .bind(&task_id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        let candidates = vec![
+            (task_id.clone(), "priority".to_string()),
+            (task_id.clone(), "priority".to_string()),
+            (task_id.clone(), "labels".to_string()),
+            (task_id.clone(), "status".to_string()),
+        ];
+        let conflicts = unresolved_task_conflict_fields(&mut conn, &workspace_id, &candidates)
+            .await
+            .unwrap();
+
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(
+            conflicts.get(&task_id).unwrap(),
+            &std::collections::HashSet::from(["priority".to_string()])
+        );
+    }
+
+    #[tokio::test]
+    async fn candidate_conflicts_chunk_below_the_sqlite_bind_limit() {
+        let (_temp, mut conn) = crate::test_support::test_conn().await;
+        let workspace_id: WorkspaceId = "0000000000000000".parse().unwrap();
+        let candidates = (0..=CONFLICT_CANDIDATE_CHUNK_SIZE)
+            .map(|index| {
+                (
+                    format!("{index:016X}").parse::<TaskId>().unwrap(),
+                    "priority".to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        for index in [0, candidates.len() - 1] {
+            insert_task_conflict(
+                &mut conn,
+                &workspace_id,
+                &candidates[index].0,
+                "priority",
+                &format!("chunk-{index}"),
+                false,
+            )
+            .await;
+        }
+
+        let conflicts = unresolved_task_conflict_fields(&mut conn, &workspace_id, &candidates)
+            .await
+            .unwrap();
+
+        assert_eq!(conflicts.len(), 2);
+        assert!(conflicts.contains_key(&candidates[0].0));
+        assert!(conflicts.contains_key(&candidates.last().unwrap().0));
+    }
+
+    #[tokio::test]
+    async fn candidate_conflict_plan_uses_exact_field_identity_lookups() {
+        let (_temp, mut conn) = crate::test_support::test_conn().await;
+        let workspace_id: WorkspaceId = "0000000000000000".parse().unwrap();
+        let candidates = (0..64)
+            .map(|index| {
+                (
+                    format!("{index:016X}").parse::<TaskId>().unwrap(),
+                    "priority".to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let candidate_refs = candidates.iter().collect::<Vec<_>>();
+        let mut query = unresolved_task_conflict_query(&workspace_id, &candidate_refs, true);
+        let plan = query
+            .build()
+            .fetch_all(&mut *conn)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|row| row.get::<String, _>("detail"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            plan.contains("sqlite_autoindex_conflicts_1")
+                && plan.contains("workspace_id=?")
+                && plan.contains("entity_type=?")
+                && plan.contains("entity_id=?")
+                && plan.contains("field=?"),
+            "unexpected candidate conflict plan:\n{plan}"
+        );
+    }
 }

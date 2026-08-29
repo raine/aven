@@ -221,13 +221,17 @@ async fn plan_bulk_updates(
         })
         .collect::<Vec<_>>();
     let metadata_fields = resolve_bulk_metadata_fields(database, workspace_id, &planned).await?;
-    let task_ids = planned
+    let conflict_candidates = planned
         .iter()
         .filter(|planned| planned.will_change)
-        .map(|planned| planned.item.task.id.clone())
+        .flat_map(|planned| {
+            bulk_update_conflict_fields(&planned.update, &metadata_fields)
+                .into_iter()
+                .map(|field| (planned.item.task.id.clone(), field))
+        })
         .collect::<Vec<_>>();
     let conflicts = database
-        .unresolved_task_conflict_fields(workspace_id, &task_ids)
+        .unresolved_task_conflict_fields(workspace_id, &conflict_candidates)
         .await?;
     for planned in &planned {
         if planned.will_change {
@@ -423,18 +427,28 @@ fn preflight_bulk_update_item(
     conflicts: &HashMap<crate::ids::TaskId, HashSet<String>>,
 ) -> Result<()> {
     let item = &planned.item;
-    let update = &planned.update;
+    for field in bulk_update_conflict_fields(&planned.update, metadata_fields) {
+        ensure_bulk_field_clear(conflicts, &item.display_ref, &item.task.id, &field)?;
+    }
+    Ok(())
+}
+
+fn bulk_update_conflict_fields(
+    update: &TaskUpdate,
+    metadata_fields: &HashMap<String, MetadataFieldId>,
+) -> Vec<String> {
+    let mut fields = Vec::new();
     if update.status.is_some() {
-        ensure_bulk_field_clear(conflicts, &item.display_ref, &item.task.id, "status")?;
+        fields.push("status".to_string());
     }
     if update.priority.is_some() {
-        ensure_bulk_field_clear(conflicts, &item.display_ref, &item.task.id, "priority")?;
+        fields.push("priority".to_string());
     }
     if update.project.is_some() {
-        ensure_bulk_field_clear(conflicts, &item.display_ref, &item.task.id, "project")?;
+        fields.push("project".to_string());
     }
     if !update.add_labels.is_empty() || !update.remove_labels.is_empty() {
-        ensure_bulk_field_clear(conflicts, &item.display_ref, &item.task.id, "labels")?;
+        fields.push("labels".to_string());
     }
     for key in update
         .set_metadata
@@ -445,11 +459,10 @@ fn preflight_bulk_update_item(
         let key = aven_core::metadata::normalize_metadata_key(key)
             .expect("bulk metadata keys were validated");
         if let Some(field_id) = metadata_fields.get(&key) {
-            let field = format!("metadata:{field_id}");
-            ensure_bulk_field_clear(conflicts, &item.display_ref, &item.task.id, &field)?;
+            fields.push(format!("metadata:{field_id}"));
         }
     }
-    Ok(())
+    fields
 }
 
 fn ensure_bulk_field_clear(
