@@ -111,10 +111,10 @@ impl Database {
         set_meta(&mut conn, "sync_last_error", &error).await
     }
 
-    pub(super) async fn pending_sync_change_count(&self) -> Result<i64> {
+    pub(super) async fn pending_sync_changes_exist(&self) -> Result<bool> {
         let mut conn = self.acquire_reader().await?;
         Ok(
-            sqlx::query_scalar("SELECT COUNT(*) FROM changes WHERE server_seq IS NULL")
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM changes WHERE server_seq IS NULL)")
                 .fetch_one(&mut *conn)
                 .await?,
         )

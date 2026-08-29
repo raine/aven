@@ -703,7 +703,7 @@ impl SyncSession {
         let active = self.active.take().expect("active sync page");
         self.summary.pages += 1;
         self.last_has_more = active.has_more;
-        let local_more = self.database.pending_sync_change_count().await? > 0;
+        let local_more = self.database.pending_sync_changes_exist().await?;
         self.last_local_more = local_more;
         let complete = !local_more && !active.has_more && !active.transfer_budget_blocked;
         self.summary.complete = complete;
