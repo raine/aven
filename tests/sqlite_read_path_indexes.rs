@@ -1082,6 +1082,21 @@ async fn assert_plan_uses(
     );
 }
 
+async fn explain_plan(conn: &mut SqliteConnection, sql: &str, binds: &[&str]) -> String {
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+    for bind in binds {
+        query = query.bind(*bind);
+    }
+    query
+        .fetch_all(&mut *conn)
+        .await
+        .expect("explain query plan")
+        .iter()
+        .map(|row| row.get::<String, _>("detail"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 async fn assert_plan_uses_search_without_temp_sort(
     conn: &mut SqliteConnection,
     sql: &str,

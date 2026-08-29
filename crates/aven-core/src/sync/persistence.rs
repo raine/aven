@@ -965,9 +965,18 @@ mod tests {
                 server_seq: None,
             };
 
-            apply_server_blob_reference(&mut conn, &deletion_change("1"))
+            let mut affected_hashes = HashSet::new();
+            apply_server_blob_reference(&mut conn, &deletion_change("1"), &mut affected_hashes)
                 .await
                 .unwrap();
+            let affected_hashes = affected_hashes.into_iter().collect::<Vec<_>>();
+            crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
+                &mut conn,
+                &affected_hashes,
+                &crate::attachments::lifecycle::SystemClock,
+            )
+            .await
+            .unwrap();
             let deleted: bool = sqlx::query_scalar(
                 "SELECT deleted FROM server_task_tombstones
                  WHERE workspace_id = '0000000000000000' AND task_id = ?",
@@ -985,9 +994,18 @@ mod tests {
             assert!(deleted, "{operation} must apply live-to-deleted state");
             assert!(unreferenced_at.is_some());
 
-            apply_server_blob_reference(&mut conn, &deletion_change("0"))
+            let mut affected_hashes = HashSet::new();
+            apply_server_blob_reference(&mut conn, &deletion_change("0"), &mut affected_hashes)
                 .await
                 .unwrap();
+            let affected_hashes = affected_hashes.into_iter().collect::<Vec<_>>();
+            crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
+                &mut conn,
+                &affected_hashes,
+                &crate::attachments::lifecycle::SystemClock,
+            )
+            .await
+            .unwrap();
             let deleted: bool = sqlx::query_scalar(
                 "SELECT deleted FROM server_task_tombstones
                  WHERE workspace_id = '0000000000000000' AND task_id = ?",

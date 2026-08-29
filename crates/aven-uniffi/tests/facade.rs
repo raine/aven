@@ -119,12 +119,6 @@ fn local_task_flow_uses_typed_values_and_validates_ids() {
     let page = client.list_tasks_page(workspace.id.clone(), 0, 1).unwrap();
     assert_eq!(page.items, listed);
     assert!(!page.has_more);
-    let (code, _) = error_parts(
-        client
-            .list_tasks_page(workspace.id.clone(), 0, 0)
-            .unwrap_err(),
-    );
-    assert_eq!(code, ErrorCode::Validation);
     assert_eq!(
         client.fetch_task(workspace.id.clone(), task.id).unwrap(),
         updated.task

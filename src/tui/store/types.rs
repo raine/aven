@@ -132,21 +132,6 @@ impl TaskProjection {
     }
 }
 
-#[cfg(test)]
-mod task_projection_tests {
-    use super::{DetailRevision, TaskProjection};
-
-    #[test]
-    fn mutable_access_advances_detail_revision() {
-        let mut projection = TaskProjection::default();
-        assert_eq!(projection.revision(), DetailRevision::UNCACHED);
-
-        projection.clear();
-
-        assert_ne!(projection.revision(), DetailRevision::UNCACHED);
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TaskScope {
     Workspace,

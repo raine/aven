@@ -212,26 +212,3 @@ async fn upcoming_cache_rebuilds_at_the_local_date_boundary_after_refresh_failur
         .collect::<Vec<_>>();
     assert_eq!(after_labels, vec!["today"]);
 }
-
-#[tokio::test]
-async fn task_surface_projections_invalidate_after_task_and_column_changes() {
-    let mut store = test_store().await;
-    let _ = create_selected_task(&mut store, "Cached task").await;
-
-    assert!(store.task_list_view().row_count() > 0);
-    store.tasks.clear();
-    assert_eq!(store.task_list_view().row_count(), 0);
-
-    let _ = create_selected_task(&mut store, "Cached task again").await;
-    store.set_task_columns(vec![crate::config::TaskColumnConfig {
-        name: "Inbox".to_string(),
-        statuses: vec!["inbox".to_string()],
-    }]);
-    assert_eq!(store.column_board().columns[0].task_indices, [0, 1]);
-
-    store.set_task_columns(vec![crate::config::TaskColumnConfig {
-        name: "Todo".to_string(),
-        statuses: vec!["todo".to_string()],
-    }]);
-    assert!(store.column_board().columns[0].task_indices.is_empty());
-}

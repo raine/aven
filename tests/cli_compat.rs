@@ -144,7 +144,8 @@ async fn taskless_outcomes_return_to_derived_gaps_on_upgrade() {
              'outcome:2026-07-20', 'completed', 'skipped', 'TASKLESSOUTCOME',
              'local', 'remote', '2026-07-20T12:00:00Z'
          );
-         DELETE FROM _sqlx_migrations WHERE version = 20260728183706;",
+         DELETE FROM _sqlx_migrations
+         WHERE version IN (20260728183706, 20260829113619);",
     )
     .execute(&pool)
     .await

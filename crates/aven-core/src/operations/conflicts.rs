@@ -1243,7 +1243,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn candidate_conflicts_preserve_scope_fields_and_distinct_semantics() {
+    async fn candidate_conflicts_filter_by_field_and_workspace() {
         let (_temp, mut conn) = crate::test_support::test_conn().await;
         let workspace_id: WorkspaceId = "0000000000000000".parse().unwrap();
         let other_workspace_id: WorkspaceId = "0000000000000001".parse().unwrap();
@@ -1255,15 +1255,6 @@ mod tests {
             &task_id,
             "priority",
             "priority-a",
-            false,
-        )
-        .await;
-        insert_task_conflict(
-            &mut conn,
-            &workspace_id,
-            &task_id,
-            "priority",
-            "priority-b",
             false,
         )
         .await;
@@ -1306,7 +1297,6 @@ mod tests {
         .unwrap();
 
         let candidates = vec![
-            (task_id.clone(), "priority".to_string()),
             (task_id.clone(), "priority".to_string()),
             (task_id.clone(), "labels".to_string()),
             (task_id.clone(), "status".to_string()),

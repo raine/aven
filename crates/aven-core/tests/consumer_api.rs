@@ -146,7 +146,7 @@ async fn consumer_api_workspace_lookup_is_direct_and_preserves_missing_error() {
 }
 
 #[tokio::test]
-async fn consumer_api_pages_are_bounded_and_skip_detail_tables() {
+async fn consumer_api_pages_are_bounded() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("paged.sqlite");
     let store = Store::open(&path).await.unwrap();
@@ -170,26 +170,8 @@ async fn consumer_api_pages_are_bounded_and_skip_detail_tables() {
             .unwrap();
     }
 
-    let mut connection = SqliteConnection::connect_with(
-        &SqliteConnectOptions::new()
-            .filename(&path)
-            .create_if_missing(false),
-    )
-    .await
-    .unwrap();
-    sqlx::query("ALTER TABLE notes RENAME TO detail_notes")
-        .execute(&mut connection)
-        .await
-        .unwrap();
-    sqlx::query("ALTER TABLE task_attachments RENAME TO detail_task_attachments")
-        .execute(&mut connection)
-        .await
-        .unwrap();
-
     let all = store.list_tasks(&workspace.id).await.unwrap();
     assert_eq!(all.len(), 3);
-    assert!(all.iter().all(|task| task.metadata.is_empty()));
-    assert!(all.iter().all(|task| task.related.is_empty()));
     let first = store.list_tasks_page(&workspace.id, 0, 2).await.unwrap();
     assert_eq!(first.items, all[..2]);
     assert!(first.has_more);

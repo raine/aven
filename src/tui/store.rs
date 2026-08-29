@@ -78,8 +78,6 @@ pub(crate) struct TuiStore {
     database: Database,
     app_config: AppConfig,
     projection: TuiProjection,
-    activity_hydrated_task: Option<crate::ids::TaskId>,
-    activity_failed_task: Option<crate::ids::TaskId>,
     task_columns: Vec<crate::config::TaskColumnConfig>,
     derived: DerivedTaskProjections,
     pub(crate) columns_preview_visible: bool,
@@ -249,8 +247,6 @@ impl RefreshRetainedState {
             database: self.database,
             app_config: self.app_config,
             projection,
-            activity_hydrated_task: None,
-            activity_failed_task: None,
             task_columns: self.task_columns,
             derived: DerivedTaskProjections::default(),
             columns_preview_visible: self.columns_preview_visible,
@@ -309,8 +305,6 @@ impl TuiStore {
                 #[cfg(test)]
                 clone_sentinel: ProjectionCloneSentinel::default(),
             },
-            activity_hydrated_task: None,
-            activity_failed_task: None,
             task_columns,
             derived: DerivedTaskProjections::default(),
             columns_preview_visible: true,
@@ -420,36 +414,6 @@ impl TuiStore {
             .next())
     }
 
-    pub(crate) async fn hydrate_task_activity(
-        &mut self,
-        task_id: &crate::ids::TaskId,
-    ) -> Result<()> {
-        if self.activity_hydrated_task.as_ref() == Some(task_id)
-            || self.activity_failed_task.as_ref() == Some(task_id)
-        {
-            return Ok(());
-        }
-        let Some(index) = self.tasks.iter().position(|item| &item.task.id == task_id) else {
-            return Ok(());
-        };
-        let activity = match self
-            .database
-            .task_activity_for_task(&self.active_workspace.id, task_id)
-            .await
-        {
-            Ok(activity) => activity,
-            Err(error) => {
-                self.activity_failed_task = Some(task_id.clone());
-                return Err(error);
-            }
-        };
-        self.activity_hydrated_task = Some(task_id.clone());
-        if let Some(item) = self.tasks.get_mut(index) {
-            item.activity = activity;
-        }
-        Ok(())
-    }
-
     pub(crate) async fn load_task_items(
         &self,
         task_ids: &[crate::ids::TaskId],
@@ -514,8 +478,6 @@ impl TuiStore {
     }
 
     pub(crate) fn show_exact_task(&mut self, item: TaskListItem) {
-        self.activity_hydrated_task = Some(item.task.id.clone());
-        self.activity_failed_task = None;
         self.view_state = TaskViewState::for_exact_task(item.task.id.clone());
         self.tasks = vec![item].into();
     }

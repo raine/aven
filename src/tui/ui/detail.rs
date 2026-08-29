@@ -257,8 +257,6 @@ struct DetailBodyGeometry {
     epic_children: Vec<DetailEpicChild>,
     body: DetailBodyDocument,
     selectable: DetailSelectableDocument,
-    #[cfg(test)]
-    geometry_id: usize,
 }
 
 #[derive(Debug)]
@@ -361,8 +359,6 @@ impl DetailBodyGeometry {
             epic_children,
             body,
             selectable,
-            #[cfg(test)]
-            geometry_id: next_detail_geometry_id(),
         }
     }
 }
@@ -507,11 +503,6 @@ impl DetailDocument {
         context: &DetailRenderContext<'_>,
     ) -> bool {
         self.geometry_matches(item, context) && self.view_matches(context)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn geometry_id(&self) -> usize {
-        self.geometry.geometry_id
     }
 
     fn sticky_height(&self) -> usize {
@@ -801,14 +792,6 @@ impl DetailDocument {
 
 #[cfg(test)]
 fn next_detail_projection_id() -> usize {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-    NEXT_ID.fetch_add(1, Ordering::Relaxed)
-}
-
-#[cfg(test)]
-fn next_detail_geometry_id() -> usize {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
@@ -5405,37 +5388,6 @@ mod tests {
         assert!(placement.y > area.y);
         assert!(placement.x.saturating_add(placement.width) < area.x + area.width);
         assert!(placement.y.saturating_add(placement.height) < area.y + area.height);
-    }
-
-    #[test]
-    fn cached_geometry_reuses_body_across_scroll_positions() {
-        let mut item = detail_test_item();
-        item.task.description = (0..100)
-            .map(|index| format!("line {index}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let expanded_sections = BTreeSet::new();
-        let base = DetailRenderContext {
-            terminal_area: Rect::new(0, 0, 80, 12),
-            scroll: 0,
-            detail_revision: DetailRevision::UNCACHED,
-            inline_title_editor: None,
-            active_target: None,
-            hovered_target: None,
-            expanded_sections: &expanded_sections,
-            selection: None,
-            inline_images: None,
-            pending_attachments: &[],
-            removed_epic_child: None,
-        };
-        let first = Rc::new(DetailDocument::build(&item, &base));
-        let scrolled = DetailRenderContext { scroll: 1, ..base };
-        let second = DetailDocument::reuse_or_build(Some(&first), &item, &scrolled);
-
-        assert_eq!(first.geometry_id(), second.geometry_id());
-        assert_ne!(first.projection_id(), second.projection_id());
-        assert!(second.model.body_start > first.model.body_start);
-        assert!(second.model.lines.len() <= second.body_visible());
     }
 
     #[test]

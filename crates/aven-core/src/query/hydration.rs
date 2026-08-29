@@ -6,8 +6,8 @@ use sqlx::SqliteConnection;
 use crate::queue::queue_meta_on;
 use crate::refs::DisplayRefContext;
 use crate::task_enrichment::{
-    load_task_bulk_update_enrichment, load_task_enrichment,
-    load_task_enrichment_without_activity, load_task_list_enrichment,
+    load_task_bulk_update_enrichment, load_task_enrichment, load_task_enrichment_without_activity,
+    load_task_list_enrichment,
 };
 use crate::types::Task;
 
@@ -64,7 +64,7 @@ pub async fn build_task_list_items(
             .remove(&task_id)
             .unwrap_or_default();
         let has_notes = match hydration {
-            TaskHydration::Detail => !notes.is_empty(),
+            TaskHydration::Detail | TaskHydration::DetailWithoutActivity => !notes.is_empty(),
             TaskHydration::List => enrichment.task_ids_with_notes.contains(&task_id),
             TaskHydration::BulkUpdate => false,
         };
@@ -159,7 +159,9 @@ pub async fn build_task_list_items(
             recurrence,
             recurrence_group: None,
             hydration: match hydration {
-                TaskHydration::Detail => TaskItemHydration::Detail,
+                TaskHydration::Detail | TaskHydration::DetailWithoutActivity => {
+                    TaskItemHydration::Detail
+                }
                 TaskHydration::List | TaskHydration::BulkUpdate => TaskItemHydration::Summary,
             },
         });

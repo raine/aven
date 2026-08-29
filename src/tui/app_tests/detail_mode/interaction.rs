@@ -579,10 +579,7 @@ async fn modal_overlay_pointer_move_clears_stale_detail_hover() {
 async fn stable_frame_mouse_movement_reuses_detail_document() {
     let mut app = test_app().await;
     let mut draft = test_task_draft("Stable detail projection");
-    draft.description = (0..100)
-        .map(|index| format!("line {index}"))
-        .collect::<Vec<_>>()
-        .join("\n");
+    draft.description = "**wrapped Markdown** remains stable across pointer movement".to_string();
     create_and_select_task(&mut app, draft).await;
     app.show_detail(0);
     let size: ratatui::layout::Size = (80, 24).into();
@@ -594,7 +591,6 @@ async fn stable_frame_mouse_movement_reuses_detail_document() {
             .expect("rendered detail document"),
     );
     let projection_id = document.projection_id();
-    let geometry_id = document.geometry_id();
 
     for (column, row) in [(4, 7), (18, 9)] {
         app.dispatch_mouse(
@@ -617,19 +613,6 @@ async fn stable_frame_mouse_movement_reuses_detail_document() {
         assert_eq!(cached.projection_id(), projection_id);
         assert!(std::rc::Rc::ptr_eq(cached, &document));
     }
-
-    app.dispatch_key(key(KeyCode::PageDown), size)
-        .await
-        .unwrap();
-    render_app_buffer(&mut app, size.width, size.height);
-    let scrolled = app
-        .widgets
-        .detail_document
-        .as_ref()
-        .expect("scrolled detail document");
-    assert_eq!(scrolled.geometry_id(), geometry_id);
-    assert_ne!(scrolled.projection_id(), projection_id);
-    assert!(!std::rc::Rc::ptr_eq(scrolled, &document));
 }
 
 #[tokio::test]

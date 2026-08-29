@@ -437,7 +437,7 @@ fn doctor_with_integrity_reports_invalid_due_dates() {
 }
 
 #[test]
-fn doctor_with_integrity_reports_attachment_sidecar_issues() {
+fn doctor_integrity_refreshes_attachment_checks_after_database_checks() {
     let env = TestEnv::new();
     let db = env.db("integrity-attachment-doctor.sqlite");
     let task_ref = extract_ref(&ok(
@@ -471,6 +471,7 @@ fn doctor_with_integrity_reports_attachment_sidecar_issues() {
             "!! result",
         ],
     );
+    assert!(output.find("quick check").unwrap() < output.find("!! attachment objects").unwrap());
 }
 
 #[test]

@@ -1,36 +1,6 @@
 use super::*;
 
 #[tokio::test]
-async fn task_activity_loads_only_for_the_visible_detail_task() {
-    let mut store = test_store().await;
-    let (first_id, _) = create_selected_task(&mut store, "First task").await;
-    let (second_id, _) = create_selected_task(&mut store, "Second task").await;
-
-    assert!(store.tasks.iter().all(|item| item.activity.is_empty()));
-
-    store.hydrate_task_activity(&first_id).await.unwrap();
-
-    assert!(
-        !store
-            .tasks
-            .iter()
-            .find(|item| item.task.id == first_id)
-            .unwrap()
-            .activity
-            .is_empty()
-    );
-    assert!(
-        store
-            .tasks
-            .iter()
-            .find(|item| item.task.id == second_id)
-            .unwrap()
-            .activity
-            .is_empty()
-    );
-}
-
-#[tokio::test]
 async fn exact_task_load_ignores_active_view_filters() {
     let mut store = test_store().await;
     let (task_id, index) = create_selected_task(&mut store, "Filtered detail").await;
@@ -127,31 +97,7 @@ async fn task_markdown_omits_empty_optional_sections() {
 }
 
 #[tokio::test]
-async fn detail_hydration_reports_a_resident_task_deleted_before_detail_read() {
-    let (_dir, pool, mut store) = test_store_with_pool().await;
-    let (task_id, _) = create_selected_task(&mut store, "Vanishing summary").await;
-    store.refresh(None).await.unwrap();
-    assert_eq!(store.tasks[0].hydration, TaskItemHydration::Summary);
-
-    sqlx::query("DELETE FROM tasks WHERE id = ?")
-        .bind(&task_id)
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let hydration = store
-        .ensure_task_details(std::slice::from_ref(&task_id))
-        .await
-        .unwrap();
-
-    assert!(!hydration.is_ready(&task_id));
-    assert!(!hydration.is_complete());
-    assert_eq!(hydration.stale_ids().collect::<Vec<_>>(), vec![&task_id]);
-    assert_eq!(store.tasks[0].hydration, TaskItemHydration::Summary);
-}
-
-#[tokio::test]
-async fn detail_hydration_distinguishes_ids_absent_from_the_projection() {
+async fn detail_hydration_reports_ids_absent_from_the_projection_as_stale() {
     let mut store = test_store().await;
     let missing = crate::test_support::task_id("missing-resident-task");
 

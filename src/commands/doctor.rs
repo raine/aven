@@ -441,25 +441,6 @@ fn stable_check_code(prefix: &str, label: &str) -> String {
     format!("{prefix}.{suffix}")
 }
 
-async fn run_integrity_scans<DatabaseScan, DatabaseFuture, AttachmentScan, AttachmentFuture>(
-    database_scan: DatabaseScan,
-    attachment_scan: AttachmentScan,
-) -> (
-    Result<aven_core::data_safety::IntegrityReport>,
-    Result<Vec<aven_core::data_safety::IntegrityCheck>>,
-)
-where
-    DatabaseScan: FnOnce() -> DatabaseFuture,
-    DatabaseFuture: std::future::Future<Output = Result<aven_core::data_safety::IntegrityReport>>,
-    AttachmentScan: FnOnce() -> AttachmentFuture,
-    AttachmentFuture:
-        std::future::Future<Output = Result<Vec<aven_core::data_safety::IntegrityCheck>>>,
-{
-    let database_result = database_scan().await;
-    let attachment_result = attachment_scan().await;
-    (database_result, attachment_result)
-}
-
 fn add_integrity_check(
     section: &mut DoctorSection,
     check: &aven_core::data_safety::IntegrityCheck,
@@ -1132,19 +1113,12 @@ async fn add_runtime_database_sections(
         let integrity_section = report.section("integrity", "Integrity");
         match (database, db_path) {
             (Some(database), Some(_)) => {
-                let (database_result, attachment_result) =
-                    if let Some(blob_dir) = integrity_blob_dir.as_deref() {
-                        run_integrity_scans(
-                            || database_integrity_report(database),
-                            || attachment_integrity_checks(database, blob_dir, true),
-                        )
-                        .await
-                    } else {
-                        (
-                            database_integrity_report(database).await,
-                            Err(anyhow::anyhow!("attachment path could not be resolved")),
-                        )
-                    };
+                let database_result = database_integrity_report(database).await;
+                let attachment_result = if let Some(blob_dir) = integrity_blob_dir.as_deref() {
+                    attachment_integrity_checks(database, blob_dir, true).await
+                } else {
+                    Err(anyhow::anyhow!("attachment path could not be resolved"))
+                };
                 let mut combined = match database_result {
                     Ok(integrity_report) => {
                         integrity_section.check(
@@ -1270,75 +1244,5 @@ fn add_daemon_section(report: &mut DoctorReport, config: &AppConfig) {
             false,
             "daemon status is unavailable; inspect the service manager directly",
         ),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::cell::{Cell, RefCell};
-    use std::fs;
-
-    use aven_core::data_safety::{IntegrityCheck, IntegrityReport};
-
-    use super::run_integrity_scans;
-
-    fn healthy_database_report() -> IntegrityReport {
-        IntegrityReport {
-            quick_check_ok: true,
-            quick_check_value: "ok".to_string(),
-            checks: Vec::new(),
-        }
-    }
-
-    #[tokio::test]
-    async fn integrity_scans_attachments_once() {
-        let attachment_calls = Cell::new(0);
-
-        let (_, attachment_result) = run_integrity_scans(
-            || async { Ok(healthy_database_report()) },
-            || async {
-                attachment_calls.set(attachment_calls.get() + 1);
-                Ok(Vec::new())
-            },
-        )
-        .await;
-
-        assert!(attachment_result.is_ok());
-        assert_eq!(attachment_calls.get(), 1);
-    }
-
-    #[tokio::test]
-    async fn integrity_attachment_scan_observes_changes_after_database_work() {
-        let temp = tempfile::tempdir().expect("create temp directory");
-        let object = temp.path().join("attachment-object");
-        fs::write(&object, b"attachment").expect("write attachment object");
-        let events = RefCell::new(Vec::new());
-
-        let (_, attachment_result) = run_integrity_scans(
-            || async {
-                events.borrow_mut().push("database");
-                fs::remove_file(&object).expect("remove attachment during database work");
-                Ok(healthy_database_report())
-            },
-            || async {
-                events.borrow_mut().push("attachments");
-                Ok(vec![IntegrityCheck {
-                    label: "attachment objects",
-                    ok: object.exists(),
-                    value: if object.exists() {
-                        "all present".to_string()
-                    } else {
-                        "1 missing".to_string()
-                    },
-                }])
-            },
-        )
-        .await;
-
-        assert_eq!(&*events.borrow(), &["database", "attachments"]);
-        let checks = attachment_result.expect("attachment scan result");
-        assert_eq!(checks.len(), 1);
-        assert!(!checks[0].ok);
-        assert_eq!(checks[0].value, "1 missing");
     }
 }

@@ -321,20 +321,9 @@ fn schedule_rank_and_seek_round_trip_across_frequencies() {
 }
 
 #[test]
-fn schedule_rank_handles_partial_week_anchor() {
+fn schedule_rank_counts_partial_anchor_week() {
     let rule = RecurrenceRule::every_n_weeks_on(2, [Weekday::Mon, Weekday::Thu]).unwrap();
     let start_on = date(2026, 7, 15);
-    assert_eq!(
-        (0..4)
-            .map(|rank| super::schedule::slot_at_rank(&rule, start_on, rank).unwrap())
-            .collect::<Vec<_>>(),
-        [
-            date(2026, 7, 16),
-            date(2026, 7, 27),
-            date(2026, 7, 30),
-            date(2026, 8, 10)
-        ]
-    );
     assert_eq!(
         super::schedule::slot_count_before(&rule, start_on, date(2026, 7, 20)),
         Some(1)

@@ -13,7 +13,7 @@ use sqlx::{Row, SqliteConnection};
 
 use crate::attachments::storage::object_path;
 use crate::attachments::validation::validate_sha256;
-use crate::db::begin_immediate;
+use crate::db::{begin_immediate, get_meta, set_meta};
 use crate::ids::new_id;
 
 pub const DEFAULT_LOCAL_GRACE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -21,6 +21,7 @@ pub const DEFAULT_ORIGINAL_QUOTA_BYTES: i64 = 10 * 1024 * 1024 * 1024;
 pub const DEFAULT_PREVIEW_QUOTA_BYTES: u64 = 512 * 1024 * 1024;
 pub const DEFAULT_MAINTENANCE_LIMIT: usize = 128;
 const LEASE_TTL: Duration = Duration::from_secs(10 * 60);
+const LIVENESS_CURSOR_META_KEY: &str = "attachment_liveness_cursor";
 
 pub trait Clock: Send + Sync {
     fn now(&self) -> DateTime<Utc>;
@@ -371,6 +372,23 @@ pub(crate) async fn reconcile_liveness_in_transaction(
     Ok(())
 }
 
+pub(crate) async fn reconcile_task_liveness_in_transaction(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_id: &str,
+    clock: &dyn Clock,
+) -> Result<()> {
+    let hashes = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT sha256 FROM task_attachments
+         WHERE workspace_id = ? AND task_id = ?",
+    )
+    .bind(workspace_id)
+    .bind(task_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    reconcile_liveness_for_hashes_in_transaction(conn, &hashes, clock).await
+}
+
 pub(crate) async fn reconcile_liveness_for_hashes_in_transaction(
     conn: &mut SqliteConnection,
     hashes: &[String],
@@ -415,6 +433,52 @@ pub(crate) async fn reconcile_liveness_for_hashes_in_transaction(
     .bind(&hashes)
     .execute(&mut *conn)
     .await?;
+    Ok(())
+}
+
+async fn reconcile_liveness_bounded(
+    conn: &mut SqliteConnection,
+    limit: usize,
+    clock: &dyn Clock,
+) -> Result<()> {
+    let mut tx = begin_immediate(conn).await?;
+    let now = timestamp(clock.now());
+    sqlx::query("DELETE FROM blob_leases WHERE expires_at <= ?")
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM blob_upload_reservations WHERE expires_at <= ?")
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    if limit == 0 {
+        tx.commit().await?;
+        return Ok(());
+    }
+
+    let cursor = get_meta(&mut tx, LIVENESS_CURSOR_META_KEY)
+        .await?
+        .unwrap_or_default();
+    let hashes = sqlx::query_scalar::<_, String>(
+        "SELECT sha256 FROM blob_inventory
+         WHERE sha256 > ? ORDER BY sha256 LIMIT ?",
+    )
+    .bind(&cursor)
+    .bind(i64::try_from(limit)?)
+    .fetch_all(&mut *tx)
+    .await?;
+    reconcile_liveness_for_hashes_in_transaction(&mut tx, &hashes, clock).await?;
+    set_meta(
+        &mut tx,
+        LIVENESS_CURSOR_META_KEY,
+        if hashes.len() < limit {
+            ""
+        } else {
+            hashes.last().map(String::as_str).unwrap_or_default()
+        },
+    )
+    .await?;
+    tx.commit().await?;
     Ok(())
 }
 

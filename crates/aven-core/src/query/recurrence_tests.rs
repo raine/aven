@@ -574,7 +574,7 @@ async fn recurrence_history_pages_preserve_metadata_and_boundaries() {
 }
 
 #[tokio::test]
-async fn history_pagination_seeks_over_an_ancient_schedule() {
+async fn history_pagination_seeks_over_an_ancient_schedule_and_pause() {
     let (_temp, database, workspace) = setup().await;
     let mut long_draft = draft("ancient history", 1);
     long_draft.schedule.start_on = NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
@@ -590,7 +590,6 @@ async fn history_pagination_seeks_over_an_ancient_schedule() {
         .recurrence_history_at(&workspace.id, &created.series.id, at(24, 12), 0, 2)
         .await
         .unwrap();
-
     assert_eq!(
         history
             .items
@@ -608,20 +607,7 @@ async fn history_pagination_seeks_over_an_ancient_schedule() {
         .unwrap();
     assert_eq!(deep.items.len(), 2);
     assert_eq!(deep.total, history.total);
-}
 
-#[tokio::test]
-async fn historical_pause_does_not_disable_deep_rank_pagination() {
-    let (_temp, database, workspace) = setup().await;
-    let mut long_draft = draft("paused ancient history", 1);
-    long_draft.schedule.start_on = NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
-    let created = database
-        .create_recurrence_series(
-            &workspace,
-            CreateRecurrenceSeriesParams::new(long_draft).at(at(24, 12)),
-        )
-        .await
-        .unwrap();
     insert_pause(
         &database,
         &workspace,
@@ -631,15 +617,13 @@ async fn historical_pause_does_not_disable_deep_rank_pagination() {
         "1900-12-31T00:00:00Z",
     )
     .await;
-
-    let history = database
+    let paused = database
         .recurrence_history_at(&workspace.id, &created.series.id, at(24, 12), 40_000, 2)
         .await
         .unwrap();
-
-    assert_eq!(history.items.len(), 2);
-    assert!(history.total > 40_000);
-    assert!(history.has_more);
+    assert_eq!(paused.items.len(), 2);
+    assert!(paused.total > 40_000);
+    assert!(paused.has_more);
 }
 
 #[tokio::test]
