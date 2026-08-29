@@ -471,10 +471,6 @@ async fn bounded_list_hydrates_only_selected_summary_rows() {
         .execute(conn.as_mut())
         .await
         .unwrap();
-    sqlx::query("ALTER TABLE notes RENAME TO detail_notes")
-        .execute(conn.as_mut())
-        .await
-        .unwrap();
     sqlx::query("ALTER TABLE task_attachments RENAME TO detail_task_attachments")
         .execute(conn.as_mut())
         .await
@@ -503,6 +499,7 @@ async fn bounded_list_hydrates_only_selected_summary_rows() {
         expected_ids
     );
     assert!(bounded.iter().all(|item| item.notes.is_empty()));
+    assert!(bounded.iter().all(|item| item.has_notes));
     assert!(bounded.iter().all(|item| item.attachments.is_empty()));
 }
 

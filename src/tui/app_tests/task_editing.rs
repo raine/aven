@@ -10,14 +10,17 @@ async fn create_copyable_task(app: &mut App) -> usize {
         },
     )
     .await;
-    app.store.tasks[selected]
-        .notes
-        .push(crate::query::TaskNote {
-            id: "note-id".to_string(),
-            body: "Note body".to_string(),
-            created_at: crate::ids::now(),
-        });
-    selected
+    let task_id = app.store.tasks[selected].task.id.clone();
+    app.store
+        .add_note_to_task(&task_id, "Note body".to_string())
+        .await
+        .unwrap();
+    app.store.refresh(None).await.unwrap();
+    app.store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == task_id)
+        .unwrap()
 }
 
 #[tokio::test]
@@ -687,6 +690,7 @@ async fn edit_description_conflict_preserves_overlay() {
 async fn detail_copy_hotkeys_copy_task_text_and_show_feedback() {
     let mut app = test_app().await;
     create_copyable_task(&mut app).await;
+    app.execute(Action::ToggleDetail).await.unwrap();
     assert!(app.view().copy_description_available);
     assert!(app.view().copy_notes_available);
 

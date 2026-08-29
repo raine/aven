@@ -703,6 +703,7 @@ mod tests {
             display_ref: format!("APP-{index}"),
             labels: Vec::new(),
             notes: Vec::new(),
+            has_notes: false,
             has_conflict: false,
             unresolved_blocker_count: 0,
             dependent_count: 0,
@@ -715,6 +716,7 @@ mod tests {
             epic_rollup: None,
             recurrence: None,
             recurrence_group: None,
+            hydration: crate::query::TaskItemHydration::Detail,
             attachments: Vec::new(),
             queue: Default::default(),
         }

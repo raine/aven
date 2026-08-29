@@ -1183,7 +1183,7 @@ fn metadata_cell(
             Style::new().fg(FG_MUTED).remove_modifier(Modifier::BOLD),
         ));
     }
-    if !item.notes.is_empty() {
+    if item.has_notes {
         if !spans.is_empty() {
             spans.push(Span::raw(" "));
         }
@@ -2489,6 +2489,7 @@ mod tests {
             body: "one".to_string(),
             created_at: "001".to_string(),
         }];
+        documented.has_notes = true;
         let visible_tasks = vec![&plain];
         let all_tasks = vec![&plain, &documented];
 
@@ -2533,6 +2534,7 @@ mod tests {
             body: "one".to_string(),
             created_at: "001".to_string(),
         }];
+        task.has_notes = true;
 
         assert_eq!(metadata_column_width_from_tasks(&[task]), 3);
     }
@@ -2845,6 +2847,7 @@ mod tests {
                 created_at: "002".to_string(),
             },
         ];
+        item.has_notes = true;
 
         assert_eq!(
             metadata_cell(&item, EpicSelectionContext::default(), false).to_string(),
@@ -3056,6 +3059,7 @@ mod tests {
             body: "one".to_string(),
             created_at: "001".to_string(),
         }];
+        item.has_notes = true;
         item.unresolved_blocker_count = 1;
         item.dependent_count = 1;
 

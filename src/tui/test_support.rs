@@ -28,6 +28,7 @@ pub(crate) fn task_list_item(title: &str) -> TaskListItem {
         display_ref: "APP-1".to_string(),
         labels: Vec::new(),
         notes: Vec::new(),
+        has_notes: false,
         attachments: Vec::new(),
         has_conflict: false,
         unresolved_blocker_count: 0,
@@ -41,6 +42,7 @@ pub(crate) fn task_list_item(title: &str) -> TaskListItem {
         epic_rollup: None,
         recurrence: None,
         recurrence_group: None,
+        hydration: crate::query::TaskItemHydration::Detail,
         queue: Default::default(),
     }
 }

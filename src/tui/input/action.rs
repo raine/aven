@@ -24,6 +24,16 @@ impl App {
         if self.handle_recurring_series_task_action(&action).await? {
             return Ok(());
         }
+        if action == Action::BeginRemoveRelated {
+            if let Some(selection) = self.resolve_task_selection() {
+                let task_ids = selection.ids().cloned().collect::<Vec<_>>();
+                self.store.ensure_task_details(&task_ids).await?;
+            }
+        } else if (action == Action::ToggleDetail && self.detail.is_inactive())
+            || action == Action::CopyTaskNotes
+        {
+            self.ensure_selected_task_detail().await?;
+        }
 
         match action {
             Action::Quit => self.should_quit = true,

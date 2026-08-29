@@ -19,6 +19,7 @@ const SQLITE_BIND_CHUNK_SIZE: usize = 900;
 pub struct TaskEnrichment {
     pub labels_by_task: HashMap<TaskId, Vec<String>>,
     pub notes_by_task: HashMap<TaskId, Vec<TaskNote>>,
+    pub task_ids_with_notes: HashSet<TaskId>,
     pub attachments_by_task: HashMap<TaskId, Vec<AttachmentMetadata>>,
     pub metadata_by_task: HashMap<TaskId, Vec<TaskMetadataValue>>,
     pub activity_by_task: HashMap<TaskId, Vec<RecentActionItem>>,
@@ -85,15 +86,22 @@ async fn load_task_enrichment_with_detail(
     include_detail: bool,
     include_activity: bool,
 ) -> Result<TaskEnrichment> {
-    let (notes_by_task, attachments_by_task, metadata_by_task) = if include_detail {
-        (
-            notes_for_tasks(conn, workspace_id, task_ids).await?,
-            attachments_for_tasks(conn, workspace_id, task_ids).await?,
-            crate::metadata::metadata_by_task_ids(conn, workspace_id, task_ids).await?,
-        )
-    } else {
-        (HashMap::new(), HashMap::new(), HashMap::new())
-    };
+    let (notes_by_task, task_ids_with_notes, attachments_by_task, metadata_by_task) =
+        if include_detail {
+            (
+                notes_for_tasks(conn, workspace_id, task_ids).await?,
+                HashSet::new(),
+                attachments_for_tasks(conn, workspace_id, task_ids).await?,
+                crate::metadata::metadata_by_task_ids(conn, workspace_id, task_ids).await?,
+            )
+        } else {
+            (
+                HashMap::new(),
+                task_ids_with_notes(conn, workspace_id, task_ids).await?,
+                HashMap::new(),
+                HashMap::new(),
+            )
+        };
     let activity_by_task = if include_activity {
         crate::query::task_activity_for_tasks_in_workspace(conn, workspace_id, task_ids).await?
     } else {
@@ -116,6 +124,7 @@ async fn load_task_enrichment_with_detail(
     Ok(TaskEnrichment {
         labels_by_task: labels_for_tasks(conn, workspace_id, task_ids).await?,
         notes_by_task,
+        task_ids_with_notes,
         attachments_by_task,
         metadata_by_task,
         activity_by_task,
@@ -263,6 +272,37 @@ async fn notes_for_tasks(
         }
     }
     Ok(notes_by_task)
+}
+
+async fn task_ids_with_notes(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    task_ids: &[TaskId],
+) -> Result<HashSet<TaskId>> {
+    let mut task_ids_with_notes = HashSet::new();
+    if task_ids.is_empty() {
+        return Ok(task_ids_with_notes);
+    }
+    for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT DISTINCT task_id
+             FROM notes WHERE workspace_id = ",
+        );
+        query.push_bind(workspace_id);
+        query.push(" AND task_id IN (");
+        {
+            let mut separated = query.separated(", ");
+            for task_id in chunk {
+                separated.push_bind(task_id);
+            }
+        }
+        query.push(")");
+
+        for row in query.build().fetch_all(&mut *conn).await? {
+            task_ids_with_notes.insert(row.get("task_id"));
+        }
+    }
+    Ok(task_ids_with_notes)
 }
 
 pub(crate) async fn labels_for_tasks(

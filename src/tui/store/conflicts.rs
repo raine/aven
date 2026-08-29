@@ -92,7 +92,7 @@ impl TuiStore {
         }
         let mut items = self
             .database
-            .list_task_items_without_activity_from_current_projection(
+            .list_task_summary_items_from_current_projection(
                 &self.active_workspace.id,
                 crate::query::TaskFilters {
                     task_ids: crate::query::TaskIdFilter::Only(task_ids),
@@ -102,6 +102,7 @@ impl TuiStore {
                 crate::query::TaskQueryMode::Flat,
                 crate::query::TaskSort::Created,
                 crate::query::SortDirection::Asc,
+                None,
             )
             .await?;
         for item in &mut items {

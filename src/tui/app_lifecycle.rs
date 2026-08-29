@@ -163,19 +163,10 @@ impl App {
                 needs_redraw = true;
             }
 
-            let detail_task_id = self
-                .detail
-                .is_active()
-                .then(|| {
-                    self.store
-                        .selected_task(self.list.selected_task())
-                        .map(|item| item.task.id.clone())
-                })
-                .flatten();
-            if let Some(task_id) = detail_task_id
-                && let Err(error) = self.store.hydrate_task_activity(&task_id).await
+            if self.detail_hydration_required()
+                && let Err(error) = self.ensure_selected_task_detail().await
             {
-                self.set_error(format!("activity load failed: {error:#}"));
+                self.set_error(format!("detail load failed: {error:#}"));
                 needs_redraw = true;
             }
 
@@ -446,7 +437,7 @@ impl App {
             pending_shortcut_scroll: self.pending_shortcut_scroll,
             copy_description_available: selected_task
                 .is_some_and(|task| !task.task.description.is_empty()),
-            copy_notes_available: selected_task.is_some_and(|task| !task.notes.is_empty()),
+            copy_notes_available: selected_task.is_some_and(|task| task.has_notes),
             visible_marked_task_count: self.bulk_scope_marked_task_count(),
             custom_command_marked_task_count: self.marked_task_ids_in_view().len(),
             footer_choice_mode: self.footer_choice.as_ref().map(|choice| choice.mode),
@@ -525,6 +516,11 @@ impl App {
             && !matches!(self.overlay, Some(OverlayState::AttachmentPreview { .. }))
     }
 
+    fn detail_hydration_required(&self) -> bool {
+        self.detail_underlay()
+            || matches!(self.overlay, Some(OverlayState::AttachmentPreview { .. }))
+    }
+
     pub(super) async fn refresh(&mut self) -> Result<()> {
         self.refresh_view(RefreshKind::User).await
     }
@@ -563,10 +559,10 @@ impl App {
                 .map(|detail| detail.series.id.clone())
         })
         .flatten();
-        let detail_task = (self.detail_underlay()
-            || matches!(self.overlay, Some(OverlayState::AttachmentPreview { .. })))
-        .then(|| self.store.selected_task(selected).cloned())
-        .flatten();
+        let detail_hydration_required = self.detail_hydration_required();
+        let detail_task = detail_hydration_required
+            .then(|| self.store.selected_task(selected).cloned())
+            .flatten();
         let previous_detail_targets = detail_task
             .as_ref()
             .map(|_| self.detail_focus_targets(ratatui::layout::Size::new(80, 24)))
@@ -604,6 +600,9 @@ impl App {
                 result.selected
             });
         self.list.select_task(selected);
+        if detail_hydration_required && let Err(error) = self.ensure_selected_task_detail().await {
+            self.set_error(format!("detail load failed: {error:#}"));
+        }
         if let Some(series_id) = recurrence_detail_id {
             let selected_matches = self
                 .store
@@ -648,6 +647,19 @@ impl App {
             self.set_warning(format!("project scope {project} is no longer available"));
         }
         Ok(())
+    }
+
+    pub(in crate::tui) async fn ensure_selected_task_detail(&mut self) -> Result<()> {
+        let Some(task_id) = self
+            .store
+            .selected_task(self.list.selected_task())
+            .map(|item| item.task.id.clone())
+        else {
+            return Ok(());
+        };
+        self.store
+            .ensure_task_details(std::slice::from_ref(&task_id))
+            .await
     }
 
     pub(super) fn reconcile_detail_focus(

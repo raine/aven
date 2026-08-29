@@ -944,11 +944,7 @@ impl App {
     }
 
     pub(super) fn open_remove_related_picker(&mut self, selection: TaskSelection) {
-        let Some(index) = self.selection_index(&selection) else {
-            self.set_warning("task is unavailable");
-            return;
-        };
-        let items = self.store.selected_related_picker_items(Some(index));
+        let items = crate::tui::store::related_picker_items(&selection.targets()[0]);
         self.open_picker_overlay(
             PickerIntent::RemoveRelated { selection },
             REMOVE_RELATED_TITLE,

@@ -35,7 +35,7 @@ pub(crate) use launch::{TuiLaunch, TuiStartup};
 pub(crate) use onboarding::OnboardingStatus;
 pub(crate) use pickers::{
     ADD_TASK_STATUS_AUTO_VALUE, CREATE_PROJECT_PICKER_VALUE_PREFIX, create_project_picker_name,
-    deleted_picker_items, epic_picker_items,
+    deleted_picker_items, epic_picker_items, related_picker_items,
 };
 pub(crate) use recurrence::recurrence_draft;
 pub(crate) use task_commands::{PriorityMutation, TaskDateField, TaskTextField};
@@ -51,9 +51,24 @@ pub(crate) use types::{
 pub(crate) use types::{DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts};
 
 use crate::query::{
-    ProjectListItem, RecurrenceSeriesDetail, RecurrenceSeriesListItem, SidebarCounts, TaskListItem,
+    ProjectListItem, RecurrenceSeriesDetail, RecurrenceSeriesListItem, SidebarCounts,
+    TaskItemHydration, TaskListItem,
 };
 use crate::workspaces::Workspace;
+
+// The summary row owns task identity, visibility, ordering, conflict, and recurrence fields.
+// Detail hydration fills only collections omitted from the summary projection.
+fn absorb_task_detail(summary: &mut TaskListItem, detail: TaskListItem) {
+    debug_assert_eq!(summary.task.id, detail.task.id);
+    summary.notes = detail.notes;
+    summary.has_notes = detail.has_notes;
+    summary.attachments = detail.attachments;
+    summary.metadata = detail.metadata;
+    summary.activity = detail.activity;
+    summary.related = detail.related;
+    summary.epic_child_dependencies = detail.epic_child_dependencies;
+    summary.hydration = TaskItemHydration::Detail;
+}
 
 pub(crate) struct TuiStore {
     database: Database,
@@ -350,7 +365,9 @@ impl TuiStore {
         let resident = self
             .tasks
             .iter()
-            .filter(|item| requested.contains(&item.task.id))
+            .filter(|item| {
+                requested.contains(&item.task.id) && item.hydration == TaskItemHydration::Detail
+            })
             .map(|item| (item.task.id.clone(), item.clone()))
             .collect::<std::collections::BTreeMap<_, _>>();
         let missing = task_ids
@@ -646,12 +663,13 @@ impl TuiStore {
             let filters = self.view_state.filters();
             self.tasks = self
                 .database
-                .list_task_items_without_activity_from_current_projection(
+                .list_task_summary_items_from_current_projection(
                     &workspace_id,
                     filters,
                     self.view_state.query_mode(),
                     self.view_state.sort(),
                     self.view_state.sort_direction(),
+                    None,
                 )
                 .await?;
             if self.view_state.query == TaskQuery::Conflicts {
@@ -660,6 +678,7 @@ impl TuiStore {
         }
         self.load_epic_child_tasks(&workspace_id).await?;
         self.prune_expanded_epic_ids();
+        self.ensure_restored_task_detail(restore).await?;
         self.sync_status = self.load_sync_status().await?;
         self.latest_undo = self.load_latest_undo_presentation().await?;
         self.rebuild_sidebar();
@@ -668,6 +687,68 @@ impl TuiStore {
             selected: self.restored_main_selection(restore),
             fallback_scope,
         })
+    }
+
+    async fn ensure_restored_task_detail(&mut self, restore: &SelectionRestore) -> Result<()> {
+        let task_id = match restore {
+            SelectionRestore::Identity(MainRowIdentity::Task(task_id))
+            | SelectionRestore::Anchor(MainRowAnchor {
+                identity: MainRowIdentity::Task(task_id),
+                ..
+            }) => Some(task_id),
+            SelectionRestore::Default
+            | SelectionRestore::Identity(_)
+            | SelectionRestore::Anchor(_)
+            | SelectionRestore::Index(_) => None,
+        };
+        if let Some(task_id) = task_id {
+            self.ensure_task_details(std::slice::from_ref(task_id))
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn ensure_task_details(
+        &mut self,
+        task_ids: &[crate::ids::TaskId],
+    ) -> Result<()> {
+        let missing = task_ids
+            .iter()
+            .filter(|task_id| {
+                self.tasks.iter().any(|item| {
+                    &item.task.id == *task_id && item.hydration == TaskItemHydration::Summary
+                })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let hydrated = self
+            .database
+            .list_task_items_from_current_projection(
+                &self.active_workspace.id,
+                crate::query::TaskFilters {
+                    include_deleted: true,
+                    expand_recurring: true,
+                    task_ids: crate::query::TaskIdFilter::Only(missing),
+                    ..crate::query::TaskFilters::default()
+                },
+                crate::query::TaskQueryMode::Flat,
+                crate::query::TaskSort::Created,
+                crate::query::SortDirection::Asc,
+            )
+            .await?;
+        for detail in hydrated {
+            if let Some(summary) = self
+                .tasks
+                .iter_mut()
+                .find(|item| item.task.id == detail.task.id)
+            {
+                absorb_task_detail(summary, detail);
+            }
+        }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -740,7 +821,7 @@ impl TuiStore {
         }
         let children = self
             .database
-            .list_task_items_without_activity_from_current_projection(
+            .list_task_summary_items_from_current_projection(
                 workspace_id,
                 crate::query::TaskFilters {
                     task_ids: crate::query::TaskIdFilter::Only(child_ids),
@@ -749,6 +830,7 @@ impl TuiStore {
                 crate::query::TaskQueryMode::Flat,
                 crate::query::TaskSort::Created,
                 crate::query::SortDirection::Asc,
+                None,
             )
             .await?;
         self.tasks.extend(children);

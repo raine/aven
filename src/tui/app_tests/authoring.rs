@@ -1557,6 +1557,17 @@ async fn finished_attachment_task_intake_closes_composer() {
         .iter()
         .find(|item| item.task.title == "created with image")
         .unwrap();
+    let created_id = created.task.id.clone();
+    app.store
+        .ensure_task_details(std::slice::from_ref(&created_id))
+        .await
+        .unwrap();
+    let created = app
+        .store
+        .tasks
+        .iter()
+        .find(|item| item.task.id == created_id)
+        .unwrap();
     assert_eq!(created.attachments.len(), 1);
 }
 
@@ -2233,6 +2244,10 @@ async fn add_note_targets_one_marked_task_instead_of_cursor() {
     type_chars(&mut app, "Marked detail").await;
     app.handle_overlay_key(ctrl_s()).await.unwrap();
 
+    app.store
+        .ensure_task_details(std::slice::from_ref(&marked_id))
+        .await
+        .unwrap();
     let marked = app
         .store
         .tasks

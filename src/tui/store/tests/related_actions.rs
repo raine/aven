@@ -16,6 +16,10 @@ async fn related_actions_add_remove_and_undo() {
     assert_eq!(store.tasks[selected].related[0].task_id, related_id);
 
     store.undo_last(Some(selected)).await.unwrap().unwrap();
+    store
+        .ensure_task_details(std::slice::from_ref(&task_id))
+        .await
+        .unwrap();
     let selected = store
         .tasks
         .iter()
@@ -35,6 +39,10 @@ async fn related_actions_add_remove_and_undo() {
         .unwrap();
     assert!(removed.message.contains("removed related link"));
     store.undo_last(removed.selected).await.unwrap().unwrap();
+    store
+        .ensure_task_details(std::slice::from_ref(&task_id))
+        .await
+        .unwrap();
     let selected = store
         .tasks
         .iter()
@@ -47,7 +55,7 @@ async fn related_actions_add_remove_and_undo() {
 async fn related_removal_picker_includes_deleted_targets_with_marker() {
     let (_dir, pool, mut store) = test_store_with_pool().await;
     let (related_id, _) = create_selected_task(&mut store, "Deleted related").await;
-    let (_task_id, selected) = create_selected_task(&mut store, "Picker subject").await;
+    let (task_id, selected) = create_selected_task(&mut store, "Picker subject").await;
     store
         .add_related(Some(selected), &related_id)
         .await
@@ -63,7 +71,11 @@ async fn related_removal_picker_includes_deleted_targets_with_marker() {
         .iter()
         .position(|item| item.task.title == "Picker subject")
         .unwrap();
-    let items = store.selected_related_picker_items(Some(selected));
+    store
+        .ensure_task_details(std::slice::from_ref(&task_id))
+        .await
+        .unwrap();
+    let items = crate::tui::store::related_picker_items(&store.tasks[selected]);
     assert_eq!(items.len(), 1);
     assert!(items[0].label.contains("[deleted]"));
     assert_eq!(items[0].value, related_id.to_string());

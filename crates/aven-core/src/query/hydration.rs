@@ -11,7 +11,7 @@ use crate::task_enrichment::{
 };
 use crate::types::Task;
 
-use super::TaskListItem;
+use super::{TaskItemHydration, TaskListItem};
 
 #[derive(Clone, Copy)]
 pub(super) enum TaskHydration {
@@ -63,6 +63,11 @@ pub async fn build_task_list_items(
             .notes_by_task
             .remove(&task_id)
             .unwrap_or_default();
+        let has_notes = match hydration {
+            TaskHydration::Detail => !notes.is_empty(),
+            TaskHydration::List => enrichment.task_ids_with_notes.contains(&task_id),
+            TaskHydration::BulkUpdate => false,
+        };
         let attachments = enrichment
             .attachments_by_task
             .remove(&task_id)
@@ -136,6 +141,7 @@ pub async fn build_task_list_items(
             display_ref,
             labels,
             notes,
+            has_notes,
             attachments,
             metadata,
             activity,
@@ -152,6 +158,10 @@ pub async fn build_task_list_items(
             queue,
             recurrence,
             recurrence_group: None,
+            hydration: match hydration {
+                TaskHydration::Detail => TaskItemHydration::Detail,
+                TaskHydration::List | TaskHydration::BulkUpdate => TaskItemHydration::Summary,
+            },
         });
     }
 

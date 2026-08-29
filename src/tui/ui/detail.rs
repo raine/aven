@@ -5629,6 +5629,7 @@ mod tests {
                 body: "Confirmed race in useTokenRefresh.ts".to_string(),
                 created_at: "2026-06-20T12:00:00Z".to_string(),
             }],
+            has_notes: true,
             has_conflict: true,
             unresolved_blocker_count: 0,
             dependent_count: 0,
@@ -5655,6 +5656,7 @@ mod tests {
             epic_rollup: None,
             recurrence: None,
             recurrence_group: None,
+            hydration: crate::query::TaskItemHydration::Detail,
             attachments: Vec::new(),
             queue: Default::default(),
         }

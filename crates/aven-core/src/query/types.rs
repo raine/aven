@@ -16,6 +16,12 @@ pub enum TaskQueryMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskItemHydration {
+    Summary,
+    Detail,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskSort {
     Created,
     Updated,
@@ -276,6 +282,7 @@ pub struct TaskListItem {
     pub display_ref: String,
     pub labels: Vec<String>,
     pub notes: Vec<TaskNote>,
+    pub has_notes: bool,
     pub attachments: Vec<AttachmentMetadata>,
     pub metadata: Vec<TaskMetadataValue>,
     pub activity: Vec<RecentActionItem>,
@@ -292,6 +299,7 @@ pub struct TaskListItem {
     pub queue: QueueMeta,
     pub recurrence: Option<TaskRecurrenceSummary>,
     pub recurrence_group: Option<RecurrenceTaskGroup>,
+    pub hydration: TaskItemHydration,
 }
 
 #[derive(Serialize, Debug, Clone, PartialEq, Eq)]

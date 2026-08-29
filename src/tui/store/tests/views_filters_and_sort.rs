@@ -636,7 +636,7 @@ async fn search_view_preview_returns_rendered_fields_without_full_hydration() {
 }
 
 #[tokio::test]
-async fn search_view_submitted_search_keeps_full_result_hydration() {
+async fn search_view_upgrades_selected_result_to_full_hydration() {
     let mut store = test_store().await;
     let blocker_id = create_search_task(&mut store, "Blocker task").await;
     let task_id = create_search_task(&mut store, "Hydrated needle").await;
@@ -705,6 +705,10 @@ async fn search_view_submitted_search_keeps_full_result_hydration() {
 
     store.refresh(Some(&task_id)).await.unwrap();
     store.accept_search("Hydrated").await.unwrap();
+    store
+        .ensure_task_details(std::slice::from_ref(&task_id))
+        .await
+        .unwrap();
 
     let item = store
         .tasks

@@ -1,5 +1,5 @@
 use crate::choices::{PRIORITIES, STATUSES};
-use crate::query::ProjectListItem;
+use crate::query::{ProjectListItem, TaskListItem};
 use crate::tui::overlay::PickerItem;
 use crate::workspaces::Workspace;
 
@@ -140,24 +140,6 @@ impl TuiStore {
             .collect()
     }
 
-    pub(crate) fn selected_related_picker_items(&self, index: Option<usize>) -> Vec<PickerItem> {
-        let Some(item) = self.selected_task(index) else {
-            return Vec::new();
-        };
-        item.related
-            .iter()
-            .map(|link| PickerItem {
-                label: if link.deleted {
-                    format!("{} {} [deleted]", link.display_ref, link.title)
-                } else {
-                    format!("{} {}", link.display_ref, link.title)
-                },
-                value: link.task_id.to_string(),
-                selected: false,
-            })
-            .collect()
-    }
-
     pub(crate) fn selected_dependency_picker_items(&self, index: Option<usize>) -> Vec<PickerItem> {
         let Some(item) = self.selected_task(index) else {
             return Vec::new();
@@ -187,6 +169,21 @@ fn project_picker_item(project: &ProjectListItem, selected: &str) -> PickerItem 
         value: project.key.clone(),
         selected: project.key == selected,
     }
+}
+
+pub(crate) fn related_picker_items(item: &TaskListItem) -> Vec<PickerItem> {
+    item.related
+        .iter()
+        .map(|link| PickerItem {
+            label: if link.deleted {
+                format!("{} {} [deleted]", link.display_ref, link.title)
+            } else {
+                format!("{} {}", link.display_ref, link.title)
+            },
+            value: link.task_id.to_string(),
+            selected: false,
+        })
+        .collect()
 }
 
 pub(crate) fn deleted_picker_items(selected: &str) -> Vec<PickerItem> {

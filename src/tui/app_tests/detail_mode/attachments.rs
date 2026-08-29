@@ -4,6 +4,11 @@ use super::*;
 async fn detail_tab_focuses_locally_available_images_independent_of_preview_state() {
     let (_dir, _pool, mut app) = test_app_with_pool().await;
     let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
+    let task_id = app.store.tasks[selected].task.id.clone();
+    app.store
+        .ensure_task_details(std::slice::from_ref(&task_id))
+        .await
+        .unwrap();
     let suppressed = test_attachment("SUPPRESSED", "image/png", true, Some((640, 480)));
     app.inline_images
         .set_context_override(crate::tui::ui::DetailInlineImageContext {
@@ -736,6 +741,10 @@ async fn attachment_preview_refresh_preserves_owning_task_across_query_change() 
         .set_context_override(crate::tui::ui::DetailInlineImageContext::default());
     let selected = create_and_select_task(&mut app, test_task_draft("Preview owner")).await;
     let task_id = app.store.tasks[selected].task.id.clone();
+    app.store
+        .ensure_task_details(std::slice::from_ref(&task_id))
+        .await
+        .unwrap();
     app.store.tasks[selected].attachments = vec![test_attachment(
         "OWNEDIMAGE",
         "image/png",

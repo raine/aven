@@ -66,7 +66,7 @@ pub use types::{
     RecurrenceSeriesDetail, RecurrenceSeriesLifecycleFilter, RecurrenceSeriesListItem,
     RecurrenceSeriesListQuery, RecurrenceSeriesSummary, RecurrenceTaskGroup, SidebarCounts,
     SortDirection, TaskAvailabilityFilter, TaskDependencyLink, TaskFilters, TaskIdFilter,
-    TaskListItem, TaskNote, TaskQueryMode, TaskRecurrenceSummary, TaskSort,
+    TaskItemHydration, TaskListItem, TaskNote, TaskQueryMode, TaskRecurrenceSummary, TaskSort,
 };
 
 pub const MAX_RECURRENCE_HISTORY_LIMIT: usize = 500;
@@ -432,6 +432,30 @@ impl Database {
         limit: Option<usize>,
     ) -> Result<Vec<TaskListItem>> {
         self.reconcile_recurrence_reports(workspace_id).await?;
+        self.list_task_summary_items_from_current_projection(
+            workspace_id,
+            filters,
+            mode,
+            sort,
+            direction,
+            limit,
+        )
+        .await
+    }
+
+    /// Reads the persisted task projection as-is.
+    ///
+    /// Callers establish projection currency by reconciling the workspace for the report snapshot.
+    #[doc(hidden)]
+    pub async fn list_task_summary_items_from_current_projection(
+        &self,
+        workspace_id: &WorkspaceId,
+        filters: TaskFilters,
+        mode: TaskQueryMode,
+        sort: TaskSort,
+        direction: SortDirection,
+        limit: Option<usize>,
+    ) -> Result<Vec<TaskListItem>> {
         let mut conn = self.acquire_reader().await?;
         list_task_summary_items_in_workspace(
             &mut conn,
