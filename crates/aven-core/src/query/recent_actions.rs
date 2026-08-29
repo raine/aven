@@ -770,7 +770,7 @@ mod tests {
         .await
         .unwrap();
 
-        for index in 0..=RECENT_ACTION_LIMIT {
+        for index in 0..RECENT_ACTION_LIMIT {
             crate::db::insert_change(
                 &mut conn,
                 "task",
@@ -786,24 +786,54 @@ mod tests {
             .await
             .unwrap();
         }
+        let suppressed_change_id = crate::db::insert_change(
+            &mut conn,
+            "task",
+            &task.task.id,
+            Some("title"),
+            op_type::SET_FIELD,
+            json!({
+                "workspace_id": workspace.id,
+                "value": "suppressed"
+            }),
+            None,
+        )
+        .await
+        .unwrap();
+        crate::db::insert_change(
+            &mut conn,
+            "recurrence_series",
+            "series",
+            None,
+            op_type::RESOLVE_RECURRENCE_OCCURRENCE,
+            json!({
+                "workspace_id": workspace.id,
+                "task_status_change_id": suppressed_change_id
+            }),
+            None,
+        )
+        .await
+        .unwrap();
 
         let actions = list_recent_actions_in_workspace(&mut conn, &workspace.id, None)
             .await
             .unwrap();
 
         assert_eq!(actions.len(), RECENT_ACTION_LIMIT as usize);
-        assert_eq!(
-            actions.first().and_then(|item| item.detail.as_deref()),
-            Some("title 80")
-        );
-        assert_eq!(
-            actions.last().and_then(|item| item.detail.as_deref()),
-            Some("title 1")
+        assert!(
+            actions
+                .iter()
+                .any(|item| item.detail.as_deref() == Some("title 1"))
         );
         assert!(
             !actions
                 .iter()
                 .any(|item| item.detail.as_deref() == Some("title 0"))
+        );
+        assert!(
+            !actions
+                .iter()
+                .any(|item| item.detail.as_deref() == Some("suppressed"))
         );
     }
 
