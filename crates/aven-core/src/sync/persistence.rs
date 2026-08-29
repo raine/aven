@@ -771,14 +771,17 @@ async fn prepare_server_blobs(
     changes: &[ChangeWire],
 ) -> Result<()> {
     let assigned_change_ids = load_assigned_change_ids(conn, changes).await?;
-    for change in changes {
-        if change.op_type != op_type::ATTACHMENT_ADD
-            || assigned_change_ids.contains(&change.change_id)
-        {
-            continue;
-        }
-        let contract = super::blob::attachment_blob_contract(change)?
-            .context("error attachment-blob-missing")?;
+    let contracts = changes
+        .iter()
+        .filter(|change| {
+            change.op_type == op_type::ATTACHMENT_ADD
+                && !assigned_change_ids.contains(&change.change_id)
+        })
+        .map(|change| {
+            super::blob::attachment_blob_contract(change)?.context("error attachment-blob-missing")
+        })
+        .collect::<Result<Vec<_>>>()?;
+    for contract in super::blob::unique_blob_content_contracts(&contracts)? {
         validate_server_blob_before_writer(conn, blob_dir, &contract).await?;
     }
     Ok(())
@@ -834,12 +837,8 @@ async fn ensure_attachment_blobs_admitted(
     blob_dir: &Path,
     changes: &[ChangeWire],
 ) -> Result<()> {
-    for change in changes {
-        if change.op_type != op_type::ATTACHMENT_ADD {
-            continue;
-        }
-        let contract = super::blob::attachment_blob_contract(change)?
-            .context("error attachment-blob-missing")?;
+    let contracts = super::blob::attachment_blob_contracts(changes)?;
+    for contract in super::blob::unique_blob_content_contracts(&contracts)? {
         let Some(row) =
             crate::attachments::storage::blob_inventory_row(conn, &contract.sha256).await?
         else {
@@ -849,6 +848,8 @@ async fn ensure_attachment_blobs_admitted(
         if !crate::attachments::object_path(blob_dir, &contract.sha256)?.exists() {
             bail!("error attachment-blob-missing");
         }
+    }
+    for contract in super::blob::unique_blob_admission_contracts(&contracts) {
         let admitted: bool = sqlx::query_scalar(
             "SELECT EXISTS(
                SELECT 1 FROM server_blob_references sbr

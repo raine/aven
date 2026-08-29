@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
@@ -61,17 +61,56 @@ pub(super) fn attachment_blob_contract(change: &ChangeWire) -> Result<Option<Blo
     }))
 }
 
-pub(super) fn unique_blob_contracts(changes: &[ChangeWire]) -> Result<Vec<BlobUploadContract>> {
-    let mut seen = HashSet::new();
+pub(super) fn attachment_blob_contracts(changes: &[ChangeWire]) -> Result<Vec<BlobUploadContract>> {
     let mut contracts = Vec::new();
     for change in changes {
-        if let Some(contract) = attachment_blob_contract(change)?
-            && seen.insert((contract.workspace_id.clone(), contract.sha256.clone()))
-        {
+        if let Some(contract) = attachment_blob_contract(change)? {
             contracts.push(contract);
         }
     }
     Ok(contracts)
+}
+
+fn same_blob_content_contract(left: &BlobUploadContract, right: &BlobUploadContract) -> bool {
+    left.byte_size == right.byte_size
+        && left.media_type == right.media_type
+        && left.width == right.width
+        && left.height == right.height
+}
+
+pub(super) fn unique_blob_content_contracts(
+    contracts: &[BlobUploadContract],
+) -> Result<Vec<BlobUploadContract>> {
+    let mut seen = HashMap::new();
+    let mut unique = Vec::new();
+    for contract in contracts {
+        if let Some(existing) = seen.get(&contract.sha256) {
+            if !same_blob_content_contract(existing, contract) {
+                bail!("error blob-inventory-metadata-mismatch");
+            }
+            continue;
+        }
+        seen.insert(contract.sha256.clone(), contract.clone());
+        unique.push(contract.clone());
+    }
+    Ok(unique)
+}
+
+pub(super) fn unique_blob_admission_contracts(
+    contracts: &[BlobUploadContract],
+) -> Vec<BlobUploadContract> {
+    let mut seen = HashSet::new();
+    contracts
+        .iter()
+        .filter(|contract| seen.insert((contract.workspace_id.as_str(), contract.sha256.as_str())))
+        .cloned()
+        .collect()
+}
+
+pub(super) fn unique_blob_contracts(changes: &[ChangeWire]) -> Result<Vec<BlobUploadContract>> {
+    let contracts = attachment_blob_contracts(changes)?;
+    unique_blob_content_contracts(&contracts)?;
+    Ok(unique_blob_admission_contracts(&contracts))
 }
 
 pub(super) fn contract_by_hash(
@@ -411,6 +450,28 @@ mod tests {
             attachment_blob_contract(&attachment_change(op_type::NOTE_ADD))
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn blob_contracts_deduplicate_content_and_admission_separately() {
+        let contract = attachment_blob_contract(&attachment_change(op_type::ATTACHMENT_ADD))
+            .unwrap()
+            .unwrap();
+        let mut other_workspace = contract.clone();
+        other_workspace.workspace_id = "0000000000000001".to_string();
+        let contracts = vec![contract.clone(), contract.clone(), other_workspace.clone()];
+
+        assert_eq!(unique_blob_content_contracts(&contracts).unwrap().len(), 1);
+        assert_eq!(unique_blob_admission_contracts(&contracts).len(), 2);
+
+        let mut mismatch = contract.clone();
+        mismatch.height += 1;
+        let error = unique_blob_content_contracts(&[contract, mismatch]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("blob-inventory-metadata-mismatch")
         );
     }
 
