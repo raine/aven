@@ -52,9 +52,11 @@ pub(crate) use sidebar::sidebar_counts_for_scope_in_workspace;
 pub use sync_history::SyncHistoryStats;
 pub(crate) use sync_history::sync_history_stats;
 pub(crate) use tasks::{
-    list_bulk_update_task_items_in_workspace, list_task_items_in_workspace,
-    list_task_items_with_display_refs, list_task_items_without_activity_in_workspace,
-    list_task_summary_items_in_workspace,
+    ConsumerTaskPage, ConsumerTaskProjection, ConsumerTaskSummaryPage,
+    ConsumerTaskSummaryProjection, list_bulk_update_task_items_in_workspace,
+    list_consumer_task_summaries_page_in_workspace, list_consumer_tasks_page_in_workspace,
+    list_task_items_in_workspace, list_task_items_with_display_refs,
+    list_task_items_without_activity_in_workspace, list_task_summary_items_in_workspace,
 };
 pub use types::RecentActionTarget;
 pub use types::{
@@ -292,6 +294,36 @@ impl Database {
     ) -> Result<Vec<ProjectListItem>> {
         let mut conn = self.acquire_reader().await?;
         list_project_items_in_workspace(&mut conn, workspace_id).await
+    }
+
+    pub(crate) async fn list_consumer_tasks_page(
+        &self,
+        workspace_id: &WorkspaceId,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ConsumerTaskPage> {
+        self.reconcile_recurrence_reports(workspace_id).await?;
+        let mut conn = self.acquire_reader().await?;
+        list_consumer_tasks_page_in_workspace(&mut conn, workspace_id, offset, limit).await
+    }
+
+    pub(crate) async fn list_consumer_task_summaries_page(
+        &self,
+        workspace_id: &WorkspaceId,
+        expand_recurring: bool,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ConsumerTaskSummaryPage> {
+        self.reconcile_recurrence_reports(workspace_id).await?;
+        let mut conn = self.acquire_reader().await?;
+        list_consumer_task_summaries_page_in_workspace(
+            &mut conn,
+            workspace_id,
+            expand_recurring,
+            offset,
+            limit,
+        )
+        .await
     }
 
     pub async fn list_task_items(

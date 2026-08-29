@@ -17,6 +17,7 @@ use crate::recurrence::{
 use crate::refs::DisplayRefContext;
 use crate::types::{RecurrenceOccurrence, RecurrencePauseInterval, RecurrenceSeries};
 
+use super::tasks::ConsumerTaskProjection;
 use super::types::{
     RecurrenceCounts, RecurrenceHistoryEntry, RecurrenceHistoryKind, RecurrenceHistoryPage,
     RecurrenceOccurrenceLink, RecurrenceReconciliation, RecurrenceSeriesConflict,
@@ -194,11 +195,37 @@ pub(crate) async fn task_recurrence_summaries(
     workspace_id: &WorkspaceId,
     task_ids: &[TaskId],
 ) -> Result<HashMap<TaskId, TaskRecurrenceSummary>> {
-    let mut summaries = HashMap::new();
     if task_ids.is_empty() {
-        return Ok(summaries);
+        return Ok(HashMap::new());
     }
     let refs = SeriesRefContext::load(conn, workspace_id).await?;
+    let rows = load_task_recurrence_rows(conn, workspace_id, task_ids).await?;
+    task_recurrence_summaries_from_rows(rows, &refs)
+}
+
+pub(crate) async fn task_recurrence_summaries_for_consumer(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    task_ids: &[TaskId],
+) -> Result<HashMap<TaskId, TaskRecurrenceSummary>> {
+    if task_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = load_task_recurrence_rows(conn, workspace_id, task_ids).await?;
+    let series_ids = rows
+        .iter()
+        .map(|row| row.series_id.clone())
+        .collect::<HashSet<_>>();
+    let refs = SeriesRefContext::for_series_ids(conn, workspace_id, &series_ids).await?;
+    task_recurrence_summaries_from_rows(rows, &refs)
+}
+
+async fn load_task_recurrence_rows(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    task_ids: &[TaskId],
+) -> Result<Vec<TaskRecurrenceRow>> {
+    let mut rows = Vec::new();
     for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
         let mut query = QueryBuilder::<Sqlite>::new(
             "SELECT o.task_id, o.series_id, o.slot_on, o.outcome, o.projection_state,
@@ -218,37 +245,100 @@ pub(crate) async fn task_recurrence_summaries(
         }
         query.push(")");
         for row in query.build().fetch_all(&mut *conn).await? {
-            let task_id: TaskId = row.get("task_id");
-            let series_id: RecurrenceSeriesId = row.get("series_id");
-            let outcome_text: String = row.get("outcome");
-            summaries.insert(
-                task_id,
-                TaskRecurrenceSummary {
-                    series_ref: refs.display_ref(&series_id),
-                    series_id,
-                    slot_on: row.get("slot_on"),
-                    rule_label: rule_label(
-                        row.get("frequency"),
-                        row.get::<i64, _>("interval") as u32,
-                        row.get("weekdays"),
-                    ),
-                    timezone: row.get("timezone"),
-                    lifecycle: RecurrenceSeriesState::parse(
-                        row.get::<String, _>("state").as_str(),
-                    )?,
-                    outcome: if outcome_text.is_empty() {
-                        None
-                    } else {
-                        Some(RecurrenceOutcome::parse(&outcome_text)?)
-                    },
-                    projection_state: RecurrenceProjectionState::parse(
-                        row.get::<String, _>("projection_state").as_str(),
-                    )?,
-                },
-            );
+            rows.push(TaskRecurrenceRow {
+                task_id: row.get("task_id"),
+                series_id: row.get("series_id"),
+                slot_on: row.get("slot_on"),
+                outcome: row.get("outcome"),
+                projection_state: row.get("projection_state"),
+                frequency: row.get("frequency"),
+                interval: row.get::<i64, _>("interval") as u32,
+                weekdays: row.get("weekdays"),
+                timezone: row.get("timezone"),
+                state: row.get("state"),
+            });
         }
     }
+    Ok(rows)
+}
+
+fn task_recurrence_summaries_from_rows(
+    rows: Vec<TaskRecurrenceRow>,
+    refs: &SeriesRefContext,
+) -> Result<HashMap<TaskId, TaskRecurrenceSummary>> {
+    let mut summaries = HashMap::with_capacity(rows.len());
+    for row in rows {
+        let outcome = if row.outcome.is_empty() {
+            None
+        } else {
+            Some(RecurrenceOutcome::parse(&row.outcome)?)
+        };
+        summaries.insert(
+            row.task_id,
+            TaskRecurrenceSummary {
+                series_ref: refs.display_ref(&row.series_id),
+                series_id: row.series_id,
+                slot_on: row.slot_on,
+                rule_label: rule_label(row.frequency, row.interval, row.weekdays),
+                timezone: row.timezone,
+                lifecycle: RecurrenceSeriesState::parse(&row.state)?,
+                outcome,
+                projection_state: RecurrenceProjectionState::parse(&row.projection_state)?,
+            },
+        );
+    }
     Ok(summaries)
+}
+
+struct TaskRecurrenceRow {
+    task_id: TaskId,
+    series_id: RecurrenceSeriesId,
+    slot_on: String,
+    outcome: String,
+    projection_state: String,
+    frequency: String,
+    interval: u32,
+    weekdays: String,
+    timezone: String,
+    state: String,
+}
+
+pub(crate) async fn terminal_recurrence_groups_for_tasks(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    tasks: &[ConsumerTaskProjection],
+    recurrence: &HashMap<TaskId, TaskRecurrenceSummary>,
+    at: DateTime<Utc>,
+) -> Result<HashMap<TaskId, RecurrenceTaskGroup>> {
+    let series_ids = tasks
+        .iter()
+        .filter(|task| task.status.is_terminal())
+        .filter_map(|task| recurrence.get(&task.id))
+        .map(|summary| summary.series_id.clone())
+        .collect::<HashSet<_>>();
+    if series_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let series_ids = series_ids.into_iter().collect::<Vec<_>>();
+    let series = load_series_for_ids(conn, workspace_id, &series_ids).await?;
+    let counts = recurrence_counts_batch(conn, workspace_id, &series, at).await?;
+    let mut groups = HashMap::new();
+    for task in tasks.iter().filter(|task| task.status.is_terminal()) {
+        let Some(summary) = recurrence.get(&task.id) else {
+            continue;
+        };
+        let mut group_counts = counts.get(&summary.series_id).cloned().unwrap_or_default();
+        group_counts.series_ref.clone_from(&summary.series_ref);
+        groups.insert(
+            task.id.clone(),
+            RecurrenceTaskGroup {
+                series_id: summary.series_id.clone(),
+                series_ref: summary.series_ref.clone(),
+                counts: group_counts,
+            },
+        );
+    }
+    Ok(groups)
 }
 
 pub(crate) async fn list_recurrence_series_view(
@@ -1332,6 +1422,56 @@ impl SeriesRefContext {
         .bind(workspace_id)
         .fetch_all(&mut *conn)
         .await?;
+        Ok(Self { ids })
+    }
+
+    async fn for_series_ids(
+        conn: &mut SqliteConnection,
+        workspace_id: &WorkspaceId,
+        series_ids: &HashSet<RecurrenceSeriesId>,
+    ) -> Result<Self> {
+        if series_ids.is_empty() {
+            return Ok(Self { ids: Vec::new() });
+        }
+        let requested = series_ids.iter().cloned().collect::<Vec<_>>();
+        let mut ids = HashSet::new();
+        for chunk in requested.chunks(SQLITE_BIND_CHUNK_SIZE.saturating_sub(2)) {
+            let mut query = QueryBuilder::<Sqlite>::new("WITH requested(id) AS (VALUES ");
+            for (index, series_id) in chunk.iter().enumerate() {
+                if index != 0 {
+                    query.push(", ");
+                }
+                query.push("(").push_bind(series_id).push(")");
+            }
+            query.push(
+                ")
+                 SELECT id FROM requested
+                 UNION
+                 SELECT MAX(s.id) FROM recurrence_series s
+                 JOIN requested r ON s.id < r.id
+                 WHERE s.workspace_id = ",
+            );
+            query.push_bind(workspace_id);
+            query.push(
+                " GROUP BY r.id
+                  UNION
+                  SELECT MIN(s.id) FROM recurrence_series s
+                  JOIN requested r ON s.id > r.id
+                  WHERE s.workspace_id = ",
+            );
+            query.push_bind(workspace_id);
+            for series_id in query
+                .build_query_scalar::<Option<RecurrenceSeriesId>>()
+                .fetch_all(&mut *conn)
+                .await?
+                .into_iter()
+                .flatten()
+            {
+                ids.insert(series_id);
+            }
+        }
+        let mut ids = ids.into_iter().collect::<Vec<_>>();
+        ids.sort();
         Ok(Self { ids })
     }
 

@@ -1052,6 +1052,48 @@ impl From<core_api::TaskSummary> for TaskSummary {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct TaskPage {
+    pub items: Vec<TaskRecord>,
+    pub offset: u64,
+    pub limit: u64,
+    pub has_more: bool,
+}
+
+impl TryFrom<core_api::TaskPage> for TaskPage {
+    type Error = AvenError;
+
+    fn try_from(value: core_api::TaskPage) -> Result<Self, Self::Error> {
+        Ok(Self {
+            items: value.items.into_iter().map(Into::into).collect(),
+            offset: to_u64(value.offset, "task page offset")?,
+            limit: to_u64(value.limit, "task page limit")?,
+            has_more: value.has_more,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct TaskSummaryPage {
+    pub items: Vec<TaskSummary>,
+    pub offset: u64,
+    pub limit: u64,
+    pub has_more: bool,
+}
+
+impl TryFrom<core_api::TaskSummaryPage> for TaskSummaryPage {
+    type Error = AvenError;
+
+    fn try_from(value: core_api::TaskSummaryPage) -> Result<Self, Self::Error> {
+        Ok(Self {
+            items: value.items.into_iter().map(Into::into).collect(),
+            offset: to_u64(value.offset, "task summary page offset")?,
+            limit: to_u64(value.limit, "task summary page limit")?,
+            has_more: value.has_more,
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum ConflictField {
     Title,
@@ -1248,6 +1290,21 @@ impl AvenClient {
             .block_on(self.store.list_tasks(&workspace_id))
             .map(|values| values.into_iter().map(Into::into).collect())
             .map_err(Into::into)
+    }
+
+    pub fn list_tasks_page(
+        &self,
+        workspace_id: String,
+        offset: u64,
+        limit: u64,
+    ) -> Result<TaskPage, AvenError> {
+        let workspace_id = parse_workspace_id(&workspace_id)?;
+        let offset = usize::try_from(offset)
+            .map_err(|_| AvenError::validation("task page offset exceeds the host limit"))?;
+        let limit = usize::try_from(limit)
+            .map_err(|_| AvenError::validation("task page limit exceeds the host limit"))?;
+        let page = runtime()?.block_on(self.store.list_tasks_page(&workspace_id, offset, limit))?;
+        page.try_into()
     }
 
     pub fn fetch_task(
@@ -1482,6 +1539,28 @@ impl AvenClient {
             )
             .map(|values| values.into_iter().map(Into::into).collect())
             .map_err(Into::into)
+    }
+
+    pub fn recurrence_task_report_page(
+        &self,
+        workspace_id: String,
+        expand_recurring: bool,
+        offset: u64,
+        limit: u64,
+    ) -> Result<TaskSummaryPage, AvenError> {
+        let workspace_id = parse_workspace_id(&workspace_id)?;
+        let offset = usize::try_from(offset).map_err(|_| {
+            AvenError::validation("task summary page offset exceeds the host limit")
+        })?;
+        let limit = usize::try_from(limit)
+            .map_err(|_| AvenError::validation("task summary page limit exceeds the host limit"))?;
+        let page = runtime()?.block_on(self.store.recurrence_task_report_page(
+            &workspace_id,
+            expand_recurring,
+            offset,
+            limit,
+        ))?;
+        page.try_into()
     }
 
     pub fn list_conflicts(&self, workspace_id: String) -> Result<Vec<ConflictSummary>, AvenError> {

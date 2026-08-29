@@ -146,6 +146,75 @@ async fn consumer_api_workspace_lookup_is_direct_and_preserves_missing_error() {
 }
 
 #[tokio::test]
+async fn consumer_api_pages_are_bounded_and_skip_detail_tables() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("paged.sqlite");
+    let store = Store::open(&path).await.unwrap();
+    let workspace = store.resolve_workspace("default").await.unwrap();
+    for title in ["first", "second", "third"] {
+        store
+            .create_task(
+                &workspace.id,
+                CreateTask {
+                    title: title.to_string(),
+                    description: String::new(),
+                    project: "Core".to_string(),
+                    status: TaskStatus::Todo,
+                    priority: TaskPriority::None,
+                    metadata: Vec::new(),
+                    available_at: None,
+                    due_on: None,
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    let mut connection = SqliteConnection::connect_with(
+        &SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(false),
+    )
+    .await
+    .unwrap();
+    sqlx::query("ALTER TABLE notes RENAME TO detail_notes")
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE task_attachments RENAME TO detail_task_attachments")
+        .execute(&mut connection)
+        .await
+        .unwrap();
+
+    let all = store.list_tasks(&workspace.id).await.unwrap();
+    assert_eq!(all.len(), 3);
+    assert!(all.iter().all(|task| task.metadata.is_empty()));
+    assert!(all.iter().all(|task| task.related.is_empty()));
+    let first = store.list_tasks_page(&workspace.id, 0, 2).await.unwrap();
+    assert_eq!(first.items, all[..2]);
+    assert!(first.has_more);
+    let second = store.list_tasks_page(&workspace.id, 2, 2).await.unwrap();
+    assert_eq!(second.items, all[2..]);
+    assert!(!second.has_more);
+    assert!(
+        store
+            .list_tasks_page(&workspace.id, 3, 2)
+            .await
+            .unwrap()
+            .items
+            .is_empty()
+    );
+
+    for limit in [0, 501] {
+        let error = store
+            .list_tasks_page(&workspace.id, 0, limit)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::Validation);
+    }
+}
+
+#[tokio::test]
 async fn consumer_api_completes_local_task_and_conflict_flows() {
     let directory = tempfile::tempdir().unwrap();
     let first_path = directory.path().join("first.sqlite");
@@ -637,6 +706,35 @@ async fn consumer_api_owns_recurrence_lifecycle_reports_and_mutation_routing() {
         .unwrap();
     assert_eq!(grouped.len(), 2);
     assert_eq!(expanded.len(), 3);
+    let grouped_page = store
+        .recurrence_task_report_page(&workspace.id, false, 0, 1)
+        .await
+        .unwrap();
+    assert_eq!(grouped_page.items.len(), 1);
+    assert!(grouped_page.has_more);
+    let grouped_tail = store
+        .recurrence_task_report_page(&workspace.id, false, 1, 1)
+        .await
+        .unwrap();
+    assert_eq!(grouped_tail.items.len(), 1);
+    assert!(!grouped_tail.has_more);
+    assert_eq!(
+        grouped_page.items[0]
+            .recurrence_group
+            .as_ref()
+            .unwrap()
+            .counts
+            .completed,
+        2
+    );
+    let expanded_page = store
+        .recurrence_task_report_page(&workspace.id, true, 0, 2)
+        .await
+        .unwrap();
+    assert_eq!(expanded_page.items.len(), 2);
+    assert!(expanded_page.has_more);
+    assert_eq!(expanded_page.items[0].task, expanded[0].task);
+    assert_eq!(expanded_page.items[1].task, expanded[1].task);
     assert_eq!(
         grouped
             .iter()

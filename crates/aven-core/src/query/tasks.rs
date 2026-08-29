@@ -1,7 +1,7 @@
-use crate::ids::WorkspaceId;
+use crate::ids::{ProjectId, TaskId, WorkspaceId};
 use anyhow::Result;
 use chrono::Local;
-use sqlx::{QueryBuilder, Sqlite, SqliteConnection};
+use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 
 use crate::choices::{TaskPriority, TaskStatus};
 use crate::db::task_from_row;
@@ -14,9 +14,50 @@ use super::fragments;
 use super::hydration::{TaskHydration, build_task_list_items};
 use super::sorting::push_sort;
 use super::{
-    SortDirection, TaskAvailabilityFilter, TaskFilters, TaskIdFilter, TaskListItem, TaskQueryMode,
-    TaskSort,
+    RecurrenceTaskGroup, SortDirection, TaskAvailabilityFilter, TaskFilters, TaskIdFilter,
+    TaskListItem, TaskQueryMode, TaskRecurrenceSummary, TaskSort,
 };
+
+const CONSUMER_TASK_COLUMNS: &str = "t.id, t.workspace_id, t.title, t.description, t.project_id,
+    p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority,
+    t.created_at, t.updated_at, t.available_at, t.due_on";
+
+#[derive(Debug)]
+pub(crate) struct ConsumerTaskProjection {
+    pub(crate) id: TaskId,
+    pub(crate) workspace_id: WorkspaceId,
+    pub(crate) title: String,
+    pub(crate) description: String,
+    pub(crate) project_id: ProjectId,
+    pub(crate) project_key: String,
+    pub(crate) project_prefix: String,
+    pub(crate) status: TaskStatus,
+    pub(crate) priority: TaskPriority,
+    pub(crate) created_at: String,
+    pub(crate) updated_at: String,
+    pub(crate) available_at: Option<String>,
+    pub(crate) due_on: Option<String>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ConsumerTaskPage {
+    pub(crate) items: Vec<ConsumerTaskProjection>,
+    pub(crate) has_more: bool,
+}
+
+#[derive(Debug)]
+pub(crate) struct ConsumerTaskSummaryProjection {
+    pub(crate) task: ConsumerTaskProjection,
+    pub(crate) display_ref: String,
+    pub(crate) recurrence: Option<TaskRecurrenceSummary>,
+    pub(crate) recurrence_group: Option<RecurrenceTaskGroup>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ConsumerTaskSummaryPage {
+    pub(crate) items: Vec<ConsumerTaskSummaryProjection>,
+    pub(crate) has_more: bool,
+}
 
 struct TaskListRead {
     filters: TaskFilters,
@@ -25,6 +66,166 @@ struct TaskListRead {
     direction: SortDirection,
     limit: Option<usize>,
     hydration: TaskHydration,
+}
+
+pub(crate) async fn list_consumer_tasks_page_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    offset: usize,
+    limit: usize,
+) -> Result<ConsumerTaskPage> {
+    select_consumer_tasks(conn, workspace_id, offset, limit, true).await
+}
+
+pub(crate) async fn list_consumer_task_summaries_page_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    expand_recurring: bool,
+    offset: usize,
+    limit: usize,
+) -> Result<ConsumerTaskSummaryPage> {
+    let page = select_consumer_tasks(conn, workspace_id, offset, limit, !expand_recurring).await?;
+    let task_ids = page
+        .items
+        .iter()
+        .map(|task| task.id.clone())
+        .collect::<Vec<_>>();
+    let display_refs = DisplayRefContext::for_task_ids(conn, workspace_id, &task_ids).await?;
+    let recurrence =
+        super::recurrence::task_recurrence_summaries_for_consumer(conn, workspace_id, &task_ids)
+            .await?;
+    let groups = if expand_recurring {
+        std::collections::HashMap::new()
+    } else {
+        super::recurrence::terminal_recurrence_groups_for_tasks(
+            conn,
+            workspace_id,
+            &page.items,
+            &recurrence,
+            crate::ids::now_utc(),
+        )
+        .await?
+    };
+    let mut recurrence = recurrence;
+    let mut groups = groups;
+    let items = page
+        .items
+        .into_iter()
+        .map(|task| {
+            let display_ref =
+                display_refs.display_ref_for_id(&task.workspace_id, &task.project_prefix, &task.id);
+            ConsumerTaskSummaryProjection {
+                recurrence: recurrence.remove(&task.id),
+                recurrence_group: groups.remove(&task.id),
+                task,
+                display_ref,
+            }
+        })
+        .collect();
+    Ok(ConsumerTaskSummaryPage {
+        items,
+        has_more: page.has_more,
+    })
+}
+
+async fn select_consumer_tasks(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    offset: usize,
+    limit: usize,
+    group_terminal_recurrences: bool,
+) -> Result<ConsumerTaskPage> {
+    let fetch_limit = i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX);
+    let offset = i64::try_from(offset).unwrap_or(i64::MAX);
+    let mut query = QueryBuilder::<Sqlite>::new("");
+    if group_terminal_recurrences {
+        query.push(
+            "WITH candidates AS (
+                SELECT t.rowid AS task_rowid, ",
+        );
+        query.push(CONSUMER_TASK_COLUMNS);
+        query.push(
+            ", CASE
+                    WHEN t.status IN ('done', 'canceled') AND ro.series_id IS NOT NULL
+                    THEN 'series:' || ro.series_id
+                    ELSE 'task:' || t.id
+                END AS consumer_group
+             FROM tasks t
+             JOIN projects p
+               ON p.workspace_id = t.workspace_id AND p.id = t.project_id
+             LEFT JOIN recurrence_occurrences ro
+               ON ro.workspace_id = t.workspace_id AND ro.task_id = t.id
+              AND ro.task_id != ''
+             WHERE t.workspace_id = ",
+        );
+        query.push_bind(workspace_id);
+        query.push(" AND t.deleted = 0 AND t.is_epic = 0 AND ");
+        query.push(fragments::ordinary_task_clause("t"));
+        query.push(
+            "), ranked AS (
+                SELECT candidates.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY consumer_group
+                           ORDER BY created_at ASC, task_rowid ASC
+                       ) AS consumer_group_rank
+                FROM candidates
+            )
+            SELECT id, workspace_id, title, description, project_id,
+                   project_key, project_prefix, status, priority,
+                   created_at, updated_at, available_at, due_on
+            FROM ranked
+            WHERE consumer_group_rank = 1
+            ORDER BY created_at ASC, task_rowid ASC
+            LIMIT ",
+        );
+    } else {
+        query.push("SELECT ");
+        query.push(CONSUMER_TASK_COLUMNS);
+        query.push(
+            " FROM tasks t
+              JOIN projects p
+                ON p.workspace_id = t.workspace_id AND p.id = t.project_id
+              WHERE t.workspace_id = ",
+        );
+        query.push_bind(workspace_id);
+        query.push(" AND t.deleted = 0 AND t.is_epic = 0 AND ");
+        query.push(fragments::ordinary_task_clause("t"));
+        query.push(" ORDER BY t.created_at ASC, t.rowid ASC LIMIT ");
+    }
+    query.push_bind(fetch_limit);
+    query.push(" OFFSET ");
+    query.push_bind(offset);
+
+    let mut rows = query.build().fetch_all(&mut *conn).await?;
+    let has_more = rows.len() > limit;
+    if has_more {
+        rows.truncate(limit);
+    }
+    let items = rows
+        .iter()
+        .map(consumer_task_from_row)
+        .collect::<Result<Vec<_>>>()?;
+    Ok(ConsumerTaskPage { items, has_more })
+}
+
+fn consumer_task_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<ConsumerTaskProjection> {
+    let available_at = row.try_get::<String, _>("available_at")?;
+    let due_on = row.try_get::<String, _>("due_on")?;
+    Ok(ConsumerTaskProjection {
+        id: row.try_get("id")?,
+        workspace_id: row.try_get("workspace_id")?,
+        title: row.try_get("title")?,
+        description: row.try_get("description")?,
+        project_id: row.try_get("project_id")?,
+        project_key: row.try_get("project_key")?,
+        project_prefix: row.try_get("project_prefix")?,
+        status: TaskStatus::parse(&row.try_get::<String, _>("status")?)?,
+        priority: TaskPriority::parse(&row.try_get::<String, _>("priority")?)?,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+        available_at: (!available_at.is_empty()).then_some(available_at),
+        due_on: (!due_on.is_empty()).then_some(due_on),
+    })
 }
 
 pub async fn list_task_items_in_workspace(
