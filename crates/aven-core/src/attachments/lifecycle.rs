@@ -372,23 +372,6 @@ pub(crate) async fn reconcile_liveness_in_transaction(
     Ok(())
 }
 
-pub(crate) async fn reconcile_task_liveness_in_transaction(
-    conn: &mut SqliteConnection,
-    workspace_id: &str,
-    task_id: &str,
-    clock: &dyn Clock,
-) -> Result<()> {
-    let hashes = sqlx::query_scalar::<_, String>(
-        "SELECT DISTINCT sha256 FROM task_attachments
-         WHERE workspace_id = ? AND task_id = ?",
-    )
-    .bind(workspace_id)
-    .bind(task_id)
-    .fetch_all(&mut *conn)
-    .await?;
-    reconcile_liveness_for_hashes_in_transaction(conn, &hashes, clock).await
-}
-
 pub(crate) async fn reconcile_liveness_for_hashes_in_transaction(
     conn: &mut SqliteConnection,
     hashes: &[String],
