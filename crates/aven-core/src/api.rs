@@ -18,7 +18,8 @@ use crate::query::{
     MAX_RECURRENCE_HISTORY_LIMIT, RecurrenceCounts as InternalRecurrenceCounts,
     RecurrenceHistoryEntry as InternalRecurrenceHistoryEntry,
     RecurrenceSeriesDetail as InternalRecurrenceSeriesDetail,
-    RecurrenceSeriesSummary as InternalRecurrenceSeriesSummary, TaskListItem,
+    RecurrenceSeriesSummary as InternalRecurrenceSeriesSummary, SortDirection, TaskFilters,
+    TaskListItem, TaskQueryMode, TaskSort,
 };
 pub use crate::recurrence::{
     RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceOutcome, RecurrenceProjectionState,
@@ -32,8 +33,6 @@ use crate::sync::SyncSession;
 use crate::task_fields::TaskField;
 use crate::types::{RecurrenceOccurrence, RecurrenceSeries, Task};
 use crate::workspaces::Workspace;
-
-const MAX_CONSUMER_TASK_PAGE_LIMIT: usize = 500;
 
 #[derive(Clone)]
 pub struct Store {
@@ -232,42 +231,24 @@ impl Store {
 
     pub async fn list_tasks(&self, workspace_id: &WorkspaceId) -> Result<Vec<TaskRecord>, Error> {
         self.workspace(workspace_id).await?;
+        let filters = TaskFilters {
+            exclude_epics: true,
+            ..TaskFilters::default()
+        };
         self.database
-            .reconcile_recurrence_reports(workspace_id)
-            .await
-            .map_err(Error::from_internal)?;
-        self.database
-            .list_consumer_tasks_from_current_projection(workspace_id)
+            .list_task_items(
+                workspace_id,
+                filters,
+                TaskQueryMode::Flat,
+                TaskSort::Created,
+                SortDirection::Asc,
+            )
             .await
             .map(|items| {
                 items
                     .into_iter()
-                    .map(TaskRecord::from_consumer_projection)
+                    .map(|item| TaskRecord::from(item.task))
                     .collect()
-            })
-            .map_err(Error::from_internal)
-    }
-
-    pub async fn list_tasks_page(
-        &self,
-        workspace_id: &WorkspaceId,
-        offset: usize,
-        limit: usize,
-    ) -> Result<TaskPage, Error> {
-        validate_consumer_page(offset, limit)?;
-        self.workspace(workspace_id).await?;
-        self.database
-            .list_consumer_tasks_page(workspace_id, offset, limit)
-            .await
-            .map(|page| TaskPage {
-                items: page
-                    .items
-                    .into_iter()
-                    .map(TaskRecord::from_consumer_projection)
-                    .collect(),
-                offset,
-                limit,
-                has_more: page.has_more,
             })
             .map_err(Error::from_internal)
     }
@@ -569,34 +550,19 @@ impl Store {
     ) -> Result<Vec<TaskSummary>, Error> {
         self.workspace(workspace_id).await?;
         self.database
-            .reconcile_recurrence_reports(workspace_id)
-            .await
-            .map_err(Error::from_internal)?;
-        self.database
-            .list_consumer_task_summaries_from_current_projection(workspace_id, expand_recurring)
+            .list_task_items(
+                workspace_id,
+                TaskFilters {
+                    exclude_epics: true,
+                    expand_recurring,
+                    ..TaskFilters::default()
+                },
+                TaskQueryMode::Flat,
+                TaskSort::Created,
+                SortDirection::Asc,
+            )
             .await
             .map(|items| items.into_iter().map(TaskSummary::from).collect())
-            .map_err(Error::from_internal)
-    }
-
-    pub async fn recurrence_task_report_page(
-        &self,
-        workspace_id: &WorkspaceId,
-        expand_recurring: bool,
-        offset: usize,
-        limit: usize,
-    ) -> Result<TaskSummaryPage, Error> {
-        validate_consumer_page(offset, limit)?;
-        self.workspace(workspace_id).await?;
-        self.database
-            .list_consumer_task_summaries_page(workspace_id, expand_recurring, offset, limit)
-            .await
-            .map(|page| TaskSummaryPage {
-                items: page.items.into_iter().map(TaskSummary::from).collect(),
-                offset,
-                limit,
-                has_more: page.has_more,
-            })
             .map_err(Error::from_internal)
     }
 
@@ -709,22 +675,6 @@ impl Store {
                 }
             })
     }
-}
-
-fn validate_consumer_page(offset: usize, limit: usize) -> Result<(), Error> {
-    if !(1..=MAX_CONSUMER_TASK_PAGE_LIMIT).contains(&limit) {
-        return Err(Error::new(
-            ErrorCode::Validation,
-            format!("task page limit must be between 1 and {MAX_CONSUMER_TASK_PAGE_LIMIT}"),
-        ));
-    }
-    if i64::try_from(offset).is_err() {
-        return Err(Error::new(
-            ErrorCode::Validation,
-            "task page offset exceeds the database limit".to_string(),
-        ));
-    }
-    Ok(())
 }
 
 fn validate_project(project: &str) -> Result<(), Error> {
@@ -1307,64 +1257,12 @@ pub struct RecurrenceTaskGroup {
     pub counts: RecurrenceCounts,
 }
 
-impl From<crate::query::TaskRecurrenceSummary> for TaskRecurrenceSummary {
-    fn from(value: crate::query::TaskRecurrenceSummary) -> Self {
-        Self {
-            series_id: value.series_id,
-            series_ref: value.series_ref,
-            slot_on: value.slot_on,
-            rule_label: value.rule_label,
-            timezone: value.timezone,
-            lifecycle: value.lifecycle,
-            outcome: value.outcome,
-            projection_state: value.projection_state,
-        }
-    }
-}
-
-impl From<crate::query::RecurrenceTaskGroup> for RecurrenceTaskGroup {
-    fn from(value: crate::query::RecurrenceTaskGroup) -> Self {
-        Self {
-            series_id: value.series_id,
-            series_ref: value.series_ref,
-            counts: value.counts.into(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskPage {
-    pub items: Vec<TaskRecord>,
-    pub offset: usize,
-    pub limit: usize,
-    pub has_more: bool,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskSummary {
     pub task: TaskRecord,
     pub display_ref: String,
     pub recurrence: Option<TaskRecurrenceSummary>,
     pub recurrence_group: Option<RecurrenceTaskGroup>,
-}
-
-impl From<crate::query::ConsumerTaskSummaryProjection> for TaskSummary {
-    fn from(value: crate::query::ConsumerTaskSummaryProjection) -> Self {
-        Self {
-            task: TaskRecord::from_consumer_projection(value.task),
-            display_ref: value.display_ref,
-            recurrence: value.recurrence.map(Into::into),
-            recurrence_group: value.recurrence_group.map(Into::into),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskSummaryPage {
-    pub items: Vec<TaskSummary>,
-    pub offset: usize,
-    pub limit: usize,
-    pub has_more: bool,
 }
 
 impl From<TaskListItem> for TaskSummary {
@@ -1463,26 +1361,6 @@ impl From<Task> for TaskRecord {
 }
 
 impl TaskRecord {
-    fn from_consumer_projection(value: crate::query::ConsumerTaskProjection) -> Self {
-        Self {
-            id: value.id,
-            workspace_id: value.workspace_id,
-            title: value.title,
-            description: value.description,
-            project_id: value.project_id,
-            project_key: value.project_key,
-            project_prefix: value.project_prefix,
-            status: value.status,
-            priority: value.priority,
-            created_at: value.created_at,
-            updated_at: value.updated_at,
-            available_at: value.available_at,
-            due_on: value.due_on,
-            metadata: Vec::new(),
-            related: Vec::new(),
-        }
-    }
-
     fn with_metadata(task: Task, metadata: Vec<TaskMetadataValue>) -> Self {
         Self::with_metadata_and_related(task, metadata, Vec::new())
     }

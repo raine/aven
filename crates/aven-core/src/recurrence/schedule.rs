@@ -113,61 +113,6 @@ impl Iterator for RecurrenceSlotIter<'_> {
     }
 }
 
-pub(crate) fn slot_rank(
-    rule: &RecurrenceRule,
-    start_on: NaiveDate,
-    slot_on: NaiveDate,
-) -> Option<u64> {
-    if !rule.matches(start_on, slot_on) {
-        return None;
-    }
-    slot_count_before(rule, start_on, slot_on)
-}
-
-pub(crate) fn slot_count_before(
-    rule: &RecurrenceRule,
-    start_on: NaiveDate,
-    date: NaiveDate,
-) -> Option<u64> {
-    if date <= start_on {
-        return Some(0);
-    }
-    match rule.frequency() {
-        RecurrenceFrequency::Daily => {
-            let elapsed = date.signed_duration_since(start_on).num_days();
-            let interval = i64::from(rule.interval());
-            u64::try_from(elapsed.checked_add(interval - 1)?.checked_div(interval)?).ok()
-        }
-        RecurrenceFrequency::Weekly => weekly_slot_count_before(rule, start_on, date),
-        RecurrenceFrequency::Monthly => {
-            monthly_slot_count_before(i64::from(rule.interval()), start_on, date)
-        }
-        RecurrenceFrequency::Yearly => {
-            monthly_slot_count_before(i64::from(rule.interval()) * 12, start_on, date)
-        }
-    }
-}
-
-pub(crate) fn slot_at_rank(
-    rule: &RecurrenceRule,
-    start_on: NaiveDate,
-    rank: u64,
-) -> Option<NaiveDate> {
-    match rule.frequency() {
-        RecurrenceFrequency::Daily => {
-            let days = rank.checked_mul(u64::from(rule.interval()))?;
-            start_on.checked_add_days(Days::new(days))
-        }
-        RecurrenceFrequency::Weekly => weekly_slot_at_rank(rule, start_on, rank),
-        RecurrenceFrequency::Monthly => {
-            monthly_slot_at_rank(i64::from(rule.interval()), start_on, rank)
-        }
-        RecurrenceFrequency::Yearly => {
-            monthly_slot_at_rank(i64::from(rule.interval()) * 12, start_on, rank)
-        }
-    }
-}
-
 pub(crate) fn slot_on_or_after(
     rule: &RecurrenceRule,
     start_on: NaiveDate,
@@ -241,22 +186,6 @@ fn month_slot_on_or_after(period: i64, start_on: NaiveDate, date: NaiveDate) -> 
     Some(slot)
 }
 
-fn monthly_slot_count_before(period: i64, start_on: NaiveDate, date: NaiveDate) -> Option<u64> {
-    let difference = month_ordinal(date).checked_sub(month_ordinal(start_on))?;
-    let index = difference.checked_div(period)?;
-    let slot = month_slot(start_on, period, index)?;
-    let count = if slot < date {
-        index.checked_add(1)?
-    } else {
-        index
-    };
-    u64::try_from(count).ok()
-}
-
-fn monthly_slot_at_rank(period: i64, start_on: NaiveDate, rank: u64) -> Option<NaiveDate> {
-    month_slot(start_on, period, i64::try_from(rank).ok()?)
-}
-
 fn month_slot_on_or_before(period: i64, start_on: NaiveDate, date: NaiveDate) -> Option<NaiveDate> {
     let difference = month_ordinal(date).checked_sub(month_ordinal(start_on))?;
     let mut index = difference.checked_div(period)?;
@@ -302,87 +231,6 @@ fn weekly_slot_on_or_after(
         }
         block = block.checked_add(1)?;
     }
-}
-
-fn weekly_slot_count_before(
-    rule: &RecurrenceRule,
-    start_on: NaiveDate,
-    date: NaiveDate,
-) -> Option<u64> {
-    let anchor_monday = monday_of(start_on)?;
-    let target_monday = monday_of(date)?;
-    let target_week = target_monday
-        .signed_duration_since(anchor_monday)
-        .num_days()
-        .checked_div(7)?;
-    let weekdays = rule.weekdays_set();
-    let weekday_count = i64::try_from(weekdays.iter().count()).ok()?;
-    let first_block_excluded = i64::try_from(
-        weekdays
-            .iter()
-            .filter(|weekday| {
-                add_days(anchor_monday, i64::from(weekday.num_days_from_monday()))
-                    .is_some_and(|candidate| candidate < start_on)
-            })
-            .count(),
-    )
-    .ok()?;
-    let interval = i64::from(rule.interval());
-    let block = target_week.checked_div(interval)?;
-    let complete_blocks = if target_week % interval == 0 {
-        block
-    } else {
-        block.checked_add(1)?
-    };
-    let complete =
-        complete_blocks
-            .checked_mul(weekday_count)?
-            .checked_sub(if complete_blocks == 0 {
-                0
-            } else {
-                first_block_excluded
-            })?;
-    let current = if target_week % interval == 0 {
-        weekdays
-            .iter()
-            .filter(|weekday| {
-                add_days(target_monday, i64::from(weekday.num_days_from_monday()))
-                    .is_some_and(|candidate| candidate >= start_on && candidate < date)
-            })
-            .count() as i64
-    } else {
-        0
-    };
-    u64::try_from(complete.checked_add(current)?).ok()
-}
-
-fn weekly_slot_at_rank(rule: &RecurrenceRule, start_on: NaiveDate, rank: u64) -> Option<NaiveDate> {
-    let anchor_monday = monday_of(start_on)?;
-    let weekdays = rule.weekdays_set().iter().collect::<Vec<_>>();
-    let first_block = weekdays
-        .iter()
-        .filter_map(|weekday| {
-            add_days(anchor_monday, i64::from(weekday.num_days_from_monday()))
-                .filter(|candidate| *candidate >= start_on)
-        })
-        .collect::<Vec<_>>();
-    let first_count = u64::try_from(first_block.len()).ok()?;
-    let (block, weekday_index) = if rank < first_count {
-        return first_block.get(usize::try_from(rank).ok()?).copied();
-    } else {
-        let remaining = rank.checked_sub(first_count)?;
-        let weekday_count = u64::try_from(weekdays.len()).ok()?;
-        let block = 1u64.checked_add(remaining.checked_div(weekday_count)?)?;
-        (block, remaining % weekday_count)
-    };
-    let monday = add_weeks(
-        anchor_monday,
-        i64::try_from(block.checked_mul(u64::from(rule.interval()))?).ok()?,
-    )?;
-    add_days(
-        monday,
-        i64::from(weekdays[usize::try_from(weekday_index).ok()?].num_days_from_monday()),
-    )
 }
 
 fn weekly_slot_on_or_before(

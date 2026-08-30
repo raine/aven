@@ -1,5 +1,5 @@
 use crate::ids::{TaskId, WorkspaceId};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use anyhow::{Result, bail};
 use sqlx::SqliteConnection;
@@ -9,7 +9,6 @@ use crate::types::Task;
 use crate::workspaces::Workspace;
 
 const DISPLAY_SUFFIX_FLOOR: usize = 4;
-const SQLITE_BIND_CHUNK_SIZE: usize = 900;
 
 fn quote(input: &str) -> String {
     serde_json::to_string(input).unwrap_or_else(|_| "\"\"".to_string())
@@ -69,64 +68,6 @@ impl DisplayRefContext {
         workspace_id: &WorkspaceId,
     ) -> Result<Self> {
         Self::load(conn, std::slice::from_ref(workspace_id)).await
-    }
-
-    pub(crate) async fn for_task_ids(
-        conn: &mut SqliteConnection,
-        workspace_id: &WorkspaceId,
-        task_ids: &[TaskId],
-    ) -> Result<Self> {
-        if task_ids.is_empty() {
-            return Ok(Self {
-                task_ids_by_workspace: HashMap::new(),
-            });
-        }
-        let mut ids = HashSet::new();
-        for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE.saturating_sub(2)) {
-            let mut query =
-                sqlx::QueryBuilder::<sqlx::Sqlite>::new("WITH requested(id) AS (VALUES ");
-            for (index, task_id) in chunk.iter().enumerate() {
-                if index != 0 {
-                    query.push(", ");
-                }
-                query.push("(").push_bind(task_id).push(")");
-            }
-            query.push(
-                ")
-                 SELECT id FROM requested
-                 UNION
-                 SELECT (
-                     SELECT t.id FROM tasks t INDEXED BY idx_tasks_workspace_id
-                     WHERE t.workspace_id = ",
-            );
-            query.push_bind(workspace_id);
-            query.push(
-                " AND t.id < requested.id ORDER BY t.id DESC LIMIT 1
-                 ) FROM requested
-                 UNION
-                 SELECT (
-                     SELECT t.id FROM tasks t INDEXED BY idx_tasks_workspace_id
-                     WHERE t.workspace_id = ",
-            );
-            query.push_bind(workspace_id);
-            query.push(
-                " AND t.id > requested.id ORDER BY t.id ASC LIMIT 1
-                 ) FROM requested",
-            );
-            ids.extend(
-                query
-                    .build_query_scalar::<Option<TaskId>>()
-                    .fetch_all(&mut *conn)
-                    .await?
-                    .into_iter()
-                    .flatten(),
-            );
-        }
-        let mut ids = ids.into_iter().collect::<Vec<_>>();
-        ids.sort();
-        Ok(Self {
-            task_ids_by_workspace: HashMap::from([(workspace_id.clone(), ids)]),
-        })
     }
 
     async fn load(conn: &mut SqliteConnection, workspace_ids: &[WorkspaceId]) -> Result<Self> {

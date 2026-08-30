@@ -8,10 +8,6 @@ use std::time::Duration;
 
 const READ_PATH_INDEXES: &[(&str, &str)] = &[
     (
-        "idx_tasks_workspace_id",
-        "CREATE INDEX idx_tasks_workspace_id ON tasks(workspace_id, id)",
-    ),
-    (
         "idx_tasks_workspace_deleted_updated",
         "CREATE INDEX idx_tasks_workspace_deleted_updated ON tasks(workspace_id, deleted, updated_at DESC, created_at DESC)",
     ),
@@ -241,67 +237,6 @@ fn recurrence_task_lookups_use_task_index() {
             "idx_recurrence_occurrences_task",
         )
         .await;
-
-        let task_neighbors = explain_plan(
-            &mut conn,
-            "EXPLAIN QUERY PLAN
-             WITH requested(id) AS (VALUES (?), (?))
-             SELECT id FROM requested
-             UNION
-             SELECT (
-                 SELECT t.id FROM tasks t INDEXED BY idx_tasks_workspace_id
-                 WHERE t.workspace_id = ? AND t.id < requested.id
-                 ORDER BY t.id DESC LIMIT 1
-             ) FROM requested
-             UNION
-             SELECT (
-                 SELECT t.id FROM tasks t INDEXED BY idx_tasks_workspace_id
-                 WHERE t.workspace_id = ? AND t.id > requested.id
-                 ORDER BY t.id ASC LIMIT 1
-             ) FROM requested",
-            &[
-                "0000000000002008",
-                "0000000000002016",
-                "0000000000000000",
-                "0000000000000000",
-            ],
-        )
-        .await;
-        assert_eq!(task_neighbors.matches("idx_tasks_workspace_id").count(), 2);
-        assert!(!task_neighbors.contains("GROUP BY"), "{task_neighbors}");
-
-        let series_neighbors = explain_plan(
-            &mut conn,
-            "EXPLAIN QUERY PLAN
-             WITH requested(id) AS (VALUES (?), (?))
-             SELECT id FROM requested
-             UNION
-             SELECT (
-                 SELECT s.id FROM recurrence_series s
-                 WHERE s.workspace_id = ? AND s.id < requested.id
-                 ORDER BY s.id DESC LIMIT 1
-             ) FROM requested
-             UNION
-             SELECT (
-                 SELECT s.id FROM recurrence_series s
-                 WHERE s.workspace_id = ? AND s.id > requested.id
-                 ORDER BY s.id ASC LIMIT 1
-             ) FROM requested",
-            &[
-                "S000000000000008",
-                "S000000000000016",
-                "0000000000000000",
-                "0000000000000000",
-            ],
-        )
-        .await;
-        assert_eq!(
-            series_neighbors
-                .matches("sqlite_autoindex_recurrence_series_1")
-                .count(),
-            2,
-            "{series_neighbors}"
-        );
     });
 }
 
@@ -1080,21 +1015,6 @@ async fn assert_plan_uses(
         plan.contains(index_name),
         "expected plan to use {index_name}\n{plan}"
     );
-}
-
-async fn explain_plan(conn: &mut SqliteConnection, sql: &str, binds: &[&str]) -> String {
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
-    for bind in binds {
-        query = query.bind(*bind);
-    }
-    query
-        .fetch_all(&mut *conn)
-        .await
-        .expect("explain query plan")
-        .iter()
-        .map(|row| row.get::<String, _>("detail"))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 async fn assert_plan_uses_search_without_temp_sort(

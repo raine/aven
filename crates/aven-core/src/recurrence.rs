@@ -26,7 +26,6 @@ pub use schedule::{
     RecurrenceScheduleError, RecurrenceSlotIter, is_slot, live_slot_on, next_slot_after,
     projection_slot_at, slot_cutoff, slot_values,
 };
-pub(crate) use schedule::{slot_at_rank, slot_rank};
 
 #[cfg(test)]
 mod tests;
