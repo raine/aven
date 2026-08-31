@@ -3,6 +3,10 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## Unreleased
+
+- Fix: Opening a [search](/tui/#search-filter-and-order) result with `Enter` keeps the typed query as the committed search view, so closing the task detail returns to the full result list instead of a single-task view scoped to that task's reference.
+
 ## v0.1.35 (2026-08-28)
 
 - Task details include a collapsed activity log for inspecting the changes behind a task's idle age, with concise values for labels, statuses, notes, and relationships.
