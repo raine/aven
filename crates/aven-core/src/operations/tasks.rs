@@ -1065,10 +1065,12 @@ pub async fn update_task(
 
 fn append_task_undo_commands(
     task_id: &TaskId,
-    before: &TaskUndoSnapshot,
-    after: &TaskUndoSnapshot,
+    before_snapshot: &TaskUndoSnapshot,
+    after_snapshot: &TaskUndoSnapshot,
     commands: &mut Vec<UndoCommand>,
 ) {
+    let before = before_snapshot;
+    let after = after_snapshot;
     let fields = [
         ("title", before.title.as_str(), after.title.as_str()),
         (
@@ -1101,6 +1103,12 @@ fn append_task_undo_commands(
                 field: field.to_string(),
                 before: before.to_string(),
                 after: after.to_string(),
+                queue_activity_before: (before_snapshot.queue_activity_at
+                    != after_snapshot.queue_activity_at)
+                    .then(|| before_snapshot.queue_activity_at.clone()),
+                queue_activity_after: (before_snapshot.queue_activity_at
+                    != after_snapshot.queue_activity_at)
+                    .then(|| after_snapshot.queue_activity_at.clone()),
             });
         }
     }
@@ -1112,6 +1120,10 @@ fn append_task_undo_commands(
             field: "deleted".to_string(),
             before: before_deleted.to_string(),
             after: after_deleted.to_string(),
+            queue_activity_before: (before.queue_activity_at != after.queue_activity_at)
+                .then(|| before.queue_activity_at.clone()),
+            queue_activity_after: (before.queue_activity_at != after.queue_activity_at)
+                .then(|| after.queue_activity_at.clone()),
         });
     }
     let before_is_epic = if before.is_epic { "1" } else { "0" };
@@ -1122,6 +1134,8 @@ fn append_task_undo_commands(
             field: "is_epic".to_string(),
             before: before_is_epic.to_string(),
             after: after_is_epic.to_string(),
+            queue_activity_before: None,
+            queue_activity_after: None,
         });
     }
     if before.labels != after.labels {

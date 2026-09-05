@@ -46,6 +46,8 @@ impl Database {
                     field: TaskField::IsEpic.as_str().to_string(),
                     before: "0".to_string(),
                     after: "1".to_string(),
+                    queue_activity_before: None,
+                    queue_activity_after: None,
                 });
             }
             record_tui_undo(&mut tx, &workspace.id, &summary, UndoPayload { commands }).await?;

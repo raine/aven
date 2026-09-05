@@ -253,6 +253,8 @@ impl Database {
                         field: "status".to_string(),
                         before: before.status.as_str().to_string(),
                         after: result.task.status.as_str().to_string(),
+                        queue_activity_before: Some(before.queue_activity_at.clone()),
+                        queue_activity_after: Some(result.task.queue_activity_at.clone()),
                     }],
                 },
             )
