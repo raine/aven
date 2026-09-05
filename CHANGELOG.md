@@ -3,6 +3,16 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.36 (2026-09-05)
+
+- Perf: Faster browsing and bulk updates for large task collections, including task details, Recent Actions, and recurring-task history. Sync and attachment cleanup also do less background work.
+- Fix: Attachment sync and cleanup protect files still used by tasks during deletion, restoration, conflict resolution, and background checks. Cleanup also works when attachment storage spans filesystems.
+- Fix: Upcoming keeps tasks in the correct date groups when the TUI stays open past midnight.
+- Fix: Task details handle tasks deleted during refresh without displaying incomplete or outdated information.
+- Fix: Undoing a task field change restores its previous idle age unless newer activity has updated it.
+- Fix: `aven doctor --integrity` checks attachment files after its database checks, capturing file changes made while those checks run.
+- UX: Epic details show each child's blockers on one compact line. Open the child task to see all its dependencies.
+
 ## v0.1.35 (2026-08-28)
 
 - Task details include a collapsed activity log for inspecting the changes behind a task's idle age, with concise values for labels, statuses, notes, and relationships.

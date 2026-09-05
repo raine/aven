@@ -16,7 +16,7 @@ name = "uniffi-bindgen"
 path = "src/uniffi_bindgen.rs"
 
 [dependencies]
-aven-core = { path = "../aven-core", version = "=0.1.27" }
+aven-core = { path = "../aven-core", version = "=0.1.28" }
 thiserror = "=2.0.18"
 tokio = { version = "=1.52.3", features = ["rt-multi-thread"] }
 uniffi = { version = "=0.32.0", features = ["cli"] }
