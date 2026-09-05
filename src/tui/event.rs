@@ -79,6 +79,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::SaveAttachment
             | Action::DeleteAttachment
             | Action::BeginEditTitle
+            | Action::BeginEditMetadata
             | Action::BeginEditDescription
             | Action::BeginEditProject
             | Action::BeginEditPriority

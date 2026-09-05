@@ -913,6 +913,7 @@ async fn apply_undo_command(
                     &workspace,
                     task_id,
                     &crate::metadata::TaskMetadataInput {
+                        expected_field_id: None,
                         key: field.key,
                         value: value.clone(),
                     },

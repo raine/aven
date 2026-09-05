@@ -805,6 +805,7 @@ pub struct MetadataInput {
 impl From<MetadataInput> for TaskMetadataInput {
     fn from(input: MetadataInput) -> Self {
         Self {
+            expected_field_id: None,
             key: input.key,
             value: input.value,
         }

@@ -628,3 +628,6 @@ mod conflicts;
 
 #[path = "app_tests/typed_overlay_submissions.rs"]
 mod typed_overlay_submissions;
+
+#[path = "app_tests/metadata.rs"]
+mod metadata;

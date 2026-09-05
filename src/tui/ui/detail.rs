@@ -36,6 +36,7 @@ const DETAIL_DEPENDENCY_TREE_CAP: usize = 3;
 
 pub(crate) fn detail_target_is_actionable(item: &TaskListItem, target: &DetailTargetId) -> bool {
     match target {
+        DetailTargetId::CustomMetadata => !item.metadata.is_empty(),
         DetailTargetId::Task { section, task_id } => match section {
             DetailSection::EpicParent => item
                 .epic_parent
@@ -51,7 +52,10 @@ pub(crate) fn detail_target_is_actionable(item: &TaskListItem, target: &DetailTa
                 .related
                 .iter()
                 .any(|link| (!link.deleted || item.task.deleted) && &link.task_id == task_id),
-            DetailSection::Attachments | DetailSection::Notes | DetailSection::Activity => false,
+            DetailSection::CustomMetadata
+            | DetailSection::Attachments
+            | DetailSection::Notes
+            | DetailSection::Activity => false,
         },
         DetailTargetId::Note { note_id } => item.notes.iter().any(|note| note.id == *note_id),
         DetailTargetId::Attachment { attachment_id } => item
@@ -71,7 +75,10 @@ pub(crate) fn detail_target_is_actionable(item: &TaskListItem, target: &DetailTa
                     > DETAIL_DEPENDENCY_TREE_CAP
             }
             DetailSection::Activity => !item.activity.is_empty(),
-            DetailSection::EpicParent | DetailSection::Attachments | DetailSection::Notes => false,
+            DetailSection::CustomMetadata
+            | DetailSection::EpicParent
+            | DetailSection::Attachments
+            | DetailSection::Notes => false,
         },
     }
 }
@@ -1128,7 +1135,7 @@ fn apply_active_style(model: &mut DetailContentRenderModel, target: &DetailTarge
         return;
     };
     match target {
-        DetailTargetId::Expand { .. } => {
+        DetailTargetId::CustomMetadata | DetailTargetId::Expand { .. } => {
             for line in lines {
                 for (index, span) in line.spans.iter_mut().enumerate() {
                     span.style = span.style.bg(BG_PANEL);
@@ -1452,6 +1459,66 @@ fn build_detail_body_document(
                     width,
                     height,
                 });
+            }
+        }
+    }
+
+    if !item.metadata.is_empty() {
+        lines.push(Line::raw(""));
+        section_body_indices.push(lines.len());
+        interactive_rows.push(DetailInteractiveRow {
+            target: DetailTargetId::CustomMetadata,
+            line_index: lines.len(),
+            height: 1,
+        });
+        lines.push(Line::from(vec![
+            Span::styled(
+                "CUSTOM METADATA",
+                Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" (", Style::new().fg(FG_DIM)),
+            Span::styled("e", keycap_style()),
+            Span::raw(" "),
+            Span::styled("m", keycap_style()),
+            Span::styled(" edit)", Style::new().fg(FG_DIM)),
+        ]));
+        let key_width = item
+            .metadata
+            .iter()
+            .map(|value| value.key.width())
+            .max()
+            .unwrap_or(0)
+            .min(24)
+            .min(width / 3);
+        for value in &item.metadata {
+            let long_key = value.key.width() > key_width;
+            if long_key {
+                for mut line in plain_metadata_lines(
+                    &value.key,
+                    width.saturating_sub(2),
+                    Style::new().fg(FG_DIM),
+                ) {
+                    line.spans.insert(0, Span::raw("  "));
+                    lines.push(line);
+                }
+            }
+            let indent = if long_key { 4 } else { key_width + 4 };
+            let (text, style) = (value.value.as_str(), Style::new().fg(FG));
+            for (index, mut line) in plain_metadata_lines(text, width.saturating_sub(indent), style)
+                .into_iter()
+                .enumerate()
+            {
+                let prefix = if index == 0 && !long_key {
+                    format!("  {:key_width$}  ", value.key)
+                } else {
+                    " ".repeat(indent)
+                };
+                line.spans
+                    .insert(0, Span::styled(prefix, Style::new().fg(FG_DIM)));
+                lines.push(line);
+            }
+            if value.value.contains('\n') || long_key {
+                lines.push(Line::raw(""));
             }
         }
     }
@@ -2764,6 +2831,30 @@ fn markdown_hyperlinks(
         }
     }
     placements
+}
+
+fn plain_metadata_lines(value: &str, width: usize, style: Style) -> Vec<Line<'static>> {
+    let width = width.max(1);
+    value
+        .split('\n')
+        .flat_map(|line| {
+            let mut lines = Vec::new();
+            let mut text = String::new();
+            let mut cells = 0;
+            for c in line.chars() {
+                let shown = if c.is_control() { '�' } else { c };
+                let size = unicode_width::UnicodeWidthChar::width(shown).unwrap_or(0);
+                if cells + size > width && cells > 0 {
+                    lines.push(Line::styled(std::mem::take(&mut text), style));
+                    cells = 0;
+                }
+                text.push(shown);
+                cells += size;
+            }
+            lines.push(Line::styled(text, style));
+            lines
+        })
+        .collect()
 }
 
 fn quoted_block_lines(body: &str, width: usize, style: Style) -> Vec<Line<'static>> {
@@ -4517,6 +4608,41 @@ mod tests {
             .expect("child interaction row");
 
         assert_eq!(child_row.height, 2);
+    }
+
+    #[test]
+    fn custom_metadata_heading_uses_note_heading_and_keycap_styles() {
+        let mut item = detail_test_epic_item();
+        item.metadata = vec![aven_core::metadata::TaskMetadataValue {
+            field_id: crate::ids::MetadataFieldId::new(),
+            key: "owner".to_string(),
+            value: "Alex".to_string(),
+        }];
+        let children = detail_epic_children(&item, None);
+        let body = build_detail_body_document(&item, &children, 80, &BTreeSet::new(), None, &[]);
+        let metadata = body
+            .lines
+            .iter()
+            .find(|line| line.to_string().starts_with("CUSTOM METADATA"))
+            .unwrap();
+        let notes = body
+            .lines
+            .iter()
+            .find(|line| line.to_string().starts_with("NOTES"))
+            .unwrap();
+        assert_eq!(metadata.to_string(), "CUSTOM METADATA (e m edit)");
+        assert_eq!(metadata.spans[0].style, notes.spans[0].style);
+        for key in ["e", "m"] {
+            assert_eq!(
+                metadata
+                    .spans
+                    .iter()
+                    .find(|span| span.content == key)
+                    .unwrap()
+                    .style,
+                notes.spans[2].style
+            );
+        }
     }
 
     #[test]

@@ -1,5 +1,6 @@
 mod handlers;
 mod layout;
+pub(crate) mod metadata;
 mod mouse;
 mod multiline;
 mod picker;

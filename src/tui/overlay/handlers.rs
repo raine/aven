@@ -29,6 +29,10 @@ use crate::tui::store::TaskOrder;
 
 pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) -> OverlayState {
     match overlay {
+        OverlayState::Metadata(mut state) => {
+            state.paste(text);
+            OverlayState::Metadata(state)
+        }
         OverlayState::Search(mut state) => {
             state.input.insert_paste(text);
             state.results.clear();
@@ -140,6 +144,7 @@ pub(crate) fn handle_generic_overlay_key(
     help_scroll_cap: u16,
 ) -> OverlayOutcome {
     match overlay {
+        OverlayState::Metadata(state) => super::metadata::handle_key(state, key),
         OverlayState::AddTask(mut state) => {
             match std::mem::replace(&mut state.mode, AddTaskMode::Compose) {
                 AddTaskMode::Schedule(mut editor) => {
@@ -1095,6 +1100,7 @@ mod tests {
 
     fn add_task_state(focus: AddTaskStep) -> Box<crate::tui::overlay::AddTaskState> {
         Box::new(crate::tui::overlay::AddTaskState {
+            custom_metadata: Vec::new(),
             title: LineEdit::blank(),
             description: MultilineInputState::blank(
                 MultilineIntent::AddTaskDescription,

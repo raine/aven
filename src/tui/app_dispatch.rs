@@ -766,6 +766,9 @@ impl App {
                             self.open_attachment_externally(&attachment_id).await;
                         }
                     }
+                    Some(DetailTargetActivation::EditMetadata) => {
+                        self.begin_edit_metadata().await?;
+                    }
                     Some(DetailTargetActivation::Focus) => {
                         self.show_detail(scroll);
                     }
@@ -1295,7 +1298,9 @@ impl App {
                         self.move_detail_focus_selection(-1, terminal_size);
                         focused_scroll = self.detail_focus_scroll(scroll, terminal_size);
                     }
-                    (KeyCode::Char('e'), KeyModifiers::NONE) => {
+                    (KeyCode::Char('e'), KeyModifiers::NONE)
+                        if matches!(&selected_target, DetailTargetId::Note { .. }) =>
+                    {
                         if let DetailTargetId::Note { note_id } = &selected_target {
                             self.begin_edit_note(note_id, scroll);
                             return Ok(());
@@ -1331,6 +1336,10 @@ impl App {
                     (KeyCode::Enter, KeyModifiers::NONE) => match selected_target {
                         DetailTargetId::Task { task_id, .. } => {
                             self.open_detail_task(&task_id, scroll).await;
+                            return Ok(());
+                        }
+                        DetailTargetId::CustomMetadata => {
+                            self.begin_edit_metadata().await?;
                             return Ok(());
                         }
                         DetailTargetId::Note { .. } => {}
@@ -1490,6 +1499,9 @@ impl App {
 
         if self.pending_shortcut.take_editor_open_request(key) {
             match &overlay {
+                OverlayState::Metadata(state) => {
+                    self.open_metadata_external_editor(state.clone());
+                }
                 OverlayState::MultilineInput(state) if state.intent.is_description_edit() => {
                     self.open_description_external_editor(state.clone());
                 }
@@ -1505,6 +1517,14 @@ impl App {
                 }
                 _ => self.overlay = Some(overlay),
             }
+            return Ok(());
+        }
+
+        if is_editor_prefix_key(key)
+            && matches!(&overlay, OverlayState::Metadata(state) if state.editor.as_ref().is_some_and(|editor| !editor.discard))
+        {
+            self.pending_shortcut.begin_editor_prefix();
+            self.overlay = Some(overlay);
             return Ok(());
         }
 
@@ -1673,6 +1693,9 @@ impl App {
             Some(DetailTargetId::Task { .. }) => {
                 "leave relationship focus before using that command"
             }
+            Some(DetailTargetId::CustomMetadata) => {
+                "leave metadata focus before using that command"
+            }
             Some(DetailTargetId::Note { .. }) => "leave note focus before using that command",
             Some(DetailTargetId::Attachment { .. }) => {
                 "leave attachment focus before using that command"
@@ -1728,6 +1751,7 @@ impl App {
             DetailSection::Related
             | DetailSection::Attachments
             | DetailSection::Notes
+            | DetailSection::CustomMetadata
             | DetailSection::Activity => None,
         }?;
         Some(FocusedRelationship {
@@ -1847,7 +1871,10 @@ impl App {
                     },
                 }
             }
-            DetailSection::Attachments | DetailSection::Notes | DetailSection::Activity => {
+            DetailSection::Attachments
+            | DetailSection::Notes
+            | DetailSection::CustomMetadata
+            | DetailSection::Activity => {
                 self.set_warning("focused row does not support unlink");
                 return Ok(());
             }
@@ -1902,6 +1929,13 @@ impl App {
             return Ok(false);
         };
         if !key.modifiers.is_empty() && key.modifiers != KeyModifiers::SHIFT {
+            return Ok(false);
+        }
+        if target == DetailTargetId::CustomMetadata {
+            if let Some(outcome) = self.handle_detail_shortcut(key, scroll).await? {
+                self.overlay = outcome;
+                return Ok(true);
+            }
             return Ok(false);
         }
         let relationship = self.focused_relationship();
@@ -2403,6 +2437,7 @@ impl App {
             DetailSection::Related
             | DetailSection::Attachments
             | DetailSection::Notes
+            | DetailSection::CustomMetadata
             | DetailSection::Activity => None,
         };
         let Some(link) = link else {
@@ -2496,6 +2531,7 @@ impl App {
             DetailSection::Related
             | DetailSection::Attachments
             | DetailSection::Notes
+            | DetailSection::CustomMetadata
             | DetailSection::Activity => {
                 self.set_warning("captured row does not support unlink");
                 return Ok(());
@@ -2739,6 +2775,7 @@ impl App {
                 self.begin_create_task_gist_for(selection.targets()[0].task.id.clone())
             }
             Action::BeginEditTitle => self.begin_edit_title_for(selection),
+            Action::BeginEditMetadata => self.begin_edit_metadata_for(selection).await?,
             Action::BeginEditDescription => self.begin_edit_description_for(selection),
             Action::BeginEditProject => self.open_edit_project_picker(selection),
             Action::BeginEditPriority => self.begin_edit_priority_for(selection),

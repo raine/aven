@@ -20,6 +20,7 @@ use unicode_width::UnicodeWidthStr;
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlayState {
+    Metadata(Box<super::metadata::MetadataState>),
     Onboarding {
         persist_on_exit: bool,
     },
@@ -611,6 +612,7 @@ impl TextIntent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MultilineIntent {
+    CustomMetadata,
     AddTaskDescription,
     AddTaskNatural,
     AddNote {
@@ -987,6 +989,7 @@ impl AddTaskMode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AddTaskState {
+    pub(crate) custom_metadata: Vec<aven_core::metadata::TaskMetadataInput>,
     pub(crate) title: LineEdit,
     pub(crate) description: MultilineInputState,
     pub(crate) focus: AddTaskStep,
@@ -1143,6 +1146,7 @@ impl AddTaskState {
             || self.status != AddTaskStatusChoice::Derived
             || self.priority.value() != "none"
             || !self.labels.is_empty()
+            || !self.custom_metadata.is_empty()
             || self.is_epic
             || !self.available_at.text.trim().is_empty()
             || !self.due_on.text.trim().is_empty()
@@ -1382,7 +1386,11 @@ impl MultilineInputState {
         self.row = row;
         self.column = column;
 
-        let text = normalize_pasted_newlines(text);
+        let text = if matches!(self.intent, MultilineIntent::CustomMetadata) {
+            text.to_string()
+        } else {
+            normalize_pasted_newlines(text)
+        };
         let mut pasted_lines = text.split('\n');
         let first = pasted_lines.next().unwrap_or_default();
         let rest = self.lines[row].split_off(column);
@@ -1530,6 +1538,12 @@ pub(crate) enum SyncStatusAction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlaySubmit {
+    MetadataSave {
+        state: Box<super::metadata::MetadataState>,
+        remove: bool,
+    },
+
+    MetadataExternalEditor(Box<super::metadata::MetadataState>),
     AddTask(Box<AddTaskState>),
     CreateAddTaskProject {
         state: Box<AddTaskState>,

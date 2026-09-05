@@ -226,6 +226,10 @@ fn render_surface(
     }
 
     if frame.area().width < MIN_TUI_WIDTH || frame.area().height < MIN_TUI_HEIGHT {
+        if let Some(OverlayView::Metadata(state)) = &view.overlay {
+            self::overlays::metadata::render(frame, state);
+            return;
+        }
         frame.render_widget(
             Paragraph::new("terminal too small for aven tui")
                 .alignment(Alignment::Center)
@@ -779,6 +783,7 @@ fn overlay_dims_underlay(overlay: &OverlayView, inline_title_editor: bool) -> bo
         | OverlayView::DetailHelp { .. }
         | OverlayView::Search { .. }
         | OverlayView::Command { .. }
+        | OverlayView::Metadata(_)
         | OverlayView::AddTask(_)
         | OverlayView::MultilineInput(_)
         | OverlayView::Picker(_)
@@ -857,6 +862,7 @@ fn render_overlay_content(
                 undo_description,
             },
         ),
+        OverlayView::Metadata(state) => self::overlays::metadata::render(frame, state),
         OverlayView::AddTask(state) => self::overlays::render_add_task(frame, state),
         OverlayView::TextInput(state)
             if state.kind == TextInputKind::EditTitle && inline_title_editor => {}

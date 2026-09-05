@@ -140,6 +140,7 @@ pub(super) struct FooterChoiceState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum DetailSection {
+    CustomMetadata,
     EpicParent,
     EpicChildren,
     Attachments,
@@ -152,6 +153,7 @@ pub(crate) enum DetailSection {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum DetailTargetId {
+    CustomMetadata,
     Task {
         section: DetailSection,
         task_id: crate::ids::TaskId,
@@ -171,6 +173,7 @@ impl DetailTargetId {
     pub(crate) fn section(&self) -> DetailSection {
         match self {
             Self::Task { section, .. } | Self::Expand { section } => *section,
+            Self::CustomMetadata => DetailSection::CustomMetadata,
             Self::Note { .. } => DetailSection::Notes,
             Self::Attachment { .. } => DetailSection::Attachments,
         }
@@ -179,6 +182,7 @@ impl DetailTargetId {
     pub(crate) fn routing_domain(&self) -> crate::tui::event::RoutingDomain {
         match self {
             Self::Task { .. } => crate::tui::event::RoutingDomain::DetailRelated,
+            Self::CustomMetadata => crate::tui::event::RoutingDomain::DetailParent,
             Self::Note { .. } | Self::Expand { .. } => {
                 crate::tui::event::RoutingDomain::DetailPassive
             }
@@ -483,7 +487,7 @@ impl App {
                             )
                         )
                 })
-                .map(|target| match target {
+                .and_then(|target| Some(match target {
                     DetailTargetId::Task {
                         section: DetailSection::EpicChildren,
                         task_id,
@@ -495,6 +499,7 @@ impl App {
                         section: *section,
                         task_id: task_id.clone(),
                     },
+                    DetailTargetId::CustomMetadata => return None,
                     DetailTargetId::Note { .. } => DetailCommandFocus::Note,
                     DetailTargetId::Attachment { attachment_id } => {
                         let bytes_present = parent.attachments.iter().any(|attachment| {
@@ -507,7 +512,7 @@ impl App {
                         }
                     }
                     DetailTargetId::Expand { .. } => DetailCommandFocus::Disclosure
-                });
+                }));
             return CommandSessionSnapshot {
                 workspace,
                 surface: CommandSurfaceSnapshot::Detail {

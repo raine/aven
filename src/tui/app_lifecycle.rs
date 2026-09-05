@@ -166,6 +166,13 @@ impl App {
                 needs_redraw = true;
             }
 
+            if self.needs_terminal_clear {
+                self.needs_terminal_clear = false;
+                self.preview_controller.set_desired([]);
+                let _ = self.erase_previous_inline_images();
+                terminal.clear()?;
+                needs_redraw = true;
+            }
             if needs_redraw {
                 self.draw(terminal)?;
                 needs_redraw = self.render_inline_images_after_draw(terminal).is_err();
@@ -201,12 +208,6 @@ impl App {
                         let result = self.dispatch_key(key, terminal.size()?).await;
                         if let Err(error) = result {
                             self.set_error(format!("{error:#}"));
-                        }
-                        if self.needs_terminal_clear {
-                            self.needs_terminal_clear = false;
-                            self.preview_controller.set_desired([]);
-                            let _ = self.erase_previous_inline_images();
-                            terminal.clear()?;
                         }
                     }
                     Event::Paste(text) => {

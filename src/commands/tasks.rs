@@ -32,6 +32,7 @@ pub(super) fn parse_metadata_args(values: &[String]) -> Result<Vec<TaskMetadataI
                 .split_once('=')
                 .ok_or_else(|| anyhow::anyhow!("error invalid-metadata-assignment"))?;
             Ok(TaskMetadataInput {
+                expected_field_id: None,
                 key: key.to_string(),
                 value: value.to_string(),
             })
@@ -647,6 +648,7 @@ pub(crate) async fn cmd_edit(
             workspace,
             &task.id,
             TaskUpdate {
+                require_metadata_fields: Vec::new(),
                 title: args.title,
                 description,
                 project: args.project,

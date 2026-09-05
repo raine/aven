@@ -116,6 +116,7 @@ pub struct TaskUpdate {
     pub remove_labels: Vec<String>,
     pub set_metadata: Vec<TaskMetadataInput>,
     pub remove_metadata: Vec<String>,
+    pub require_metadata_fields: Vec<(crate::ids::MetadataFieldId, String)>,
     pub label_selection: Option<TaskLabelSelection>,
     pub create_missing_labels: bool,
 }
@@ -1328,6 +1329,9 @@ async fn apply_task_update(
         &update.remove_labels,
     )
     .await?;
+    for (id, key) in &update.require_metadata_fields {
+        crate::metadata::require_metadata_field(conn, &workspace.id, id, key).await?;
+    }
     crate::metadata::validate_task_metadata_result(
         conn,
         &workspace.id,

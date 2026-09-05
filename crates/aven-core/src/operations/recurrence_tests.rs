@@ -507,6 +507,7 @@ async fn template_edits_apply_only_to_future_occurrences() {
     let (_temp, mut conn, workspace) = setup().await;
     let mut series_draft = draft(20);
     series_draft.metadata = vec![crate::metadata::TaskMetadataInput {
+        expected_field_id: None,
         key: "legacy-id".to_string(),
         value: "old".to_string(),
     }];
@@ -520,6 +521,7 @@ async fn template_edits_apply_only_to_future_occurrences() {
     let original_task_id = created.task.id.clone();
     let update = RecurrenceTemplateUpdate {
         set_metadata: vec![crate::metadata::TaskMetadataInput {
+            expected_field_id: None,
             key: "legacy-id".to_string(),
             value: "new".to_string(),
         }],

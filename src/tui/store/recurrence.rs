@@ -61,7 +61,10 @@ impl TuiStore {
         if recurring_view {
             let created_id = outcome.series.id.clone();
             let requested = super::MainRowSelection::RecurrenceSeries(created_id.clone());
-            let refreshed = self.refresh_with_scope_fallback(Some(&requested)).await?;
+            let refreshed = self
+                .refresh_with_scope_fallback(Some(&requested))
+                .await
+                .map_err(super::types::committed_mutation_error)?;
             let created_index = self
                 .recurrence_series
                 .iter()
@@ -78,7 +81,9 @@ impl TuiStore {
             ));
         }
         let task_id = outcome.task.id.clone();
-        self.refresh(None).await?;
+        self.refresh(None)
+            .await
+            .map_err(super::types::committed_mutation_error)?;
         let selected = self
             .tasks
             .iter()

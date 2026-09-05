@@ -3,6 +3,10 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## Unreleased
+
+- View and edit [custom task metadata in the TUI](/tui/#custom-metadata), with inline editing for short values and external-editor support for multiline values.
+
 ## v0.1.36 (2026-09-05)
 
 - Perf: Faster browsing and bulk updates for large task collections, including task details, Recent Actions, and recurring-task history. Sync and attachment cleanup also do less background work.

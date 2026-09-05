@@ -36,6 +36,8 @@ pub struct TaskMetadataValue {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskMetadataInput {
+    /// Require this workspace field identity and key instead of defining a key.
+    pub expected_field_id: Option<MetadataFieldId>,
     pub key: String,
     pub value: String,
 }
@@ -352,7 +354,7 @@ pub(crate) async fn set_task_metadata(
     task_id: &TaskId,
     input: &TaskMetadataInput,
 ) -> Result<bool> {
-    let field = resolve_or_create_metadata_field(conn, workspace, &input.key).await?;
+    let field = resolve_metadata_input_field(conn, workspace, input).await?;
     let identity = format!("metadata:{}", field.id);
     let current = sqlx::query_scalar::<_, String>(
         "SELECT value FROM task_metadata
@@ -472,7 +474,7 @@ pub(crate) async fn set_recurrence_metadata(
     series_id: &RecurrenceSeriesId,
     input: &TaskMetadataInput,
 ) -> Result<bool> {
-    let field = resolve_or_create_metadata_field(conn, workspace, &input.key).await?;
+    let field = resolve_metadata_input_field(conn, workspace, input).await?;
     let identity = format!("metadata:{}", field.id);
     let current = sqlx::query_scalar::<_, String>(
         "SELECT value FROM recurrence_series_metadata
@@ -633,7 +635,7 @@ pub(crate) async fn remove_recurrence_metadata(
     Ok(true)
 }
 
-pub(crate) fn validate_metadata_update(set: &[TaskMetadataInput], remove: &[String]) -> Result<()> {
+pub fn validate_metadata_update(set: &[TaskMetadataInput], remove: &[String]) -> Result<()> {
     if set.len() > MAX_METADATA_VALUES {
         bail!("error too-many-metadata-values limit={MAX_METADATA_VALUES}");
     }
@@ -733,6 +735,30 @@ pub(crate) async fn validate_task_metadata_result(
     )
 }
 
+pub(crate) async fn require_metadata_field(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    field_id: &MetadataFieldId,
+    key: &str,
+) -> Result<MetadataField> {
+    let field = metadata_field_by_id(conn, workspace_id, field_id).await?;
+    match field {
+        Some(field) if field.key == key => Ok(field),
+        _ => bail!("error metadata-field-changed"),
+    }
+}
+
+async fn resolve_metadata_input_field(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    input: &TaskMetadataInput,
+) -> Result<MetadataField> {
+    match &input.expected_field_id {
+        Some(id) => require_metadata_field(conn, &workspace.id, id, &input.key).await,
+        None => resolve_or_create_metadata_field(conn, workspace, &input.key).await,
+    }
+}
+
 pub(crate) async fn resolve_metadata_inputs(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
@@ -741,7 +767,7 @@ pub(crate) async fn resolve_metadata_inputs(
     validate_metadata_update(inputs, &[])?;
     let mut values = Vec::with_capacity(inputs.len());
     for input in inputs {
-        let field = resolve_or_create_metadata_field(conn, workspace, &input.key).await?;
+        let field = resolve_metadata_input_field(conn, workspace, input).await?;
         values.push(ResolvedMetadataValue {
             field_id: field.id,
             key: field.key,
@@ -883,6 +909,49 @@ mod tests {
     use crate::db::begin_immediate;
     use crate::test_support::{ensure_default_workspace, test_conn};
 
+    #[tokio::test]
+    async fn existing_field_identity_rejects_rename_and_other_workspace() {
+        let (_temp, mut conn) = test_conn().await;
+        let workspace = ensure_default_workspace(&mut conn).await.unwrap();
+        let mut tx = begin_immediate(&mut conn).await.unwrap();
+        let field = resolve_or_create_metadata_field(&mut tx, &workspace, "review")
+            .await
+            .unwrap();
+        let input = TaskMetadataInput {
+            expected_field_id: Some(field.id.clone()),
+            key: field.key.clone(),
+            value: String::new(),
+        };
+        assert_eq!(
+            resolve_metadata_inputs(&mut tx, &workspace, std::slice::from_ref(&input))
+                .await
+                .unwrap()[0]
+                .value,
+            ""
+        );
+        rename_metadata_field(&mut tx, &workspace, "review", "review-state")
+            .await
+            .unwrap();
+        assert!(
+            resolve_metadata_inputs(&mut tx, &workspace, &[input])
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("metadata-field-changed")
+        );
+        assert!(
+            metadata_field_by_key(&mut tx, &workspace.id, "review")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            require_metadata_field(&mut tx, &WorkspaceId::new(), &field.id, "review-state")
+                .await
+                .is_err()
+        );
+    }
+
     #[test]
     fn metadata_keys_have_stable_normalization() {
         assert_eq!(normalize_metadata_key(" Max_Turns ").unwrap(), "max_turns");
@@ -902,6 +971,7 @@ mod tests {
             "x".repeat(MAX_METADATA_VALUE_BYTES - 1),
         ));
         let set = [TaskMetadataInput {
+            expected_field_id: None,
             key: "key_8".to_string(),
             value: "é".to_string(),
         }];
@@ -920,6 +990,7 @@ mod tests {
             .map(|index| (format!("key_{index}"), "x".repeat(MAX_METADATA_VALUE_BYTES)))
             .collect::<Vec<_>>();
         let set = [TaskMetadataInput {
+            expected_field_id: None,
             key: "replacement".to_string(),
             value: "y".repeat(MAX_METADATA_VALUE_BYTES),
         }];
@@ -938,12 +1009,14 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let replacement = [TaskMetadataInput {
+            expected_field_id: None,
             key: "KEY_0".to_string(),
             value: "replacement".to_string(),
         }];
         validate_metadata_result_limits(existing.clone(), &replacement, &[]).unwrap();
 
         let insertion = [TaskMetadataInput {
+            expected_field_id: None,
             key: "extra".to_string(),
             value: "x".to_string(),
         }];

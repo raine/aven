@@ -335,3 +335,26 @@ The in-app command catalog is the authoritative shortcut reference:
   sync defaults, and task-intake configuration.
 - [Terminal tips](/tips/) covers terminal input, tmux, and
   image previews.
+
+## Custom metadata
+
+Custom metadata appears in a separate, scrollable section in task detail. Press
+`e m`, run `:edit-metadata`, or activate the section heading to edit one task.
+The field list shows existing workspace fields. Type to filter fields, use arrow
+keys to select, and press `Enter` or click a field to edit it.
+
+Edit short values in the single-line input and press `Enter` to save. `Tab`
+moves between the input and actions. Blank input disables **Save**;
+**Remove field** removes the assignment. `Esc` returns to the field list;
+unsaved text requires confirmation with `y` to discard or `n` / `Esc` to keep
+editing. Successful task edits support undo. Validation errors keep the input open.
+
+For multiline values, choose **editor** or press `Ctrl-x Ctrl-e`, the
+same external-editor shortcut used for descriptions. Aven uses `$VISUAL`, then
+`$EDITOR`, falling back to `vi`. Returning from the editor updates the draft;
+**Save** commits it. Multiline values have a compact read-only preview. Pasting
+multiple lines preserves the text and switches to that preview.
+
+Custom values are edited on existing tasks. Recurring occurrence edits affect
+that task, not its series template. Metadata field definitions and renames are
+managed through the CLI.

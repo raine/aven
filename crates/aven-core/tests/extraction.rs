@@ -216,6 +216,7 @@ async fn task_metadata_undo_tracks_field_identity_across_renames() {
                 created.task.id.clone(),
                 TaskUpdate {
                     set_metadata: vec![TaskMetadataInput {
+                        expected_field_id: None,
                         key: "legacy-id".to_string(),
                         value: String::new(),
                     }],
@@ -245,6 +246,7 @@ async fn task_metadata_undo_tracks_field_identity_across_renames() {
             &created.task.id,
             TaskUpdate {
                 set_metadata: vec![TaskMetadataInput {
+                    expected_field_id: None,
                     key: "external-id".to_string(),
                     value: String::new(),
                 }],

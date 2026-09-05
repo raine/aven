@@ -14,6 +14,7 @@ mod app_edit;
 mod app_filters;
 mod app_intake;
 mod app_lifecycle;
+mod app_metadata;
 mod app_navigation;
 mod app_notes;
 mod app_onboarding;

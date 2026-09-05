@@ -69,6 +69,7 @@ impl SearchKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlayView<'a> {
+    Metadata(super::metadata::MetadataView<'a>),
     Onboarding {
         splash_underlay: bool,
     },
@@ -255,7 +256,9 @@ pub(crate) enum MultilineInputKind {
 impl From<&MultilineIntent> for MultilineInputKind {
     fn from(intent: &MultilineIntent) -> Self {
         match intent {
-            MultilineIntent::AddTaskDescription => Self::AddTaskDescription,
+            MultilineIntent::CustomMetadata | MultilineIntent::AddTaskDescription => {
+                Self::AddTaskDescription
+            }
             MultilineIntent::AddTaskNatural => Self::AddTaskNatural,
             MultilineIntent::AddNote { .. } => Self::AddNote,
             MultilineIntent::EditNote { .. } => Self::EditNote,
@@ -523,6 +526,7 @@ impl<'a> OverlayView<'a> {
                 candidates: &state.candidates,
                 highlighted: state.highlighted,
             },
+            Metadata(state) => Self::Metadata(state.view()),
             AddTask(state) => Self::AddTask(Box::new(AddTaskView {
                 title: state.title.as_str().to_string(),
                 title_cursor: state.title.cursor,

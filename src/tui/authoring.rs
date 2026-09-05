@@ -233,6 +233,7 @@ struct AddTaskDraftState {
     status: AddTaskStatusChoice,
     priority: AddTaskPriorityChoice,
     labels: Vec<String>,
+    custom_metadata: Vec<aven_core::metadata::TaskMetadataInput>,
     is_epic: bool,
     create_more: bool,
     available_at: String,
@@ -261,6 +262,7 @@ impl Default for AddTaskDraftState {
             status: AddTaskStatusChoice::Derived,
             priority: AddTaskPriorityChoice::Literal("none".to_string()),
             labels: Vec::new(),
+            custom_metadata: Vec::new(),
             is_epic: false,
             create_more: false,
             available_at: String::new(),
@@ -294,6 +296,7 @@ pub(crate) struct AddTaskContext {
     pub(crate) status: AddTaskStatusChoice,
     pub(crate) priority: AddTaskPriorityChoice,
     pub(crate) labels: Vec<String>,
+    pub(crate) custom_metadata: Vec<aven_core::metadata::TaskMetadataInput>,
     pub(crate) is_epic: bool,
     pub(crate) create_more: bool,
     pub(crate) create_more_available: bool,
@@ -331,6 +334,15 @@ pub(crate) enum AddTaskTitleSubmit {
 }
 
 impl AuthoringState {
+    pub(crate) fn apply_custom_metadata(
+        &mut self,
+        values: Vec<aven_core::metadata::TaskMetadataInput>,
+    ) {
+        if let Some(draft) = &mut self.flow {
+            draft.custom_metadata = values;
+        }
+    }
+
     pub(crate) fn begin_add_task(
         &mut self,
         active_project: Option<String>,
@@ -367,6 +379,7 @@ impl AuthoringState {
             status: AddTaskStatusChoice::Explicit(series.initial_status.as_str().to_string()),
             priority: AddTaskPriorityChoice::Literal(series.priority.as_str().to_string()),
             labels: detail.labels.clone(),
+            custom_metadata: Vec::new(),
             is_epic: false,
             create_more: false,
             available_at: String::new(),
@@ -459,6 +472,7 @@ impl AuthoringState {
             status: draft.status.clone(),
             priority: draft.priority.clone(),
             labels: draft.labels.clone(),
+            custom_metadata: draft.custom_metadata.clone(),
             is_epic: draft.is_epic,
             create_more: draft.create_more,
             create_more_available: Self::flow_supports_create_more(draft),
@@ -628,6 +642,7 @@ impl AuthoringState {
             return false;
         }
         draft.title.clear();
+        draft.custom_metadata.clear();
         draft.description.clear();
         draft.is_epic = false;
         draft.available_at.clear();
@@ -784,6 +799,7 @@ impl AuthoringState {
         };
         draft.priority = AddTaskPriorityChoice::Literal(task.priority);
         draft.labels = task.labels;
+        draft.custom_metadata = task.metadata;
         draft.is_epic = task.is_epic;
         draft.available_at = task.available_at.unwrap_or_default();
         draft.due_on = task.due_on.unwrap_or_default();
@@ -806,7 +822,7 @@ impl AuthoringState {
         let description = draft.description.trim().to_string();
         AddTaskTitleSubmit::Create(Box::new(AddTaskCreate {
             draft: TaskDraft {
-                metadata: Vec::new(),
+                metadata: draft.custom_metadata,
                 title: trimmed.to_string(),
                 description,
                 project: draft.project,

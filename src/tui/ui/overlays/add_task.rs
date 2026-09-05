@@ -416,16 +416,16 @@ fn add_task_metadata_lines(state: &AddTaskView, width: u16) -> Vec<Line<'static>
         ),
     ];
     if width >= 80 {
-        return vec![
+        vec![
             metadata_row(owned[..3].to_vec(), width as usize),
             metadata_row(owned[3..].to_vec(), width as usize),
-        ];
+        ]
+    } else {
+        owned
+            .chunks(metadata_columns(width))
+            .map(|chunk| metadata_row(chunk.to_vec(), width as usize))
+            .collect()
     }
-    let columns = metadata_columns(width);
-    owned
-        .chunks(columns)
-        .map(|chunk| metadata_row(chunk.to_vec(), width as usize))
-        .collect()
 }
 
 fn status_metadata_field(status: &str, automatic: bool, focus: AddTaskStep) -> Line<'static> {

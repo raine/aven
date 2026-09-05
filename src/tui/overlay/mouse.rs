@@ -44,6 +44,9 @@ pub(crate) fn dispatch_overlay_mouse(
     terminal_size: Size,
     context: OverlayMouseContext,
 ) -> OverlayMouseOutcome {
+    if let OverlayState::Metadata(state) = overlay {
+        return map_generic_outcome(super::metadata::handle_mouse(state, mouse, terminal_size));
+    }
     if matches!(
         mouse.kind,
         MouseEventKind::ScrollDown | MouseEventKind::ScrollUp

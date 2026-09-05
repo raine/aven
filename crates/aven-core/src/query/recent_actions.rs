@@ -960,6 +960,7 @@ mod tests {
             &first.task.id,
             crate::operations::TaskUpdate {
                 set_metadata: vec![crate::metadata::TaskMetadataInput {
+                    expected_field_id: None,
                     key: "customer".to_string(),
                     value: "Acme".to_string(),
                 }],

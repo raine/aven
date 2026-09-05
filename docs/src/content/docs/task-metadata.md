@@ -6,7 +6,7 @@ description: Add workspace-scoped custom string values to tasks and recurring ta
 Task metadata stores custom `key=value` information alongside Aven's built-in task fields. Use it for workflow state, source information, estimates, review details, or integration-specific values that do not belong in titles, descriptions, or labels.
 
 :::note[TUI support]
-The TUI does not yet show or edit custom task metadata. Use the CLI, Rust consumer API, or UniFFI facade to work with it.
+The TUI shows custom metadata in task detail. Press `e m` to assign or edit existing workspace fields. Short values use a single-line input; multiline values use an external editor. See [Custom metadata in the TUI](/tui/#custom-metadata). Define and rename workspace fields through the CLI.
 :::
 
 ```sh

@@ -66,6 +66,7 @@ impl App {
         let inferred_project = (selected_project.is_none() && context.project != "no project")
             .then(|| context.project.clone());
         self.overlay = Some(OverlayState::AddTask(Box::new(AddTaskState {
+            custom_metadata: context.custom_metadata,
             title: LineEdit::new(context.title),
             description: MultilineInputState::from_value(
                 MultilineIntent::AddTaskDescription,
@@ -146,6 +147,8 @@ impl App {
             state.focus,
         );
         if captured {
+            self.authoring
+                .apply_custom_metadata(state.custom_metadata.clone());
             self.authoring
                 .apply_add_task_project(state.selected_project.clone().into_iter().collect());
             self.authoring
