@@ -2180,41 +2180,52 @@ fn epic_child_dependency_lines(
     width: usize,
     hovered: bool,
 ) -> Vec<Line<'static>> {
-    dependencies
+    let blockers = dependencies
         .iter()
         .filter(|dependency| dependency.unresolved)
-        .map(|dependency| {
-            let rail = if child_is_last { "   " } else { "│  " };
-            let verbose_prefix = "← blocked by ";
-            let short_prefix = "← ";
-            let prefix = if width
-                >= rail.width() + verbose_prefix.width() + dependency.display_ref.width()
-            {
-                verbose_prefix
-            } else {
-                short_prefix
-            };
-            let rail_style = if hovered {
-                Style::new().fg(BORDER).bg(BG_PANEL)
-            } else {
-                Style::new().fg(BORDER)
-            };
-            let dependency_style = if hovered {
-                Style::new().fg(FG_DIM).bg(BG_PANEL)
-            } else {
-                Style::new().fg(FG_DIM)
-            };
-            let reference_width = width.saturating_sub(rail.width() + prefix.width());
-            Line::from(vec![
-                Span::styled(rail, rail_style),
-                Span::styled(prefix, dependency_style),
-                Span::styled(
-                    truncate_width(&dependency.display_ref, reference_width),
-                    dependency_style,
-                ),
-            ])
-        })
-        .collect()
+        .collect::<Vec<_>>();
+    if blockers.is_empty() {
+        return Vec::new();
+    }
+    let rail = if child_is_last { "   " } else { "│  " };
+    let available = width.saturating_sub(rail.width());
+    let mut summary = format!(
+        "← {} blocker{}",
+        blockers.len(),
+        if blockers.len() == 1 { "" } else { "s" }
+    );
+    for visible in (1..=blockers.len().min(2)).rev() {
+        let refs = blockers[..visible]
+            .iter()
+            .map(|link| link.display_ref.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let hidden = blockers.len() - visible;
+        let suffix = if hidden == 0 {
+            String::new()
+        } else {
+            format!(" +{hidden} more")
+        };
+        let candidate = format!("← blocked by {refs}{suffix}");
+        if candidate.width() <= available {
+            summary = candidate;
+            break;
+        }
+    }
+    let rail_style = Style::new().fg(BORDER);
+    let dependency_style = Style::new().fg(FG_DIM);
+    let background = if hovered {
+        Style::new().bg(BG_PANEL)
+    } else {
+        Style::new()
+    };
+    vec![Line::from(vec![
+        Span::styled(truncate_width(rail, width), rail_style.patch(background)),
+        Span::styled(
+            truncate_width(&summary, available),
+            dependency_style.patch(background),
+        ),
+    ])]
 }
 
 fn extend_dependency_sections(
@@ -4432,12 +4443,48 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(dependency_lines.len(), 1);
-        assert!(dependency_lines[0].starts_with("│  ← APP-BLOCK"));
+        assert_eq!(dependency_lines[0], "│  ← 1 blocker");
         assert!(!dependency_lines[0].contains("blocked by"));
         assert!(
             dependency_lines.iter().all(|line| line.width() <= 18),
             "dependency row exceeded content width: {dependency_lines:?}"
         );
+    }
+
+    #[test]
+    fn epic_child_blockers_stay_on_one_row_and_count_hidden_refs() {
+        let mut blockers = (0..10)
+            .map(|index| crate::query::TaskDependencyLink {
+                task_id: crate::test_support::task_id(&format!("blocker-{index}")),
+                display_ref: format!("APP-B{index}"),
+                title: format!("Blocker {index}"),
+                status: "todo".to_string(),
+                priority: "high".to_string(),
+                unresolved: true,
+            })
+            .collect::<Vec<_>>();
+        blockers[9].unresolved = false;
+        let lines = epic_child_dependency_lines(&blockers, false, 80, false);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            lines[0].to_string(),
+            "│  ← blocked by APP-B0, APP-B1 +7 more"
+        );
+        for width in [0, 5, 18, 32, 40, 80] {
+            let lines = epic_child_dependency_lines(&blockers, true, width, true);
+            assert_eq!(lines.len(), 1);
+            assert!(lines[0].width() <= width);
+            assert!(
+                lines[0]
+                    .spans
+                    .iter()
+                    .all(|span| span.style.bg == Some(BG_PANEL))
+            );
+        }
+        for blocker in &mut blockers {
+            blocker.unresolved = false;
+        }
+        assert!(epic_child_dependency_lines(&blockers, false, 80, false).is_empty());
     }
 
     #[test]
