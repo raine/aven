@@ -47,7 +47,9 @@ pub(crate) async fn cmd_demo(db: Option<PathBuf>, workspace: Option<String>) -> 
     ensure_demo_isolated(db, workspace)?;
 
     run_demo_session(|database, workspace, db_path, config| async move {
-        let launch = tui::resolve_launch(&database, &workspace, Default::default()).await?;
+        let routing = crate::routing::InvocationRouting::new(&config);
+        let launch =
+            tui::resolve_launch(&database, &workspace, Default::default(), &routing).await?;
         tui::run_demo(database, workspace, launch, db_path, config).await
     })
     .await

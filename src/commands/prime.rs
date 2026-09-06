@@ -11,8 +11,20 @@ use crate::query::{
 use crate::render::{print_json_pretty, quote};
 use crate::workspaces::Workspace;
 
-pub(crate) async fn run(database: &Database, workspace: &Workspace, args: PrimeArgs) -> Result<()> {
-    let report = build_report(database, workspace, args.project.as_deref(), args.limit).await?;
+pub(crate) async fn run(
+    database: &Database,
+    workspace: &Workspace,
+    args: PrimeArgs,
+    routing: &crate::routing::InvocationRouting<'_>,
+) -> Result<()> {
+    let report = build_report(
+        database,
+        workspace,
+        args.project.as_deref(),
+        args.limit,
+        routing,
+    )
+    .await?;
     if args.json {
         print_json_pretty(&report)?;
     } else {
@@ -80,6 +92,7 @@ async fn build_report(
     workspace: &Workspace,
     project_arg: Option<&str>,
     limit: Option<usize>,
+    routing: &crate::routing::InvocationRouting<'_>,
 ) -> Result<PrimeReport> {
     let project = if let Some(project) = project_arg {
         Some(
@@ -89,7 +102,8 @@ async fn build_report(
                 .key,
         )
     } else {
-        crate::projects::inferred_project_key_for_add_with_database(database, workspace).await?
+        crate::projects::inferred_project_key_for_add_with_routing(database, workspace, routing)
+            .await?
     };
 
     let Some(project) = project else {

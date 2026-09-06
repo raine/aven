@@ -20,6 +20,29 @@ pub async fn resolve_active_workspace_with_database(
             .resolve_required_workspace(name, "--workspace")
             .await;
     }
+    let cwd = std::fs::canonicalize(cwd).with_context(|| "could not resolve cwd")?;
+    resolve_inferred_workspace(database, config, &cwd).await
+}
+
+pub(crate) async fn resolve_active_workspace_with_routing(
+    database: &Database,
+    explicit: Option<&str>,
+    routing: &crate::routing::InvocationRouting<'_>,
+) -> Result<Workspace> {
+    routing.invocation_cwd()?;
+    if let Some(name) = explicit {
+        return database
+            .resolve_required_workspace(name, "--workspace")
+            .await;
+    }
+    resolve_inferred_workspace(database, routing.config, routing.cwd()?).await
+}
+
+async fn resolve_inferred_workspace(
+    database: &Database,
+    config: &AppConfig,
+    cwd: &Path,
+) -> Result<Workspace> {
     if let Some(route) = longest_matching_route(cwd, &config.workspace.routes)? {
         return database
             .resolve_required_workspace(&route.workspace, "workspace route")
@@ -52,7 +75,6 @@ fn longest_matching_route(
     cwd: &Path,
     routes: &[WorkspaceRouteConfig],
 ) -> Result<Option<WorkspaceRouteConfig>> {
-    let cwd = std::fs::canonicalize(cwd).with_context(|| "could not resolve cwd")?;
     let mut best: Option<(usize, WorkspaceRouteConfig)> = None;
     for route in routes {
         for path in &route.paths {

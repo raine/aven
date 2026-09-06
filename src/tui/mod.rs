@@ -123,8 +123,9 @@ pub(crate) async fn resolve_launch(
     database: &Database,
     workspace: &crate::workspaces::Workspace,
     args: crate::cli::TuiArgs,
+    routing: &crate::routing::InvocationRouting<'_>,
 ) -> Result<store::TuiLaunch> {
-    store::TuiLaunch::resolve(database, workspace, args).await
+    store::TuiLaunch::resolve(database, workspace, args, routing).await
 }
 
 pub(crate) async fn run(

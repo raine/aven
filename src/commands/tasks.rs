@@ -55,6 +55,7 @@ pub(crate) async fn cmd_add(
     workspace: &Workspace,
     config: &AppConfig,
     args: AddArgs,
+    routing: &crate::routing::InvocationRouting<'_>,
 ) -> Result<()> {
     validate_priority(&args.priority)?;
     validate_optional_status(args.status.as_deref())?;
@@ -92,7 +93,8 @@ pub(crate) async fn cmd_add(
                 "error recurrence-epic-unsupported hint=\"create recurring work as an ordinary task\""
             );
         }
-        let project = resolve_add_project(database, workspace, args.project.as_deref()).await?;
+        let project =
+            resolve_add_project(database, workspace, args.project.as_deref(), routing).await?;
         let schedule = super::recurrence_schedule(
             rule,
             args.repeat_at.as_deref(),
@@ -142,10 +144,11 @@ pub(crate) async fn cmd_add(
                 "error natural-add-exclusive hint=\"use plain add flags or --natural, not both\""
             );
         }
-        let context = crate::task_intake::TaskIntakeContext::load_with_database(
+        let context = crate::task_intake::TaskIntakeContext::load_with_routing(
             database,
             workspace,
             args.project.as_deref(),
+            routing,
         )
         .await?;
         let output = crate::task_intake::run_task_intake_command(
@@ -166,7 +169,7 @@ pub(crate) async fn cmd_add(
                 .into_recurrence_draft()
                 .expect("recurring intake has a recurrence schedule");
             if recurring.project.is_empty() {
-                recurring.project = resolve_add_project(database, workspace, None).await?;
+                recurring.project = resolve_add_project(database, workspace, None, routing).await?;
             }
             let outcome = database
                 .create_recurrence_series(
@@ -220,9 +223,10 @@ pub(crate) async fn cmd_add(
             .await?,
         );
     } else {
-        draft.project =
-            crate::projects::inferred_project_key_for_add_with_database(database, workspace)
-                .await?;
+        draft.project = crate::projects::inferred_project_key_for_add_with_routing(
+            database, workspace, routing,
+        )
+        .await?;
     }
     let outcome = database.create_task(workspace, draft).await?;
     let task = outcome.task;
@@ -235,6 +239,7 @@ async fn resolve_add_project(
     database: &Database,
     workspace: &Workspace,
     project: Option<&str>,
+    routing: &crate::routing::InvocationRouting<'_>,
 ) -> Result<String> {
     if let Some(project) = project {
         return crate::projects::resolve_project_key_for_add_with_database(
@@ -245,7 +250,7 @@ async fn resolve_add_project(
         .await;
     }
     Ok(
-        crate::projects::inferred_project_key_for_add_with_database(database, workspace)
+        crate::projects::inferred_project_key_for_add_with_routing(database, workspace, routing)
             .await?
             .unwrap_or_else(|| "default".to_string()),
     )
@@ -257,11 +262,13 @@ pub(crate) async fn cmd_internal_natural_add(
     args: InternalNaturalAddArgs,
 ) -> Result<()> {
     let workspace = database.workspace_for_id(&args.workspace_id).await?;
+    let routing = crate::routing::InvocationRouting::new(config);
     let outcome = async {
-        let context = crate::task_intake::TaskIntakeContext::load_with_database(
+        let context = crate::task_intake::TaskIntakeContext::load_with_routing(
             database,
             &workspace,
             args.project.as_deref(),
+            &routing,
         )
         .await?;
         let output = crate::task_intake::run_task_intake_command(
@@ -282,7 +289,7 @@ pub(crate) async fn cmd_internal_natural_add(
                 .into_recurrence_draft()
                 .expect("recurring intake has a recurrence schedule");
             if draft.project.is_empty() {
-                draft.project = resolve_add_project(database, &workspace, None).await?;
+                draft.project = resolve_add_project(database, &workspace, None, &routing).await?;
             }
             return Ok(database
                 .create_recurrence_series(

@@ -1,4 +1,3 @@
-use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -43,22 +42,22 @@ pub async fn resolve_project_key_for_add_with_database(
     bail!("near-match project")
 }
 
-pub async fn inferred_existing_project_key_with_database(
+pub(crate) async fn inferred_existing_project_key_with_routing(
     database: &Database,
     workspace: &crate::workspaces::Workspace,
+    routing: &crate::routing::InvocationRouting<'_>,
 ) -> Result<Option<String>> {
-    let config = AppConfig::load()?;
-    let config_candidate =
-        matching_project_override(&config, Some(&workspace.id), Some(&workspace.key))?;
-    let cwd = fs::canonicalize(env::current_dir()?)?;
-    let root = git_root(&cwd)?;
+    let cwd = routing.cwd()?;
+    let root = routing.git_root()?;
+    let config_candidate = matching_project_override_for_paths(
+        routing.config,
+        Some(&workspace.id),
+        Some(&workspace.key),
+        cwd,
+        root.unwrap_or(cwd),
+    );
     database
-        .inferred_existing_project_key(
-            &workspace.id,
-            config_candidate.as_deref(),
-            &cwd,
-            root.as_deref(),
-        )
+        .inferred_existing_project_key(&workspace.id, config_candidate.as_deref(), cwd, root)
         .await
 }
 
@@ -67,15 +66,28 @@ pub async fn inferred_project_key_for_add_with_database(
     workspace: &crate::workspaces::Workspace,
 ) -> Result<Option<String>> {
     let config = AppConfig::load()?;
-    if let Some(project) =
-        matching_project_override(&config, Some(&workspace.id), Some(&workspace.key))?
-    {
+    let routing = crate::routing::InvocationRouting::new(&config);
+    inferred_project_key_for_add_with_routing(database, workspace, &routing).await
+}
+
+pub(crate) async fn inferred_project_key_for_add_with_routing(
+    database: &Database,
+    workspace: &crate::workspaces::Workspace,
+    routing: &crate::routing::InvocationRouting<'_>,
+) -> Result<Option<String>> {
+    let cwd = routing.cwd()?;
+    let root = routing.git_root()?;
+    if let Some(project) = matching_project_override_for_paths(
+        routing.config,
+        Some(&workspace.id),
+        Some(&workspace.key),
+        cwd,
+        root.unwrap_or(cwd),
+    ) {
         return Ok(Some(normalize_key(&project)));
     }
-    let cwd = fs::canonicalize(env::current_dir()?)?;
-    let root = git_root(&cwd)?;
     if let Some(project) = database
-        .inferred_existing_project_key(&workspace.id, None, &cwd, root.as_deref())
+        .inferred_existing_project_key(&workspace.id, None, cwd, root)
         .await?
     {
         return Ok(Some(project));
@@ -97,22 +109,6 @@ pub fn project_has_config_mapping(
     Ok(config.has_project_override(Some(workspace_id), Some(workspace_key), project_key))
 }
 
-fn matching_project_override(
-    config: &AppConfig,
-    workspace_id: Option<&WorkspaceId>,
-    workspace: Option<&str>,
-) -> Result<Option<String>> {
-    let cwd = fs::canonicalize(env::current_dir()?)?;
-    let root = git_root(&cwd)?.unwrap_or_else(|| cwd.clone());
-    Ok(matching_project_override_for_paths(
-        config,
-        workspace_id,
-        workspace,
-        &cwd,
-        &root,
-    ))
-}
-
 fn matching_project_override_for_paths(
     config: &AppConfig,
     workspace_id: Option<&WorkspaceId>,
@@ -124,14 +120,7 @@ fn matching_project_override_for_paths(
     for project_override in &config.project.overrides {
         let scoped =
             project_override.workspace_id.is_some() || project_override.workspace.is_some();
-        let matches_workspace = match project_override.workspace_id.as_ref() {
-            Some(id) => Some(id) == workspace_id,
-            None => project_override
-                .workspace
-                .as_deref()
-                .is_none_or(|key| Some(key) == workspace),
-        };
-        if !matches_workspace {
+        if !project_override.matches_workspace(workspace_id, workspace) {
             continue;
         }
         for path in &project_override.paths {
@@ -189,7 +178,7 @@ fn matching_path(cwd: &Path, root: &Path, path: &Path) -> Option<PathMatch> {
     None
 }
 
-fn git_root(path: &Path) -> Result<Option<PathBuf>> {
+pub(crate) fn git_root(path: &Path) -> Result<Option<PathBuf>> {
     let Some(root) = path
         .ancestors()
         .find(|ancestor| ancestor.join(".git").exists())
@@ -235,6 +224,48 @@ fn common_git_dir(git_dir: &Path) -> Result<Option<PathBuf>> {
 mod tests {
     use super::*;
     use crate::config_edit::{self, ProjectPathMappingEdit};
+
+    #[test]
+    fn override_precedence_uses_cwd_then_length_then_workspace_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().join("linked/sub");
+        let root = dir.path().join("main/deep/repo");
+        fs::create_dir_all(&cwd).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        let cwd = fs::canonicalize(cwd).unwrap();
+        let root = fs::canonicalize(root).unwrap();
+        let workspace = crate::workspaces::Workspace::default();
+        let entry = |project: &str, path: &Path, scoped: bool| ProjectOverrideConfig {
+            workspace_id: scoped.then(|| workspace.id.clone()),
+            workspace: None,
+            project: project.to_string(),
+            paths: vec![path.to_path_buf()],
+        };
+        let mut config = AppConfig::default();
+        config.project.overrides = vec![
+            entry("root", &root, true),
+            entry("parent", cwd.parent().unwrap(), true),
+            entry("exact", &cwd, false),
+            entry("scoped", &cwd, true),
+            entry("later-tie", &cwd, true),
+        ];
+        let infer = |config: &AppConfig| {
+            matching_project_override_for_paths(
+                config,
+                Some(&workspace.id),
+                Some(&workspace.key),
+                &cwd,
+                &root,
+            )
+        };
+        assert_eq!(infer(&config).as_deref(), Some("scoped"));
+        config.project.overrides.truncate(3);
+        assert_eq!(infer(&config).as_deref(), Some("exact"));
+        config.project.overrides.truncate(2);
+        assert_eq!(infer(&config).as_deref(), Some("parent"));
+        config.project.overrides.truncate(1);
+        assert_eq!(infer(&config).as_deref(), Some("root"));
+    }
 
     #[test]
     fn managed_path_mapping_drives_project_inference_and_can_be_removed() {
