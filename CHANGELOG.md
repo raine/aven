@@ -6,6 +6,7 @@ description: Release notes for aven.
 ## Unreleased
 
 - View and edit [custom task metadata in the TUI](/tui/#custom-metadata), with inline editing for short values and external-editor support for multiline values.
+- Customize which [TUI sidebar views](/configuration/#tui-sidebar-views) appear and their order in config, and click Views, Scope, or Projects to collapse each section independently, with right-aligned expand/collapse indicators.
 
 ## v0.1.36 (2026-09-05)
 
