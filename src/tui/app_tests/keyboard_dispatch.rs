@@ -672,8 +672,8 @@ async fn external_editor_dispatch_preserves_description_note_and_fallback_state(
             " exact\r\ndraft\n".to_string(),
             "baseline".to_string(),
         );
-        state.row = 1;
-        state.column = 2;
+        state.buffer.row = 1;
+        state.buffer.column = 2;
         app.overlay = Some(OverlayState::MultilineInput(state.clone()));
         if supported {
             crate::tui::platform::fail_next_external_editor();
@@ -700,7 +700,10 @@ async fn external_editor_dispatch_preserves_description_note_and_fallback_state(
             };
             assert_eq!(edited.intent, intent);
             assert_eq!(edited.baseline_value(), "baseline");
-            assert_eq!(edited.lines.join("\n"), " exact\r\ndraft\n from editor");
+            assert_eq!(
+                edited.buffer.lines.join("\n"),
+                " exact\r\ndraft\n from editor"
+            );
         }
     }
 }
