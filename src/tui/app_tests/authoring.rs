@@ -2348,3 +2348,59 @@ async fn add_task_title_scrolls_wide_characters_within_the_dialog() {
         "title scrolled instead of overflowing: {caret_row:?}"
     );
 }
+
+#[tokio::test]
+async fn recurring_creation_inherits_metadata_and_committed_refresh_failure_closes_draft() {
+    let mut app = test_app().await;
+    create_and_select_task(
+        &mut app,
+        TaskDraft {
+            metadata: vec![aven_core::metadata::TaskMetadataInput {
+                expected_field_id: None,
+                key: "review".to_string(),
+                value: "pending".to_string(),
+            }],
+            ..test_task_draft("Field seed")
+        },
+    )
+    .await;
+    let field = app.store.metadata_fields().await.unwrap().remove(0);
+    app.begin_add_task().await.unwrap();
+    let Some(OverlayState::AddTask(state)) = &mut app.overlay else {
+        panic!()
+    };
+    state.title = LineEdit::new("Recurring metadata".to_string());
+    state.selected_project = Some("aven".to_string());
+    state.set_repeat_rule("daily".to_string());
+    state.custom_metadata = vec![aven_core::metadata::TaskMetadataInput {
+        expected_field_id: Some(field.id),
+        key: field.key,
+        value: String::new(),
+    }];
+    app.store.fail_next_refresh();
+    let error = app
+        .handle_overlay_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL))
+        .await
+        .unwrap_err();
+    assert!(crate::tui::store::mutation_committed(&error));
+    assert!(app.overlay.is_none());
+    assert!(app.authoring.add_task_context().is_none());
+    app.store.refresh(None).await.unwrap();
+    let item = app
+        .store
+        .tasks
+        .iter()
+        .find(|item| item.task.title == "Recurring metadata")
+        .unwrap();
+    assert_eq!(
+        app.store.metadata_values(&item.task.id).await.unwrap()[0].value,
+        ""
+    );
+    let series = item.recurrence.as_ref().unwrap().series_id.clone();
+    let detail = app
+        .store
+        .recurrence_detail_for_series(&series)
+        .await
+        .unwrap();
+    assert_eq!(detail.metadata[0].value, "");
+}

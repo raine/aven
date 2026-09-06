@@ -69,8 +69,8 @@ async fn metadata_blank_save_is_disabled_and_explicit_remove_supports_undo() {
             state,
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
-                column: layout.actions[0].x,
-                row: layout.actions[0].y,
+                column: layout.actions[0].area.x,
+                row: layout.actions[0].area.y,
                 modifiers: KeyModifiers::NONE,
             },
             (80, 24).into(),
@@ -149,29 +149,7 @@ async fn metadata_mouse_and_focus_use_narrow_rendered_geometry() {
         panic!()
     };
     let layout = crate::tui::overlay::metadata::metadata_layout(&state.view(), (40, 12).into());
-    let Some(overlay) = app.overlay.take() else {
-        panic!()
-    };
-    let outcome = crate::tui::overlay::dispatch_overlay_mouse(
-        overlay,
-        MouseEvent {
-            kind: MouseEventKind::ScrollDown,
-            column: layout.body.x,
-            row: layout.body.y,
-            modifiers: KeyModifiers::NONE,
-        },
-        (40, 12).into(),
-        crate::tui::overlay::OverlayMouseContext {
-            add_task_only: false,
-            detail_help_scroll_cap: 0,
-        },
-    );
-    let crate::tui::overlay::OverlayMouseOutcome::Retained(overlay) = outcome else {
-        panic!()
-    };
-    assert!(matches!(&overlay, OverlayState::Metadata(state) if state.selected == 1));
-    let outcome = crate::tui::overlay::dispatch_overlay_mouse(
-        overlay,
+    app.dispatch_mouse(
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: layout.body.x,
@@ -179,15 +157,9 @@ async fn metadata_mouse_and_focus_use_narrow_rendered_geometry() {
             modifiers: KeyModifiers::NONE,
         },
         (40, 12).into(),
-        crate::tui::overlay::OverlayMouseContext {
-            add_task_only: false,
-            detail_help_scroll_cap: 0,
-        },
-    );
-    let crate::tui::overlay::OverlayMouseOutcome::Retained(overlay) = outcome else {
-        panic!()
-    };
-    app.overlay = Some(overlay);
+    )
+    .await
+    .unwrap();
     app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
     assert!(
         matches!(&app.overlay, Some(OverlayState::Metadata(state)) if state.editor.as_ref().unwrap().focus == MetadataFocus::Save)
@@ -197,51 +169,6 @@ async fn metadata_mouse_and_focus_use_narrow_rendered_geometry() {
     assert!(rendered.contains("save"));
     assert!(rendered.contains("remove"));
     assert!(rendered.contains("cancel"));
-}
-
-#[tokio::test]
-async fn recurring_creation_inherits_metadata_and_committed_refresh_failure_closes_draft() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, seeded_draft("Field seed")).await;
-    let field = app.store.metadata_fields().await.unwrap().remove(0);
-    app.begin_add_task().await.unwrap();
-    let Some(OverlayState::AddTask(state)) = &mut app.overlay else {
-        panic!()
-    };
-    state.title = LineEdit::new("Recurring metadata".to_string());
-    state.selected_project = Some("aven".to_string());
-    state.set_repeat_rule("daily".to_string());
-    state.custom_metadata = vec![TaskMetadataInput {
-        expected_field_id: Some(field.id),
-        key: field.key,
-        value: String::new(),
-    }];
-    app.store.fail_next_refresh();
-    let error = app
-        .handle_overlay_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL))
-        .await
-        .unwrap_err();
-    assert!(crate::tui::store::mutation_committed(&error));
-    assert!(app.overlay.is_none());
-    assert!(app.authoring.add_task_context().is_none());
-    app.store.refresh(None).await.unwrap();
-    let item = app
-        .store
-        .tasks
-        .iter()
-        .find(|item| item.task.title == "Recurring metadata")
-        .unwrap();
-    assert_eq!(
-        app.store.metadata_values(&item.task.id).await.unwrap()[0].value,
-        ""
-    );
-    let series = item.recurrence.as_ref().unwrap().series_id.clone();
-    let detail = app
-        .store
-        .recurrence_detail_for_series(&series)
-        .await
-        .unwrap();
-    assert_eq!(detail.metadata[0].value, "");
 }
 
 #[tokio::test]

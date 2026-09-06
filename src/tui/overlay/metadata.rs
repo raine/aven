@@ -200,71 +200,99 @@ impl MetadataView<'_> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MetadataAction {
+    pub(crate) focus: MetadataFocus,
+    pub(crate) key: &'static str,
+    pub(crate) label: &'static str,
+    pub(crate) visible: bool,
+    pub(crate) enabled: bool,
+    pub(crate) area: Rect,
+}
+
+impl MetadataView<'_> {
+    fn actions(&self, width: u16) -> [MetadataAction; 4] {
+        let editor = self.editor.expect("metadata editor actions");
+        let assigned = self.entries[self.selected].value.is_some();
+        [
+            (
+                MetadataFocus::Save,
+                if matches!(editor.focus, MetadataFocus::Input | MetadataFocus::Save) {
+                    "Enter"
+                } else {
+                    "^S"
+                },
+                "save",
+                true,
+                editor.can_save(),
+            ),
+            (
+                MetadataFocus::ExternalEditor,
+                if width >= 60 {
+                    "Ctrl+X Ctrl+E"
+                } else {
+                    "^X ^E"
+                },
+                "editor",
+                true,
+                true,
+            ),
+            (
+                MetadataFocus::Remove,
+                if editor.focus == MetadataFocus::Remove {
+                    "Enter"
+                } else {
+                    ""
+                },
+                if width < 30 { "remove" } else { "remove field" },
+                assigned,
+                assigned,
+            ),
+            (MetadataFocus::Cancel, "Esc", "cancel", true, true),
+        ]
+        .map(|(focus, key, label, visible, enabled)| MetadataAction {
+            focus,
+            key,
+            label,
+            visible,
+            enabled,
+            area: Rect::default(),
+        })
+    }
+}
+
 pub(crate) struct MetadataLayout {
     pub(crate) area: Rect,
     pub(crate) header: Rect,
     pub(crate) body: Rect,
     pub(crate) error: Rect,
-    pub(crate) actions: [Rect; 4],
+    pub(crate) actions: Vec<MetadataAction>,
+    pub(crate) browser_hints: Rect,
+    pub(crate) done: Rect,
 }
 
-pub(crate) fn metadata_footer_hints(
-    view: &MetadataView<'_>,
-    width: u16,
-) -> [(&'static str, &'static str); 4] {
-    let editor = view.editor.expect("metadata editor footer");
-    [
-        (
-            if matches!(editor.focus, MetadataFocus::Input | MetadataFocus::Save) {
-                "Enter"
-            } else {
-                "^S"
-            },
-            "save",
-        ),
-        (
-            if width >= 60 {
-                "Ctrl+X Ctrl+E"
-            } else {
-                "^X ^E"
-            },
-            "editor",
-        ),
-        (
-            if editor.focus == MetadataFocus::Remove {
-                "Enter"
-            } else {
-                ""
-            },
-            if view.entries[view.selected].value.is_none() {
-                ""
-            } else if width < 30 {
-                "remove"
-            } else {
-                "remove field"
-            },
-        ),
-        ("Esc", "cancel"),
-    ]
-}
-
-fn metadata_footer_rects(view: &MetadataView<'_>, width: u16) -> ([Rect; 4], u16) {
+fn metadata_footer(view: &MetadataView<'_>, width: u16) -> (Vec<MetadataAction>, u16) {
     let mut x = 0;
     let mut y = 0;
-    let actions = metadata_footer_hints(view, width).map(|(key, label)| {
-        if label.is_empty() {
-            return Rect::default();
-        }
-        let length = (key.len() + usize::from(!key.is_empty()) + label.len()) as u16;
-        let length = length.min(width);
-        if x > 0 && x + length > width {
-            x = 0;
-            y += 1;
-        }
-        let area = Rect::new(x, y, length, 1);
-        x += length + 2;
-        area
-    });
+    let actions = view
+        .actions(width)
+        .into_iter()
+        .map(|mut action| {
+            if action.visible {
+                let length = (action.key.len()
+                    + usize::from(!action.key.is_empty())
+                    + action.label.len()) as u16;
+                let length = length.min(width);
+                if x > 0 && x + length > width {
+                    x = 0;
+                    y += 1;
+                }
+                action.area = Rect::new(x, y, length, 1);
+                x += length + 2;
+            }
+            action
+        })
+        .collect();
     (actions, y + 1)
 }
 
@@ -272,9 +300,9 @@ pub(crate) fn metadata_layout(view: &MetadataView<'_>, size: Size) -> MetadataLa
     let bounds = Rect::new(0, 0, size.width, size.height);
     let width = super::layout::dialog_inner_area(super::dialog_area(bounds, 72, size.height)).width;
     let (footer, action_rows) = if view.editor.is_some() {
-        metadata_footer_rects(view, width)
+        metadata_footer(view, width)
     } else {
-        ([Rect::default(); 4], 1)
+        (Vec::new(), 1)
     };
     let hint_rows = if view.error.is_some() {
         2
@@ -317,35 +345,71 @@ pub(crate) fn metadata_layout(view: &MetadataView<'_>, size: Size) -> MetadataLa
         inner.width,
         action_y.saturating_sub(error_y),
     );
-    let actions = if view.editor.is_some() {
-        footer.map(|area| Rect::new(inner.x + area.x, action_y + area.y, area.width, area.height))
-    } else {
-        std::array::from_fn(|i| {
-            let start = inner.width as usize * i / 4;
-            let end = inner.width as usize * (i + 1) / 4;
-            Rect::new(
-                inner.x + start as u16,
-                action_y,
-                (end - start) as u16,
-                u16::from(rows > 0),
-            )
+    let actions = footer
+        .into_iter()
+        .map(|mut action| {
+            if action.visible {
+                action.area.x += inner.x;
+                action.area.y += action_y;
+            }
+            action
         })
-    };
+        .collect();
+    let done_start = inner.width as usize * 3 / 4;
+    let browser_hints = Rect::new(inner.x, action_y, done_start as u16, u16::from(rows > 0));
+    let done = Rect::new(
+        inner.x + done_start as u16,
+        action_y,
+        inner.width - done_start as u16,
+        u16::from(rows > 0),
+    );
     MetadataLayout {
         area,
         header,
         body,
         error,
         actions,
+        browser_hints,
+        done,
     }
 }
 
-pub(crate) fn visible_start(view: &MetadataView<'_>, rows: usize) -> usize {
-    view.visible()
+pub(crate) fn visible_start(visible: &[usize], selected: usize, rows: usize) -> usize {
+    visible
         .iter()
-        .position(|i| *i == view.selected)
+        .position(|i| *i == selected)
         .unwrap_or(0)
         .saturating_sub(rows.saturating_sub(1))
+}
+
+fn activate(mut state: Box<MetadataState>, focus: MetadataFocus) -> OverlayOutcome {
+    let focus = if focus == MetadataFocus::Input {
+        MetadataFocus::Save
+    } else {
+        focus
+    };
+    if state.editor.as_ref().is_some_and(|editor| !editor.discard)
+        && state
+            .view()
+            .actions(0)
+            .iter()
+            .any(|action| action.focus == focus && action.visible && action.enabled)
+    {
+        match focus {
+            MetadataFocus::Save | MetadataFocus::Remove => {
+                return OverlayOutcome::Submitted(OverlaySubmit::MetadataSave {
+                    state,
+                    remove: focus == MetadataFocus::Remove,
+                });
+            }
+            MetadataFocus::ExternalEditor => {
+                return OverlayOutcome::Submitted(OverlaySubmit::MetadataExternalEditor(state));
+            }
+            MetadataFocus::Cancel => state.cancel_edit(),
+            MetadataFocus::Input => unreachable!("input activates save"),
+        }
+    }
+    OverlayOutcome::None(OverlayState::Metadata(state))
 }
 
 pub(crate) fn handle_key(mut state: Box<MetadataState>, key: KeyEvent) -> OverlayOutcome {
@@ -362,59 +426,38 @@ pub(crate) fn handle_key(mut state: Box<MetadataState>, key: KeyEvent) -> Overla
         } else if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('s') | KeyCode::Enter)
         {
-            if editor.can_save() {
-                return OverlayOutcome::Submitted(OverlaySubmit::MetadataSave {
-                    state,
-                    remove: false,
-                });
-            }
+            return activate(state, MetadataFocus::Save);
         } else {
             match key.code {
                 KeyCode::Esc => state.cancel_edit(),
                 KeyCode::Tab | KeyCode::BackTab => {
-                    let mut choices = Vec::new();
-                    if !editor.is_multiline() {
-                        choices.push(MetadataFocus::Input);
-                    }
-                    if editor.can_save() {
-                        choices.push(MetadataFocus::Save);
-                    }
-                    choices.push(MetadataFocus::ExternalEditor);
-                    if state.entries[state.selected].value.is_some() {
-                        choices.push(MetadataFocus::Remove);
-                    }
-                    choices.push(MetadataFocus::Cancel);
+                    let focus = editor.focus;
+                    let input = (!editor.is_multiline()).then_some(MetadataFocus::Input);
+                    let choices: Vec<_> = input
+                        .into_iter()
+                        .chain(
+                            state
+                                .view()
+                                .actions(0)
+                                .into_iter()
+                                .filter(|action| action.visible && action.enabled)
+                                .map(|action| action.focus),
+                        )
+                        .collect();
                     let i = choices
                         .iter()
-                        .position(|focus| *focus == editor.focus)
+                        .position(|choice| *choice == focus)
                         .unwrap_or(0);
-                    editor.focus = choices[if key.code == KeyCode::BackTab {
+                    state.editor.as_mut().unwrap().focus = choices[if key.code == KeyCode::BackTab {
                         (i + choices.len() - 1) % choices.len()
                     } else {
                         (i + 1) % choices.len()
                     }];
                 }
-                KeyCode::Enter => match editor.focus {
-                    MetadataFocus::Save | MetadataFocus::Input if editor.can_save() => {
-                        return OverlayOutcome::Submitted(OverlaySubmit::MetadataSave {
-                            state,
-                            remove: false,
-                        });
-                    }
-                    MetadataFocus::Remove => {
-                        return OverlayOutcome::Submitted(OverlaySubmit::MetadataSave {
-                            state,
-                            remove: true,
-                        });
-                    }
-                    MetadataFocus::Cancel => state.cancel_edit(),
-                    MetadataFocus::ExternalEditor => {
-                        return OverlayOutcome::Submitted(OverlaySubmit::MetadataExternalEditor(
-                            state,
-                        ));
-                    }
-                    MetadataFocus::Save | MetadataFocus::Input => {}
-                },
+                KeyCode::Enter => {
+                    let focus = editor.focus;
+                    return activate(state, focus);
+                }
                 _ if editor.focus == MetadataFocus::Input && !editor.is_multiline() => {
                     super::text_buffer::edit_text_buffer(&mut editor.input, key);
                     state.error = None;
@@ -450,32 +493,23 @@ pub(crate) fn handle_mouse(
                 return OverlayOutcome::None(OverlayState::Metadata(state));
             } else if layout.body.contains(point) && !editor.is_multiline() {
                 editor.click(layout.body, mouse.column, mouse.row);
-            } else if layout.actions[0].contains(point) && editor.can_save() {
-                return OverlayOutcome::Submitted(OverlaySubmit::MetadataSave {
-                    state,
-                    remove: false,
-                });
-            } else if layout.actions[1].contains(point) {
-                return OverlayOutcome::Submitted(OverlaySubmit::MetadataExternalEditor(state));
-            } else if layout.actions[2].contains(point)
-                && state.entries[state.selected].value.is_some()
+            } else if let Some(action) = layout
+                .actions
+                .iter()
+                .find(|action| action.visible && action.enabled && action.area.contains(point))
             {
-                return OverlayOutcome::Submitted(OverlaySubmit::MetadataSave {
-                    state,
-                    remove: true,
-                });
-            } else if layout.actions[3].contains(point) {
-                state.cancel_edit();
+                return activate(state, action.focus);
             }
         } else if layout.body.contains(point) {
             let view = state.view();
-            let index = visible_start(&view, layout.body.height as usize)
+            let visible = view.visible();
+            let index = visible_start(&visible, view.selected, layout.body.height as usize)
                 + (mouse.row - layout.body.y) as usize;
-            if let Some(selected) = view.visible().get(index) {
+            if let Some(selected) = visible.get(index) {
                 state.selected = *selected;
                 state.open();
             }
-        } else if layout.actions[3].contains(point) {
+        } else if layout.done.contains(point) {
             return OverlayOutcome::Cancelled;
         }
     } else if state.editor.is_none() && layout.body.contains(point) {
@@ -507,7 +541,7 @@ mod tests {
             assert!(layout.body.height > 0);
             assert!(layout.body.width > 0);
             assert!(layout.body.bottom() <= layout.error.y);
-            for action in layout.actions {
+            for action in [layout.browser_hints, layout.done] {
                 assert!(action.width > 0);
                 assert!(action.bottom() < height);
                 assert!(action.right() < width);
@@ -555,8 +589,285 @@ mod tests {
             error: None,
         };
         assert_eq!(view.visible(), (20..30).collect::<Vec<_>>());
-        assert_eq!(visible_start(&view, 4), 6);
+        assert_eq!(visible_start(&view.visible(), view.selected, 4), 6);
         assert_eq!(entries[0].value.as_deref(), Some(""));
         assert_eq!(entries[1].value, None);
+    }
+
+    fn state(values: &[Option<&str>]) -> Box<MetadataState> {
+        let task = crate::tui::test_support::task_list_item_with_id("metadata", "target");
+        Box::new(MetadataState {
+            target: MetadataTarget {
+                workspace_id: crate::ids::WorkspaceId::new(),
+                selection: TaskSelection::resolve_single(&[task], Some(0)).unwrap(),
+            },
+            entries: values
+                .iter()
+                .enumerate()
+                .map(|(i, value)| MetadataEntry {
+                    field: MetadataField {
+                        id: crate::ids::MetadataFieldId::new(),
+                        workspace_id: crate::ids::WorkspaceId::new(),
+                        key: format!("field_{i:02}"),
+                        created_at: String::new(),
+                        updated_at: String::new(),
+                    },
+                    value: value.map(str::to_string),
+                })
+                .collect(),
+            filter: LineEdit::blank(),
+            selected: 0,
+            editor: None,
+            error: None,
+        })
+    }
+
+    fn retained(outcome: OverlayOutcome) -> Box<MetadataState> {
+        let OverlayOutcome::None(OverlayState::Metadata(state)) = outcome else {
+            panic!("expected retained metadata")
+        };
+        state
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn mouse(kind: MouseEventKind, area: Rect) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column: area.x,
+            row: area.y,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn mouse_and_focus_use_narrow_rendered_geometry() {
+        let state = state(&[Some("pending"), Some("")]);
+        let size = Size::new(40, 12);
+        let layout = metadata_layout(&state.view(), size);
+        let context = super::super::OverlayMouseContext {
+            add_task_only: false,
+            detail_help_scroll_cap: 0,
+        };
+        let outcome = super::super::dispatch_overlay_mouse(
+            OverlayState::Metadata(state),
+            mouse(MouseEventKind::ScrollDown, layout.body),
+            size,
+            context,
+        );
+        let super::super::OverlayMouseOutcome::Retained(OverlayState::Metadata(state)) = outcome
+        else {
+            panic!()
+        };
+        assert_eq!(state.selected, 1);
+        let outcome = super::super::dispatch_overlay_mouse(
+            OverlayState::Metadata(state),
+            mouse(MouseEventKind::Down(MouseButton::Left), layout.body),
+            size,
+            context,
+        );
+        let super::super::OverlayMouseOutcome::Retained(OverlayState::Metadata(state)) = outcome
+        else {
+            panic!()
+        };
+        let state = retained(handle_key(state, key(KeyCode::Tab)));
+        assert_eq!(state.editor.as_ref().unwrap().focus, MetadataFocus::Save);
+        let state = retained(handle_key(state, key(KeyCode::BackTab)));
+        assert_eq!(state.editor.as_ref().unwrap().focus, MetadataFocus::Input);
+    }
+
+    #[test]
+    fn actions_share_focus_activation_and_packed_hit_areas() {
+        for assigned in [false, true] {
+            for value in ["", " \t", "value", "line\r\nnext"] {
+                for width in [100, 70, 40, 30] {
+                    let mut state = state(&[assigned.then_some("original")]);
+                    state.open();
+                    state.editor.as_mut().unwrap().input = TextBuffer::from_value_with_baseline(
+                        value.to_string(),
+                        (if assigned { "original" } else { "" }).to_string(),
+                    );
+                    let multiline = state.editor.as_ref().unwrap().is_multiline();
+                    let can_save = state.editor.as_ref().unwrap().can_save();
+                    let mut expected = Vec::new();
+                    if !multiline {
+                        expected.push(MetadataFocus::Input);
+                    }
+                    if can_save {
+                        expected.push(MetadataFocus::Save);
+                    }
+                    expected.push(MetadataFocus::ExternalEditor);
+                    if assigned {
+                        expected.push(MetadataFocus::Remove);
+                    }
+                    expected.push(MetadataFocus::Cancel);
+                    for focus in [
+                        MetadataFocus::Input,
+                        MetadataFocus::Save,
+                        MetadataFocus::ExternalEditor,
+                        MetadataFocus::Remove,
+                        MetadataFocus::Cancel,
+                    ] {
+                        state.editor.as_mut().unwrap().focus = focus;
+                        let index = expected.iter().position(|item| *item == focus).unwrap_or(0);
+                        for (code, next) in [
+                            (KeyCode::Tab, (index + 1) % expected.len()),
+                            (
+                                KeyCode::BackTab,
+                                (index + expected.len() - 1) % expected.len(),
+                            ),
+                        ] {
+                            let result = retained(handle_key(state.clone(), key(code)));
+                            assert_eq!(result.editor.as_ref().unwrap().focus, expected[next]);
+                        }
+                    }
+                    let size = Size::new(width, 24);
+                    let layout = metadata_layout(&state.view(), size);
+                    for action in &layout.actions {
+                        if !action.visible {
+                            assert_eq!(action.area, Rect::default());
+                            continue;
+                        }
+                        assert!(action.area.width > 0);
+                        assert!(action.area.right() < width);
+                        assert_eq!(
+                            layout
+                                .actions
+                                .iter()
+                                .filter(|other| other.visible
+                                    && other.area.contains((action.area.x, action.area.y).into()))
+                                .count(),
+                            1
+                        );
+                        state.editor.as_mut().unwrap().focus = action.focus;
+                        for outcome in [
+                            handle_key(state.clone(), key(KeyCode::Enter)),
+                            handle_mouse(
+                                state.clone(),
+                                mouse(MouseEventKind::Down(MouseButton::Left), action.area),
+                                size,
+                            ),
+                        ] {
+                            match (action.focus, action.enabled, outcome) {
+                                (
+                                    MetadataFocus::Save,
+                                    true,
+                                    OverlayOutcome::Submitted(OverlaySubmit::MetadataSave {
+                                        remove: false,
+                                        ..
+                                    }),
+                                ) => {}
+                                (
+                                    MetadataFocus::Remove,
+                                    true,
+                                    OverlayOutcome::Submitted(OverlaySubmit::MetadataSave {
+                                        remove: true,
+                                        ..
+                                    }),
+                                ) => {}
+                                (
+                                    MetadataFocus::ExternalEditor,
+                                    true,
+                                    OverlayOutcome::Submitted(
+                                        OverlaySubmit::MetadataExternalEditor(_),
+                                    ),
+                                ) => {}
+                                (
+                                    MetadataFocus::Cancel,
+                                    _,
+                                    OverlayOutcome::None(OverlayState::Metadata(result)),
+                                ) => {
+                                    if value == if assigned { "original" } else { "" } {
+                                        assert!(result.editor.is_none());
+                                    } else {
+                                        assert!(result.editor.as_ref().unwrap().discard);
+                                    }
+                                }
+                                (
+                                    MetadataFocus::Save,
+                                    false,
+                                    OverlayOutcome::None(OverlayState::Metadata(result)),
+                                ) => assert_eq!(result, state),
+                                _ => panic!("incorrect action outcome: {action:?}"),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn filtered_scrolled_clicks_keep_entry_indices_and_empty_results_do_nothing() {
+        let mut state = state(&vec![None; 30]);
+        state.filter = LineEdit::new("FIELD_2".to_string());
+        state.selected = 29;
+        let size = Size::new(40, 12);
+        let layout = metadata_layout(&state.view(), size);
+        let visible = state.view().visible();
+        let start = visible_start(&visible, 29, layout.body.height as usize);
+        let result = retained(handle_mouse(
+            state.clone(),
+            mouse(MouseEventKind::Down(MouseButton::Left), layout.body),
+            size,
+        ));
+        assert_eq!(result.selected, visible[start]);
+        assert!(result.editor.is_some());
+        assert_eq!(visible_start(&visible, 99, 4), 0);
+        assert_eq!(visible_start(&visible, 29, 0), 9);
+        state.filter = LineEdit::new("missing".to_string());
+        state.normalize_selection();
+        assert_eq!(state.selected, 0);
+        assert_eq!(visible_start(&[], 0, 0), 0);
+        let layout = metadata_layout(&state.view(), size);
+        let result = retained(handle_mouse(
+            state.clone(),
+            mouse(MouseEventKind::Down(MouseButton::Left), layout.body),
+            size,
+        ));
+        assert_eq!(result, state);
+    }
+
+    #[test]
+    fn discard_blocks_keyboard_and_every_action_click() {
+        let mut state = state(&[Some("original")]);
+        state.open();
+        state.paste("!");
+        state.cancel_edit();
+        let layout = metadata_layout(&state.view(), Size::new(40, 12));
+        for event in [
+            key(KeyCode::Enter),
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+        ] {
+            assert_eq!(retained(handle_key(state.clone(), event)), state);
+        }
+        for action in layout.actions {
+            assert_eq!(
+                retained(handle_mouse(
+                    state.clone(),
+                    mouse(MouseEventKind::Down(MouseButton::Left), action.area),
+                    Size::new(40, 12)
+                )),
+                state
+            );
+        }
+        for code in [KeyCode::Esc, KeyCode::Char('n'), KeyCode::Char('N')] {
+            let result = retained(handle_key(state.clone(), key(code)));
+            assert!(!result.editor.as_ref().unwrap().discard);
+            assert_eq!(
+                result.editor.as_ref().unwrap().input,
+                state.editor.as_ref().unwrap().input
+            );
+        }
+        for code in [KeyCode::Char('y'), KeyCode::Char('Y')] {
+            assert!(
+                retained(handle_key(state.clone(), key(code)))
+                    .editor
+                    .is_none()
+            );
+        }
     }
 }

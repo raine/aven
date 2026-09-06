@@ -1,6 +1,5 @@
 use crate::tui::overlay::metadata::{
-    MetadataFocus, MetadataView, metadata_display, metadata_footer_hints, metadata_layout,
-    visible_start,
+    MetadataFocus, MetadataView, metadata_display, metadata_layout, visible_start,
 };
 use crate::tui::text::truncate_width;
 use crate::tui::theme::{ACCENT, BG_ALT, FG, FG_DIM, FG_MUTED, RED, SELECTED};
@@ -100,19 +99,13 @@ pub(in crate::tui::ui) fn render(frame: &mut Frame, view: &MetadataView<'_>) {
                 .wrap(Wrap { trim: false }),
             layout.error,
         );
-        let hints = metadata_footer_hints(view, layout.header.width);
-        for (i, (key, label)) in hints.into_iter().enumerate() {
-            if label.is_empty() {
+        for action in &layout.actions {
+            if !action.visible {
                 continue;
             }
-            let focus = [
-                MetadataFocus::Save,
-                MetadataFocus::ExternalEditor,
-                MetadataFocus::Remove,
-                MetadataFocus::Cancel,
-            ][i];
-            let selected = editor.focus == focus;
-            let disabled = i == 0 && !editor.can_save();
+            let (key, label) = (action.key, action.label);
+            let selected = editor.focus == action.focus;
+            let disabled = !action.enabled;
             let mut line = if key.is_empty() {
                 Line::styled(label, Style::new().fg(FG_MUTED))
             } else {
@@ -127,7 +120,7 @@ pub(in crate::tui::ui) fn render(frame: &mut Frame, view: &MetadataView<'_>) {
                     span.style = span.style.add_modifier(Modifier::UNDERLINED);
                 }
             }
-            frame.render_widget(Paragraph::new(line).style(style), layout.actions[i]);
+            frame.render_widget(Paragraph::new(line).style(style), action.area);
         }
     } else {
         let filter = if view.filter.text.is_empty() {
@@ -165,7 +158,7 @@ pub(in crate::tui::ui) fn render(frame: &mut Frame, view: &MetadataView<'_>) {
                 .min(28)
                 .min(layout.body.width.saturating_sub(8) as usize / 2);
             let value_width = (layout.body.width as usize).saturating_sub(key_width + 4);
-            let start = visible_start(view, layout.body.height as usize);
+            let start = visible_start(&visible, view.selected, layout.body.height as usize);
             for (row, i) in visible
                 .into_iter()
                 .skip(start)
@@ -216,221 +209,13 @@ pub(in crate::tui::ui) fn render(frame: &mut Frame, view: &MetadataView<'_>) {
         }
         frame.render_widget(
             Paragraph::new(dialog_hint_line(&[("↑↓", "select"), ("Enter", "edit")])).style(style),
-            layout.actions[0].union(layout.actions[2]),
+            layout.browser_hints,
         );
         frame.render_widget(
             Paragraph::new(dialog_hint_line(&[("Esc", "done")]))
                 .alignment(Alignment::Right)
                 .style(style),
-            layout.actions[3],
+            layout.done,
         );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::tui::overlay::metadata::{MetadataEditor, MetadataEntry};
-    use crate::tui::overlay::{LineEdit, TextBuffer};
-    use ratatui::{Terminal, backend::TestBackend};
-
-    fn entry(key: &str, value: Option<&str>) -> MetadataEntry {
-        MetadataEntry {
-            field: aven_core::metadata::MetadataField {
-                id: crate::ids::MetadataFieldId::new(),
-                workspace_id: crate::ids::WorkspaceId::new(),
-                key: key.to_string(),
-                created_at: String::new(),
-                updated_at: String::new(),
-            },
-            value: value.map(str::to_string),
-        }
-    }
-
-    #[test]
-    fn fields_align_values_and_show_unset_fields() {
-        let entries = [
-            entry("owner", Some("Alex")),
-            entry("review-state", Some("")),
-            entry("url", None),
-        ];
-        let filter = LineEdit::blank();
-        let view = MetadataView {
-            entries: &entries,
-            filter: &filter,
-            selected: 0,
-            editor: None,
-            error: None,
-        };
-        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-        terminal.draw(|frame| render(frame, &view)).unwrap();
-        let layout = metadata_layout(&view, Size::new(100, 30));
-        assert_eq!(layout.area.height, 9);
-        let buffer = terminal.backend().buffer();
-        let x = layout.body.x + 2 + "review-state".len() as u16 + 2;
-        for (row, text) in ["Alex", "", "Not set"].into_iter().enumerate() {
-            let y = layout.body.y + row as u16;
-            let actual: String = (x..x + text.len() as u16)
-                .map(|x| buffer[(x, y)].symbol())
-                .collect();
-            assert_eq!(actual, text);
-            assert_eq!(buffer[(x, y)].fg, if row == 2 { FG_DIM } else { FG });
-        }
-        assert_eq!(
-            buffer[(layout.body.right() - 1, layout.body.y)].bg,
-            SELECTED.bg.unwrap()
-        );
-    }
-
-    #[test]
-    fn editor_footer_uses_shared_hotkey_styles_and_click_geometry() {
-        let entries = [entry("owner", Some("Alex"))];
-        let filter = LineEdit::blank();
-        let editor = MetadataEditor {
-            input: TextBuffer::from_value("Alex".to_string()),
-            focus: MetadataFocus::Input,
-            discard: false,
-        };
-        let view = MetadataView {
-            entries: &entries,
-            filter: &filter,
-            selected: 0,
-            editor: Some(&editor),
-            error: None,
-        };
-        for width in [100, 70, 40] {
-            let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
-            terminal.draw(|frame| render(frame, &view)).unwrap();
-            let layout = metadata_layout(&view, Size::new(width, 24));
-            let buffer = terminal.backend().buffer();
-            for (i, key, label) in [
-                (0, "Enter", "save"),
-                (
-                    1,
-                    if width < 70 { "^X ^E" } else { "Ctrl+X Ctrl+E" },
-                    "editor",
-                ),
-                (3, "Esc", "cancel"),
-            ] {
-                let area = layout.actions[i];
-                let text: String = (area.x..area.right())
-                    .map(|x| buffer[(x, area.y)].symbol())
-                    .collect();
-                assert!(text.contains(&format!("{key} {label}")), "{width}: {text}");
-                let expected = dialog_hint_line(&[(key, label)]);
-                assert_eq!(
-                    buffer[(area.x, area.y)].fg,
-                    expected.spans[0].style.fg.unwrap()
-                );
-                assert!(buffer[(area.x, area.y)].modifier.contains(Modifier::BOLD));
-                assert_eq!(buffer[(area.x + key.len() as u16 + 1, area.y)].fg, FG_MUTED);
-                assert_eq!(buffer[(area.x, area.y)].bg, BG_ALT);
-            }
-        }
-    }
-
-    #[test]
-    fn input_uses_shared_cursor_and_footer_packs_visible_actions() {
-        let entries = [entry("owner", None)];
-        let filter = LineEdit::blank();
-        let editor = MetadataEditor {
-            input: TextBuffer::from_value("é中".to_string()),
-            focus: MetadataFocus::Input,
-            discard: false,
-        };
-        let view = MetadataView {
-            entries: &entries,
-            filter: &filter,
-            selected: 0,
-            editor: Some(&editor),
-            error: None,
-        };
-        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-        terminal.draw(|frame| render(frame, &view)).unwrap();
-        let layout = metadata_layout(&view, Size::new(100, 30));
-        let buffer = terminal.backend().buffer();
-        assert_eq!(layout.body.height, 1);
-        assert_eq!(layout.body.y, layout.header.bottom());
-        let cursor = crate::tui::ui::input::text_cursor_position(buffer).unwrap();
-        assert_eq!(cursor.x, layout.body.x + 3);
-        assert_eq!(cursor.y, layout.body.y);
-        assert_eq!(layout.actions[1].x, layout.actions[0].right() + 2);
-        assert_eq!(layout.actions[2].width, 0);
-        assert_eq!(layout.actions[3].x, layout.actions[1].right() + 2);
-    }
-
-    #[test]
-    fn blank_editor_disables_save_without_empty_string_instructions() {
-        let entries = [entry("owner", Some("Alex"))];
-        let filter = LineEdit::blank();
-        for value in ["", " \t", "\n"] {
-            let editor = MetadataEditor {
-                input: TextBuffer::from_value(value.to_string()),
-                focus: MetadataFocus::Save,
-                discard: false,
-            };
-            let view = MetadataView {
-                entries: &entries,
-                filter: &filter,
-                selected: 0,
-                editor: Some(&editor),
-                error: None,
-            };
-            let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-            terminal.draw(|frame| render(frame, &view)).unwrap();
-            let layout = metadata_layout(&view, Size::new(100, 30));
-            let buffer = terminal.backend().buffer();
-            assert_eq!(buffer[(layout.actions[0].x, layout.actions[0].y)].fg, FG);
-            assert!(
-                buffer[(layout.actions[0].x, layout.actions[0].y)]
-                    .modifier
-                    .contains(Modifier::BOLD)
-            );
-            assert_eq!(
-                buffer[(layout.actions[0].x, layout.actions[0].y)].bg,
-                BG_ALT
-            );
-            let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
-            assert!(text.contains("remove field"));
-            assert!(!text.contains("empty string"));
-            assert!(!text.contains("^S"));
-        }
-    }
-
-    #[test]
-    fn editor_sizes_to_content_and_keeps_error_and_actions_visible() {
-        let entries = [entry("owner", Some(""))];
-        let filter = LineEdit::blank();
-        for count in [1, 6, 20] {
-            let editor = MetadataEditor {
-                input: TextBuffer::from_value(vec!["value"; count].join("\n")),
-                focus: MetadataFocus::Save,
-                discard: false,
-            };
-            let view = MetadataView {
-                entries: &entries,
-                filter: &filter,
-                selected: 0,
-                editor: Some(&editor),
-                error: Some("Save failed"),
-            };
-            for (width, height) in [(100, 30), (70, 18), (40, 12), (30, 8)] {
-                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-                terminal.draw(|frame| render(frame, &view)).unwrap();
-                let layout = metadata_layout(&view, Size::new(width, height));
-                assert!(layout.area.height <= count.clamp(1, 3) as u16 + 11);
-                assert!(layout.body.height > 0);
-                assert!(layout.body.bottom() <= layout.error.y);
-                let buffer = terminal.backend().buffer();
-                if layout.error.height > 0 {
-                    assert_eq!(buffer[(layout.error.x, layout.error.y)].fg, RED);
-                }
-                assert_eq!(
-                    buffer[(layout.actions[0].x, layout.actions[0].y)].bg,
-                    BG_ALT
-                );
-                assert!(layout.actions[3].right() < width);
-            }
-        }
     }
 }

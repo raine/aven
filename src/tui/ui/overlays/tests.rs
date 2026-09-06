@@ -58,6 +58,7 @@ fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView<'_>)
                 intent,
             },
         ),
+        OverlayView::Metadata(state) => super::metadata::render(frame, state),
         OverlayView::AddTask(state) => render_add_task(frame, state),
         OverlayView::TextInput(state) => render_text_input(frame, state),
         OverlayView::MultilineInput(state) => render_multiline_input(frame, state),
@@ -294,3 +295,5 @@ mod sync_status_overlay;
 mod presentation_kind_rendering;
 
 mod confirm_overlays;
+
+mod metadata;
