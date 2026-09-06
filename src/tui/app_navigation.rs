@@ -7,18 +7,17 @@ use crate::tui::store::{MainRowSelection, TaskQuery, TaskViewState};
 
 impl App {
     pub(super) fn restore_sidebar_selection(&mut self) {
-        self.list.select_sidebar(self.store.sidebar_selection());
+        self.list.sync_sidebar(&self.store.sidebar_entries);
+        let target = self
+            .store
+            .sidebar_selection()
+            .and_then(|index| self.store.sidebar_entries.get(index))
+            .and_then(|entry| entry.target.as_ref());
+        self.list.select_sidebar_target(target);
     }
 
     pub(super) fn preserve_or_restore_sidebar_selection(&mut self) {
-        let selected = self.list.selected_sidebar().filter(|&index| {
-            self.store
-                .sidebar_entries
-                .get(index)
-                .is_some_and(|entry| entry.target.is_some())
-        });
-        self.list
-            .select_sidebar(selected.or_else(|| self.store.sidebar_selection()));
+        self.list.sync_sidebar(&self.store.sidebar_entries);
     }
 
     pub(super) async fn move_selection(&mut self, delta: isize) -> Result<()> {
@@ -53,7 +52,7 @@ impl App {
             Focus::Sidebar => {
                 let next = next_selectable_sidebar(
                     self.list.selected_sidebar(),
-                    &self.store.sidebar_entries,
+                    self.list.sidebar_entries(),
                     delta,
                     true,
                 );
@@ -94,13 +93,13 @@ impl App {
             }
             Focus::Sidebar => {
                 let next = if last {
-                    self.store
-                        .sidebar_entries
+                    self.list
+                        .sidebar_entries()
                         .iter()
                         .rposition(|entry| entry.target.is_some())
                 } else {
-                    self.store
-                        .sidebar_entries
+                    self.list
+                        .sidebar_entries()
                         .iter()
                         .position(|entry| entry.target.is_some())
                 };
@@ -283,7 +282,7 @@ impl App {
         let target = self
             .list
             .selected_sidebar()
-            .and_then(|index| self.store.sidebar_entries.get(index))
+            .and_then(|index| self.list.sidebar_entries().get(index))
             .and_then(|entry| entry.target.clone());
         self.apply_sidebar_target(target).await
     }
@@ -296,6 +295,7 @@ impl App {
         use crate::tui::store::{SidebarEntryTarget, TaskScopeTarget};
 
         let target = match target {
+            SidebarCommandTarget::Section(section) => SidebarEntryTarget::Section(section),
             SidebarCommandTarget::View(view) => SidebarEntryTarget::View(view),
             SidebarCommandTarget::Project(project) => {
                 SidebarEntryTarget::Scope(TaskScopeTarget::Project(project))
@@ -307,11 +307,16 @@ impl App {
         self.apply_sidebar_target(Some(target)).await
     }
 
-    async fn apply_sidebar_target(
+    pub(super) async fn apply_sidebar_target(
         &mut self,
         target: Option<crate::tui::store::SidebarEntryTarget>,
     ) -> Result<()> {
         match target {
+            Some(crate::tui::store::SidebarEntryTarget::Section(section)) => {
+                self.list
+                    .toggle_section(section, &self.store.sidebar_entries);
+                return Ok(());
+            }
             Some(crate::tui::store::SidebarEntryTarget::View(view)) => self.show_view(view).await?,
             Some(crate::tui::store::SidebarEntryTarget::Scope(scope)) => {
                 self.show_scope(scope).await?

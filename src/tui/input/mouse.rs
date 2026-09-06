@@ -3,7 +3,7 @@ use ratatui::layout::Rect;
 
 use crate::choices::TaskStatus;
 use crate::tui::list_surface::ListSurface;
-use crate::tui::store::{TaskQuery, TuiStore};
+use crate::tui::store::{SidebarEntryTarget, TaskQuery, TuiStore};
 use crate::tui::ui::{recent_action_at_position, task_at_position, task_status_at_position};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,7 +54,7 @@ pub(crate) struct TaskSurfaceHits {
     pub(crate) series: Option<PointerSeriesHit>,
     pub(crate) status: Option<PointerTaskHit>,
     pub(crate) task: Option<PointerTaskHit>,
-    pub(crate) sidebar_entry: Option<usize>,
+    pub(crate) sidebar_entry: Option<SidebarEntryTarget>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,7 +64,7 @@ pub(crate) enum PointerEvent {
     SelectSeries(PointerSeriesHit),
     EditStatus(PointerTaskHit),
     SelectTask(PointerTaskHit),
-    SelectSidebar(usize),
+    SelectSidebar(SidebarEntryTarget),
     None,
 }
 
@@ -138,7 +138,7 @@ pub(crate) fn route_task_surface(view: TaskSurfaceView<'_>, column: u16, row: u1
                 viewport_row: hit.viewport_row,
             }),
         sidebar_entry: crate::tui::ui::sidebar_click_at_for(
-            &store.sidebar_entries,
+            list.sidebar_entries(),
             list.sidebar_state(),
             focus,
             sidebar_visible,
@@ -146,7 +146,7 @@ pub(crate) fn route_task_surface(view: TaskSurfaceView<'_>, column: u16, row: u1
             column,
             row,
         )
-        .map(|click| click.entry_index),
+        .map(|click| click.target),
     })
 }
 

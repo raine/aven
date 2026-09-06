@@ -510,10 +510,10 @@ impl App {
                     );
                 }
             }
-            PointerEvent::SelectSidebar(entry_index) => {
+            PointerEvent::SelectSidebar(target) => {
                 self.list.clear_task_click();
-                self.list.select_sidebar(Some(entry_index));
-                self.apply_sidebar_selection().await?;
+                self.list.select_sidebar_target(Some(&target));
+                self.apply_sidebar_target(Some(target)).await?;
             }
             PointerEvent::None => self.list.clear_task_click(),
         }

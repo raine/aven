@@ -585,8 +585,16 @@ pub(crate) enum TaskScopeTarget {
     Project(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum SidebarSection {
+    Views,
+    Scope,
+    Projects,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SidebarEntryTarget {
+    Section(SidebarSection),
     View(TaskQuery),
     Scope(TaskScopeTarget),
 }

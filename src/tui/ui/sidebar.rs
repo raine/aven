@@ -38,9 +38,9 @@ const WORKSPACE_MARKER: &str = "\u{f0e8}";
 const PROJECT_MARKER: &str = "\u{f07b}";
 const SIDEBAR_ICON_WIDTH: usize = 2;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SidebarClick {
-    pub(crate) entry_index: usize,
+    pub(crate) target: SidebarEntryTarget,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,13 +140,9 @@ pub(crate) fn sidebar_click_at_for(
     }
 
     let entry_index = usize::from(row - layout.content.y).saturating_add(state.offset());
-    entries.get(entry_index).and_then(|entry| {
-        if entry.target.is_some() {
-            Some(SidebarClick { entry_index })
-        } else {
-            None
-        }
-    })
+    entries
+        .get(entry_index)
+        .and_then(|entry| entry.target.clone().map(|target| SidebarClick { target }))
 }
 
 pub(super) fn render_sidebar_overlay(
@@ -169,9 +165,10 @@ pub(super) fn render_sidebar(
     area: Rect,
     overlay: bool,
 ) {
+    list.sync_sidebar(&store.sidebar_entries);
     let content_width = area.width.saturating_sub(if overlay { 2 } else { 1 }) as usize;
-    let mut items: Vec<ListItem> = store
-        .sidebar_entries
+    let mut items: Vec<ListItem> = list
+        .sidebar_entries()
         .iter()
         .enumerate()
         .map(|(index, entry)| {
@@ -180,7 +177,17 @@ pub(super) fn render_sidebar(
                     return ListItem::new(Line::from(""));
                 }
                 return ListItem::new(
-                    Line::from(format!(" {} ", entry.label.to_uppercase())).style(
+                    Line::from(format!(
+                        " {} {} ",
+                        match entry.target {
+                            Some(SidebarEntryTarget::Section(section))
+                                if list.section_collapsed(section) =>
+                                "▸",
+                            _ => "▾",
+                        },
+                        entry.label.to_uppercase()
+                    ))
+                    .style(
                         Style::new()
                             .fg(FG_DIM)
                             .bg(BG_ALT)
@@ -278,7 +285,7 @@ fn sidebar_entry_active(entry: &SidebarEntry, store: &TuiStore) -> bool {
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(project))) => {
             store.scope_project() == Some(project.as_str())
         }
-        None => false,
+        Some(SidebarEntryTarget::Section(_)) | None => false,
     }
 }
 
@@ -303,7 +310,7 @@ fn sidebar_icon(entry: &SidebarEntry) -> &'static str {
         Some(SidebarEntryTarget::View(TaskQuery::Open)) => OPEN_MARKER,
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)) => WORKSPACE_MARKER,
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(_))) => PROJECT_MARKER,
-        None => " ",
+        Some(SidebarEntryTarget::Section(_)) | None => " ",
     }
 }
 
@@ -334,7 +341,7 @@ fn sidebar_label(entry: &SidebarEntry) -> String {
             .unwrap_or(&entry.label)
             .trim_end_matches('*')
             .to_string(),
-        None => entry.label.clone(),
+        Some(SidebarEntryTarget::Section(_)) | None => entry.label.clone(),
     }
 }
 

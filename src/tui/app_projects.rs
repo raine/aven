@@ -382,7 +382,7 @@ impl App {
     fn selected_sidebar_project(&self) -> Option<String> {
         self.list
             .selected_sidebar()
-            .and_then(|index| self.store.sidebar_entries.get(index))
+            .and_then(|index| self.list.sidebar_entries().get(index))
             .and_then(|entry| entry.target.as_ref())
             .and_then(|target| match target {
                 crate::tui::store::SidebarEntryTarget::Scope(

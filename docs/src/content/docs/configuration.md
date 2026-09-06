@@ -81,6 +81,25 @@ update:
   automatic_checks: true
 
 tui:
+  sidebar:
+    views:
+      - queue
+      - ready
+      - blocked
+      - overdue
+      - all
+      - open
+      - inbox
+      - active
+      - backlog
+      - todo
+      - upcoming
+      - done
+      - conflicts
+      - epics
+      - recurring
+      - recent_actions
+      - search
   columns:
     - name: "Inbox"
       statuses: [inbox]
@@ -224,6 +243,28 @@ update:
 ```
 
 Set `AVEN_NO_UPDATE_CHECK=1` to disable automatic checks for one environment. The environment variable takes precedence over `update.automatic_checks`. `aven update` and the TUI's explicit update command are available with either setting.
+
+## TUI sidebar views
+
+`tui.sidebar.views` controls which task views appear in the sidebar and their
+order. Edit the local config file and restart the TUI to apply changes. The available names are `queue`, `ready`, `blocked`, `overdue`, `all`,
+`open`, `inbox`, `active`, `backlog`, `todo`, `upcoming`, `done`, `conflicts`,
+`epics`, `recurring`, `recent_actions`, and `search`.
+
+For example, this keeps a compact set of views:
+
+```yaml
+tui:
+  sidebar:
+    views: [queue, ready, upcoming, done]
+```
+
+An empty list (`views: []`) hides every task view from the sidebar while keeping
+the section headings and project scope navigation. Hidden views remain
+available through the command palette, header view menu, and keyboard shortcuts.
+Selecting a hidden view keeps it hidden in the sidebar.
+Aven rejects unknown or duplicate names. Remove `sidebar` or `views` to restore
+the default 17-view order shown in the full config example.
 
 ## TUI columns
 

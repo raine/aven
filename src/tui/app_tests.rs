@@ -168,6 +168,7 @@ fn test_attachment(
 async fn create_and_select_task(app: &mut App, draft: TaskDraft) -> usize {
     let (_, selected) = app.store.create_task(draft, None).await.unwrap();
     let selected = selected.unwrap();
+    app.preserve_or_restore_sidebar_selection();
     app.list.select_task(Some(selected));
     selected
 }

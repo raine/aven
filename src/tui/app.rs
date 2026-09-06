@@ -396,11 +396,12 @@ impl App {
 
         self.list
             .selected_sidebar()
-            .and_then(|index| self.store.sidebar_entries.get(index))
+            .and_then(|index| self.list.sidebar_entries().get(index))
             .and_then(|entry| entry.target.as_ref())
             .map(|target| match target {
                 SidebarEntryTarget::View(view) => SidebarCommandTarget::View(*view),
                 SidebarEntryTarget::Scope(scope) => SidebarCommandTarget::from_scope(scope),
+                SidebarEntryTarget::Section(section) => SidebarCommandTarget::Section(*section),
             })
     }
 

@@ -6,7 +6,9 @@ use ratatui::widgets::{ListState, TableState};
 use crate::ids::TaskId;
 use crate::tui::bounded_history::BoundedHistory;
 use crate::tui::detail_session::DetailSnapshot;
-use crate::tui::store::{MainRowAnchor, MainRowIdentity, TaskViewState};
+use crate::tui::store::{
+    MainRowAnchor, MainRowIdentity, SidebarEntry, SidebarEntryTarget, SidebarSection, TaskViewState,
+};
 
 const NAVIGATION_HISTORY_LIMIT: usize = 32;
 const TASK_ROW_DOUBLE_CLICK: Duration = Duration::from_millis(500);
@@ -82,6 +84,8 @@ pub(crate) struct NavigationState {
 
 pub(crate) struct ListSurface {
     sidebar: ListState,
+    sidebar_entries: Vec<SidebarEntry>,
+    collapsed_sections: BTreeSet<SidebarSection>,
     table: TableState,
     marked_task_ids: BTreeSet<TaskId>,
     focus: Focus,
@@ -101,6 +105,8 @@ impl ListSurface {
         table.select(has_tasks.then_some(0));
         Self {
             sidebar: ListState::default(),
+            sidebar_entries: Vec::new(),
+            collapsed_sections: BTreeSet::new(),
             table,
             marked_task_ids: BTreeSet::new(),
             focus: Focus::Tasks,
@@ -190,6 +196,58 @@ impl ListSurface {
 
     pub(crate) fn select_sidebar(&mut self, selected: Option<usize>) {
         self.sidebar.select(selected);
+    }
+
+    pub(crate) fn sidebar_entries(&self) -> &[SidebarEntry] {
+        &self.sidebar_entries
+    }
+
+    pub(crate) fn section_collapsed(&self, section: SidebarSection) -> bool {
+        self.collapsed_sections.contains(&section)
+    }
+
+    pub(crate) fn toggle_section(&mut self, section: SidebarSection, entries: &[SidebarEntry]) {
+        if !self.collapsed_sections.remove(&section) {
+            self.collapsed_sections.insert(section);
+        }
+        self.sync_sidebar(entries);
+        self.select_sidebar_target(Some(&SidebarEntryTarget::Section(section)));
+    }
+
+    pub(crate) fn select_sidebar_target(&mut self, target: Option<&SidebarEntryTarget>) {
+        let index = self
+            .sidebar_entries
+            .iter()
+            .position(|entry| entry.target.as_ref() == target && target.is_some());
+        self.sidebar.select(index.or_else(|| {
+            self.sidebar_entries
+                .iter()
+                .position(|entry| entry.target.is_some())
+        }));
+    }
+
+    pub(crate) fn sync_sidebar(&mut self, entries: &[SidebarEntry]) {
+        let selected = self
+            .sidebar
+            .selected()
+            .and_then(|index| self.sidebar_entries.get(index))
+            .and_then(|entry| entry.target.clone());
+        let mut collapsed = false;
+        self.sidebar_entries = entries
+            .iter()
+            .filter(|entry| {
+                if let Some(SidebarEntryTarget::Section(section)) = entry.target {
+                    collapsed = self.collapsed_sections.contains(&section);
+                    true
+                } else {
+                    entry.section || !collapsed
+                }
+            })
+            .cloned()
+            .collect();
+        self.select_sidebar_target(selected.as_ref());
+        let max_offset = self.sidebar_entries.len().saturating_sub(1);
+        *self.sidebar.offset_mut() = self.sidebar.offset().min(max_offset);
     }
 
     pub(crate) fn sidebar_state(&self) -> &ListState {

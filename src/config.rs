@@ -56,6 +56,8 @@ fn default_automatic_update_checks() -> bool {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TuiConfig {
+    #[serde(default)]
+    pub sidebar: SidebarConfig,
     #[serde(default = "default_task_columns")]
     pub columns: Vec<TaskColumnConfig>,
     #[serde(default)]
@@ -65,10 +67,69 @@ pub struct TuiConfig {
 impl Default for TuiConfig {
     fn default() -> Self {
         Self {
+            sidebar: SidebarConfig::default(),
             columns: default_task_columns(),
             commands: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SidebarConfig {
+    #[serde(default = "default_sidebar_views")]
+    pub views: Vec<SidebarView>,
+}
+
+impl Default for SidebarConfig {
+    fn default() -> Self {
+        Self {
+            views: default_sidebar_views(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarView {
+    Queue,
+    Ready,
+    Blocked,
+    Overdue,
+    All,
+    Open,
+    Inbox,
+    Active,
+    Backlog,
+    Todo,
+    Upcoming,
+    Done,
+    Conflicts,
+    Epics,
+    Recurring,
+    RecentActions,
+    Search,
+}
+
+fn default_sidebar_views() -> Vec<SidebarView> {
+    vec![
+        SidebarView::Queue,
+        SidebarView::Ready,
+        SidebarView::Blocked,
+        SidebarView::Overdue,
+        SidebarView::All,
+        SidebarView::Open,
+        SidebarView::Inbox,
+        SidebarView::Active,
+        SidebarView::Backlog,
+        SidebarView::Todo,
+        SidebarView::Upcoming,
+        SidebarView::Done,
+        SidebarView::Conflicts,
+        SidebarView::Epics,
+        SidebarView::Recurring,
+        SidebarView::RecentActions,
+        SidebarView::Search,
+    ]
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -495,6 +556,13 @@ impl AppConfig {
     pub fn validate(&self) -> Result<()> {
         use std::collections::BTreeSet;
 
+        let mut sidebar_views = BTreeSet::new();
+        for view in &self.tui.sidebar.views {
+            if !sidebar_views.insert(view) {
+                bail!("tui.sidebar.views contains duplicate view {view:?}");
+            }
+        }
+
         if self.tui.columns.is_empty() {
             bail!("column view requires at least one column");
         }
@@ -878,6 +946,71 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["Inbox", "Backlog", "Todo", "Active", "Done"]
         );
+    }
+
+    #[test]
+    fn sidebar_views_default_to_existing_order() {
+        let expected = vec![
+            SidebarView::Queue,
+            SidebarView::Ready,
+            SidebarView::Blocked,
+            SidebarView::Overdue,
+            SidebarView::All,
+            SidebarView::Open,
+            SidebarView::Inbox,
+            SidebarView::Active,
+            SidebarView::Backlog,
+            SidebarView::Todo,
+            SidebarView::Upcoming,
+            SidebarView::Done,
+            SidebarView::Conflicts,
+            SidebarView::Epics,
+            SidebarView::Recurring,
+            SidebarView::RecentActions,
+            SidebarView::Search,
+        ];
+
+        assert_eq!(AppConfig::default().tui.sidebar.views, expected);
+        assert_eq!(load_config("{}\n").unwrap().tui.sidebar.views, expected);
+        assert_eq!(
+            load_config("tui:\n  sidebar: {}\n")
+                .unwrap()
+                .tui
+                .sidebar
+                .views,
+            expected
+        );
+    }
+
+    #[test]
+    fn sidebar_views_load_in_configured_order_and_support_empty_lists() {
+        let configured =
+            load_config("tui:\n  sidebar:\n    views: [search, recent_actions, queue]\n").unwrap();
+        assert_eq!(
+            configured.tui.sidebar.views,
+            [
+                SidebarView::Search,
+                SidebarView::RecentActions,
+                SidebarView::Queue,
+            ]
+        );
+
+        let empty = load_config("tui:\n  sidebar:\n    views: []\n").unwrap();
+        assert!(empty.tui.sidebar.views.is_empty());
+    }
+
+    #[test]
+    fn sidebar_views_reject_duplicates() {
+        let error = load_config("tui:\n  sidebar:\n    views: [queue, done, queue]\n").unwrap_err();
+
+        assert!(format!("{error:#}").contains("tui.sidebar.views contains duplicate view Queue"));
+    }
+
+    #[test]
+    fn sidebar_views_reject_unknown_names() {
+        let error = load_config("tui:\n  sidebar:\n    views: [queue, someday]\n").unwrap_err();
+
+        assert!(format!("{error:#}").contains("unknown variant `someday`"));
     }
 
     #[test]
