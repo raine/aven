@@ -5,11 +5,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::input::prefixed_input_line;
-use crate::tui::overlay::{
-    GENERIC_PICKER_VIEWPORT_ROWS, GENERIC_PICKER_WIDTH, LABEL_PICKER_WIDTH,
-    PROJECT_PICKER_VIEWPORT_ROWS, PROJECT_PICKER_WIDTH, PickerItem, PickerKind, PickerMode,
-    PickerView, picker_row_count, picker_viewport_start,
-};
+use crate::tui::overlay::{PickerItem, PickerKind, PickerMode, PickerView, picker_layout};
 use crate::tui::text::truncate_width;
 use crate::tui::theme::{self, ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, SELECTED};
 use crate::tui::widgets::priority_icon;
@@ -24,8 +20,7 @@ pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, state: &PickerView) {
         return;
     }
 
-    let viewport_rows = GENERIC_PICKER_VIEWPORT_ROWS;
-    let selected_position = picker_visible_start(state, viewport_rows);
+    let layout = picker_layout(state, frame.area().as_size());
     let mut lines = Vec::new();
     if matches!(state.mode, PickerMode::Filter) {
         lines.push(picker_filter_line(
@@ -38,8 +33,8 @@ pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, state: &PickerView) {
     for index in state
         .visible_indices
         .iter()
-        .skip(selected_position)
-        .take(viewport_rows)
+        .skip(layout.visible_start)
+        .take(layout.visible_end - layout.visible_start)
     {
         let item = &state.items[*index];
         let marker = if *index == state.selected {
@@ -72,22 +67,7 @@ pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, state: &PickerView) {
             .unwrap_or("submit"),
         matches!(state.kind, PickerKind::SwitchWorkspace),
     ));
-    let height = (lines.len() as u16).saturating_add(2);
-    Dialog::new(&state.title, GENERIC_PICKER_WIDTH, height).render_text(frame, Text::from(lines));
-}
-
-fn picker_visible_start(state: &PickerView, viewport_rows: usize) -> usize {
-    let selected_position = state
-        .visible_indices
-        .iter()
-        .position(|index| *index == state.selected)
-        .unwrap_or(0);
-    picker_viewport_start(
-        state.scroll,
-        selected_position,
-        state.visible_indices.len(),
-        viewport_rows,
-    )
+    Dialog::new(&state.title, 0, 0).render_text_at(frame, layout.area, Text::from(lines));
 }
 
 fn picker_empty_label(kind: PickerKind) -> Option<&'static str> {
@@ -146,8 +126,7 @@ fn picker_hint_line_with_escape(
 }
 
 fn render_label_picker(frame: &mut Frame, state: &PickerView) {
-    let viewport_rows = GENERIC_PICKER_VIEWPORT_ROWS;
-    let selected_position = picker_visible_start(state, viewport_rows);
+    let layout = picker_layout(state, frame.area().as_size());
     let mut lines = Vec::new();
     if matches!(state.mode, PickerMode::Filter) {
         lines.push(picker_filter_line(
@@ -167,8 +146,8 @@ fn render_label_picker(frame: &mut Frame, state: &PickerView) {
     for index in state
         .visible_indices
         .iter()
-        .skip(selected_position)
-        .take(viewport_rows)
+        .skip(layout.visible_start)
+        .take(layout.visible_end - layout.visible_start)
     {
         lines.push(label_picker_line(
             &state.items[*index],
@@ -183,8 +162,7 @@ fn render_label_picker(frame: &mut Frame, state: &PickerView) {
     }
     lines.push(Line::from(""));
     lines.push(picker_hint_line(state.mode, false, "choose"));
-    let height = (lines.len() as u16).saturating_add(2);
-    Dialog::new(&state.title, LABEL_PICKER_WIDTH, height).render_text(frame, Text::from(lines));
+    Dialog::new(&state.title, 0, 0).render_text_at(frame, layout.area, Text::from(lines));
 }
 
 pub(in crate::tui::ui) fn label_picker_line(item: &PickerItem, selected: bool) -> Line<'static> {
@@ -220,14 +198,7 @@ pub(in crate::tui::ui) fn label_picker_line(item: &PickerItem, selected: bool) -
 }
 
 fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'static str) {
-    let viewport_rows = PROJECT_PICKER_VIEWPORT_ROWS;
-    let list_rows = picker_row_count(state.items.len(), viewport_rows);
-    let height = (list_rows as u16).saturating_add(if matches!(state.mode, PickerMode::Filter) {
-        6
-    } else {
-        5
-    });
-    let selected_position = picker_visible_start(state, viewport_rows);
+    let layout = picker_layout(state, frame.area().as_size());
     let mut lines = Vec::new();
     if matches!(state.mode, PickerMode::Filter) {
         lines.push(picker_filter_line(
@@ -244,8 +215,8 @@ fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'
     for index in state
         .visible_indices
         .iter()
-        .skip(selected_position)
-        .take(viewport_rows)
+        .skip(layout.visible_start)
+        .take(layout.visible_end - layout.visible_start)
     {
         lines.push(project_picker_line(
             &state.items[*index],
@@ -258,7 +229,7 @@ fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'
             Style::new().fg(FG_DIM),
         )));
     }
-    while lines.len().saturating_sub(list_start) < list_rows {
+    while lines.len().saturating_sub(list_start) < layout.list_rows {
         lines.push(Line::from(""));
     }
     lines.push(Line::from(""));
@@ -267,7 +238,7 @@ fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'
         submit_label,
         state.kind == PickerKind::ScopeProject,
     ));
-    Dialog::new(&state.title, PROJECT_PICKER_WIDTH, height).render_text(frame, Text::from(lines));
+    Dialog::new(&state.title, 0, 0).render_text_at(frame, layout.area, Text::from(lines));
 }
 
 pub(in crate::tui::ui) fn project_picker_submit_label(kind: PickerKind) -> Option<&'static str> {

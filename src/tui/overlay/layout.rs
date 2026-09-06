@@ -19,9 +19,73 @@ pub(crate) const TAG_COMBOBOX_WIDTH: u16 = 68;
 pub(crate) struct PickerLayout {
     pub(crate) area: Rect,
     pub(crate) inner: Rect,
-    pub(crate) list_start: u16,
-    pub(crate) viewport_rows: usize,
+    pub(crate) list: Rect,
+    pub(crate) filter: Option<Rect>,
+    pub(crate) list_rows: usize,
     pub(crate) visible_start: usize,
+    pub(crate) visible_end: usize,
+}
+
+impl PickerLayout {
+    pub(crate) fn item_at(&self, column: u16, row: u16, indices: &[usize]) -> Option<usize> {
+        if !self.list.contains((column, row).into()) {
+            return None;
+        }
+        let position = self.visible_start + usize::from(row - self.list.y);
+        (position < self.visible_end).then(|| indices[position])
+    }
+}
+
+pub(crate) const COMMAND_DIALOG_MAX_WIDTH: u16 = 112;
+const COMMAND_VIEWPORT_ROWS: usize = 8;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CommandLayout {
+    pub(crate) area: Rect,
+    pub(crate) inner: Rect,
+    pub(crate) list: Rect,
+    pub(crate) visible: std::ops::Range<usize>,
+}
+
+impl CommandLayout {
+    pub(crate) fn candidate_at(&self, column: u16, row: u16) -> Option<usize> {
+        if !self.list.contains((column, row).into()) {
+            return None;
+        }
+        Some(self.visible.start + usize::from(row - self.list.y))
+    }
+}
+
+pub(crate) fn command_layout(
+    terminal_size: Size,
+    candidate_count: usize,
+    highlighted: Option<usize>,
+) -> CommandLayout {
+    let selected = highlighted
+        .unwrap_or(0)
+        .min(candidate_count.saturating_sub(1));
+    let offset = selected.saturating_sub(COMMAND_VIEWPORT_ROWS - 1);
+    let rows = candidate_count
+        .saturating_sub(offset)
+        .min(COMMAND_VIEWPORT_ROWS);
+    let area = dialog_area(
+        Rect::new(0, 0, terminal_size.width, terminal_size.height),
+        COMMAND_DIALOG_MAX_WIDTH,
+        rows as u16 + 3 + u16::from(candidate_count > 0),
+    );
+    let inner = dialog_inner_area(area);
+    let list = Rect::new(
+        inner.x,
+        inner.y + inner.height.min(1),
+        inner.width,
+        (rows as u16).min(inner.height.saturating_sub(1)),
+    );
+    CommandLayout {
+        area,
+        inner,
+        list,
+        visible: offset..offset + usize::from(list.height),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,56 +157,54 @@ pub(crate) fn picker_layout(state: &PickerView, terminal_size: Size) -> PickerLa
     } else {
         state.visible_indices.len()
     };
-    let list_rows = picker_row_count(row_count, viewport_rows);
-    if project_picker {
-        let height = (list_rows as u16).saturating_add(if state.mode == PickerMode::Filter {
-            6
-        } else {
-            5
-        });
-        let area = dialog_area(
-            Rect::new(0, 0, terminal_size.width, terminal_size.height),
-            PROJECT_PICKER_WIDTH,
-            height,
-        );
-        return PickerLayout {
-            area,
-            inner: dialog_inner_area(area),
-            list_start: if state.mode == PickerMode::Filter {
-                2
-            } else {
-                1
-            },
-            viewport_rows: list_rows,
-            visible_start: picker_visible_start(state, list_rows),
-        };
-    }
-
     let label_picker = state.kind == PickerKind::LabelAdministration;
-    let height = (list_rows as u16).saturating_add(if label_picker { 7 } else { 6 });
+    let filtering = state.mode == PickerMode::Filter;
+    let list_start = if project_picker || label_picker {
+        1 + u16::from(filtering)
+    } else if filtering {
+        2
+    } else {
+        0
+    };
+    let list_rows = if project_picker || label_picker || state.kind == PickerKind::SwitchWorkspace {
+        picker_row_count(row_count, viewport_rows)
+    } else {
+        row_count.min(viewport_rows)
+    };
+    let height = list_rows as u16 + list_start + 4;
+    let width = if project_picker {
+        PROJECT_PICKER_WIDTH
+    } else if label_picker {
+        LABEL_PICKER_WIDTH
+    } else {
+        GENERIC_PICKER_WIDTH
+    };
     let area = dialog_area(
         Rect::new(0, 0, terminal_size.width, terminal_size.height),
-        if label_picker {
-            LABEL_PICKER_WIDTH
-        } else {
-            GENERIC_PICKER_WIDTH
-        },
+        width,
         height,
     );
+    let inner = dialog_inner_area(area);
+    let list = Rect::new(
+        inner.x,
+        inner.y + list_start.min(inner.height),
+        inner.width,
+        (list_rows as u16).min(inner.height.saturating_sub(list_start)),
+    );
+    let visible_start = picker_visible_start(state, usize::from(list.height).max(1));
     PickerLayout {
         area,
-        inner: dialog_inner_area(area),
-        list_start: if label_picker {
-            if state.mode == PickerMode::Filter {
-                2
-            } else {
-                1
-            }
-        } else {
-            2
-        },
-        viewport_rows: GENERIC_PICKER_VIEWPORT_ROWS,
-        visible_start: picker_visible_start(state, GENERIC_PICKER_VIEWPORT_ROWS),
+        inner,
+        list,
+        filter: (filtering || project_picker || label_picker).then_some(Rect::new(
+            inner.x,
+            inner.y,
+            inner.width,
+            inner.height.min(1),
+        )),
+        list_rows,
+        visible_start,
+        visible_end: (visible_start + usize::from(list.height)).min(state.visible_indices.len()),
     }
 }
 
@@ -293,6 +355,57 @@ mod tests {
 
         assert_eq!(one_match.area.height, unfiltered.area.height);
         assert_eq!(no_matches.area.height, unfiltered.area.height);
+    }
+
+    #[test]
+    fn generic_picker_modes_share_exact_row_mapping() {
+        for mode in [PickerMode::Navigate, PickerMode::Filter] {
+            let mut view = project_picker_view(12, 12);
+            view.kind = PickerKind::Generic;
+            view.mode = mode;
+            view.visible_indices = vec![1, 4, 7, 10];
+            view.selected = 10;
+            let layout = picker_layout(&view, Size::new(80, 24));
+            assert_eq!(
+                layout.list.y - layout.inner.y,
+                if mode == PickerMode::Filter { 2 } else { 0 }
+            );
+            for (offset, index) in view.visible_indices.iter().enumerate() {
+                assert_eq!(
+                    layout.item_at(
+                        layout.list.x,
+                        layout.list.y + offset as u16,
+                        &view.visible_indices
+                    ),
+                    Some(*index)
+                );
+            }
+            assert_eq!(
+                layout.item_at(layout.list.x, layout.list.bottom(), &view.visible_indices),
+                None
+            );
+            assert_eq!(layout.filter.is_some(), mode == PickerMode::Filter);
+        }
+    }
+
+    #[test]
+    fn command_layout_clips_mouse_targets_to_content() {
+        for width in [0, 1, 20, 72, 120] {
+            for height in [0, 1, 4, 7, 30] {
+                for count in [0, 1, 20] {
+                    let layout = command_layout(Size::new(width, height), count, Some(19));
+                    assert!(layout.visible.end <= count);
+                    for row in 0..height {
+                        for column in 0..width {
+                            if let Some(index) = layout.candidate_at(column, row) {
+                                assert!(layout.inner.contains((column, row).into()));
+                                assert!(layout.visible.contains(&index));
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

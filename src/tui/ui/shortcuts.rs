@@ -211,7 +211,6 @@ const CHILD_DETAIL_HELP_TOPICS: &[HelpTopic] = &[
 
 const HELP_DIALOG_MAX_WIDTH: u16 = 112;
 const HELP_DIALOG_MAX_HEIGHT: u16 = 28;
-const COMMAND_DIALOG_MAX_WIDTH: u16 = 112;
 const DEFAULT_UNDO_DESCRIPTION: &str = "undo last TUI mutation";
 
 fn help_dialog_height(frame_height: u16) -> u16 {
@@ -808,36 +807,31 @@ pub(super) fn render_command(
     let command_context = session.routing_domain().command_context();
     let matches = candidates
         .iter()
-        .filter_map(|candidate| {
-            catalog
-                .command(candidate.index)
-                .map(|command| (command, candidate.availability.reason()))
+        .map(|candidate| {
+            (
+                catalog.command(candidate.index),
+                candidate.availability.reason(),
+            )
         })
         .collect::<Vec<_>>();
     let match_count = matches.len();
     let selected = highlighted.unwrap_or(0).min(match_count.saturating_sub(1));
-    let offset = selected.saturating_sub(7);
-    let visible_end = offset.saturating_add(8).min(match_count);
+    let layout =
+        crate::tui::overlay::command_layout(frame.area().as_size(), match_count, highlighted);
+    let offset = layout.visible.start;
+    let visible_end = layout.visible.end;
     let command_name_width = catalog_command_name_width(
         &matches[offset..visible_end]
             .iter()
-            .map(|(command, _)| *command)
+            .filter_map(|(command, _)| *command)
             .collect::<Vec<_>>(),
     );
-    let height = (visible_end.saturating_sub(offset) as u16)
-        .saturating_add(3)
-        .saturating_add(u16::from(match_count > 0));
     let title = if marked_task_count == 0 {
         "Command".to_string()
     } else {
         format!("Command · {}", marked_task_label(marked_task_count))
     };
-    let dialog_width = frame
-        .area()
-        .width
-        .saturating_sub(2)
-        .min(COMMAND_DIALOG_MAX_WIDTH);
-    let mut dialog = Dialog::new(&title, dialog_width, height);
+    let mut dialog = Dialog::new(&title, 0, 0);
     if match_count > 0 {
         let position = highlighted.map_or_else(
             || format!("{match_count} commands"),
@@ -848,12 +842,22 @@ pub(super) fn render_command(
             Style::new().fg(FG_MUTED),
         )));
     }
-    let content = dialog.render_block(frame);
-    let line_width = (content.width as usize).saturating_sub(usize::from(match_count > 8));
+    dialog.render_block_at(frame, layout.area);
+    let content = layout.inner;
+    let line_width =
+        (content.width as usize).saturating_sub(usize::from(match_count > layout.visible.len()));
 
     let mut lines = vec![input_line(":", input, cursor)];
-    for (row, (command, unavailable_reason)) in matches.into_iter().enumerate().skip(offset).take(8)
+    for (row, (command, unavailable_reason)) in matches
+        .into_iter()
+        .enumerate()
+        .skip(offset)
+        .take(layout.visible.len())
     {
+        let Some(command) = command else {
+            lines.push(Line::default());
+            continue;
+        };
         let marked_annotation = |count| {
             let noun = if count == 1 { "task" } else { "tasks" };
             format!("{count} {noun} · ")
@@ -906,20 +910,20 @@ pub(super) fn render_command(
         Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(BG_ALT)),
         content,
     );
-    render_command_scrollbar(frame, content, match_count, offset);
+    render_command_scrollbar(frame, &layout, match_count);
 }
 
-fn render_command_scrollbar(frame: &mut Frame, content: Rect, match_count: usize, offset: usize) {
-    const VISIBLE_COMMANDS: usize = 8;
-    if match_count <= VISIBLE_COMMANDS {
+fn render_command_scrollbar(
+    frame: &mut Frame,
+    layout: &crate::tui::overlay::CommandLayout,
+    match_count: usize,
+) {
+    let visible = layout.visible.len();
+    if match_count <= visible || visible == 0 {
         return;
     }
-    let area = Rect {
-        y: content.y.saturating_add(1),
-        height: (match_count.min(VISIBLE_COMMANDS)) as u16,
-        ..content
-    };
-    let position = super::scroll::scrollbar_thumb_position(offset, match_count, VISIBLE_COMMANDS);
+    let position =
+        super::scroll::scrollbar_thumb_position(layout.visible.start, match_count, visible);
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .begin_symbol(None)
         .end_symbol(None)
@@ -929,8 +933,8 @@ fn render_command_scrollbar(frame: &mut Frame, content: Rect, match_count: usize
         .track_style(Style::new().fg(BORDER).bg(BG_ALT));
     let mut state = ScrollbarState::new(match_count)
         .position(position)
-        .viewport_content_length(VISIBLE_COMMANDS);
-    frame.render_stateful_widget(scrollbar, area, &mut state);
+        .viewport_content_length(visible);
+    frame.render_stateful_widget(scrollbar, layout.list, &mut state);
 }
 
 fn marked_task_label(count: usize) -> String {
@@ -1631,6 +1635,76 @@ mod tests {
     }
 
     #[test]
+    fn command_rendered_rows_select_identical_catalog_candidates() {
+        use crate::tui::overlay::{
+            CommandState, OverlayMouseContext, OverlayMouseOutcome, OverlayState, command_layout,
+            dispatch_overlay_mouse,
+        };
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+        for (width, height) in [(72, 30), (120, 30), (40, 7)] {
+            for input in ["", "stat", "no-such-command-xyz"] {
+                let mut state = CommandState::test_with_input(input);
+                state.highlighted = state.candidates.len().checked_sub(1);
+                let size = ratatui::layout::Size::new(width, height);
+                let layout = command_layout(size, state.candidates.len(), state.highlighted);
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal
+                    .draw(|frame| {
+                        render_command(
+                            frame,
+                            input,
+                            input.len(),
+                            state.highlighted,
+                            CommandRenderContext {
+                                session: &state.session,
+                                catalog: &state.catalog,
+                                candidates: &state.candidates,
+                                undo_description: DEFAULT_UNDO_DESCRIPTION,
+                            },
+                        )
+                    })
+                    .unwrap();
+                for (offset, position) in layout.visible.clone().enumerate() {
+                    let row = layout.list.y + offset as u16;
+                    let candidate = &state.candidates[position];
+                    let name = state.catalog.command(candidate.index).unwrap().name();
+                    assert!(buffer_row(terminal.backend().buffer(), row).contains(name));
+                    let outcome = dispatch_overlay_mouse(
+                        OverlayState::Command {
+                            state: state.clone(),
+                        },
+                        MouseEvent {
+                            kind: MouseEventKind::Down(MouseButton::Left),
+                            column: layout.list.x,
+                            row,
+                            modifiers: KeyModifiers::NONE,
+                        },
+                        size,
+                        OverlayMouseContext {
+                            add_task_only: false,
+                            detail_help_scroll_cap: 0,
+                        },
+                    );
+                    let OverlayMouseOutcome::Retained(OverlayState::Command { state: clicked }) =
+                        outcome
+                    else {
+                        panic!("expected retained command panel");
+                    };
+                    assert_eq!(clicked.highlighted, Some(position));
+                    assert_eq!(clicked.candidates[position].index, candidate.index);
+                    assert_eq!(clicked.session, state.session);
+                }
+                assert_eq!(
+                    layout.candidate_at(layout.list.x, layout.area.bottom() - 1),
+                    None
+                );
+                assert_eq!(layout.candidate_at(0, 0), None);
+            }
+        }
+    }
+
+    #[test]
     fn undo_description_is_shared_by_help_and_command_panel() {
         let description = "undo priority change";
         let help_backend = TestBackend::new(100, 30);
@@ -1761,6 +1835,7 @@ mod tests {
 
     #[test]
     fn command_overlay_uses_available_width_up_to_its_maximum() {
+        use crate::tui::overlay::COMMAND_DIALOG_MAX_WIDTH;
         let buffer = render_command_buffer_at_width("", 0, None, None, 120);
         let corners = dialog_corners(&buffer);
         let left = corners.iter().map(|(column, _, _)| *column).min().unwrap();

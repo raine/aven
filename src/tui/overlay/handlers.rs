@@ -783,19 +783,14 @@ fn picker_mouse_target(
     if !contains(layout.inner, column, row) {
         return PickerMouseTarget::Interior;
     }
-    let inner_row = row.saturating_sub(layout.inner.y);
-    if inner_row == 0 {
+    if layout
+        .filter
+        .is_some_and(|filter| contains(filter, column, row))
+    {
         return PickerMouseTarget::Filter;
     }
-    let Some(row_offset) = inner_row.checked_sub(layout.list_start) else {
-        return PickerMouseTarget::Interior;
-    };
-    if row_offset >= layout.viewport_rows as u16 {
-        return PickerMouseTarget::Interior;
-    }
-    let visible_position = layout.visible_start.saturating_add(row_offset as usize);
-    match view.visible_indices.get(visible_position) {
-        Some(index) => PickerMouseTarget::Row(*index),
+    match layout.item_at(column, row, &view.visible_indices) {
+        Some(index) => PickerMouseTarget::Row(index),
         None => PickerMouseTarget::Interior,
     }
 }

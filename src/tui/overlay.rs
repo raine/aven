@@ -15,12 +15,12 @@ pub(crate) use handlers::{
     handle_generic_overlay_key, handle_generic_overlay_mouse, handle_generic_overlay_paste,
     wrap_index_by_value,
 };
+#[cfg(test)]
+pub(crate) use layout::COMMAND_DIALOG_MAX_WIDTH;
 pub(crate) use layout::{
-    GENERIC_PICKER_VIEWPORT_ROWS, GENERIC_PICKER_WIDTH, LABEL_PICKER_WIDTH,
-    PROJECT_PICKER_VIEWPORT_ROWS, PROJECT_PICKER_WIDTH, TAG_COMBOBOX_VIEWPORT_ROWS,
-    TAG_COMBOBOX_WIDTH, TEXT_PANEL_VISIBLE_ROWS, TEXT_PANEL_WIDTH, confirm_layout, confirm_width,
-    dialog_area, picker_layout, picker_row_count, tag_combobox_layout, text_panel_layout,
-    text_panel_scroll_cap,
+    CommandLayout, GENERIC_PICKER_VIEWPORT_ROWS, TAG_COMBOBOX_VIEWPORT_ROWS, TAG_COMBOBOX_WIDTH,
+    command_layout, confirm_layout, confirm_width, dialog_area, picker_layout, tag_combobox_layout,
+    text_panel_layout, text_panel_scroll_cap,
 };
 pub(crate) use mouse::{OverlayMouseContext, OverlayMouseOutcome, dispatch_overlay_mouse};
 pub(crate) use picker::{

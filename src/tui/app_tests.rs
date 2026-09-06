@@ -456,11 +456,7 @@ fn picker_row_click(app: &App, visible_row: u16, size: ratatui::layout::Size) ->
             let layout = crate::tui::overlay::picker_layout(&view, size);
             left_click(
                 layout.inner.x.saturating_add(2),
-                layout
-                    .inner
-                    .y
-                    .saturating_add(layout.list_start)
-                    .saturating_add(visible_row),
+                layout.list.y.saturating_add(visible_row),
             )
         }
         OverlayView::TagCombobox(view) => {
