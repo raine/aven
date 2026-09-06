@@ -635,7 +635,7 @@ pub(crate) async fn remove_recurrence_metadata(
     Ok(true)
 }
 
-pub fn validate_metadata_update(set: &[TaskMetadataInput], remove: &[String]) -> Result<()> {
+pub(crate) fn validate_metadata_update(set: &[TaskMetadataInput], remove: &[String]) -> Result<()> {
     if set.len() > MAX_METADATA_VALUES {
         bail!("error too-many-metadata-values limit={MAX_METADATA_VALUES}");
     }

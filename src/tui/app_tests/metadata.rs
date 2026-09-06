@@ -477,3 +477,46 @@ async fn metadata_discard_uses_explicit_y_and_preserves_input_on_n_or_escape() {
         "pending"
     );
 }
+
+#[tokio::test]
+async fn metadata_external_editor_failure_moves_and_restores_complete_captured_state() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, seeded_draft("Captured target")).await;
+    open_editor(&mut app).await;
+    let Some(OverlayState::Metadata(state)) = &mut app.overlay else {
+        panic!("expected metadata overlay")
+    };
+    state.filter = LineEdit::new("review".to_string());
+    state.paste(" exact draft");
+    state.editor.as_mut().unwrap().input.column = 3;
+    let original = state.clone();
+    let allocation = std::ptr::from_ref(state.as_ref());
+    create_and_select_task(&mut app, seeded_draft("Other target")).await;
+    crate::tui::platform::fail_next_external_editor();
+    for code in ['x', 'e'] {
+        app.handle_overlay_key(KeyEvent::new(KeyCode::Char(code), KeyModifiers::CONTROL))
+            .await
+            .unwrap();
+    }
+    let Some(OverlayState::Metadata(state)) = &mut app.overlay else {
+        panic!("expected restored metadata overlay")
+    };
+    assert_eq!(std::ptr::from_ref(state.as_ref()), allocation);
+    assert_eq!(
+        state.error.as_deref(),
+        Some("Editor failed: injected external editor failure")
+    );
+    state.error = original.error.clone();
+    assert_eq!(state, &original);
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL))
+        .await
+        .unwrap();
+    assert_eq!(
+        app.store
+            .metadata_values(original.target.selection.single_id().unwrap())
+            .await
+            .unwrap()[0]
+            .value,
+        "pending exact draft"
+    );
+}

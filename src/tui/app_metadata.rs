@@ -3,7 +3,7 @@ use crate::tui::overlay::metadata::{MetadataEntry, MetadataFocus, MetadataState,
 use crate::tui::overlay::{LineEdit, MultilineInputState, MultilineIntent, OverlayState};
 use crate::tui::task_selection::TaskSelection;
 use anyhow::Result;
-use aven_core::metadata::TaskMetadataInput;
+use aven_core::metadata::TaskMetadataValue;
 
 impl App {
     pub(super) async fn begin_edit_metadata(&mut self) -> Result<()> {
@@ -22,14 +22,6 @@ impl App {
             .store
             .metadata_values(selection.single_id().expect("single metadata target"))
             .await?;
-        let values = values
-            .into_iter()
-            .map(|value| TaskMetadataInput {
-                expected_field_id: Some(value.field_id),
-                key: value.key,
-                value: value.value,
-            })
-            .collect();
         let target = MetadataTarget {
             workspace_id: self.store.active_workspace.id.clone(),
             selection,
@@ -40,7 +32,7 @@ impl App {
     async fn open_metadata(
         &mut self,
         target: MetadataTarget,
-        mut values: Vec<TaskMetadataInput>,
+        mut values: Vec<TaskMetadataValue>,
     ) -> Result<()> {
         let fields = self.store.metadata_fields().await?;
         let entries = fields
@@ -48,12 +40,7 @@ impl App {
             .map(|field| {
                 let value = values
                     .iter()
-                    .position(|value| {
-                        value
-                            .expected_field_id
-                            .as_ref()
-                            .map_or(value.key == field.key, |id| id == &field.id)
-                    })
+                    .position(|value| value.field_id == field.id)
                     .map(|index| values.swap_remove(index).value);
                 MetadataEntry { field, value }
             })
@@ -170,5 +157,85 @@ fn metadata_error(error: &anyhow::Error) -> String {
         "A task supports 128 values. Remove a value first.".to_string()
     } else {
         format!("Save failed: {error:#}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::operations::TaskDraft;
+    use aven_core::metadata::TaskMetadataInput;
+
+    #[tokio::test]
+    async fn entries_follow_field_ids_and_definition_order_across_renames() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = aven_core::db::Database::open(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mut app = App::new_for_tests(database.clone()).await.unwrap();
+        app.store
+            .create_task(
+                TaskDraft {
+                    title: "Metadata construction".to_string(),
+                    description: String::new(),
+                    project: None,
+                    status: "inbox".to_string(),
+                    priority: "none".to_string(),
+                    source: crate::choices::TaskSource::Unknown,
+                    labels: Vec::new(),
+                    metadata: ["alpha", "empty", "unset"]
+                        .into_iter()
+                        .map(|key| TaskMetadataInput {
+                            expected_field_id: None,
+                            key: key.to_string(),
+                            value: String::new(),
+                        })
+                        .collect(),
+                    available_at: None,
+                    due_on: None,
+                    is_epic: false,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let selection = TaskSelection::resolve_single(&app.store.tasks, Some(0)).unwrap();
+        let mut values = app
+            .store
+            .metadata_values(selection.single_id().unwrap())
+            .await
+            .unwrap();
+        values.retain(|value| value.key != "unset");
+        let exact = "  opaque\r\né\n";
+        values
+            .iter_mut()
+            .find(|value| value.key == "alpha")
+            .unwrap()
+            .value = exact.to_string();
+        values.reverse();
+        database
+            .rename_metadata_field(&app.store.active_workspace, "alpha", "zulu")
+            .await
+            .unwrap();
+        let target = MetadataTarget {
+            workspace_id: app.store.active_workspace.id.clone(),
+            selection,
+        };
+        app.open_metadata(target.clone(), values).await.unwrap();
+        let Some(OverlayState::Metadata(state)) = &app.overlay else {
+            panic!("expected metadata overlay")
+        };
+        assert_eq!(state.target, target);
+        assert_eq!(
+            state
+                .entries
+                .iter()
+                .map(|entry| entry.field.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["empty", "unset", "zulu"]
+        );
+        assert_eq!(state.entries[0].value.as_deref(), Some(""));
+        assert_eq!(state.entries[1].value, None);
+        assert_eq!(state.entries[2].value.as_deref(), Some(exact));
     }
 }

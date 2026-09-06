@@ -1498,24 +1498,24 @@ impl App {
         }
 
         if self.pending_shortcut.take_editor_open_request(key) {
-            match &overlay {
+            match overlay {
                 OverlayState::Metadata(state) => {
-                    self.open_metadata_external_editor(state.clone());
+                    self.open_metadata_external_editor(state);
                 }
                 OverlayState::MultilineInput(state) if state.intent.is_description_edit() => {
-                    self.open_description_external_editor(state.clone());
+                    self.open_description_external_editor(state);
                 }
                 OverlayState::MultilineInput(state)
                     if matches!(state.intent, MultilineIntent::EditNote { .. }) =>
                 {
-                    self.open_note_external_editor(state.clone());
+                    self.open_note_external_editor(state);
                 }
                 OverlayState::AddTask(state) if state.focus == AddTaskStep::Description => {
-                    if self.capture_add_task_state(state) {
+                    if self.capture_add_task_state(&state) {
                         self.open_add_task_description_editor();
                     }
                 }
-                _ => self.overlay = Some(overlay),
+                overlay => self.overlay = Some(overlay),
             }
             return Ok(());
         }
