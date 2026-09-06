@@ -294,6 +294,19 @@ impl Database {
         list_project_items_in_workspace(&mut conn, workspace_id).await
     }
 
+    pub(crate) async fn list_base_tasks(
+        &self,
+        workspace_id: &WorkspaceId,
+        filters: TaskFilters,
+        sort: TaskSort,
+        direction: SortDirection,
+    ) -> Result<Vec<Task>> {
+        self.reconcile_recurrence_reports(workspace_id).await?;
+        let mut conn = self.acquire_reader().await?;
+        tasks::list_base_tasks_in_workspace(&mut conn, workspace_id, filters, sort, direction, None)
+            .await
+    }
+
     pub async fn list_task_items(
         &self,
         workspace_id: &WorkspaceId,

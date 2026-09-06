@@ -236,20 +236,9 @@ impl Store {
             ..TaskFilters::default()
         };
         self.database
-            .list_task_items(
-                workspace_id,
-                filters,
-                TaskQueryMode::Flat,
-                TaskSort::Created,
-                SortDirection::Asc,
-            )
+            .list_base_tasks(workspace_id, filters, TaskSort::Created, SortDirection::Asc)
             .await
-            .map(|items| {
-                items
-                    .into_iter()
-                    .map(|item| TaskRecord::from(item.task))
-                    .collect()
-            })
+            .map(|tasks| tasks.into_iter().map(TaskRecord::from).collect())
             .map_err(Error::from_internal)
     }
 
