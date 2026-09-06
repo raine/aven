@@ -1,3 +1,4 @@
+use crate::operations::{RecurrenceStructuralMutation, RecurrenceTaskMutation};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -1366,8 +1367,16 @@ pub async fn update_task_labels_in_workspace(
     add_labels: &[String],
     remove_labels: &[String],
 ) -> Result<bool> {
+    let mutation_at = now();
     let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
-    crate::operations::route_recurrence_task_field(conn, &workspace, task_id, "labels", "").await?;
+    crate::operations::route_recurrence_task_mutation(
+        conn,
+        &workspace,
+        task_id,
+        RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Labels),
+        &mutation_at,
+    )
+    .await?;
     let mut changed = false;
     for label in resolve_labels_in_workspace(conn, &workspace.id, add_labels).await? {
         let rows_affected = sqlx::query(
@@ -1433,11 +1442,17 @@ pub(super) async fn add_note_operation(
     body: String,
     tui_undo: bool,
 ) -> Result<NoteOutcome> {
-    let note_id = new_id();
     let ts = now();
+    let note_id = new_id();
     let mut tx = begin_immediate(conn).await?;
-    crate::operations::route_recurrence_task_field(&mut tx, workspace, task_id, "notes", "")
-        .await?;
+    crate::operations::route_recurrence_task_mutation(
+        &mut tx,
+        workspace,
+        task_id,
+        RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Notes),
+        &ts,
+    )
+    .await?;
     let change_id = append_change(
         &mut tx,
         ChangeEntity::Task,
@@ -1499,9 +1514,16 @@ async fn edit_note_operation(
     body: String,
     tui_undo: bool,
 ) -> Result<NoteEditOutcome> {
+    let edited_at = now();
     let mut tx = begin_immediate(conn).await?;
-    crate::operations::route_recurrence_task_field(&mut tx, workspace, task_id, "notes", "")
-        .await?;
+    crate::operations::route_recurrence_task_mutation(
+        &mut tx,
+        workspace,
+        task_id,
+        RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Notes),
+        &edited_at,
+    )
+    .await?;
     let before = sqlx::query_scalar::<_, String>(
         "SELECT body FROM notes WHERE workspace_id = ? AND task_id = ? AND id = ?",
     )
@@ -1513,7 +1535,6 @@ async fn edit_note_operation(
     let found = before.is_some();
     let changed = before.as_ref().is_some_and(|before| before != &body);
     if changed {
-        let edited_at = now();
         sqlx::query("UPDATE notes SET body = ? WHERE workspace_id = ? AND task_id = ? AND id = ?")
             .bind(&body)
             .bind(&workspace.id)
@@ -1575,9 +1596,16 @@ async fn delete_note_operation(
     note_id: &str,
     tui_undo: bool,
 ) -> Result<NoteDeleteOutcome> {
+    let deleted_at = now();
     let mut tx = begin_immediate(conn).await?;
-    crate::operations::route_recurrence_task_field(&mut tx, workspace, task_id, "notes", "")
-        .await?;
+    crate::operations::route_recurrence_task_mutation(
+        &mut tx,
+        workspace,
+        task_id,
+        RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Notes),
+        &deleted_at,
+    )
+    .await?;
     let before = sqlx::query_as::<_, (String, String)>(
         "SELECT body, created_at FROM notes WHERE workspace_id = ? AND task_id = ? AND id = ?",
     )
@@ -1586,7 +1614,6 @@ async fn delete_note_operation(
     .bind(note_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let deleted_at = now();
     let deleted =
         sqlx::query("DELETE FROM notes WHERE workspace_id = ? AND task_id = ? AND id = ?")
             .bind(&workspace.id)

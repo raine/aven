@@ -1217,3 +1217,327 @@ async fn project_delete_stops_active_and_paused_series_atomically() {
     .unwrap();
     assert_eq!(projected, 2);
 }
+
+#[tokio::test]
+async fn typed_structural_requests_preserve_occurrence_write_policy() {
+    let (_temp, mut conn, workspace) = setup().await;
+    let ordinary = crate::operations::create_task(
+        &mut conn,
+        &workspace,
+        crate::operations::TaskDraft {
+            title: "ordinary".to_string(),
+            description: String::new(),
+            project: Some("recurrence".to_string()),
+            status: "todo".to_string(),
+            priority: "none".to_string(),
+            source: crate::choices::TaskSource::Unknown,
+            labels: Vec::new(),
+            metadata: Vec::new(),
+            available_at: None,
+            due_on: None,
+            is_epic: false,
+        },
+    )
+    .await
+    .unwrap();
+    let active = create_daily(&mut conn, &workspace).await;
+    let paused = create_daily(&mut conn, &workspace).await;
+    pause_recurrence_series(
+        &mut conn,
+        &workspace,
+        &paused.series.id,
+        "2026-07-20T13:00:00Z",
+    )
+    .await
+    .unwrap();
+    let stopped = create_daily(&mut conn, &workspace).await;
+    stop_recurrence_series(
+        &mut conn,
+        &workspace,
+        &stopped.series.id,
+        false,
+        "2026-07-20T13:00:00Z",
+    )
+    .await
+    .unwrap();
+    let resolved = create_daily(&mut conn, &workspace).await;
+    resolve(
+        &mut conn,
+        &workspace,
+        &resolved.task.id,
+        RecurrenceOutcome::Completed,
+        "2026-07-20T13:00:00Z",
+    )
+    .await;
+    let archived = create_daily(&mut conn, &workspace).await;
+    reconcile_recurrence_series_once(&mut conn, &workspace, &archived.series.id, at(21, 12))
+        .await
+        .unwrap();
+
+    for intent in [
+        RecurrenceStructuralMutation::Labels,
+        RecurrenceStructuralMutation::Notes,
+        RecurrenceStructuralMutation::Attachments,
+        RecurrenceStructuralMutation::Dependencies,
+        RecurrenceStructuralMutation::EpicMembership,
+    ] {
+        let mut tx = begin_immediate(&mut conn).await.unwrap();
+        for task in [
+            &ordinary.task,
+            &active.task,
+            &paused.task,
+            &stopped.task,
+            &resolved.task,
+        ] {
+            assert_eq!(
+                route_recurrence_task_mutation(
+                    &mut tx,
+                    &workspace,
+                    &task.id,
+                    RecurrenceTaskMutation::Structural(intent),
+                    "2026-07-20T14:00:00Z",
+                )
+                .await
+                .unwrap(),
+                RecurrenceMutationOutcome::Proceed,
+                "{intent:?} for {}",
+                task.id,
+            );
+        }
+        let error = route_recurrence_task_mutation(
+            &mut tx,
+            &workspace,
+            &archived.task.id,
+            RecurrenceTaskMutation::Structural(intent),
+            "2026-07-21T14:00:00Z",
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("recurrence-occurrence-archived"));
+        let boundary_error = route_recurrence_task_mutation(
+            &mut tx,
+            &workspace,
+            &active.task.id,
+            RecurrenceTaskMutation::Structural(intent),
+            "2026-07-21T00:00:00Z",
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            boundary_error
+                .to_string()
+                .contains("recurrence-occurrence-archived")
+        );
+        tx.rollback().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn typed_gate_uses_owner_clock_at_slot_boundary_and_rolls_back_reconciliation() {
+    let (_temp, mut conn, workspace) = setup().await;
+    let created = create_daily(&mut conn, &workspace).await;
+    let before = materialization_snapshot(
+        &mut conn,
+        &workspace.id,
+        &created.series.id,
+        &created.task.id,
+    )
+    .await;
+    let mut tx = begin_immediate(&mut conn).await.unwrap();
+    assert_eq!(
+        route_recurrence_task_mutation(
+            &mut tx,
+            &workspace,
+            &created.task.id,
+            RecurrenceTaskMutation::Scalar {
+                field: TaskField::Status,
+                value: "done"
+            },
+            "2026-07-20T23:59:59Z",
+        )
+        .await
+        .unwrap(),
+        RecurrenceMutationOutcome::Handled,
+    );
+    let occurrence = load_occurrence_for_task(&mut tx, &workspace.id, &created.task.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(occurrence.outcome, Some(RecurrenceOutcome::Completed));
+    assert_eq!(
+        occurrence.resolved_at.as_deref(),
+        Some("2026-07-20T23:59:59Z")
+    );
+    let task = get_task_in_workspace(&mut tx, &workspace, &created.task.id)
+        .await
+        .unwrap();
+    assert_eq!(task.status, TaskStatus::Done);
+    assert_eq!(task.updated_at, "2026-07-20T23:59:59Z");
+    tx.rollback().await.unwrap();
+    assert_eq!(
+        before,
+        materialization_snapshot(
+            &mut conn,
+            &workspace.id,
+            &created.series.id,
+            &created.task.id
+        )
+        .await
+    );
+
+    let mut tx = begin_immediate(&mut conn).await.unwrap();
+    let error = route_recurrence_task_mutation(
+        &mut tx,
+        &workspace,
+        &created.task.id,
+        RecurrenceTaskMutation::Scalar {
+            field: TaskField::Status,
+            value: "done",
+        },
+        "2026-07-21T00:00:00Z",
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("recurrence-occurrence-archived"));
+    let current = load_projected_occurrence(&mut tx, &workspace.id, &created.series.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(current.slot_on, at(21, 0).date_naive());
+    tx.rollback().await.unwrap();
+    assert_eq!(
+        before,
+        materialization_snapshot(
+            &mut conn,
+            &workspace.id,
+            &created.series.id,
+            &created.task.id
+        )
+        .await
+    );
+}
+
+#[tokio::test]
+async fn typed_scalar_gate_preserves_outcomes_and_stopped_final_writes() {
+    let (_temp, mut conn, workspace) = setup().await;
+    let created = create_daily(&mut conn, &workspace).await;
+    stop_recurrence_series(
+        &mut conn,
+        &workspace,
+        &created.series.id,
+        false,
+        "2026-07-20T13:00:00Z",
+    )
+    .await
+    .unwrap();
+    let mut tx = begin_immediate(&mut conn).await.unwrap();
+    for (field, value, expected) in [
+        (
+            TaskField::Title,
+            "final task",
+            RecurrenceMutationOutcome::Proceed,
+        ),
+        (
+            TaskField::Status,
+            "todo",
+            RecurrenceMutationOutcome::NoChange,
+        ),
+        (
+            TaskField::Status,
+            "active",
+            RecurrenceMutationOutcome::Proceed,
+        ),
+        (TaskField::Deleted, "0", RecurrenceMutationOutcome::Proceed),
+    ] {
+        assert_eq!(
+            route_recurrence_task_mutation(
+                &mut tx,
+                &workspace,
+                &created.task.id,
+                RecurrenceTaskMutation::Scalar { field, value },
+                "2026-07-22T12:00:00Z"
+            )
+            .await
+            .unwrap(),
+            expected
+        );
+    }
+    let error = route_recurrence_task_mutation(
+        &mut tx,
+        &workspace,
+        &created.task.id,
+        RecurrenceTaskMutation::Scalar {
+            field: TaskField::Deleted,
+            value: "1",
+        },
+        "2026-07-22T12:00:00Z",
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("complete or cancel the final occurrence")
+    );
+    assert_eq!(
+        route_recurrence_task_mutation(
+            &mut tx,
+            &workspace,
+            &created.task.id,
+            RecurrenceTaskMutation::Scalar {
+                field: TaskField::Status,
+                value: "canceled"
+            },
+            "2026-07-22T12:00:00Z"
+        )
+        .await
+        .unwrap(),
+        RecurrenceMutationOutcome::Handled
+    );
+    assert!(
+        load_projected_occurrence(&mut tx, &workspace.id, &created.series.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        load_occurrence_for_task(&mut tx, &workspace.id, &created.task.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .outcome,
+        Some(RecurrenceOutcome::Skipped)
+    );
+    assert_eq!(
+        route_recurrence_task_mutation(
+            &mut tx,
+            &workspace,
+            &created.task.id,
+            RecurrenceTaskMutation::Scalar {
+                field: TaskField::Status,
+                value: "canceled"
+            },
+            "2026-07-22T12:00:00Z"
+        )
+        .await
+        .unwrap(),
+        RecurrenceMutationOutcome::NoChange
+    );
+    for value in ["todo", "done"] {
+        assert!(
+            route_recurrence_task_mutation(
+                &mut tx,
+                &workspace,
+                &created.task.id,
+                RecurrenceTaskMutation::Scalar {
+                    field: TaskField::Status,
+                    value
+                },
+                "2026-07-22T12:00:00Z"
+            )
+            .await
+            .is_err()
+        );
+    }
+    tx.commit().await.unwrap();
+}

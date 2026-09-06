@@ -1,4 +1,5 @@
 use crate::ids::{ProjectId, WorkspaceId};
+use crate::operations::{RecurrenceMutationOutcome, RecurrenceTaskMutation};
 use anyhow::{Result, bail, ensure};
 use sqlx::SqliteConnection;
 use std::collections::BTreeSet;
@@ -255,16 +256,27 @@ pub(crate) async fn set_task_field(
     field: &str,
     value: &str,
 ) -> Result<bool> {
-    if let Some(changed) =
-        crate::operations::route_recurrence_task_field(conn, workspace, task_id, field, value)
-            .await?
-    {
-        return Ok(changed);
-    }
+    let mutation_at = now();
     let task_field = TaskField::parse_or_unknown(field)?;
+    match crate::operations::route_recurrence_task_mutation(
+        conn,
+        workspace,
+        task_id,
+        RecurrenceTaskMutation::Scalar {
+            field: task_field,
+            value,
+        },
+        &mutation_at,
+    )
+    .await?
+    {
+        RecurrenceMutationOutcome::Proceed => {}
+        RecurrenceMutationOutcome::NoChange => return Ok(false),
+        RecurrenceMutationOutcome::Handled => return Ok(true),
+    }
     if task_field.is_project() {
         let project = resolve_or_create_project_in_workspace(conn, &workspace.id, value).await?;
-        set_task_project(conn, workspace, task_id, &project).await
+        set_task_project_after_recurrence_gate(conn, workspace, task_id, &project).await
     } else {
         set_task_scalar_field(conn, workspace, task_id, task_field, value).await
     }
@@ -276,14 +288,26 @@ pub(crate) async fn set_task_project(
     task_id: &crate::ids::TaskId,
     project: &Project,
 ) -> Result<bool> {
-    crate::operations::route_recurrence_task_field(
+    crate::operations::route_recurrence_task_mutation(
         conn,
         workspace,
         task_id,
-        "project",
-        project.id.as_str(),
+        RecurrenceTaskMutation::Scalar {
+            field: TaskField::Project,
+            value: project.id.as_str(),
+        },
+        &now(),
     )
     .await?;
+    set_task_project_after_recurrence_gate(conn, workspace, task_id, project).await
+}
+
+async fn set_task_project_after_recurrence_gate(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    task_id: &crate::ids::TaskId,
+    project: &Project,
+) -> Result<bool> {
     let field = TaskField::Project.as_str();
     let current = current_task(conn, &workspace.id, task_id).await?;
     if current.project_id == project.id {
