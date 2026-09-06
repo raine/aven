@@ -1598,7 +1598,7 @@ impl App {
             }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('n') {
                 let title = state.title.text.clone();
-                let description = state.description.lines.join("\n");
+                let description = state.description.buffer.lines.join("\n");
                 if self.capture_add_task_state(state) {
                     self.submit_add_task_title_natural(title, description)
                         .await?;

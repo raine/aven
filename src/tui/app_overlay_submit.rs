@@ -225,7 +225,9 @@ impl App {
                     &series_id,
                     aven_core::operations::RecurrenceTemplateUpdate {
                         title: Some(title.to_string()),
-                        description: Some(state.description.lines.join("\n").trim().to_string()),
+                        description: Some(
+                            state.description.buffer.lines.join("\n").trim().to_string(),
+                        ),
                         project: state.selected_project.clone(),
                         priority: Some(state.priority.value().to_string()),
                         initial_status: Some(state.effective_status().to_string()),
@@ -247,7 +249,7 @@ impl App {
         if let Some(schedule) = recurrence_schedule {
             let mut draft = crate::tui::store::recurrence_draft(
                 title.to_string(),
-                state.description.lines.join("\n").trim().to_string(),
+                state.description.buffer.lines.join("\n").trim().to_string(),
                 state
                     .selected_project
                     .clone()
@@ -318,7 +320,7 @@ impl App {
         state.create_more = false;
         let draft = TaskDraft {
             title: title.to_string(),
-            description: state.description.lines.join("\n").trim().to_string(),
+            description: state.description.buffer.lines.join("\n").trim().to_string(),
             project: state.selected_project.clone(),
             status: state.effective_status().to_string(),
             priority: state.priority.value().to_string(),
@@ -405,9 +407,6 @@ impl App {
         value: String,
     ) -> Result<()> {
         match intent {
-            MultilineIntent::CustomMetadata => {
-                unreachable!("metadata editor submits its complete state")
-            }
             MultilineIntent::AddTaskDescription => {
                 if self.authoring.capture_add_task_fields(
                     self.authoring

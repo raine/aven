@@ -125,7 +125,7 @@ pub(crate) fn dispatch_overlay_mouse(
                 Rect::new(0, 0, terminal_size.width, terminal_size.height),
                 context.add_task_only,
                 crate::tui::ui::AddTaskLayout {
-                    description: &state.description.lines,
+                    description: &state.description.buffer.lines,
                     mode: &state.mode,
                     has_attachments: !state.attachments.is_empty(),
                     show_schedule_error: state.schedule_error.is_some()

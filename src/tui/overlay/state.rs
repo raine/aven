@@ -11,7 +11,7 @@ use crate::tui::store::{
     ConflictTarget, EpicChildTarget, EpicContext, TaskOrder, TaskQuery, TuiDatabaseStats,
 };
 use crate::tui::task_selection::TaskSelection;
-use crate::tui::text::{char_boundary_at_or_before, normalize_pasted_newlines};
+use crate::tui::text::normalize_pasted_newlines;
 use aven_core::query::{RecurrenceHistoryEntry, RecurrenceHistoryPage};
 use aven_core::recurrence::RecurrenceSeriesId;
 use chrono::{DateTime, Utc};
@@ -612,7 +612,6 @@ impl TextIntent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MultilineIntent {
-    CustomMetadata,
     AddTaskDescription,
     AddTaskNatural,
     AddNote {
@@ -1139,6 +1138,7 @@ impl AddTaskState {
         !self.title.text.trim().is_empty()
             || self
                 .description
+                .buffer
                 .lines
                 .iter()
                 .any(|line| !line.trim().is_empty())
@@ -1350,16 +1350,13 @@ pub(crate) struct MultilineInputState {
     pub(crate) intent: MultilineIntent,
     pub(crate) title: String,
     pub(crate) prompt: String,
-    pub(crate) lines: Vec<String>,
-    pub(crate) row: usize,
-    pub(crate) column: usize,
+    pub(crate) buffer: super::text_buffer::TextBuffer,
     pub(crate) mode: MultilineInputMode,
-    baseline: Vec<String>,
 }
 
 impl MultilineInputState {
     pub(crate) fn is_dirty(&self) -> bool {
-        self.lines != self.baseline
+        self.buffer.is_dirty()
     }
 
     pub(crate) fn should_confirm_discard(&self) -> bool {
@@ -1374,36 +1371,11 @@ impl MultilineInputState {
     }
 
     pub(crate) fn baseline_value(&self) -> String {
-        self.baseline.join("\n")
+        self.buffer.baseline_value()
     }
 
     pub(crate) fn insert_paste(&mut self, text: &str) {
-        if self.lines.is_empty() {
-            self.lines.push(String::new());
-        }
-        let row = self.row.min(self.lines.len() - 1);
-        let column = char_boundary_at_or_before(&self.lines[row], self.column);
-        self.row = row;
-        self.column = column;
-
-        let text = if matches!(self.intent, MultilineIntent::CustomMetadata) {
-            text.to_string()
-        } else {
-            normalize_pasted_newlines(text)
-        };
-        let mut pasted_lines = text.split('\n');
-        let first = pasted_lines.next().unwrap_or_default();
-        let rest = self.lines[row].split_off(column);
-        self.lines[row].push_str(first);
-
-        let mut insert_at = row;
-        for line in pasted_lines {
-            insert_at += 1;
-            self.lines.insert(insert_at, line.to_string());
-        }
-        self.lines[insert_at].push_str(&rest);
-        self.row = insert_at;
-        self.column = self.lines[insert_at].len().saturating_sub(rest.len());
+        self.buffer.insert_exact(&normalize_pasted_newlines(text));
     }
 
     pub(crate) fn blank(
@@ -1430,19 +1402,12 @@ impl MultilineInputState {
         value: String,
         baseline: String,
     ) -> Self {
-        let lines = value.split('\n').map(str::to_string).collect::<Vec<_>>();
-        let baseline = baseline.split('\n').map(str::to_string).collect::<Vec<_>>();
-        let row = lines.len() - 1;
-        let column = lines[row].len();
         Self {
             intent,
             title: title.into(),
             prompt: prompt.into(),
-            lines,
-            row,
-            column,
+            buffer: super::text_buffer::TextBuffer::from_value_with_baseline(value, baseline),
             mode: MultilineInputMode::Compose,
-            baseline,
         }
     }
 }
@@ -1808,7 +1773,10 @@ mod tests {
             panic!("expected multiline input");
         };
         assert_eq!(multiline.intent, MultilineIntent::AddTaskNatural);
-        assert_eq!(multiline.lines, vec!["one".to_string(), "two".to_string()]);
+        assert_eq!(
+            multiline.buffer.lines,
+            vec!["one".to_string(), "two".to_string()]
+        );
     }
 
     #[test]

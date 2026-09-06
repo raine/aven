@@ -1,6 +1,6 @@
 use crate::tui::app::App;
 use crate::tui::overlay::metadata::{MetadataEntry, MetadataFocus, MetadataState, MetadataTarget};
-use crate::tui::overlay::{LineEdit, MultilineInputState, MultilineIntent, OverlayState};
+use crate::tui::overlay::{LineEdit, OverlayState, TextBuffer};
 use crate::tui::task_selection::TaskSelection;
 use anyhow::Result;
 use aven_core::metadata::TaskMetadataValue;
@@ -69,13 +69,8 @@ impl App {
             );
             match result {
                 Ok(value) => {
-                    editor.input = MultilineInputState::from_value_with_baseline(
-                        MultilineIntent::CustomMetadata,
-                        "",
-                        "",
-                        value,
-                        editor.input.baseline_value(),
-                    );
+                    editor.input =
+                        TextBuffer::from_value_with_baseline(value, editor.input.baseline_value());
                     editor.focus = if editor.is_multiline() {
                         MetadataFocus::Save
                     } else {

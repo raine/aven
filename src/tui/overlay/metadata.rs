@@ -2,9 +2,7 @@ use aven_core::metadata::MetadataField;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Rect, Size};
 
-use super::{
-    LineEdit, MultilineInputState, MultilineIntent, OverlayOutcome, OverlayState, OverlaySubmit,
-};
+use super::{LineEdit, OverlayOutcome, OverlayState, OverlaySubmit, TextBuffer};
 use crate::tui::task_selection::TaskSelection;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,7 +28,7 @@ pub(crate) enum MetadataFocus {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MetadataEditor {
-    pub(crate) input: MultilineInputState,
+    pub(crate) input: TextBuffer,
     pub(crate) focus: MetadataFocus,
     pub(crate) discard: bool,
 }
@@ -129,12 +127,7 @@ impl MetadataState {
             return;
         };
         self.editor = Some(MetadataEditor {
-            input: MultilineInputState::from_value(
-                MultilineIntent::CustomMetadata,
-                "",
-                "",
-                entry.value.clone().unwrap_or_default(),
-            ),
+            input: TextBuffer::from_value(entry.value.clone().unwrap_or_default()),
             focus: MetadataFocus::Input,
             discard: false,
         });
@@ -149,7 +142,7 @@ impl MetadataState {
     pub(crate) fn paste(&mut self, text: &str) {
         if let Some(editor) = &mut self.editor {
             if !editor.discard && editor.focus == MetadataFocus::Input && !editor.is_multiline() {
-                editor.input.insert_paste(text);
+                editor.input.insert_exact(text);
                 if editor.is_multiline() {
                     editor.focus = MetadataFocus::ExternalEditor;
                 }
@@ -423,7 +416,7 @@ pub(crate) fn handle_key(mut state: Box<MetadataState>, key: KeyEvent) -> Overla
                     MetadataFocus::Save | MetadataFocus::Input => {}
                 },
                 _ if editor.focus == MetadataFocus::Input && !editor.is_multiline() => {
-                    super::multiline::edit_multiline_input(&mut editor.input, key);
+                    super::text_buffer::edit_text_buffer(&mut editor.input, key);
                     state.error = None;
                 }
                 _ => {}
@@ -525,12 +518,7 @@ mod tests {
     #[test]
     fn editor_mouse_uses_unicode_and_control_safe_viewport() {
         let mut editor = MetadataEditor {
-            input: MultilineInputState::from_value(
-                MultilineIntent::CustomMetadata,
-                "",
-                "",
-                "é\t中\nlast".to_string(),
-            ),
+            input: TextBuffer::from_value("é\t中\nlast".to_string()),
             focus: MetadataFocus::Save,
             discard: false,
         };
@@ -540,7 +528,7 @@ mod tests {
         assert_eq!(editor.input.column, "é\t".len());
         assert_eq!(editor.focus, MetadataFocus::Input);
         assert_eq!(metadata_display("é\t中"), "é�中");
-        editor.input.insert_paste("\r\n");
+        editor.input.insert_exact("\r\n");
         assert_eq!(editor.input.lines.join("\n"), "é\t\r\n中\nlast");
     }
 

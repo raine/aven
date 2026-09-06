@@ -231,7 +231,7 @@ pub(in crate::tui::ui) fn render(frame: &mut Frame, view: &MetadataView<'_>) {
 mod tests {
     use super::*;
     use crate::tui::overlay::metadata::{MetadataEditor, MetadataEntry};
-    use crate::tui::overlay::{LineEdit, MultilineInputState, MultilineIntent};
+    use crate::tui::overlay::{LineEdit, TextBuffer};
     use ratatui::{Terminal, backend::TestBackend};
 
     fn entry(key: &str, value: Option<&str>) -> MetadataEntry {
@@ -287,12 +287,7 @@ mod tests {
         let entries = [entry("owner", Some("Alex"))];
         let filter = LineEdit::blank();
         let editor = MetadataEditor {
-            input: MultilineInputState::from_value(
-                MultilineIntent::CustomMetadata,
-                "",
-                "",
-                "Alex".to_string(),
-            ),
+            input: TextBuffer::from_value("Alex".to_string()),
             focus: MetadataFocus::Input,
             discard: false,
         };
@@ -339,12 +334,7 @@ mod tests {
         let entries = [entry("owner", None)];
         let filter = LineEdit::blank();
         let editor = MetadataEditor {
-            input: MultilineInputState::from_value(
-                MultilineIntent::CustomMetadata,
-                "",
-                "",
-                "é中".to_string(),
-            ),
+            input: TextBuffer::from_value("é中".to_string()),
             focus: MetadataFocus::Input,
             discard: false,
         };
@@ -375,12 +365,7 @@ mod tests {
         let filter = LineEdit::blank();
         for value in ["", " \t", "\n"] {
             let editor = MetadataEditor {
-                input: MultilineInputState::from_value(
-                    MultilineIntent::CustomMetadata,
-                    "",
-                    "",
-                    value.to_string(),
-                ),
+                input: TextBuffer::from_value(value.to_string()),
                 focus: MetadataFocus::Save,
                 discard: false,
             };
@@ -418,12 +403,7 @@ mod tests {
         let filter = LineEdit::blank();
         for count in [1, 6, 20] {
             let editor = MetadataEditor {
-                input: MultilineInputState::from_value(
-                    MultilineIntent::CustomMetadata,
-                    "",
-                    "",
-                    vec!["value"; count].join("\n"),
-                ),
+                input: TextBuffer::from_value(vec!["value"; count].join("\n")),
                 focus: MetadataFocus::Save,
                 discard: false,
             };

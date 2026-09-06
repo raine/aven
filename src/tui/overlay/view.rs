@@ -256,9 +256,7 @@ pub(crate) enum MultilineInputKind {
 impl From<&MultilineIntent> for MultilineInputKind {
     fn from(intent: &MultilineIntent) -> Self {
         match intent {
-            MultilineIntent::CustomMetadata | MultilineIntent::AddTaskDescription => {
-                Self::AddTaskDescription
-            }
+            MultilineIntent::AddTaskDescription => Self::AddTaskDescription,
             MultilineIntent::AddTaskNatural => Self::AddTaskNatural,
             MultilineIntent::AddNote { .. } => Self::AddNote,
             MultilineIntent::EditNote { .. } => Self::EditNote,
@@ -424,9 +422,9 @@ impl<'a> MultilineInputView<'a> {
             kind: (&state.intent).into(),
             title: state.title.clone(),
             prompt: state.prompt.clone(),
-            lines: &state.lines,
-            row: state.row,
-            column: state.column,
+            lines: &state.buffer.lines,
+            row: state.buffer.row,
+            column: state.buffer.column,
             mode: state.mode,
         }
     }
@@ -530,9 +528,9 @@ impl<'a> OverlayView<'a> {
             AddTask(state) => Self::AddTask(Box::new(AddTaskView {
                 title: state.title.as_str().to_string(),
                 title_cursor: state.title.cursor,
-                description: &state.description.lines,
-                description_row: state.description.row,
-                description_column: state.description.column,
+                description: &state.description.buffer.lines,
+                description_row: state.description.buffer.row,
+                description_column: state.description.buffer.column,
                 focus: state.focus,
                 project: state.project.clone(),
                 status: state.effective_status().to_string(),

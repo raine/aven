@@ -143,7 +143,7 @@ impl App {
     pub(super) fn capture_add_task_state(&mut self, state: &AddTaskState) -> bool {
         let captured = self.authoring.capture_add_task_fields(
             state.title.text.clone(),
-            state.description.lines.join("\n"),
+            state.description.buffer.lines.join("\n"),
             state.focus,
         );
         if captured {

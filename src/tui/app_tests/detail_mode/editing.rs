@@ -1260,7 +1260,7 @@ async fn populated_add_note_from_detail_returns_after_confirmed_discard() {
         &app.overlay,
         Some(OverlayState::MultilineInput(state))
             if state.mode == MultilineInputMode::ConfirmDiscard
-                && state.lines == ["detail draft"]
+                && state.buffer.lines == ["detail draft"]
     ));
     assert!(app.detail.is_active());
 
@@ -1269,7 +1269,7 @@ async fn populated_add_note_from_detail_returns_after_confirmed_discard() {
         &app.overlay,
         Some(OverlayState::MultilineInput(state))
             if state.mode == MultilineInputMode::Compose
-                && state.lines == ["detail draft"]
+                && state.buffer.lines == ["detail draft"]
     ));
     assert!(app.detail.is_active());
 

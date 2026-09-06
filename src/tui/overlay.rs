@@ -7,6 +7,7 @@ mod picker;
 mod scroll;
 mod state;
 mod tag_combobox;
+mod text_buffer;
 mod text_input;
 mod view;
 
@@ -39,6 +40,7 @@ pub(crate) use state::{
 #[cfg(test)]
 pub(crate) use state::{ConfirmState, TextInputState};
 
+pub(crate) use text_buffer::TextBuffer;
 pub(crate) use text_input::LineEdit;
 #[cfg(test)]
 pub(crate) use view::{AddTaskAttachmentsView, TagComboboxKind};

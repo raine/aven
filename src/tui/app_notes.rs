@@ -15,7 +15,7 @@ impl App {
         let prompt = state.prompt.clone();
         let baseline = state.baseline_value();
         match edit_text_externally(
-            state.lines.join("\n"),
+            state.buffer.lines.join("\n"),
             "note.md",
             self.terminal_mouse_capture,
         ) {

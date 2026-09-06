@@ -375,7 +375,8 @@ pub(crate) fn handle_generic_overlay_key(
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
                 KeyCode::Up
-                    if state.focus == AddTaskStep::Description && state.description.row == 0 =>
+                    if state.focus == AddTaskStep::Description
+                        && state.description.buffer.row == 0 =>
                 {
                     state.focus = AddTaskStep::Title;
                     OverlayOutcome::None(OverlayState::AddTask(state))
@@ -478,7 +479,7 @@ pub(crate) fn handle_generic_overlay_key(
             if (key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL))
                 || (key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::CONTROL))
             {
-                let value = state.lines.join("\n");
+                let value = state.buffer.lines.join("\n");
                 return OverlayOutcome::Submitted(OverlaySubmit::Multiline {
                     intent: state.intent,
                     value,
@@ -1040,6 +1041,40 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn multiline_adapters_normalize_paste_without_changing_baseline_or_mode() {
+        for intent in [
+            add_note_intent(),
+            MultilineIntent::EditNote {
+                task_id: crate::test_support::task_id("task-1"),
+                display_ref: "APP-1234".to_string(),
+                note_id: "note-1".to_string(),
+            },
+            description_intent(),
+            manual_conflict_description_intent(),
+            MultilineIntent::AddTaskNatural,
+            MultilineIntent::AddTaskDescription,
+        ] {
+            let mut state = MultilineInputState::from_value_with_baseline(
+                intent.clone(),
+                "Title",
+                "Prompt",
+                "é中".to_string(),
+                "initial\r\n".to_string(),
+            );
+            state.buffer.column = 1;
+            state.insert_paste("a\r\nb\rc\n");
+            assert_eq!(state.buffer.lines.join("\n"), "a\nb\nc\né中");
+            assert_eq!((state.buffer.row, state.buffer.column), (3, 0));
+            assert_eq!(state.baseline_value(), "initial\r\n");
+            assert!(state.is_dirty());
+            assert_eq!(state.mode, MultilineInputMode::Compose);
+            assert_eq!(state.intent, intent);
+            assert_eq!(state.title, "Title");
+            assert_eq!(state.prompt, "Prompt");
+        }
+    }
+
     fn add_note_intent() -> MultilineIntent {
         MultilineIntent::AddNote {
             task_id: crate::test_support::task_id("task-1"),
@@ -1309,11 +1344,11 @@ mod tests {
             panic!("expected add task state");
         };
         assert_eq!(
-            state.description.lines,
+            state.description.buffer.lines,
             vec!["one".to_string(), "two".to_string()]
         );
-        assert_eq!(state.description.row, 1);
-        assert_eq!(state.description.column, 3);
+        assert_eq!(state.description.buffer.row, 1);
+        assert_eq!(state.description.buffer.column, 3);
     }
 
     #[test]
@@ -1618,7 +1653,7 @@ mod tests {
             panic!("expected composer");
         };
         assert_eq!(
-            state.description.lines,
+            state.description.buffer.lines,
             vec!["".to_string(), "".to_string()]
         );
     }
@@ -1834,11 +1869,14 @@ mod tests {
     fn add_task_help_returns_without_changing_text_cursors() {
         let mut state = add_task_state(AddTaskStep::Description);
         state.title = LineEdit::new("Draft".to_string());
-        state.description.lines = vec!["first".to_string(), "second".to_string()];
-        state.description.row = 1;
-        state.description.column = 3;
+        state.description.buffer.lines = vec!["first".to_string(), "second".to_string()];
+        state.description.buffer.row = 1;
+        state.description.buffer.column = 3;
         let title_cursor = state.title.cursor;
-        let description_cursor = (state.description.row, state.description.column);
+        let description_cursor = (
+            state.description.buffer.row,
+            state.description.buffer.column,
+        );
         let OverlayOutcome::None(OverlayState::AddTask(help)) =
             handle(key(KeyCode::F(1)), OverlayState::AddTask(state))
         else {
@@ -1851,7 +1889,10 @@ mod tests {
         };
         assert_eq!(state.title.cursor, title_cursor);
         assert_eq!(
-            (state.description.row, state.description.column),
+            (
+                state.description.buffer.row,
+                state.description.buffer.column
+            ),
             description_cursor
         );
     }
@@ -1893,8 +1934,8 @@ mod tests {
     fn populated_add_note_requires_discard_confirmation() {
         let mut state = MultilineInputState::blank(add_note_intent(), "Add note", "note body:");
         state.insert_paste(" first\nsecond ");
-        state.row = 0;
-        state.column = 3;
+        state.buffer.row = 0;
+        state.buffer.column = 3;
 
         let OverlayOutcome::None(OverlayState::MultilineInput(state)) =
             handle(key(KeyCode::Esc), OverlayState::MultilineInput(state))
@@ -1902,8 +1943,8 @@ mod tests {
             panic!("expected discard confirmation");
         };
         assert_eq!(state.mode, MultilineInputMode::ConfirmDiscard);
-        assert_eq!(state.lines, vec![" first", "second "]);
-        assert_eq!((state.row, state.column), (0, 3));
+        assert_eq!(state.buffer.lines, vec![" first", "second "]);
+        assert_eq!((state.buffer.row, state.buffer.column), (0, 3));
     }
 
     #[test]
@@ -1918,7 +1959,7 @@ mod tests {
     #[test]
     fn changed_blank_add_note_requires_discard_confirmation() {
         let mut state = MultilineInputState::blank(add_note_intent(), "Add note", "");
-        state.lines = vec!["   ".to_string()];
+        state.buffer.lines = vec!["   ".to_string()];
         assert!(matches!(
             handle(key(KeyCode::Esc), OverlayState::MultilineInput(state)),
             OverlayOutcome::None(OverlayState::MultilineInput(MultilineInputState {
@@ -1971,8 +2012,8 @@ mod tests {
                 "",
                 "first\nsecond".to_string(),
             );
-            state.row = 0;
-            state.column = 2;
+            state.buffer.row = 0;
+            state.buffer.column = 2;
             state.mode = MultilineInputMode::ConfirmDiscard;
             let OverlayOutcome::None(OverlayState::MultilineInput(state)) =
                 handle(key(code), OverlayState::MultilineInput(state))
@@ -1980,8 +2021,8 @@ mod tests {
                 panic!("expected composer");
             };
             assert_eq!(state.mode, MultilineInputMode::Compose);
-            assert_eq!(state.lines, vec!["first", "second"]);
-            assert_eq!((state.row, state.column), (0, 2));
+            assert_eq!(state.buffer.lines, vec!["first", "second"]);
+            assert_eq!((state.buffer.row, state.buffer.column), (0, 2));
         }
     }
 
@@ -2001,7 +2042,7 @@ mod tests {
             panic!("expected composer");
         };
         assert_eq!(state.mode, MultilineInputMode::Compose);
-        assert_eq!(state.lines, vec!["draft"]);
+        assert_eq!(state.buffer.lines, vec!["draft"]);
     }
 
     #[test]
