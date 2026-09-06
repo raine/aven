@@ -349,8 +349,69 @@ async fn sidebar_sections_collapse_independently_and_headers_expand_with_mouse()
                 .iter()
                 .map(|cell| cell.symbol())
                 .collect::<String>()
-                .contains("▾ VIEWS")
+                .contains(&format!(
+                    " VIEWS{}▾ ",
+                    " ".repeat(if width == 90 { 24 } else { 17 })
+                ))
         );
+    }
+}
+
+#[tokio::test]
+async fn sidebar_header_indicators_render_at_right_with_whole_row_targets() {
+    use crate::tui::store::SidebarSection;
+    use crate::tui::ui::sidebar_click_at_for;
+    use ratatui::layout::Rect;
+
+    for width in [90, 140] {
+        let mut app = test_app().await;
+        app.list.focus_sidebar();
+        for section in [
+            SidebarSection::Views,
+            SidebarSection::Scope,
+            SidebarSection::Projects,
+        ] {
+            let target = SidebarEntryTarget::Section(section);
+            for collapsed in [false, true] {
+                app.list.select_sidebar_target(Some(&target));
+                let buffer = render_app_buffer(&mut app, width, 40);
+                let terminal = Rect::new(0, 0, width, 40);
+                let layout = crate::tui::ui::sidebar_layout(terminal, Focus::Sidebar).unwrap();
+                let index = app.list.selected_sidebar().unwrap();
+                let entry = &app.list.sidebar_entries()[index];
+                let row = layout.content.y + (index - app.list.sidebar_state().offset()) as u16;
+                let text: String = (layout.content.x..layout.content.right())
+                    .map(|column| buffer[(column, row)].symbol())
+                    .collect();
+                assert!(text.starts_with(&format!(" {} ", entry.label.to_uppercase())));
+                assert_eq!(
+                    buffer[(layout.content.right() - 2, row)].symbol(),
+                    if collapsed { "▸" } else { "▾" }
+                );
+                for column in layout.content.x..layout.content.right() {
+                    assert_eq!(
+                        sidebar_click_at_for(
+                            app.list.sidebar_entries(),
+                            app.list.sidebar_state(),
+                            Focus::Sidebar,
+                            true,
+                            terminal,
+                            column,
+                            row,
+                        )
+                        .unwrap()
+                        .target,
+                        target
+                    );
+                }
+                app.dispatch_mouse(
+                    click_at(layout.content.right() - 2, row),
+                    (width, 40).into(),
+                )
+                .await
+                .unwrap();
+            }
+        }
     }
 }
 
@@ -416,7 +477,7 @@ async fn collapsed_sidebar_survives_refresh_view_and_project_scope_changes() {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>()
-            .contains("▸ PROJECTS")
+            .contains(&format!(" PROJECTS{}▸ ", " ".repeat(14)))
     );
 }
 

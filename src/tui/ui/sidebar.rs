@@ -176,24 +176,9 @@ pub(super) fn render_sidebar(
                 if entry.label.is_empty() || entry.label == "Smart Views" {
                     return ListItem::new(Line::from(""));
                 }
-                return ListItem::new(
-                    Line::from(format!(
-                        " {} {} ",
-                        match entry.target {
-                            Some(SidebarEntryTarget::Section(section))
-                                if list.section_collapsed(section) =>
-                                "▸",
-                            _ => "▾",
-                        },
-                        entry.label.to_uppercase()
-                    ))
-                    .style(
-                        Style::new()
-                            .fg(FG_DIM)
-                            .bg(BG_ALT)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                );
+                let collapsed = matches!(entry.target,
+                    Some(SidebarEntryTarget::Section(section)) if list.section_collapsed(section));
+                return ListItem::new(sidebar_section_line(&entry.label, collapsed, content_width));
             }
             let marker = sidebar_icon(entry);
             let label = sidebar_label(entry);
@@ -263,6 +248,23 @@ pub(super) fn render_sidebar(
         )
         .highlight_style(highlight_style);
     frame.render_stateful_widget(sidebar, area, list.sidebar_state_mut());
+}
+
+fn sidebar_section_line(label: &str, collapsed: bool, width: usize) -> Line<'static> {
+    let indicator = if collapsed { "▸" } else { "▾" };
+    let text = if width < 3 {
+        format!("{indicator} ").chars().take(width).collect()
+    } else {
+        let label = truncate_width(&label.to_uppercase(), width.saturating_sub(4));
+        let spacer = " ".repeat(width - label.width() - 3);
+        format!(" {label}{spacer}{indicator} ")
+    };
+    Line::from(text).style(
+        Style::new()
+            .fg(FG_DIM)
+            .bg(BG_ALT)
+            .add_modifier(Modifier::BOLD),
+    )
 }
 
 fn badge(count: i64, active: bool) -> Span<'static> {
@@ -398,6 +400,32 @@ fn filter_item(icon: &str, label: &str, count: i64, color: Color, width: u16) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sidebar_section_indicators_are_right_aligned_without_overflow() {
+        for label in ["Views", "Scope", "Projects"] {
+            for collapsed in [false, true] {
+                for width in 0..=34 {
+                    let line = sidebar_section_line(label, collapsed, width);
+                    let text = line.to_string();
+                    assert_eq!(line.width(), width);
+                    assert_eq!(line.style.fg, Some(FG_DIM));
+                    assert_eq!(line.style.bg, Some(BG_ALT));
+                    assert!(line.style.add_modifier.contains(Modifier::BOLD));
+                    if width > 0 {
+                        let indicator_column = width.saturating_sub(2);
+                        assert_eq!(
+                            text.chars().nth(indicator_column),
+                            Some(if collapsed { '▸' } else { '▾' })
+                        );
+                    }
+                    if width >= label.len() + 4 {
+                        assert!(text.starts_with(&format!(" {} ", label.to_uppercase())));
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn sidebar_icon_cell_uses_fixed_display_width() {
