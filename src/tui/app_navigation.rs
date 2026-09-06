@@ -315,6 +315,13 @@ impl App {
             Some(crate::tui::store::SidebarEntryTarget::Section(section)) => {
                 self.list
                     .toggle_section(section, &self.store.sidebar_entries);
+                if let Err(error) = self
+                    .store
+                    .set_sidebar_section_collapsed(section, self.list.section_collapsed(section))
+                    .await
+                {
+                    self.set_warning(format!("could not save sidebar state: {error}"));
+                }
                 return Ok(());
             }
             Some(crate::tui::store::SidebarEntryTarget::View(view)) => self.show_view(view).await?,

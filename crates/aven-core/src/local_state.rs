@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use anyhow::Result;
 
 use crate::db::{Database, begin_immediate, get_meta, set_meta};
@@ -53,4 +55,100 @@ impl Database {
 
 fn marker_version(value: Option<&str>) -> Option<u32> {
     value?.trim().parse().ok()
+}
+
+/// Database-local sidebar preferences shared across workspaces and projects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SidebarSection {
+    Views,
+    Scope,
+    Projects,
+}
+
+impl SidebarSection {
+    fn meta_key(self) -> &'static str {
+        match self {
+            Self::Views => "tui_sidebar_views_collapsed",
+            Self::Scope => "tui_sidebar_scope_collapsed",
+            Self::Projects => "tui_sidebar_projects_collapsed",
+        }
+    }
+}
+
+impl Database {
+    pub async fn collapsed_sidebar_sections(&self) -> Result<BTreeSet<SidebarSection>> {
+        let mut conn = self.acquire_reader().await?;
+        let mut sections = BTreeSet::new();
+        for section in [
+            SidebarSection::Views,
+            SidebarSection::Scope,
+            SidebarSection::Projects,
+        ] {
+            if get_meta(&mut conn, section.meta_key())
+                .await?
+                .as_deref()
+                .map(str::trim)
+                == Some("true")
+            {
+                sections.insert(section);
+            }
+        }
+        Ok(sections)
+    }
+
+    pub async fn set_sidebar_section_collapsed(
+        &self,
+        section: SidebarSection,
+        collapsed: bool,
+    ) -> Result<()> {
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        set_meta(
+            &mut tx,
+            section.meta_key(),
+            if collapsed { "true" } else { "false" },
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn sidebar_preferences_are_local_and_invalid_values_default_to_expanded() {
+        let database = Database::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let before: i64 = {
+            let mut conn = database.acquire_reader().await.unwrap();
+            sqlx::query_scalar("SELECT COUNT(*) FROM changes")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap()
+        };
+        database
+            .set_sidebar_section_collapsed(SidebarSection::Scope, true)
+            .await
+            .unwrap();
+        {
+            let mut conn = database.acquire_writer().await.unwrap();
+            set_meta(&mut conn, SidebarSection::Views.meta_key(), "invalid")
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            database.collapsed_sidebar_sections().await.unwrap(),
+            BTreeSet::from([SidebarSection::Scope])
+        );
+        let mut conn = database.acquire_reader().await.unwrap();
+        let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM changes")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(before, after);
+    }
 }

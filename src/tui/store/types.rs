@@ -585,12 +585,7 @@ pub(crate) enum TaskScopeTarget {
     Project(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum SidebarSection {
-    Views,
-    Scope,
-    Projects,
-}
+pub(crate) use aven_core::local_state::SidebarSection;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SidebarEntryTarget {

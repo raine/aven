@@ -66,8 +66,9 @@ options. Use `Up` and `Down` to move, `Enter` to choose, and `Esc` to cancel.
 The header and sidebar show the active workspace, scope, view, and filters.
 Click **Views**, **Scope**, or **Projects** to independently collapse or expand
 that section. The headings remain visible, with ▾ for expanded and ▸ for
-collapsed. All sections start expanded; collapse state lasts for the session,
-including refreshes and view or scope changes. Collapsing Projects preserves
+collapsed. Sections default to expanded. Collapse preferences persist across application
+restarts in the local database, shared across its workspaces and projects. They
+are not synced. Refreshes and view or scope changes preserve these preferences. Collapsing Projects preserves
 the selected project scope. Focus a heading with sidebar navigation and press
 `Enter` to toggle it with the keyboard.
 

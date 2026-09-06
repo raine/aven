@@ -271,6 +271,7 @@ impl App {
         view_state: TaskViewState,
     ) -> Result<Self> {
         Self::new_with_store(TuiStore::new_with_view_state(database, workspace, view_state).await?)
+            .await
     }
 
     pub(crate) async fn new_with_view_state_and_config(
@@ -283,15 +284,16 @@ impl App {
             TuiStore::new_with_view_state_and_config(database, workspace, view_state, config)
                 .await?,
         )
+        .await
     }
 
     #[cfg(test)]
     pub(crate) async fn new_for_tests(database: Database) -> Result<Self> {
         let store = TuiStore::new(database, crate::workspaces::Workspace::default()).await?;
-        Self::new_with_store(store)
+        Self::new_with_store(store).await
     }
 
-    fn new_with_store(store: TuiStore) -> Result<Self> {
+    async fn new_with_store(store: TuiStore) -> Result<Self> {
         let config = store.config().clone();
         let origin_cwd =
             std::env::current_dir().context("could not determine current directory")?;
@@ -345,6 +347,10 @@ impl App {
             _test_database_dir: None,
         };
         app.set_config(config);
+        match app.store.collapsed_sidebar_sections().await {
+            Ok(sections) => app.list.restore_collapsed_sections(sections),
+            Err(error) => app.set_warning(format!("could not load sidebar state: {error}")),
+        }
         app.restore_sidebar_selection();
         Ok(app)
     }

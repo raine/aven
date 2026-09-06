@@ -202,6 +202,10 @@ impl ListSurface {
         &self.sidebar_entries
     }
 
+    pub(crate) fn restore_collapsed_sections(&mut self, sections: BTreeSet<SidebarSection>) {
+        self.collapsed_sections = sections;
+    }
+
     pub(crate) fn section_collapsed(&self, section: SidebarSection) -> bool {
         self.collapsed_sections.contains(&section)
     }

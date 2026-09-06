@@ -589,3 +589,104 @@ async fn sidebar_heading_command_keeps_captured_section_identity() {
     assert!(app.list.section_collapsed(SidebarSection::Views));
     assert!(!app.list.section_collapsed(SidebarSection::Projects));
 }
+
+#[tokio::test]
+async fn sidebar_sections_restore_on_reopen_and_expansion_persists() {
+    use crate::tui::store::SidebarSection::{Projects, Scope, Views};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sidebar.db");
+    let open = async || {
+        App::new_for_tests(aven_core::db::Database::open(&path).await.unwrap())
+            .await
+            .unwrap()
+    };
+    let mut app = open().await;
+    for section in [Views, Scope, Projects] {
+        assert!(!app.list.section_collapsed(section));
+    }
+    for section in [Views, Projects] {
+        app.apply_sidebar_target(Some(SidebarEntryTarget::Section(section)))
+            .await
+            .unwrap();
+    }
+    drop(app);
+    let mut app = open().await;
+    assert!(app.list.section_collapsed(Views));
+    assert!(!app.list.section_collapsed(Scope));
+    assert!(app.list.section_collapsed(Projects));
+    assert!(
+        !app.list
+            .sidebar_entries()
+            .iter()
+            .any(|entry| matches!(entry.target, Some(SidebarEntryTarget::View(_))))
+    );
+    app.show_view(TaskQuery::Ready).await.unwrap();
+    app.refresh().await.unwrap();
+    assert!(app.list.section_collapsed(Views));
+    for section in [Views, Scope] {
+        app.apply_sidebar_target(Some(SidebarEntryTarget::Section(section)))
+            .await
+            .unwrap();
+    }
+    drop(app);
+    let app = open().await;
+    assert!(!app.list.section_collapsed(Views));
+    assert!(app.list.section_collapsed(Scope));
+    assert!(app.list.section_collapsed(Projects));
+    assert!(app.list.sidebar_entries().iter().any(|entry| matches!(
+        entry.target,
+        Some(SidebarEntryTarget::View(TaskQuery::Ready))
+    )));
+}
+
+#[tokio::test]
+async fn sidebar_write_failure_warns_and_keeps_runtime_choice() {
+    use crate::tui::store::SidebarSection;
+    let mut app = test_app().await;
+    let pool = crate::test_support::open_db(
+        &app._test_database_dir
+            .as_ref()
+            .unwrap()
+            .path()
+            .join("test.db"),
+    )
+    .await
+    .unwrap();
+    sqlx::query("CREATE TRIGGER reject_sidebar BEFORE INSERT ON meta WHEN NEW.key LIKE 'tui_sidebar_%' BEGIN SELECT RAISE(FAIL, 'sidebar write blocked'); END")
+        .execute(&pool).await.unwrap();
+    app.apply_sidebar_target(Some(SidebarEntryTarget::Section(SidebarSection::Views)))
+        .await
+        .unwrap();
+    assert!(app.list.section_collapsed(SidebarSection::Views));
+    assert!(
+        toast_message(&app)
+            .unwrap()
+            .contains("could not save sidebar state")
+    );
+}
+
+#[tokio::test]
+async fn sidebar_load_failure_warns_and_defaults_to_expanded() {
+    use crate::tui::store::SidebarSection;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sidebar.db");
+    let database = aven_core::db::Database::open(&path).await.unwrap();
+    let store = TuiStore::new(database, crate::workspaces::Workspace::default())
+        .await
+        .unwrap();
+    let pool = crate::test_support::open_db(&path).await.unwrap();
+    sqlx::query("DROP TABLE meta").execute(&pool).await.unwrap();
+    let app = App::new_with_store(store).await.unwrap();
+    assert!(
+        toast_message(&app)
+            .unwrap()
+            .contains("could not load sidebar state")
+    );
+    for section in [
+        SidebarSection::Views,
+        SidebarSection::Scope,
+        SidebarSection::Projects,
+    ] {
+        assert!(!app.list.section_collapsed(section));
+    }
+}
