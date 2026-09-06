@@ -33,6 +33,80 @@ mod tests {
     }
 
     #[test]
+    fn shared_keys_match_single_line_for_unicode_and_invalid_byte_cursors() {
+        use crate::tui::overlay::text_input::LineEdit;
+
+        let mut keys = vec![
+            key(KeyCode::Left),
+            key(KeyCode::Right),
+            key(KeyCode::Home),
+            key(KeyCode::End),
+            key(KeyCode::Backspace),
+            key(KeyCode::Delete),
+            key(KeyCode::Char('界')),
+            key(KeyCode::Char('\u{301}')),
+            KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT),
+            key(KeyCode::Tab),
+        ];
+        keys.extend("bfaehdkuwx".chars().map(|ch| ctrl(KeyCode::Char(ch))));
+        for text in ["", "ascii words", "中界 e\u{301} 文", "  中  界  "] {
+            for cursor in (0..=text.len() + 1).chain([usize::MAX]) {
+                for &key in &keys {
+                    let mut single = LineEdit::new(text.to_string());
+                    single.cursor = cursor;
+                    let mut multi = state_with_lines(vec![text.to_string()], 0, cursor);
+                    single.handle_key(key);
+                    edit_multiline_input(&mut multi, key);
+                    assert_eq!(multi.buffer.lines, vec![single.text.clone()]);
+                    assert_eq!(multi.buffer.column, single.cursor);
+                    assert!(single.text.is_char_boundary(single.cursor));
+                    assert_eq!(multi.buffer.is_dirty(), single.text != text);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unicode_line_boundaries_keep_control_deletion_local() {
+        for (code, row, column) in [('h', 1, 0), ('d', 0, "中".len())] {
+            let mut state = state_with_lines(vec!["中".into(), "e\u{301}".into()], row, column);
+            edit_multiline_input(&mut state, ctrl(KeyCode::Char(code)));
+            assert_eq!(state.buffer.lines, vec!["中", "e\u{301}"]);
+            assert_eq!((state.buffer.row, state.buffer.column), (row, column));
+            assert!(!state.buffer.is_dirty());
+            let code = if code == 'h' {
+                KeyCode::Backspace
+            } else {
+                KeyCode::Delete
+            };
+            edit_multiline_input(&mut state, key(code));
+            assert_eq!(state.buffer.lines, vec!["中e\u{301}"]);
+            assert_eq!((state.buffer.row, state.buffer.column), (0, "中".len()));
+        }
+    }
+
+    #[test]
+    fn word_deletion_crosses_empty_lines_and_preserves_unicode_suffix() {
+        let mut state = state_with_lines(vec!["中 界 ".into(), "".into(), "e\u{301}".into()], 2, 0);
+        edit_multiline_input(&mut state, ctrl(KeyCode::Char('w')));
+        assert_eq!(state.buffer.lines, vec!["中 e\u{301}"]);
+        assert_eq!((state.buffer.row, state.buffer.column), (0, "中 ".len()));
+    }
+
+    #[test]
+    fn newline_split_normalizes_unicode_cursor_and_vertical_navigation() {
+        let mut state = state_with_lines(vec!["中e\u{301}".into()], 0, 2);
+        edit_multiline_input(&mut state, key(KeyCode::Enter));
+        assert_eq!(state.buffer.lines, vec!["", "中e\u{301}"]);
+        assert_eq!((state.buffer.row, state.buffer.column), (1, 0));
+        edit_multiline_input(&mut state, key(KeyCode::End));
+        edit_multiline_input(&mut state, key(KeyCode::Up));
+        assert_eq!((state.buffer.row, state.buffer.column), (0, 0));
+        edit_multiline_input(&mut state, key(KeyCode::Left));
+        assert_eq!((state.buffer.row, state.buffer.column), (0, 0));
+    }
+
+    #[test]
     fn multiline_input_splits_and_merges_lines() {
         let mut state = state_with_lines(vec!["ab".to_string()], 0, 1);
         edit_multiline_input(&mut state, key(KeyCode::Enter));
