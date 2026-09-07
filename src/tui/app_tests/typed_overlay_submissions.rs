@@ -150,6 +150,79 @@ async fn search_selected_blocker_adds_dependency() {
 }
 
 #[tokio::test]
+async fn navigate_search_result_commits_typed_query() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Needle one")).await;
+    let second = create_and_select_task(&mut app, test_task_draft("Needle two")).await;
+    let second_id = app.store.tasks[second].task.id.clone();
+
+    app.begin_search();
+    type_chars(&mut app, "needle").await;
+    settle_search_preview(&mut app).await;
+    let Some(OverlayState::Search(state)) = &mut app.overlay else {
+        panic!("expected search overlay");
+    };
+    state.selected = state
+        .results
+        .iter()
+        .position(|result| result.task_id == second_id)
+        .expect("picked task in preview results");
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert!(app.overlay.is_none());
+    assert!(app.detail.is_active());
+    assert_eq!(app.store.view_state.query, TaskQuery::Search);
+    assert!(matches!(
+        &app.store.view_state.projection_origin,
+        crate::tui::store::TaskProjectionOrigin::Search { query, .. } if query == "needle"
+    ));
+    assert_eq!(app.store.tasks.len(), 2);
+    let selected = app.list.selected_task().unwrap();
+    assert_eq!(app.store.tasks[selected].task.id, second_id);
+}
+
+#[tokio::test]
+async fn navigate_search_result_missing_from_results_opens_exact_task() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Alpha target")).await;
+    let other = create_and_select_task(&mut app, test_task_draft("Beta other")).await;
+    let other_id = app.store.tasks[other].task.id.clone();
+
+    app.overlay = Some(OverlayState::Search(SearchState {
+        input: LineEdit::new("alpha".to_string()),
+        results: vec![crate::tui::overlay::SearchResultItem {
+            task_id: other_id.clone(),
+            display_ref: "BETA-REF".to_string(),
+            title: "Beta other".to_string(),
+            description: String::new(),
+            project_key: String::new(),
+            status: "inbox".to_string(),
+            priority: "none".to_string(),
+            created_at: String::new(),
+            labels: Vec::new(),
+            matched_field: crate::query::SearchMatchedField::Title,
+            snippet: None,
+            score: 0,
+            deleted: false,
+            is_epic: false,
+            unavailable_reason: None,
+            create_new: false,
+        }],
+        selected: 0,
+        total_matches: 1,
+        results_query: Some("alpha".to_string()),
+        intent: SearchIntent::Navigate,
+    }));
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert!(app.overlay.is_none());
+    assert!(app.detail.is_active());
+    assert_eq!(app.store.tasks.len(), 1);
+    assert_eq!(app.store.tasks[0].task.id, other_id);
+    assert_eq!(app.list.selected_task(), Some(0));
+}
+
+#[tokio::test]
 async fn add_dependency_search_tab_keeps_picker_context() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("Blocked")).await;

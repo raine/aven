@@ -268,10 +268,16 @@ impl App {
     ) -> Result<()> {
         match intent {
             SearchIntent::Navigate => {
-                self.accept_search_input(result.display_ref.clone()).await?;
-                self.select_task_by_id(&result.task_id);
-                self.detail = crate::tui::detail_session::DetailSession::open(0);
-                self.show_detail(0);
+                self.accept_search_input(input).await?;
+                if self.select_task_by_id(&result.task_id) {
+                    self.detail = crate::tui::detail_session::DetailSession::open(0);
+                    self.show_detail(0);
+                } else {
+                    // The picked result can be missing from the committed query
+                    // results (e.g. the input changed after the preview ran);
+                    // fall back to opening it as an exact task.
+                    self.open_detail_task(&result.task_id, 0).await;
+                }
             }
             SearchIntent::AddDependency {
                 selection,
