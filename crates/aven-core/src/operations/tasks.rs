@@ -1492,6 +1492,7 @@ pub(super) async fn add_note_operation(
                     task_id: task_id.clone(),
                     note_id: note_id.clone(),
                     note_add_change_id: change_id.clone(),
+                    restoration_change_ids: Vec::new(),
                 }],
             },
         )
@@ -1606,8 +1607,8 @@ async fn delete_note_operation(
         &deleted_at,
     )
     .await?;
-    let before = sqlx::query_as::<_, (String, String)>(
-        "SELECT body, created_at FROM notes WHERE workspace_id = ? AND task_id = ? AND id = ?",
+    let before = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT body, created_at, change_id FROM notes WHERE workspace_id = ? AND task_id = ? AND id = ?",
     )
     .bind(&workspace.id)
     .bind(task_id)
@@ -1645,7 +1646,8 @@ async fn delete_note_operation(
         )
         .await?;
         if tui_undo {
-            let (body, created_at) = before.expect("deleted note has before state");
+            let (body, created_at, note_add_change_id) =
+                before.expect("deleted note has before state");
             record_tui_undo(
                 &mut tx,
                 &workspace.id,
@@ -1656,6 +1658,7 @@ async fn delete_note_operation(
                         note_id: note_id.to_string(),
                         body,
                         created_at,
+                        note_add_change_id,
                     }],
                 },
             )

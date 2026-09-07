@@ -136,11 +136,14 @@ pub enum UndoCommand {
         note_id: String,
         body: String,
         created_at: String,
+        note_add_change_id: String,
     },
     DeleteCreatedNote {
         task_id: crate::ids::TaskId,
         note_id: String,
         note_add_change_id: String,
+        #[serde(default)]
+        restoration_change_ids: Vec<String>,
     },
     DeleteCreatedProject {
         project_key: String,
@@ -1080,6 +1083,7 @@ async fn apply_undo_command(
             note_id,
             body,
             created_at,
+            note_add_change_id,
         } => {
             let exists: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM notes WHERE workspace_id = ? AND task_id = ? AND id = ?",
@@ -1122,8 +1126,17 @@ async fn apply_undo_command(
             .bind(task_id)
             .bind(body)
             .bind(created_at)
-            .bind(change_id)
+            .bind(&change_id)
             .execute(&mut *conn)
+            .await?;
+            extend_note_undo_lineage(
+                conn,
+                workspace_id,
+                task_id,
+                note_id,
+                note_add_change_id,
+                &change_id,
+            )
             .await?;
             sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
                 .bind(now())
@@ -1142,6 +1155,7 @@ async fn apply_undo_command(
             task_id,
             note_id,
             note_add_change_id,
+            restoration_change_ids,
         } => {
             let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
             crate::operations::route_recurrence_task_mutation(
@@ -1152,7 +1166,15 @@ async fn apply_undo_command(
                 mutation_at,
             )
             .await?;
-            delete_created_note(conn, workspace_id, task_id, note_id, note_add_change_id).await?;
+            delete_created_note(
+                conn,
+                workspace_id,
+                task_id,
+                note_id,
+                note_add_change_id,
+                restoration_change_ids,
+            )
+            .await?;
             Ok(CommandOutcome {
                 task_id: Some(task_id.clone()),
                 include_deleted: None,
@@ -1671,12 +1693,61 @@ async fn hard_delete_created_task(
     Ok(())
 }
 
+// Only a restoration of the expected row may extend a pending creation's lineage.
+// The original and intermediate adds remain guards against synchronized history.
+async fn extend_note_undo_lineage(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    task_id: &crate::ids::TaskId,
+    note_id: &str,
+    previous_change_id: &str,
+    restored_change_id: &str,
+) -> Result<()> {
+    let rows = sqlx::query(
+        "SELECT id, payload FROM tui_undo_entries WHERE workspace_id = ? AND undone_at IS NULL",
+    )
+    .bind(workspace_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    for row in rows {
+        let mut payload: UndoPayload = serde_json::from_str(row.get("payload"))?;
+        let mut changed = false;
+        for command in &mut payload.commands {
+            if let UndoCommand::DeleteCreatedNote {
+                task_id: expected_task,
+                note_id: expected_note,
+                note_add_change_id,
+                restoration_change_ids,
+            } = command
+            {
+                let expected = restoration_change_ids.last().unwrap_or(note_add_change_id);
+                if expected_task == task_id
+                    && expected_note == note_id
+                    && expected == previous_change_id
+                {
+                    restoration_change_ids.push(restored_change_id.to_string());
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            sqlx::query("UPDATE tui_undo_entries SET payload = ? WHERE id = ?")
+                .bind(serde_json::to_string(&payload)?)
+                .bind(row.get::<String, _>("id"))
+                .execute(&mut *conn)
+                .await?;
+        }
+    }
+    Ok(())
+}
+
 async fn delete_created_note(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     task_id: &crate::ids::TaskId,
     note_id: &str,
     note_add_change_id: &str,
+    restoration_change_ids: &[String],
 ) -> Result<()> {
     let row = sqlx::query(
         "SELECT change_id FROM notes WHERE workspace_id = ? AND id = ? AND task_id = ?",
@@ -1690,11 +1761,19 @@ async fn delete_created_note(
         bail!("error undo-state-changed task_id={task_id} field=note");
     };
     let stored_change_id: String = row.get("change_id");
-    if stored_change_id != note_add_change_id {
+    let expected_change_id = restoration_change_ids
+        .last()
+        .map(String::as_str)
+        .unwrap_or(note_add_change_id);
+    if stored_change_id != expected_change_id {
         bail!("error undo-state-changed task_id={task_id} field=note");
     }
-    if !change_is_unsynced(conn, note_add_change_id).await? {
-        bail!("error undo-state-changed task_id={task_id} field=note");
+    for change_id in
+        std::iter::once(note_add_change_id).chain(restoration_change_ids.iter().map(String::as_str))
+    {
+        if !change_is_unsynced(conn, change_id).await? {
+            bail!("error undo-state-changed task_id={task_id} field=note");
+        }
     }
     sqlx::query("DELETE FROM notes WHERE workspace_id = ? AND id = ? AND task_id = ?")
         .bind(workspace_id)
@@ -1703,7 +1782,7 @@ async fn delete_created_note(
         .execute(&mut *conn)
         .await?;
     sqlx::query("DELETE FROM changes WHERE change_id = ?")
-        .bind(note_add_change_id)
+        .bind(expected_change_id)
         .execute(&mut *conn)
         .await?;
     Ok(())
