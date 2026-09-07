@@ -369,6 +369,9 @@ pub(crate) async fn open_db(path: &Path) -> Result<SqlitePool> {
     initialize_meta(&pool).await?;
     let mut conn = pool.acquire().await?;
     ensure_default_workspace(&mut conn).await?;
+    let mut tx = begin_immediate(&mut conn).await?;
+    crate::epic_membership::recover(&mut tx, false).await?;
+    tx.commit().await?;
     Ok(pool)
 }
 

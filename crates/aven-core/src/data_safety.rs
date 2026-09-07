@@ -854,6 +854,19 @@ fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
         }
     }
 
+    for meta in &export.tables.meta {
+        if let Some((workspace_id, child_id, parent_id)) =
+            crate::epic_membership::parse_baseline_identity(&meta.key, &meta.value)?
+        {
+            ensure!(
+                task_ids.get(&workspace_id).is_some_and(|tasks| {
+                    tasks.contains(&child_id) && tasks.contains(&parent_id)
+                }),
+                "error invalid-export-snapshot epic membership baseline missing task"
+            );
+        }
+    }
+
     let changes_by_id = export
         .tables
         .changes
@@ -1759,6 +1772,7 @@ async fn replace_from_export(
     tables::import_task_related_links(tx, &export.tables.task_related_links).await?;
     tables::import_field_versions(tx, &field_versions).await?;
     tables::import_conflicts(tx, &conflicts).await?;
+    crate::epic_membership::recover(tx, true).await?;
 
     Ok(())
 }

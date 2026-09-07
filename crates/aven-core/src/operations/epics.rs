@@ -262,6 +262,8 @@ pub(crate) async fn add_task_to_epic_in_transaction(
     if pair.epic.deleted {
         bail!("error epic-parent-deleted epic_task_id={epic_id}");
     }
+    crate::epic_membership::capture_snapshot_baseline(conn, workspace.id.as_str(), child_id)
+        .await?;
     let promoted = !pair.epic.is_epic;
     if promoted {
         mark_task_as_epic(conn, workspace, &pair.epic).await?;
@@ -287,6 +289,8 @@ pub(crate) async fn restore_task_to_epic_in_transaction(
     epic_id: &crate::ids::TaskId,
 ) -> Result<EpicLinkOutcome> {
     let pair = load_epic_pair(conn, workspace, child_id, epic_id).await?;
+    crate::epic_membership::capture_snapshot_baseline(conn, workspace.id.as_str(), child_id)
+        .await?;
     let ts = now();
     let changed = insert_epic_link_if_absent(conn, &pair, &ts).await?;
     if changed {
@@ -324,6 +328,8 @@ pub(crate) async fn remove_task_from_epic_in_transaction(
     )
     .await?;
     let pair = load_epic_pair(conn, workspace, child_id, epic_id).await?;
+    crate::epic_membership::capture_snapshot_baseline(conn, workspace.id.as_str(), child_id)
+        .await?;
     let changed = sqlx::query(
         "DELETE FROM task_epic_links
          WHERE workspace_id = ? AND epic_task_id = ? AND child_task_id = ?",

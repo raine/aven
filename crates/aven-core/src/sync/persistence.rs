@@ -307,6 +307,7 @@ async fn apply_sync_response(conn: &mut SqliteConnection, page: ApplySyncPage) -
         );
     }
     update_change_server_seqs_if_missing(&mut tx, &page.response.push_acks).await?;
+    reconcile_acknowledged_epic_memberships(&mut tx, &page.response.push_acks).await?;
     let existing_change_ids = load_existing_change_ids(&mut tx, &page.response.changes).await?;
     let mut affected_series = HashSet::new();
     let mut affected_attachment_hashes = HashSet::new();
@@ -314,10 +315,20 @@ async fn apply_sync_response(conn: &mut SqliteConnection, page: ApplySyncPage) -
         if existing_change_ids.contains(change.change_id.as_str()) {
             verify_existing_change(&mut tx, change).await?;
             update_change_server_seq(&mut tx, &change.change_id, change.server_seq).await?;
+            reconcile_epic_change(&mut tx, change).await?;
             continue;
         }
         collect_attachment_liveness_hashes(&mut tx, change, &mut affected_attachment_hashes)
             .await?;
+        if is_epic_change(change) {
+            let workspace_id = epic_change_workspace(change)?;
+            crate::epic_membership::capture_snapshot_baseline(
+                &mut tx,
+                workspace_id,
+                &change.entity_id,
+            )
+            .await?;
+        }
         let related_mutation = matches!(
             change.op_type.as_str(),
             op_type::RELATED_ADD | op_type::RELATED_REMOVE
@@ -348,6 +359,7 @@ async fn apply_sync_response(conn: &mut SqliteConnection, page: ApplySyncPage) -
         if !related_mutation {
             insert_wire_change(&mut tx, change).await?;
         }
+        reconcile_epic_change(&mut tx, change).await?;
         applied += 1;
     }
     for (workspace_id, series_id) in affected_series {
@@ -383,6 +395,57 @@ async fn apply_sync_response(conn: &mut SqliteConnection, page: ApplySyncPage) -
     .await?;
     tx.commit().await?;
     Ok(applied)
+}
+
+fn is_epic_change(change: &ChangeWire) -> bool {
+    matches!(
+        change.op_type.as_str(),
+        op_type::EPIC_LINK_ADD | op_type::EPIC_LINK_REMOVE
+    )
+}
+
+fn epic_change_workspace(change: &ChangeWire) -> Result<&str> {
+    change.payload["workspace_id"]
+        .as_str()
+        .context("epic change missing workspace_id")
+}
+
+async fn reconcile_epic_change(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
+    if is_epic_change(change) {
+        crate::epic_membership::reconcile_child(
+            conn,
+            epic_change_workspace(change)?,
+            &change.entity_id,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn reconcile_acknowledged_epic_memberships(
+    conn: &mut SqliteConnection,
+    acknowledgements: &[PushAck],
+) -> Result<()> {
+    if acknowledgements.is_empty() {
+        return Ok(());
+    }
+    let mut query = QueryBuilder::<Sqlite>::new(
+        "SELECT DISTINCT json_extract(payload, '$.workspace_id'), entity_id FROM changes
+         WHERE op_type IN ('epic_link_add', 'epic_link_remove') AND change_id IN (",
+    );
+    let mut ids = query.separated(", ");
+    for acknowledgement in acknowledgements {
+        ids.push_bind(&acknowledgement.change_id);
+    }
+    ids.push_unseparated(")");
+    let children = query
+        .build_query_as::<(String, String)>()
+        .fetch_all(&mut *conn)
+        .await?;
+    for (workspace_id, child_id) in children {
+        crate::epic_membership::reconcile_child(conn, &workspace_id, &child_id).await?;
+    }
+    Ok(())
 }
 
 async fn load_existing_change_ids(
