@@ -3,11 +3,13 @@ title: Changelog
 description: Release notes for aven.
 ---
 
-## Unreleased
+## v0.1.37 (2026-09-07)
 
-- View and edit [custom task metadata in the TUI](/tui/#custom-metadata), with inline editing for short values and external-editor support for multiline values.
+- View and edit [custom task metadata in the TUI](/tui/#custom-metadata), with inline editing for short values and external-editor support for multiline values. ([#9](https://github.com/raine/aven/issues/9))
 - Customize which [TUI sidebar views](/configuration/#tui-sidebar-views) appear and their order in config.
 - Collapse sidebar sections to keep navigation focused on what you need, with preferences remembered across restarts.
+- Fix: More reliable sync after offline edits and with large batches of changes. **Sync requires updating both the server and clients to this release.**
+- Fix: Various fixes for task recovery, recurring tasks, project settings, and mouse navigation.
 
 ## v0.1.36 (2026-09-05)
 
