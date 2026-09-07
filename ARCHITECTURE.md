@@ -99,7 +99,7 @@
 
 ### Sync flow
 
-1. Local mutations append operation-log rows in `changes`.
+1. Local mutations append operation-log rows in `changes`. Both ordinary and explicit-identity insertion helpers share the wire validator's 64 KiB serialized UTF-8 JSON payload limit and return typed validation errors inside the owning mutation transaction. Existing operation history is preserved.
 2. Unsynced rows have `server_seq IS NULL`.
 3. `src/sync/coordination.rs` derives a persistent sidecar from the canonical SQLite filename. Its kernel-owned exclusive lock covers the complete root host operation and releases on guard drop or process exit. Interactive sync waits for a short bounded interval. Daemon sync attempts once and defers on contention. In-memory databases bypass filesystem coordination.
 4. `crates/aven-core/src/sync/session.rs` prepares bounded metadata and attachment exchanges. Persistence selects an ordered push prefix within count and complete serialized request byte limits before attachment planning. A first pending change that cannot fit alone produces a preparation error rather than an empty page. Attachment additions probe server inventory, upload missing content-addressed objects under lifecycle leases, confirm admission, and then send metadata. Missing local objects are downloaded after metadata application. Each round is bounded by object and byte budgets.

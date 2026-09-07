@@ -21,6 +21,18 @@ use crate::task_fields::TaskField;
 
 pub const SYNC_PROTOCOL_VERSION: u32 = 16;
 const MAX_CHANGE_PAYLOAD_BYTES: usize = 64 * 1024;
+
+pub(crate) fn serialize_change_payload(payload: &Value) -> Result<String> {
+    let serialized = serde_json::to_string(payload)?;
+    if serialized.len() > MAX_CHANGE_PAYLOAD_BYTES {
+        return Err(crate::error::CoreError::validation(format!(
+            "error invalid-sync-change payload-too-large limit={MAX_CHANGE_PAYLOAD_BYTES}"
+        ))
+        .into());
+    }
+    Ok(serialized)
+}
+
 pub fn sync_server_url_is_valid(server: &str) -> bool {
     let Ok(url) = url::Url::parse(server) else {
         return false;
@@ -135,9 +147,7 @@ fn validate_attachment_change_envelope(change: &ChangeWire, expected_op_type: &s
     if !change.payload.is_object() {
         bail!("error invalid-sync-change payload expected-object");
     }
-    if serde_json::to_vec(&change.payload)?.len() > MAX_CHANGE_PAYLOAD_BYTES {
-        bail!("error invalid-sync-change payload-too-large limit={MAX_CHANGE_PAYLOAD_BYTES}");
-    }
+    serialize_change_payload(&change.payload)?;
     Ok(())
 }
 
@@ -401,9 +411,7 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
     if !change.payload.is_object() {
         bail!("error invalid-sync-change payload expected-object");
     }
-    if serde_json::to_vec(&change.payload)?.len() > MAX_CHANGE_PAYLOAD_BYTES {
-        bail!("error invalid-sync-change payload-too-large limit={MAX_CHANGE_PAYLOAD_BYTES}");
-    }
+    serialize_change_payload(&change.payload)?;
 
     match change.op_type.as_str() {
         op_type::CREATE_WORKSPACE => {

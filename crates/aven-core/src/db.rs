@@ -692,13 +692,13 @@ pub(crate) async fn insert_change(
     payload: Value,
     base_version: Option<&str>,
 ) -> Result<String> {
+    let payload = crate::sync::wire::serialize_change_payload(&payload)?;
     let change_id = new_id();
     let client_id = get_meta(conn, "client_id")
         .await?
         .context("missing client id")?;
     let local_seq = next_local_seq(conn).await?;
     let created_at = now();
-    let payload = payload.to_string();
     sqlx::query!(
         "INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field,
          op_type, payload, base_version, created_at)
@@ -744,7 +744,7 @@ pub(crate) async fn insert_change_with_identity(
         base_version,
         created_at,
     } = change;
-    let payload = payload.to_string();
+    let payload = crate::sync::wire::serialize_change_payload(&payload)?;
     let existing = sqlx::query(
         "SELECT entity_type, entity_id, field, op_type, payload, base_version, created_at
          FROM changes WHERE change_id = ?",
@@ -1695,3 +1695,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod payload_tests;
