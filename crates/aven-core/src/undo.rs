@@ -976,6 +976,7 @@ async fn apply_undo_command(
                     && labels_clear
                     && attachment_changes_clear
                     && related_state_clear
+                    && !task_has_independent_creation_state(conn, workspace_id, task_id).await?
                     && current_attachment_ids == *attachment_ids
                 {
                     hard_delete_created_task(
@@ -1603,6 +1604,25 @@ async fn collect_task_attachment_hashes(
     .await?;
     affected_attachment_hashes.extend(hashes);
     Ok(())
+}
+
+// Independently authored rows must retain their task endpoint when creation is undone.
+async fn task_has_independent_creation_state(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    task_id: &crate::ids::TaskId,
+) -> Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM notes WHERE workspace_id = ?1 AND task_id = ?2)
+         OR EXISTS(SELECT 1 FROM task_dependencies
+                   WHERE workspace_id = ?1 AND (task_id = ?2 OR depends_on_task_id = ?2))
+         OR EXISTS(SELECT 1 FROM task_epic_links
+                   WHERE workspace_id = ?1 AND (epic_task_id = ?2 OR child_task_id = ?2))",
+    )
+    .bind(workspace_id)
+    .bind(task_id)
+    .fetch_one(&mut *conn)
+    .await?)
 }
 
 async fn hard_delete_created_task(

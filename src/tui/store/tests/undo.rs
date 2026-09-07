@@ -972,3 +972,84 @@ async fn update_labels_for_tasks_records_single_undo_payload() {
     assert_eq!(first.labels, vec!["bug".to_string()]);
     assert_eq!(second.labels, vec!["docs".to_string()]);
 }
+
+#[tokio::test]
+async fn undo_creation_preserves_independent_notes_and_relationships() {
+    let mut physically_deleted = Vec::new();
+    for case in ["note", "blocked", "blocker", "epic", "child"] {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (other_id, _) = create_selected_task(&mut store, "Independent task").await;
+        let mut draft = task_draft("Creation to undo");
+        draft.is_epic = case == "epic";
+        let (_, selected) = store.create_task(draft, None).await.unwrap();
+        let task_id = store.tasks[selected.unwrap()].task.id.clone();
+        let workspace = &store.active_workspace;
+        match case {
+            "note" => {
+                store
+                    .database
+                    .add_note(workspace, &task_id, "Independent note".into())
+                    .await
+                    .unwrap();
+            }
+            "blocked" => {
+                store
+                    .database
+                    .add_task_dependency(workspace, &task_id, &other_id)
+                    .await
+                    .unwrap();
+            }
+            "blocker" => {
+                store
+                    .database
+                    .add_task_dependency(workspace, &other_id, &task_id)
+                    .await
+                    .unwrap();
+            }
+            "epic" => {
+                store
+                    .database
+                    .add_task_to_epic(workspace, &other_id, &task_id)
+                    .await
+                    .unwrap();
+            }
+            "child" => {
+                store
+                    .database
+                    .add_task_to_epic(workspace, &task_id, &other_id)
+                    .await
+                    .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        store.undo_last(None).await.unwrap().unwrap();
+        let deleted: Option<i64> = sqlx::query_scalar("SELECT deleted FROM tasks WHERE id = ?")
+            .bind(&task_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        if deleted != Some(1) {
+            physically_deleted.push(case);
+        }
+        let count_query = match case {
+            "note" => "SELECT count(*) FROM notes",
+            "blocked" | "blocker" => "SELECT count(*) FROM task_dependencies",
+            _ => "SELECT count(*) FROM task_epic_links",
+        };
+        let count: i64 = sqlx::query_scalar(count_query)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "independent state must survive: {case}");
+        let other_deleted: i64 = sqlx::query_scalar("SELECT deleted FROM tasks WHERE id = ?")
+            .bind(&other_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(other_deleted, 0);
+    }
+    assert!(
+        physically_deleted.is_empty(),
+        "orphaned independent state: {physically_deleted:?}"
+    );
+}
