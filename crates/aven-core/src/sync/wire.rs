@@ -33,6 +33,9 @@ pub fn sync_server_url_is_valid(server: &str) -> bool {
         && url.fragment().is_none()
 }
 pub const MAX_PUSH_BATCH: usize = 256;
+/// Full decoded JSON metadata request allowance, shared by page selection and HTTP extraction.
+/// Compatible with the 2 MiB default body allowance in Axum 0.8.
+pub const MAX_SYNC_REQUEST_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_PULL_BATCH: u32 = 512;
 pub const MAX_BLOB_TRANSFER_OBJECTS: usize = 16;
 pub const MAX_BLOB_TRANSFER_BYTES: u64 = 64 * 1024 * 1024;

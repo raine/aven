@@ -660,3 +660,154 @@ async fn invalid_sync_initialization_records_attempt_and_error() {
         Some("invalid sync server URL")
     );
 }
+
+#[tokio::test]
+async fn sync_byte_bounded_pages_replay_acknowledge_and_converge() {
+    use std::io::Read;
+
+    use aven_core::sync::wire::{
+        MAX_PUSH_BATCH, MAX_SYNC_REQUEST_BYTES, SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse,
+        validate_pushed_change,
+    };
+    use aven_core::sync::{ServerSyncPage, SyncHttpResponse};
+
+    let directory = tempfile::tempdir().unwrap();
+    let client = Database::open(&directory.path().join("client.sqlite"))
+        .await
+        .unwrap();
+    let server = Database::open(&directory.path().join("server.sqlite"))
+        .await
+        .unwrap();
+    let workspace = client.list_workspaces().await.unwrap().remove(0);
+    let project = client
+        .create_project(&workspace, "Budget")
+        .await
+        .unwrap()
+        .project;
+    for index in 0..40 {
+        client
+            .create_task(
+                &workspace,
+                TaskDraft {
+                    title: format!("byte budget {index}"),
+                    description: "ordinary description ".repeat(2800),
+                    project: Some(project.key.clone()),
+                    status: "inbox".to_string(),
+                    priority: "none".to_string(),
+                    source: TaskSource::Unknown,
+                    metadata: Vec::new(),
+                    labels: Vec::new(),
+                    available_at: None,
+                    due_on: None,
+                    is_epic: false,
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let mut expected = client
+        .sync_persistence_status()
+        .await
+        .unwrap()
+        .pending_changes;
+    assert!(expected < MAX_PUSH_BATCH as i64);
+    let mut session = SyncSession::start(
+        client.clone(),
+        "https://sync.example.test".to_string(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let mut acknowledged = 0;
+    let mut pages = 0;
+    while let Some(prepared) = session.prepare_request().await.unwrap() {
+        pages += 1;
+        assert!(pages <= 4, "bounded drain must make progress");
+        if pages == 1 {
+            client
+                .create_project(&workspace, "During replay")
+                .await
+                .unwrap();
+            expected += 1;
+        }
+        let replay = session.prepare_request().await.unwrap().unwrap();
+        assert_eq!(prepared.body, replay.body);
+        assert_eq!(prepared.headers, replay.headers);
+        assert_eq!(prepared.context, replay.context);
+        let compressed = prepared
+            .headers
+            .iter()
+            .any(|header| header.name == "content-encoding" && header.value == "gzip");
+        assert!(compressed);
+        let mut decoded = Vec::new();
+        flate2::read::GzDecoder::new(prepared.body.as_slice())
+            .read_to_end(&mut decoded)
+            .unwrap();
+        assert!(decoded.len() <= MAX_SYNC_REQUEST_BYTES);
+        let request: SyncRequest = serde_json::from_slice(&decoded).unwrap();
+        assert!(!request.changes.is_empty());
+        assert!(request.changes.len() <= MAX_PUSH_BATCH);
+        assert_eq!(serde_json::to_vec(&request).unwrap(), decoded);
+        for change in &request.changes {
+            validate_pushed_change(change).unwrap();
+        }
+        let ids = request
+            .changes
+            .iter()
+            .map(|change| change.change_id.clone())
+            .collect::<Vec<_>>();
+        let after = request.after;
+        let result = server
+            .persist_server_sync_page(ServerSyncPage { request })
+            .await
+            .unwrap();
+        assert_eq!(
+            result
+                .push_acks
+                .iter()
+                .map(|ack| &ack.change_id)
+                .collect::<Vec<_>>(),
+            ids.iter().collect::<Vec<_>>()
+        );
+        acknowledged += ids.len() as i64;
+        let cursor = result
+            .changes
+            .last()
+            .and_then(|change| change.server_seq)
+            .unwrap_or(after);
+        session
+            .accept_response(
+                &prepared.context,
+                SyncHttpResponse {
+                    status: 200,
+                    headers: Vec::new(),
+                    body: serde_json::to_vec(&SyncResponse {
+                        protocol_version: SYNC_PROTOCOL_VERSION,
+                        cursor,
+                        has_more: result.has_more,
+                        push_acks: result.push_acks,
+                        changes: result.changes,
+                    })
+                    .unwrap(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            client
+                .sync_persistence_status()
+                .await
+                .unwrap()
+                .pending_changes,
+            expected - acknowledged
+        );
+    }
+    assert!(
+        pages > 1,
+        "byte budget must split a below-count-limit backlog"
+    );
+    assert_eq!(acknowledged, expected);
+    assert_eq!(session.summary().pushed, expected);
+    assert!(session.summary().complete);
+}

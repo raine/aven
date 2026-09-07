@@ -123,7 +123,12 @@ pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> R
         "sync server starting"
     );
     let app = Router::new()
-        .route("/sync", post(sync_handler))
+        .route(
+            "/sync",
+            post(sync_handler).layer(DefaultBodyLimit::max(
+                aven_core::sync::wire::MAX_SYNC_REQUEST_BYTES,
+            )),
+        )
         .route("/sync/blobs/missing", post(missing_blobs_handler))
         .route(
             "/sync/blobs/{sha256}",
