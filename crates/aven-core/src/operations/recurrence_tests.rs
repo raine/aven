@@ -809,9 +809,227 @@ async fn stop_paused_series_advances_equal_lifecycle_timestamp() {
     assert_eq!(resumed_at, "2026-07-20T12:00:01Z");
 }
 
+async fn assert_recurrence_roundtrip(temp: &tempfile::TempDir) {
+    let database = crate::db::Database::open(&temp.path().join("test.sqlite"))
+        .await
+        .unwrap();
+    let export = database
+        .export_data("2026-07-24T18:00:00Z".into())
+        .await
+        .unwrap();
+    let report = database.database_integrity_report().await.unwrap();
+    let target_temp = tempfile::tempdir().unwrap();
+    let target = crate::db::Database::open(&target_temp.path().join("import.sqlite"))
+        .await
+        .unwrap();
+    let validation = target.validate_import_data(&export).await;
+    assert!(
+        report.checks.iter().all(|check| check.ok) && validation.is_ok(),
+        "integrity: {report:#?}, import validation: {validation:?}"
+    );
+    let imported_report = target.import_data(&export).await.unwrap();
+    assert!(imported_report.quick_check_ok);
+    assert!(imported_report.checks.iter().all(|check| check.ok));
+    let imported = target
+        .export_data(export.exported_at.clone())
+        .await
+        .unwrap();
+    for (before, after) in [
+        (
+            serde_json::to_value(&export.tables.recurrence_series).unwrap(),
+            serde_json::to_value(&imported.tables.recurrence_series).unwrap(),
+        ),
+        (
+            serde_json::to_value(&export.tables.recurrence_occurrences).unwrap(),
+            serde_json::to_value(&imported.tables.recurrence_occurrences).unwrap(),
+        ),
+        (
+            serde_json::to_value(&export.tables.tasks).unwrap(),
+            serde_json::to_value(&imported.tables.tasks).unwrap(),
+        ),
+    ] {
+        assert_eq!(before, after);
+    }
+}
+
+#[tokio::test]
+async fn stopped_final_outcomes_pass_integrity_and_portable_import() {
+    for start_day in [20, 22] {
+        for outcome in [RecurrenceOutcome::Completed, RecurrenceOutcome::Skipped] {
+            let (temp, mut conn, workspace) = setup().await;
+            let created = create_recurrence_series(
+                &mut conn,
+                &workspace,
+                CreateRecurrenceSeriesParams::new(draft(start_day)).at(at(20, 12)),
+            )
+            .await
+            .unwrap();
+            let stopped = stop_recurrence_series(
+                &mut conn,
+                &workspace,
+                &created.series.id,
+                false,
+                "2026-07-20T15:00:00Z",
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                stopped.series.stopped_at.as_deref(),
+                Some("2026-07-20T15:00:00Z")
+            );
+            assert_recurrence_roundtrip(&temp).await;
+            let resolved = resolve(
+                &mut conn,
+                &workspace,
+                &created.task.id,
+                outcome,
+                "2026-07-24T18:00:00Z",
+            )
+            .await;
+            assert!(resolved.successor.is_none());
+            assert_eq!(
+                resolved.resolved.resolved_at.as_deref(),
+                Some("2026-07-24T18:00:00Z")
+            );
+            let count: i64 = sqlx::query_scalar("SELECT count(*) FROM recurrence_occurrences")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+            assert_eq!(count, 1);
+            let series = load_series(&mut conn, &workspace.id, &created.series.id)
+                .await
+                .unwrap();
+            assert_eq!(series.stopped_at.as_deref(), Some("2026-07-20T15:00:00Z"));
+            assert_recurrence_roundtrip(&temp).await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn stopped_history_rejects_post_stop_archival_and_successors() {
+    for corruption in [
+        "archive",
+        "earlier_outcome",
+        "successor",
+        "invalid_timestamp",
+    ] {
+        let (temp, mut conn, workspace) = setup().await;
+        let created = create_daily(&mut conn, &workspace).await;
+        let first = resolve(
+            &mut conn,
+            &workspace,
+            &created.task.id,
+            RecurrenceOutcome::Completed,
+            "2026-07-20T13:00:00Z",
+        )
+        .await;
+        let final_task = first.successor.unwrap().id;
+        stop_recurrence_series(
+            &mut conn,
+            &workspace,
+            &created.series.id,
+            false,
+            "2026-07-20T15:00:00Z",
+        )
+        .await
+        .unwrap();
+        let final_outcome = resolve(
+            &mut conn,
+            &workspace,
+            &final_task,
+            RecurrenceOutcome::Skipped,
+            "2026-07-22T18:00:00Z",
+        )
+        .await;
+        assert!(final_outcome.successor.is_none());
+        assert_recurrence_roundtrip(&temp).await;
+        match corruption {
+            "archive" => {
+                sqlx::query(
+                    "UPDATE recurrence_occurrences SET projection_state = 'archived',
+                     outcome = '', resolved_at = '', outcome_change_id = '',
+                     archived_at = '2026-07-22T18:00:00Z' WHERE task_id = ?",
+                )
+                .bind(&final_task)
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+            }
+            "earlier_outcome" => {
+                sqlx::query(
+                    "UPDATE recurrence_occurrences SET resolved_at = '2026-07-20T18:00:00Z'
+                     WHERE task_id = ?",
+                )
+                .bind(&created.task.id)
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+                // An earlier outcome cannot be the retained final occurrence, even
+                // when its change claims it generated no successor.
+                sqlx::query(
+                    "UPDATE changes SET payload = json_set(payload, '$.resolved_at',
+                     '2026-07-20T18:00:00Z', '$.successor_task_id', '') WHERE change_id = ?",
+                )
+                .bind(&first.resolved.outcome_change_id)
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+            }
+            "successor" => {
+                sqlx::query(
+                    "UPDATE changes SET payload = json_set(payload, '$.successor_task_id', ?)
+                     WHERE change_id = ?",
+                )
+                .bind(&created.task.id)
+                .bind(&final_outcome.resolved.outcome_change_id)
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+            }
+            "invalid_timestamp" => {
+                sqlx::query(
+                    "UPDATE recurrence_occurrences SET resolved_at = 'invalid' WHERE task_id = ?",
+                )
+                .bind(&final_task)
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let database = crate::db::Database::open(&temp.path().join("test.sqlite"))
+            .await
+            .unwrap();
+        let report = database.database_integrity_report().await.unwrap();
+        assert!(
+            !report
+                .checks
+                .iter()
+                .find(|check| check.label == "recurrence stop boundaries")
+                .unwrap()
+                .ok,
+            "{corruption}: {report:#?}"
+        );
+        let export = database
+            .export_data("2026-07-24T18:00:00Z".into())
+            .await
+            .unwrap();
+        let error = database
+            .validate_import_data(&export)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("stop boundary") || error.contains("occurrence timestamp"),
+            "{corruption}: {error}"
+        );
+        assert!(database.import_data(&export).await.is_err());
+    }
+}
+
 #[tokio::test]
 async fn stopped_series_keeps_final_task_and_skip_current_creates_no_successor() {
-    let (_temp, mut conn, workspace) = setup().await;
+    let (temp, mut conn, workspace) = setup().await;
     let created = create_daily(&mut conn, &workspace).await;
     let stopped = stop_recurrence_series(
         &mut conn,
@@ -836,6 +1054,7 @@ async fn stopped_series_keeps_final_task_and_skip_current_creates_no_successor()
     )
     .await;
     assert!(resolved.successor.is_none());
+    assert_recurrence_roundtrip(&temp).await;
 
     let second = create_recurrence_series(
         &mut conn,

@@ -159,6 +159,15 @@ async fn recurrence_row_checks(conn: &mut SqliteConnection) -> Result<Vec<Integr
     let occurrence_rows = sqlx::query("SELECT * FROM recurrence_occurrences")
         .fetch_all(&mut *conn)
         .await?;
+    let mut final_slots = HashMap::new();
+    for row in &occurrence_rows {
+        if let Ok(occurrence) = recurrence_occurrence_from_row(row) {
+            final_slots
+                .entry((occurrence.workspace_id, occurrence.series_id))
+                .and_modify(|last: &mut chrono::NaiveDate| *last = (*last).max(occurrence.slot_on))
+                .or_insert(occurrence.slot_on);
+        }
+    }
     let mut invalid_occurrences = 0_usize;
     let mut deterministic_identity_mismatches = 0_usize;
     let mut deterministic_change_mismatches = 0_usize;
@@ -277,19 +286,26 @@ async fn recurrence_row_checks(conn: &mut SqliteConnection) -> Result<Vec<Integr
             }
         }
         if let Some(stopped_at) = &series.stopped_at {
-            let stopped = DateTime::parse_from_rfc3339(stopped_at).ok();
-            let activity = occurrence
-                .resolved_at
-                .as_deref()
-                .or(occurrence.archived_at.as_deref());
-            if stopped.is_none()
-                || activity.is_some_and(|value| {
-                    DateTime::parse_from_rfc3339(value)
-                        .ok()
-                        .zip(stopped)
-                        .is_none_or(|(at, stop)| at > stop)
-                })
-            {
+            let payload: Option<String> =
+                sqlx::query_scalar("SELECT payload FROM changes WHERE change_id = ?")
+                    .bind(&occurrence.outcome_change_id)
+                    .fetch_optional(&mut *conn)
+                    .await?;
+            let no_successor = payload
+                .and_then(|payload| serde_json::from_str::<Value>(&payload).ok())
+                .is_some_and(|payload| {
+                    payload.get("successor_task_id").and_then(Value::as_str) == Some("")
+                });
+            let final_slot = final_slots.get(&(
+                occurrence.workspace_id.clone(),
+                occurrence.series_id.clone(),
+            ));
+            if !super::recurrence_stop_boundary_valid(
+                stopped_at,
+                occurrence.resolved_at.as_deref(),
+                occurrence.archived_at.as_deref(),
+                final_slot == Some(&occurrence.slot_on) && no_successor,
+            ) {
                 stop_boundary_violations += 1;
             }
         }

@@ -1116,6 +1116,26 @@ fn has_recurrence_data(export: &AvenExport) -> bool {
         || !export.tables.recurrence_pause_intervals.is_empty()
 }
 
+// A stopped series retains its final projection, even when its slot is in the future.
+// Only that occurrence may resolve after stopping, and it cannot generate a successor.
+fn recurrence_stop_boundary_valid(
+    stopped_at: &str,
+    resolved_at: Option<&str>,
+    archived_at: Option<&str>,
+    retained_final: bool,
+) -> bool {
+    let Ok(stop) = DateTime::parse_from_rfc3339(stopped_at) else {
+        return false;
+    };
+    [(resolved_at, retained_final), (archived_at, false)]
+        .into_iter()
+        .all(|(timestamp, allow_after_stop)| {
+            timestamp.is_none_or(|value| {
+                DateTime::parse_from_rfc3339(value).is_ok_and(|at| at <= stop || allow_after_stop)
+            })
+        })
+}
+
 fn validate_recurrence_snapshot(
     export: &AvenExport,
     workspace_ids: &HashSet<WorkspaceId>,
@@ -1260,6 +1280,14 @@ fn validate_recurrence_snapshot(
         );
     }
 
+    let mut final_slots = HashMap::new();
+    for row in &export.tables.recurrence_occurrences {
+        let slot = row.slot_on.parse::<NaiveDate>()?;
+        final_slots
+            .entry((row.workspace_id.clone(), row.series_id.clone()))
+            .and_modify(|last: &mut NaiveDate| *last = (*last).max(slot))
+            .or_insert(slot);
+    }
     let mut occurrence_keys = HashSet::new();
     let mut occurrence_tasks = HashSet::new();
     let mut projected_series = HashSet::new();
@@ -1334,14 +1362,25 @@ fn validate_recurrence_snapshot(
             );
         }
         for value in [resolved_at, archived_at].into_iter().flatten() {
-            let activity_at = DateTime::parse_from_rfc3339(value)
+            DateTime::parse_from_rfc3339(value)
                 .context("invalid recurrence occurrence timestamp")?;
-            if let Some(stopped_at) = series.stopped_at {
-                ensure!(
-                    activity_at <= stopped_at,
-                    "error invalid-export-snapshot recurrence activity exceeds the stop boundary"
-                );
-            }
+        }
+        if let Some(stopped_at) = series.stopped_at {
+            let no_successor = outcome_change_id
+                .and_then(|id| change_rows.get(id))
+                .and_then(|change| serde_json::from_str::<Value>(&change.payload).ok())
+                .is_some_and(|payload| {
+                    payload.get("successor_task_id").and_then(Value::as_str) == Some("")
+                });
+            ensure!(
+                recurrence_stop_boundary_valid(
+                    &stopped_at.to_rfc3339(),
+                    resolved_at,
+                    archived_at,
+                    final_slots.get(&series_key) == Some(&slot_on) && no_successor,
+                ),
+                "error invalid-export-snapshot recurrence activity exceeds the stop boundary"
+            );
         }
 
         if let Some(task_id) = task_id {
