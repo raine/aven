@@ -39,7 +39,7 @@ async fn create_more_reopens_blank_composer_with_retained_defaults() {
         panic!("expected composer");
     };
     state.title = LineEdit::new("First rapid task".to_string());
-    state.description.lines = vec!["First details".to_string()];
+    state.description.buffer.lines = vec!["First details".to_string()];
     state.apply_status_choice("todo");
     state.apply_priority_choice("high");
     state.labels = vec!["rapid".to_string()];
@@ -52,7 +52,7 @@ async fn create_more_reopens_blank_composer_with_retained_defaults() {
         Some(OverlayState::AddTask(state))
             if state.focus == AddTaskStep::Title
                 && state.title.text.is_empty()
-                && state.description.lines == vec![String::new()]
+                && state.description.buffer.lines == vec![String::new()]
                 && state.effective_status() == "todo"
                 && state.priority.value() == "high"
                 && state.labels == vec!["rapid".to_string()]
@@ -169,7 +169,7 @@ async fn create_more_refresh_failure_resets_committed_draft_without_duplication(
         panic!("expected composer");
     };
     state.title = LineEdit::new("Committed once".to_string());
-    state.description.lines = vec!["Do not retry".to_string()];
+    state.description.buffer.lines = vec!["Do not retry".to_string()];
     app.store.fail_next_refresh();
 
     app.handle_overlay_key(ctrl_g()).await.unwrap();
@@ -179,7 +179,7 @@ async fn create_more_refresh_failure_resets_committed_draft_without_duplication(
         Some(OverlayState::AddTask(state))
             if state.focus == AddTaskStep::Title
                 && state.title.text.is_empty()
-                && state.description.lines == vec![String::new()]
+                && state.description.buffer.lines == vec![String::new()]
                 && !state.create_more
     ));
     assert!(toast_message(&app).is_some_and(|message| {
@@ -209,7 +209,7 @@ async fn create_more_precommit_failure_preserves_the_exact_draft() {
         panic!("expected composer");
     };
     state.title = LineEdit::new("Retry safely".to_string());
-    state.description.lines = vec!["Preserve this".to_string()];
+    state.description.buffer.lines = vec!["Preserve this".to_string()];
     state.apply_priority_choice("urgent");
 
     let error = app.handle_overlay_key(ctrl_g()).await.unwrap_err();
@@ -219,7 +219,7 @@ async fn create_more_precommit_failure_preserves_the_exact_draft() {
         &app.overlay,
         Some(OverlayState::AddTask(state))
             if state.title.text == "Retry safely"
-                && state.description.lines == vec!["Preserve this".to_string()]
+                && state.description.buffer.lines == vec!["Preserve this".to_string()]
                 && state.priority.value() == "urgent"
                 && !state.create_more
     ));
@@ -1174,7 +1174,7 @@ async fn add_task_description_ctrl_x_ctrl_e_opens_external_editor_and_returns_to
         Some(OverlayState::AddTask(state))
             if state.focus == AddTaskStep::Description
                 && state.title.as_str() == "Write docs"
-                && state.description.lines == vec!["Details from editor".to_string()]
+                && state.description.buffer.lines == vec!["Details from editor".to_string()]
     ));
 }
 
@@ -1193,7 +1193,7 @@ async fn add_task_description_ctrl_x_non_editor_key_clears_prefix_and_edits_text
         &app.overlay,
         Some(OverlayState::AddTask(state))
             if state.focus == AddTaskStep::Description
-                && state.description.lines == vec!["z".to_string()]
+                && state.description.buffer.lines == vec!["z".to_string()]
     ));
 }
 
@@ -1210,8 +1210,8 @@ async fn add_task_description_ctrl_e_moves_to_line_end() {
         &app.overlay,
         Some(OverlayState::AddTask(state))
             if state.focus == AddTaskStep::Description
-                && state.description.column == "Details".len()
-                && state.description.lines == vec!["Details".to_string()]
+                && state.description.buffer.column == "Details".len()
+                && state.description.buffer.lines == vec!["Details".to_string()]
     ));
 }
 
@@ -1235,7 +1235,7 @@ async fn add_task_project_and_priority_return_to_description_step() {
         &app.overlay,
         Some(OverlayState::AddTask(state))
             if state.focus == AddTaskStep::Description
-                && state.description.lines == vec!["Details".to_string()]
+                && state.description.buffer.lines == vec!["Details".to_string()]
     ));
 
     app.handle_overlay_key(ctrl_r()).await.unwrap();
@@ -1658,7 +1658,7 @@ async fn add_task_natural_dialog_error_reopens_natural_dialog() {
     assert!(matches!(
         &app.overlay,
         Some(OverlayState::MultilineInput(state))
-            if state.lines.join("\n") == "raw natural title"
+            if state.buffer.lines.join("\n") == "raw natural title"
     ));
     assert!(toast_message(&app).is_some_and(|message| {
         message.contains("task intake failed") && message.contains("logged to")
@@ -2187,9 +2187,9 @@ async fn add_note_discard_confirmation_preserves_and_discards_draft() {
         Some(OverlayState::MultilineInput(state))
             if matches!(state.intent, MultilineIntent::AddNote { .. })
                 && state.mode == MultilineInputMode::ConfirmDiscard
-                && state.lines == ["draft note"]
-                && state.row == 0
-                && state.column == 10
+                && state.buffer.lines == ["draft note"]
+                && state.buffer.row == 0
+                && state.buffer.column == 10
     ));
 
     app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
@@ -2197,9 +2197,9 @@ async fn add_note_discard_confirmation_preserves_and_discards_draft() {
         &app.overlay,
         Some(OverlayState::MultilineInput(state))
             if state.mode == MultilineInputMode::Compose
-                && state.lines == ["draft note"]
-                && state.row == 0
-                && state.column == 10
+                && state.buffer.lines == ["draft note"]
+                && state.buffer.row == 0
+                && state.buffer.column == 10
     ));
 
     app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
@@ -2214,9 +2214,9 @@ async fn add_note_discard_confirmation_preserves_and_discards_draft() {
         &app.overlay,
         Some(OverlayState::MultilineInput(state))
             if state.mode == MultilineInputMode::Compose
-                && state.lines == [""]
-                && state.row == 0
-                && state.column == 0
+                && state.buffer.lines == [""]
+                && state.buffer.row == 0
+                && state.buffer.column == 0
     ));
 }
 
@@ -2347,4 +2347,60 @@ async fn add_task_title_scrolls_wide_characters_within_the_dialog() {
         caret_row.matches('한').count() < 80,
         "title scrolled instead of overflowing: {caret_row:?}"
     );
+}
+
+#[tokio::test]
+async fn recurring_creation_inherits_metadata_and_committed_refresh_failure_closes_draft() {
+    let mut app = test_app().await;
+    create_and_select_task(
+        &mut app,
+        TaskDraft {
+            metadata: vec![aven_core::metadata::TaskMetadataInput {
+                expected_field_id: None,
+                key: "review".to_string(),
+                value: "pending".to_string(),
+            }],
+            ..test_task_draft("Field seed")
+        },
+    )
+    .await;
+    let field = app.store.metadata_fields().await.unwrap().remove(0);
+    app.begin_add_task().await.unwrap();
+    let Some(OverlayState::AddTask(state)) = &mut app.overlay else {
+        panic!()
+    };
+    state.title = LineEdit::new("Recurring metadata".to_string());
+    state.selected_project = Some("aven".to_string());
+    state.set_repeat_rule("daily".to_string());
+    state.custom_metadata = vec![aven_core::metadata::TaskMetadataInput {
+        expected_field_id: Some(field.id),
+        key: field.key,
+        value: String::new(),
+    }];
+    app.store.fail_next_refresh();
+    let error = app
+        .handle_overlay_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL))
+        .await
+        .unwrap_err();
+    assert!(crate::tui::store::mutation_committed(&error));
+    assert!(app.overlay.is_none());
+    assert!(app.authoring.add_task_context().is_none());
+    app.store.refresh(None).await.unwrap();
+    let item = app
+        .store
+        .tasks
+        .iter()
+        .find(|item| item.task.title == "Recurring metadata")
+        .unwrap();
+    assert_eq!(
+        app.store.metadata_values(&item.task.id).await.unwrap()[0].value,
+        ""
+    );
+    let series = item.recurrence.as_ref().unwrap().series_id.clone();
+    let detail = app
+        .store
+        .recurrence_detail_for_series(&series)
+        .await
+        .unwrap();
+    assert_eq!(detail.metadata[0].value, "");
 }

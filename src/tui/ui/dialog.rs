@@ -56,8 +56,18 @@ impl<'a> Dialog<'a> {
     }
 
     pub(super) fn render_text<'text>(self, frame: &mut Frame, text: impl Into<Text<'text>>) {
+        let area = self.area(frame);
+        self.render_text_at(frame, area, text);
+    }
+
+    pub(super) fn render_text_at<'text>(
+        self,
+        frame: &mut Frame,
+        area: Rect,
+        text: impl Into<Text<'text>>,
+    ) {
         let wrap = self.wrap;
-        let inner = self.render_block(frame);
+        let inner = self.render_block_at(frame, area);
         let mut paragraph = Paragraph::new(text).style(Style::new().fg(FG).bg(BG_ALT));
         if wrap {
             paragraph = paragraph.wrap(Wrap { trim: false });

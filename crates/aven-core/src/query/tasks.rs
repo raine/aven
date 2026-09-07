@@ -24,7 +24,6 @@ struct TaskListRead {
     sort: TaskSort,
     direction: SortDirection,
     limit: Option<usize>,
-    hydration: TaskHydration,
 }
 
 pub async fn list_task_items_in_workspace(
@@ -67,8 +66,8 @@ pub async fn list_task_items_with_display_refs(
             sort,
             direction,
             limit: None,
-            hydration: TaskHydration::Detail,
         },
+        TaskHydration::Detail,
     )
     .await
 }
@@ -113,8 +112,8 @@ pub async fn list_task_items_without_activity_with_display_refs(
             sort,
             direction,
             limit: None,
-            hydration: TaskHydration::DetailWithoutActivity,
         },
+        TaskHydration::DetailWithoutActivity,
     )
     .await
 }
@@ -138,8 +137,8 @@ pub async fn list_bulk_update_task_items_in_workspace(
             sort,
             direction,
             limit: None,
-            hydration: TaskHydration::BulkUpdate,
         },
+        TaskHydration::BulkUpdate,
     )
     .await
 }
@@ -164,8 +163,8 @@ pub async fn list_task_summary_items_in_workspace(
             sort,
             direction,
             limit,
-            hydration: TaskHydration::List,
         },
+        TaskHydration::List,
     )
     .await
 }
@@ -175,14 +174,66 @@ async fn query_task_items(
     workspace_id: &WorkspaceId,
     display_refs: &DisplayRefContext,
     read: TaskListRead,
+    hydration: TaskHydration,
 ) -> Result<Vec<TaskListItem>> {
+    let mode = read.mode;
+    let SelectedTasks {
+        tasks,
+        expand_recurring,
+        task_ids,
+        remaining_limit,
+    } = select_tasks(conn, workspace_id, read).await?;
+    let now_seconds = now_seconds();
+    let local_today = Local::now().date_naive();
+    let mut items = build_task_list_items(
+        conn,
+        workspace_id,
+        tasks,
+        now_seconds,
+        local_today,
+        display_refs,
+        hydration,
+    )
+    .await?;
+    if !expand_recurring {
+        let at = crate::ids::now_utc();
+        items = super::recurrence::group_terminal_task_items(conn, workspace_id, items, at).await?;
+    }
+    if mode == TaskQueryMode::RankedQueue {
+        items.sort_by(|a, b| queue_order((&a.task, a.queue), (&b.task, b.queue)));
+    }
+    if let TaskIdFilter::Only(order) = task_ids {
+        items.sort_by_key(|item| {
+            order
+                .iter()
+                .position(|task_id| task_id == &item.task.id)
+                .unwrap_or(order.len())
+        });
+    }
+    if let Some(limit) = remaining_limit {
+        items.truncate(limit);
+    }
+    Ok(items)
+}
+
+struct SelectedTasks {
+    tasks: Vec<crate::types::Task>,
+    expand_recurring: bool,
+    task_ids: TaskIdFilter,
+    remaining_limit: Option<usize>,
+}
+
+async fn select_tasks(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    read: TaskListRead,
+) -> Result<SelectedTasks> {
     let TaskListRead {
         filters,
         mode,
         sort,
         direction,
         limit,
-        hydration,
     } = read;
     let expand_recurring = filters.expand_recurring;
     let status_filter = filters
@@ -391,37 +442,67 @@ async fn query_task_items(
         .into_iter()
         .map(|row| task_from_row(&row))
         .collect::<Result<Vec<_>>>()?;
-    let now_seconds = now_seconds();
-    let local_today = Local::now().date_naive();
-    let mut items = build_task_list_items(
+    Ok(SelectedTasks {
+        tasks,
+        expand_recurring,
+        task_ids: filters.task_ids,
+        remaining_limit: limit.filter(|_| !limit_in_sql),
+    })
+}
+
+/// Flat base records share list selection without queue or detail enrichment.
+pub(super) async fn list_base_tasks_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    filters: TaskFilters,
+    sort: TaskSort,
+    direction: SortDirection,
+    limit: Option<usize>,
+) -> Result<Vec<crate::types::Task>> {
+    let SelectedTasks {
+        mut tasks,
+        expand_recurring,
+        task_ids,
+        remaining_limit,
+    } = select_tasks(
         conn,
         workspace_id,
-        tasks,
-        now_seconds,
-        local_today,
-        display_refs,
-        hydration,
+        TaskListRead {
+            filters,
+            mode: TaskQueryMode::Flat,
+            sort,
+            direction,
+            limit,
+        },
     )
     .await?;
     if !expand_recurring {
-        let at = crate::ids::now_utc();
-        items = super::recurrence::group_terminal_task_items(conn, workspace_id, items, at).await?;
+        let terminal_ids = tasks
+            .iter()
+            .filter(|task| task.status.is_terminal())
+            .map(|task| task.id.clone())
+            .collect::<Vec<_>>();
+        let summaries = super::task_recurrence_summaries(conn, workspace_id, &terminal_ids).await?;
+        let mut seen = std::collections::HashSet::new();
+        tasks.retain(|task| {
+            !task.status.is_terminal()
+                || summaries
+                    .get(&task.id)
+                    .is_none_or(|summary| seen.insert(summary.series_id.clone()))
+        });
     }
-    if mode == TaskQueryMode::RankedQueue {
-        items.sort_by(|a, b| queue_order((&a.task, a.queue), (&b.task, b.queue)));
-    }
-    if let TaskIdFilter::Only(order) = filters.task_ids {
-        items.sort_by_key(|item| {
+    if let TaskIdFilter::Only(order) = task_ids {
+        tasks.sort_by_key(|task| {
             order
                 .iter()
-                .position(|task_id| task_id == &item.task.id)
+                .position(|task_id| task_id == &task.id)
                 .unwrap_or(order.len())
         });
     }
-    if let Some(limit) = limit.filter(|_| !limit_in_sql) {
-        items.truncate(limit);
+    if let Some(limit) = remaining_limit {
+        tasks.truncate(limit);
     }
-    Ok(items)
+    Ok(tasks)
 }
 
 fn push_availability_filter(

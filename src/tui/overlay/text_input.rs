@@ -33,77 +33,80 @@ impl LineEdit {
     }
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) {
-        let cursor = char_boundary_at_or_before(&self.text, self.cursor);
-        match key.code {
-            KeyCode::Left => self.cursor = previous_char_boundary(&self.text, cursor),
-            KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.cursor = previous_char_boundary(&self.text, cursor);
-            }
-            KeyCode::Right => self.cursor = next_char_boundary(&self.text, cursor),
-            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.cursor = next_char_boundary(&self.text, cursor);
-            }
-            KeyCode::Home => self.cursor = 0,
-            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.cursor = 0;
-            }
-            KeyCode::End => self.cursor = self.text.len(),
-            KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.cursor = self.text.len();
-            }
-            KeyCode::Backspace if cursor > 0 => {
-                let previous = previous_char_boundary(&self.text, cursor);
-                self.text.drain(previous..cursor);
-                self.cursor = previous;
-            }
-            KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) && cursor > 0 => {
-                let previous = previous_char_boundary(&self.text, cursor);
-                self.text.drain(previous..cursor);
-                self.cursor = previous;
-            }
-            KeyCode::Delete if cursor < self.text.len() => {
-                let next = next_char_boundary(&self.text, cursor);
-                self.text.drain(cursor..next);
-                self.cursor = cursor;
-            }
-            KeyCode::Char('d')
-                if key.modifiers.contains(KeyModifiers::CONTROL) && cursor < self.text.len() =>
-            {
-                let next = next_char_boundary(&self.text, cursor);
-                self.text.drain(cursor..next);
-                self.cursor = cursor;
-            }
-            KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.text.truncate(cursor);
-                self.cursor = cursor;
-            }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.text.drain(..cursor);
-                self.cursor = 0;
-            }
-            KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let previous = previous_word_start(&self.text, cursor);
-                self.text.drain(previous..cursor);
-                if previous > 0 && next_char_is_whitespace(&self.text, previous) {
-                    let before = previous_char_boundary(&self.text, previous);
-                    if self.text[before..previous].chars().all(char::is_whitespace) {
-                        self.text.drain(before..previous);
-                        self.cursor = before;
-                    } else {
-                        self.cursor = previous;
-                    }
-                } else {
-                    self.cursor = previous;
-                }
-            }
-            KeyCode::Char(ch)
-                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
-            {
-                self.text.insert(cursor, ch);
-                self.cursor = cursor + ch.len_utf8();
-            }
-            _ => self.cursor = cursor,
+        edit_line(&mut self.text, &mut self.cursor, key);
+    }
+}
+
+/// Apply line-local keys using a UTF-8 byte cursor normalized before editing.
+pub(super) fn edit_line(text: &mut String, byte_cursor: &mut usize, key: KeyEvent) {
+    let cursor = char_boundary_at_or_before(text, *byte_cursor);
+    match key.code {
+        KeyCode::Left => *byte_cursor = previous_char_boundary(text, cursor),
+        KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            *byte_cursor = previous_char_boundary(text, cursor);
         }
+        KeyCode::Right => *byte_cursor = next_char_boundary(text, cursor),
+        KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            *byte_cursor = next_char_boundary(text, cursor);
+        }
+        KeyCode::Home => *byte_cursor = 0,
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            *byte_cursor = 0;
+        }
+        KeyCode::End => *byte_cursor = text.len(),
+        KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            *byte_cursor = text.len();
+        }
+        KeyCode::Backspace if cursor > 0 => {
+            let previous = previous_char_boundary(text, cursor);
+            text.drain(previous..cursor);
+            *byte_cursor = previous;
+        }
+        KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) && cursor > 0 => {
+            let previous = previous_char_boundary(text, cursor);
+            text.drain(previous..cursor);
+            *byte_cursor = previous;
+        }
+        KeyCode::Delete if cursor < text.len() => {
+            let next = next_char_boundary(text, cursor);
+            text.drain(cursor..next);
+            *byte_cursor = cursor;
+        }
+        KeyCode::Char('d')
+            if key.modifiers.contains(KeyModifiers::CONTROL) && cursor < text.len() =>
+        {
+            let next = next_char_boundary(text, cursor);
+            text.drain(cursor..next);
+            *byte_cursor = cursor;
+        }
+        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            text.truncate(cursor);
+            *byte_cursor = cursor;
+        }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            text.drain(..cursor);
+            *byte_cursor = 0;
+        }
+        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let previous = previous_word_start(text, cursor);
+            text.drain(previous..cursor);
+            if previous > 0 && next_char_is_whitespace(text, previous) {
+                let before = previous_char_boundary(text, previous);
+                if text[before..previous].chars().all(char::is_whitespace) {
+                    text.drain(before..previous);
+                    *byte_cursor = before;
+                } else {
+                    *byte_cursor = previous;
+                }
+            } else {
+                *byte_cursor = previous;
+            }
+        }
+        KeyCode::Char(ch) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
+            text.insert(cursor, ch);
+            *byte_cursor = cursor + ch.len_utf8();
+        }
+        _ => *byte_cursor = cursor,
     }
 }
 
@@ -124,6 +127,18 @@ mod tests {
             text: input.to_string(),
             cursor,
         }
+    }
+
+    #[test]
+    fn unicode_edits_use_scalar_boundaries_including_combining_marks() {
+        let mut state = line_edit("中e\u{301}界", "中e\u{301}".len());
+        state.handle_key(key(KeyCode::Backspace));
+        assert_eq!((state.as_str(), state.cursor), ("中e界", "中e".len()));
+        state.handle_key(key(KeyCode::Delete));
+        assert_eq!((state.as_str(), state.cursor), ("中e", "中e".len()));
+        state.cursor = 2;
+        state.handle_key(key(KeyCode::Char('界')));
+        assert_eq!((state.as_str(), state.cursor), ("界中e", "界".len()));
     }
 
     #[test]

@@ -568,6 +568,7 @@ async fn consumer_api_owns_recurrence_lifecycle_reports_and_mutation_routing() {
         .await
         .unwrap();
     assert_eq!(paused.series.state, RecurrenceSeriesState::Paused);
+    assert!(store.list_tasks(&workspace.id).await.unwrap().is_empty());
     assert!(
         store
             .recurrence_task_report(&workspace.id, false)
@@ -828,4 +829,75 @@ async fn related_links_converge_across_remove_and_offline_remove_add_race() {
             .len(),
         1
     );
+}
+
+#[tokio::test]
+async fn consumer_base_list_matches_detail_selection_without_detail_tables() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("base-list.sqlite");
+    let store = Store::open(&path).await.unwrap();
+    let workspace = store.resolve_workspace("default").await.unwrap();
+    for title in ["First", "Second", "Epic"] {
+        store
+            .create_task(
+                &workspace.id,
+                CreateTask {
+                    metadata: Vec::new(),
+                    title: title.to_string(),
+                    description: "base description".to_string(),
+                    project: "Core".to_string(),
+                    status: TaskStatus::Todo,
+                    priority: TaskPriority::High,
+                    available_at: None,
+                    due_on: None,
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let mut connection = SqliteConnection::connect_with(
+        &SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(false),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE tasks SET is_epic = 1 WHERE title = 'Epic'")
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    let database = Database::open(&path).await.unwrap();
+    let expected = database
+        .list_task_items(
+            &workspace.id,
+            aven_core::query::TaskFilters {
+                exclude_epics: true,
+                ..Default::default()
+            },
+            aven_core::query::TaskQueryMode::Flat,
+            aven_core::query::TaskSort::Created,
+            aven_core::query::SortDirection::Asc,
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|item| aven_core::api::TaskRecord::from(item.task))
+        .collect::<Vec<_>>();
+    assert_eq!(expected.len(), 2);
+    assert_eq!(store.list_tasks(&workspace.id).await.unwrap(), expected);
+    for statement in [
+        "DROP TABLE notes",
+        "DROP TABLE task_attachments",
+        "DROP TABLE task_related_links",
+        "DROP TABLE task_metadata",
+        "DROP TABLE task_labels",
+        "DROP TABLE task_dependencies",
+        "DROP TABLE task_epic_links",
+    ] {
+        sqlx::query(statement)
+            .execute(&mut connection)
+            .await
+            .unwrap();
+    }
+    assert_eq!(store.list_tasks(&workspace.id).await.unwrap(), expected);
 }

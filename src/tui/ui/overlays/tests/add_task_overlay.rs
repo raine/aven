@@ -15,6 +15,10 @@ fn dialog_height(state: AddTaskView) -> u16 {
 #[test]
 fn add_task_overlay_starts_compact() {
     assert_eq!(dialog_height(add_task_view()), 14);
+    let buffer = overlay_buffer(add_task_overlay(add_task_view()));
+    assert!(
+        !(0..buffer.area.height).any(|row| buffer_row(&buffer, row).contains("Custom metadata"))
+    );
 }
 
 #[test]

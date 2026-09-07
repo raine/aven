@@ -112,16 +112,37 @@ async fn list(
     mode: TaskQueryMode,
 ) -> Vec<crate::query::TaskListItem> {
     let mut conn = database.acquire_writer().await.unwrap();
-    super::super::tasks::list_task_items_in_workspace(
+    let items = super::super::tasks::list_task_items_in_workspace(
         &mut conn,
         &workspace.id,
-        filters,
+        filters.clone(),
         mode,
         TaskSort::Updated,
         SortDirection::Desc,
     )
     .await
-    .unwrap()
+    .unwrap();
+    if mode == TaskQueryMode::Flat {
+        for limit in [None, Some(0), Some(1), Some(3)] {
+            let base = super::super::tasks::list_base_tasks_in_workspace(
+                &mut conn,
+                &workspace.id,
+                filters.clone(),
+                TaskSort::Updated,
+                SortDirection::Desc,
+                limit,
+            )
+            .await
+            .unwrap();
+            let expected = items
+                .iter()
+                .take(limit.unwrap_or(usize::MAX))
+                .map(|item| item.task.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(base, expected);
+        }
+    }
+    items
 }
 
 #[tokio::test]
@@ -870,4 +891,63 @@ async fn search_resolves_recurrence_series_refs_to_their_occurrences() {
 
     let wrong_prefix = search(format!("/APP-{suffix}")).await;
     assert!(wrong_prefix.is_empty());
+}
+
+#[tokio::test]
+async fn base_projection_groups_terminal_occurrences_before_limits() {
+    let (_temp, database, workspace) = setup().await;
+    let created = create(&database, &workspace, "daily", 20).await;
+    resolve_at(
+        &database,
+        &workspace,
+        &created.task.id,
+        RecurrenceOutcome::Completed,
+        at(20, 13),
+    )
+    .await;
+    database
+        .reconcile_recurrence_series(&workspace, &created.series.id, at(21, 12))
+        .await
+        .unwrap();
+    let current = list(
+        &database,
+        &workspace,
+        TaskFilters {
+            hide_done: true,
+            ..TaskFilters::default()
+        },
+        TaskQueryMode::Flat,
+    )
+    .await;
+    resolve_at(
+        &database,
+        &workspace,
+        &current[0].task.id,
+        RecurrenceOutcome::Completed,
+        at(21, 13),
+    )
+    .await;
+    let grouped = list(
+        &database,
+        &workspace,
+        TaskFilters {
+            status: Some("done".into()),
+            ..TaskFilters::default()
+        },
+        TaskQueryMode::Flat,
+    )
+    .await;
+    assert_eq!(grouped.len(), 1);
+    let expanded = list(
+        &database,
+        &workspace,
+        TaskFilters {
+            status: Some("done".into()),
+            expand_recurring: true,
+            ..TaskFilters::default()
+        },
+        TaskQueryMode::Flat,
+    )
+    .await;
+    assert_eq!(expanded.len(), 2);
 }

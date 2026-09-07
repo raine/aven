@@ -1,4 +1,5 @@
 use crate::ids::WorkspaceId;
+use crate::operations::{RecurrenceStructuralMutation, RecurrenceTaskMutation};
 use std::collections::HashSet;
 
 use anyhow::{Result, bail};
@@ -161,14 +162,21 @@ async fn add_task_dependency_in_transaction(
     task_id: &crate::ids::TaskId,
     depends_on_id: &crate::ids::TaskId,
 ) -> Result<DependencyOutcome> {
-    crate::operations::route_recurrence_task_field(conn, workspace, task_id, "dependencies", "")
-        .await?;
-    crate::operations::route_recurrence_task_field(
+    let created_at = now();
+    crate::operations::route_recurrence_task_mutation(
+        conn,
+        workspace,
+        task_id,
+        RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Dependencies),
+        &created_at,
+    )
+    .await?;
+    crate::operations::route_recurrence_task_mutation(
         conn,
         workspace,
         depends_on_id,
-        "dependencies",
-        "",
+        RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Dependencies),
+        &created_at,
     )
     .await?;
     let pair = load_dependency_pair(conn, workspace, task_id, depends_on_id).await?;
@@ -183,8 +191,6 @@ async fn add_task_dependency_in_transaction(
     {
         bail!("error dependency-cycle task_id={task_id} depends_on_task_id={depends_on_id}");
     }
-
-    let created_at = now();
     let changed = sqlx::query(
         "INSERT OR IGNORE INTO task_dependencies(workspace_id, task_id, depends_on_task_id, created_at)
          VALUES (?, ?, ?, ?)",
@@ -215,14 +221,21 @@ async fn remove_task_dependency_in_transaction(
     task_id: &crate::ids::TaskId,
     depends_on_id: &crate::ids::TaskId,
 ) -> Result<DependencyOutcome> {
-    crate::operations::route_recurrence_task_field(conn, workspace, task_id, "dependencies", "")
-        .await?;
-    crate::operations::route_recurrence_task_field(
+    let mutation_at = now();
+    crate::operations::route_recurrence_task_mutation(
+        conn,
+        workspace,
+        task_id,
+        RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Dependencies),
+        &mutation_at,
+    )
+    .await?;
+    crate::operations::route_recurrence_task_mutation(
         conn,
         workspace,
         depends_on_id,
-        "dependencies",
-        "",
+        RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Dependencies),
+        &mutation_at,
     )
     .await?;
     let pair = load_dependency_pair(conn, workspace, task_id, depends_on_id).await?;

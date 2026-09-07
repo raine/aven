@@ -276,3 +276,57 @@ fn text_panel_scroll_offset_changes_visible_content() {
     assert!(rendered.contains("Line 8"));
     assert!(!rendered.contains("Line 0"));
 }
+
+#[test]
+fn text_panel_rendered_border_matches_mouse_boundary() {
+    use crate::tui::overlay::{
+        OverlayOutcome, TextPanelState, handle_generic_overlay_mouse, text_panel_layout,
+    };
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+    for count in [0, 1, 20] {
+        for (width, height) in [(80, 24), (24, 8)] {
+            let state = TextPanelState {
+                title: "Panel".to_string(),
+                lines: (0..count).map(|index| format!("Line {index}")).collect(),
+                scroll: 0,
+            };
+            let size = ratatui::layout::Size::new(width, height);
+            let layout = text_panel_layout(size, count);
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render_text_panel(
+                        frame,
+                        &TextPanelView {
+                            title: state.title.clone(),
+                            lines: &state.lines,
+                            scroll: state.scroll,
+                        },
+                    )
+                })
+                .unwrap();
+            assert_eq!(
+                terminal.backend().buffer()[(layout.area.x, layout.area.y)].symbol(),
+                "╭"
+            );
+            for (column, row, outside) in [
+                (layout.area.x, layout.area.y, false),
+                (layout.area.right() - 1, layout.area.bottom() - 1, false),
+                (layout.area.x, layout.area.bottom(), true),
+            ] {
+                let outcome = handle_generic_overlay_mouse(
+                    OverlayState::TextPanel(state.clone()),
+                    MouseEvent {
+                        kind: MouseEventKind::Down(MouseButton::Left),
+                        column,
+                        row,
+                        modifiers: KeyModifiers::NONE,
+                    },
+                    size,
+                );
+                assert_eq!(outcome == OverlayOutcome::Cancelled, outside);
+            }
+        }
+    }
+}

@@ -345,6 +345,7 @@ fn bulk_update_for_item(
     mutations: &BulkResolvedMutations,
 ) -> TaskUpdate {
     TaskUpdate {
+        require_metadata_fields: Vec::new(),
         title: None,
         description: None,
         project: mutations

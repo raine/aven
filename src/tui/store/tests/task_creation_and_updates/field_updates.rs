@@ -355,3 +355,76 @@ async fn update_labels_adds_and_removes_labels() {
     assert_eq!(outcome.message, format!("set {display_ref} labels"));
     assert_eq!(store.tasks[selected].labels, vec!["docs".to_string()]);
 }
+
+#[tokio::test]
+async fn metadata_empty_remove_noop_and_undo_use_core_transactions() {
+    let (_dir, pool, mut store) = test_store_with_pool().await;
+    let mut draft = task_draft("Metadata");
+    draft.metadata.push(aven_core::metadata::TaskMetadataInput {
+        expected_field_id: None,
+        key: "review".to_string(),
+        value: "pending".to_string(),
+    });
+    let (_, selected) = store.create_task(draft, None).await.unwrap();
+    let selection =
+        crate::tui::task_selection::TaskSelection::resolve_single(&store.tasks, selected).unwrap();
+    let id = selection.single_id().unwrap().clone();
+    let field = store.metadata_fields().await.unwrap().remove(0);
+    let before = pending_undo_count(&pool, &store.active_workspace.id).await;
+    store
+        .mutate_metadata(&selection, &field, Some("pending".to_string()))
+        .await
+        .unwrap();
+    assert_eq!(
+        pending_undo_count(&pool, &store.active_workspace.id).await,
+        before
+    );
+    store
+        .mutate_metadata(&selection, &field, Some(String::new()))
+        .await
+        .unwrap();
+    assert_eq!(store.metadata_values(&id).await.unwrap()[0].value, "");
+    store
+        .mutate_metadata(&selection, &field, None)
+        .await
+        .unwrap();
+    assert!(store.metadata_values(&id).await.unwrap().is_empty());
+    store.undo_last(selected).await.unwrap();
+    assert_eq!(store.metadata_values(&id).await.unwrap()[0].value, "");
+    store
+        .database
+        .rename_metadata_field(&store.active_workspace, "review", "review-state")
+        .await
+        .unwrap();
+    assert!(
+        store
+            .mutate_metadata(&selection, &field, Some("stale".to_string()))
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .mutate_metadata(&selection, &field, None)
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .database
+            .find_metadata_field(&store.active_workspace.id, "review")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let field = store.metadata_fields().await.unwrap().remove(0);
+    reject_undo_inserts(&pool).await;
+    assert!(
+        store
+            .mutate_metadata(&selection, &field, Some("rollback".to_string()))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("injected undo failure")
+    );
+    assert_eq!(store.metadata_values(&id).await.unwrap()[0].value, "");
+}

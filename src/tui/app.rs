@@ -140,6 +140,7 @@ pub(super) struct FooterChoiceState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum DetailSection {
+    CustomMetadata,
     EpicParent,
     EpicChildren,
     Attachments,
@@ -152,6 +153,7 @@ pub(crate) enum DetailSection {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum DetailTargetId {
+    CustomMetadata,
     Task {
         section: DetailSection,
         task_id: crate::ids::TaskId,
@@ -171,6 +173,7 @@ impl DetailTargetId {
     pub(crate) fn section(&self) -> DetailSection {
         match self {
             Self::Task { section, .. } | Self::Expand { section } => *section,
+            Self::CustomMetadata => DetailSection::CustomMetadata,
             Self::Note { .. } => DetailSection::Notes,
             Self::Attachment { .. } => DetailSection::Attachments,
         }
@@ -179,6 +182,7 @@ impl DetailTargetId {
     pub(crate) fn routing_domain(&self) -> crate::tui::event::RoutingDomain {
         match self {
             Self::Task { .. } => crate::tui::event::RoutingDomain::DetailRelated,
+            Self::CustomMetadata => crate::tui::event::RoutingDomain::DetailParent,
             Self::Note { .. } | Self::Expand { .. } => {
                 crate::tui::event::RoutingDomain::DetailPassive
             }
@@ -267,6 +271,7 @@ impl App {
         view_state: TaskViewState,
     ) -> Result<Self> {
         Self::new_with_store(TuiStore::new_with_view_state(database, workspace, view_state).await?)
+            .await
     }
 
     pub(crate) async fn new_with_view_state_and_config(
@@ -279,15 +284,16 @@ impl App {
             TuiStore::new_with_view_state_and_config(database, workspace, view_state, config)
                 .await?,
         )
+        .await
     }
 
     #[cfg(test)]
     pub(crate) async fn new_for_tests(database: Database) -> Result<Self> {
         let store = TuiStore::new(database, crate::workspaces::Workspace::default()).await?;
-        Self::new_with_store(store)
+        Self::new_with_store(store).await
     }
 
-    fn new_with_store(store: TuiStore) -> Result<Self> {
+    async fn new_with_store(store: TuiStore) -> Result<Self> {
         let config = store.config().clone();
         let origin_cwd =
             std::env::current_dir().context("could not determine current directory")?;
@@ -341,6 +347,10 @@ impl App {
             _test_database_dir: None,
         };
         app.set_config(config);
+        match app.store.collapsed_sidebar_sections().await {
+            Ok(sections) => app.list.restore_collapsed_sections(sections),
+            Err(error) => app.set_warning(format!("could not load sidebar state: {error}")),
+        }
         app.restore_sidebar_selection();
         Ok(app)
     }
@@ -392,11 +402,12 @@ impl App {
 
         self.list
             .selected_sidebar()
-            .and_then(|index| self.store.sidebar_entries.get(index))
+            .and_then(|index| self.list.sidebar_entries().get(index))
             .and_then(|entry| entry.target.as_ref())
             .map(|target| match target {
                 SidebarEntryTarget::View(view) => SidebarCommandTarget::View(*view),
                 SidebarEntryTarget::Scope(scope) => SidebarCommandTarget::from_scope(scope),
+                SidebarEntryTarget::Section(section) => SidebarCommandTarget::Section(*section),
             })
     }
 
@@ -483,7 +494,7 @@ impl App {
                             )
                         )
                 })
-                .map(|target| match target {
+                .and_then(|target| Some(match target {
                     DetailTargetId::Task {
                         section: DetailSection::EpicChildren,
                         task_id,
@@ -495,6 +506,7 @@ impl App {
                         section: *section,
                         task_id: task_id.clone(),
                     },
+                    DetailTargetId::CustomMetadata => return None,
                     DetailTargetId::Note { .. } => DetailCommandFocus::Note,
                     DetailTargetId::Attachment { attachment_id } => {
                         let bytes_present = parent.attachments.iter().any(|attachment| {
@@ -507,7 +519,7 @@ impl App {
                         }
                     }
                     DetailTargetId::Expand { .. } => DetailCommandFocus::Disclosure
-                });
+                }));
             return CommandSessionSnapshot {
                 workspace,
                 surface: CommandSurfaceSnapshot::Detail {

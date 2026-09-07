@@ -44,6 +44,9 @@ pub(crate) fn dispatch_overlay_mouse(
     terminal_size: Size,
     context: OverlayMouseContext,
 ) -> OverlayMouseOutcome {
+    if let OverlayState::Metadata(state) = overlay {
+        return map_generic_outcome(super::metadata::handle_mouse(state, mouse, terminal_size));
+    }
     if matches!(
         mouse.kind,
         MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
@@ -77,25 +80,9 @@ pub(crate) fn dispatch_overlay_mouse(
         OverlayState::Command { mut state }
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) =>
         {
-            let selected = state.highlighted.unwrap_or(0);
-            let offset = selected.saturating_sub(7);
-            let visible = state.candidates.len().saturating_sub(offset).min(8);
-            let height = (visible as u16)
-                .saturating_add(3)
-                .saturating_add(u16::from(!state.candidates.is_empty()));
-            let width = terminal_size.width.saturating_sub(2).min(112);
-            let area = super::dialog_area(
-                Rect::new(0, 0, terminal_size.width, terminal_size.height),
-                width,
-                height,
-            );
-            let first_row = area.y.saturating_add(2);
-            if mouse.column >= area.x
-                && mouse.column < area.right()
-                && mouse.row >= first_row
-                && usize::from(mouse.row.saturating_sub(first_row)) < visible
-            {
-                let index = offset + usize::from(mouse.row.saturating_sub(first_row));
+            let layout =
+                super::command_layout(terminal_size, state.candidates.len(), state.highlighted);
+            if let Some(index) = layout.candidate_at(mouse.column, mouse.row) {
                 state.highlighted = Some(index);
             }
             OverlayMouseOutcome::Retained(OverlayState::Command { state })
@@ -122,7 +109,7 @@ pub(crate) fn dispatch_overlay_mouse(
                 Rect::new(0, 0, terminal_size.width, terminal_size.height),
                 context.add_task_only,
                 crate::tui::ui::AddTaskLayout {
-                    description: &state.description.lines,
+                    description: &state.description.buffer.lines,
                     mode: &state.mode,
                     has_attachments: !state.attachments.is_empty(),
                     show_schedule_error: state.schedule_error.is_some()

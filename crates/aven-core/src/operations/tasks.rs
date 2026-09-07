@@ -1,3 +1,4 @@
+use crate::operations::{RecurrenceStructuralMutation, RecurrenceTaskMutation};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -116,6 +117,7 @@ pub struct TaskUpdate {
     pub remove_labels: Vec<String>,
     pub set_metadata: Vec<TaskMetadataInput>,
     pub remove_metadata: Vec<String>,
+    pub require_metadata_fields: Vec<(crate::ids::MetadataFieldId, String)>,
     pub label_selection: Option<TaskLabelSelection>,
     pub create_missing_labels: bool,
 }
@@ -1065,10 +1067,12 @@ pub async fn update_task(
 
 fn append_task_undo_commands(
     task_id: &TaskId,
-    before: &TaskUndoSnapshot,
-    after: &TaskUndoSnapshot,
+    before_snapshot: &TaskUndoSnapshot,
+    after_snapshot: &TaskUndoSnapshot,
     commands: &mut Vec<UndoCommand>,
 ) {
+    let before = before_snapshot;
+    let after = after_snapshot;
     let fields = [
         ("title", before.title.as_str(), after.title.as_str()),
         (
@@ -1101,6 +1105,12 @@ fn append_task_undo_commands(
                 field: field.to_string(),
                 before: before.to_string(),
                 after: after.to_string(),
+                queue_activity_before: (before_snapshot.queue_activity_at
+                    != after_snapshot.queue_activity_at)
+                    .then(|| before_snapshot.queue_activity_at.clone()),
+                queue_activity_after: (before_snapshot.queue_activity_at
+                    != after_snapshot.queue_activity_at)
+                    .then(|| after_snapshot.queue_activity_at.clone()),
             });
         }
     }
@@ -1112,6 +1122,10 @@ fn append_task_undo_commands(
             field: "deleted".to_string(),
             before: before_deleted.to_string(),
             after: after_deleted.to_string(),
+            queue_activity_before: (before.queue_activity_at != after.queue_activity_at)
+                .then(|| before.queue_activity_at.clone()),
+            queue_activity_after: (before.queue_activity_at != after.queue_activity_at)
+                .then(|| after.queue_activity_at.clone()),
         });
     }
     let before_is_epic = if before.is_epic { "1" } else { "0" };
@@ -1122,6 +1136,8 @@ fn append_task_undo_commands(
             field: "is_epic".to_string(),
             before: before_is_epic.to_string(),
             after: after_is_epic.to_string(),
+            queue_activity_before: None,
+            queue_activity_after: None,
         });
     }
     if before.labels != after.labels {
@@ -1314,6 +1330,9 @@ async fn apply_task_update(
         &update.remove_labels,
     )
     .await?;
+    for (id, key) in &update.require_metadata_fields {
+        crate::metadata::require_metadata_field(conn, &workspace.id, id, key).await?;
+    }
     crate::metadata::validate_task_metadata_result(
         conn,
         &workspace.id,
@@ -1348,8 +1367,16 @@ pub async fn update_task_labels_in_workspace(
     add_labels: &[String],
     remove_labels: &[String],
 ) -> Result<bool> {
+    let mutation_at = now();
     let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
-    crate::operations::route_recurrence_task_field(conn, &workspace, task_id, "labels", "").await?;
+    crate::operations::route_recurrence_task_mutation(
+        conn,
+        &workspace,
+        task_id,
+        RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Labels),
+        &mutation_at,
+    )
+    .await?;
     let mut changed = false;
     for label in resolve_labels_in_workspace(conn, &workspace.id, add_labels).await? {
         let rows_affected = sqlx::query(
@@ -1415,11 +1442,17 @@ pub(super) async fn add_note_operation(
     body: String,
     tui_undo: bool,
 ) -> Result<NoteOutcome> {
-    let note_id = new_id();
     let ts = now();
+    let note_id = new_id();
     let mut tx = begin_immediate(conn).await?;
-    crate::operations::route_recurrence_task_field(&mut tx, workspace, task_id, "notes", "")
-        .await?;
+    crate::operations::route_recurrence_task_mutation(
+        &mut tx,
+        workspace,
+        task_id,
+        RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Notes),
+        &ts,
+    )
+    .await?;
     let change_id = append_change(
         &mut tx,
         ChangeEntity::Task,
@@ -1481,9 +1514,16 @@ async fn edit_note_operation(
     body: String,
     tui_undo: bool,
 ) -> Result<NoteEditOutcome> {
+    let edited_at = now();
     let mut tx = begin_immediate(conn).await?;
-    crate::operations::route_recurrence_task_field(&mut tx, workspace, task_id, "notes", "")
-        .await?;
+    crate::operations::route_recurrence_task_mutation(
+        &mut tx,
+        workspace,
+        task_id,
+        RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Notes),
+        &edited_at,
+    )
+    .await?;
     let before = sqlx::query_scalar::<_, String>(
         "SELECT body FROM notes WHERE workspace_id = ? AND task_id = ? AND id = ?",
     )
@@ -1495,7 +1535,6 @@ async fn edit_note_operation(
     let found = before.is_some();
     let changed = before.as_ref().is_some_and(|before| before != &body);
     if changed {
-        let edited_at = now();
         sqlx::query("UPDATE notes SET body = ? WHERE workspace_id = ? AND task_id = ? AND id = ?")
             .bind(&body)
             .bind(&workspace.id)
@@ -1557,9 +1596,16 @@ async fn delete_note_operation(
     note_id: &str,
     tui_undo: bool,
 ) -> Result<NoteDeleteOutcome> {
+    let deleted_at = now();
     let mut tx = begin_immediate(conn).await?;
-    crate::operations::route_recurrence_task_field(&mut tx, workspace, task_id, "notes", "")
-        .await?;
+    crate::operations::route_recurrence_task_mutation(
+        &mut tx,
+        workspace,
+        task_id,
+        RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Notes),
+        &deleted_at,
+    )
+    .await?;
     let before = sqlx::query_as::<_, (String, String)>(
         "SELECT body, created_at FROM notes WHERE workspace_id = ? AND task_id = ? AND id = ?",
     )
@@ -1568,7 +1614,6 @@ async fn delete_note_operation(
     .bind(note_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let deleted_at = now();
     let deleted =
         sqlx::query("DELETE FROM notes WHERE workspace_id = ? AND task_id = ? AND id = ?")
             .bind(&workspace.id)

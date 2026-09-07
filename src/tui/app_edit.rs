@@ -1646,7 +1646,7 @@ impl App {
         let intent = state.intent.clone();
         let baseline = state.baseline_value();
         match edit_text_externally(
-            state.lines.join("\n"),
+            state.buffer.lines.join("\n"),
             "description.md",
             self.terminal_mouse_capture,
         ) {

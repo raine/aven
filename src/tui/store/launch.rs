@@ -25,6 +25,7 @@ impl TuiLaunch {
         database: &Database,
         workspace: &Workspace,
         args: TuiArgs,
+        routing: &crate::routing::InvocationRouting<'_>,
     ) -> Result<Self> {
         if let Some(task_ref) = args.task_ref {
             let task = database.resolve_task_ref(workspace, &task_ref).await?;
@@ -35,11 +36,11 @@ impl TuiLaunch {
         }
 
         let scope = match args.project.as_deref() {
-            Some("") => {
-                crate::projects::inferred_existing_project_key_with_database(database, workspace)
-                    .await?
-                    .map_or(TaskScope::Workspace, TaskScope::Project)
-            }
+            Some("") => crate::projects::inferred_existing_project_key_with_routing(
+                database, workspace, routing,
+            )
+            .await?
+            .map_or(TaskScope::Workspace, TaskScope::Project),
             Some(project) => TaskScope::Project(
                 database
                     .resolve_existing_project(&workspace.id, project)
@@ -214,9 +215,14 @@ mod tests {
         input.natural = true;
         drop(conn);
 
-        let launch = TuiLaunch::resolve(&database, &Workspace::default(), input)
-            .await
-            .unwrap();
+        let launch = TuiLaunch::resolve(
+            &database,
+            &Workspace::default(),
+            input,
+            &crate::routing::InvocationRouting::new(&crate::config::AppConfig::default()),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             launch.view_state.scope,
@@ -241,9 +247,14 @@ mod tests {
         input.view = Some(TuiViewArg::All);
         input.layout = Some(TuiLayoutArg::Columns);
 
-        let launch = TuiLaunch::resolve(&database, &Workspace::default(), input)
-            .await
-            .unwrap();
+        let launch = TuiLaunch::resolve(
+            &database,
+            &Workspace::default(),
+            input,
+            &crate::routing::InvocationRouting::new(&crate::config::AppConfig::default()),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(launch.view_state.query, TaskQuery::All);
         assert_eq!(launch.view_state.layout, TaskLayout::Columns);
@@ -256,9 +267,14 @@ mod tests {
         input.view = Some(TuiViewArg::Queue);
         input.layout = Some(TuiLayoutArg::Columns);
 
-        let error = TuiLaunch::resolve(&database, &Workspace::default(), input)
-            .await
-            .unwrap_err();
+        let error = TuiLaunch::resolve(
+            &database,
+            &Workspace::default(),
+            input,
+            &crate::routing::InvocationRouting::new(&crate::config::AppConfig::default()),
+        )
+        .await
+        .unwrap_err();
 
         assert_eq!(
             error.to_string(),
@@ -277,9 +293,14 @@ mod tests {
             let mut input = args();
             input.view = Some(arg);
 
-            let launch = TuiLaunch::resolve(&database, &Workspace::default(), input)
-                .await
-                .unwrap();
+            let launch = TuiLaunch::resolve(
+                &database,
+                &Workspace::default(),
+                input,
+                &crate::routing::InvocationRouting::new(&crate::config::AppConfig::default()),
+            )
+            .await
+            .unwrap();
 
             assert_eq!(launch.view_state.query, query);
             assert_eq!(launch.startup, TuiStartup::Browse);
@@ -292,9 +313,14 @@ mod tests {
         let mut input = args();
         input.view = Some(TuiViewArg::Upcoming);
 
-        let launch = TuiLaunch::resolve(&database, &Workspace::default(), input)
-            .await
-            .unwrap();
+        let launch = TuiLaunch::resolve(
+            &database,
+            &Workspace::default(),
+            input,
+            &crate::routing::InvocationRouting::new(&crate::config::AppConfig::default()),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(launch.view_state.query, TaskQuery::Upcoming);
         assert_eq!(launch.startup, TuiStartup::Browse);
@@ -306,9 +332,14 @@ mod tests {
         let mut input = args();
         input.view = Some(TuiViewArg::Recurring);
 
-        let launch = TuiLaunch::resolve(&database, &Workspace::default(), input)
-            .await
-            .unwrap();
+        let launch = TuiLaunch::resolve(
+            &database,
+            &Workspace::default(),
+            input,
+            &crate::routing::InvocationRouting::new(&crate::config::AppConfig::default()),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(launch.view_state.query, TaskQuery::Recurring);
         assert_eq!(launch.startup, TuiStartup::Browse);
@@ -335,9 +366,14 @@ mod tests {
         input.task_ref = Some("APP-ABCD".to_string());
         drop(conn);
 
-        let launch = TuiLaunch::resolve(&database, &Workspace::default(), input)
-            .await
-            .unwrap();
+        let launch = TuiLaunch::resolve(
+            &database,
+            &Workspace::default(),
+            input,
+            &crate::routing::InvocationRouting::new(&crate::config::AppConfig::default()),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(launch.view_state.scope, TaskScope::Workspace);
         assert_eq!(launch.view_state.query, TaskQuery::Search);
@@ -355,9 +391,14 @@ mod tests {
         input.view = Some(TuiViewArg::RecentActions);
         input.priority = Some(crate::cli::TuiPriorityArg::Urgent);
 
-        let error = TuiLaunch::resolve(&database, &Workspace::default(), input)
-            .await
-            .unwrap_err();
+        let error = TuiLaunch::resolve(
+            &database,
+            &Workspace::default(),
+            input,
+            &crate::routing::InvocationRouting::new(&crate::config::AppConfig::default()),
+        )
+        .await
+        .unwrap_err();
 
         assert_eq!(
             error.to_string(),
@@ -372,9 +413,14 @@ mod tests {
         input.label = Some("missing".to_string());
         drop(conn);
 
-        let error = TuiLaunch::resolve(&database, &Workspace::default(), input)
-            .await
-            .unwrap_err();
+        let error = TuiLaunch::resolve(
+            &database,
+            &Workspace::default(),
+            input,
+            &crate::routing::InvocationRouting::new(&crate::config::AppConfig::default()),
+        )
+        .await
+        .unwrap_err();
 
         assert_eq!(error.to_string(), "unknown label");
     }

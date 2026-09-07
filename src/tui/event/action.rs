@@ -101,6 +101,7 @@ pub(crate) enum Action {
     DeleteAttachment,
     BeginEditTitle,
     BeginEditDescription,
+    BeginEditMetadata,
     BeginEditProject,
     BeginEditPriority,
     BeginEditEpic,
@@ -259,6 +260,7 @@ impl Action {
             | Self::CopyDurableRef
             | Self::CopyTaskTitle => CommandTargetPolicy::Batch,
             Self::BeginEditTitle => CommandTargetPolicy::Single("title"),
+            Self::BeginEditMetadata => CommandTargetPolicy::Single("custom metadata"),
             Self::BeginEditDescription => CommandTargetPolicy::Single("description"),
             Self::BeginAddNote => CommandTargetPolicy::Single("note"),
             Self::BeginAddDependency => CommandTargetPolicy::Single("dependency"),

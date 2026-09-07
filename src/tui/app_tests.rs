@@ -168,6 +168,7 @@ fn test_attachment(
 async fn create_and_select_task(app: &mut App, draft: TaskDraft) -> usize {
     let (_, selected) = app.store.create_task(draft, None).await.unwrap();
     let selected = selected.unwrap();
+    app.preserve_or_restore_sidebar_selection();
     app.list.select_task(Some(selected));
     selected
 }
@@ -456,11 +457,7 @@ fn picker_row_click(app: &App, visible_row: u16, size: ratatui::layout::Size) ->
             let layout = crate::tui::overlay::picker_layout(&view, size);
             left_click(
                 layout.inner.x.saturating_add(2),
-                layout
-                    .inner
-                    .y
-                    .saturating_add(layout.list_start)
-                    .saturating_add(visible_row),
+                layout.list.y.saturating_add(visible_row),
             )
         }
         OverlayView::TagCombobox(view) => {
@@ -628,3 +625,6 @@ mod conflicts;
 
 #[path = "app_tests/typed_overlay_submissions.rs"]
 mod typed_overlay_submissions;
+
+#[path = "app_tests/metadata.rs"]
+mod metadata;

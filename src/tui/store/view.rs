@@ -60,7 +60,11 @@ impl TuiStore {
                 Some(SidebarEntryTarget::View(view)) => *view == self.view_state.query,
                 _ => false,
             })
-            .or(Some(1))
+            .or_else(|| {
+                self.sidebar_entries
+                    .iter()
+                    .position(|entry| entry.target.is_some())
+            })
     }
 
     #[cfg(test)]

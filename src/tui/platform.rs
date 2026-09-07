@@ -362,11 +362,24 @@ pub(crate) fn edit_text_externally(
 }
 
 #[cfg(test)]
+thread_local! {
+    static FAIL_NEXT_EDITOR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn fail_next_external_editor() {
+    FAIL_NEXT_EDITOR.set(true);
+}
+
+#[cfg(test)]
 pub(crate) fn edit_text_externally(
     value: String,
     _filename: &str,
     _mouse_capture: bool,
 ) -> Result<String> {
+    if FAIL_NEXT_EDITOR.replace(false) {
+        anyhow::bail!("injected external editor failure");
+    }
     Ok(format!("{value} from editor"))
 }
 

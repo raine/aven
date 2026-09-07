@@ -1260,13 +1260,15 @@ async fn focused_relationship_delete_and_unsupported_actions_are_explicit() {
             task_id: blocker_id.clone(),
         }));
 
-    for code in [KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('e')] {
+    for code in [KeyCode::Char('t'), KeyCode::Char('r')] {
         app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
     }
     assert_eq!(
         toast_message(&app).as_deref(),
         Some("invalid shortcut: t r")
     );
+    assert!(app.pending_shortcut.is_empty());
+    assert!(app.overlay.is_none());
 
     for code in [KeyCode::Char('t'), KeyCode::Char('D')] {
         app.dispatch_key(key(code), (80, 24).into()).await.unwrap();

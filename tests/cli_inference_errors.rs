@@ -496,3 +496,55 @@ fn database_rejects_invalid_status_and_priority_values() {
     let priority_stderr = String::from_utf8_lossy(&priority_error.stderr);
     assert!(priority_stderr.contains("CHECK constraint failed"));
 }
+
+#[test]
+fn invalid_workspace_routes_fail_but_explicit_workspace_bypasses_them() {
+    let env = TestEnv::new();
+    let db = env.db("invalid-route.sqlite");
+    let cwd = env.path("cwd");
+    fs::create_dir_all(cwd.join(".git")).unwrap();
+    env.write_config(&format!(
+        r#"local:
+  db_path: "{}"
+workspace:
+  routes:
+    - workspace: default
+      paths: ["{}"]
+project:
+  overrides:
+    - project: ignored
+      paths: ["{}"]
+"#,
+        db.display(),
+        env.path("missing-route").display(),
+        env.path("missing-project").display(),
+    ));
+    let error = fail(aven_config_in(&env, &cwd, ["add", "implicit workspace"]));
+    contains_all(&error, &["could not resolve workspace route path"]);
+    let output = ok(aven_config_in(
+        &env,
+        &cwd,
+        ["--workspace", "default", "add", "explicit workspace"],
+    ));
+    contains_none(&output, &["project=ignored"]);
+}
+
+#[test]
+fn explicit_project_bypasses_invalid_git_discovery() {
+    let env = TestEnv::new();
+    let db = env.db("invalid-git.sqlite");
+    let cwd = env.path("cwd");
+    let git_dir = env.path("git-dir");
+    fs::create_dir_all(&cwd).unwrap();
+    fs::create_dir_all(&git_dir).unwrap();
+    fs::write(cwd.join(".git"), format!("gitdir: {}", git_dir.display())).unwrap();
+    fs::write(git_dir.join("commondir"), "missing").unwrap();
+    let error = fail(env.aven_in(&db, &cwd, ["add", "infer project"]));
+    contains_all(&error, &["could not resolve"]);
+    let output = ok(env.aven_in(
+        &db,
+        &cwd,
+        ["add", "explicit project", "--project", "chosen"],
+    ));
+    contains_all(&output, &["project=chosen"]);
+}

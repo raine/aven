@@ -11,6 +11,12 @@ use crate::tui::overlay::{
 impl App {
     pub(super) async fn handle_overlay_submit(&mut self, submit: OverlaySubmit) -> Result<()> {
         match submit {
+            OverlaySubmit::MetadataSave { state, remove } => {
+                self.save_metadata(state, remove).await?
+            }
+            OverlaySubmit::MetadataExternalEditor(state) => {
+                self.open_metadata_external_editor(state)
+            }
             OverlaySubmit::AddTask(state) => self.handle_add_task_submit(*state).await?,
             OverlaySubmit::CreateAddTaskProject { state, name } => {
                 self.handle_create_add_task_project(state, name).await?;
@@ -219,7 +225,9 @@ impl App {
                     &series_id,
                     aven_core::operations::RecurrenceTemplateUpdate {
                         title: Some(title.to_string()),
-                        description: Some(state.description.lines.join("\n").trim().to_string()),
+                        description: Some(
+                            state.description.buffer.lines.join("\n").trim().to_string(),
+                        ),
                         project: state.selected_project.clone(),
                         priority: Some(state.priority.value().to_string()),
                         initial_status: Some(state.effective_status().to_string()),
@@ -239,9 +247,9 @@ impl App {
         }
 
         if let Some(schedule) = recurrence_schedule {
-            let draft = crate::tui::store::recurrence_draft(
+            let mut draft = crate::tui::store::recurrence_draft(
                 title.to_string(),
-                state.description.lines.join("\n").trim().to_string(),
+                state.description.buffer.lines.join("\n").trim().to_string(),
                 state
                     .selected_project
                     .clone()
@@ -251,10 +259,22 @@ impl App {
                 state.labels.clone(),
                 schedule,
             );
-            let (message, selected) = self
+            draft.metadata = state.custom_metadata.clone();
+            let (message, selected) = match self
                 .store
                 .create_recurrence_series(draft, self.list.selected_task())
-                .await?;
+                .await
+            {
+                Ok(result) => result,
+                Err(error) => {
+                    if !crate::tui::store::mutation_committed(&error) {
+                        self.overlay = Some(OverlayState::AddTask(Box::new(state)));
+                    } else {
+                        self.authoring.clear();
+                    }
+                    return Err(error);
+                }
+            };
             self.list.select_task(selected);
             self.preserve_or_restore_sidebar_selection();
             self.prune_task_marks();
@@ -300,13 +320,13 @@ impl App {
         state.create_more = false;
         let draft = TaskDraft {
             title: title.to_string(),
-            description: state.description.lines.join("\n").trim().to_string(),
+            description: state.description.buffer.lines.join("\n").trim().to_string(),
             project: state.selected_project.clone(),
             status: state.effective_status().to_string(),
             priority: state.priority.value().to_string(),
             source: crate::choices::TaskSource::Tui,
             labels: state.labels.clone(),
-            metadata: Vec::new(),
+            metadata: state.custom_metadata.clone(),
             available_at,
             due_on,
             is_epic: state.is_epic,

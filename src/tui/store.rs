@@ -44,9 +44,9 @@ pub(crate) use task_creation::task_creation_committed;
 pub(crate) use types::{
     ClosedTaskVisibility, ConflictTarget, DetailRevision, MainRowAnchor, MainRowIdentity,
     MainRowPosition, MainRowSelection, MutationMessage, RecurringSeriesViewState, SelectionRestore,
-    SidebarEntry, SidebarEntryTarget, SyncStatusCheck, TaskFilterModifiers, TaskLayout,
-    TaskListRenderMode, TaskOrder, TaskProjection, TaskProjectionOrigin, TaskQuery, TaskScope,
-    TaskScopeTarget, TaskViewState, TuiDatabaseStats, TuiSyncStatus, UndoPresentation,
+    SidebarEntry, SidebarEntryTarget, SidebarSection, SyncStatusCheck, TaskFilterModifiers,
+    TaskLayout, TaskListRenderMode, TaskOrder, TaskProjection, TaskProjectionOrigin, TaskQuery,
+    TaskScope, TaskScopeTarget, TaskViewState, TuiDatabaseStats, TuiSyncStatus, UndoPresentation,
     mutation_committed,
 };
 #[cfg(test)]
@@ -328,6 +328,7 @@ impl TuiStore {
         let task_columns = config.tui.columns.clone();
         self.app_config = config;
         self.set_task_columns(task_columns);
+        self.rebuild_sidebar();
     }
 
     pub(crate) fn task_columns(&self) -> &[crate::config::TaskColumnConfig] {

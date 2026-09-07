@@ -153,7 +153,7 @@ async fn clean_manual_description_conflict_merge_cancels_without_confirmation() 
         &app.overlay,
         Some(OverlayState::MultilineInput(state))
             if state.mode == MultilineInputMode::Compose
-                && state.lines == ["local description"]
+                && state.buffer.lines == ["local description"]
     ));
     app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
 
@@ -185,7 +185,7 @@ async fn changed_manual_description_conflict_merge_requires_discard_confirmation
         &app.overlay,
         Some(OverlayState::MultilineInput(state))
             if state.mode == MultilineInputMode::ConfirmDiscard
-                && state.lines == ["local description updated"]
+                && state.buffer.lines == ["local description updated"]
     ));
     app.handle_overlay_key(key(KeyCode::Char('y')))
         .await

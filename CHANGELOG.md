@@ -5,7 +5,20 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- View and edit [custom task metadata in the TUI](/tui/#custom-metadata), with inline editing for short values and external-editor support for multiline values.
+- Customize which [TUI sidebar views](/configuration/#tui-sidebar-views) appear and their order in config.
+- Collapse sidebar sections to keep navigation focused on what you need, with preferences remembered across restarts.
 - Fix: Opening a [search](/tui/#search-filter-and-order) result with `Enter` keeps the typed query as the committed search view, so closing the task detail returns to the full result list instead of a single-task view scoped to that task's reference.
+
+## v0.1.36 (2026-09-05)
+
+- Perf: Faster browsing and bulk updates for large task collections, including task details, Recent Actions, and recurring-task history. Sync and attachment cleanup also do less background work.
+- Fix: Attachment sync and cleanup protect files still used by tasks during deletion, restoration, conflict resolution, and background checks. Cleanup also works when attachment storage spans filesystems.
+- Fix: Upcoming keeps tasks in the correct date groups when the TUI stays open past midnight.
+- Fix: Task details handle tasks deleted during refresh without displaying incomplete or outdated information.
+- Fix: Undoing a task field change restores its previous idle age unless newer activity has updated it.
+- Fix: `aven doctor --integrity` checks attachment files after its database checks, capturing file changes made while those checks run.
+- UX: Epic details show each child's blockers on one compact line. Open the child task to see all its dependencies.
 
 ## v0.1.35 (2026-08-28)
 

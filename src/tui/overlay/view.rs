@@ -69,6 +69,7 @@ impl SearchKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlayView<'a> {
+    Metadata(super::metadata::MetadataView<'a>),
     Onboarding {
         splash_underlay: bool,
     },
@@ -421,9 +422,9 @@ impl<'a> MultilineInputView<'a> {
             kind: (&state.intent).into(),
             title: state.title.clone(),
             prompt: state.prompt.clone(),
-            lines: &state.lines,
-            row: state.row,
-            column: state.column,
+            lines: &state.buffer.lines,
+            row: state.buffer.row,
+            column: state.buffer.column,
             mode: state.mode,
         }
     }
@@ -523,12 +524,13 @@ impl<'a> OverlayView<'a> {
                 candidates: &state.candidates,
                 highlighted: state.highlighted,
             },
+            Metadata(state) => Self::Metadata(state.view()),
             AddTask(state) => Self::AddTask(Box::new(AddTaskView {
                 title: state.title.as_str().to_string(),
                 title_cursor: state.title.cursor,
-                description: &state.description.lines,
-                description_row: state.description.row,
-                description_column: state.description.column,
+                description: &state.description.buffer.lines,
+                description_row: state.description.buffer.row,
+                description_column: state.description.buffer.column,
                 focus: state.focus,
                 project: state.project.clone(),
                 status: state.effective_status().to_string(),

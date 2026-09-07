@@ -570,7 +570,7 @@ async fn add_task_paste_image_path_attaches_to_created_task_once() {
         &app.overlay,
         Some(OverlayState::AddTask(state))
             if state.focus == crate::tui::authoring::AddTaskStep::Description
-                && state.description.lines.join("\n") == "Include setup details"
+                && state.description.buffer.lines.join("\n") == "Include setup details"
                 && state.attachments.len() == 1
                 && state.attachments[0].byte_size == image_bytes.len() as i64
                 && state.attachments[0].dimensions == Some((16, 16))
@@ -718,7 +718,10 @@ async fn failed_attachment_task_submission_preserves_composer_for_retry() {
         panic!("add task composer should remain open");
     };
     assert_eq!(state.title.as_str(), "Retry attachment task");
-    assert_eq!(state.description.lines.join("\n"), "Keep every field");
+    assert_eq!(
+        state.description.buffer.lines.join("\n"),
+        "Keep every field"
+    );
     let mut conn = pool.acquire().await.unwrap();
     let task_count: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks")
         .fetch_one(&mut *conn)

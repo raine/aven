@@ -248,7 +248,7 @@ impl App {
 
     pub(super) fn apply_filter_selection(&mut self, selected: Option<usize>) {
         self.list.select_task(selected);
-        self.list.select_sidebar(self.store.sidebar_selection());
+        self.restore_sidebar_selection();
         self.prune_task_marks();
         self.list.focus_tasks();
         self.overlay = None;

@@ -96,6 +96,71 @@ async fn undo_guard_blocks_stale_task_field() {
 }
 
 #[tokio::test]
+async fn undo_cancel_restores_prior_queue_activity() {
+    let (dir, pool, mut store) = test_store_with_pool().await;
+    let (task_id, selected) = create_selected_task(&mut store, "Preserve idle").await;
+    let prior_activity = "1970-01-01T00:00:00Z";
+    set_task_timestamps(
+        &pool,
+        &store.active_workspace.id,
+        &task_id,
+        prior_activity,
+        None,
+    )
+    .await;
+    store.refresh(Some(&task_id)).await.unwrap();
+
+    store
+        .update_status(Some(selected), "canceled")
+        .await
+        .unwrap();
+
+    store.undo_last(None).await.unwrap().unwrap();
+    let task = store
+        .tasks
+        .iter()
+        .find(|item| item.task.id == task_id)
+        .unwrap();
+    assert_eq!(task.task.status, TaskStatus::Inbox);
+    assert_eq!(task.task.queue_activity_at, prior_activity);
+}
+
+#[tokio::test]
+async fn undo_status_keeps_later_queue_activity() {
+    let (dir, pool, mut store) = test_store_with_pool().await;
+    let (task_id, selected) = create_selected_task(&mut store, "Keep later activity").await;
+    set_task_timestamps(
+        &pool,
+        &store.active_workspace.id,
+        &task_id,
+        "1970-01-01T00:00:00Z",
+        None,
+    )
+    .await;
+    store.refresh(Some(&task_id)).await.unwrap();
+    store.update_status(Some(selected), "todo").await.unwrap();
+
+    let later_activity = "2999-01-01T00:00:00Z";
+    set_task_timestamps(
+        &pool,
+        &store.active_workspace.id,
+        &task_id,
+        later_activity,
+        None,
+    )
+    .await;
+
+    store.undo_last(None).await.unwrap().unwrap();
+    let task = store
+        .tasks
+        .iter()
+        .find(|item| item.task.id == task_id)
+        .unwrap();
+    assert_eq!(task.task.status, TaskStatus::Inbox);
+    assert_eq!(task.task.queue_activity_at, later_activity);
+}
+
+#[tokio::test]
 async fn single_task_undo_presentation_keeps_display_ref() {
     let mut store = test_store().await;
     let (_task_id, selected) = create_selected_task(&mut store, "Single summary").await;

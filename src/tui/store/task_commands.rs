@@ -33,6 +33,66 @@ fn task_noun(count: usize) -> &'static str {
 }
 
 impl TuiStore {
+    pub(crate) async fn metadata_fields(&self) -> Result<Vec<aven_core::metadata::MetadataField>> {
+        Ok(self
+            .database
+            .list_metadata_fields(&self.active_workspace.id)
+            .await?
+            .into_iter()
+            .map(|usage| usage.field)
+            .collect())
+    }
+
+    pub(crate) async fn metadata_values(
+        &self,
+        task_id: &crate::ids::TaskId,
+    ) -> Result<Vec<aven_core::metadata::TaskMetadataValue>> {
+        self.database
+            .task_metadata(&self.active_workspace.id, task_id)
+            .await
+    }
+
+    pub(crate) async fn mutate_metadata(
+        &mut self,
+        selection: &TaskSelection,
+        field: &aven_core::metadata::MetadataField,
+        value: Option<String>,
+    ) -> Result<MutationMessage> {
+        ensure!(selection.is_single(), "metadata requires one task");
+        let mut update = TaskUpdate::default();
+        if let Some(value) = value {
+            update
+                .set_metadata
+                .push(aven_core::metadata::TaskMetadataInput {
+                    expected_field_id: Some(field.id.clone()),
+                    key: field.key.clone(),
+                    value,
+                });
+        } else {
+            update.remove_metadata.push(field.key.clone());
+            update
+                .require_metadata_fields
+                .push((field.id.clone(), field.key.clone()));
+        }
+        let report = self
+            .apply_uniform_task_update(
+                selection,
+                update,
+                UndoContext::tui_task_mutation(
+                    Some(format!("metadata {}", selection.targets()[0].display_ref)),
+                    "metadata",
+                ),
+            )
+            .await?;
+        let message = if report.changed_count() == 0 {
+            "Metadata unchanged"
+        } else {
+            "Metadata updated"
+        };
+        self.refresh_task_selection(selection, report, message.to_string(), true, false)
+            .await
+    }
+
     async fn apply_task_updates(
         &mut self,
         updates: Vec<(crate::ids::TaskId, TaskUpdate)>,

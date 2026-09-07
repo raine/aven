@@ -1129,6 +1129,16 @@ pub(crate) const COMMANDS: &[BuiltInCommand] = &[
     ),
     // Edit
     BuiltInCommand::implemented_in_detail(
+        "edit-metadata",
+        "view and edit custom metadata",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('e'), KeyCode::Char('m')],
+            label: "e m",
+        }],
+        Action::BeginEditMetadata,
+    ),
+    BuiltInCommand::implemented_in_detail(
         "edit-title",
         "edit selected task title",
         "Tasks",

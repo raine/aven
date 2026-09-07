@@ -102,6 +102,7 @@ impl App {
                 self.set_warning("requires a focused attachment")
             }
             Action::BeginEditTitle => self.begin_edit_title(),
+            Action::BeginEditMetadata => self.begin_edit_metadata().await?,
             Action::BeginEditDescription => self.begin_edit_description(),
             Action::BeginEditProject => self.begin_edit_project(),
             Action::BeginEditPriority => self.begin_edit_priority(),

@@ -36,6 +36,7 @@ const DETAIL_DEPENDENCY_TREE_CAP: usize = 3;
 
 pub(crate) fn detail_target_is_actionable(item: &TaskListItem, target: &DetailTargetId) -> bool {
     match target {
+        DetailTargetId::CustomMetadata => !item.metadata.is_empty(),
         DetailTargetId::Task { section, task_id } => match section {
             DetailSection::EpicParent => item
                 .epic_parent
@@ -51,7 +52,10 @@ pub(crate) fn detail_target_is_actionable(item: &TaskListItem, target: &DetailTa
                 .related
                 .iter()
                 .any(|link| (!link.deleted || item.task.deleted) && &link.task_id == task_id),
-            DetailSection::Attachments | DetailSection::Notes | DetailSection::Activity => false,
+            DetailSection::CustomMetadata
+            | DetailSection::Attachments
+            | DetailSection::Notes
+            | DetailSection::Activity => false,
         },
         DetailTargetId::Note { note_id } => item.notes.iter().any(|note| note.id == *note_id),
         DetailTargetId::Attachment { attachment_id } => item
@@ -71,7 +75,10 @@ pub(crate) fn detail_target_is_actionable(item: &TaskListItem, target: &DetailTa
                     > DETAIL_DEPENDENCY_TREE_CAP
             }
             DetailSection::Activity => !item.activity.is_empty(),
-            DetailSection::EpicParent | DetailSection::Attachments | DetailSection::Notes => false,
+            DetailSection::CustomMetadata
+            | DetailSection::EpicParent
+            | DetailSection::Attachments
+            | DetailSection::Notes => false,
         },
     }
 }
@@ -1128,7 +1135,7 @@ fn apply_active_style(model: &mut DetailContentRenderModel, target: &DetailTarge
         return;
     };
     match target {
-        DetailTargetId::Expand { .. } => {
+        DetailTargetId::CustomMetadata | DetailTargetId::Expand { .. } => {
             for line in lines {
                 for (index, span) in line.spans.iter_mut().enumerate() {
                     span.style = span.style.bg(BG_PANEL);
@@ -1452,6 +1459,66 @@ fn build_detail_body_document(
                     width,
                     height,
                 });
+            }
+        }
+    }
+
+    if !item.metadata.is_empty() {
+        lines.push(Line::raw(""));
+        section_body_indices.push(lines.len());
+        interactive_rows.push(DetailInteractiveRow {
+            target: DetailTargetId::CustomMetadata,
+            line_index: lines.len(),
+            height: 1,
+        });
+        lines.push(Line::from(vec![
+            Span::styled(
+                "CUSTOM METADATA",
+                Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" (", Style::new().fg(FG_DIM)),
+            Span::styled("e", keycap_style()),
+            Span::raw(" "),
+            Span::styled("m", keycap_style()),
+            Span::styled(" edit)", Style::new().fg(FG_DIM)),
+        ]));
+        let key_width = item
+            .metadata
+            .iter()
+            .map(|value| value.key.width())
+            .max()
+            .unwrap_or(0)
+            .min(24)
+            .min(width / 3);
+        for value in &item.metadata {
+            let long_key = value.key.width() > key_width;
+            if long_key {
+                for mut line in plain_metadata_lines(
+                    &value.key,
+                    width.saturating_sub(2),
+                    Style::new().fg(FG_DIM),
+                ) {
+                    line.spans.insert(0, Span::raw("  "));
+                    lines.push(line);
+                }
+            }
+            let indent = if long_key { 4 } else { key_width + 4 };
+            let (text, style) = (value.value.as_str(), Style::new().fg(FG));
+            for (index, mut line) in plain_metadata_lines(text, width.saturating_sub(indent), style)
+                .into_iter()
+                .enumerate()
+            {
+                let prefix = if index == 0 && !long_key {
+                    format!("  {:key_width$}  ", value.key)
+                } else {
+                    " ".repeat(indent)
+                };
+                line.spans
+                    .insert(0, Span::styled(prefix, Style::new().fg(FG_DIM)));
+                lines.push(line);
+            }
+            if value.value.contains('\n') || long_key {
+                lines.push(Line::raw(""));
             }
         }
     }
@@ -2180,41 +2247,52 @@ fn epic_child_dependency_lines(
     width: usize,
     hovered: bool,
 ) -> Vec<Line<'static>> {
-    dependencies
+    let blockers = dependencies
         .iter()
         .filter(|dependency| dependency.unresolved)
-        .map(|dependency| {
-            let rail = if child_is_last { "   " } else { "│  " };
-            let verbose_prefix = "← blocked by ";
-            let short_prefix = "← ";
-            let prefix = if width
-                >= rail.width() + verbose_prefix.width() + dependency.display_ref.width()
-            {
-                verbose_prefix
-            } else {
-                short_prefix
-            };
-            let rail_style = if hovered {
-                Style::new().fg(BORDER).bg(BG_PANEL)
-            } else {
-                Style::new().fg(BORDER)
-            };
-            let dependency_style = if hovered {
-                Style::new().fg(FG_DIM).bg(BG_PANEL)
-            } else {
-                Style::new().fg(FG_DIM)
-            };
-            let reference_width = width.saturating_sub(rail.width() + prefix.width());
-            Line::from(vec![
-                Span::styled(rail, rail_style),
-                Span::styled(prefix, dependency_style),
-                Span::styled(
-                    truncate_width(&dependency.display_ref, reference_width),
-                    dependency_style,
-                ),
-            ])
-        })
-        .collect()
+        .collect::<Vec<_>>();
+    if blockers.is_empty() {
+        return Vec::new();
+    }
+    let rail = if child_is_last { "   " } else { "│  " };
+    let available = width.saturating_sub(rail.width());
+    let mut summary = format!(
+        "← {} blocker{}",
+        blockers.len(),
+        if blockers.len() == 1 { "" } else { "s" }
+    );
+    for visible in (1..=blockers.len().min(2)).rev() {
+        let refs = blockers[..visible]
+            .iter()
+            .map(|link| link.display_ref.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let hidden = blockers.len() - visible;
+        let suffix = if hidden == 0 {
+            String::new()
+        } else {
+            format!(" +{hidden} more")
+        };
+        let candidate = format!("← blocked by {refs}{suffix}");
+        if candidate.width() <= available {
+            summary = candidate;
+            break;
+        }
+    }
+    let rail_style = Style::new().fg(BORDER);
+    let dependency_style = Style::new().fg(FG_DIM);
+    let background = if hovered {
+        Style::new().bg(BG_PANEL)
+    } else {
+        Style::new()
+    };
+    vec![Line::from(vec![
+        Span::styled(truncate_width(rail, width), rail_style.patch(background)),
+        Span::styled(
+            truncate_width(&summary, available),
+            dependency_style.patch(background),
+        ),
+    ])]
 }
 
 fn extend_dependency_sections(
@@ -2753,6 +2831,30 @@ fn markdown_hyperlinks(
         }
     }
     placements
+}
+
+fn plain_metadata_lines(value: &str, width: usize, style: Style) -> Vec<Line<'static>> {
+    let width = width.max(1);
+    value
+        .split('\n')
+        .flat_map(|line| {
+            let mut lines = Vec::new();
+            let mut text = String::new();
+            let mut cells = 0;
+            for c in line.chars() {
+                let shown = if c.is_control() { '�' } else { c };
+                let size = unicode_width::UnicodeWidthChar::width(shown).unwrap_or(0);
+                if cells + size > width && cells > 0 {
+                    lines.push(Line::styled(std::mem::take(&mut text), style));
+                    cells = 0;
+                }
+                text.push(shown);
+                cells += size;
+            }
+            lines.push(Line::styled(text, style));
+            lines
+        })
+        .collect()
 }
 
 fn quoted_block_lines(body: &str, width: usize, style: Style) -> Vec<Line<'static>> {
@@ -4432,12 +4534,48 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(dependency_lines.len(), 1);
-        assert!(dependency_lines[0].starts_with("│  ← APP-BLOCK"));
+        assert_eq!(dependency_lines[0], "│  ← 1 blocker");
         assert!(!dependency_lines[0].contains("blocked by"));
         assert!(
             dependency_lines.iter().all(|line| line.width() <= 18),
             "dependency row exceeded content width: {dependency_lines:?}"
         );
+    }
+
+    #[test]
+    fn epic_child_blockers_stay_on_one_row_and_count_hidden_refs() {
+        let mut blockers = (0..10)
+            .map(|index| crate::query::TaskDependencyLink {
+                task_id: crate::test_support::task_id(&format!("blocker-{index}")),
+                display_ref: format!("APP-B{index}"),
+                title: format!("Blocker {index}"),
+                status: "todo".to_string(),
+                priority: "high".to_string(),
+                unresolved: true,
+            })
+            .collect::<Vec<_>>();
+        blockers[9].unresolved = false;
+        let lines = epic_child_dependency_lines(&blockers, false, 80, false);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            lines[0].to_string(),
+            "│  ← blocked by APP-B0, APP-B1 +7 more"
+        );
+        for width in [0, 5, 18, 32, 40, 80] {
+            let lines = epic_child_dependency_lines(&blockers, true, width, true);
+            assert_eq!(lines.len(), 1);
+            assert!(lines[0].width() <= width);
+            assert!(
+                lines[0]
+                    .spans
+                    .iter()
+                    .all(|span| span.style.bg == Some(BG_PANEL))
+            );
+        }
+        for blocker in &mut blockers {
+            blocker.unresolved = false;
+        }
+        assert!(epic_child_dependency_lines(&blockers, false, 80, false).is_empty());
     }
 
     #[test]
@@ -4470,6 +4608,41 @@ mod tests {
             .expect("child interaction row");
 
         assert_eq!(child_row.height, 2);
+    }
+
+    #[test]
+    fn custom_metadata_heading_uses_note_heading_and_keycap_styles() {
+        let mut item = detail_test_epic_item();
+        item.metadata = vec![aven_core::metadata::TaskMetadataValue {
+            field_id: crate::ids::MetadataFieldId::new(),
+            key: "owner".to_string(),
+            value: "Alex".to_string(),
+        }];
+        let children = detail_epic_children(&item, None);
+        let body = build_detail_body_document(&item, &children, 80, &BTreeSet::new(), None, &[]);
+        let metadata = body
+            .lines
+            .iter()
+            .find(|line| line.to_string().starts_with("CUSTOM METADATA"))
+            .unwrap();
+        let notes = body
+            .lines
+            .iter()
+            .find(|line| line.to_string().starts_with("NOTES"))
+            .unwrap();
+        assert_eq!(metadata.to_string(), "CUSTOM METADATA (e m edit)");
+        assert_eq!(metadata.spans[0].style, notes.spans[0].style);
+        for key in ["e", "m"] {
+            assert_eq!(
+                metadata
+                    .spans
+                    .iter()
+                    .find(|span| span.content == key)
+                    .unwrap()
+                    .style,
+                notes.spans[2].style
+            );
+        }
     }
 
     #[test]

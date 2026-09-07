@@ -266,3 +266,63 @@ fn project_path_project_selection_uses_structured_project_picker() {
     assert!(rendered.contains("claude-code"));
     assert!(rendered.contains("Enter select"));
 }
+
+#[test]
+fn picker_rendered_rows_are_mouse_targets() {
+    use crate::tui::overlay::{OverlayOutcome, handle_generic_overlay_mouse, picker_layout};
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+    for mode in [PickerMode::Navigate, PickerMode::Filter] {
+        for (count, filter) in [(0usize, ""), (1, ""), (3, ""), (12, ""), (12, "Item 1")] {
+            for (width, height) in [(80, 24), (24, 9)] {
+                let state = PickerState {
+                    intent: PickerIntent::FilterLabel,
+                    title: "Pick".to_string(),
+                    filter: LineEdit::new(filter.to_string()),
+                    items: (0..count)
+                        .map(|i| picker_item(&format!("Item {i:02}"), &i.to_string()))
+                        .collect(),
+                    selected: count.saturating_sub(1),
+                    scroll: count.saturating_sub(8),
+                    multi: true,
+                    mode,
+                };
+                let view = PickerView::from_state(&state);
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal.draw(|frame| render_picker(frame, &view)).unwrap();
+                let size = ratatui::layout::Size::new(width, height);
+                let layout = picker_layout(&view, size);
+                let click = |column, row| MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    column,
+                    row,
+                    modifiers: KeyModifiers::NONE,
+                };
+                for row in layout.list.y..layout.list.bottom() {
+                    let text = (layout.inner.x..layout.inner.right())
+                        .map(|x| terminal.backend().buffer()[(x, row)].symbol())
+                        .collect::<String>();
+                    if let Some(index) = layout.item_at(layout.list.x, row, &view.visible_indices) {
+                        assert!(text.contains(&format!("Item {index:02}")), "{text}");
+                        let outcome = handle_generic_overlay_mouse(
+                            OverlayState::Picker(state.clone()),
+                            click(layout.list.x, row),
+                            size,
+                        );
+                        let OverlayOutcome::None(OverlayState::Picker(clicked)) = outcome else {
+                            panic!("expected retained multi picker");
+                        };
+                        assert_eq!(clicked.selected, index);
+                        assert!(clicked.items[index].selected);
+                    } else {
+                        assert!(!text.contains("Item"));
+                    }
+                }
+                assert_eq!(
+                    handle_generic_overlay_mouse(OverlayState::Picker(state), click(0, 0), size),
+                    OverlayOutcome::Cancelled
+                );
+            }
+        }
+    }
+}

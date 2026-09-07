@@ -308,7 +308,7 @@ async fn edit_description_prefills_and_ctrl_s_updates() {
         Some(OverlayState::MultilineInput(state))
             if state.title == EDIT_DESCRIPTION_TITLE
                 && state.prompt.is_empty()
-                && state.lines == vec!["first".to_string(), "second".to_string()]
+                && state.buffer.lines == vec!["first".to_string(), "second".to_string()]
     ));
 
     app.handle_overlay_key(key(KeyCode::End)).await.unwrap();
@@ -372,7 +372,7 @@ async fn changed_description_edit_requires_discard_confirmation() {
         &app.overlay,
         Some(OverlayState::MultilineInput(state))
             if state.mode == MultilineInputMode::ConfirmDiscard
-                && state.lines == ["existing description updated"]
+                && state.buffer.lines == ["existing description updated"]
     ));
     app.handle_overlay_key(key(KeyCode::Char('y')))
         .await
@@ -682,7 +682,7 @@ async fn edit_description_conflict_preserves_overlay() {
     assert!(matches!(
         &app.overlay,
         Some(OverlayState::MultilineInput(state))
-            if state.lines.join("\n") == "old updated"
+            if state.buffer.lines.join("\n") == "old updated"
     ));
 }
 

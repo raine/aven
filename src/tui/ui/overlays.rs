@@ -2,6 +2,7 @@ mod add_task;
 mod changelog;
 mod confirm;
 mod database_stats;
+pub(super) mod metadata;
 mod multiline;
 mod onboarding;
 mod picker;

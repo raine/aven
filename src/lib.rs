@@ -18,6 +18,7 @@ mod operations;
 mod projects;
 mod recurrence_input;
 mod render;
+mod routing;
 mod schedule_input;
 mod signals;
 mod status;
@@ -47,7 +48,7 @@ use commands::{
     cmd_sync_status, cmd_text, cmd_workspace,
 };
 use sync::{run_server, sync_client};
-use workspaces::resolve_active_workspace_with_database;
+use workspaces::resolve_active_workspace_with_routing;
 
 pub async fn run_cli() -> Result<()> {
     let cli = cli::parse();
@@ -240,11 +241,10 @@ async fn dispatch_tui(
     let config = config::AppConfig::load()?;
     let db_path = config::resolve_db_path(db, &config)?;
     let database = aven_core::db::Database::open(&db_path).await?;
-    let cwd = std::env::current_dir()?;
+    let routing = routing::InvocationRouting::new(&config);
     let resolved_workspace =
-        resolve_active_workspace_with_database(&database, workspace.as_deref(), &config, &cwd)
-            .await?;
-    let launch = tui::resolve_launch(&database, &resolved_workspace, args).await?;
+        resolve_active_workspace_with_routing(&database, workspace.as_deref(), &routing).await?;
+    let launch = tui::resolve_launch(&database, &resolved_workspace, args, &routing).await?;
 
     tui::run(database, resolved_workspace, launch, db_path, config).await
 }
@@ -252,10 +252,9 @@ async fn dispatch_tui(
 async fn resolve_command_workspace(
     database: &db::Database,
     workspace: Option<&str>,
-    config: &config::AppConfig,
+    routing: &routing::InvocationRouting<'_>,
 ) -> Result<workspaces::Workspace> {
-    let cwd = std::env::current_dir()?;
-    resolve_active_workspace_with_database(database, workspace, config, &cwd).await
+    resolve_active_workspace_with_routing(database, workspace, routing).await
 }
 
 async fn dispatch_database(
@@ -267,36 +266,37 @@ async fn dispatch_database(
     let config = config::AppConfig::load()?;
     let db_path = config::resolve_db_path(db, &config)?;
     let database = db::Database::open(&db_path).await?;
+    let routing = routing::InvocationRouting::new(&config);
     let should_wake = metadata.wakes_daemon;
     let result = match command {
         DatabaseCommand::Add(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
-            cmd_add(&database, &workspace, &config, args).await
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
+            cmd_add(&database, &workspace, &config, args, &routing).await
         }
         DatabaseCommand::Attachment(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_attachment(&database, &workspace, &config, &db_path, args).await
         }
         DatabaseCommand::Context(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_context(&database, &workspace, args).await
         }
         DatabaseCommand::Show(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_show(&database, &workspace, args).await
         }
         DatabaseCommand::List(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_list(&database, &workspace, args).await
         }
         DatabaseCommand::Search(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_search(&database, &workspace, args).await
         }
         DatabaseCommand::Backup { output } => {
@@ -313,12 +313,12 @@ async fn dispatch_database(
         }
         DatabaseCommand::Dep(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_dep(&database, &workspace, args).await
         }
         DatabaseCommand::Related(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             let changed = cmd_related(&database, &workspace, args).await?;
             if changed {
                 daemon::wake_if_enabled(&config);
@@ -327,69 +327,69 @@ async fn dispatch_database(
         }
         DatabaseCommand::Epic(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_epic(&database, &workspace, args).await
         }
         DatabaseCommand::BulkUpdate(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_bulk_update(&database, &workspace, args).await
         }
         DatabaseCommand::Prime(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
-            cmd_prime(&database, &workspace, args).await
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
+            cmd_prime(&database, &workspace, args, &routing).await
         }
         DatabaseCommand::Edit(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_edit(&database, &workspace, args).await
         }
         DatabaseCommand::Note(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_note(&database, &workspace, args).await
         }
         DatabaseCommand::NoteDelete(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_note_delete(&database, &workspace, args).await
         }
         DatabaseCommand::Export(args) => cmd_export(&database, args).await,
         DatabaseCommand::Import(args) => cmd_import(&database, &db_path, args).await,
         DatabaseCommand::Label(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_label(&database, &workspace, args).await
         }
         DatabaseCommand::Metadata(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_metadata(&database, &workspace, args).await
         }
         DatabaseCommand::Project(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_project(&database, &workspace, args).await
         }
         DatabaseCommand::Recur(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_recur(&database, &workspace, args).await
         }
         DatabaseCommand::Delete(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_delete_restore(&database, &workspace, args, true).await
         }
         DatabaseCommand::Restore(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_delete_restore(&database, &workspace, args, false).await
         }
         DatabaseCommand::Conflict(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_conflict(&database, &workspace, args).await
         }
         DatabaseCommand::Sync(args) => match &args.command {
@@ -401,7 +401,7 @@ async fn dispatch_database(
         DatabaseCommand::Workspace(args) => cmd_workspace(&database, args).await,
         DatabaseCommand::Text(args) => {
             let workspace =
-                resolve_command_workspace(&database, workspace.as_deref(), &config).await?;
+                resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_text(&database, &workspace, args).await
         }
     };

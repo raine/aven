@@ -14,6 +14,7 @@ mod app_edit;
 mod app_filters;
 mod app_intake;
 mod app_lifecycle;
+mod app_metadata;
 mod app_navigation;
 mod app_notes;
 mod app_onboarding;
@@ -122,8 +123,9 @@ pub(crate) async fn resolve_launch(
     database: &Database,
     workspace: &crate::workspaces::Workspace,
     args: crate::cli::TuiArgs,
+    routing: &crate::routing::InvocationRouting<'_>,
 ) -> Result<store::TuiLaunch> {
-    store::TuiLaunch::resolve(database, workspace, args).await
+    store::TuiLaunch::resolve(database, workspace, args, routing).await
 }
 
 pub(crate) async fn run(

@@ -1,3 +1,4 @@
+use crate::operations::{RecurrenceStructuralMutation, RecurrenceTaskMutation};
 use std::path::Path;
 
 use anyhow::{Result, bail};
@@ -384,13 +385,14 @@ async fn add_task_attachment_inner(
         crate::attachments::lifecycle::release_reservation(conn, &reservation_id).await?;
     }
     let database_result = async {
+        let mutation_at = now();
         let mut tx = begin_immediate(conn).await?;
-        crate::operations::route_recurrence_task_field(
+        crate::operations::route_recurrence_task_mutation(
             &mut tx,
             workspace,
             task_id,
-            "attachments",
-            "",
+            RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Attachments),
+            &mutation_at,
         )
         .await?;
         let task_exists = sqlx::query_scalar::<_, bool>(
@@ -422,7 +424,7 @@ async fn add_task_attachment_inner(
         }
 
         let attachment_id = identity.attachment_id.unwrap_or_else(new_id);
-        let created_at = identity.created_at.unwrap_or_else(now);
+        let created_at = identity.created_at.unwrap_or_else(|| mutation_at.clone());
         record_attachment_add(
             &mut tx,
             workspace,
@@ -495,6 +497,7 @@ pub async fn delete_task_attachment(
     workspace: &Workspace,
     attachment_id: &str,
 ) -> Result<AttachmentOutcome> {
+    let deleted_at = now();
     let attachment = require_attachment(conn, &workspace.id, attachment_id).await?;
     if attachment.deleted {
         let has_blob = attachment_has_blob(conn, &attachment.sha256).await?;
@@ -505,11 +508,16 @@ pub async fn delete_task_attachment(
     }
 
     let task_id = attachment.task_id.clone();
-    let deleted_at = now();
 
     let mut tx = begin_immediate(conn).await?;
-    crate::operations::route_recurrence_task_field(&mut tx, workspace, &task_id, "attachments", "")
-        .await?;
+    crate::operations::route_recurrence_task_mutation(
+        &mut tx,
+        workspace,
+        &task_id,
+        RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Attachments),
+        &deleted_at,
+    )
+    .await?;
 
     let change_id = append_change(
         &mut tx,

@@ -253,6 +253,8 @@ impl Database {
                         field: "status".to_string(),
                         before: before.status.as_str().to_string(),
                         after: result.task.status.as_str().to_string(),
+                        queue_activity_before: Some(before.queue_activity_at.clone()),
+                        queue_activity_after: Some(result.task.queue_activity_at.clone()),
                     }],
                 },
             )
@@ -1289,15 +1291,38 @@ async fn stop_recurrence_series_in_transaction(
     Ok(RecurrenceStateOutcome { series, occurrence })
 }
 
-pub(crate) async fn route_recurrence_task_field(
+/// Local write intent checked against the recurrence aggregate in its owner transaction.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum RecurrenceTaskMutation<'a> {
+    Scalar { field: TaskField, value: &'a str },
+    Structural(RecurrenceStructuralMutation),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum RecurrenceStructuralMutation {
+    Labels,
+    Notes,
+    Attachments,
+    Dependencies,
+    EpicMembership,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecurrenceMutationOutcome {
+    Proceed,
+    NoChange,
+    Handled,
+}
+
+pub(crate) async fn route_recurrence_task_mutation(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     task_id: &TaskId,
-    field: &str,
-    value: &str,
-) -> Result<Option<bool>> {
+    request: RecurrenceTaskMutation<'_>,
+    at: &str,
+) -> Result<RecurrenceMutationOutcome> {
     let Some(mut occurrence) = load_occurrence_for_task(conn, &workspace.id, task_id).await? else {
-        return Ok(None);
+        return Ok(RecurrenceMutationOutcome::Proceed);
     };
     if matches!(
         occurrence.projection_state,
@@ -1307,7 +1332,7 @@ pub(crate) async fn route_recurrence_task_field(
             conn,
             workspace,
             &occurrence.series_id,
-            Utc::now(),
+            DateTime::parse_from_rfc3339(at)?.with_timezone(&Utc),
         )
         .await?;
         occurrence = load_occurrence_for_task(conn, &workspace.id, task_id)
@@ -1323,11 +1348,21 @@ pub(crate) async fn route_recurrence_task_field(
         ))
         .into());
     }
-    if field == "status" {
+    let (field, value) = match request {
+        RecurrenceTaskMutation::Scalar { field, value } => (field, value),
+        RecurrenceTaskMutation::Structural(
+            RecurrenceStructuralMutation::Labels
+            | RecurrenceStructuralMutation::Notes
+            | RecurrenceStructuralMutation::Attachments
+            | RecurrenceStructuralMutation::Dependencies
+            | RecurrenceStructuralMutation::EpicMembership,
+        ) => return Ok(RecurrenceMutationOutcome::Proceed),
+    };
+    if field == TaskField::Status {
         let task = get_task_in_workspace(conn, workspace, task_id).await?;
         let target = TaskStatus::parse(value)?;
         if task.status == target {
-            return Ok(Some(false));
+            return Ok(RecurrenceMutationOutcome::NoChange);
         }
         if task.status.is_terminal() {
             if target.is_open() {
@@ -1354,13 +1389,13 @@ pub(crate) async fn route_recurrence_task_field(
             } else {
                 RecurrenceOutcome::Skipped
             };
-            resolve_recurrence_occurrence_in_transaction(conn, workspace, task_id, outcome, &now())
+            resolve_recurrence_occurrence_in_transaction(conn, workspace, task_id, outcome, at)
                 .await?;
-            return Ok(Some(true));
+            return Ok(RecurrenceMutationOutcome::Handled);
         }
-        return Ok(None);
+        return Ok(RecurrenceMutationOutcome::Proceed);
     }
-    if field == "deleted"
+    if field == TaskField::Deleted
         && matches!(
             occurrence.projection_state,
             RecurrenceProjectionState::Projected
@@ -1378,7 +1413,7 @@ pub(crate) async fn route_recurrence_task_field(
         ))
         .into());
     }
-    Ok(None)
+    Ok(RecurrenceMutationOutcome::Proceed)
 }
 
 pub(crate) async fn undo_recurrence_resolution(

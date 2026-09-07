@@ -78,6 +78,21 @@ impl TaskIntakeContext {
         workspace: &Workspace,
         project: Option<&str>,
     ) -> Result<Self> {
+        let config = if project.is_some() {
+            crate::config::AppConfig::default()
+        } else {
+            crate::config::AppConfig::load()?
+        };
+        let routing = crate::routing::InvocationRouting::new(&config);
+        Self::load_with_routing(database, workspace, project, &routing).await
+    }
+
+    pub(crate) async fn load_with_routing(
+        database: &Database,
+        workspace: &Workspace,
+        project: Option<&str>,
+        routing: &crate::routing::InvocationRouting<'_>,
+    ) -> Result<Self> {
         let (fixed_project, inferred_project) = match project {
             Some(project) => {
                 let project = database
@@ -88,8 +103,10 @@ impl TaskIntakeContext {
             }
             None => (
                 None,
-                crate::projects::inferred_project_key_for_add_with_database(database, workspace)
-                    .await?,
+                crate::projects::inferred_project_key_for_add_with_routing(
+                    database, workspace, routing,
+                )
+                .await?,
             ),
         };
         let projects = database.list_project_items(&workspace.id).await?;

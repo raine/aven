@@ -222,9 +222,9 @@ async fn focused_note_edit_preserves_note_identity() {
             ..
         } if intent_task_id == &task_id && intent_note_id == &note_id
     ));
-    state.lines = vec!["corrected note".to_string()];
-    state.row = 0;
-    state.column = 14;
+    state.buffer.lines = vec!["corrected note".to_string()];
+    state.buffer.row = 0;
+    state.buffer.column = 14;
     app.handle_overlay_key(ctrl_s()).await.unwrap();
 
     let item = app.store.selected_task(app.list.selected_task()).unwrap();

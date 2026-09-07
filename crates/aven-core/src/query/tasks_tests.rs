@@ -695,6 +695,37 @@ async fn explicit_workspace_read_apis_scope_results() {
     .await
     .unwrap();
     assert_eq!(listed_titles(&beta_tasks), ["beta task"]);
+    for (workspace, filters, expected) in [
+        (
+            &alpha_id,
+            TaskFilters {
+                project: Some("app".into()),
+                label: Some("shared".into()),
+                conflicts_only: true,
+                ..TaskFilters::default()
+            },
+            &alpha_tasks,
+        ),
+        (&beta.id, TaskFilters::default(), &beta_tasks),
+    ] {
+        let base = list_base_tasks_in_workspace(
+            &mut conn,
+            workspace,
+            filters,
+            TaskSort::Created,
+            SortDirection::Asc,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            base,
+            expected
+                .iter()
+                .map(|item| item.task.clone())
+                .collect::<Vec<_>>()
+        );
+    }
 
     let alpha_projects = list_project_items_in_workspace(&mut conn, &alpha_id)
         .await
@@ -1231,4 +1262,127 @@ async fn project_scoped_sidebar_epics_count_excludes_other_projects() {
 
     assert_eq!(counts.open, 1);
     assert_eq!(counts.epics, 0);
+}
+
+#[tokio::test]
+async fn base_projection_preserves_flat_selection_and_limits() {
+    let (_temp, mut conn) = test_conn().await;
+    seed_default_project(&mut conn).await;
+    let workspace_id = crate::workspaces::default_workspace_id();
+    for (id, title, status, priority) in [
+        ("0000000000000001", "Zulu", "todo", "high"),
+        ("0000000000000002", "Alpha", "done", "none"),
+        ("0000000000000003", "Beta", "inbox", "low"),
+    ] {
+        insert_test_task(&mut conn, id, title, status, priority, "001").await;
+    }
+    for filters in [
+        TaskFilters::default(),
+        TaskFilters {
+            hide_done: true,
+            ..TaskFilters::default()
+        },
+        TaskFilters {
+            expand_recurring: true,
+            ..TaskFilters::default()
+        },
+        TaskFilters {
+            status: Some("done".into()),
+            ..TaskFilters::default()
+        },
+        TaskFilters {
+            priority: Some("high".into()),
+            ..TaskFilters::default()
+        },
+        TaskFilters {
+            search: Some("Alpha".into()),
+            ..TaskFilters::default()
+        },
+        TaskFilters {
+            task_ids: TaskIdFilter::Only(vec![
+                "0000000000000003".parse().unwrap(),
+                "0000000000000001".parse().unwrap(),
+            ]),
+            ..TaskFilters::default()
+        },
+        TaskFilters {
+            task_ids: TaskIdFilter::Only(vec![]),
+            ..TaskFilters::default()
+        },
+    ] {
+        for sort in [
+            TaskSort::Created,
+            TaskSort::Updated,
+            TaskSort::Title,
+            TaskSort::Priority,
+        ] {
+            for direction in [SortDirection::Asc, SortDirection::Desc] {
+                let detail = list_task_items_in_workspace(
+                    &mut conn,
+                    &workspace_id,
+                    filters.clone(),
+                    TaskQueryMode::Flat,
+                    sort,
+                    direction,
+                )
+                .await
+                .unwrap();
+                for limit in [None, Some(0), Some(1), Some(2), Some(10)] {
+                    let base = list_base_tasks_in_workspace(
+                        &mut conn,
+                        &workspace_id,
+                        filters.clone(),
+                        sort,
+                        direction,
+                        limit,
+                    )
+                    .await
+                    .unwrap();
+                    assert_eq!(
+                        base,
+                        detail
+                            .iter()
+                            .take(limit.unwrap_or(usize::MAX))
+                            .map(|item| item.task.clone())
+                            .collect::<Vec<_>>()
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn base_projection_applies_sql_limit_before_decoding_tasks() {
+    let (_temp, mut conn) = test_conn().await;
+    seed_default_project(&mut conn).await;
+    for (id, title) in [
+        ("0000000000000001", "first"),
+        ("0000000000000002", "second"),
+    ] {
+        insert_test_task(&mut conn, id, title, "todo", "none", "001").await;
+    }
+    sqlx::query("PRAGMA ignore_check_constraints = ON")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE tasks SET source = 'invalid' WHERE id = '0000000000000002'")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    let tasks = list_base_tasks_in_workspace(
+        &mut conn,
+        &crate::workspaces::default_workspace_id(),
+        TaskFilters {
+            hide_done: true,
+            ..TaskFilters::default()
+        },
+        TaskSort::Created,
+        SortDirection::Asc,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].title, "first");
 }

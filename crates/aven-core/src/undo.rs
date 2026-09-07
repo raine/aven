@@ -1,4 +1,5 @@
 use crate::ids::{ProjectId, WorkspaceId};
+use crate::operations::{RecurrenceStructuralMutation, RecurrenceTaskMutation};
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Result, bail, ensure};
@@ -99,6 +100,10 @@ pub enum UndoCommand {
         field: String,
         before: String,
         after: String,
+        #[serde(default)]
+        queue_activity_before: Option<String>,
+        #[serde(default)]
+        queue_activity_after: Option<String>,
     },
     SetTaskLabels {
         task_id: crate::ids::TaskId,
@@ -205,6 +210,8 @@ pub struct TaskUndoSnapshot {
     pub project_key: String,
     pub status: String,
     pub priority: String,
+    #[serde(default)]
+    pub queue_activity_at: String,
     pub available_at: String,
     #[serde(default)]
     pub due_on: String,
@@ -346,7 +353,7 @@ pub(crate) async fn task_snapshot(
     task_id: &crate::ids::TaskId,
 ) -> Result<TaskUndoSnapshot> {
     let row = sqlx::query(
-        "SELECT t.title, t.description, t.project_id, p.key AS project_key, t.status, t.priority, t.available_at, t.due_on, t.deleted, t.is_epic
+        "SELECT t.title, t.description, t.project_id, p.key AS project_key, t.status, t.priority, t.queue_activity_at, t.available_at, t.due_on, t.deleted, t.is_epic
          FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
          WHERE t.workspace_id = ? AND t.id = ?",
     )
@@ -373,6 +380,7 @@ pub(crate) async fn task_snapshot(
         project_key: row.get("project_key"),
         status: row.get("status"),
         priority: row.get("priority"),
+        queue_activity_at: row.get("queue_activity_at"),
         available_at: row.get("available_at"),
         due_on: row.get("due_on"),
         deleted: row.get::<i64, _>("deleted") != 0,
@@ -669,7 +677,7 @@ pub(crate) async fn apply_latest_tui_undo(
     let apply_result = APPLYING_UNDO
         .scope(
             (),
-            apply_undo_commands(&mut tx, workspace_id, &payload.commands),
+            apply_undo_commands(&mut tx, workspace_id, &payload.commands, &undone_at),
         )
         .await;
     match apply_result {
@@ -701,6 +709,7 @@ async fn apply_undo_commands(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     commands: &[UndoCommand],
+    mutation_at: &str,
 ) -> Result<CommandOutcome> {
     let mut task_id = None;
     let mut include_deleted = None;
@@ -708,9 +717,14 @@ async fn apply_undo_commands(
     let mut label_rename = None;
     let mut affected_attachment_hashes = BTreeSet::new();
     for command in commands {
-        let outcome =
-            apply_undo_command(conn, workspace_id, command, &mut affected_attachment_hashes)
-                .await?;
+        let outcome = apply_undo_command(
+            conn,
+            workspace_id,
+            command,
+            &mut affected_attachment_hashes,
+            mutation_at,
+        )
+        .await?;
         if outcome.task_id.is_some() {
             task_id = outcome.task_id;
         }
@@ -739,11 +753,27 @@ async fn apply_undo_commands(
     })
 }
 
+async fn restore_queue_activity(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    task_id: &crate::ids::TaskId,
+    queue_activity_at: &str,
+) -> Result<()> {
+    sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
+        .bind(queue_activity_at)
+        .bind(workspace_id)
+        .bind(task_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
 async fn apply_undo_command(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     command: &UndoCommand,
     affected_attachment_hashes: &mut BTreeSet<String>,
+    mutation_at: &str,
 ) -> Result<CommandOutcome> {
     match command {
         UndoCommand::SetTaskField {
@@ -751,6 +781,8 @@ async fn apply_undo_command(
             field,
             before,
             after,
+            queue_activity_before,
+            queue_activity_after,
         } => {
             let task_field = TaskField::parse_or_unknown(field)?;
             let current =
@@ -758,6 +790,24 @@ async fn apply_undo_command(
             if current != *after {
                 bail!("error undo-state-changed task_id={task_id} field={field}");
             }
+            let queue_activity_to_restore = if let (Some(before), Some(after)) =
+                (queue_activity_before, queue_activity_after)
+            {
+                let current: String = sqlx::query_scalar(
+                    "SELECT queue_activity_at FROM tasks WHERE workspace_id = ? AND id = ?",
+                )
+                .bind(workspace_id)
+                .bind(task_id)
+                .fetch_one(&mut *conn)
+                .await?;
+                Some(if current == *after {
+                    before.clone()
+                } else {
+                    current
+                })
+            } else {
+                None
+            };
             if before != after {
                 let recurrence_undone = if task_field == TaskField::Status {
                     crate::operations::undo_recurrence_resolution(
@@ -772,6 +822,10 @@ async fn apply_undo_command(
                     false
                 };
                 if recurrence_undone {
+                    if let Some(queue_activity_at) = queue_activity_to_restore {
+                        restore_queue_activity(conn, workspace_id, task_id, &queue_activity_at)
+                            .await?;
+                    }
                     return Ok(CommandOutcome {
                         task_id: Some(task_id.clone()),
                         include_deleted: None,
@@ -796,8 +850,18 @@ async fn apply_undo_command(
                     )
                     .await?;
                 }
-                set_task_field_in_workspace(conn, workspace_id, task_id, task_field, before)
-                    .await?;
+                set_task_field_in_workspace(
+                    conn,
+                    workspace_id,
+                    task_id,
+                    task_field,
+                    before,
+                    mutation_at,
+                )
+                .await?;
+                if let Some(queue_activity_at) = queue_activity_to_restore {
+                    restore_queue_activity(conn, workspace_id, task_id, &queue_activity_at).await?;
+                }
             }
             let include_deleted = if task_field == TaskField::Deleted {
                 Some(before == "1")
@@ -864,6 +928,7 @@ async fn apply_undo_command(
                     &workspace,
                     task_id,
                     &crate::metadata::TaskMetadataInput {
+                        expected_field_id: None,
                         key: field.key,
                         value: value.clone(),
                     },
@@ -932,8 +997,15 @@ async fn apply_undo_command(
             }
             collect_task_attachment_hashes(conn, workspace_id, task_id, affected_attachment_hashes)
                 .await?;
-            set_task_field_in_workspace(conn, workspace_id, task_id, TaskField::Deleted, "1")
-                .await?;
+            set_task_field_in_workspace(
+                conn,
+                workspace_id,
+                task_id,
+                TaskField::Deleted,
+                "1",
+                mutation_at,
+            )
+            .await?;
             Ok(CommandOutcome {
                 task_id: Some(task_id.clone()),
                 include_deleted: None,
@@ -959,9 +1031,15 @@ async fn apply_undo_command(
                 bail!("error undo-state-changed task_id={task_id} field=notes");
             }
             let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
-            crate::operations::route_recurrence_task_field(conn, &workspace, task_id, "notes", "")
-                .await?;
-            let edited_at = now();
+            crate::operations::route_recurrence_task_mutation(
+                conn,
+                &workspace,
+                task_id,
+                RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Notes),
+                mutation_at,
+            )
+            .await?;
+            let edited_at = mutation_at;
             sqlx::query(
                 "UPDATE notes SET body = ? WHERE workspace_id = ? AND task_id = ? AND id = ?",
             )
@@ -980,11 +1058,11 @@ async fn apply_undo_command(
                 crate::change_log::ChangePayload::workspace(&workspace)
                     .set("note_id", note_id)
                     .set("body", before)
-                    .set("edited_at", &edited_at),
+                    .set("edited_at", edited_at),
             )
             .await?;
             sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
-                .bind(&edited_at)
+                .bind(edited_at)
                 .bind(workspace_id)
                 .bind(task_id)
                 .execute(&mut *conn)
@@ -1014,8 +1092,14 @@ async fn apply_undo_command(
                 bail!("error undo-state-changed task_id={task_id} field=notes");
             }
             let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
-            crate::operations::route_recurrence_task_field(conn, &workspace, task_id, "notes", "")
-                .await?;
+            crate::operations::route_recurrence_task_mutation(
+                conn,
+                &workspace,
+                task_id,
+                RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Notes),
+                mutation_at,
+            )
+            .await?;
             let change_id = crate::change_log::append_change(
                 conn,
                 crate::change_log::ChangeEntity::Task,
@@ -1059,8 +1143,14 @@ async fn apply_undo_command(
             note_add_change_id,
         } => {
             let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
-            crate::operations::route_recurrence_task_field(conn, &workspace, task_id, "notes", "")
-                .await?;
+            crate::operations::route_recurrence_task_mutation(
+                conn,
+                &workspace,
+                task_id,
+                RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Notes),
+                mutation_at,
+            )
+            .await?;
             delete_created_note(conn, workspace_id, task_id, note_id, note_add_change_id).await?;
             Ok(CommandOutcome {
                 task_id: Some(task_id.clone()),
@@ -1192,7 +1282,15 @@ async fn apply_undo_command(
                 )
                 .await?;
             }
-            set_task_field_in_workspace(conn, workspace_id, task_id, task_field, before).await?;
+            set_task_field_in_workspace(
+                conn,
+                workspace_id,
+                task_id,
+                task_field,
+                before,
+                mutation_at,
+            )
+            .await?;
             let restored = sqlx::query(
                 "UPDATE conflicts SET resolved = 0 WHERE id = ? AND workspace_id = ? AND resolved = 1",
             )
@@ -1216,20 +1314,20 @@ async fn apply_undo_command(
             depends_on_task_id,
         } => {
             let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
-            crate::operations::route_recurrence_task_field(
+            crate::operations::route_recurrence_task_mutation(
                 conn,
                 &workspace,
                 task_id,
-                "dependencies",
-                "",
+                RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Dependencies),
+                mutation_at,
             )
             .await?;
-            crate::operations::route_recurrence_task_field(
+            crate::operations::route_recurrence_task_mutation(
                 conn,
                 &workspace,
                 depends_on_task_id,
-                "dependencies",
-                "",
+                RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Dependencies),
+                mutation_at,
             )
             .await?;
             ensure!(
@@ -1249,20 +1347,20 @@ async fn apply_undo_command(
             depends_on_task_id,
         } => {
             let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
-            crate::operations::route_recurrence_task_field(
+            crate::operations::route_recurrence_task_mutation(
                 conn,
                 &workspace,
                 task_id,
-                "dependencies",
-                "",
+                RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Dependencies),
+                mutation_at,
             )
             .await?;
-            crate::operations::route_recurrence_task_field(
+            crate::operations::route_recurrence_task_mutation(
                 conn,
                 &workspace,
                 depends_on_task_id,
-                "dependencies",
-                "",
+                RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Dependencies),
+                mutation_at,
             )
             .await?;
             ensure!(
@@ -1375,10 +1473,26 @@ async fn set_task_field_in_workspace(
     task_id: &crate::ids::TaskId,
     task_field: TaskField,
     value: &str,
+    mutation_at: &str,
 ) -> Result<()> {
     let field = task_field.as_str();
     let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
-    crate::operations::route_recurrence_task_field(conn, &workspace, task_id, field, value).await?;
+    match crate::operations::route_recurrence_task_mutation(
+        conn,
+        &workspace,
+        task_id,
+        RecurrenceTaskMutation::Scalar {
+            field: task_field,
+            value,
+        },
+        mutation_at,
+    )
+    .await?
+    {
+        crate::operations::RecurrenceMutationOutcome::Proceed => {}
+        crate::operations::RecurrenceMutationOutcome::NoChange
+        | crate::operations::RecurrenceMutationOutcome::Handled => return Ok(()),
+    }
     if conflict_exists(conn, workspace_id, task_id, field).await? {
         bail!(
             "error conflicted-field ref={} field={} hint=\"use conflict resolve\"",
@@ -1965,6 +2079,8 @@ mod presentation_tests {
             field: field.to_string(),
             before: "before".to_string(),
             after: "after".to_string(),
+            queue_activity_before: None,
+            queue_activity_after: None,
         }
     }
 
@@ -2040,6 +2156,7 @@ mod presentation_tests {
                 project_key: "project".to_string(),
                 status: "inbox".to_string(),
                 priority: "none".to_string(),
+                queue_activity_at: String::new(),
                 available_at: String::new(),
                 due_on: String::new(),
                 deleted: false,

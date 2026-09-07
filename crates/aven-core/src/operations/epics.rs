@@ -1,4 +1,5 @@
 use crate::ids::WorkspaceId;
+use crate::operations::{RecurrenceStructuralMutation, RecurrenceTaskMutation};
 use anyhow::{Result, bail};
 use sqlx::SqliteConnection;
 
@@ -46,6 +47,8 @@ impl Database {
                     field: TaskField::IsEpic.as_str().to_string(),
                     before: "0".to_string(),
                     after: "1".to_string(),
+                    queue_activity_before: None,
+                    queue_activity_after: None,
                 });
             }
             record_tui_undo(&mut tx, &workspace.id, &summary, UndoPayload { commands }).await?;
@@ -229,16 +232,23 @@ pub(crate) async fn add_task_to_epic_in_transaction(
     child_id: &crate::ids::TaskId,
     epic_id: &crate::ids::TaskId,
 ) -> Result<EpicLinkOutcome> {
-    crate::operations::route_recurrence_task_field(
+    let ts = now();
+    crate::operations::route_recurrence_task_mutation(
         conn,
         workspace,
         child_id,
-        "epic_membership",
-        "",
+        RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::EpicMembership),
+        &ts,
     )
     .await?;
-    crate::operations::route_recurrence_task_field(conn, workspace, epic_id, "epic_membership", "")
-        .await?;
+    crate::operations::route_recurrence_task_mutation(
+        conn,
+        workspace,
+        epic_id,
+        RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::EpicMembership),
+        &ts,
+    )
+    .await?;
     let pair = load_epic_pair(conn, workspace, child_id, epic_id).await?;
     if pair.child.project_id != pair.epic.project_id {
         bail!("error epic-cross-project child_task_id={child_id} epic_task_id={epic_id}");
@@ -252,7 +262,6 @@ pub(crate) async fn add_task_to_epic_in_transaction(
     if pair.epic.deleted {
         bail!("error epic-parent-deleted epic_task_id={epic_id}");
     }
-    let ts = now();
     let promoted = !pair.epic.is_epic;
     if promoted {
         mark_task_as_epic(conn, workspace, &pair.epic).await?;
@@ -297,16 +306,23 @@ pub(crate) async fn remove_task_from_epic_in_transaction(
     child_id: &crate::ids::TaskId,
     epic_id: &crate::ids::TaskId,
 ) -> Result<EpicLinkOutcome> {
-    crate::operations::route_recurrence_task_field(
+    let mutation_at = now();
+    crate::operations::route_recurrence_task_mutation(
         conn,
         workspace,
         child_id,
-        "epic_membership",
-        "",
+        RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::EpicMembership),
+        &mutation_at,
     )
     .await?;
-    crate::operations::route_recurrence_task_field(conn, workspace, epic_id, "epic_membership", "")
-        .await?;
+    crate::operations::route_recurrence_task_mutation(
+        conn,
+        workspace,
+        epic_id,
+        RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::EpicMembership),
+        &mutation_at,
+    )
+    .await?;
     let pair = load_epic_pair(conn, workspace, child_id, epic_id).await?;
     let changed = sqlx::query(
         "DELETE FROM task_epic_links

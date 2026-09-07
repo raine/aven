@@ -642,3 +642,68 @@ async fn mark_shortcuts_update_task_marks() {
     assert!(app.list.marked_task_ids().is_empty());
     assert!(toast_message(&app).is_none());
 }
+
+#[tokio::test]
+async fn external_editor_dispatch_preserves_description_note_and_fallback_state() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Captured editor target")).await;
+    let selection = app.resolve_task_selection().unwrap();
+    let intents = [
+        MultilineIntent::EditDescription {
+            selection: selection.clone(),
+        },
+        MultilineIntent::EditNote {
+            task_id: selection.single_id().unwrap().clone(),
+            display_ref: "captured".to_string(),
+            note_id: "captured-note".to_string(),
+        },
+        MultilineIntent::AddNote {
+            task_id: selection.single_id().unwrap().clone(),
+            display_ref: "captured".to_string(),
+        },
+    ];
+    create_and_select_task(&mut app, test_task_draft("Other editor target")).await;
+    for intent in intents {
+        let supported = intent.supports_external_editor();
+        let mut state = MultilineInputState::from_value_with_baseline(
+            intent.clone(),
+            "Editor",
+            "Prompt",
+            " exact\r\ndraft\n".to_string(),
+            "baseline".to_string(),
+        );
+        state.buffer.row = 1;
+        state.buffer.column = 2;
+        app.overlay = Some(OverlayState::MultilineInput(state.clone()));
+        if supported {
+            crate::tui::platform::fail_next_external_editor();
+        }
+        app.pending_shortcut.begin_editor_prefix();
+        app.handle_overlay_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL))
+            .await
+            .unwrap();
+        assert!(
+            matches!(&app.overlay, Some(OverlayState::MultilineInput(restored)) if restored == &state)
+        );
+        if supported {
+            assert!(
+                toast_message(&app)
+                    .unwrap()
+                    .contains("injected external editor failure")
+            );
+            app.pending_shortcut.begin_editor_prefix();
+            app.handle_overlay_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL))
+                .await
+                .unwrap();
+            let Some(OverlayState::MultilineInput(edited)) = &app.overlay else {
+                panic!("expected external editor result")
+            };
+            assert_eq!(edited.intent, intent);
+            assert_eq!(edited.baseline_value(), "baseline");
+            assert_eq!(
+                edited.buffer.lines.join("\n"),
+                " exact\r\ndraft\n from editor"
+            );
+        }
+    }
+}
