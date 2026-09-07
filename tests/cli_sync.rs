@@ -76,11 +76,18 @@ fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) {
 
 fn exec_sql(db: &std::path::Path, sql: &str) {
     let output = std::process::Command::new("sqlite3")
+        .args(["-cmd", ".timeout 5000"])
         .arg(db)
         .arg(sql)
         .output()
         .expect("run sqlite");
-    assert!(output.status.success(), "sqlite failed");
+    assert!(
+        output.status.success(),
+        "sqlite failed\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 fn query_sql_scalar(db: &std::path::Path, sql: &str) -> String {
@@ -2237,7 +2244,7 @@ fn sync_server_returns_bounded_pull_pages() {
 
 #[test]
 fn sync_server_pure_pull_succeeds_while_write_transaction_is_held() {
-    use std::io::Write;
+    use sqlx::Connection;
 
     let env = TestEnv::new();
     let server = TestServer::start(&env);
@@ -2250,18 +2257,23 @@ fn sync_server_pure_pull_succeeds_while_write_transaction_is_held() {
                  NULL, '2026-01-01T00:00:01Z', 1)"
     );
 
-    let mut locker = std::process::Command::new("sqlite3")
-        .arg(&server_db)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .spawn()
-        .expect("start sqlite lock process");
-    locker
-        .stdin
-        .as_mut()
-        .expect("sqlite stdin")
-        .write_all(b"BEGIN IMMEDIATE;\n")
-        .expect("begin immediate transaction");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("create lock runtime");
+    let mut locker = runtime.block_on(async {
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&server_db)
+            .busy_timeout(Duration::from_secs(5));
+        let mut connection = sqlx::SqliteConnection::connect_with(&options)
+            .await
+            .expect("open lock connection");
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut connection)
+            .await
+            .expect("acquire write lock before pulling");
+        connection
+    });
 
     let (status, body) = post_sync_json(
         &server.url,
@@ -2278,8 +2290,13 @@ fn sync_server_pure_pull_succeeds_while_write_transaction_is_held() {
     let body: Value = serde_json::from_str(&body).expect("sync response json");
     assert_eq!(body["changes"].as_array().expect("changes array").len(), 1);
 
-    locker.kill().expect("stop sqlite lock process");
-    locker.wait().expect("wait for lock process");
+    runtime.block_on(async {
+        sqlx::query("ROLLBACK")
+            .execute(&mut locker)
+            .await
+            .expect("release write lock");
+        locker.close().await.expect("close lock connection");
+    });
 }
 
 #[test]
