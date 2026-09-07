@@ -1156,6 +1156,114 @@ mod tests {
     };
 
     #[tokio::test]
+    async fn terminal_status_suppression_preserves_text_conflict_variants() {
+        use crate::db::field_version;
+        use crate::task_fields::TaskField;
+
+        for field in [TaskField::Title, TaskField::Description, TaskField::Status] {
+            for incoming in ["done", "canceled", "active"] {
+                let (_temp, mut conn) = crate::test_support::test_conn().await;
+                let workspace = crate::test_support::ensure_default_workspace(&mut conn)
+                    .await
+                    .unwrap();
+                let created = create_recurrence_series(
+                    &mut conn,
+                    &workspace,
+                    CreateRecurrenceSeriesParams::new(RecurrenceSeriesDraft {
+                        metadata: Vec::new(),
+                        title: "original title".to_string(),
+                        description: "original description".to_string(),
+                        project: "recurrence".to_string(),
+                        priority: "none".to_string(),
+                        initial_status: "todo".to_string(),
+                        labels: Vec::new(),
+                        schedule: RecurrenceSchedule::new(
+                            RecurrenceRule::daily(),
+                            "UTC".parse().unwrap(),
+                            NaiveDate::from_ymd_opt(2026, 7, 20).unwrap(),
+                            None,
+                            RecurrenceDuePolicy::SameDay,
+                        ),
+                    })
+                    .at(Utc.with_ymd_and_hms(2026, 7, 20, 12, 0, 0).unwrap()),
+                )
+                .await
+                .unwrap();
+                let task_id: TaskId = sqlx::query_scalar(
+                    "SELECT task_id FROM recurrence_occurrences WHERE series_id = ?",
+                )
+                .bind(&created.series.id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+                let base_version = field_version(&mut conn, &task_id, field.as_str())
+                    .await
+                    .unwrap();
+                let local_value = if field == TaskField::Status {
+                    "backlog"
+                } else {
+                    "local text edit"
+                };
+                let mut change = ChangeWire {
+                    change_id: "AAAAAAAAAAAAAAA0".to_string(),
+                    client_id: "local".to_string(),
+                    local_seq: 1,
+                    entity_type: "task".to_string(),
+                    entity_id: task_id.to_string(),
+                    field: Some(field.as_str().to_string()),
+                    op_type: crate::change_log::op_type::SET_FIELD.to_string(),
+                    payload: serde_json::json!({
+                        "workspace_id": workspace.id,
+                        "value": local_value,
+                    }),
+                    base_version,
+                    created_at: "2026-07-20T12:01:00Z".to_string(),
+                    server_seq: Some(1),
+                };
+                super::super::apply_remote_change(&mut conn, &change)
+                    .await
+                    .unwrap();
+                let local_change_id = change.change_id.clone();
+                change.change_id = "BBBBBBBBBBBBBBB0".to_string();
+                change.client_id = "remote".to_string();
+                change.payload["value"] = serde_json::json!(incoming);
+                change.server_seq = Some(2);
+                super::super::apply_remote_change(&mut conn, &change)
+                    .await
+                    .unwrap();
+
+                let conflict: Option<(String, String, String, String)> = sqlx::query_as(
+                    "SELECT local_value, remote_value, local_change_id, remote_change_id
+                     FROM conflicts WHERE workspace_id = ? AND task_id = ?
+                     AND field = ? AND resolved = 0",
+                )
+                .bind(&workspace.id)
+                .bind(&task_id)
+                .bind(field.as_str())
+                .fetch_optional(&mut *conn)
+                .await
+                .unwrap();
+                let suppressed = field == TaskField::Status && incoming != "active";
+                let expected = (!suppressed).then(|| {
+                    (
+                        local_value.to_string(),
+                        incoming.to_string(),
+                        local_change_id.clone(),
+                        change.change_id.clone(),
+                    )
+                });
+                assert_eq!(conflict, expected, "field={field:?}, incoming={incoming}");
+                assert_eq!(
+                    field_version(&mut conn, &task_id, field.as_str())
+                        .await
+                        .unwrap(),
+                    Some(local_change_id),
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn lifecycle_conflict_preserves_existing_projection_during_remote_projection_apply() {
         let (_temp, mut conn) = crate::test_support::test_conn().await;
         let workspace = crate::test_support::ensure_default_workspace(&mut conn)

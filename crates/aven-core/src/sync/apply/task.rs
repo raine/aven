@@ -130,14 +130,15 @@ pub async fn set_field(
             return Ok(());
         }
         if current != change.base_version {
-            if super::recurrence::suppress_recurrence_status_conflict(
-                conn,
-                &workspace_id,
-                &task_id,
-                &value,
-                false,
-            )
-            .await?
+            if task_field == TaskField::Status
+                && super::recurrence::suppress_recurrence_status_conflict(
+                    conn,
+                    &workspace_id,
+                    &task_id,
+                    &value,
+                    false,
+                )
+                .await?
             {
                 return Ok(());
             }
