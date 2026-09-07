@@ -548,3 +548,81 @@ fn explicit_project_bypasses_invalid_git_discovery() {
     ));
     contains_all(&output, &["project=chosen"]);
 }
+
+#[test]
+fn unrelated_path_edits_preserve_valid_scoped_mappings() {
+    for layout in [
+        "inline-paths",
+        "omitted-workspace",
+        "inline-overrides",
+        "block",
+    ] {
+        let env = TestEnv::new();
+        let db = env.db("preservation.sqlite");
+        let mapped = env.path("mapped");
+        let other = env.path("other");
+        fs::create_dir_all(&mapped).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        let entry = match layout {
+            "inline-paths" => format!(
+                "  overrides:\n    - workspace_id: '0000000000000000'\n      workspace: default\n      project: mapped\n      paths: [\"{}\"]\n",
+                mapped.display()
+            ),
+            "omitted-workspace" => format!(
+                "  overrides:\n    - workspace_id: '0000000000000000'\n      project: mapped\n      paths:\n        - \"{}\"\n",
+                mapped.display()
+            ),
+            "inline-overrides" => format!(
+                "  overrides: [{{workspace_id: '0000000000000000', project: mapped, paths: [\"{}\"]}}]\n",
+                mapped.display()
+            ),
+            _ => format!(
+                "  overrides:\n    - workspace_id: '0000000000000000'\n      workspace: default\n      project: mapped\n      paths:\n        - \"{}\"\n",
+                mapped.display()
+            ),
+        };
+        let original = format!("local:\n  db_path: \"{}\"\nproject:\n{entry}", db.display());
+        env.write_config(&original);
+        contains_all(
+            &ok(aven_config_in(&env, &mapped, ["add", "before edit"])),
+            &["project=mapped"],
+        );
+        ok(env.aven_config(["project", "create", "other"]));
+        for create in [false, true] {
+            let args = if create {
+                vec![
+                    "project",
+                    "create",
+                    "third",
+                    "--path",
+                    other.to_str().unwrap(),
+                ]
+            } else {
+                vec!["project", "path", "add", "other", other.to_str().unwrap()]
+            };
+            let output = env.aven_config(args);
+            assert_eq!(
+                output.status.success(),
+                layout != "inline-overrides",
+                "{layout}"
+            );
+            if output.status.success() {
+                contains_all(
+                    &ok(aven_config_in(&env, &other, ["add", "accepted edit"])),
+                    &[if create {
+                        "project=third"
+                    } else {
+                        "project=other"
+                    }],
+                );
+            } else {
+                contains_all(&fail(output), &["cannot safely edit project path mappings"]);
+                assert_eq!(fs::read_to_string(env.config_file()).unwrap(), original);
+            }
+            contains_all(
+                &ok(aven_config_in(&env, &mapped, ["add", "after edit"])),
+                &["project=mapped"],
+            );
+        }
+    }
+}

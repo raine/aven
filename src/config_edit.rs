@@ -106,18 +106,20 @@ pub struct ProjectPathMappingEdit<'a> {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ManagedProjectOverride {
     workspace_id: WorkspaceId,
-    workspace: String,
+    workspace: Option<String>,
     project: String,
+    #[serde(default)]
     paths: Vec<PathBuf>,
 }
 
 pub fn add_project_path(path: &Path, edit: ProjectPathMappingEdit<'_>) -> Result<()> {
     let text = read_config_text(path)?;
     let text = mark_scoped_project_overrides(&text);
-    let (text, mut entries) = remove_managed_entries(&text);
+    let (text, mut entries) = remove_managed_entries(&text)?;
     for entry in &mut entries {
         if &entry.workspace_id == edit.workspace_id {
             entry.paths.retain(|path| path != &edit.path);
@@ -132,7 +134,7 @@ pub fn add_project_path(path: &Path, edit: ProjectPathMappingEdit<'_>) -> Result
     } else {
         entries.push(ManagedProjectOverride {
             workspace_id: edit.workspace_id.clone(),
-            workspace: edit.workspace.to_string(),
+            workspace: Some(edit.workspace.to_string()),
             project: edit.project.to_string(),
             paths: vec![edit.path],
         });
@@ -148,7 +150,7 @@ pub fn remove_project_path(
 ) -> Result<bool> {
     let text = read_config_text(path)?;
     let text = mark_scoped_project_overrides(&text);
-    let (text, mut entries) = remove_managed_entries(&text);
+    let (text, mut entries) = remove_managed_entries(&text)?;
     let mut changed = false;
     for entry in &mut entries {
         if &entry.workspace_id == workspace_id && entry.project == project {
@@ -174,7 +176,7 @@ pub fn rename_project_path(
 ) -> Result<bool> {
     let text = read_config_text(path)?;
     let text = mark_scoped_project_overrides(&text);
-    let (text, mut entries) = remove_managed_entries(&text);
+    let (text, mut entries) = remove_managed_entries(&text)?;
     let mut changed = false;
     for entry in &mut entries {
         if &entry.workspace_id == workspace_id && entry.project == old_project {
@@ -239,7 +241,7 @@ fn mark_scoped_project_overrides(text: &str) -> String {
     output
 }
 
-fn remove_managed_entries(text: &str) -> (String, Vec<ManagedProjectOverride>) {
+fn remove_managed_entries(text: &str) -> Result<(String, Vec<ManagedProjectOverride>)> {
     let lines = split_lines(text);
     let mut output = Vec::new();
     let mut entries = Vec::new();
@@ -269,18 +271,16 @@ fn remove_managed_entries(text: &str) -> (String, Vec<ManagedProjectOverride>) {
             block.push(line.clone());
             i += 1;
         }
-        if let Some(entry) = parse_managed_entry(&block) {
-            entries.push(entry);
-        }
+        entries.push(parse_managed_entry(&block)?);
     }
     let mut text = output.join("\n");
     if text.ends_with('\n') {
-        return (text, entries);
+        return Ok((text, entries));
     }
     if !text.is_empty() && has_trailing_newline(text.as_str(), lines.last()) {
         text.push('\n');
     }
-    (text, entries)
+    Ok((text, entries))
 }
 
 fn append_managed_entries(text: &str, entries: &[ManagedProjectOverride]) -> Result<String> {
@@ -294,7 +294,13 @@ fn append_managed_entries(text: &str, entries: &[ManagedProjectOverride]) -> Res
         if let Some(overrides_line) =
             find_child_key(&lines, project_line + 1, project_end, 2, "overrides")
         {
-            if lines[overrides_line].trim() != "overrides:" {
+            if !is_block_mapping_key(&lines[overrides_line], "overrides") {
+                let header: serde_yaml::Value = serde_yaml::from_str(lines[overrides_line].trim())?;
+                if !header["overrides"].as_sequence().is_some_and(Vec::is_empty) {
+                    bail!(
+                        "cannot safely edit project path mappings: overrides must use a YAML block sequence; config unchanged"
+                    );
+                }
                 lines[overrides_line] = format!("{}overrides:", " ".repeat(2));
             }
             let overrides_end = find_section_end(&lines, overrides_line, 2);
@@ -318,39 +324,17 @@ fn append_managed_entries(text: &str, entries: &[ManagedProjectOverride]) -> Res
     Ok(out)
 }
 
-fn parse_managed_entry(lines: &[String]) -> Option<ManagedProjectOverride> {
-    let mut workspace_id = None;
-    let mut workspace = None;
-    let mut project = None;
-    let mut paths = Vec::new();
-    let mut in_paths = false;
-    for line in lines {
-        let trimmed = line.trim();
-        if let Some(value) = trimmed.strip_prefix("- workspace_id:") {
-            workspace_id = Some(parse_scalar(value));
-            in_paths = false;
-        } else if let Some(value) = trimmed.strip_prefix("workspace_id:") {
-            workspace_id = Some(parse_scalar(value));
-            in_paths = false;
-        } else if let Some(value) = trimmed.strip_prefix("workspace:") {
-            workspace = Some(parse_scalar(value));
-            in_paths = false;
-        } else if let Some(value) = trimmed.strip_prefix("project:") {
-            project = Some(parse_scalar(value));
-            in_paths = false;
-        } else if trimmed == "paths:" {
-            in_paths = true;
-        } else if in_paths && let Some(value) = trimmed.strip_prefix("- ") {
-            paths.push(PathBuf::from(parse_scalar(value)));
-        }
+fn parse_managed_entry(lines: &[String]) -> Result<ManagedProjectOverride> {
+    let mut entries: Vec<ManagedProjectOverride> = serde_yaml::from_str(&lines.join("\n"))
+        .context(
+            "cannot safely edit project path mappings: unsupported managed entry; config unchanged",
+        )?;
+    if entries.len() != 1 {
+        bail!(
+            "cannot safely edit project path mappings: expected one managed entry; config unchanged"
+        );
     }
-    Some(ManagedProjectOverride {
-        workspace_id: workspace_id?.parse().ok()?,
-        workspace: workspace?,
-        project: project?,
-        paths,
-    })
-    .filter(|entry| !entry.paths.is_empty())
+    Ok(entries.remove(0))
 }
 
 fn render_managed_entries(entries: &[ManagedProjectOverride]) -> Vec<String> {
@@ -361,10 +345,9 @@ fn render_managed_entries(entries: &[ManagedProjectOverride]) -> Vec<String> {
             "    - workspace_id: {}",
             yaml_scalar(entry.workspace_id.as_str())
         ));
-        lines.push(format!(
-            "      workspace: {}",
-            yaml_scalar(&entry.workspace)
-        ));
+        if let Some(workspace) = &entry.workspace {
+            lines.push(format!("      workspace: {}", yaml_scalar(workspace)));
+        }
         lines.push(format!("      project: {}", yaml_scalar(&entry.project)));
         lines.push("      paths:".to_string());
         for path in &entry.paths {
@@ -383,20 +366,6 @@ fn yaml_scalar(value: &str) -> String {
         .trim()
         .trim_end_matches("...")
         .trim()
-        .to_string()
-}
-
-fn parse_scalar(value: &str) -> String {
-    let value = value.trim();
-    value
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .or_else(|| {
-            value
-                .strip_prefix('\'')
-                .and_then(|value| value.strip_suffix('\''))
-        })
-        .unwrap_or(value)
         .to_string()
 }
 
@@ -456,6 +425,36 @@ fn has_trailing_newline(_text: &str, last_line: Option<&String>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsupported_managed_entries_fail_closed_for_all_path_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let workspace_id: WorkspaceId = "0000000000000000".parse().unwrap();
+        let original = "project:\n  overrides:\n    - workspace_id: '0000000000000000'\n      project: app\n      paths: [/app]\n      extra: preserved\n";
+        fs::write(&path, original).unwrap();
+        for result in [
+            add_project_path(
+                &path,
+                ProjectPathMappingEdit {
+                    workspace_id: &workspace_id,
+                    workspace: "default",
+                    project: "other",
+                    path: PathBuf::from("/other"),
+                },
+            ),
+            remove_project_path(&path, &workspace_id, "app", &[PathBuf::from("/app")]).map(|_| ()),
+            rename_project_path(&path, &workspace_id, "app", "renamed").map(|_| ()),
+        ] {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("cannot safely edit")
+            );
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        }
+    }
 
     #[test]
     fn scalar_edit_preserves_comments_unrelated_settings_and_indentation() {
