@@ -175,7 +175,7 @@ async fn duplicate_content_preserves_input_order_and_reserves_one_object() {
         .fetch_all(&pool)
         .await
         .unwrap();
-    assert_eq!(reservations, [hash.clone()]);
+    assert_eq!(reservations.as_slice(), std::slice::from_ref(&hash));
     assert!(object_path(&blob_dir, &hash).exists());
 }
 
