@@ -416,6 +416,10 @@ async fn select_tasks(
         push_filter_prefix(&mut query, &mut filters_added);
         query.push("t.is_epic = 1");
     }
+    if filters.without_epic_link {
+        push_filter_prefix(&mut query, &mut filters_added);
+        query.push("NOT EXISTS (SELECT 1 FROM task_epic_links l WHERE l.workspace_id = t.workspace_id AND l.child_task_id = t.id)");
+    }
     if filters.exclude_epics {
         push_filter_prefix(&mut query, &mut filters_added);
         query.push("t.is_epic = 0");

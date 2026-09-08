@@ -611,6 +611,12 @@ impl App {
                 }
             }));
         }
+        if let Some(reason) = self.pairing_missing_config_reason() {
+            unavailable.push(crate::tui::overlay::CommandAvailabilityOverride {
+                action: crate::tui::event::Action::PairMobile,
+                reason,
+            });
+        }
         let recurrence_series_id = target.as_ref().map(|target| match target {
             crate::tui::overlay::OverlayTarget::RecurrenceSeries { series_id, .. } => {
                 series_id.clone()

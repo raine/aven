@@ -24,15 +24,7 @@ impl Database {
         project_id: &ProjectId,
     ) -> Result<Option<Project>> {
         let mut conn = self.acquire_reader().await?;
-        let row = sqlx::query(
-            "SELECT id, workspace_id, key, name, prefix
-             FROM projects WHERE workspace_id = ? AND id = ? AND deleted = 0",
-        )
-        .bind(workspace_id)
-        .bind(project_id)
-        .fetch_optional(&mut *conn)
-        .await?;
-        Ok(row.map(project_from_row))
+        find_project_by_id_in_workspace(&mut conn, workspace_id, project_id).await
     }
 
     pub async fn resolve_existing_project(
@@ -245,6 +237,22 @@ pub fn normalize_key(input: &str) -> String {
         }
     }
     out.trim_matches('-').to_string()
+}
+
+pub(crate) async fn find_project_by_id_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    project_id: &ProjectId,
+) -> Result<Option<Project>> {
+    let row = sqlx::query(
+        "SELECT id, workspace_id, key, name, prefix
+         FROM projects WHERE workspace_id = ? AND id = ? AND deleted = 0",
+    )
+    .bind(workspace_id)
+    .bind(project_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(row.map(project_from_row))
 }
 
 pub(crate) async fn find_project_in_workspace(
@@ -542,16 +550,10 @@ pub(crate) async fn resolve_project_for_stored_value(
     value: &str,
 ) -> Result<Project> {
     if let Ok(project_id) = value.parse::<ProjectId>()
-        && let Some(row) = sqlx::query(
-            "SELECT id, workspace_id, key, name, prefix
-             FROM projects WHERE workspace_id = ? AND id = ? AND deleted = 0",
-        )
-        .bind(workspace_id)
-        .bind(&project_id)
-        .fetch_optional(&mut *conn)
-        .await?
+        && let Some(project) =
+            find_project_by_id_in_workspace(conn, workspace_id, &project_id).await?
     {
-        return Ok(project_from_row(row));
+        return Ok(project);
     }
     resolve_or_create_project_in_workspace(conn, workspace_id, value).await
 }

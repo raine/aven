@@ -438,6 +438,9 @@ mod tests {
                 .unwrap();
             set_meta(&mut conn, "local_seq", "6").await.unwrap();
             set_meta(&mut conn, "sync_cursor", "6").await.unwrap();
+            set_meta(&mut conn, "sync_metadata_caught_up", "1")
+                .await
+                .unwrap();
             sqlx::query("DELETE FROM meta WHERE key = ?")
                 .bind(REPAIR_KEY)
                 .execute(&mut *conn)
@@ -469,9 +472,9 @@ mod tests {
                 .unwrap();
             assert_eq!(changes, 6);
         }
-        let facts = database.sync_persistence_status().await.unwrap();
+        let facts = database.ios_sync_facts().await.unwrap();
         assert_eq!(facts.pending_changes, 0);
-        assert_eq!(facts.sync_cursor.as_deref(), Some("6"));
+        assert!(facts.metadata_caught_up);
         let integrity = database.database_integrity_report().await.unwrap();
         assert!(integrity.quick_check_ok);
         assert!(

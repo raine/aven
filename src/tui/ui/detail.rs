@@ -1856,14 +1856,7 @@ fn extend_activity_section(
     }
 
     let available = item.queue.band == crate::queue::QueueBand::Available;
-    let idle_index = (!available)
-        .then(|| {
-            item.activity.iter().position(|action| {
-                action.created_at == item.task.queue_activity_at
-                    && action_establishes_queue_activity(action)
-            })
-        })
-        .flatten();
+    let idle_index = item.queue_idle_activity_index();
     let idle_tag = item
         .queue
         .idle_seconds
@@ -1914,7 +1907,7 @@ fn extend_activity_section(
             0
         };
         let summary = truncate_width(
-            &task_activity_summary(item, action),
+            &action.task_activity_summary(&item.task.title),
             width.saturating_sub(prefix_width + reserved),
         );
         let mut spans = vec![
@@ -1939,47 +1932,6 @@ fn extend_activity_section(
     push_disclosure_row(lines, rows, disclosure, "Hide activity", None);
 }
 
-fn task_activity_summary(item: &TaskListItem, action: &crate::query::RecentActionItem) -> String {
-    let summary = action
-        .summary
-        .strip_suffix(&format!(": {}", item.task.title))
-        .unwrap_or(&action.summary);
-    let Some(detail) = task_activity_detail(action) else {
-        return summary.to_string();
-    };
-    format!("{summary} · {detail}")
-}
-
-fn task_activity_detail(action: &crate::query::RecentActionItem) -> Option<&str> {
-    let detail = action
-        .detail
-        .as_deref()
-        .filter(|detail| !detail.is_empty())?;
-    let include = match action.op_type.as_str() {
-        crate::change_log::op_type::LABEL_ADD
-        | crate::change_log::op_type::LABEL_REMOVE
-        | crate::change_log::op_type::NOTE_ADD
-        | crate::change_log::op_type::NOTE_EDIT
-        | crate::change_log::op_type::NOTE_DELETE
-        | crate::change_log::op_type::DEPENDENCY_ADD
-        | crate::change_log::op_type::DEPENDENCY_REMOVE
-        | crate::change_log::op_type::RELATED_ADD
-        | crate::change_log::op_type::RELATED_REMOVE
-        | crate::change_log::op_type::EPIC_LINK_ADD
-        | crate::change_log::op_type::EPIC_LINK_REMOVE
-        | crate::change_log::op_type::ATTACHMENT_ADD
-        | crate::change_log::op_type::ATTACHMENT_DELETE
-        | crate::change_log::op_type::SET_TASK_METADATA
-        | crate::change_log::op_type::REMOVE_TASK_METADATA => true,
-        crate::change_log::op_type::SET_FIELD => !matches!(
-            action.field.as_deref(),
-            Some("description" | "status" | "priority" | "deleted" | "is_epic")
-        ),
-        _ => false,
-    };
-    include.then_some(detail)
-}
-
 fn idle_activity_noun(action: &crate::query::RecentActionItem) -> &'static str {
     match action.op_type.as_str() {
         crate::change_log::op_type::CREATE_TASK => "creation",
@@ -1988,19 +1940,6 @@ fn idle_activity_noun(action: &crate::query::RecentActionItem) -> &'static str {
         | crate::change_log::op_type::NOTE_DELETE => "note",
         _ if action.field.as_deref() == Some("priority") => "priority change",
         _ => "status change",
-    }
-}
-
-fn action_establishes_queue_activity(action: &crate::query::RecentActionItem) -> bool {
-    match action.op_type.as_str() {
-        crate::change_log::op_type::CREATE_TASK
-        | crate::change_log::op_type::NOTE_ADD
-        | crate::change_log::op_type::NOTE_EDIT
-        | crate::change_log::op_type::NOTE_DELETE => true,
-        crate::change_log::op_type::SET_FIELD | crate::change_log::op_type::RESOLVE_FIELD => {
-            matches!(action.field.as_deref(), Some("status" | "priority"))
-        }
-        _ => false,
     }
 }
 
@@ -5990,6 +5929,7 @@ mod tests {
             recurrence_group: None,
             hydration: crate::query::TaskItemHydration::Detail,
             attachments: Vec::new(),
+            live_attachment_count: 0,
             queue: Default::default(),
         }
     }

@@ -5,8 +5,78 @@ use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 use std::collections::HashMap;
 
 use crate::change_log::op_type;
-use crate::query::types::{RecentActionItem, RecentActionTarget};
+use crate::query::types::{RecentActionItem, RecentActionTarget, TaskListItem};
 use crate::refs::DisplayRefContext;
+use crate::task_fields::TaskField;
+
+impl RecentActionItem {
+    pub fn task_activity_summary(&self, task_title: &str) -> String {
+        let summary = self
+            .summary
+            .strip_suffix(&format!(": {}", task_title))
+            .unwrap_or(&self.summary);
+        let Some(detail) = self.task_activity_detail() else {
+            return summary.to_string();
+        };
+        format!("{summary} · {detail}")
+    }
+
+    fn task_activity_detail(&self) -> Option<&str> {
+        let detail = self.detail.as_deref().filter(|detail| !detail.is_empty())?;
+        let include = match self.op_type.as_str() {
+            crate::change_log::op_type::LABEL_ADD
+            | crate::change_log::op_type::LABEL_REMOVE
+            | crate::change_log::op_type::NOTE_ADD
+            | crate::change_log::op_type::NOTE_EDIT
+            | crate::change_log::op_type::NOTE_DELETE
+            | crate::change_log::op_type::DEPENDENCY_ADD
+            | crate::change_log::op_type::DEPENDENCY_REMOVE
+            | crate::change_log::op_type::RELATED_ADD
+            | crate::change_log::op_type::RELATED_REMOVE
+            | crate::change_log::op_type::EPIC_LINK_ADD
+            | crate::change_log::op_type::EPIC_LINK_REMOVE
+            | crate::change_log::op_type::ATTACHMENT_ADD
+            | crate::change_log::op_type::ATTACHMENT_DELETE
+            | crate::change_log::op_type::SET_TASK_METADATA
+            | crate::change_log::op_type::REMOVE_TASK_METADATA => true,
+            crate::change_log::op_type::SET_FIELD => !matches!(
+                self.field.as_deref(),
+                Some("description" | "status" | "priority" | "deleted" | "is_epic")
+            ),
+            _ => false,
+        };
+        include.then_some(detail)
+    }
+
+    fn establishes_queue_activity(&self) -> bool {
+        match self.op_type.as_str() {
+            crate::change_log::op_type::CREATE_TASK
+            | crate::change_log::op_type::NOTE_ADD
+            | crate::change_log::op_type::NOTE_EDIT
+            | crate::change_log::op_type::NOTE_DELETE => true,
+            crate::change_log::op_type::SET_FIELD | crate::change_log::op_type::RESOLVE_FIELD => {
+                self.field
+                    .as_deref()
+                    .and_then(TaskField::parse)
+                    .is_some_and(TaskField::updates_queue_activity)
+            }
+            _ => false,
+        }
+    }
+}
+
+impl TaskListItem {
+    pub fn queue_idle_activity_index(&self) -> Option<usize> {
+        if self.queue.band == crate::queue::QueueBand::Available
+            || self.queue.idle_seconds.is_none()
+        {
+            return None;
+        }
+        self.activity.iter().position(|action| {
+            action.created_at == self.task.queue_activity_at && action.establishes_queue_activity()
+        })
+    }
+}
 
 const RECENT_ACTION_LIMIT: i64 = 80;
 const TASK_ACTIVITY_LIMIT: i64 = 8;

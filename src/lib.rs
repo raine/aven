@@ -15,6 +15,7 @@ mod input;
 mod logging;
 mod notification;
 mod operations;
+mod pairing;
 mod projects;
 mod recurrence_input;
 mod render;
@@ -45,7 +46,7 @@ use commands::{
     cmd_export, cmd_import, cmd_internal_demo_snapshot, cmd_internal_natural_add, cmd_label,
     cmd_list, cmd_metadata, cmd_note, cmd_note_delete, cmd_prime, cmd_project, cmd_recur,
     cmd_related, cmd_search, cmd_self_update, cmd_show, cmd_skill, cmd_skill_install,
-    cmd_sync_status, cmd_text, cmd_workspace,
+    cmd_sync_pair, cmd_sync_status, cmd_text, cmd_workspace,
 };
 use sync::{run_server, sync_client};
 use workspaces::resolve_active_workspace_with_routing;
@@ -84,6 +85,7 @@ enum StandaloneCommand {
     Internal(cli::InternalCommand),
     Server(cli::ServerArgs),
     Skill(cli::SkillCommand),
+    SyncPair(cli::PairArgs),
     Update(cli::SelfUpdateArgs),
 }
 
@@ -166,7 +168,18 @@ impl From<Commands> for CliDispatch {
             Commands::Daemon(args) => Self::Standalone(StandaloneCommand::Daemon(args)),
             Commands::Demo => Self::Standalone(StandaloneCommand::Demo),
             Commands::Server(args) => Self::Standalone(StandaloneCommand::Server(args)),
-            Commands::Sync(args) => Self::database(DatabaseCommand::Sync(args)),
+            Commands::Sync(mut args) => match args.command.take() {
+                Some(SyncSubcommand::Pair(pair)) => {
+                    Self::Standalone(StandaloneCommand::SyncPair(cli::PairArgs {
+                        server: pair.server.or(args.server),
+                        copy: pair.copy,
+                    }))
+                }
+                command => {
+                    args.command = command;
+                    Self::database(DatabaseCommand::Sync(args))
+                }
+            },
             Commands::Tui(args) => Self::Tui(args),
             Commands::Internal(args) => Self::Standalone(StandaloneCommand::Internal(args)),
         }
@@ -192,6 +205,10 @@ async fn dispatch_standalone(
             None => cmd_skill(),
             Some(SkillSubcommand::Install(args)) => cmd_skill_install(args),
         },
+        StandaloneCommand::SyncPair(args) => {
+            let config = config::AppConfig::load()?;
+            cmd_sync_pair(&config, args)
+        }
         StandaloneCommand::Config(args) => cmd_config(args).await,
         StandaloneCommand::Demo => cmd_demo(db, workspace).await,
         StandaloneCommand::Doctor(args) => cmd_doctor(db, workspace.as_deref(), args).await,
@@ -393,6 +410,7 @@ async fn dispatch_database(
             cmd_conflict(&database, &workspace, args).await
         }
         DatabaseCommand::Sync(args) => match &args.command {
+            Some(SyncSubcommand::Pair(_)) => unreachable!("pairing command is standalone"),
             Some(SyncSubcommand::Status(status)) => {
                 cmd_sync_status(&database, &config, status.json).await
             }

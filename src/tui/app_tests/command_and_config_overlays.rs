@@ -3,6 +3,9 @@ use super::*;
 #[path = "command_and_config_overlays/command_palette.rs"]
 mod command_palette;
 
+#[path = "command_and_config_overlays/pairing.rs"]
+mod pairing;
+
 #[path = "command_and_config_overlays/search.rs"]
 mod search;
 

@@ -77,6 +77,7 @@ fn absorb_task_detail(summary: &mut TaskListItem, detail: TaskListItem) {
 pub(crate) struct TuiStore {
     database: Database,
     app_config: AppConfig,
+    pairing_server_environment: Option<String>,
     projection: TuiProjection,
     task_columns: Vec<crate::config::TaskColumnConfig>,
     derived: DerivedTaskProjections,
@@ -136,6 +137,7 @@ impl TaskDetailHydration {
 struct RefreshRetainedState {
     database: Database,
     app_config: AppConfig,
+    pairing_server_environment: Option<String>,
     task_columns: Vec<crate::config::TaskColumnConfig>,
     columns_preview_visible: bool,
     db_stats: TuiDatabaseStats,
@@ -231,6 +233,7 @@ impl From<&TuiStore> for RefreshRetainedState {
         Self {
             database: store.database.clone(),
             app_config: store.app_config.clone(),
+            pairing_server_environment: store.pairing_server_environment.clone(),
             task_columns: store.task_columns.clone(),
             columns_preview_visible: store.columns_preview_visible,
             db_stats: store.db_stats.clone(),
@@ -246,6 +249,7 @@ impl RefreshRetainedState {
         TuiStore {
             database: self.database,
             app_config: self.app_config,
+            pairing_server_environment: self.pairing_server_environment,
             projection,
             task_columns: self.task_columns,
             derived: DerivedTaskProjections::default(),
@@ -258,6 +262,16 @@ impl RefreshRetainedState {
             _test_database_dir: self.test_database_dir,
         }
     }
+}
+
+#[cfg(not(test))]
+fn pairing_server_environment() -> Option<String> {
+    std::env::var("AVEN_SYNC_SERVER").ok()
+}
+
+#[cfg(test)]
+fn pairing_server_environment() -> Option<String> {
+    None
 }
 
 impl TuiStore {
@@ -286,6 +300,7 @@ impl TuiStore {
         let mut store = Self {
             database,
             app_config,
+            pairing_server_environment: pairing_server_environment(),
             projection: TuiProjection {
                 tasks: TaskProjection::default(),
                 recurrence_series: Vec::new(),

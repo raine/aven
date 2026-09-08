@@ -117,6 +117,7 @@ pub(crate) enum OverlayView<'a> {
         markdown: &'a str,
         scroll: u16,
     },
+    Pairing(std::sync::Arc<crate::pairing::PairingPresentation>),
     RecurrenceHistory(RecurrenceHistoryView<'a>),
     SyncStatus(Box<SyncStatusView<'a>>),
     DatabaseStats {
@@ -589,6 +590,7 @@ impl<'a> OverlayView<'a> {
                 markdown: &state.markdown,
                 scroll: state.scroll,
             },
+            Pairing(presentation) => Self::Pairing(presentation.clone()),
             RecurrenceHistory(state) => {
                 Self::RecurrenceHistory(RecurrenceHistoryView::from_state(state))
             }

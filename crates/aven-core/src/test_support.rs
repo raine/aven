@@ -90,6 +90,7 @@ pub async fn set_task_deleted(
         task: outcome.task,
         create_change_id: None,
         attachment_change_ids: Vec::new(),
+        undo_snapshot: None,
     })
 }
 

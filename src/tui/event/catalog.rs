@@ -346,6 +346,14 @@ pub(crate) const COMMANDS: &[BuiltInCommand] = &[
         &[],
         Action::ShowChangelog,
     ),
+    BuiltInCommand::implemented_with_aliases(
+        "pair-mobile",
+        &["pair"],
+        "pair a mobile device with this TUI",
+        "General",
+        &[],
+        Action::PairMobile,
+    ),
     BuiltInCommand::implemented_for_epic_child(
         "undo",
         "undo last TUI mutation",

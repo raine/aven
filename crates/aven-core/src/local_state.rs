@@ -3,7 +3,9 @@ use std::collections::BTreeSet;
 use anyhow::Result;
 
 use crate::db::{Database, begin_immediate, get_meta, set_meta};
+use crate::ids::WorkspaceId;
 
+const IOS_QUEUE_WORKSPACE_META_KEY: &str = "ios_queue_workspace_id";
 const ONBOARDING_META_KEY: &str = "tui_onboarding_version";
 const FIRST_LAUNCH_ONBOARDING_VERSION: u32 = 1;
 
@@ -15,6 +17,35 @@ pub enum OnboardingStatus {
 }
 
 impl Database {
+    pub async fn restore_ios_queue_workspace(&self) -> Result<crate::workspaces::Workspace> {
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        let workspaces = crate::workspaces::list_workspaces(&mut tx).await?;
+        let stored_id = get_meta(&mut tx, IOS_QUEUE_WORKSPACE_META_KEY)
+            .await?
+            .and_then(|value| value.parse::<WorkspaceId>().ok());
+        let selected = stored_id
+            .and_then(|id| workspaces.iter().find(|workspace| workspace.id == id))
+            .or_else(|| workspaces.first())
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("no available workspace"))?;
+        set_meta(&mut tx, IOS_QUEUE_WORKSPACE_META_KEY, selected.id.as_str()).await?;
+        tx.commit().await?;
+        Ok(selected)
+    }
+
+    pub async fn select_ios_queue_workspace(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<crate::workspaces::Workspace> {
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        let workspace = crate::workspaces::workspace_for_id(&mut tx, workspace_id).await?;
+        set_meta(&mut tx, IOS_QUEUE_WORKSPACE_META_KEY, workspace.id.as_str()).await?;
+        tx.commit().await?;
+        Ok(workspace)
+    }
+
     pub async fn onboarding_status(&self) -> Result<OnboardingStatus> {
         let mut conn = self.acquire_reader().await?;
         let marker = get_meta(&mut conn, ONBOARDING_META_KEY).await?;

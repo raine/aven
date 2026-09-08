@@ -17,8 +17,8 @@ use super::planner::{
 };
 use super::wire::{
     BlobUploadContract, MAX_BLOB_TRANSFER_BYTES, MAX_BLOB_TRANSFER_OBJECTS, MAX_PULL_BATCH,
-    MAX_PUSH_BATCH, MissingBlobsRequest, MissingBlobsResponse, SyncResponse,
-    sync_server_url_is_valid, validate_blob_hashes,
+    MAX_PUSH_BATCH, MissingBlobsRequest, MissingBlobsResponse, SYNC_PROTOCOL_VERSION, SyncResponse,
+    sync_server_url_is_valid, validate_blob_hashes, validate_sync_response_for_request,
 };
 use crate::attachments::lifecycle::{ByteCount, LifecyclePolicy};
 use crate::db::Database;
@@ -74,6 +74,16 @@ pub struct SyncHttpResponse {
     pub status: u16,
     pub headers: Vec<SyncHttpHeader>,
     pub body: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PairingConnectionValidationResponse {
+    Accepted,
+    RejectedCredentials,
+    MalformedResponse,
+    IncompatibleServer,
+    ServerFailure,
+    Timeout,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -791,6 +801,32 @@ impl SyncSession {
     }
 }
 
+pub fn classify_pairing_connection_validation_response(
+    response: &SyncHttpResponse,
+) -> PairingConnectionValidationResponse {
+    match response.status {
+        200..=299 => {
+            let Ok(decoded) = serde_json::from_slice::<SyncResponse>(&response.body) else {
+                return PairingConnectionValidationResponse::MalformedResponse;
+            };
+            if decoded.protocol_version != SYNC_PROTOCOL_VERSION {
+                return PairingConnectionValidationResponse::IncompatibleServer;
+            }
+            if validate_sync_response_for_request(0, 1, &[], &decoded).is_err() {
+                return PairingConnectionValidationResponse::MalformedResponse;
+            }
+            PairingConnectionValidationResponse::Accepted
+        }
+        401 => PairingConnectionValidationResponse::RejectedCredentials,
+        408 | 504 => PairingConnectionValidationResponse::Timeout,
+        300..=399 | 404 | 405 | 426 => PairingConnectionValidationResponse::IncompatibleServer,
+        400 if sync_protocol_versions(sync_http_error_detail(response)).is_some() => {
+            PairingConnectionValidationResponse::IncompatibleServer
+        }
+        _ => PairingConnectionValidationResponse::ServerFailure,
+    }
+}
+
 fn request_timeout(kind: &RequestKind) -> SyncRequestTimeout {
     match kind {
         RequestKind::Missing | RequestKind::Confirm | RequestKind::Metadata { .. } => {
@@ -879,8 +915,8 @@ fn header_value<'a>(headers: &'a [SyncHttpHeader], name: &str) -> Option<&'a str
         .map(|header| header.value.as_str())
 }
 
-fn sync_http_error(response: &SyncHttpResponse) -> String {
-    let detail = header_value(&response.headers, "content-type")
+fn sync_http_error_detail(response: &SyncHttpResponse) -> Option<&str> {
+    header_value(&response.headers, "content-type")
         .filter(|content_type| {
             content_type
                 .split(';')
@@ -894,9 +930,11 @@ fn sync_http_error(response: &SyncHttpResponse) -> String {
                 && detail.len() <= MAX_HTTP_ERROR_DETAIL_BYTES
                 && detail.is_ascii()
                 && !detail.chars().any(char::is_control)
-        });
+        })
+}
 
-    let detail = match detail {
+fn sync_http_error(response: &SyncHttpResponse) -> String {
+    let detail = match sync_http_error_detail(response) {
         Some(detail) => actionable_sync_http_error_detail(detail).unwrap_or_else(|| detail.to_string()),
         None => match response.status {
             400 => {
@@ -918,8 +956,8 @@ fn sync_http_error(response: &SyncHttpResponse) -> String {
     )
 }
 
-fn actionable_sync_http_error_detail(detail: &str) -> Option<String> {
-    let fields = detail.strip_prefix("error sync-protocol-unsupported ")?;
+fn sync_protocol_versions(detail: Option<&str>) -> Option<(u32, u32)> {
+    let fields = detail?.strip_prefix("error sync-protocol-unsupported ")?;
     let mut fields = fields.split_whitespace();
     let client = fields
         .next()?
@@ -934,6 +972,11 @@ fn actionable_sync_http_error_detail(detail: &str) -> Option<String> {
     if fields.next().is_some() || client == server {
         return None;
     }
+    Some((client, server))
+}
+
+fn actionable_sync_http_error_detail(detail: &str) -> Option<String> {
+    let (client, server) = sync_protocol_versions(Some(detail))?;
     let action = if client > server {
         "upgrade the sync server"
     } else {
@@ -955,6 +998,109 @@ fn gzip_encode(body: &[u8]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn validation_response(status: u16, body: serde_json::Value) -> SyncHttpResponse {
+        SyncHttpResponse {
+            status,
+            headers: vec![header("content-type", "application/json")],
+            body: serde_json::to_vec(&body).unwrap(),
+        }
+    }
+
+    #[test]
+    fn pairing_validation_classifies_protocol_responses() {
+        let accepted = validation_response(
+            200,
+            serde_json::json!({
+                "protocol_version": SYNC_PROTOCOL_VERSION,
+                "cursor": 0,
+                "has_more": false,
+                "push_acks": [],
+                "changes": [],
+            }),
+        );
+        let incompatible = validation_response(
+            200,
+            serde_json::json!({
+                "protocol_version": SYNC_PROTOCOL_VERSION + 1,
+                "cursor": 0,
+                "has_more": false,
+                "push_acks": [],
+                "changes": [],
+            }),
+        );
+        let malformed = validation_response(
+            200,
+            serde_json::json!({
+                "protocol_version": SYNC_PROTOCOL_VERSION,
+                "cursor": 1,
+                "has_more": false,
+                "push_acks": [],
+                "changes": [],
+            }),
+        );
+
+        assert_eq!(
+            classify_pairing_connection_validation_response(&accepted),
+            PairingConnectionValidationResponse::Accepted
+        );
+        assert_eq!(
+            classify_pairing_connection_validation_response(&incompatible),
+            PairingConnectionValidationResponse::IncompatibleServer
+        );
+        assert_eq!(
+            classify_pairing_connection_validation_response(&malformed),
+            PairingConnectionValidationResponse::MalformedResponse
+        );
+    }
+
+    #[test]
+    fn pairing_validation_classifies_http_failures_without_details() {
+        let response = |status| SyncHttpResponse {
+            status,
+            headers: Vec::new(),
+            body: Vec::new(),
+        };
+
+        assert_eq!(
+            classify_pairing_connection_validation_response(&response(401)),
+            PairingConnectionValidationResponse::RejectedCredentials
+        );
+        assert_eq!(
+            classify_pairing_connection_validation_response(&response(404)),
+            PairingConnectionValidationResponse::IncompatibleServer
+        );
+        assert_eq!(
+            classify_pairing_connection_validation_response(&response(408)),
+            PairingConnectionValidationResponse::Timeout
+        );
+        assert_eq!(
+            classify_pairing_connection_validation_response(&response(403)),
+            PairingConnectionValidationResponse::ServerFailure
+        );
+        assert_eq!(
+            classify_pairing_connection_validation_response(&response(503)),
+            PairingConnectionValidationResponse::ServerFailure
+        );
+
+        let unsupported = SyncHttpResponse {
+            status: 400,
+            headers: vec![header("content-type", "text/plain; charset=utf-8")],
+            body: b"error sync-protocol-unsupported client=15 server=16".to_vec(),
+        };
+        assert_eq!(
+            classify_pairing_connection_validation_response(&unsupported),
+            PairingConnectionValidationResponse::IncompatibleServer
+        );
+        assert_eq!(
+            classify_pairing_connection_validation_response(&response(400)),
+            PairingConnectionValidationResponse::ServerFailure
+        );
+        assert_eq!(
+            classify_pairing_connection_validation_response(&response(302)),
+            PairingConnectionValidationResponse::IncompatibleServer
+        );
+    }
 
     #[test]
     fn retry_after_accepts_http_forms_and_caps_delays() {

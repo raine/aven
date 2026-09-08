@@ -72,6 +72,10 @@ pub async fn build_task_list_items(
             .attachments_by_task
             .remove(&task_id)
             .unwrap_or_default();
+        let live_attachment_count = enrichment
+            .live_attachment_counts_by_task
+            .remove(&task_id)
+            .unwrap_or_default();
         let metadata = enrichment
             .metadata_by_task
             .remove(&task_id)
@@ -130,7 +134,7 @@ pub async fn build_task_list_items(
         let queue = queue_meta_on(
             &task,
             has_conflict,
-            unresolved_blocker_count > 0,
+            unresolved_blocker_count,
             dependent_count,
             now_seconds,
             local_today,
@@ -143,6 +147,7 @@ pub async fn build_task_list_items(
             notes,
             has_notes,
             attachments,
+            live_attachment_count,
             metadata,
             activity,
             has_conflict,

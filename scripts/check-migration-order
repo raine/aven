@@ -87,7 +87,8 @@ for path in "${added_migrations[@]}"; do
   [[ "$path" == crates/aven-core/migrations/*.sql ]] || continue
   [[ -f "$repo_root/$path" ]] || continue
   name="$(basename "$path")"
-  if git -C "$repo_root" cat-file -e "$target_ref:migrations/$name" 2>/dev/null; then
+  if git -C "$repo_root" cat-file -e "$target_ref:$path" 2>/dev/null \
+    || git -C "$repo_root" cat-file -e "$target_ref:migrations/$name" 2>/dev/null; then
     continue
   fi
   timestamp="$(migration_timestamp "$path")"

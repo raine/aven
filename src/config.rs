@@ -828,11 +828,20 @@ pub fn resolve_blob_dir(db_path: &Path, config: &AppConfig) -> Result<PathBuf> {
 }
 
 pub fn resolve_sync_server(flag: Option<&str>, config: &AppConfig) -> Result<String> {
+    let environment = env::var("AVEN_SYNC_SERVER").ok();
+    resolve_sync_server_from(flag, environment.as_deref(), config)
+}
+
+pub(crate) fn resolve_sync_server_from(
+    flag: Option<&str>,
+    environment: Option<&str>,
+    config: &AppConfig,
+) -> Result<String> {
     if let Some(server) = flag {
         return Ok(server.to_string());
     }
-    if let Ok(server) = env::var("AVEN_SYNC_SERVER") {
-        return Ok(server);
+    if let Some(server) = environment {
+        return Ok(server.to_string());
     }
     if let Some(server) = &config.sync.server_url {
         return Ok(server.clone());
@@ -912,6 +921,31 @@ mod tests {
         let path = dir.path().join("config.yaml");
         fs::write(&path, text)?;
         AppConfig::load_from_path(&path)
+    }
+
+    #[test]
+    fn sync_server_resolution_uses_flag_environment_then_config() {
+        let mut config = AppConfig::default();
+        config.sync.server_url = Some("https://configured.example.test".to_string());
+
+        assert_eq!(
+            resolve_sync_server_from(
+                Some("https://explicit.example.test"),
+                Some("https://environment.example.test"),
+                &config,
+            )
+            .unwrap(),
+            "https://explicit.example.test"
+        );
+        assert_eq!(
+            resolve_sync_server_from(None, Some("https://environment.example.test"), &config)
+                .unwrap(),
+            "https://environment.example.test"
+        );
+        assert_eq!(
+            resolve_sync_server_from(None, None, &config).unwrap(),
+            "https://configured.example.test"
+        );
     }
 
     #[test]

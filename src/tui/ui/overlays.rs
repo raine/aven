@@ -5,6 +5,7 @@ mod database_stats;
 pub(super) mod metadata;
 mod multiline;
 mod onboarding;
+mod pairing;
 mod picker;
 mod recurrence_history;
 mod search;
@@ -27,6 +28,10 @@ pub(super) use multiline::{
     render_multiline_input,
 };
 pub(super) use onboarding::{render_onboarding, render_onboarding_raised};
+#[cfg(test)]
+pub(crate) use pairing::NETWORK_REQUIREMENT;
+pub(crate) use pairing::pairing_layout;
+pub(super) use pairing::render_pairing;
 pub(super) use picker::render_picker;
 pub(crate) use recurrence_history::recurrence_history_entry_at;
 pub(super) use recurrence_history::render_recurrence_history;

@@ -237,6 +237,7 @@ mod tests {
             recurrence_group: None,
             hydration: crate::query::TaskItemHydration::Detail,
             attachments: Vec::new(),
+            live_attachment_count: 0,
             queue: Default::default(),
         }
     }

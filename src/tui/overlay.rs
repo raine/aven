@@ -19,8 +19,8 @@ pub(crate) use handlers::{
 pub(crate) use layout::COMMAND_DIALOG_MAX_WIDTH;
 pub(crate) use layout::{
     CommandLayout, GENERIC_PICKER_VIEWPORT_ROWS, TAG_COMBOBOX_VIEWPORT_ROWS, TAG_COMBOBOX_WIDTH,
-    command_layout, confirm_layout, confirm_width, dialog_area, picker_layout, tag_combobox_layout,
-    text_panel_layout, text_panel_scroll_cap,
+    command_layout, confirm_layout, confirm_width, dialog_area, dialog_inner_area, picker_layout,
+    tag_combobox_layout, text_panel_layout, text_panel_scroll_cap,
 };
 pub(crate) use mouse::{OverlayMouseContext, OverlayMouseOutcome, dispatch_overlay_mouse};
 pub(crate) use picker::{

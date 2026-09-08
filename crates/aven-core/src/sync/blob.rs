@@ -354,7 +354,7 @@ async fn missing_local_blob_page(
     Ok(MissingBlobPage { blobs, has_more })
 }
 
-async fn missing_local_blob_counts(conn: &mut SqliteConnection) -> Result<ByteCount> {
+pub(super) async fn missing_local_blob_counts(conn: &mut SqliteConnection) -> Result<ByteCount> {
     let (count, bytes): (i64, i64) = sqlx::query_as(
         "SELECT COUNT(*), COALESCE(SUM(byte_size), 0) FROM (
            SELECT ta.sha256, MAX(ta.byte_size) AS byte_size
