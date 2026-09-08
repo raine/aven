@@ -1905,6 +1905,108 @@ async fn ios_task_detail_is_exact_bounded_and_attachment_aware() {
 }
 
 #[tokio::test]
+async fn ios_capture_undo_rejects_activity_changed_by_inverse_status_mutation() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("capture-activity.sqlite");
+    let store = Store::open(&path).await.unwrap();
+    let workspace = store.resolve_workspace("default").await.unwrap();
+    let database = Database::open(&path).await.unwrap();
+    database
+        .resolve_or_create_project(&workspace.id, "Capture")
+        .await
+        .unwrap();
+    let mut connection =
+        SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&path))
+            .await
+            .unwrap();
+    // Distinct fixture timestamps avoid depending on second-precision wall-clock races.
+    sqlx::query("CREATE TRIGGER capture_activity AFTER INSERT ON tasks BEGIN UPDATE tasks SET queue_activity_at = '2000-01-01T00:00:00Z' WHERE id = NEW.id; END")
+        .execute(&mut connection).await.unwrap();
+    sqlx::query("CREATE TRIGGER mutation_activity AFTER UPDATE OF status ON tasks BEGIN UPDATE tasks SET queue_activity_at = CASE NEW.status WHEN 'done' THEN '2000-01-02T00:00:00Z' ELSE '2000-01-03T00:00:00Z' END WHERE id = NEW.id; END")
+        .execute(&mut connection).await.unwrap();
+    let input = || IosTaskCapture {
+        title: "State-checked capture".to_string(),
+        description: String::new(),
+        project: Some("capture".to_string()),
+        priority: TaskPriority::None,
+        due_on: None,
+        labels: Vec::new(),
+    };
+    let captured = store
+        .capture_ios_queue_task(&workspace.id, input())
+        .await
+        .unwrap();
+    let completed = store
+        .mutate_ios_queue_task(
+            &workspace.id,
+            &captured.task_id,
+            IosQueueMutation {
+                kind: IosQueueMutationKind::Done,
+                priority: None,
+                local_date: None,
+                time_zone: None,
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .undo_ios_queue_mutation(&completed.undo_token)
+        .await
+        .unwrap();
+    let row: (String, bool, String) =
+        sqlx::query_as("SELECT status, deleted, queue_activity_at FROM tasks WHERE id = ?")
+            .bind(&captured.task_id)
+            .fetch_one(&mut connection)
+            .await
+            .unwrap();
+    assert_eq!(
+        row,
+        (
+            "inbox".to_string(),
+            false,
+            "2000-01-03T00:00:00Z".to_string()
+        )
+    );
+    let changes: Vec<(String, String)> =
+        sqlx::query_as("SELECT change_id, payload FROM changes ORDER BY change_id")
+            .fetch_all(&mut connection)
+            .await
+            .unwrap();
+    let error = store
+        .undo_ios_queue_capture(&captured.undo_token)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::GenerationConflict);
+    let after: (String, bool, String) =
+        sqlx::query_as("SELECT status, deleted, queue_activity_at FROM tasks WHERE id = ?")
+            .bind(&captured.task_id)
+            .fetch_one(&mut connection)
+            .await
+            .unwrap();
+    let changes_after: Vec<(String, String)> =
+        sqlx::query_as("SELECT change_id, payload FROM changes ORDER BY change_id")
+            .fetch_all(&mut connection)
+            .await
+            .unwrap();
+    assert_eq!(row, after);
+    assert_eq!(changes, changes_after);
+    let fresh = store
+        .capture_ios_queue_task(&workspace.id, input())
+        .await
+        .unwrap();
+    store
+        .undo_ios_queue_capture(&fresh.undo_token)
+        .await
+        .unwrap();
+    let deleted: bool = sqlx::query_scalar("SELECT deleted FROM tasks WHERE id = ?")
+        .bind(&fresh.task_id)
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+    assert!(deleted);
+}
+
+#[tokio::test]
 async fn ios_attachment_bytes_are_scoped_bounded_and_leased() {
     use aven_core::api::IosAttachmentRead;
     use aven_core::attachments::{MAX_BLOB_BYTES, default_blob_dir, object_path, sha256_hex};
