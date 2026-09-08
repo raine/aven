@@ -1,5 +1,88 @@
 use super::*;
 
+async fn create_task_with_distinct_note_activity(
+    store: &mut TuiStore,
+    pool: &SqlitePool,
+    title: &str,
+) -> TaskId {
+    sqlx::query("CREATE TRIGGER task_creation_activity AFTER INSERT ON tasks BEGIN UPDATE tasks SET queue_activity_at = '2000-01-01T00:00:00Z' WHERE id = NEW.id; END")
+        .execute(pool)
+        .await
+        .unwrap();
+    let (task_id, _) = create_selected_task(store, title).await;
+    let snapshot = store
+        .database
+        .task_undo_snapshot(&store.active_workspace.id, &task_id)
+        .await
+        .unwrap();
+    assert_eq!(snapshot.queue_activity_at, "2000-01-01T00:00:00Z");
+    // Note writes retain fresh activity even when their data mutations are undone.
+    sqlx::query("CREATE TRIGGER note_mutation_activity AFTER UPDATE OF queue_activity_at ON tasks WHEN NEW.queue_activity_at != '2000-01-02T00:00:00Z' BEGIN UPDATE tasks SET queue_activity_at = '2000-01-02T00:00:00Z' WHERE id = NEW.id; END")
+        .execute(pool)
+        .await
+        .unwrap();
+    task_id
+}
+
+async fn assert_note_activity_preserves_stale_task_creation_undo(
+    store: &mut TuiStore,
+    pool: &SqlitePool,
+    task_id: &TaskId,
+) {
+    let workspace_id = store.active_workspace.id.clone();
+    let before = store
+        .database
+        .task_undo_snapshot(&workspace_id, task_id)
+        .await
+        .unwrap();
+    assert_eq!(before.queue_activity_at, "2000-01-02T00:00:00Z");
+    assert!(!before.deleted);
+    let changes: Vec<(String, String)> =
+        sqlx::query_as("SELECT change_id, payload FROM changes ORDER BY change_id")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    let undo_entries: Vec<(String, String, Option<String>)> =
+        sqlx::query_as("SELECT id, payload, undone_at FROM tui_undo_entries ORDER BY id")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        undo_entries
+            .iter()
+            .filter(|entry| entry.2.is_none())
+            .count(),
+        1
+    );
+
+    for _ in 0..2 {
+        let error = store.undo_last(None).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("undo-state-changed task_id={task_id} field=task"))
+        );
+        let after = store
+            .database
+            .task_undo_snapshot(&workspace_id, task_id)
+            .await
+            .unwrap();
+        let changes_after: Vec<(String, String)> =
+            sqlx::query_as("SELECT change_id, payload FROM changes ORDER BY change_id")
+                .fetch_all(pool)
+                .await
+                .unwrap();
+        let undo_entries_after: Vec<(String, String, Option<String>)> =
+            sqlx::query_as("SELECT id, payload, undone_at FROM tui_undo_entries ORDER BY id")
+                .fetch_all(pool)
+                .await
+                .unwrap();
+        assert_eq!(after, before);
+        assert_eq!(changes_after, changes);
+        assert_eq!(undo_entries_after, undo_entries);
+    }
+}
+
 #[tokio::test]
 async fn add_note_to_task_writes_note() {
     let mut store = test_store().await;
@@ -18,7 +101,8 @@ async fn add_note_to_task_writes_note() {
 #[tokio::test]
 async fn note_edit_and_delete_target_stable_identity() {
     let (_dir, pool, mut store) = test_store_with_pool().await;
-    let (task_id, _) = create_selected_task(&mut store, "Note mutations").await;
+    let task_id =
+        create_task_with_distinct_note_activity(&mut store, &pool, "Note mutations").await;
     let note_id = store
         .add_note_to_task(&task_id, "original".to_string())
         .await
@@ -70,7 +154,7 @@ async fn note_edit_and_delete_target_stable_identity() {
         .await
         .unwrap();
     assert_eq!(count, 0);
-    store.undo_last(None).await.unwrap();
+    assert_note_activity_preserves_stale_task_creation_undo(&mut store, &pool, &task_id).await;
 }
 
 #[tokio::test]
@@ -133,7 +217,7 @@ async fn note_creation_rolls_back_when_undo_recording_fails() {
 #[tokio::test]
 async fn note_creation_undo_follows_deletion_restoration() {
     let (_dir, pool, mut store) = test_store_with_pool().await;
-    let (task_id, _) = create_selected_task(&mut store, "Lineage").await;
+    let task_id = create_task_with_distinct_note_activity(&mut store, &pool, "Lineage").await;
     let note_id = store
         .add_note_to_task(&task_id, "original".into())
         .await
@@ -174,12 +258,7 @@ async fn note_creation_undo_follows_deletion_restoration() {
         .await
         .unwrap();
     assert_eq!(count, 0);
-    store.undo_last(None).await.unwrap();
-    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks WHERE deleted = 0")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(count, 0);
+    assert_note_activity_preserves_stale_task_creation_undo(&mut store, &pool, &task_id).await;
 }
 
 #[tokio::test]
