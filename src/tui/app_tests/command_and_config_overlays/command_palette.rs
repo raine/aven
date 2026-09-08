@@ -408,6 +408,7 @@ async fn detail_command_overlay_routes_supported_focused_task_actions() {
         .position(|item| item.task.id == selected_id)
         .unwrap();
     app.store.tasks[selected].depends_on = vec![crate::query::TaskDependencyLink {
+        project_key: "app".to_string(),
         task_id: linked.task.id.clone(),
         display_ref: linked.display_ref.clone(),
         title: linked.task.title.clone(),
