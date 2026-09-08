@@ -350,6 +350,7 @@ async fn missing_linked_task_keeps_current_detail_open() {
     let current_id = app.store.tasks[selected].task.id.clone();
     let missing_id = crate::test_support::task_id("missing-linked-task");
     app.store.tasks[selected].depends_on = vec![crate::query::TaskDependencyLink {
+        project_key: "app".to_string(),
         task_id: missing_id,
         display_ref: "APP-MISS".to_string(),
         title: "Unavailable blocker".to_string(),
@@ -429,6 +430,7 @@ async fn focused_detail_missing_relationship_reports_unavailable_without_mutatin
     let task_id = app.store.tasks[selected].task.id.clone();
     let linked_id = crate::test_support::task_id("focused-linked-task");
     app.store.tasks[selected].depends_on = vec![crate::query::TaskDependencyLink {
+        project_key: "app".to_string(),
         task_id: linked_id.clone(),
         display_ref: "APP-LINK".to_string(),
         title: "Linked task".to_string(),

@@ -351,6 +351,7 @@ pub struct TaskNote {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskDependencyLink {
+    pub project_key: String,
     pub task_id: TaskId,
     pub display_ref: String,
     pub title: String,

@@ -621,6 +621,7 @@ async fn focused_disclosure_reports_task_commands_as_unavailable() {
     let selected = create_and_select_task(&mut app, test_task_draft("Disclosure target")).await;
     app.store.tasks[selected].depends_on = (0..4)
         .map(|index| crate::query::TaskDependencyLink {
+            project_key: "app".to_string(),
             task_id: crate::test_support::task_id(&format!("disclosure-child-{index}")),
             display_ref: format!("APP-{index}"),
             title: format!("Child {index}"),
@@ -672,6 +673,7 @@ async fn rendered_disclosure_rebuilds_focus_and_scroll_from_expanded_document() 
         .iter()
         .enumerate()
         .map(|(index, task_id)| crate::query::TaskDependencyLink {
+            project_key: "app".to_string(),
             task_id: task_id.clone(),
             display_ref: format!("APP-{index}"),
             title: format!("Child {index}"),

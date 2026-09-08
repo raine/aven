@@ -709,6 +709,7 @@ mod tests {
         item.epic_children = child_ids
             .iter()
             .map(|child_id| crate::query::TaskDependencyLink {
+                project_key: "app".to_string(),
                 task_id: crate::test_support::task_id(child_id),
                 display_ref: format!("APP-{}", &child_id[..4]),
                 title: "child".to_string(),

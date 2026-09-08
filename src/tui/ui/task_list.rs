@@ -10,7 +10,7 @@ use self::view_model::{TaskGroupRow, TaskListProjection, TaskListRow, scrollbar_
 pub(crate) use self::hit_test::TaskListHit;
 
 use super::input::clipped_input_line;
-use super::task_display::{description_or_placeholder, labels_display};
+use super::task_display::{description_or_placeholder, labels_display, linked_task_ref_spans};
 use super::timestamps::local_timestamp_display;
 use crate::query::{TaskListItem, TaskSort};
 use crate::queue::{now_seconds, unix_seconds};
@@ -1568,15 +1568,17 @@ fn task_preview_lines(item: &TaskListItem, width: usize, height: usize) -> Vec<L
             } else {
                 "├─"
             };
-            lines.push(Line::from(vec![
-                Span::styled(format!("  {branch} "), Style::new().fg(FG_DIM)),
-                Span::styled(
-                    format!("{} ", link.display_ref),
-                    Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-                ),
+            let mut spans = vec![Span::styled(
+                format!("  {branch} "),
+                Style::new().fg(FG_DIM),
+            )];
+            spans.extend(linked_task_ref_spans(&link.display_ref, &link.project_key));
+            spans.extend([
+                Span::raw(" "),
                 Span::styled(link.title.clone(), Style::new().fg(FG_MUTED)),
                 Span::styled(format!(" {}", link.status), Style::new().fg(FG_DIM)),
-            ]));
+            ]);
+            lines.push(Line::from(spans));
         }
         if open_child_links.len() > 5 {
             lines.push(Line::from(vec![Span::styled(
@@ -1758,6 +1760,7 @@ mod tests {
             latest_activity_at: "2026-06-21T00:00:00Z".to_string(),
         });
         parent.epic_children = vec![crate::query::TaskDependencyLink {
+            project_key: "app".to_string(),
             task_id: child_id.clone(),
             display_ref: "APP-CHLD".to_string(),
             title: "Verify recovery email".to_string(),
@@ -1772,6 +1775,7 @@ mod tests {
         child.task.updated_at = "2026-06-21T00:00:00Z".to_string();
         child.display_ref = "APP-CHLD".to_string();
         child.epic_parent = Some(crate::query::TaskDependencyLink {
+            project_key: "app".to_string(),
             task_id: parent_id,
             display_ref: "APP-EPIC".to_string(),
             title: "Ship account recovery".to_string(),
@@ -2873,6 +2877,7 @@ mod tests {
         parent.task.is_epic = true;
         let mut child = task_list_item("child");
         child.epic_parent = Some(crate::query::TaskDependencyLink {
+            project_key: "app".to_string(),
             task_id: parent_id,
             display_ref: "APP-EPIC".to_string(),
             title: "Parent epic".to_string(),
@@ -2904,6 +2909,7 @@ mod tests {
     fn metadata_cell_marks_children_of_selected_epic() {
         let mut item = task_list_item("child");
         item.epic_parent = Some(crate::query::TaskDependencyLink {
+            project_key: "app".to_string(),
             task_id: crate::test_support::task_id("epic-1"),
             display_ref: "APP-EPIC".to_string(),
             title: "Selected epic".to_string(),
@@ -3158,6 +3164,7 @@ mod tests {
     #[test]
     fn preview_marks_epic_parent_with_star() {
         let parent = crate::query::TaskDependencyLink {
+            project_key: "app".to_string(),
             task_id: crate::test_support::task_id("parent-task-id"),
             display_ref: "APP-EPIC".to_string(),
             title: "Build the epic container".to_string(),
@@ -3228,6 +3235,7 @@ mod tests {
         let mut item = task_list_item("epic");
         item.epic_children = vec![
             crate::query::TaskDependencyLink {
+                project_key: "app".to_string(),
                 task_id: crate::test_support::task_id("child-1"),
                 display_ref: "APP-C001".to_string(),
                 title: "first child".to_string(),
@@ -3236,6 +3244,7 @@ mod tests {
                 unresolved: true,
             },
             crate::query::TaskDependencyLink {
+                project_key: "app".to_string(),
                 task_id: crate::test_support::task_id("child-2"),
                 display_ref: "APP-C002".to_string(),
                 title: "second child".to_string(),

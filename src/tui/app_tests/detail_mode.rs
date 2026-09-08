@@ -2,6 +2,7 @@ use super::*;
 
 fn detail_link(item: &crate::query::TaskListItem) -> crate::query::TaskDependencyLink {
     crate::query::TaskDependencyLink {
+        project_key: item.task.project_key.clone(),
         task_id: item.task.id.clone(),
         display_ref: item.display_ref.clone(),
         title: item.task.title.clone(),

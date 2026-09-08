@@ -11,6 +11,7 @@ const RELATED_BIND_CHUNK_SIZE: usize = 449;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskRelatedLink {
+    pub project_key: String,
     pub task_id: TaskId,
     pub display_ref: String,
     pub title: String,
@@ -31,7 +32,7 @@ pub(crate) async fn related_links_for_tasks(
         let mut query = QueryBuilder::<Sqlite>::new(
             "SELECT r.task_a_id AS source_task_id,
                     t.id, t.title, t.status, t.priority, t.deleted,
-                    p.prefix AS project_prefix, c.created_at AS linked_at
+                    p.key AS project_key, p.prefix AS project_prefix, c.created_at AS linked_at
              FROM task_related_links r
              JOIN tasks t ON t.workspace_id = r.workspace_id AND t.id = r.task_b_id
              JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
@@ -49,7 +50,7 @@ pub(crate) async fn related_links_for_tasks(
         query.push(
             ") AND r.linked = 1 UNION ALL SELECT r.task_b_id AS source_task_id,
                     t.id, t.title, t.status, t.priority, t.deleted,
-                    p.prefix AS project_prefix, c.created_at AS linked_at
+                    p.key AS project_key, p.prefix AS project_prefix, c.created_at AS linked_at
              FROM task_related_links r
              JOIN tasks t ON t.workspace_id = r.workspace_id AND t.id = r.task_a_id
              JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
@@ -74,6 +75,7 @@ pub(crate) async fn related_links_for_tasks(
                 .entry(source_task_id)
                 .or_insert_with(Vec::new)
                 .push(TaskRelatedLink {
+                    project_key: row.get("project_key"),
                     display_ref: display_refs.display_ref_for_id(
                         workspace_id,
                         &project_prefix,

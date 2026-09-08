@@ -135,6 +135,7 @@ impl TuiStore {
                 project_key: item.task.project_key.clone(),
             },
             child: TaskDependencyLink {
+                project_key: item.task.project_key.clone(),
                 task_id: item.task.id.clone(),
                 display_ref: item.display_ref.clone(),
                 title: item.task.title.clone(),
@@ -158,6 +159,7 @@ impl TuiStore {
                 project_key: item.task.project_key.clone(),
             },
             child: TaskDependencyLink {
+                project_key: item.task.project_key.clone(),
                 task_id: item.task.id.clone(),
                 display_ref: item.display_ref.clone(),
                 title: item.task.title.clone(),
@@ -215,6 +217,7 @@ impl TuiStore {
         let child = live_child
             .map(|(_, child)| child.clone())
             .unwrap_or(TaskDependencyLink {
+                project_key: outcome.child.project_key.clone(),
                 task_id: outcome.child.id,
                 display_ref: child_ref.clone(),
                 title: outcome.child.title,

@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use super::input::clipped_input_line;
 use super::scroll::{clamp_scroll_start, scrollbar_thumb_position};
-use super::task_display::{description_or_placeholder, labels_display};
+use super::task_display::{description_or_placeholder, labels_display, linked_task_ref_spans};
 use super::task_list::EPIC_MARKER;
 use super::timestamps::{local_activity_timestamp_display, local_timestamp_display};
 use super::truncate::truncate_line_width;
@@ -2174,16 +2174,6 @@ fn epic_child_tree_item_lines(
 ) -> Vec<Line<'static>> {
     let tree_glyph = if is_last { "└─ " } else { "├─ " };
     let removed = state == EpicChildState::Removed;
-    let ref_style = if hovered {
-        Style::new()
-            .fg(ACCENT)
-            .bg(BG_PANEL)
-            .add_modifier(Modifier::BOLD)
-    } else if removed {
-        Style::new().fg(FG_MUTED).add_modifier(Modifier::DIM)
-    } else {
-        Style::new().fg(ACCENT)
-    };
     let title_style = if hovered {
         Style::new().fg(FG).bg(BG_PANEL)
     } else if removed {
@@ -2213,10 +2203,16 @@ fn epic_child_tree_item_lines(
             Span::styled(" ", gap_style),
         ]);
     }
-    prefix.extend([
-        Span::styled(link.display_ref.clone(), ref_style),
-        Span::styled("  ", gap_style),
-    ]);
+    let mut reference = linked_task_ref_spans(&link.display_ref, &link.project_key);
+    for span in &mut reference {
+        if hovered {
+            span.style = span.style.bg(BG_PANEL).add_modifier(Modifier::BOLD);
+        } else if removed {
+            span.style = span.style.fg(FG_MUTED).add_modifier(Modifier::DIM);
+        }
+    }
+    prefix.extend(reference);
+    prefix.push(Span::styled("  ", gap_style));
     let title = if removed {
         format!("{}  [removed]", link.title)
     } else {
@@ -2261,6 +2257,7 @@ fn epic_child_dependency_lines(
         blockers.len(),
         if blockers.len() == 1 { "" } else { "s" }
     );
+    let mut visible_refs = 0;
     for visible in (1..=blockers.len().min(2)).rev() {
         let refs = blockers[..visible]
             .iter()
@@ -2276,6 +2273,7 @@ fn epic_child_dependency_lines(
         let candidate = format!("← blocked by {refs}{suffix}");
         if candidate.width() <= available {
             summary = candidate;
+            visible_refs = visible;
             break;
         }
     }
@@ -2286,13 +2284,32 @@ fn epic_child_dependency_lines(
     } else {
         Style::new()
     };
-    vec![Line::from(vec![
-        Span::styled(truncate_width(rail, width), rail_style.patch(background)),
-        Span::styled(
+    let mut spans = vec![Span::styled(
+        truncate_width(rail, width),
+        rail_style.patch(background),
+    )];
+    if visible_refs == 0 {
+        spans.push(Span::styled(
             truncate_width(&summary, available),
-            dependency_style.patch(background),
-        ),
-    ])]
+            dependency_style,
+        ));
+    } else {
+        spans.push(Span::styled("← blocked by ", dependency_style));
+        for (index, link) in blockers[..visible_refs].iter().enumerate() {
+            if index > 0 {
+                spans.push(Span::styled(", ", dependency_style));
+            }
+            spans.extend(linked_task_ref_spans(&link.display_ref, &link.project_key));
+        }
+        let hidden = blockers.len() - visible_refs;
+        if hidden > 0 {
+            spans.push(Span::styled(format!(" +{hidden} more"), dependency_style));
+        }
+    }
+    for span in &mut spans {
+        span.style = span.style.patch(background);
+    }
+    vec![Line::from(spans)]
 }
 
 fn extend_dependency_sections(
@@ -2418,14 +2435,15 @@ fn extend_related_section(
         };
         let available = width.saturating_sub(glyph.width() + link.display_ref.width() + 4);
         let title = truncate_width(&link.title, available);
-        let mut rendered = vec![Line::from(vec![
-            Span::styled(glyph, Style::new().fg(BORDER)),
-            Span::styled(link.display_ref.clone(), Style::new().fg(ACCENT)),
+        let mut spans = vec![Span::styled(glyph, Style::new().fg(BORDER))];
+        spans.extend(linked_task_ref_spans(&link.display_ref, &link.project_key));
+        spans.extend([
             Span::raw("  "),
             status_span(link.status.as_str()),
             Span::raw("  "),
             Span::styled(title, Style::new().fg(FG)),
-        ])];
+        ]);
+        let mut rendered = vec![Line::from(spans)];
         if active_target == Some(&target) {
             apply_link_row_style(&mut rendered);
         }
@@ -2529,13 +2547,13 @@ fn dependency_tree_item_lines(
     width: usize,
 ) -> Vec<Line<'static>> {
     let tree_glyph = if is_last { "└─ " } else { "├─ " };
-    let prefix = vec![
+    let mut prefix = vec![
         Span::styled(tree_glyph, Style::new().fg(BORDER)),
         Span::styled(direction.marker(), Style::new().fg(FG_DIM)),
         Span::styled(" ", Style::new().fg(FG_DIM)),
-        Span::styled(link.display_ref.clone(), Style::new().fg(ACCENT)),
-        Span::styled("  ", Style::new().fg(FG_DIM)),
     ];
+    prefix.extend(linked_task_ref_spans(&link.display_ref, &link.project_key));
+    prefix.push(Span::styled("  ", Style::new().fg(FG_DIM)));
     dependency_node_lines(prefix, &link.title, &link.status, &link.priority, width)
 }
 
@@ -2632,21 +2650,10 @@ fn detail_header_options(
         ),
         Span::styled(" / ", Style::new().fg(FG_DIM)),
     ];
-    if let Some((project, suffix)) = item.display_ref.split_once('-') {
-        summary_spans.extend([
-            Span::styled(
-                project.to_string(),
-                Style::new().fg(theme::project_color(&item.task.project_key)),
-            ),
-            Span::styled("-", Style::new().fg(FG_DIM)),
-            Span::styled(suffix.to_string(), Style::new().fg(FG_DIM)),
-        ]);
-    } else {
-        summary_spans.push(Span::styled(
-            item.display_ref.clone(),
-            Style::new().fg(FG_DIM),
-        ));
-    }
+    summary_spans.extend(linked_task_ref_spans(
+        &item.display_ref,
+        &item.task.project_key,
+    ));
     if item.task.is_epic {
         summary_spans.extend([
             Span::styled("  ", Style::new().fg(FG_DIM)),
@@ -3817,6 +3824,7 @@ mod tests {
     fn detail_body_shows_epic_parent_relationship() {
         let mut item = detail_test_item();
         item.epic_parent = Some(crate::query::TaskDependencyLink {
+            project_key: "app".to_string(),
             task_id: crate::test_support::task_id("epic-task-id"),
             display_ref: "APP-EPIC".to_string(),
             title: "Ship authentication reliability".to_string(),
@@ -3853,6 +3861,7 @@ mod tests {
     fn detail_epic_parent_relationship_wraps_to_width() {
         let mut item = detail_test_item();
         item.epic_parent = Some(crate::query::TaskDependencyLink {
+            project_key: "app".to_string(),
             task_id: crate::test_support::task_id("epic-task-id"),
             display_ref: "APP-EPIC".to_string(),
             title: "A long epic title that must fit the sticky header".to_string(),
@@ -3871,6 +3880,7 @@ mod tests {
     fn detail_document_projections_share_semantic_body_geometry() {
         let mut item = detail_test_epic_item();
         item.epic_parent = Some(crate::query::TaskDependencyLink {
+            project_key: "app".to_string(),
             task_id: crate::test_support::task_id("epic-parent-id"),
             display_ref: "APP-EPIC".to_string(),
             title: "Parent epic".to_string(),
@@ -3918,6 +3928,7 @@ mod tests {
         let mut item = detail_test_item();
         item.task.is_epic = true;
         item.epic_parent = Some(crate::query::TaskDependencyLink {
+            project_key: "app".to_string(),
             task_id: crate::test_support::task_id("epic-parent-id"),
             display_ref: "APP-EPIC".to_string(),
             title: "Parent epic".to_string(),
@@ -3926,6 +3937,7 @@ mod tests {
             unresolved: true,
         });
         item.epic_children = vec![crate::query::TaskDependencyLink {
+            project_key: "app".to_string(),
             task_id: crate::test_support::task_id("epic-child-id"),
             display_ref: "APP-CHILD".to_string(),
             title: "Child task".to_string(),
@@ -3969,6 +3981,7 @@ mod tests {
         let mut item = detail_test_item();
         item.depends_on = (0..5)
             .map(|index| crate::query::TaskDependencyLink {
+                project_key: "app".to_string(),
                 task_id: crate::test_support::task_id(&format!("blocker-id-{index}")),
                 display_ref: format!("APP-B{index}"),
                 title: format!("blocker {index}"),
@@ -4032,6 +4045,7 @@ mod tests {
         let mut item = detail_test_item();
         item.depends_on = (0..5)
             .map(|index| crate::query::TaskDependencyLink {
+                project_key: "app".to_string(),
                 task_id: crate::test_support::task_id(&format!("blocker-id-{index}")),
                 display_ref: format!("APP-B{index}"),
                 title: format!("blocker {index}"),
@@ -4059,6 +4073,7 @@ mod tests {
         let mut item = detail_test_item();
         item.blocks = (0..5)
             .map(|index| crate::query::TaskDependencyLink {
+                project_key: "app".to_string(),
                 task_id: crate::test_support::task_id(&format!("dependent-id-{index}")),
                 display_ref: format!("APP-D{index}"),
                 title: format!("dependent {index}"),
@@ -4481,6 +4496,7 @@ mod tests {
         item.epic_children[1].status = "todo".to_string();
         item.epic_children[1].unresolved = true;
         let blocker = crate::query::TaskDependencyLink {
+            project_key: "app".to_string(),
             task_id: crate::test_support::task_id("shared-blocker-id"),
             display_ref: "APP-BLKR".to_string(),
             title: "Prepare the shared environment".to_string(),
@@ -4518,6 +4534,7 @@ mod tests {
         item.epic_child_dependencies.insert(
             child_id,
             vec![crate::query::TaskDependencyLink {
+                project_key: "app".to_string(),
                 task_id: crate::test_support::task_id("narrow-blocker-id"),
                 display_ref: "APP-BLOCKER-LONG".to_string(),
                 title: "Prepare the environment".to_string(),
@@ -4546,6 +4563,7 @@ mod tests {
     fn epic_child_blockers_stay_on_one_row_and_count_hidden_refs() {
         let mut blockers = (0..10)
             .map(|index| crate::query::TaskDependencyLink {
+                project_key: "app".to_string(),
                 task_id: crate::test_support::task_id(&format!("blocker-{index}")),
                 display_ref: format!("APP-B{index}"),
                 title: format!("Blocker {index}"),
@@ -4585,6 +4603,7 @@ mod tests {
         item.epic_child_dependencies.insert(
             child_id.clone(),
             vec![crate::query::TaskDependencyLink {
+                project_key: "app".to_string(),
                 task_id: crate::test_support::task_id("hit-blocker-id"),
                 display_ref: "APP-BLKR".to_string(),
                 title: "Prepare the environment".to_string(),
@@ -4670,6 +4689,35 @@ mod tests {
     }
 
     #[test]
+    fn linked_references_use_their_own_project_color_and_dim_suffix() {
+        let mut item = detail_test_epic_item();
+        item.epic_children[0].project_key = "different-project".to_string();
+        item.depends_on = vec![item.epic_children[0].clone()];
+        item.blocks = item.depends_on.clone();
+        let children = detail_epic_children(&item, None);
+        let body = build_detail_body_document(&item, &children, 120, &BTreeSet::new(), None, &[]);
+        let rows: Vec<_> = body
+            .lines
+            .iter()
+            .filter(|line| line.to_string().contains("APP-CHLD"))
+            .collect();
+        assert_eq!(rows.len(), 3);
+        for row in rows {
+            let prefix = row.spans.iter().find(|span| span.content == "APP").unwrap();
+            let suffix = row
+                .spans
+                .iter()
+                .find(|span| span.content == "CHLD")
+                .unwrap();
+            assert_eq!(
+                prefix.style.fg,
+                Some(theme::project_color("different-project"))
+            );
+            assert_eq!(suffix.style.fg, Some(FG_DIM));
+        }
+    }
+
+    #[test]
     fn legitimate_removed_suffix_remains_a_live_epic_child_title() {
         let mut item = detail_test_epic_item();
         item.epic_children.truncate(1);
@@ -4685,7 +4733,7 @@ mod tests {
         let child_ref = child_line
             .spans
             .iter()
-            .find(|span| span.content.as_ref() == "APP-CHLD")
+            .find(|span| span.content.as_ref() == "APP")
             .expect("child ref");
         let rendered = body
             .lines
@@ -4697,7 +4745,7 @@ mod tests {
         assert!(rendered.contains("CHILD TASKS open=1 total=1"));
         assert!(rendered.contains("Investigate literal [removed]"));
         assert_eq!(children[0].state, EpicChildState::Live);
-        assert_eq!(child_ref.style.fg, Some(ACCENT));
+        assert_eq!(child_ref.style.fg, Some(theme::project_color("app")));
         assert!(!child_ref.style.add_modifier.contains(Modifier::DIM));
     }
 
@@ -4725,7 +4773,7 @@ mod tests {
         let ref_span = line
             .spans
             .iter()
-            .find(|span| span.content.as_ref() == "APP-CHLD")
+            .find(|span| span.content.as_ref() == "APP")
             .unwrap();
 
         assert_eq!(ref_span.style.bg, Some(BG_PANEL));
@@ -5719,6 +5767,7 @@ mod tests {
         item.task.is_epic = true;
         item.epic_children = vec![
             crate::query::TaskDependencyLink {
+                project_key: "app".to_string(),
                 task_id: crate::test_support::task_id("child-task-id"),
                 display_ref: "APP-CHLD".to_string(),
                 title: "Build the first child task".to_string(),
@@ -5727,6 +5776,7 @@ mod tests {
                 unresolved: true,
             },
             crate::query::TaskDependencyLink {
+                project_key: "app".to_string(),
                 task_id: crate::test_support::task_id("done-child-task-id"),
                 display_ref: "APP-DONE".to_string(),
                 title: "Finished child task".to_string(),
@@ -5745,6 +5795,7 @@ mod tests {
         let deleted_id = crate::test_support::task_id("deleted-related-task");
         item.related = vec![
             crate::query::TaskRelatedLink {
+                project_key: "app".to_string(),
                 task_id: live_id.clone(),
                 display_ref: "APP-LIVE".to_string(),
                 title: "Live related".to_string(),
@@ -5754,6 +5805,7 @@ mod tests {
                 linked_at: "2026-08-22T00:00:00Z".to_string(),
             },
             crate::query::TaskRelatedLink {
+                project_key: "app".to_string(),
                 task_id: deleted_id.clone(),
                 display_ref: "APP-DEAD".to_string(),
                 title: "Deleted related".to_string(),
@@ -5912,6 +5964,7 @@ mod tests {
             unresolved_blocker_count: 0,
             dependent_count: 0,
             depends_on: vec![crate::query::TaskDependencyLink {
+                project_key: "app".to_string(),
                 task_id: crate::test_support::task_id("blocker-task-id"),
                 display_ref: "APP-7KQ1".to_string(),
                 title: "Ship auth service".to_string(),
@@ -5920,6 +5973,7 @@ mod tests {
                 unresolved: true,
             }],
             blocks: vec![crate::query::TaskDependencyLink {
+                project_key: "app".to_string(),
                 task_id: crate::test_support::task_id("dependent-task-id"),
                 display_ref: "APP-7KQ2".to_string(),
                 title: "Write rollout notes".to_string(),

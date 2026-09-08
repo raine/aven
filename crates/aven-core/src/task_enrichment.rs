@@ -351,6 +351,7 @@ fn dependency_link_from_row(
     let task_id: TaskId = row.get("id");
     let project_prefix: String = row.get("project_prefix");
     TaskDependencyLink {
+        project_key: row.get("project_key"),
         task_id: task_id.clone(),
         display_ref: display_refs.display_ref_for_id(workspace_id, &project_prefix, &task_id),
         title: row.get("title"),
@@ -497,7 +498,7 @@ async fn dependency_links_for_tasks(
         let initial = if blocks_only {
             format!(
                 "SELECT d.depends_on_task_id AS source_task_id,
-                        t.id, t.title, t.status, t.priority, p.prefix AS project_prefix,
+                        t.id, t.title, t.status, t.priority, p.key AS project_key, p.prefix AS project_prefix,
                         d.created_at AS dependency_created_at,
                         CASE
                             WHEN {}
@@ -518,7 +519,7 @@ async fn dependency_links_for_tasks(
         } else {
             format!(
                 "SELECT d.task_id AS source_task_id,
-                        t.id, t.title, t.status, t.priority, p.prefix AS project_prefix,
+                        t.id, t.title, t.status, t.priority, p.key AS project_key, p.prefix AS project_prefix,
                         d.created_at AS dependency_created_at,
                         CASE
                             WHEN {}
@@ -575,7 +576,7 @@ async fn epic_children_for_tasks(
     for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
         let mut query = QueryBuilder::<Sqlite>::new(
             "SELECT l.epic_task_id AS source_task_id,
-                    t.id, t.title, t.status, t.priority, p.prefix AS project_prefix,
+                    t.id, t.title, t.status, t.priority, p.key AS project_key, p.prefix AS project_prefix,
                     CASE WHEN ",
         );
         query.push(fragments::open_task_clause("t"));
@@ -710,7 +711,7 @@ pub(crate) async fn epic_parents_for_tasks(
     for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
         let mut query = QueryBuilder::<Sqlite>::new(
             "SELECT l.child_task_id AS source_task_id,
-                    t.id, t.title, t.status, t.priority, p.prefix AS project_prefix,
+                    t.id, t.title, t.status, t.priority, p.key AS project_key, p.prefix AS project_prefix,
                     CASE WHEN ",
         );
         query.push(fragments::open_task_clause("t"));
