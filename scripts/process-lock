@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+[[ "${BASH_SOURCE[0]}" != "$0" ]] || set -euo pipefail
+process_lock_script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+process_lock_owned_paths=()
+process_lock_owned_tokens=()
+process_lock_owned_files=()
+PROCESS_LOCK_WAITED=0
+process_lock_error() { printf 'error: %s\n' "$*" >&2; }
+process_lock_random_token() { if command -v uuidgen >/dev/null; then uuidgen | tr '[:upper:]' '[:lower:]' | tr -d -; else printf '%s.%s.%s' "$$" "$RANDOM" "$(date +%s%N)" | shasum -a 256 | cut -c1-32; fi; }
+process_lock_process_start() { LC_ALL=C ps -p "$1" -o lstart= 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'; }
+process_lock_boot_identity() {
+  local b
+  if [[ -n "${AVEN_PROCESS_LOCK_BOOT_IDENTITY_OVERRIDE:-}" ]]; then printf '%s\n' "$AVEN_PROCESS_LOCK_BOOT_IDENTITY_OVERRIDE"; elif b="$(sysctl -n kern.bootsessionuuid 2>/dev/null)" && [[ -n "$b" ]]; then printf '%s\n' "$b"; elif [[ -r /proc/sys/kernel/random/boot_id ]]; then cat /proc/sys/kernel/random/boot_id; else printf '\n'; fi
+}
+process_lock_now_epoch() { date +%s; }
+process_lock_owner_token() { jq -er '.owner_token|select(type=="string" and length>0)' "$1" 2>/dev/null; }
+process_lock_owner_is_dead() {
+  local f="$1" pid start boot current
+  pid="$(jq -er '.pid|select(type=="number" and .>0 and floor==.)' "$f" 2>/dev/null)" || return 1
+  start="$(jq -er '.process_start|select(type=="string" and length>0)' "$f" 2>/dev/null)" || return 1
+  boot="$(jq -er '.boot_identity|select(type=="string")' "$f" 2>/dev/null)" || return 1
+  current="$(process_lock_boot_identity)"
+  [[ -n "$boot" && -n "$current" && "$boot" != "$current" ]] && return 0
+  kill -0 "$pid" 2>/dev/null || return 0
+  current="$(process_lock_process_start "$pid")"
+  [[ -n "$current" && "$current" != "$start" ]]
+}
+process_lock_with_reaper_lock() {
+  local p="$1" op="$2"
+  shift 2
+  local backend="${AVEN_PROCESS_LOCK_BACKEND:-auto}"
+  if [[ "$backend" == auto ]]; then
+    if command -v lockf >/dev/null 2>&1; then backend=lockf; else backend=flock; fi
+  fi
+  case "$backend" in
+    lockf) "${AVEN_PROCESS_LOCK_LOCKF:-lockf}" -k -t 10 "${p}.reaper" "$process_lock_script_path" "$op" "$p" "$@" ;;
+    flock) "${AVEN_PROCESS_LOCK_FLOCK:-flock}" --exclusive --close --wait 10 "${p}.reaper" "$process_lock_script_path" "$op" "$p" "$@" ;;
+    *) process_lock_error "unknown process lock backend: $backend"; return 64 ;;
+  esac
+}
+process_lock_reap_if_dead() {
+  [[ -f "$1" && ! -L "$1" ]] || return 1
+  process_lock_owner_is_dead "$1" || return 1
+  process_lock_with_reaper_lock "$1" __reap
+}
+process_lock_reap_locked() {
+  local p="$1" t q
+  [[ -z "${AVEN_PROCESS_LOCK_REAPER_DELAY_SECONDS:-}" ]] || sleep "$AVEN_PROCESS_LOCK_REAPER_DELAY_SECONDS"
+  [[ -f "$p" && ! -L "$p" ]] || return 0
+  process_lock_owner_is_dead "$p" || return 0
+  t="$(process_lock_owner_token "$p")" || return 0
+  q="$p.quarantine.$t"
+  if mv "$p" "$q" 2>/dev/null; then rm -f "$q"; fi
+}
+process_lock_release_locked() {
+  local p="$1" expected="$2" actual
+  [[ -e "$p" ]] || return 0
+  [[ -f "$p" && ! -L "$p" ]] || return 1
+  actual="$(process_lock_owner_token "$p")" || return 1
+  [[ "$actual" == "$expected" ]] || return 1
+  rm -f "$p"
+}
+process_lock_record_owner() {
+  local f="$1" token="$2" repo="$3" wt="$4" class="$5" start boot
+  start="${AVEN_PROCESS_LOCK_PROCESS_START_OVERRIDE:-$(process_lock_process_start "$$")}"
+  [[ -n "$start" ]] || return 1
+  boot="$(process_lock_boot_identity)"
+  jq -n --argjson pid "$$" --arg start "$start" --arg boot "$boot" --arg repo "$repo" --arg wt "$wt" --arg class "$class" --argjson at "$(process_lock_now_epoch)" --arg token "$token" '{schema_version:1,pid:$pid,process_start:$start,boot_identity:$boot,repository_identity:$repo,worktree_identity:$wt,command_class:$class,acquired_at:$at,owner_token:$token}' >"$f"
+  chmod 600 "$f"
+}
+process_lock_holder_diagnostic() {
+  local now
+  now="$(process_lock_now_epoch)"
+  jq -r --argjson now "$now" '"pid=\(.pid) command=\(.command_class) worktree=\(.worktree_identity) elapsed=\([0,($now-.acquired_at)]|max)s token=\(.owner_token)"' "$1" 2>/dev/null || printf 'unreadable owner record'
+}
+process_lock_acquire() {
+  local p="$1" repo="$2" wt="$3" class="$4" timeout="${5:-1800}" token owner start=$SECONDS last=$SECONDS
+  [[ "$timeout" =~ ^[0-9]+$ ]] || {
+    process_lock_error "lock timeout must be a non-negative integer: $timeout"
+    return 64
+  }
+  mkdir -p "$(dirname "$p")"
+  token="$(process_lock_random_token)"
+  owner="$(dirname "$p")/.owner.$token.json"
+  process_lock_record_owner "$owner" "$token" "$repo" "$wt" "$class"
+  [[ -z "${AVEN_PROCESS_LOCK_DELAY_BEFORE_CLAIM_SECONDS:-}" ]] || sleep "$AVEN_PROCESS_LOCK_DELAY_BEFORE_CLAIM_SECONDS"
+  # shellcheck disable=SC2034
+  PROCESS_LOCK_WAITED=0
+  while ! ln "$owner" "$p" 2>/dev/null; do
+    # shellcheck disable=SC2034
+    PROCESS_LOCK_WAITED=1
+    process_lock_reap_if_dead "$p" >/dev/null 2>&1 || true
+    if ((SECONDS - start >= timeout)); then
+      process_lock_error "timed out waiting ${timeout}s for lock: $p"
+      printf 'holder: %s\n' "$(process_lock_holder_diagnostic "$p")" >&2
+      rm -f "$owner"
+      return 1
+    fi
+    if ((SECONDS - last >= 10)); then
+      printf 'waiting for lock %s: %s\n' "$p" "$(process_lock_holder_diagnostic "$p")" >&2
+      last=$SECONDS
+    fi
+    sleep "${AVEN_PROCESS_LOCK_POLL_SECONDS:-0.1}"
+  done
+  process_lock_owned_paths+=("$p")
+  process_lock_owned_tokens+=("$token")
+  process_lock_owned_files+=("$owner")
+  AVEN_PROCESS_LOCK_OWNER_TOKEN="$token"
+  export AVEN_PROCESS_LOCK_OWNER_TOKEN
+}
+process_lock_forget_released() {
+  local p="$1" expected="$2" i token='' owner=''
+  local -a kp=() kt=() kf=()
+  for i in "${!process_lock_owned_paths[@]}"; do
+    if [[ "${process_lock_owned_paths[$i]}" == "$p" && \
+        "${process_lock_owned_tokens[$i]}" == "$expected" ]]; then
+      token="${process_lock_owned_tokens[$i]}"
+      owner="${process_lock_owned_files[$i]}"
+    else
+      kp+=("${process_lock_owned_paths[$i]}")
+      kt+=("${process_lock_owned_tokens[$i]}")
+      kf+=("${process_lock_owned_files[$i]}")
+    fi
+  done
+  [[ -n "$token" ]] || return 1
+  rm -f "$owner"
+  process_lock_owned_paths=("${kp[@]}")
+  process_lock_owned_tokens=("${kt[@]}")
+  process_lock_owned_files=("${kf[@]}")
+}
+process_lock_release() {
+  local p="$1" i token=''
+  for i in "${!process_lock_owned_paths[@]}"; do
+    if [[ "${process_lock_owned_paths[$i]}" == "$p" ]]; then
+      token="${process_lock_owned_tokens[$i]}"
+    fi
+  done
+  [[ -n "$token" ]] || return 1
+  process_lock_with_reaper_lock "$p" __release "$token" || {
+    process_lock_error "refusing to release lock owned by another token: $p"
+    return 1
+  }
+  process_lock_forget_released "$p" "$token"
+}
+process_lock_release_all() {
+  local i
+  for ((i = ${#process_lock_owned_paths[@]} - 1; i >= 0; i--)); do process_lock_release "${process_lock_owned_paths[$i]}" || true; done
+}
+process_lock_process_has_ancestor() {
+  local candidate="$1" pid="$$" parent
+  while [[ "$pid" =~ ^[0-9]+$ ]] && ((pid > 1)); do
+    [[ "$pid" == "$candidate" ]] && return 0
+    parent="$(LC_ALL=C ps -p "$pid" -o ppid= 2>/dev/null | tr -d '[:space:]')"
+    [[ "$parent" =~ ^[0-9]+$ && "$parent" != "$pid" ]] || break
+    pid="$parent"
+  done
+  return 1
+}
+process_lock_assert_ancestor_owner() {
+  local p="$1" expected="$2" label="${3:-operation}" actual pid
+  [[ -n "$p" && -n "$expected" && -f "$p" && ! -L "$p" ]] || {
+    process_lock_error "$label requires an ancestor operation lease"
+    return 1
+  }
+  actual="$(process_lock_owner_token "$p")" || {
+    process_lock_error "$label has an invalid operation lease"
+    return 1
+  }
+  pid="$(jq -er '.pid|select(type=="number" and .>0 and floor==.)' "$p" 2>/dev/null)" || {
+    process_lock_error "$label has an invalid operation lease"
+    return 1
+  }
+  if [[ "$actual" != "$expected" ]] || ! process_lock_process_has_ancestor "$pid"; then
+    process_lock_error "$label requires an ancestor operation lease"
+    return 1
+  fi
+}
+process_lock_install_traps() {
+  # shellcheck disable=SC2154
+  trap 's=$?; trap - EXIT; process_lock_release_all; exit "$s"' EXIT
+  trap 'trap - EXIT INT TERM HUP; process_lock_release_all; exit 130' INT TERM HUP
+}
+process_lock_main() { case "${1:-}" in __reap) process_lock_reap_locked "$2" ;; __release) process_lock_release_locked "$2" "$3" ;; *)
+  process_lock_error 'scripts/process-lock is a sourced lock library'
+  return 64
+  ;;
+esac }
+[[ "${BASH_SOURCE[0]}" != "$0" ]] || process_lock_main "$@"

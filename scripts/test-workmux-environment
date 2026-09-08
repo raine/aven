@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+fixture="$tmp/worktree"
+mock_bin="$tmp/bin"
+mkdir -p "$fixture" "$mock_bin"
+printf 'dotenv\n' >"$fixture/.envrc"
+printf '#!/bin/sh\nexit 0\n' >"$mock_bin/direnv"
+chmod +x "$mock_bin/direnv"
+
+hook="$(ruby -ryaml -e '
+  config = YAML.load_file(ARGV.fetch(0))
+  puts config.fetch("post_create").fetch(0)
+' "$repo_root/.workmux.yaml")"
+for _ in 1 2; do
+  PATH="$mock_bin:$PATH" HOME="$tmp/home" \
+    AVEN_DB="$tmp/missing.sqlite" WM_WORKTREE_PATH="$fixture" \
+    bash -c "$hook"
+done
+
+expected_env="$(printf 'export AVEN_DEV_DB=%q\nexport AVEN_SYNC_DISABLED=1' \
+  "$fixture/.aven/db.sqlite")"
+[[ "$(cat "$fixture/.aven/worktree.env")" == "$expected_env" ]]
+[[ "$(grep -Fxc 'source_env_if_exists .aven/worktree.env' "$fixture/.envrc")" == 1 ]]
+
+printf 'ok: workmux generates and sources one idempotent worktree environment\n'
