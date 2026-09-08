@@ -94,7 +94,7 @@ aven show APP-7KQ9 --full --json
 
 Detailed JSON includes a `metadata` object keyed by the current field names and a `metadata_details` array containing `field_id`, `key`, and `value`. Compact task rows and summary task records omit metadata.
 
-Task metadata is available through the CLI, Rust consumer API, and UniFFI facade.
+Task metadata is available through the CLI and Rust consumer API, including downstream adapters.
 
 ## Bulk updates
 

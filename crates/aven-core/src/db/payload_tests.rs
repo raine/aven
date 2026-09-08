@@ -138,11 +138,7 @@ async fn oversized_description_mutations_roll_back() {
     let result = database
         .create_task_with_undo(&workspace, oversized_draft, TaskCreationUndo::TuiTask)
         .await;
-    assert_validation(
-        result
-            .err()
-            .expect("oversized task creation must be rejected"),
-    );
+    assert_validation(result.expect_err("oversized task creation must be rejected"));
     assert_eq!(snapshot(&database).await, before);
 }
 

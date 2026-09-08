@@ -30,6 +30,7 @@ pub(crate) fn task_list_item(title: &str) -> TaskListItem {
         notes: Vec::new(),
         has_notes: false,
         attachments: Vec::new(),
+        live_attachment_count: 0,
         has_conflict: false,
         unresolved_blocker_count: 0,
         dependent_count: 0,

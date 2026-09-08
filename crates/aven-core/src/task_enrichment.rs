@@ -21,6 +21,7 @@ pub struct TaskEnrichment {
     pub notes_by_task: HashMap<TaskId, Vec<TaskNote>>,
     pub task_ids_with_notes: HashSet<TaskId>,
     pub attachments_by_task: HashMap<TaskId, Vec<AttachmentMetadata>>,
+    pub live_attachment_counts_by_task: HashMap<TaskId, u32>,
     pub metadata_by_task: HashMap<TaskId, Vec<TaskMetadataValue>>,
     pub activity_by_task: HashMap<TaskId, Vec<RecentActionItem>>,
     pub conflicted_task_ids: HashSet<TaskId>,
@@ -102,6 +103,19 @@ async fn load_task_enrichment_with_detail(
                 HashMap::new(),
             )
         };
+    let live_attachment_counts_by_task = if include_detail {
+        attachments_by_task
+            .iter()
+            .map(|(task_id, attachments)| {
+                (
+                    task_id.clone(),
+                    attachments.len().min(u32::MAX as usize) as u32,
+                )
+            })
+            .collect()
+    } else {
+        live_attachment_counts_for_tasks(conn, workspace_id, task_ids).await?
+    };
     let activity_by_task = if include_activity {
         crate::query::task_activity_for_tasks_in_workspace(conn, workspace_id, task_ids).await?
     } else {
@@ -126,6 +140,7 @@ async fn load_task_enrichment_with_detail(
         notes_by_task,
         task_ids_with_notes,
         attachments_by_task,
+        live_attachment_counts_by_task,
         metadata_by_task,
         activity_by_task,
         conflicted_task_ids: tasks_with_unresolved_conflicts(conn, workspace_id, task_ids).await?,
@@ -166,6 +181,35 @@ async fn load_task_enrichment_with_detail(
         recurrence_by_task: crate::query::task_recurrence_summaries(conn, workspace_id, task_ids)
             .await?,
     })
+}
+
+async fn live_attachment_counts_for_tasks(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    task_ids: &[TaskId],
+) -> Result<HashMap<TaskId, u32>> {
+    let mut counts = HashMap::new();
+    for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT task_id, count(*) AS attachment_count FROM task_attachments
+             WHERE deleted = 0 AND workspace_id = ",
+        );
+        query.push_bind(workspace_id);
+        query.push(" AND task_id IN (");
+        let mut separated = query.separated(", ");
+        for task_id in chunk {
+            separated.push_bind(task_id);
+        }
+        query.push(") GROUP BY task_id");
+        for row in query.build().fetch_all(&mut *conn).await? {
+            let count = row.get::<i64, _>("attachment_count");
+            counts.insert(
+                row.get("task_id"),
+                count.clamp(0, i64::from(u32::MAX)) as u32,
+            );
+        }
+    }
+    Ok(counts)
 }
 
 async fn attachments_for_tasks(

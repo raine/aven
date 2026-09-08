@@ -133,6 +133,15 @@ that order. Authentication and other sync settings live in the configuration
 file. Run `aven config show` to inspect the active file and `aven doctor` to
 diagnose routing and sync configuration."#;
 
+const PAIR_HELP: &str = r#"Pairing reads configuration and produces an invitation without opening a task
+database or contacting the sync server. The invitation requires a nonempty
+sync.auth_token and a phone-reachable HTTP or HTTPS server URL. Use --server
+when the configured URL is loopback or available only from the desktop.
+
+Use --copy on the local desktop to put the invitation on the clipboard instead
+of displaying a QR code. The invitation contains credentials; clipboard history
+and sharing services may retain it. SSH clipboard copying is not supported."#;
+
 const AGENT_HELP: &str = r#"`prime` emits the coding-agent guidance plus live project work. `skill install`
 installs the reusable guidance without live task context for detected or
 selected agents."#;
@@ -1741,8 +1750,21 @@ pub(crate) struct SyncArgs {
 
 #[derive(Subcommand)]
 pub(crate) enum SyncSubcommand {
+    /// Produce a pairing invitation for Aven iOS onboarding
+    #[command(after_long_help = PAIR_HELP)]
+    Pair(PairArgs),
     /// Report sync configuration, health, progress, and pending work
     Status(StatusArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct PairArgs {
+    /// Use a phone-reachable server URL for this invitation
+    #[arg(long)]
+    pub(crate) server: Option<String>,
+    /// Copy the invitation to the local clipboard instead of displaying a QR code
+    #[arg(long)]
+    pub(crate) copy: bool,
 }
 
 #[derive(Args)]
@@ -1756,6 +1778,56 @@ pub(crate) struct StatusArgs {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn sync_existing_forms_parse() {
+        for args in [
+            vec!["aven", "sync"],
+            vec!["aven", "sync", "--server", "https://sync.example.test"],
+            vec!["aven", "sync", "status"],
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert!(matches!(cli.command, Some(Commands::Sync(_))));
+        }
+    }
+
+    #[test]
+    fn sync_pair_parses_with_optional_server_positions() {
+        let cli = Cli::try_parse_from(["aven", "sync", "pair"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Sync(SyncArgs {
+                command: Some(SyncSubcommand::Pair(PairArgs {
+                    server: None,
+                    copy: false
+                })),
+                server: None,
+            }))
+        ));
+
+        let cli = Cli::try_parse_from([
+            "aven",
+            "sync",
+            "--server",
+            "https://parent.example.test",
+            "pair",
+            "--server",
+            "https://pair.example.test",
+            "--copy",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Commands::Sync(SyncArgs {
+                command: Some(SyncSubcommand::Pair(pair)),
+                server: Some(parent),
+            })) => {
+                assert!(pair.copy);
+                assert_eq!(pair.server.as_deref(), Some("https://pair.example.test"));
+                assert_eq!(parent, "https://parent.example.test");
+            }
+            _ => panic!("expected sync pair"),
+        }
+    }
 
     #[test]
     fn help_rows_align_to_each_section_longest_command() {
@@ -1917,6 +1989,7 @@ mod tests {
             (&["skill"][..], "without live task context"),
             (&["skill", "install"][..], "repeat for multiple"),
             (&["sync"][..], "AVEN_SYNC_SERVER"),
+            (&["sync", "pair"][..], "phone-reachable"),
             (&["server"][..], "Public binds also require"),
             (&["server"][..], "local.blob_dir"),
         ];

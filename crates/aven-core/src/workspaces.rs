@@ -22,6 +22,12 @@ pub struct Workspace {
     pub name: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceOpenSummary {
+    pub workspace: Workspace,
+    pub open_task_count: u32,
+}
+
 impl Default for Workspace {
     fn default() -> Self {
         Self {
@@ -38,6 +44,35 @@ impl Database {
     pub async fn list_workspaces(&self) -> Result<Vec<Workspace>> {
         let mut conn = self.acquire_reader().await?;
         list_workspaces(&mut conn).await
+    }
+
+    pub async fn list_workspace_open_summaries(&self) -> Result<Vec<WorkspaceOpenSummary>> {
+        let mut conn = self.acquire_reader().await?;
+        let rows = sqlx::query(
+            "SELECT w.id, w.key, w.name,
+                    COALESCE(SUM(CASE WHEN t.deleted = 0
+                        AND t.status NOT IN ('done', 'canceled') THEN 1 ELSE 0 END), 0)
+                        AS open_task_count
+             FROM workspaces w
+             LEFT JOIN tasks t ON t.workspace_id = w.id
+             WHERE w.archived = 0
+             GROUP BY w.id, w.key, w.name
+             ORDER BY w.key",
+        )
+        .fetch_all(&mut *conn)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| WorkspaceOpenSummary {
+                workspace: Workspace {
+                    id: row.get("id"),
+                    key: row.get("key"),
+                    name: row.get("name"),
+                },
+                open_task_count: u32::try_from(row.get::<i64, _>("open_task_count"))
+                    .unwrap_or(u32::MAX),
+            })
+            .collect())
     }
 
     pub async fn find_workspace(&self, name_or_key: &str) -> Result<Option<Workspace>> {

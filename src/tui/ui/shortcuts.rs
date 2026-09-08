@@ -565,7 +565,7 @@ fn command_hint_line(
     let mut spans = vec![
         leading,
         Span::styled(
-            format!(":{:<command_name_width$}", command.name),
+            format!("{:<command_name_width$}", command_label(command.name)),
             command_name_style(),
         ),
     ];
@@ -586,7 +586,7 @@ fn catalog_command_hint_line(
     let mut spans = vec![
         leading,
         Span::styled(
-            format!(":{:<command_name_width$}", command.name()),
+            format!("{:<command_name_width$}", command_label(command.name())),
             name_style,
         ),
     ];
@@ -603,13 +603,19 @@ fn catalog_command_hint_line(
     Line::from(spans)
 }
 
+fn command_label(name: &str) -> String {
+    format!(":{name}")
+}
+
 fn catalog_command_name_width(commands: &[CatalogCommand<'_>]) -> usize {
     commands
         .iter()
-        .map(|command| command.name().len())
+        .map(|command| {
+            unicode_width::UnicodeWidthStr::width(command_label(command.name()).as_str())
+        })
         .max()
-        .unwrap_or(18)
-        .max(18)
+        .unwrap_or(19)
+        .max(19)
         .saturating_add(2)
 }
 
@@ -663,7 +669,7 @@ fn command_line_with_highlight(
     let mut line = command_hint_line(
         Span::styled(format!("{keys:<10}"), Style::new().fg(FG_MUTED)),
         command,
-        18,
+        19,
     );
     if highlighted {
         line.style = line.style.bg(SELECTED_BG);
@@ -704,7 +710,7 @@ fn command_palette_line(
     let mut spans = vec![
         Span::styled(format!("{keys:<10}"), Style::new().fg(FG_MUTED)),
         Span::styled(
-            format!(":{:<command_name_width$}", command.name()),
+            format!("{:<command_name_width$}", command_label(command.name())),
             if command.is_custom() {
                 Style::new()
                     .fg(CUSTOM_COMMAND_NAME)
@@ -1743,6 +1749,16 @@ mod tests {
 
         assert!(help.contains(description));
         assert!(command.contains(description));
+    }
+
+    #[test]
+    fn pairing_command_uses_canonical_label() {
+        let label = command_label("pair-mobile");
+        let rendered = render_command_overlay("pair-mobile", "pair-mobile".len());
+
+        assert_eq!(label, ":pair-mobile");
+        assert_eq!(unicode_width::UnicodeWidthStr::width(label.as_str()), 12);
+        assert!(rendered.contains(&label));
     }
 
     #[test]

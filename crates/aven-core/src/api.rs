@@ -1,26 +1,33 @@
+mod epics;
+pub use epics::{IosEpicProgress, IosEpicSummary};
+
 use std::fmt;
 use std::path::{Path, PathBuf};
 
 use anyhow::Error as InternalError;
-use chrono::{NaiveDate, NaiveTime, Weekday};
+use chrono::{Days, LocalResult, NaiveDate, NaiveTime, TimeZone, Utc, Weekday};
 
+pub use crate::attachments::AttachmentBytesState as IosAttachmentAvailability;
 use crate::choices::{TaskPriority, TaskSource, TaskStatus};
 use crate::db::Database;
 use crate::ids::{MetadataFieldId, ProjectId, TaskId, WorkspaceId};
 use crate::metadata::{MetadataFieldUsage, TaskMetadataInput, TaskMetadataValue};
 use crate::operations::{
-    CreateRecurrenceSeriesParams, RecurrenceSeriesDraft,
-    RecurrenceTemplateUpdate as InternalRecurrenceTemplateUpdate, TaskDraft,
-    TaskUpdate as InternalTaskUpdate, UpdateRecurrenceTemplateParams,
+    CreateRecurrenceSeriesParams, IosTaskMutation as InternalIosTaskMutation,
+    RecurrenceSeriesDraft, RecurrenceTemplateUpdate as InternalRecurrenceTemplateUpdate,
+    TaskCreationOptions, TaskDraft, TaskUpdate as InternalTaskUpdate,
+    UpdateRecurrenceTemplateParams,
 };
-pub use crate::query::RecurrenceHistoryKind;
+pub use crate::pairing::{PairingInvitation, PairingInvitationError};
 use crate::query::{
     MAX_RECURRENCE_HISTORY_LIMIT, RecurrenceCounts as InternalRecurrenceCounts,
     RecurrenceHistoryEntry as InternalRecurrenceHistoryEntry,
     RecurrenceSeriesDetail as InternalRecurrenceSeriesDetail,
     RecurrenceSeriesSummary as InternalRecurrenceSeriesSummary, SortDirection, TaskFilters,
-    TaskListItem, TaskQueryMode, TaskSort,
+    TaskListItem, TaskQueryMode, TaskSearchQuery, TaskSort,
 };
+pub use crate::query::{RecurrenceHistoryKind, SearchMatchedField as IosSearchMatchedField};
+pub use crate::queue::{QueueBand, QueueDateKind, QueueReason};
 pub use crate::recurrence::{
     RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceOutcome, RecurrenceProjectionState,
     RecurrenceSeriesState,
@@ -31,12 +38,70 @@ use crate::recurrence::{
 };
 use crate::sync::SyncSession;
 use crate::task_fields::TaskField;
-use crate::types::{RecurrenceOccurrence, RecurrenceSeries, Task};
+use crate::types::{Project, RecurrenceOccurrence, RecurrenceSeries, Task};
+use crate::undo::TaskUndoSnapshot;
 use crate::workspaces::Workspace;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IosSyncFacts {
+    pub pending_changes: i64,
+    pub attachment_uploads: i64,
+    pub attachment_downloads: u64,
+    pub metadata_confirmed_at: Option<String>,
+    pub metadata_caught_up: bool,
+}
+
+#[derive(Clone)]
+pub struct IosConnectionInspection {
+    pub server_url: Option<String>,
+    pub server_origin: Option<String>,
+    pub last_success_at: Option<String>,
+    pub facts: IosSyncFacts,
+}
+
+/// Reads an isolated snapshot without initializing, migrating, or repairing the replica.
+pub async fn inspect_ios_connection(
+    path: impl AsRef<Path>,
+) -> Result<IosConnectionInspection, Error> {
+    let database = Database::inspect(path.as_ref())
+        .await
+        .database
+        .ok_or_else(|| {
+            Error::new(
+                ErrorCode::Database,
+                "local connection information is unavailable".to_string(),
+            )
+        })?;
+    let server_url = database
+        .meta("sync_server_url")
+        .await
+        .map_err(Error::from_internal)?;
+    let server_origin = server_url.as_deref().and_then(|server| {
+        let url = url::Url::parse(server).ok()?;
+        crate::sync::wire::sync_server_url_is_valid_url(&url)
+            .then(|| url.origin().ascii_serialization())
+    });
+    let last_success_at = database
+        .meta("sync_last_success_at")
+        .await
+        .map_err(Error::from_internal)?;
+    let facts = database
+        .ios_sync_facts()
+        .await
+        .map_err(Error::from_internal)?;
+    Ok(IosConnectionInspection {
+        server_url,
+        server_origin,
+        last_success_at,
+        facts,
+    })
+}
 
 #[derive(Clone)]
 pub struct Store {
     database: Database,
+    #[cfg(test)]
+    fail_queue_reads: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Store {
@@ -44,7 +109,11 @@ impl Store {
         let database = Database::open(path.as_ref())
             .await
             .map_err(Error::database_open)?;
-        Ok(Self { database })
+        Ok(Self {
+            database,
+            #[cfg(test)]
+            fail_queue_reads: Default::default(),
+        })
     }
 
     pub fn initialize_storage(&self) -> Result<StorageLayout, Error> {
@@ -88,6 +157,449 @@ impl Store {
             .await
             .map(|workspaces| workspaces.into_iter().map(WorkspaceRecord::from).collect())
             .map_err(Error::from_internal)
+    }
+
+    pub async fn ios_sync_facts(&self) -> Result<IosSyncFacts, Error> {
+        self.database
+            .ios_sync_facts()
+            .await
+            .map_err(Error::from_internal)
+    }
+
+    pub async fn ios_queue_state(&self) -> Result<IosQueueState, Error> {
+        let selected = self
+            .database
+            .restore_ios_queue_workspace()
+            .await
+            .map_err(Error::from_internal)?;
+        self.ios_queue_state_for(selected).await
+    }
+
+    pub async fn select_ios_queue_workspace(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<IosQueueState, Error> {
+        let selected = self
+            .database
+            .select_ios_queue_workspace(workspace_id)
+            .await
+            .map_err(Error::from_internal)?;
+        self.ios_queue_state_for(selected).await
+    }
+
+    async fn ios_queue_state_for(&self, selected: Workspace) -> Result<IosQueueState, Error> {
+        #[cfg(test)]
+        if self
+            .fail_queue_reads
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(Error::from_internal(sqlx::Error::PoolClosed.into()));
+        }
+        let workspaces = self
+            .database
+            .list_workspace_open_summaries()
+            .await
+            .map_err(Error::from_internal)?
+            .into_iter()
+            .map(|summary| WorkspaceQueueSummary {
+                workspace: summary.workspace.into(),
+                open_task_count: summary.open_task_count,
+            })
+            .collect();
+        let projects = self
+            .database
+            .list_projects(&selected.id, None)
+            .await
+            .map_err(Error::from_internal)?
+            .into_iter()
+            .map(ProjectRecord::from)
+            .collect();
+        let labels = self
+            .database
+            .list_labels(&selected.id, None)
+            .await
+            .map_err(Error::from_internal)?;
+        let queue = self.queue_report(&selected.id).await?;
+        Ok(IosQueueState {
+            selected_workspace: selected.into(),
+            workspaces,
+            projects,
+            labels,
+            queue,
+        })
+    }
+
+    pub async fn ios_project_tasks(
+        &self,
+        workspace_id: &WorkspaceId,
+        project_id: &ProjectId,
+    ) -> Result<Vec<IosTaskListRow>, Error> {
+        self.workspace(workspace_id).await?;
+        let project = self
+            .database
+            .find_project_by_id(workspace_id, project_id)
+            .await
+            .map_err(Error::from_internal)?
+            .ok_or_else(|| Error::new(ErrorCode::NotFound, "project not found".to_string()))?;
+        self.database
+            .list_task_summary_items(
+                workspace_id,
+                TaskFilters {
+                    project: Some(project.key),
+                    ..TaskFilters::default()
+                },
+                TaskQueryMode::Flat,
+                TaskSort::Updated,
+                SortDirection::Desc,
+                None,
+            )
+            .await
+            .map(|items| items.into_iter().map(IosTaskListRow::from).collect())
+            .map_err(Error::from_internal)
+    }
+
+    pub async fn ios_search_tasks(
+        &self,
+        workspace_id: &WorkspaceId,
+        text: &str,
+    ) -> Result<Vec<IosTaskSearchResult>, Error> {
+        self.workspace(workspace_id).await?;
+        let text = text.trim();
+        if text.is_empty() {
+            return Ok(Vec::new());
+        }
+        if text.chars().count() > 256 {
+            return Err(Error::new(
+                ErrorCode::Validation,
+                "search query is too long".to_string(),
+            ));
+        }
+        self.database
+            .search_task_items(
+                workspace_id,
+                TaskSearchQuery {
+                    text: text.to_string(),
+                    project: None,
+                    metadata: Vec::new(),
+                    has_metadata: Vec::new(),
+                    missing_metadata: Vec::new(),
+                    include_deleted: false,
+                    limit: 100,
+                },
+            )
+            .await
+            .map(|results| {
+                results
+                    .into_iter()
+                    .map(|result| IosTaskSearchResult {
+                        task: IosTaskListRow::from(result.item),
+                        matched_field: result.matched_field,
+                        snippet: result.snippet,
+                    })
+                    .collect()
+            })
+            .map_err(Error::from_internal)
+    }
+
+    pub async fn ios_task_detail(
+        &self,
+        workspace_id: &WorkspaceId,
+        task_id: &TaskId,
+    ) -> Result<IosTaskDetail, Error> {
+        let workspace = self.workspace(workspace_id).await?;
+        let mut connection = self
+            .database
+            .acquire_reader()
+            .await
+            .map_err(Error::from_internal)?;
+        let task = crate::refs::get_task_in_workspace(&mut connection, &workspace, task_id)
+            .await
+            .map_err(Error::from_internal)?;
+        drop(connection);
+        let detail = self
+            .database
+            .task_detail(&task)
+            .await
+            .map_err(Error::from_internal)?;
+        IosTaskDetail::from_detail(detail, workspace)
+    }
+
+    /// Returns an owned, bounded snapshot without exposing object storage paths.
+    pub async fn ios_attachment_bytes(
+        &self,
+        workspace_id: &WorkspaceId,
+        task_id: &TaskId,
+        attachment_id: &str,
+    ) -> Result<IosAttachmentRead, Error> {
+        use crate::attachments::{MAX_BLOB_BYTES, default_blob_dir, object_path, sha256_hex};
+        use std::io::Read;
+
+        crate::attachments::validate_attachment_id(attachment_id).map_err(Error::from_internal)?;
+        let workspace = self.workspace(workspace_id).await?;
+        let lease = match self
+            .database
+            .acquire_live_attachment_read_lease(&workspace, attachment_id)
+            .await
+        {
+            Ok(lease) => lease,
+            Err(error) => {
+                return match error.downcast_ref::<crate::operations::AttachmentReadFailure>() {
+                    Some(crate::operations::AttachmentReadFailure::Invalidated) => {
+                        Ok(IosAttachmentRead::Invalidated)
+                    }
+                    Some(crate::operations::AttachmentReadFailure::Unavailable) => {
+                        Ok(IosAttachmentRead::Unavailable)
+                    }
+                    None => Err(Error::from_internal(error)),
+                };
+            }
+        };
+        let result = if lease.task_id != task_id.as_str() {
+            Ok(IosAttachmentRead::Invalidated)
+        } else {
+            let path = object_path(&default_blob_dir(self.database.path()), &lease.sha256);
+            match path {
+                Err(error) => Err(error),
+                Ok(path) => {
+                    let expected_size = lease.byte_size;
+                    let expected_hash = lease.sha256.clone();
+                    crate::attachments::run_preview(move || {
+                        let file = match std::fs::File::open(path) {
+                            Ok(file) => file,
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                                return Ok(IosAttachmentRead::Missing);
+                            }
+                            Err(error) => return Err(error.into()),
+                        };
+                        let mut bytes = Vec::new();
+                        file.take(MAX_BLOB_BYTES as u64 + 1)
+                            .read_to_end(&mut bytes)?;
+                        if bytes.len() > MAX_BLOB_BYTES
+                            || bytes.len() as i64 != expected_size
+                            || sha256_hex(&bytes) != expected_hash
+                        {
+                            return Ok(IosAttachmentRead::Corrupt);
+                        }
+                        Ok(IosAttachmentRead::Bytes { bytes })
+                    })
+                    .await
+                }
+            }
+        };
+        self.database
+            .release_attachment_lease(&lease.lease_id)
+            .await
+            .map_err(Error::from_internal)?;
+        result.map_err(Error::from_internal)
+    }
+
+    pub async fn capture_ios_queue_task(
+        &self,
+        workspace_id: &WorkspaceId,
+        input: IosTaskCapture,
+    ) -> Result<IosTaskCaptureResult, Error> {
+        let title = input.title.trim();
+        if title.is_empty() {
+            return Err(Error::new(
+                ErrorCode::Validation,
+                "task title is required".to_string(),
+            ));
+        }
+        validate_optional_date("due_on", input.due_on.as_deref())?;
+        let workspace = self.workspace(workspace_id).await?;
+        let project = input
+            .project
+            .ok_or_else(|| Error::new(ErrorCode::Validation, "project is required".to_string()))?;
+        let outcome = self
+            .database
+            .create_task_with_options(
+                &workspace,
+                TaskDraft {
+                    title: title.to_string(),
+                    description: input.description,
+                    project: Some(project),
+                    status: TaskStatus::Inbox.as_str().to_string(),
+                    priority: input.priority.as_str().to_string(),
+                    source: TaskSource::Api,
+                    labels: input.labels,
+                    metadata: Vec::new(),
+                    available_at: None,
+                    due_on: input.due_on,
+                    is_epic: false,
+                },
+                TaskCreationOptions::for_ios_capture(),
+            )
+            .await
+            .map_err(Error::from_internal)?;
+        let expected = outcome.undo_snapshot.ok_or_else(|| {
+            Error::new(
+                ErrorCode::Internal,
+                "capture undo state is unavailable".to_string(),
+            )
+        })?;
+        let undo_token = serde_json::to_string(&IosCaptureUndoToken {
+            workspace_id: workspace_id.clone(),
+            task_id: outcome.task.id.clone(),
+            expected,
+        })
+        .map_err(|error| Error::from_internal(error.into()))?;
+        let state = self.ios_queue_state_for(workspace).await.ok();
+        let display_ref = state
+            .as_ref()
+            .and_then(|state| {
+                state
+                    .queue
+                    .tasks
+                    .iter()
+                    .find(|task| task.id == outcome.task.id)
+            })
+            .map(|task| task.display_ref.clone())
+            .unwrap_or_else(|| outcome.task.id.to_string());
+        Ok(IosTaskCaptureResult {
+            task_id: outcome.task.id,
+            display_ref,
+            undo_token,
+            state,
+        })
+    }
+
+    pub async fn undo_ios_queue_capture(
+        &self,
+        undo_token: &str,
+    ) -> Result<Option<IosQueueState>, Error> {
+        let token: IosCaptureUndoToken = serde_json::from_str(undo_token).map_err(|_| {
+            Error::new(
+                ErrorCode::Validation,
+                "invalid capture undo token".to_string(),
+            )
+        })?;
+        let workspace = self.workspace(&token.workspace_id).await?;
+        self.database
+            .undo_ios_capture(&workspace, &token.task_id, &token.expected)
+            .await
+            .map_err(Error::from_internal)?;
+        Ok(self.ios_queue_state_for(workspace).await.ok())
+    }
+
+    /// Returns the committed status and its conditional Undo receipt without a read-model refresh.
+    pub async fn update_ios_detail_status(
+        &self,
+        workspace_id: &WorkspaceId,
+        task_id: &TaskId,
+        status: TaskStatus,
+    ) -> Result<IosDetailStatusReceipt, Error> {
+        let workspace = self.workspace(workspace_id).await?;
+        let mutation = InternalIosTaskMutation::DetailStatus {
+            status: status.as_str().to_string(),
+            expected_version: None,
+        };
+        let outcome = self
+            .database
+            .mutate_ios_task(&workspace, task_id, &mutation)
+            .await
+            .map_err(Error::from_internal)?;
+        let status = TaskStatus::parse(&outcome.after.status)
+            .expect("persisted task status is validated by core mutations");
+        let mutation = InternalIosTaskMutation::DetailStatus {
+            status: status.as_str().to_string(),
+            expected_version: outcome.status_version,
+        };
+        let undo_token = outcome.changed.then(|| {
+            serde_json::to_string(&IosMutationUndoToken {
+                workspace_id: workspace_id.clone(),
+                task_id: task_id.clone(),
+                mutation,
+                before: outcome.before,
+                expected: outcome.after,
+            })
+            .expect("Undo snapshots contain only JSON-serializable values")
+        });
+        Ok(IosDetailStatusReceipt { status, undo_token })
+    }
+
+    pub async fn undo_ios_detail_status(&self, undo_token: &str) -> Result<(), Error> {
+        let token: IosMutationUndoToken = serde_json::from_str(undo_token).map_err(|_| {
+            Error::new(
+                ErrorCode::Validation,
+                "invalid detail status undo token".to_string(),
+            )
+        })?;
+        if !matches!(token.mutation, InternalIosTaskMutation::DetailStatus { .. }) {
+            return Err(Error::new(
+                ErrorCode::Validation,
+                "invalid detail status undo token".to_string(),
+            ));
+        }
+        let workspace = self.workspace(&token.workspace_id).await?;
+        self.database
+            .undo_ios_task_mutation(
+                &workspace,
+                &token.task_id,
+                &token.mutation,
+                &token.before,
+                &token.expected,
+            )
+            .await
+            .map_err(Error::from_internal)?;
+        Ok(())
+    }
+
+    pub async fn mutate_ios_queue_task(
+        &self,
+        workspace_id: &WorkspaceId,
+        task_id: &TaskId,
+        input: IosQueueMutation,
+    ) -> Result<IosQueueMutationResult, Error> {
+        let workspace = self.workspace(workspace_id).await?;
+        let mutation = input.into_internal()?;
+        let outcome = self
+            .database
+            .mutate_ios_task(&workspace, task_id, &mutation)
+            .await
+            .map_err(Error::from_internal)?;
+        if !outcome.changed {
+            return Err(Error::new(
+                ErrorCode::GenerationConflict,
+                "quick action did not change the task".to_string(),
+            ));
+        }
+        let undo_token = serde_json::to_string(&IosMutationUndoToken {
+            workspace_id: workspace_id.clone(),
+            task_id: task_id.clone(),
+            mutation,
+            before: outcome.before,
+            expected: outcome.after,
+        })
+        .map_err(|error| Error::from_internal(error.into()))?;
+        Ok(IosQueueMutationResult {
+            task_id: task_id.clone(),
+            undo_token,
+            state: self.ios_queue_state_for(workspace).await.ok(),
+        })
+    }
+
+    pub async fn undo_ios_queue_mutation(
+        &self,
+        undo_token: &str,
+    ) -> Result<Option<IosQueueState>, Error> {
+        let token: IosMutationUndoToken = serde_json::from_str(undo_token).map_err(|_| {
+            Error::new(
+                ErrorCode::Validation,
+                "invalid quick action undo token".to_string(),
+            )
+        })?;
+        let workspace = self.workspace(&token.workspace_id).await?;
+        self.database
+            .undo_ios_task_mutation(
+                &workspace,
+                &token.task_id,
+                &token.mutation,
+                &token.before,
+                &token.expected,
+            )
+            .await
+            .map_err(Error::from_internal)?;
+        Ok(self.ios_queue_state_for(workspace).await.ok())
     }
 
     pub async fn resolve_workspace(&self, name_or_key: &str) -> Result<WorkspaceRecord, Error> {
@@ -176,6 +688,82 @@ impl Store {
         Ok(TaskRecord::with_metadata(outcome.task, metadata))
     }
 
+    pub async fn ios_task_edit_context(
+        &self,
+        workspace_id: &WorkspaceId,
+        task_id: &TaskId,
+    ) -> Result<IosTaskEditContext, Error> {
+        let detail = self.ios_task_detail(workspace_id, task_id).await?;
+        let projects = self
+            .database
+            .list_projects(workspace_id, None)
+            .await
+            .map_err(Error::from_internal)?
+            .into_iter()
+            .map(ProjectRecord::from)
+            .collect();
+        let labels = self
+            .database
+            .list_labels(workspace_id, None)
+            .await
+            .map_err(Error::from_internal)?;
+        Ok(IosTaskEditContext {
+            detail,
+            projects,
+            labels,
+        })
+    }
+
+    pub async fn edit_ios_task(
+        &self,
+        workspace_id: &WorkspaceId,
+        task_id: &TaskId,
+        input: IosTaskEdit,
+    ) -> Result<bool, Error> {
+        let title = input.title.map(|title| title.trim().to_string());
+        if let Some(title) = title.as_deref() {
+            if title.is_empty() {
+                return Err(Error::new(
+                    ErrorCode::Validation,
+                    "title must not be empty".into(),
+                ));
+            }
+            if title.chars().any(|character| {
+                matches!(
+                    character,
+                    '\n' | '\r' | '\u{000B}' | '\u{000C}' | '\u{0085}' | '\u{2028}' | '\u{2029}'
+                )
+            }) {
+                return Err(Error::new(
+                    ErrorCode::Validation,
+                    "title must be a single line".into(),
+                ));
+            }
+        }
+        validate_date_update("available_at", &input.available_at)?;
+        validate_date_update("due_on", &input.due_on)?;
+        let workspace = self.workspace(workspace_id).await?;
+        self.database
+            .edit_ios_task(
+                &workspace,
+                task_id,
+                input.project_id.as_ref(),
+                InternalTaskUpdate {
+                    title,
+                    description: input.description,
+                    status: input.status.map(|value| value.as_str().to_string()),
+                    priority: input.priority.map(|value| value.as_str().to_string()),
+                    available_at: input.available_at.into_internal(),
+                    due_on: input.due_on.into_internal(),
+                    add_labels: input.add_labels,
+                    remove_labels: input.remove_labels,
+                    ..InternalTaskUpdate::default()
+                },
+            )
+            .await
+            .map_err(Error::from_internal)
+    }
+
     pub async fn update_task(
         &self,
         workspace_id: &WorkspaceId,
@@ -240,6 +828,45 @@ impl Store {
             .await
             .map(|tasks| tasks.into_iter().map(TaskRecord::from).collect())
             .map_err(Error::from_internal)
+    }
+
+    pub async fn queue_report(&self, workspace_id: &WorkspaceId) -> Result<QueueReport, Error> {
+        self.workspace(workspace_id).await?;
+        let tasks = self
+            .database
+            .list_task_summary_items(
+                workspace_id,
+                TaskFilters {
+                    hide_done: true,
+                    ..TaskFilters::default()
+                },
+                TaskQueryMode::RankedQueue,
+                TaskSort::Created,
+                SortDirection::Asc,
+                None,
+            )
+            .await
+            .map_err(Error::from_internal)?
+            .into_iter()
+            .map(QueueTaskSummary::from)
+            .collect();
+        let unresolved_conflict_count = self
+            .database
+            .unresolved_conflict_count_in_workspace(workspace_id)
+            .await
+            .map_err(Error::from_internal)?
+            .clamp(0, i64::from(u32::MAX)) as u32;
+        let last_success_at = self
+            .database
+            .sync_persistence_status()
+            .await
+            .map_err(Error::from_internal)?
+            .last_success;
+        Ok(QueueReport {
+            tasks,
+            unresolved_conflict_count,
+            last_success_at,
+        })
     }
 
     pub async fn fetch_task(
@@ -592,27 +1219,40 @@ impl Store {
             .task_conflicts(&workspace, task_id, None)
             .await
             .map_err(Error::from_internal)?;
+        let mut connection = self
+            .database
+            .acquire_reader()
+            .await
+            .map_err(Error::from_internal)?;
         let mut conflicts = Vec::with_capacity(details.len());
         for detail in details {
             if detail.field.starts_with("metadata:") {
                 continue;
             }
             let field = TaskField::parse_or_unknown(&detail.field).map_err(Error::from_internal)?;
-            let local_value = self
-                .database
-                .conflict_display_value(workspace_id, field.as_str(), &detail.local_value)
-                .await
-                .map_err(Error::from_internal)?;
-            let remote_value = self
-                .database
-                .conflict_display_value(workspace_id, field.as_str(), &detail.remote_value)
-                .await
-                .map_err(Error::from_internal)?;
+            let local_value = crate::query::conflict_display_value(
+                &mut connection,
+                workspace_id,
+                field.as_str(),
+                &detail.local_value,
+            )
+            .await
+            .map_err(Error::from_internal)?;
+            let remote_value = crate::query::conflict_display_value(
+                &mut connection,
+                workspace_id,
+                field.as_str(),
+                &detail.remote_value,
+            )
+            .await
+            .map_err(Error::from_internal)?;
             conflicts.push(Conflict {
                 task_id: task_id.clone(),
                 field: ConflictField::from_task_field(field),
-                local_value,
-                remote_value,
+                local_value: bounded_conflict_display_value(local_value),
+                remote_value: bounded_conflict_display_value(remote_value),
+                variant_a: detail.variant_a,
+                variant_b: detail.variant_b,
             });
         }
         Ok(conflicts)
@@ -623,25 +1263,34 @@ impl Store {
         workspace_id: &WorkspaceId,
         task_id: &TaskId,
         field: ConflictField,
-        choice: ConflictChoice,
+        variant_a: String,
+        variant_b: String,
+        resolution: ConflictResolution,
     ) -> Result<TaskRecord, Error> {
         let workspace = self.workspace(workspace_id).await?;
         let field_name = field.as_str();
-        let choice = match choice {
-            ConflictChoice::Local => crate::operations::ConflictValueChoice::Local,
-            ConflictChoice::Remote => crate::operations::ConflictValueChoice::Remote,
+        let resolution = match &resolution {
+            ConflictResolution::Local => crate::operations::ConflictResolutionValue::Local,
+            ConflictResolution::Remote => crate::operations::ConflictResolutionValue::Remote,
+            ConflictResolution::Explicit(value) => {
+                crate::operations::ConflictResolutionValue::Explicit(value)
+            }
         };
         let mut connection = self
             .database
             .acquire_writer()
             .await
             .map_err(Error::from_internal)?;
-        crate::operations::resolve_conflict_choice(
+        crate::operations::resolve_conflict_transaction(
             &mut connection,
             &workspace,
             task_id,
             field_name,
-            choice,
+            crate::operations::ExpectedConflictIdentity {
+                variant_a: &variant_a,
+                variant_b: &variant_b,
+            },
+            resolution,
         )
         .await
         .map(|outcome| TaskRecord::from(outcome.task))
@@ -748,6 +1397,477 @@ impl From<Workspace> for WorkspaceRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceQueueSummary {
+    pub workspace: WorkspaceRecord,
+    pub open_task_count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectRecord {
+    pub id: ProjectId,
+    pub key: String,
+    pub name: String,
+}
+
+impl From<Project> for ProjectRecord {
+    fn from(project: Project) -> Self {
+        Self {
+            id: project.id,
+            key: project.key,
+            name: project.name,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IosQueueState {
+    pub selected_workspace: WorkspaceRecord,
+    pub workspaces: Vec<WorkspaceQueueSummary>,
+    pub projects: Vec<ProjectRecord>,
+    pub labels: Vec<String>,
+    pub queue: QueueReport,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IosTaskListRow {
+    pub id: TaskId,
+    pub title: String,
+    pub display_ref: String,
+    pub project_key: String,
+    pub status: TaskStatus,
+    pub priority: TaskPriority,
+    pub due_on: Option<String>,
+    pub is_epic: bool,
+}
+
+impl From<TaskListItem> for IosTaskListRow {
+    fn from(item: TaskListItem) -> Self {
+        Self {
+            id: item.task.id,
+            title: item.task.title,
+            display_ref: item.display_ref,
+            project_key: item.task.project_key,
+            status: item.task.status,
+            priority: item.task.priority,
+            due_on: item.task.due_on,
+            is_epic: item.task.is_epic,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IosTaskSearchResult {
+    pub task: IosTaskListRow,
+    pub matched_field: IosSearchMatchedField,
+    pub snippet: Option<String>,
+}
+
+pub use crate::query::TaskNote as IosTaskNote;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IosTaskLink {
+    pub task_id: TaskId,
+    pub display_ref: String,
+    pub title: String,
+    pub project_key: Option<String>,
+    pub status: TaskStatus,
+    pub deleted: bool,
+    pub unresolved: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IosAttachmentRead {
+    Bytes { bytes: Vec<u8> },
+    Unavailable,
+    Missing,
+    Corrupt,
+    Invalidated,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IosTaskAttachment {
+    pub attachment_id: String,
+    pub media_type: String,
+    pub byte_size: i64,
+    pub filename: Option<String>,
+    pub alt_text: Option<String>,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub availability: IosAttachmentAvailability,
+    pub has_blob: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IosTaskActivityKind {
+    Created,
+    Title,
+    Description,
+    Status,
+    Priority,
+    Project,
+    Deletion,
+    Availability,
+    DueDate,
+    Epic,
+    Attachment,
+    Metadata,
+    Label,
+    Note,
+    Blocker,
+    Related,
+    Conflict,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IosTaskActivity {
+    pub change_id: String,
+    pub created_at: String,
+    pub kind: IosTaskActivityKind,
+    pub summary: String,
+    pub anchors_queue_idle: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IosTaskDetail {
+    pub id: TaskId,
+    pub workspace_id: WorkspaceId,
+    pub workspace_key: String,
+    pub workspace_name: String,
+    pub title: String,
+    pub description: String,
+    pub display_ref: String,
+    pub project_key: String,
+    pub project_name: String,
+    pub status: TaskStatus,
+    pub priority: TaskPriority,
+    pub created_at: String,
+    pub updated_at: String,
+    pub available_at: Option<String>,
+    pub due_on: Option<String>,
+    pub deleted: bool,
+    pub is_epic: bool,
+    pub labels: Vec<String>,
+    pub notes: Vec<IosTaskNote>,
+    pub activity: Vec<IosTaskActivity>,
+    pub blocked_by: Vec<IosTaskLink>,
+    pub blocks: Vec<IosTaskLink>,
+    pub related: Vec<IosTaskLink>,
+    pub epic_parent: Option<IosTaskLink>,
+    pub epic_children: Vec<IosTaskLink>,
+    pub epic_done_count: u32,
+    pub epic_total_count: u32,
+    pub epic_progress: Option<IosEpicProgress>,
+    pub attachments: Vec<IosTaskAttachment>,
+    pub unresolved_conflict_count: u32,
+    pub unresolved_conflict_fields: Vec<ConflictField>,
+}
+
+impl IosTaskDetail {
+    fn from_detail(detail: crate::query::TaskDetail, workspace: Workspace) -> Result<Self, Error> {
+        let item = detail.item;
+        let anchor = item.queue_idle_activity_index();
+        let activity = item
+            .activity
+            .iter()
+            .enumerate()
+            .map(|(index, action)| IosTaskActivity {
+                change_id: action.change_id.clone(),
+                created_at: action.created_at.clone(),
+                kind: match action.verb.as_str() {
+                    "create" => IosTaskActivityKind::Created,
+                    "title" => IosTaskActivityKind::Title,
+                    "details" => IosTaskActivityKind::Description,
+                    "status" => IosTaskActivityKind::Status,
+                    "priority" => IosTaskActivityKind::Priority,
+                    "project" => IosTaskActivityKind::Project,
+                    "delete" => IosTaskActivityKind::Deletion,
+                    "availability" => IosTaskActivityKind::Availability,
+                    "due date" => IosTaskActivityKind::DueDate,
+                    "epic" => IosTaskActivityKind::Epic,
+                    "attachment" => IosTaskActivityKind::Attachment,
+                    "metadata" => IosTaskActivityKind::Metadata,
+                    "label" => IosTaskActivityKind::Label,
+                    "note" => IosTaskActivityKind::Note,
+                    "blocker" => IosTaskActivityKind::Blocker,
+                    "related link" => IosTaskActivityKind::Related,
+                    "conflict" => IosTaskActivityKind::Conflict,
+                    _ => IosTaskActivityKind::Other,
+                },
+                summary: action.task_activity_summary(&item.task.title),
+                anchors_queue_idle: anchor == Some(index),
+            })
+            .collect();
+        let task = item.task;
+        let blocked_by = detail
+            .dependencies
+            .depends_on
+            .into_iter()
+            .map(ios_task_link_from_dependency)
+            .collect();
+        let blocks = detail
+            .dependencies
+            .blocks
+            .into_iter()
+            .map(ios_task_link_from_dependency)
+            .collect();
+        let related = detail
+            .related
+            .into_iter()
+            .map(|link| IosTaskLink {
+                task_id: link.task_id,
+                display_ref: link.display_ref,
+                title: link.title,
+                project_key: None,
+                status: link.status,
+                deleted: link.deleted,
+                unresolved: false,
+            })
+            .collect();
+        let epic_parent = item
+            .epic_parent
+            .map(ios_task_link_from_enriched)
+            .transpose()?;
+        let epic_children = item
+            .epic_children
+            .into_iter()
+            .map(ios_task_link_from_enriched)
+            .collect::<Result<Vec<_>, _>>()?;
+        let epic_progress = item.epic_rollup.clone().map(IosEpicProgress::from);
+        let (epic_done_count, epic_total_count) = item
+            .epic_rollup
+            .map(|rollup| {
+                (
+                    rollup.done.min(u32::MAX as usize) as u32,
+                    rollup.total.min(u32::MAX as usize) as u32,
+                )
+            })
+            .unwrap_or_default();
+        let attachments = item
+            .attachments
+            .into_iter()
+            .map(|attachment| IosTaskAttachment {
+                attachment_id: attachment.attachment_id,
+                media_type: attachment.media_type,
+                byte_size: attachment.byte_size,
+                filename: attachment.filename,
+                alt_text: attachment.alt_text,
+                width: attachment.width,
+                height: attachment.height,
+                availability: attachment.bytes_state,
+                has_blob: attachment.has_blob,
+            })
+            .collect();
+        Ok(Self {
+            id: task.id,
+            workspace_id: task.workspace_id,
+            workspace_key: workspace.key,
+            workspace_name: workspace.name,
+            title: task.title,
+            description: task.description,
+            display_ref: item.display_ref,
+            project_key: task.project_key,
+            project_name: detail.project_name,
+            status: task.status,
+            priority: task.priority,
+            created_at: task.created_at,
+            updated_at: task.updated_at,
+            available_at: task.available_at,
+            due_on: task.due_on,
+            deleted: task.deleted,
+            is_epic: task.is_epic,
+            labels: item.labels,
+            notes: detail.notes,
+            activity,
+            blocked_by,
+            blocks,
+            related,
+            epic_parent,
+            epic_children,
+            epic_done_count,
+            epic_total_count,
+            epic_progress,
+            attachments,
+            unresolved_conflict_count: detail.conflicts.len().min(u32::MAX as usize) as u32,
+            unresolved_conflict_fields: detail
+                .conflicts
+                .into_iter()
+                .filter(|conflict| !conflict.field.starts_with("metadata:"))
+                .map(|conflict| {
+                    TaskField::parse_or_unknown(&conflict.field)
+                        .map(ConflictField::from_task_field)
+                        .map_err(Error::from_internal)
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    }
+}
+
+fn ios_task_link_from_dependency(link: crate::query::TaskDependencyItem) -> IosTaskLink {
+    IosTaskLink {
+        task_id: link.task.id,
+        display_ref: link.display_ref,
+        title: link.task.title,
+        project_key: Some(link.task.project_key),
+        status: link.task.status,
+        deleted: link.task.deleted,
+        unresolved: link.unresolved,
+    }
+}
+
+fn ios_task_link_from_enriched(
+    link: crate::query::TaskDependencyLink,
+) -> Result<IosTaskLink, Error> {
+    let status =
+        TaskStatus::parse(&link.status).map_err(|error| Error::from_internal(error.into()))?;
+    Ok(IosTaskLink {
+        task_id: link.task_id,
+        display_ref: link.display_ref,
+        title: link.title,
+        project_key: None,
+        status,
+        deleted: false,
+        unresolved: link.unresolved,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IosTaskCapture {
+    pub title: String,
+    pub description: String,
+    pub project: Option<String>,
+    pub priority: TaskPriority,
+    pub due_on: Option<String>,
+    pub labels: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IosTaskCaptureResult {
+    pub task_id: TaskId,
+    pub display_ref: String,
+    pub undo_token: String,
+    /// Optional refreshed projection. Absence does not change the committed receipt.
+    pub state: Option<IosQueueState>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct IosCaptureUndoToken {
+    workspace_id: WorkspaceId,
+    task_id: TaskId,
+    expected: TaskUndoSnapshot,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IosQueueMutationKind {
+    Start,
+    Done,
+    Snooze,
+    SetPriority,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IosQueueMutation {
+    pub kind: IosQueueMutationKind,
+    pub priority: Option<TaskPriority>,
+    pub local_date: Option<String>,
+    pub time_zone: Option<String>,
+}
+
+impl IosQueueMutation {
+    fn into_internal(self) -> Result<InternalIosTaskMutation, Error> {
+        match self.kind {
+            IosQueueMutationKind::Start => Ok(InternalIosTaskMutation::Start),
+            IosQueueMutationKind::Done => Ok(InternalIosTaskMutation::Done),
+            IosQueueMutationKind::SetPriority => self
+                .priority
+                .map(|priority| InternalIosTaskMutation::SetPriority {
+                    priority: priority.as_str().to_string(),
+                })
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorCode::Validation,
+                        "priority is required for this quick action".to_string(),
+                    )
+                }),
+            IosQueueMutationKind::Snooze => {
+                let local_date = self.local_date.ok_or_else(|| {
+                    Error::new(
+                        ErrorCode::Validation,
+                        "local date is required for snooze".to_string(),
+                    )
+                })?;
+                let time_zone = self.time_zone.ok_or_else(|| {
+                    Error::new(
+                        ErrorCode::Validation,
+                        "time zone is required for snooze".to_string(),
+                    )
+                })?;
+                Ok(InternalIosTaskMutation::Snooze {
+                    available_at: tomorrow_start(&local_date, &time_zone)?,
+                })
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IosQueueMutationResult {
+    pub task_id: TaskId,
+    pub undo_token: String,
+    /// Optional refreshed projection. Absence does not change the committed receipt.
+    pub state: Option<IosQueueState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IosDetailStatusReceipt {
+    pub status: TaskStatus,
+    pub undo_token: Option<String>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct IosMutationUndoToken {
+    workspace_id: WorkspaceId,
+    task_id: TaskId,
+    mutation: InternalIosTaskMutation,
+    before: TaskUndoSnapshot,
+    expected: TaskUndoSnapshot,
+}
+
+fn tomorrow_start(local_date: &str, time_zone: &str) -> Result<String, Error> {
+    let date = NaiveDate::parse_from_str(local_date, "%Y-%m-%d")
+        .map_err(|_| Error::new(ErrorCode::Validation, "invalid local date".to_string()))?
+        .checked_add_days(Days::new(1))
+        .ok_or_else(|| Error::new(ErrorCode::Validation, "invalid local date".to_string()))?;
+    let zone = time_zone
+        .parse::<chrono_tz::Tz>()
+        .map_err(|_| Error::new(ErrorCode::Validation, "invalid IANA time zone".to_string()))?;
+    let mut local = date.and_time(NaiveTime::MIN);
+    let resolved = loop {
+        match zone.from_local_datetime(&local) {
+            LocalResult::Single(value) => break value,
+            LocalResult::Ambiguous(first, second) => break first.min(second),
+            LocalResult::None => {
+                local = local
+                    .checked_add_signed(chrono::Duration::minutes(1))
+                    .ok_or_else(|| {
+                        Error::new(ErrorCode::Validation, "invalid local date".to_string())
+                    })?;
+                if local.date() != date {
+                    return Err(Error::new(
+                        ErrorCode::Validation,
+                        "time zone has no valid instant on the next local day".to_string(),
+                    ));
+                }
+            }
+        }
+    };
+    Ok(resolved
+        .with_timezone(&Utc)
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MetadataFieldRecord {
     pub id: MetadataFieldId,
     pub workspace_id: WorkspaceId,
@@ -811,6 +1931,26 @@ pub struct CreateTask {
     pub metadata: Vec<MetadataInput>,
     pub available_at: Option<String>,
     pub due_on: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IosTaskEditContext {
+    pub detail: IosTaskDetail,
+    pub projects: Vec<ProjectRecord>,
+    pub labels: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct IosTaskEdit {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub project_id: Option<ProjectId>,
+    pub status: Option<TaskStatus>,
+    pub priority: Option<TaskPriority>,
+    pub add_labels: Vec<String>,
+    pub remove_labels: Vec<String>,
+    pub available_at: OptionalDateUpdate,
+    pub due_on: OptionalDateUpdate,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -1248,6 +2388,89 @@ pub struct RecurrenceTaskGroup {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QueueDate {
+    Due { on: String, kind: QueueDateKind },
+    Deferred { at: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueLabelSummary {
+    pub first: String,
+    pub remaining_count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueTaskSummary {
+    pub id: TaskId,
+    pub title: String,
+    pub display_ref: String,
+    pub project_key: String,
+    pub status: TaskStatus,
+    pub priority: TaskPriority,
+    pub due_on: Option<String>,
+    pub band: QueueBand,
+    pub reason: Option<QueueReason>,
+    pub date: Option<QueueDate>,
+    pub label: Option<QueueLabelSummary>,
+    pub is_epic: bool,
+    pub live_attachment_count: u32,
+    pub has_conflict: bool,
+    pub unresolved_blocker_count: i64,
+}
+
+impl From<TaskListItem> for QueueTaskSummary {
+    fn from(value: TaskListItem) -> Self {
+        let date = if value.queue.has_deferred_date {
+            value
+                .task
+                .available_at
+                .clone()
+                .map(|at| QueueDate::Deferred { at })
+        } else {
+            value.queue.date_kind.and_then(|kind| {
+                value
+                    .task
+                    .due_on
+                    .clone()
+                    .map(|on| QueueDate::Due { on, kind })
+            })
+        };
+        let label = value
+            .labels
+            .first()
+            .cloned()
+            .map(|first| QueueLabelSummary {
+                first,
+                remaining_count: value.labels.len().saturating_sub(1).min(u32::MAX as usize) as u32,
+            });
+        Self {
+            id: value.task.id,
+            title: value.task.title,
+            display_ref: value.display_ref,
+            project_key: value.task.project_key,
+            status: value.task.status,
+            priority: value.task.priority,
+            due_on: value.task.due_on,
+            band: value.queue.band,
+            reason: value.queue.reason,
+            date,
+            label,
+            is_epic: value.task.is_epic,
+            live_attachment_count: value.live_attachment_count,
+            has_conflict: value.has_conflict,
+            unresolved_blocker_count: value.unresolved_blocker_count,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueReport {
+    pub tasks: Vec<QueueTaskSummary>,
+    pub unresolved_conflict_count: u32,
+    pub last_success_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskSummary {
     pub task: TaskRecord,
     pub display_ref: String,
@@ -1431,12 +2654,26 @@ pub struct Conflict {
     pub field: ConflictField,
     pub local_value: String,
     pub remote_value: String,
+    pub variant_a: String,
+    pub variant_b: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConflictChoice {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConflictResolution {
     Local,
     Remote,
+    Explicit(String),
+}
+
+fn bounded_conflict_display_value(value: String) -> String {
+    const MAX_CHARACTERS: usize = 512;
+    let mut characters = value.chars();
+    let preview: String = characters.by_ref().take(MAX_CHARACTERS).collect();
+    if characters.next().is_some() {
+        format!("{preview}…")
+    } else {
+        preview
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1518,6 +2755,116 @@ impl std::error::Error for Error {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn ios_capture_receipt_survives_post_commit_read_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store::open(directory.path().join("capture.sqlite"))
+            .await
+            .unwrap();
+        let workspace = store.resolve_workspace("default").await.unwrap();
+        store
+            .create_task(
+                &workspace.id,
+                CreateTask {
+                    title: "Seed".into(),
+                    description: String::new(),
+                    project: "ios".into(),
+                    status: TaskStatus::Done,
+                    priority: TaskPriority::None,
+                    metadata: Vec::new(),
+                    available_at: None,
+                    due_on: None,
+                },
+            )
+            .await
+            .unwrap();
+        store
+            .fail_queue_reads
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let result = store
+            .capture_ios_queue_task(
+                &workspace.id,
+                IosTaskCapture {
+                    title: "Captured".into(),
+                    description: String::new(),
+                    project: Some("ios".into()),
+                    priority: TaskPriority::None,
+                    due_on: None,
+                    labels: Vec::new(),
+                },
+            )
+            .await;
+        let tasks = store.list_tasks(&workspace.id).await.unwrap();
+        assert_eq!(
+            tasks.iter().filter(|task| task.title == "Captured").count(),
+            1
+        );
+        assert!(
+            result.is_ok(),
+            "committed capture lost its receipt: {result:?}"
+        );
+        let captured = result.unwrap();
+        assert!(captured.state.is_none());
+        assert_eq!(captured.display_ref, captured.task_id.to_string());
+        assert!(!captured.undo_token.is_empty());
+        let changed = store
+            .mutate_ios_queue_task(
+                &workspace.id,
+                &captured.task_id,
+                IosQueueMutation {
+                    kind: IosQueueMutationKind::SetPriority,
+                    priority: Some(TaskPriority::High),
+                    local_date: None,
+                    time_zone: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(changed.task_id, captured.task_id);
+        assert!(changed.state.is_none());
+        assert_eq!(
+            store
+                .ios_task_detail(&workspace.id, &captured.task_id)
+                .await
+                .unwrap()
+                .priority,
+            TaskPriority::High
+        );
+        assert!(
+            store
+                .undo_ios_queue_mutation(&changed.undo_token)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            store
+                .ios_task_detail(&workspace.id, &captured.task_id)
+                .await
+                .unwrap()
+                .priority,
+            TaskPriority::None
+        );
+        assert!(
+            store
+                .undo_ios_queue_capture(&captured.undo_token)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        store
+            .fail_queue_reads
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        let state = store.ios_queue_state().await.unwrap();
+        assert!(
+            state
+                .queue
+                .tasks
+                .iter()
+                .all(|task| task.id != captured.task_id)
+        );
+    }
 
     #[test]
     fn error_codes_are_stable_and_internal_errors_are_distinct() {

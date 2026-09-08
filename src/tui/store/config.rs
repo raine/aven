@@ -10,6 +10,25 @@ use super::TuiStore;
 use super::types::{SyncStatusCheck, TuiSyncStatus};
 
 impl TuiStore {
+    pub(crate) fn pairing_input_error(&self) -> Option<crate::pairing::PairingError> {
+        crate::pairing::pairing_input_error(
+            self.config(),
+            None,
+            self.pairing_server_environment.as_deref(),
+        )
+    }
+
+    pub(crate) fn pairing_presentation(
+        &self,
+    ) -> std::result::Result<crate::pairing::PairingPresentation, crate::pairing::PairingError>
+    {
+        crate::pairing::pairing_presentation_from(
+            self.config(),
+            None,
+            self.pairing_server_environment.as_deref(),
+        )
+    }
+
     pub(crate) fn config_info_lines(&self) -> Result<Vec<String>> {
         let outcome = show_config_operation()?;
         let mut lines = vec![

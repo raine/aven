@@ -734,6 +734,70 @@ mod tests {
     }
 
     #[test]
+    fn pairing_command_is_discoverable_only_on_list_surfaces() {
+        let catalog = CommandCatalog::default();
+        let surfaces = [
+            super::super::CommandSurfaceSnapshot::List {
+                primary_task_id: None,
+                marked_task_ids: Vec::new(),
+                visible_task_ids: Vec::new(),
+                focused_sidebar: None,
+                is_empty: true,
+                empty_preferred_action: None,
+            },
+            super::super::CommandSurfaceSnapshot::List {
+                primary_task_id: None,
+                marked_task_ids: Vec::new(),
+                visible_task_ids: Vec::new(),
+                focused_sidebar: Some(super::super::SidebarCommandTarget::Workspace),
+                is_empty: false,
+                empty_preferred_action: None,
+            },
+            super::super::CommandSurfaceSnapshot::RecurrenceList {
+                focused_sidebar: None,
+                is_empty: true,
+                empty_preferred_action: None,
+            },
+        ];
+
+        for surface in surfaces {
+            let snapshot = snapshot(surface, None);
+            assert_eq!(
+                query_names(&catalog, &snapshot, "pair"),
+                vec!["pair-mobile"]
+            );
+        }
+
+        let detail = snapshot(
+            super::super::CommandSurfaceSnapshot::Detail {
+                parent_task_id: crate::test_support::task_id("pairing-command-surface"),
+                marked_task_ids: Vec::new(),
+                focus: Some(super::super::DetailCommandFocus::Note),
+                scroll: 7,
+            },
+            None,
+        );
+        let matches = catalog.query(CommandQuery {
+            input: "pair",
+            snapshot: &detail,
+            unavailable: &[],
+        });
+        assert_eq!(matches.len(), 1);
+        assert_eq!(
+            matches[0].availability.reason(),
+            Some("available only in the task list")
+        );
+        assert!(
+            query_names(&catalog, &detail, "")
+                .iter()
+                .all(|name| name != "pair-mobile")
+        );
+
+        let add_task_only = snapshot(super::super::CommandSurfaceSnapshot::AddTaskOnly, None);
+        assert!(query_names(&catalog, &add_task_only, "pair").is_empty());
+    }
+
+    #[test]
     fn session_query_includes_custom_and_built_in_commands() {
         let catalog = CommandCatalog::new(vec![custom()]);
         let task_id = crate::test_support::task_id("catalog-query-task");

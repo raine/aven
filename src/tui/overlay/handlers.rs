@@ -624,6 +624,10 @@ pub(crate) fn handle_generic_overlay_key(
                 }
             }
         }
+        OverlayState::Pairing(presentation) => match key.code {
+            KeyCode::Esc => OverlayOutcome::Cancelled,
+            _ => OverlayOutcome::None(OverlayState::Pairing(presentation)),
+        },
         OverlayState::Detail => OverlayOutcome::None(OverlayState::Detail),
         other => OverlayOutcome::None(other),
     }

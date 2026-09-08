@@ -848,6 +848,32 @@ aven sync
 aven sync --server http://127.0.0.1:3000
 ```
 
+#### `aven sync pair`
+
+Produce a terminal QR pairing invitation for Aven iOS onboarding.
+
+```sh
+aven sync pair [--server <url>]
+aven sync --server <url> pair
+```
+
+The invitation transfers the existing shared `sync.auth_token` and a
+phone-reachable sync server URL. The pair-local `--server` wins over the parent
+`sync --server` form when both are present. The remaining server precedence is
+`AVEN_SYNC_SERVER`, then `sync.server_url`. A selected blank server reports a
+missing server instead of falling through. The command requires a configured,
+nonempty `sync.auth_token` and rejects invalid or loopback URLs.
+
+Pairing reads configuration only. It does not open a task database, contact the
+server, mutate configuration, or run sync. The QR code is the only invitation
+payload output: ordinary text and errors omit the token and encoded invitation.
+Terminal output uses black-on-white ANSI styling unless `NO_COLOR` is present.
+Redirected output uses plain rows without escape sequences or a terminal-width
+check.
+Use `--server` when the desktop sync configuration uses loopback or another
+address the phone cannot reach. Public HTTPS and reverse-proxy server URLs remain
+supported.
+
 #### `aven sync status`
 
 Inspect local sync state without contacting the server or starting a sync.

@@ -67,6 +67,7 @@ fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView<'_>)
         OverlayView::Confirm(state) => render_confirm(frame, state),
         OverlayView::TextPanel(state) => render_text_panel(frame, state),
         OverlayView::Changelog { markdown, scroll } => render_changelog(frame, markdown, *scroll),
+        OverlayView::Pairing(presentation) => render_pairing(frame, presentation),
         OverlayView::SyncStatus(state) => render_sync_status(frame, state),
         OverlayView::DatabaseStats { stats, scroll } => {
             render_database_stats(frame, stats, *scroll)
@@ -277,6 +278,8 @@ fn search_result_item(title: &str) -> SearchResultItem {
 }
 
 mod onboarding;
+
+mod pairing_overlay;
 
 mod text_panel_and_search;
 

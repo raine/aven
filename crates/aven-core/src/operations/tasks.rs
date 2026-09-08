@@ -16,7 +16,9 @@ use crate::labels::{
 };
 use crate::metadata::TaskMetadataInput;
 use crate::mutation::{set_task_field, set_task_project};
-use crate::projects::resolve_or_create_project_in_workspace;
+use crate::projects::{
+    resolve_existing_project_in_workspace, resolve_or_create_project_in_workspace,
+};
 use crate::refs::{DisplayRefContext, get_task_in_workspace};
 use crate::task_fields::TaskField;
 use crate::types::Task;
@@ -55,6 +57,9 @@ pub struct TaskCreationOptions {
     epic_id: Option<TaskId>,
     undo: TaskCreationUndo,
     create_missing_labels: bool,
+    require_existing_project: bool,
+    capture_undo_snapshot: bool,
+    require_existing_epic: bool,
 }
 
 impl TaskCreationOptions {
@@ -63,6 +68,9 @@ impl TaskCreationOptions {
             epic_id: None,
             undo,
             create_missing_labels: false,
+            require_existing_project: false,
+            capture_undo_snapshot: false,
+            require_existing_epic: false,
         }
     }
 
@@ -71,12 +79,37 @@ impl TaskCreationOptions {
             epic_id: Some(epic_id),
             undo,
             create_missing_labels: false,
+            require_existing_project: false,
+            capture_undo_snapshot: false,
+            require_existing_epic: false,
         }
     }
 
     pub fn with_create_missing_labels(mut self) -> Self {
         self.create_missing_labels = true;
         self
+    }
+
+    pub(crate) fn for_ios_epic(epic_id: Option<TaskId>) -> Self {
+        Self {
+            epic_id,
+            undo: TaskCreationUndo::None,
+            create_missing_labels: false,
+            require_existing_project: true,
+            capture_undo_snapshot: false,
+            require_existing_epic: true,
+        }
+    }
+
+    pub fn for_ios_capture() -> Self {
+        Self {
+            epic_id: None,
+            undo: TaskCreationUndo::None,
+            create_missing_labels: false,
+            require_existing_project: true,
+            capture_undo_snapshot: true,
+            require_existing_epic: false,
+        }
     }
 }
 
@@ -85,6 +118,7 @@ pub struct TaskOutcome {
     pub task: Task,
     pub create_change_id: Option<String>,
     pub attachment_change_ids: Vec<String>,
+    pub undo_snapshot: Option<TaskUndoSnapshot>,
 }
 
 struct InsertedTask {
@@ -135,9 +169,33 @@ pub struct TaskMutationOutcome {
     pub changed: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum IosTaskMutation {
+    Start,
+    Done,
+    DetailStatus {
+        status: String,
+        expected_version: Option<String>,
+    },
+    Snooze {
+        available_at: String,
+    },
+    SetPriority {
+        priority: String,
+    },
+}
+
 #[derive(Debug)]
 pub struct TaskMutationReport {
     pub outcomes: Vec<TaskMutationOutcome>,
+}
+
+pub(crate) struct IosTaskMutationOutcome {
+    pub status_version: Option<String>,
+    pub before: TaskUndoSnapshot,
+    pub after: TaskUndoSnapshot,
+    pub changed: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -240,6 +298,216 @@ impl Database {
             TaskCreationOptions::for_epic(epic_id.clone(), undo),
         )
         .await
+    }
+
+    pub(crate) async fn undo_ios_capture(
+        &self,
+        workspace: &Workspace,
+        task_id: &TaskId,
+        expected: &TaskUndoSnapshot,
+    ) -> Result<bool> {
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        let current = task_snapshot(&mut tx, &workspace.id, task_id).await?;
+        if current != *expected || current.deleted {
+            return Err(crate::error::CoreError::generation_conflict(
+                "captured task changed before undo",
+            )
+            .into());
+        }
+        let mut affected_attachment_hashes = BTreeSet::new();
+        let (changed, _) = apply_task_update(
+            &mut tx,
+            workspace,
+            task_id,
+            &TaskUpdate {
+                deleted: Some(true),
+                ..TaskUpdate::default()
+            },
+            &mut affected_attachment_hashes,
+        )
+        .await?;
+        let affected_attachment_hashes = affected_attachment_hashes.into_iter().collect::<Vec<_>>();
+        crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
+            &mut tx,
+            &affected_attachment_hashes,
+            &crate::attachments::lifecycle::SystemClock,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(changed)
+    }
+
+    pub(crate) async fn edit_ios_task(
+        &self,
+        workspace: &Workspace,
+        task_id: &TaskId,
+        project_id: Option<&crate::ids::ProjectId>,
+        update: TaskUpdate,
+    ) -> Result<bool> {
+        validate_task_update(&update)?;
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        let task = get_task_in_workspace(&mut tx, workspace, task_id).await?;
+        if task.deleted {
+            return Err(crate::error::CoreError::not_found("task is deleted").into());
+        }
+        let mut changed = false;
+        if let Some(project_id) = project_id {
+            let project = crate::projects::find_project_by_id_in_workspace(
+                &mut tx,
+                &workspace.id,
+                project_id,
+            )
+            .await?
+            .ok_or_else(|| crate::error::CoreError::not_found("selected project is unavailable"))?;
+            changed |= set_task_project(&mut tx, workspace, task_id, &project).await?;
+        }
+        let (fields_changed, _) =
+            apply_task_update(&mut tx, workspace, task_id, &update, &mut BTreeSet::new()).await?;
+        tx.commit().await?;
+        Ok(changed || fields_changed)
+    }
+
+    pub(crate) async fn mutate_ios_task(
+        &self,
+        workspace: &Workspace,
+        task_id: &TaskId,
+        mutation: &IosTaskMutation,
+    ) -> Result<IosTaskMutationOutcome> {
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        if matches!(mutation, IosTaskMutation::DetailStatus { .. }) {
+            let task = get_task_in_workspace(&mut tx, workspace, task_id).await?;
+            if task.deleted {
+                return Err(crate::error::CoreError::not_found("task is deleted").into());
+            }
+        }
+        let before = task_snapshot(&mut tx, &workspace.id, task_id).await?;
+        if before.deleted {
+            bail!("error task-not-found task_id={task_id}");
+        }
+        let open = !matches!(before.status.as_str(), "done" | "canceled");
+        let update = match mutation {
+            IosTaskMutation::DetailStatus { status, .. } => TaskUpdate {
+                status: Some(status.clone()),
+                ..TaskUpdate::default()
+            },
+            IosTaskMutation::Start
+                if matches!(before.status.as_str(), "inbox" | "backlog" | "todo") =>
+            {
+                TaskUpdate {
+                    status: Some("active".to_string()),
+                    ..TaskUpdate::default()
+                }
+            }
+            IosTaskMutation::Done if open => TaskUpdate {
+                status: Some("done".to_string()),
+                ..TaskUpdate::default()
+            },
+            IosTaskMutation::Snooze { available_at }
+                if open && before.available_at != *available_at =>
+            {
+                TaskUpdate {
+                    available_at: Some(Some(available_at.clone())),
+                    ..TaskUpdate::default()
+                }
+            }
+            IosTaskMutation::SetPriority { priority } if open && before.priority != *priority => {
+                TaskUpdate {
+                    priority: Some(priority.clone()),
+                    ..TaskUpdate::default()
+                }
+            }
+            _ => {
+                return Err(crate::error::CoreError::generation_conflict(
+                    "quick action is stale for the task state",
+                )
+                .into());
+            }
+        };
+        validate_task_update(&update)?;
+        let mut affected_attachment_hashes = BTreeSet::new();
+        let (changed, _) = apply_task_update(
+            &mut tx,
+            workspace,
+            task_id,
+            &update,
+            &mut affected_attachment_hashes,
+        )
+        .await?;
+        let after = task_snapshot(&mut tx, &workspace.id, task_id).await?;
+        let status_version = if matches!(mutation, IosTaskMutation::DetailStatus { .. }) {
+            crate::db::field_version(&mut tx, task_id.as_str(), "status").await?
+        } else {
+            None
+        };
+        tx.commit().await?;
+        Ok(IosTaskMutationOutcome {
+            status_version,
+            before,
+            after,
+            changed,
+        })
+    }
+
+    pub(crate) async fn undo_ios_task_mutation(
+        &self,
+        workspace: &Workspace,
+        task_id: &TaskId,
+        mutation: &IosTaskMutation,
+        before: &TaskUndoSnapshot,
+        expected: &TaskUndoSnapshot,
+    ) -> Result<bool> {
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        let current = task_snapshot(&mut tx, &workspace.id, task_id).await?;
+        if let IosTaskMutation::DetailStatus {
+            expected_version, ..
+        } = mutation
+            && crate::db::field_version(&mut tx, task_id.as_str(), "status").await?
+                != *expected_version
+        {
+            return Err(crate::error::CoreError::generation_conflict(
+                "task status changed after the detail action",
+            )
+            .into());
+        }
+        if current != *expected {
+            return Err(crate::error::CoreError::generation_conflict(
+                "task changed after the quick action",
+            )
+            .into());
+        }
+        let update = match mutation {
+            IosTaskMutation::Start
+            | IosTaskMutation::Done
+            | IosTaskMutation::DetailStatus { .. } => TaskUpdate {
+                status: Some(before.status.clone()),
+                ..TaskUpdate::default()
+            },
+            IosTaskMutation::Snooze { .. } => TaskUpdate {
+                available_at: Some(
+                    (!before.available_at.is_empty()).then(|| before.available_at.clone()),
+                ),
+                ..TaskUpdate::default()
+            },
+            IosTaskMutation::SetPriority { .. } => TaskUpdate {
+                priority: Some(before.priority.clone()),
+                ..TaskUpdate::default()
+            },
+        };
+        let mut affected_attachment_hashes = BTreeSet::new();
+        let (changed, _) = apply_task_update(
+            &mut tx,
+            workspace,
+            task_id,
+            &update,
+            &mut affected_attachment_hashes,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(changed)
     }
 
     pub async fn create_task_with_attachments(
@@ -516,6 +784,7 @@ impl Database {
             task: outcome.task,
             create_change_id: None,
             attachment_change_ids: Vec::new(),
+            undo_snapshot: None,
         })
     }
 
@@ -608,9 +877,22 @@ async fn create_task_with_epic(
         epic_id,
         undo,
         create_missing_labels,
+        require_existing_project,
+        capture_undo_snapshot,
+        require_existing_epic,
     } = options;
     let mut tx = begin_immediate(conn).await?;
-    let inserted = insert_task(&mut tx, workspace, draft, create_missing_labels).await?;
+    if require_existing_epic && let Some(epic_id) = &epic_id {
+        super::epics::require_ios_epic(&mut tx, workspace, epic_id).await?;
+    }
+    let inserted = insert_task(
+        &mut tx,
+        workspace,
+        draft,
+        create_missing_labels,
+        require_existing_project,
+    )
+    .await?;
     if let Some(epic_id) = epic_id {
         super::add_task_to_epic_in_transaction(&mut tx, workspace, &inserted.id, &epic_id).await?;
     }
@@ -625,6 +907,11 @@ async fn create_task_with_epic(
         undo,
     )
     .await?;
+    let undo_snapshot = if capture_undo_snapshot {
+        Some(task_snapshot(&mut tx, &workspace.id, &task.id).await?)
+    } else {
+        None
+    };
     tx.commit().await?;
     info!(
         task_id = %inserted.id,
@@ -636,6 +923,7 @@ async fn create_task_with_epic(
         task,
         create_change_id: Some(inserted.change_id),
         attachment_change_ids: Vec::new(),
+        undo_snapshot,
     })
 }
 
@@ -653,6 +941,9 @@ async fn create_task_with_attachments_and_epic(
         epic_id,
         undo,
         create_missing_labels,
+        require_existing_project,
+        capture_undo_snapshot,
+        require_existing_epic,
     } = options;
     let mut prepared = Vec::with_capacity(attachments.len());
     for attachment in attachments {
@@ -755,6 +1046,9 @@ async fn create_task_with_attachments_and_epic(
 
     let database_result = async {
         let mut tx = begin_immediate(conn).await?;
+        if require_existing_epic && let Some(epic_id) = &epic_id {
+            super::epics::require_ios_epic(&mut tx, workspace, epic_id).await?;
+        }
         for attachment in unique.values() {
             crate::attachments::storage::upsert_inventory_available(
                 &mut tx,
@@ -764,7 +1058,14 @@ async fn create_task_with_attachments_and_epic(
             )
             .await?;
         }
-        let inserted = insert_task(&mut tx, workspace, draft, create_missing_labels).await?;
+        let inserted = insert_task(
+            &mut tx,
+            workspace,
+            draft,
+            create_missing_labels,
+            require_existing_project,
+        )
+        .await?;
         if let Some(epic_id) = epic_id.as_ref() {
             super::add_task_to_epic_in_transaction(&mut tx, workspace, &inserted.id, epic_id)
                 .await?;
@@ -807,12 +1108,17 @@ async fn create_task_with_attachments_and_epic(
             undo,
         )
         .await?;
+        let undo_snapshot = if capture_undo_snapshot {
+            Some(task_snapshot(&mut tx, &workspace.id, &task.id).await?)
+        } else {
+            None
+        };
         tx.commit().await?;
-        Ok::<_, anyhow::Error>((inserted, attachment_change_ids, task))
+        Ok::<_, anyhow::Error>((inserted, attachment_change_ids, task, undo_snapshot))
     }
     .await;
 
-    let (inserted, attachment_change_ids, task) = match database_result {
+    let (inserted, attachment_change_ids, task, undo_snapshot) = match database_result {
         Ok(value) => value,
         Err(error) => {
             cleanup_attachment_guards(conn, &staging_leases, &capacity_reservations).await;
@@ -832,6 +1138,7 @@ async fn create_task_with_attachments_and_epic(
         task,
         create_change_id: Some(inserted.change_id),
         attachment_change_ids,
+        undo_snapshot,
     })
 }
 
@@ -907,6 +1214,7 @@ async fn insert_task(
     workspace: &Workspace,
     draft: TaskDraft,
     create_missing_labels: bool,
+    require_existing_project: bool,
 ) -> Result<InsertedTask> {
     let status = TaskStatus::parse(&draft.status)?;
     let priority = TaskPriority::parse(&draft.priority)?;
@@ -918,7 +1226,11 @@ async fn insert_task(
         .project
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("error project-required"))?;
-    let project = resolve_or_create_project_in_workspace(conn, &workspace.id, project).await?;
+    let project = if require_existing_project {
+        resolve_existing_project_in_workspace(conn, &workspace.id, project).await?
+    } else {
+        resolve_or_create_project_in_workspace(conn, &workspace.id, project).await?
+    };
     let (labels, created_labels) = if create_missing_labels {
         let resolution =
             resolve_or_create_labels_in_workspace(conn, workspace, &draft.labels).await?;

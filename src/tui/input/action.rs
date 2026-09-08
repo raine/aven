@@ -190,6 +190,7 @@ impl App {
             Action::ShowDatabaseStats => self.show_database_stats().await?,
             Action::BeginUpdate => self.begin_update(),
             Action::ShowChangelog => self.show_changelog(),
+            Action::PairMobile => self.show_pairing_invitation(),
             Action::BeginConfigInit => self.begin_config_init()?,
             Action::BeginAddDependency => self.begin_add_dependency().await?,
             Action::BeginRemoveDependency => self.begin_remove_dependency(),

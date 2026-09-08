@@ -542,8 +542,7 @@ async fn task_delete_and_restore_roll_back_when_change_logging_fails() {
         let error = database
             .set_task_deleted(&workspace, &created.task.id, deleted)
             .await
-            .err()
-            .expect("task deletion state change must fail");
+            .expect_err("task deletion state change must fail");
         assert!(error.to_string().contains("injected change failure"));
 
         let mut conn = SqliteConnection::connect_with(

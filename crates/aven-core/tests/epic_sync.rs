@@ -4,7 +4,6 @@ use aven_core::api::{CreateTask, Store};
 use aven_core::choices::{TaskPriority, TaskStatus};
 use aven_core::db::Database;
 use aven_core::ids::{TaskId, WorkspaceId};
-use aven_core::query::TaskListItem;
 use aven_core::sync::wire::{
     MAX_PULL_BATCH, MAX_PUSH_BATCH, SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse,
 };
@@ -109,26 +108,26 @@ impl Replicas {
         drain(&self.first, &self.server, push_limit, pull_limit).await;
     }
 
-    async fn detail(&self, db: &Database, id: &TaskId) -> TaskListItem {
-        let workspace = db.workspace_for_id(&self.workspace).await.unwrap();
-        let task = db.resolve_task_ref(&workspace, id.as_str()).await.unwrap();
-        db.task_detail(&task).await.unwrap().item
-    }
-
     async fn assert_parent(&self, path: &Path, expected: Option<&TaskId>) {
         // Each read opens persisted state without retaining a replica handle.
-        let db = Database::open(path).await.unwrap();
-        let detail = self.detail(&db, &self.child).await;
+        let store = Store::open(path).await.unwrap();
+        let detail = store
+            .ios_task_detail(&self.workspace, &self.child)
+            .await
+            .unwrap();
         assert_eq!(
             detail.epic_parent.as_ref().map(|parent| &parent.task_id),
             expected,
             "child parent at {}",
             path.display()
         );
-        assert!(detail.depends_on.is_empty());
+        assert!(detail.blocked_by.is_empty());
         assert!(detail.blocks.is_empty());
         for parent in &self.parents {
-            let detail = self.detail(&db, parent).await;
+            let detail = store
+                .ios_task_detail(&self.workspace, parent)
+                .await
+                .unwrap();
             let children: Vec<_> = detail
                 .epic_children
                 .iter()
@@ -145,15 +144,16 @@ impl Replicas {
                 "parent children at {}",
                 path.display()
             );
-            assert!(detail.task.is_epic, "membership replay preserves promotion");
+            assert!(detail.is_epic, "membership replay preserves promotion");
         }
     }
 
     async fn assert_all(&self, expected: Option<&TaskId>) {
         for path in [&self.first, &self.second] {
             let db = Database::open(path).await.unwrap();
-            let facts = db.sync_persistence_status().await.unwrap();
+            let facts = db.ios_sync_facts().await.unwrap();
             assert_eq!(facts.pending_changes, 0, "{}: {facts:?}", path.display());
+            assert!(facts.metadata_caught_up, "{}: {facts:?}", path.display());
             drop(db);
             self.assert_parent(path, expected).await;
         }
@@ -202,7 +202,6 @@ async fn respond(server: &Database, request: &SyncRequest) -> SyncResponse {
 }
 
 async fn apply(path: &Path, request: SyncRequest, response: SyncResponse) {
-    let cursor = response.cursor.to_string();
     Database::open(path)
         .await
         .unwrap()
@@ -215,13 +214,6 @@ async fn apply(path: &Path, request: SyncRequest, response: SyncResponse) {
         })
         .await
         .unwrap();
-    let status = Database::open(path)
-        .await
-        .unwrap()
-        .sync_persistence_status()
-        .await
-        .unwrap();
-    assert_eq!(status.sync_cursor.as_deref(), Some(cursor.as_str()));
 }
 
 async fn exchange(
@@ -243,7 +235,7 @@ async fn drain(path: &Path, server: &Database, push_limit: usize, pull_limit: u3
         let facts = Database::open(path)
             .await
             .unwrap()
-            .sync_persistence_status()
+            .ios_sync_facts()
             .await
             .unwrap();
         if !response.has_more && facts.pending_changes == 0 {
@@ -359,8 +351,9 @@ async fn acknowledgement_beyond_cursor_preserves_write_after_prepare_and_reopen(
     replicas.add(&replicas.second, parent).await;
     apply(&replicas.second, request, response).await;
     let db = Database::open(&replicas.second).await.unwrap();
-    let facts = db.sync_persistence_status().await.unwrap();
+    let facts = db.ios_sync_facts().await.unwrap();
     assert_eq!(facts.pending_changes, 1);
+    assert!(!facts.metadata_caught_up);
     drop(db);
     replicas.assert_parent(&replicas.second, Some(parent)).await;
 
@@ -400,10 +393,11 @@ async fn acknowledged_readd_beyond_cursor_is_visible_without_pending_writes() {
     let facts = Database::open(&replicas.second)
         .await
         .unwrap()
-        .sync_persistence_status()
+        .ios_sync_facts()
         .await
         .unwrap();
     assert_eq!(facts.pending_changes, 0);
+    assert!(!facts.metadata_caught_up);
     replicas.assert_parent(&replicas.second, Some(parent)).await;
     replicas.settle(1, 1).await;
     replicas.assert_quiet(Some(parent)).await;

@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -euo pipefail
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+# shellcheck disable=SC1091
+source "$script_dir/process-lock"
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+wait_path() {
+  local i=0
+  while [[ ! -e "$1" ]]; do
+    ((++i < 300)) || fail "wait $1"
+    sleep .01
+  done
+}
+owner() { jq -n --argjson pid "$2" --arg start "$3" --arg boot "$(process_lock_boot_identity)" --arg token "$4" '{schema_version:1,pid:$pid,process_start:$start,boot_identity:$boot,repository_identity:"repo",worktree_identity:"wt",command_class:"fixture",acquired_at:1,owner_token:$token}' >"$1"; }
+child_owner() {
+  # shellcheck disable=SC2016
+  "$BASH" -c 'set -euo pipefail;source "$1";process_lock_acquire "$2" repo wt fixture 5;:>"$3";sleep 30' x "$script_dir/process-lock" "$1" "$2" &
+  child_pid=$!
+}
+mkdir "$tmp/pre"
+# shellcheck disable=SC2016
+AVEN_PROCESS_LOCK_DELAY_BEFORE_CLAIM_SECONDS=30 "$BASH" -c 'source "$1";process_lock_acquire "$2" repo wt delayed 60' x "$script_dir/process-lock" "$tmp/pre/lock" &
+p=$!
+for _ in {1..200}; do
+  compgen -G "$tmp/pre/.owner.*" >/dev/null && break
+  sleep .01
+done
+kill -KILL "$p"
+wait "$p" 2>/dev/null || true
+[[ ! -e "$tmp/pre/lock" ]] || fail pre-claim
+printf 'ok: termination before claim\n'
+child_owner "$tmp/post.lock" "$tmp/post.ready"
+p=$child_pid
+wait_path "$tmp/post.ready"
+kill -KILL "$p"
+wait "$p" 2>/dev/null || true
+process_lock_acquire "$tmp/post.lock" repo wt next 2
+process_lock_release "$tmp/post.lock"
+printf 'ok: termination after claim\n'
+owner "$tmp/reuse.lock" "$$" wrong reuse
+process_lock_reap_if_dead "$tmp/reuse.lock"
+printf 'ok: PID reuse\n'
+mkdir "$tmp/delay"
+# shellcheck disable=SC2016
+AVEN_PROCESS_LOCK_DELAY_BEFORE_CLAIM_SECONDS=.5 "$BASH" -c 'source "$1";process_lock_acquire "$2" repo delayed delayed 5;:>"$3";process_lock_release "$2"' x "$script_dir/process-lock" "$tmp/delay/lock" "$tmp/delay/done" &
+p=$!
+for _ in {1..100}; do
+  compgen -G "$tmp/delay/.owner.*" >/dev/null && break
+  sleep .01
+done
+process_lock_acquire "$tmp/delay/lock" repo immediate immediate 2
+[[ "$(jq -r .worktree_identity "$tmp/delay/lock")" == immediate ]] || fail delayed
+process_lock_release "$tmp/delay/lock"
+wait "$p"
+printf 'ok: delayed creator\n'
+owner "$tmp/dead.lock" 999999 dead dead
+process_lock_reap_if_dead "$tmp/dead.lock"
+[[ ! -e "$tmp/dead.lock" ]] || fail dead
+printf 'ok: dead owner\n'
+owner "$tmp/live.lock" "$$" "$(process_lock_process_start $$)" live
+if process_lock_reap_if_dead "$tmp/live.lock"; then fail live; fi
+rm "$tmp/live.lock"
+printf 'ok: live owner\n'
+owner "$tmp/race.lock" 999999 dead race
+(process_lock_reap_if_dead "$tmp/race.lock" || true) &
+a=$!
+(process_lock_reap_if_dead "$tmp/race.lock" || true) &
+b=$!
+wait "$a"
+wait "$b"
+[[ ! -e "$tmp/race.lock" ]] || fail reapers
+printf 'ok: concurrent reapers\n'
+owner "$tmp/reaper.lock" 999999 dead reaper
+backend="${AVEN_PROCESS_LOCK_BACKEND:-auto}"
+if [[ "$backend" == auto ]]; then
+  if command -v lockf >/dev/null 2>&1; then backend=lockf; else backend=flock; fi
+fi
+case "$backend" in
+  lockf) AVEN_PROCESS_LOCK_REAPER_DELAY_SECONDS=30 lockf -k -t 10 "$tmp/reaper.lock.reaper" "$script_dir/process-lock" __reap "$tmp/reaper.lock" & ;;
+  flock) AVEN_PROCESS_LOCK_REAPER_DELAY_SECONDS=30 flock --exclusive --close --wait 10 "$tmp/reaper.lock.reaper" "$script_dir/process-lock" __reap "$tmp/reaper.lock" & ;;
+esac
+p=$!
+sleep .2
+kill -KILL "$p"
+wait "$p" 2>/dev/null || true
+process_lock_reap_if_dead "$tmp/reaper.lock"
+printf 'ok: reaper termination\n'
+process_lock_acquire "$tmp/token.lock" repo old old 2
+old="$AVEN_PROCESS_LOCK_OWNER_TOKEN"
+process_lock_release "$tmp/token.lock"
+process_lock_acquire "$tmp/token.lock" repo new new 2
+if "$script_dir/process-lock" __release "$tmp/token.lock" "$old"; then fail token; fi
+process_lock_release "$tmp/token.lock"
+printf 'ok: old-owner release attempt\n'
+# shellcheck disable=SC2016
+"$BASH" -c 'source "$1";process_lock_acquire "$2" repo wt trap 2;process_lock_install_traps;:>"$3";sleep 30' x "$script_dir/process-lock" "$tmp/trap.lock" "$tmp/trap.ready" &
+p=$!
+wait_path "$tmp/trap.ready"
+kill -TERM "$p"
+wait "$p" 2>/dev/null || true
+[[ ! -e "$tmp/trap.lock" ]] || fail trap
+printf 'ok: trap cleanup\n'
+child_owner "$tmp/wait.lock" "$tmp/wait.ready"
+p=$child_pid
+wait_path "$tmp/wait.ready"
+if process_lock_acquire "$tmp/wait.lock" repo waiter waiter 0 2>"$tmp/wait.err"; then fail timeout; fi
+grep -q 'command=fixture' "$tmp/wait.err" || fail diagnostics
+kill -KILL "$p"
+wait "$p" 2>/dev/null || true
+printf 'ok: bounded wait diagnostics\nall lock fixtures passed\n'

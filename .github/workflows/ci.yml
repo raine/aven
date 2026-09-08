@@ -23,3 +23,25 @@ jobs:
           cargo install checkle cargo-deny cargo-machete cargo-nextest just sqlx-cli --locked
       - name: Run full checks
         run: just check-ci
+
+  shell-fixtures:
+    name: Public shell fixtures (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Linux shell tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bash jq ruby shellcheck util-linux
+      - name: Install macOS shell tools
+        if: runner.os == 'macOS'
+        run: brew install bash jq ruby shellcheck
+      - name: Check public shell scripts
+        run: shellcheck scripts/process-lock scripts/test-process-lock scripts/test-pre-commit scripts/test-workmux-environment hooks/pre-commit
+      - name: Run public shell fixtures
+        run: |
+          scripts/test-process-lock
+          scripts/test-pre-commit
+          scripts/test-workmux-environment

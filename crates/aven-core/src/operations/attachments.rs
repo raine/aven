@@ -57,7 +57,26 @@ pub struct AttachmentOutcome {
     pub has_blob: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum AttachmentReadFailure {
+    Invalidated,
+    Unavailable,
+}
+
+impl std::fmt::Display for AttachmentReadFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Invalidated => "error attachment-invalidated",
+            Self::Unavailable => "error attachment-blob-unavailable",
+        })
+    }
+}
+
+impl std::error::Error for AttachmentReadFailure {}
+
 pub struct AttachmentReadLease {
+    pub task_id: String,
+    pub byte_size: i64,
     pub sha256: String,
     pub media_type: String,
     pub lease_id: String,
@@ -699,8 +718,9 @@ impl Database {
         attachment_id: &str,
     ) -> Result<AttachmentReadLease> {
         let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
         let row = sqlx::query(
-            "SELECT ta.sha256, ta.media_type, bi.available
+            "SELECT ta.task_id, ta.byte_size, ta.sha256, ta.media_type, bi.available
              FROM task_attachments ta
              JOIN tasks t ON t.workspace_id = ta.workspace_id AND t.id = ta.task_id
              LEFT JOIN blob_inventory bi ON bi.sha256 = ta.sha256
@@ -709,22 +729,25 @@ impl Database {
         )
         .bind(&workspace.id)
         .bind(attachment_id)
-        .fetch_optional(&mut *conn)
+        .fetch_optional(&mut *tx)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("error attachment-invalidated"))?;
+        .ok_or(AttachmentReadFailure::Invalidated)?;
         if !row.try_get::<bool, _>("available").unwrap_or(false) {
-            bail!("error attachment-blob-unavailable");
+            return Err(AttachmentReadFailure::Unavailable.into());
         }
         let sha256: String = row.get("sha256");
         let media_type: String = row.get("media_type");
         let lease_id = crate::attachments::lifecycle::acquire_lease(
-            &mut conn,
+            &mut tx,
             &sha256,
             "read",
             &crate::attachments::lifecycle::SystemClock,
         )
         .await?;
+        tx.commit().await?;
         Ok(AttachmentReadLease {
+            task_id: row.get("task_id"),
+            byte_size: row.get("byte_size"),
             sha256,
             media_type,
             lease_id,

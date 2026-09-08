@@ -1,68 +1,126 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-if ! command -v git-format-staged >/dev/null 2>&1; then
-  echo "error: git-format-staged is required for the pre-commit hook" >&2
-  echo "install it or bypass with git commit --no-verify" >&2
+command -v git-format-staged >/dev/null 2>&1 || {
+  echo 'error: git-format-staged is required for the pre-commit hook' >&2
+  echo 'install it or bypass with git commit --no-verify' >&2
   exit 1
-fi
-
+}
+repo_root="$(git rev-parse --show-toplevel)"
+script_dir="$repo_root/scripts"
+# shellcheck disable=SC1091
+source "$script_dir/process-lock"
 stash_created=0
-
-install_companion_hooks() {
-  local repo_root
-  repo_root="$(git rev-parse --show-toplevel)"
-  "$repo_root/scripts/install-git-hook-shims" commit-msg pre-push
-}
-
+stash_oid=''
+stash_message=''
+absolute_git_path() { case "$1" in /*) printf '%s\n' "$1" ;; *) (cd "$repo_root/$1" && pwd) ;; esac }
+repository_identity="$(absolute_git_path "$(git rev-parse --git-common-dir)")"
+worktree_identity="$(absolute_git_path "$(git rev-parse --git-dir)")"
+stash_lock="$repository_identity/aven/locks/v1/stash-reflog.lock"
+install_companion_hooks() { "$repo_root/scripts/install-git-hook-shims" commit-msg pre-push; }
 staged_paths_are_docs_or_media_only() {
-  local path
-  local found=0
-
-  while IFS= read -r path; do
+  local p found=0
+  while IFS= read -r p; do
     found=1
-    case "${path,,}" in
-      docs/*|*.md|*.markdown|*.avif|*.gif|*.jpeg|*.jpg|*.png|*.svg|*.webp) ;;
-      *) return 1 ;;
-    esac
+    case "${p,,}" in docs/* | *.md | *.markdown | *.avif | *.gif | *.jpeg | *.jpg | *.png | *.svg | *.webp) ;; *) return 1 ;; esac
   done < <(git diff --cached --name-only --diff-filter=ACMRD)
-
-  [[ "$found" -eq 1 ]]
+  [[ "$found" == 1 ]]
 }
-
+stash_lock_acquire() { process_lock_acquire "$stash_lock" "$repository_identity" "$worktree_identity" pre-commit-stash-reflog 30; }
+resolve_stash_record() {
+  local expected="${1:-}" selector oid subject
+  while IFS=$'\t' read -r selector oid subject; do
+    [[ "$subject" == *"$stash_message" ]] || continue
+    [[ -z "$expected" || "$oid" == "$expected" ]] || continue
+    printf '%s\t%s\n' "$selector" "$oid"
+    return
+  done < <(git reflog show --format='%gd%x09%H%x09%gs' refs/stash 2>/dev/null || true)
+  return 1
+}
+resolve_created_stash() {
+  local r
+  stash_lock_acquire
+  r="$(resolve_stash_record)" || {
+    process_lock_release "$stash_lock"
+    return 1
+  }
+  process_lock_release "$stash_lock"
+  stash_oid="${r#*$'\t'}"
+}
+push_unique_stash() {
+  local i max="${AVEN_PRE_COMMIT_STASH_PUSH_ATTEMPTS:-20}" delay="${AVEN_PRE_COMMIT_STASH_PUSH_RETRY_SECONDS:-0.05}" e
+  e="$(mktemp)"
+  for ((i = 1; i <= max; i++)); do
+    if git stash push --quiet --keep-index --include-untracked -m "$stash_message" 2>"$e"; then
+      rm -f "$e"
+      resolve_created_stash
+      return
+    fi
+    if resolve_created_stash 2>/dev/null; then
+      rm -f "$e"
+      return
+    fi
+    if ! grep -Eqi "cannot lock ref ['\"]?refs/stash|unable to create .*\.lock|another git process" "$e"; then
+      cat "$e" >&2
+      rm -f "$e"
+      return 1
+    fi
+    sleep "$delay"
+  done
+  echo "error: timed out updating the shared stash ref after $max attempts" >&2
+  cat "$e" >&2
+  rm -f "$e"
+  return 1
+}
+drop_applied_stash() {
+  local r selector
+  stash_lock_acquire
+  r="$(resolve_stash_record "$stash_oid")" || {
+    process_lock_release "$stash_lock"
+    echo "error: applied stash $stash_oid is missing from the shared reflog" >&2
+    return 1
+  }
+  selector="${r%%$'\t'*}"
+  if ! git stash drop --quiet "$selector"; then
+    process_lock_release "$stash_lock"
+    return 1
+  fi
+  process_lock_release "$stash_lock"
+}
 restore_unstaged() {
   local status=$?
-  if [[ "$stash_created" -eq 1 ]]; then
-    if ! git stash pop --quiet; then
-      echo "error: failed to restore unstaged changes after pre-commit checks" >&2
-      echo "resolve the stash conflict, then run git stash drop when finished" >&2
-      status=1
-    fi
-  fi
+  trap - EXIT
+  if [[ "$stash_created" == 1 ]]; then if ! git stash apply --quiet "$stash_oid"; then
+    echo 'error: failed to restore unstaged changes after pre-commit checks' >&2
+    echo "stash object preserved: $stash_oid" >&2
+    status=1
+  elif ! drop_applied_stash; then
+    echo "stash object preserved: $stash_oid" >&2
+    status=1
+  fi; fi
+  process_lock_release_all
   exit "$status"
 }
 trap restore_unstaged EXIT
-
+trap 'exit 130' INT TERM HUP
 hide_unstaged_changes() {
-  if git diff --quiet --ignore-submodules -- && [[ -z "$(git ls-files --others --exclude-standard)" ]]; then
-    return 0
-  fi
-  git stash push --quiet --keep-index --include-untracked -m "pre-commit unstaged changes"
+  local token
+  if git diff --quiet --ignore-submodules -- && [[ -z "$(git ls-files --others --exclude-standard)" ]]; then return; fi
+  token="$(process_lock_random_token)"
+  stash_message="aven-pre-commit:$worktree_identity:$$:$token"
+  push_unique_stash
+  [[ -n "$stash_oid" ]] || return 1
   stash_created=1
 }
-
 install_companion_hooks
 git-format-staged
 hide_unstaged_changes
-
 if staged_paths_are_docs_or_media_only; then
-  echo "skip pre-commit checks: only documentation or media files staged"
-  exit 0
+  echo 'skip pre-commit checks: only documentation or media files staged'
+  exit
 fi
-
 if ! just pre-commit; then
-  echo "pre-commit checks failed" >&2
-  echo "if clippy reported fixable lints, run: just clippy-fix" >&2
-  echo "review and stage any fixes, then commit again" >&2
+  echo 'pre-commit checks failed' >&2
+  echo 'if clippy reported fixable lints, run: just clippy-fix' >&2
+  echo 'review and stage any fixes, then commit again' >&2
   exit 1
 fi

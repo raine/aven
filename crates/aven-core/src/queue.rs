@@ -19,12 +19,33 @@ pub enum QueueBand {
     Epics,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueReason {
+    Conflict,
+    Urgent,
+    DueToday,
+    Overdue { days: u32 },
+    Stale { days: u32 },
+    Blocked { count: u32 },
+    AvailableAfterDeferral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueDateKind {
+    DueToday,
+    Overdue,
+    Due,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct QueueMeta {
     pub band: QueueBand,
     pub score: i32,
     pub idle_days: Option<i64>,
     pub idle_seconds: Option<i64>,
+    pub reason: Option<QueueReason>,
+    pub date_kind: Option<QueueDateKind>,
+    pub has_deferred_date: bool,
 }
 
 impl QueueBand {
@@ -58,7 +79,7 @@ impl QueueBand {
 pub fn queue_meta_on(
     task: &Task,
     has_conflict: bool,
-    has_unresolved_blockers: bool,
+    unresolved_blocker_count: i64,
     dependent_count: i64,
     now_seconds: i64,
     local_today: NaiveDate,
@@ -90,18 +111,24 @@ pub fn queue_meta_on(
         }
         + if available { 100 } else { 0 }
         + if has_conflict { 50 } else { 0 };
+    let (band, reason) = classify_queue(
+        task,
+        has_conflict,
+        unresolved_blocker_count,
+        idle,
+        available,
+        visible.then_some(due_days).flatten(),
+    );
+    let (date_kind, has_deferred_date) =
+        queue_date_presentation(task, reason, due_days, now_seconds);
     QueueMeta {
-        band: queue_band(
-            task,
-            has_conflict,
-            has_unresolved_blockers,
-            idle,
-            available,
-            visible && due_days.is_some_and(|days| days <= 0),
-        ),
+        band,
         score,
         idle_days,
         idle_seconds,
+        reason,
+        date_kind,
+        has_deferred_date,
     }
 }
 
@@ -116,7 +143,7 @@ fn queue_meta(
     queue_meta_on(
         task,
         has_conflict,
-        has_unresolved_blockers,
+        i64::from(has_unresolved_blockers),
         dependent_count,
         now_seconds,
         NaiveDate::from_ymd_opt(1970, 1, 1).unwrap(),
@@ -191,38 +218,88 @@ fn creation_seeded_queue_activity(task: &Task) -> bool {
     task.queue_activity_at == task.created_at && task.updated_at == task.created_at
 }
 
-fn queue_band(
+fn classify_queue(
     task: &Task,
     has_conflict: bool,
-    has_unresolved_blockers: bool,
+    unresolved_blocker_count: i64,
     idle_days: i64,
     available: bool,
-    due_actionable: bool,
-) -> QueueBand {
+    due_days: Option<i64>,
+) -> (QueueBand, Option<QueueReason>) {
     if task.is_epic {
-        QueueBand::Epics
-    } else if has_conflict
-        || task.priority == TaskPriority::Urgent
-        || (task.status == TaskStatus::Active && idle_days >= 7)
-    {
-        QueueBand::NeedsAction
-    } else if has_unresolved_blockers {
-        QueueBand::Blocked
-    } else if due_actionable {
-        QueueBand::NeedsAction
+        (QueueBand::Epics, None)
+    } else if has_conflict {
+        (QueueBand::NeedsAction, Some(QueueReason::Conflict))
+    } else if task.priority == TaskPriority::Urgent {
+        (QueueBand::NeedsAction, Some(QueueReason::Urgent))
+    } else if task.status == TaskStatus::Active && idle_days >= 7 {
+        (
+            QueueBand::NeedsAction,
+            Some(QueueReason::Stale {
+                days: bounded_u32(idle_days),
+            }),
+        )
+    } else if unresolved_blocker_count > 0 {
+        (
+            QueueBand::Blocked,
+            Some(QueueReason::Blocked {
+                count: bounded_u32(unresolved_blocker_count),
+            }),
+        )
+    } else if let Some(days) = due_days.filter(|days| *days <= 0) {
+        let reason = if days == 0 {
+            QueueReason::DueToday
+        } else {
+            QueueReason::Overdue {
+                days: bounded_u32(days.saturating_neg()),
+            }
+        };
+        (QueueBand::NeedsAction, Some(reason))
     } else if available {
-        QueueBand::Available
+        (
+            QueueBand::Available,
+            Some(QueueReason::AvailableAfterDeferral),
+        )
     } else if task.status == TaskStatus::Active
         || (task.status == TaskStatus::Todo && task.priority == TaskPriority::High)
     {
-        QueueBand::Focus
+        (QueueBand::Focus, None)
     } else if task.status == TaskStatus::Todo && task.priority == TaskPriority::Medium {
-        QueueBand::Soon
+        (QueueBand::Soon, None)
     } else if task.status == TaskStatus::Inbox {
-        QueueBand::Triage
+        (QueueBand::Triage, None)
     } else {
-        QueueBand::Later
+        (QueueBand::Later, None)
     }
+}
+
+fn queue_date_presentation(
+    task: &Task,
+    reason: Option<QueueReason>,
+    due_days: Option<i64>,
+    now_seconds: i64,
+) -> (Option<QueueDateKind>, bool) {
+    if matches!(reason, Some(QueueReason::AvailableAfterDeferral))
+        || task
+            .available_at
+            .as_deref()
+            .and_then(unix_seconds)
+            .is_some_and(|at| at > now_seconds)
+    {
+        return (None, true);
+    }
+    (
+        due_days.map(|days| match days {
+            0 => QueueDateKind::DueToday,
+            ..=-1 => QueueDateKind::Overdue,
+            _ => QueueDateKind::Due,
+        }),
+        false,
+    )
+}
+
+fn bounded_u32(value: i64) -> u32 {
+    value.clamp(0, i64::from(u32::MAX)) as u32
 }
 
 fn priority_score(priority: TaskPriority) -> i32 {
@@ -313,21 +390,6 @@ mod tests {
     }
 
     #[test]
-    fn urgent_and_conflicted_tasks_need_action() {
-        let urgent = task("todo", "urgent", "1000");
-        let conflicted = task("todo", "none", "1000");
-
-        assert_eq!(
-            queue_meta(&urgent, false, false, 0, 1000).band,
-            QueueBand::NeedsAction
-        );
-        assert_eq!(
-            queue_meta(&conflicted, true, false, 0, 1000).band,
-            QueueBand::NeedsAction
-        );
-    }
-
-    #[test]
     fn active_and_high_todo_are_focus() {
         assert_eq!(
             queue_meta(&task("active", "none", "1000"), false, false, 0, 1000).band,
@@ -344,14 +406,6 @@ mod tests {
         assert_eq!(
             queue_meta(&task("todo", "medium", "1000"), false, false, 0, 1000).band,
             QueueBand::Soon
-        );
-    }
-
-    #[test]
-    fn old_active_tasks_need_action() {
-        assert_eq!(
-            queue_meta(&task("active", "none", "0"), false, false, 0, 8 * 86_400).band,
-            QueueBand::NeedsAction
         );
     }
 
@@ -381,17 +435,6 @@ mod tests {
     }
 
     #[test]
-    fn deferred_task_surfaces_when_it_becomes_available() {
-        let mut deferred = task("inbox", "none", "1000");
-        deferred.available_at = Some("2000".to_string());
-
-        let meta = queue_meta(&deferred, false, false, 0, 2000);
-
-        assert_eq!(meta.band, QueueBand::Available);
-        assert_eq!(meta.idle_seconds, Some(0));
-    }
-
-    #[test]
     fn activity_after_availability_acknowledges_resurfacing() {
         let mut deferred = task("inbox", "none", "1000");
         deferred.available_at = Some("2000".to_string());
@@ -416,47 +459,29 @@ mod tests {
     }
 
     #[test]
-    fn due_today_and_overdue_visible_tasks_need_action() {
-        let today = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
-        let mut due_today = task("todo", "none", "1000");
-        due_today.due_on = Some("2026-07-16".to_string());
-        let mut overdue = task("inbox", "none", "1000");
-        overdue.due_on = Some("2026-07-15".to_string());
-
-        assert_eq!(
-            queue_meta_on(&due_today, false, false, 0, 2000, today).band,
-            QueueBand::NeedsAction
-        );
-        assert_eq!(
-            queue_meta_on(&overdue, false, false, 0, 2000, today).band,
-            QueueBand::NeedsAction
-        );
-    }
-
-    #[test]
     fn due_does_not_override_blockers_epics_or_future_availability() {
         let today = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
         let mut due = task("todo", "none", "1000");
         due.due_on = Some("2026-07-15".to_string());
         assert_eq!(
-            queue_meta_on(&due, false, true, 0, 2000, today).band,
+            queue_meta_on(&due, false, 1, 0, 2000, today).band,
             QueueBand::Blocked
         );
 
         due.is_epic = true;
-        let epic_with_due = queue_meta_on(&due, false, false, 0, 2000, today);
+        let epic_with_due = queue_meta_on(&due, false, 0, 0, 2000, today);
         assert_eq!(epic_with_due.band, QueueBand::Epics);
         due.due_on = None;
         assert_eq!(
             epic_with_due.score,
-            queue_meta_on(&due, false, false, 0, 2000, today).score
+            queue_meta_on(&due, false, 0, 0, 2000, today).score
         );
 
         due.is_epic = false;
         due.due_on = Some("2026-07-15".to_string());
         due.available_at = Some("3000".to_string());
         assert_eq!(
-            queue_meta_on(&due, false, false, 0, 2000, today).band,
+            queue_meta_on(&due, false, 0, 0, 2000, today).band,
             QueueBand::Later
         );
     }
@@ -469,9 +494,94 @@ mod tests {
         let mut far = near.clone();
         far.due_on = Some("2026-07-23".to_string());
 
-        let near_score = queue_meta_on(&near, false, false, 0, 2000, today).score;
-        let far_score = queue_meta_on(&far, false, false, 0, 2000, today).score;
+        let near_score = queue_meta_on(&near, false, 0, 0, 2000, today).score;
+        let far_score = queue_meta_on(&far, false, 0, 0, 2000, today).score;
         assert!(near_score > far_score);
+    }
+
+    #[test]
+    fn presentation_reasons_follow_classifier_precedence() {
+        let today = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let mut item = task("active", "urgent", "0");
+        item.due_on = Some("2026-07-14".to_string());
+
+        let conflicted = queue_meta_on(&item, true, 3, 0, 8 * 86_400, today);
+        assert_eq!(conflicted.band, QueueBand::NeedsAction);
+        assert_eq!(conflicted.reason, Some(QueueReason::Conflict));
+
+        let urgent = queue_meta_on(&item, false, 3, 0, 8 * 86_400, today);
+        assert_eq!(urgent.band, QueueBand::NeedsAction);
+        assert_eq!(urgent.reason, Some(QueueReason::Urgent));
+
+        item.priority = TaskPriority::None;
+        let stale = queue_meta_on(&item, false, 3, 0, 8 * 86_400, today);
+        assert_eq!(stale.band, QueueBand::NeedsAction);
+        assert_eq!(stale.reason, Some(QueueReason::Stale { days: 8 }));
+
+        item.status = TaskStatus::Todo;
+        let blocked = queue_meta_on(&item, false, 3, 0, 8 * 86_400, today);
+        assert_eq!(blocked.band, QueueBand::Blocked);
+        assert_eq!(blocked.reason, Some(QueueReason::Blocked { count: 3 }));
+
+        let overdue = queue_meta_on(&item, false, 0, 0, 8 * 86_400, today);
+        assert_eq!(overdue.reason, Some(QueueReason::Overdue { days: 2 }));
+        assert_eq!(overdue.date_kind, Some(QueueDateKind::Overdue));
+    }
+
+    #[test]
+    fn presentation_reasons_cover_date_boundaries_and_unexplained_bands() {
+        let today = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let mut item = task("todo", "none", "1000");
+        item.due_on = Some("2026-07-16".to_string());
+        let due_today = queue_meta_on(&item, false, 0, 0, 2000, today);
+        assert_eq!(due_today.band, QueueBand::NeedsAction);
+        assert_eq!(due_today.reason, Some(QueueReason::DueToday));
+        assert_eq!(due_today.date_kind, Some(QueueDateKind::DueToday));
+
+        item.status = TaskStatus::Inbox;
+        item.due_on = Some("2026-07-15".to_string());
+        let overdue_inbox = queue_meta_on(&item, false, 0, 0, 2000, today);
+        assert_eq!(overdue_inbox.band, QueueBand::NeedsAction);
+        assert_eq!(overdue_inbox.reason, Some(QueueReason::Overdue { days: 1 }));
+
+        item.status = TaskStatus::Todo;
+        item.due_on = Some("2026-07-17".to_string());
+        let future_due = queue_meta_on(&item, false, 0, 0, 2000, today);
+        assert_eq!(future_due.reason, None);
+        assert_eq!(future_due.date_kind, Some(QueueDateKind::Due));
+
+        item.due_on = None;
+        item.available_at = Some("2000".to_string());
+        let available = queue_meta_on(&item, false, 0, 0, 2000, today);
+        assert_eq!(available.band, QueueBand::Available);
+        assert_eq!(available.reason, Some(QueueReason::AvailableAfterDeferral));
+        assert_eq!(available.idle_seconds, Some(0));
+        assert_eq!(available.date_kind, None);
+        assert!(available.has_deferred_date);
+
+        item.available_at = Some("3000".to_string());
+        let deferred = queue_meta_on(&item, false, 0, 0, 2000, today);
+        assert_eq!(deferred.band, QueueBand::Later);
+        assert_eq!(deferred.reason, None);
+        assert_eq!(deferred.date_kind, None);
+        assert!(deferred.has_deferred_date);
+
+        item.available_at = None;
+        let plain = queue_meta_on(&item, false, 0, 0, 2000, today);
+        assert_eq!(plain.band, QueueBand::Later);
+        assert_eq!(plain.reason, None);
+        assert_eq!(plain.date_kind, None);
+        assert!(!plain.has_deferred_date);
+    }
+
+    #[test]
+    fn presentation_numeric_payloads_are_bounded() {
+        let today = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let blocked = queue_meta_on(&task("todo", "none", "0"), false, i64::MAX, 0, 0, today);
+        assert_eq!(
+            blocked.reason,
+            Some(QueueReason::Blocked { count: u32::MAX })
+        );
     }
 
     #[test]

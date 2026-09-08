@@ -1333,9 +1333,13 @@ mod tests {
         .await
         .unwrap();
 
-        reconcile_liveness_for_hashes_in_transaction(&mut conn, &[affected.clone()], &clock)
-            .await
-            .unwrap();
+        reconcile_liveness_for_hashes_in_transaction(
+            &mut conn,
+            std::slice::from_ref(&affected),
+            &clock,
+        )
+        .await
+        .unwrap();
         let unrelated_at: String =
             sqlx::query_scalar("SELECT unreferenced_at FROM blob_lifecycle WHERE sha256 = ?")
                 .bind(&unrelated)
@@ -1349,9 +1353,13 @@ mod tests {
             .unwrap();
         assert_eq!(updates, 1, "the live affected row changes once");
 
-        reconcile_liveness_for_hashes_in_transaction(&mut conn, &[affected.clone()], &clock)
-            .await
-            .unwrap();
+        reconcile_liveness_for_hashes_in_transaction(
+            &mut conn,
+            std::slice::from_ref(&affected),
+            &clock,
+        )
+        .await
+        .unwrap();
         let repeated_updates: i64 = sqlx::query_scalar("SELECT count(*) FROM lifecycle_updates")
             .fetch_one(&mut *conn)
             .await
@@ -1365,9 +1373,13 @@ mod tests {
         .execute(&mut *conn)
         .await
         .unwrap();
-        reconcile_liveness_for_hashes_in_transaction(&mut conn, &[affected.clone()], &clock)
-            .await
-            .unwrap();
+        reconcile_liveness_for_hashes_in_transaction(
+            &mut conn,
+            std::slice::from_ref(&affected),
+            &clock,
+        )
+        .await
+        .unwrap();
         let first_unreferenced: String =
             sqlx::query_scalar("SELECT unreferenced_at FROM blob_lifecycle WHERE sha256 = ?")
                 .bind(&affected)
@@ -1376,9 +1388,13 @@ mod tests {
                 .unwrap();
         assert_eq!(first_unreferenced, "2026-07-01T00:00:00Z");
         clock.advance(chrono::Duration::days(1));
-        reconcile_liveness_for_hashes_in_transaction(&mut conn, &[affected.clone()], &clock)
-            .await
-            .unwrap();
+        reconcile_liveness_for_hashes_in_transaction(
+            &mut conn,
+            std::slice::from_ref(&affected),
+            &clock,
+        )
+        .await
+        .unwrap();
         let second_unreferenced: String =
             sqlx::query_scalar("SELECT unreferenced_at FROM blob_lifecycle WHERE sha256 = ?")
                 .bind(&affected)

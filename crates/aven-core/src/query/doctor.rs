@@ -31,3 +31,17 @@ pub async fn unresolved_conflict_count(conn: &mut SqliteConnection) -> Result<i6
             .await?,
     )
 }
+
+pub async fn unresolved_conflict_count_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+) -> Result<i64> {
+    Ok(
+        sqlx::query_scalar(
+            "SELECT count(*) FROM conflicts WHERE workspace_id = ? AND resolved = 0",
+        )
+        .bind(workspace_id)
+        .fetch_one(&mut *conn)
+        .await?,
+    )
+}

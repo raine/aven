@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::task::{Context as TaskContext, Poll, Wake, Waker};
+use std::task::{Context as TaskContext, Poll, Waker};
 
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use sqlx::SqliteConnection;
@@ -392,12 +392,6 @@ async fn recurrence_params_combine_clock_and_label_creation_policy() {
 
 #[tokio::test]
 async fn database_creation_samples_implicit_time_before_waiting_for_writer() {
-    struct NoopWake;
-
-    impl Wake for NoopWake {
-        fn wake(self: Arc<Self>) {}
-    }
-
     let temp = tempfile::tempdir().unwrap();
     let database = Database::open(&temp.path().join("boundary.sqlite"))
         .await
@@ -434,8 +428,7 @@ async fn database_creation_samples_implicit_time_before_waiting_for_writer() {
             }
         },
     ));
-    let waker = Waker::from(Arc::new(NoopWake));
-    let mut context = TaskContext::from_waker(&waker);
+    let mut context = TaskContext::from_waker(Waker::noop());
 
     assert!(matches!(
         creation.as_mut().poll(&mut context),

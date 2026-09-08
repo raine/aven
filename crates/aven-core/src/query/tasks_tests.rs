@@ -475,6 +475,11 @@ async fn bounded_list_hydrates_only_selected_summary_rows() {
         .execute(conn.as_mut())
         .await
         .unwrap();
+    // Summary counts need attachment identity, not detail metadata columns.
+    sqlx::query("CREATE VIEW task_attachments AS SELECT workspace_id, task_id, deleted FROM detail_task_attachments")
+        .execute(conn.as_mut())
+        .await
+        .unwrap();
 
     let bounded = list_task_summary_items_in_workspace(
         &mut conn,
@@ -501,6 +506,7 @@ async fn bounded_list_hydrates_only_selected_summary_rows() {
     assert!(bounded.iter().all(|item| item.notes.is_empty()));
     assert!(bounded.iter().all(|item| item.has_notes));
     assert!(bounded.iter().all(|item| item.attachments.is_empty()));
+    assert!(bounded.iter().all(|item| item.live_attachment_count == 1));
 }
 
 #[tokio::test]

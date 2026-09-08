@@ -75,7 +75,8 @@ impl Database {
             workspace,
             task_id,
             field,
-            ResolutionValue::Explicit(value),
+            ConflictResolutionValue::Explicit(value),
+            None,
             Some(summary),
         )
         .await
@@ -901,9 +902,15 @@ pub async fn conflict_variant_value(
     bail!("error unknown-variant token={token}")
 }
 
-pub(crate) enum ConflictValueChoice {
+pub(crate) enum ConflictResolutionValue<'a> {
     Local,
     Remote,
+    Explicit(&'a str),
+}
+
+pub(crate) struct ExpectedConflictIdentity<'a> {
+    pub variant_a: &'a str,
+    pub variant_b: &'a str,
 }
 
 pub async fn resolve_conflict(
@@ -918,35 +925,33 @@ pub async fn resolve_conflict(
         workspace,
         task_id,
         field,
-        ResolutionValue::Explicit(value),
+        ConflictResolutionValue::Explicit(value),
+        None,
         None,
     )
     .await?
     .outcome)
 }
 
-pub(crate) async fn resolve_conflict_choice(
+pub(crate) async fn resolve_conflict_transaction(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     task_id: &crate::ids::TaskId,
     field: &str,
-    choice: ConflictValueChoice,
+    expected: ExpectedConflictIdentity<'_>,
+    resolution: ConflictResolutionValue<'_>,
 ) -> Result<ConflictOutcome> {
     Ok(resolve_conflict_value(
         conn,
         workspace,
         task_id,
         field,
-        ResolutionValue::Choice(choice),
+        resolution,
+        Some(expected),
         None,
     )
     .await?
     .outcome)
-}
-
-enum ResolutionValue<'a> {
-    Explicit(&'a str),
-    Choice(ConflictValueChoice),
 }
 
 async fn resolve_conflict_value(
@@ -954,7 +959,8 @@ async fn resolve_conflict_value(
     workspace: &Workspace,
     task_id: &crate::ids::TaskId,
     field: &str,
-    resolution: ResolutionValue<'_>,
+    resolution: ConflictResolutionValue<'_>,
+    expected: Option<ExpectedConflictIdentity<'_>>,
     tui_summary: Option<&str>,
 ) -> Result<ConflictResolutionOutcome> {
     if let Some(field_id) = field.strip_prefix("metadata:") {
@@ -977,28 +983,32 @@ async fn resolve_conflict_value(
     let mut tx = begin_immediate(conn).await?;
     let before = crate::undo::task_field_value(&mut tx, &workspace.id, task_id, field).await?;
     let conflict_id = crate::undo::conflict_row_id(&mut tx, &workspace.id, task_id, field).await?;
+    let conflict = sqlx::query_as::<_, (String, String, String, String)>(
+        "SELECT local_value, remote_value, variant_a, variant_b FROM conflicts
+         WHERE workspace_id = ? AND task_id = ? AND field = ? AND resolved = 0",
+    )
+    .bind(&workspace.id)
+    .bind(task_id)
+    .bind(field)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| {
+        CoreError::not_found(format!(
+            "error conflict-not-found task_id={task_id} field={field}"
+        ))
+    })?;
+    if let Some(expected) = expected
+        && (conflict.2 != expected.variant_a || conflict.3 != expected.variant_b)
+    {
+        return Err(CoreError::generation_conflict(format!(
+            "error stale-conflict task_id={task_id} field={field}"
+        ))
+        .into());
+    }
     let value = match resolution {
-        ResolutionValue::Explicit(value) => value.to_string(),
-        ResolutionValue::Choice(choice) => {
-            let values = sqlx::query_as::<_, (String, String)>(
-                "SELECT local_value, remote_value FROM conflicts
-                 WHERE workspace_id = ? AND task_id = ? AND field = ? AND resolved = 0",
-            )
-            .bind(&workspace.id)
-            .bind(task_id)
-            .bind(field)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or_else(|| {
-                CoreError::not_found(format!(
-                    "error conflict-not-found task_id={task_id} field={field}"
-                ))
-            })?;
-            match choice {
-                ConflictValueChoice::Local => values.0,
-                ConflictValueChoice::Remote => values.1,
-            }
-        }
+        ConflictResolutionValue::Explicit(value) => value.to_string(),
+        ConflictResolutionValue::Local => conflict.0,
+        ConflictResolutionValue::Remote => conflict.1,
     };
     if task_field == TaskField::IsEpic
         && value == "0"
@@ -1095,7 +1105,7 @@ async fn resolve_metadata_conflict_value(
     task_id: &TaskId,
     identity: &str,
     field_id: MetadataFieldId,
-    resolution: ResolutionValue<'_>,
+    resolution: ConflictResolutionValue<'_>,
 ) -> Result<ConflictResolutionOutcome> {
     let mut tx = begin_immediate(conn).await?;
     let field = metadata_field_by_id(&mut tx, &workspace.id, &field_id)
@@ -1127,12 +1137,12 @@ async fn resolve_metadata_conflict_value(
     .await?;
     let before = encode_metadata_conflict_value(current.as_deref())?;
     let encoded = match resolution {
-        ResolutionValue::Choice(ConflictValueChoice::Local) => conflict.1.clone(),
-        ResolutionValue::Choice(ConflictValueChoice::Remote) => conflict.2.clone(),
-        ResolutionValue::Explicit(value) if value == conflict.1 || value == conflict.2 => {
+        ConflictResolutionValue::Local => conflict.1.clone(),
+        ConflictResolutionValue::Remote => conflict.2.clone(),
+        ConflictResolutionValue::Explicit(value) if value == conflict.1 || value == conflict.2 => {
             value.to_string()
         }
-        ResolutionValue::Explicit(value) => encode_metadata_conflict_value(Some(value))?,
+        ConflictResolutionValue::Explicit(value) => encode_metadata_conflict_value(Some(value))?,
     };
     let value = decode_metadata_conflict_value(&encoded)?;
     let changed_at = now();

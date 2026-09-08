@@ -49,6 +49,7 @@ pub(crate) enum OverlayState {
     Confirm(ConfirmState),
     TextPanel(TextPanelState),
     Changelog(ChangelogState),
+    Pairing(std::sync::Arc<crate::pairing::PairingPresentation>),
     RecurrenceHistory(Box<RecurrenceHistoryState>),
     SyncStatus(SyncStatusState),
     DatabaseStats {

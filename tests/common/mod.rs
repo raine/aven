@@ -122,6 +122,23 @@ sync:
         command.args(args).output().expect("run aven with config")
     }
 
+    pub fn aven_config_env<I, S, E, K, V>(&self, args: I, envs: E) -> Output
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+        E: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        let mut command = command();
+        self.configure_command(&mut command);
+        command.envs(envs);
+        command
+            .args(args)
+            .output()
+            .expect("run aven with config and env")
+    }
+
     pub fn aven_config_stdin<I, S>(&self, args: I, input: &str) -> Output
     where
         I: IntoIterator<Item = S>,

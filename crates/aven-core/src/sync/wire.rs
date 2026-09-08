@@ -34,9 +34,12 @@ pub(crate) fn serialize_change_payload(payload: &Value) -> Result<String> {
 }
 
 pub fn sync_server_url_is_valid(server: &str) -> bool {
-    let Ok(url) = url::Url::parse(server) else {
-        return false;
-    };
+    url::Url::parse(server)
+        .as_ref()
+        .is_ok_and(sync_server_url_is_valid_url)
+}
+
+pub(crate) fn sync_server_url_is_valid_url(url: &url::Url) -> bool {
     matches!(url.scheme(), "http" | "https")
         && url.host_str().is_some()
         && url.username().is_empty()

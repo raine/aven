@@ -6,17 +6,17 @@ command = ["cargo", "fmt", "--all", "--", "--check"]
 [[check]]
 name = "clippy"
 mode = "cargo"
-command = ["cargo", "clippy", "--message-format=json", "--target-dir", "target/clippy", "--all-targets", "--", "-D", "warnings", "-D", "clippy::all"]
+command = ["cargo", "clippy", "--message-format=json", "--target-dir", "target/clippy", "--workspace", "--all-targets", "--", "-D", "warnings", "-D", "clippy::all"]
 
 [[check]]
 name = "test"
 mode = "nextest"
-command = ["env", "SQLX_OFFLINE=true", "RUST_MIN_STACK=4194304", "cargo", "nextest", "run", "--target-dir", "target/test", "--all-targets", "--locked", "--no-fail-fast", "--status-level", "fail"]
+command = ["env", "SQLX_OFFLINE=true", "RUST_MIN_STACK=4194304", "cargo", "nextest", "run", "--target-dir", "target/test", "--workspace", "--all-targets", "--locked", "--no-fail-fast", "--status-level", "fail"]
 
 [[check]]
 name = "doc-test"
 mode = "cargo"
-command = ["env", "SQLX_OFFLINE=true", "cargo", "test", "--target-dir", "target/test", "--doc", "--message-format=json", "--locked"]
+command = ["env", "SQLX_OFFLINE=true", "cargo", "test", "--target-dir", "target/test", "--workspace", "--doc", "--message-format=json", "--locked"]
 
 [[group]]
 name = "all"

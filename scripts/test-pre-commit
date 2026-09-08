@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+mkdir -p "$tmp/repo/hooks" "$tmp/repo/scripts" "$tmp/bin"
+cp "$repo_root"/hooks/{pre-commit,commit-msg,pre-push} "$tmp/repo/hooks/"
+cp "$repo_root"/scripts/{process-lock,install-git-hook-shims} "$tmp/repo/scripts/"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$tmp/bin/git-format-staged"
+cat >"$tmp/bin/just" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == pre-commit ]]
+[[ "$(cat unstaged)" == original ]]
+[[ ! -e untracked ]]
+sleep .3
+exit "${FIXTURE_CHECK_STATUS:-0}"
+MOCK
+chmod +x "$tmp/bin/"*
+export PATH="$tmp/bin:$PATH"
+git -C "$tmp/repo" init -q -b fixture
+git -C "$tmp/repo" config core.excludesFile /dev/null
+git -C "$tmp/repo" config user.name Fixture
+git -C "$tmp/repo" config user.email fixture@example.invalid
+printf 'original\n' >"$tmp/repo/staged"
+printf 'original\n' >"$tmp/repo/unstaged"
+git -C "$tmp/repo" add .
+git -C "$tmp/repo" -c core.hooksPath=/dev/null commit -qm 'seed fixture'
+printf 'unrelated\n' >"$tmp/repo/unstaged"
+git -C "$tmp/repo" stash push -qm unrelated
+unrelated="$(git -C "$tmp/repo" rev-parse refs/stash)"
+git -C "$tmp/repo" worktree add -qb second "$tmp/second"
+prepare() {
+  printf 'staged\n' >"$1/staged"
+  git -C "$1" add staged
+  printf 'unstaged\n' >"$1/unstaged"
+  printf 'untracked\n' >"$1/untracked"
+}
+verify() {
+  [[ "$(cat "$1/unstaged")" == unstaged ]]
+  [[ "$(cat "$1/untracked")" == untracked ]]
+  [[ "$(git -C "$1" show :staged)" == staged ]]
+  [[ "$(git -C "$1" rev-parse refs/stash)" == "$unrelated" ]]
+  [[ "$(git -C "$1" stash list | wc -l | tr -d ' ')" == 1 ]]
+}
+prepare "$tmp/repo"
+prepare "$tmp/second"
+(cd "$tmp/repo" && hooks/pre-commit) &
+first=$!
+(cd "$tmp/second" && hooks/pre-commit) &
+second=$!
+wait "$first"
+wait "$second"
+verify "$tmp/repo"
+verify "$tmp/second"
+printf 'ok: concurrent worktree hooks preserve staged, unstaged, untracked and unrelated stash state\n'
+if (cd "$tmp/repo" && FIXTURE_CHECK_STATUS=1 hooks/pre-commit); then
+  printf 'error: failed validation must reject the commit\n' >&2
+  exit 1
+fi
+verify "$tmp/repo"
+printf 'ok: failing checks restore only their own stash\n'

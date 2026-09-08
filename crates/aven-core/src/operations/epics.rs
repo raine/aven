@@ -1,6 +1,7 @@
+use crate::error::CoreError;
 use crate::ids::WorkspaceId;
 use crate::operations::{RecurrenceStructuralMutation, RecurrenceTaskMutation};
-use anyhow::{Result, bail};
+use anyhow::Result;
 use sqlx::SqliteConnection;
 
 use crate::change_log::{ChangeEntity, ChangePayload, append_change, op_type};
@@ -118,7 +119,7 @@ async fn load_epic_pair(
     epic_id: &crate::ids::TaskId,
 ) -> Result<EpicPair> {
     if child_id == epic_id {
-        bail!("error epic-self task_id={child_id}");
+        return Err(CoreError::validation(format!("error epic-self task_id={child_id}")).into());
     }
 
     let child = get_task_in_workspace(conn, workspace, child_id).await?;
@@ -141,11 +142,11 @@ async fn insert_epic_link_if_absent(
     if let Some(existing_epic_id) = existing_epic_id
         && existing_epic_id != pair.epic.id
     {
-        bail!(
+        return Err(CoreError::validation(format!(
             "error epic-child-already-linked child_task_id={} epic_task_id={}",
-            pair.child.id,
-            existing_epic_id
-        );
+            pair.child.id, existing_epic_id
+        ))
+        .into());
     }
 
     Ok(sqlx::query(
@@ -251,16 +252,28 @@ pub(crate) async fn add_task_to_epic_in_transaction(
     .await?;
     let pair = load_epic_pair(conn, workspace, child_id, epic_id).await?;
     if pair.child.project_id != pair.epic.project_id {
-        bail!("error epic-cross-project child_task_id={child_id} epic_task_id={epic_id}");
+        return Err(CoreError::validation(format!(
+            "error epic-cross-project child_task_id={child_id} epic_task_id={epic_id}"
+        ))
+        .into());
     }
     if pair.child.is_epic {
-        bail!("error epic-child-is-epic child_task_id={child_id}");
+        return Err(CoreError::validation(format!(
+            "error epic-child-is-epic child_task_id={child_id}"
+        ))
+        .into());
     }
     if pair.child.deleted {
-        bail!("error epic-child-deleted child_task_id={child_id}");
+        return Err(CoreError::validation(format!(
+            "error epic-child-deleted child_task_id={child_id}"
+        ))
+        .into());
     }
     if pair.epic.deleted {
-        bail!("error epic-parent-deleted epic_task_id={epic_id}");
+        return Err(CoreError::validation(format!(
+            "error epic-parent-deleted epic_task_id={epic_id}"
+        ))
+        .into());
     }
     crate::epic_membership::capture_snapshot_baseline(conn, workspace.id.as_str(), child_id)
         .await?;
@@ -367,4 +380,37 @@ pub async fn task_has_epic_children(
     .fetch_one(&mut *conn)
     .await?
         > 0)
+}
+
+pub(crate) async fn require_ios_epic(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    epic_id: &TaskId,
+) -> Result<()> {
+    let epic = get_task_in_workspace(conn, workspace, epic_id).await?;
+    if epic.deleted || !epic.is_epic {
+        return Err(CoreError::validation("epic is unavailable".to_string()).into());
+    }
+    Ok(())
+}
+
+impl Database {
+    pub(crate) async fn set_ios_epic_child(
+        &self,
+        workspace: &Workspace,
+        epic_id: &TaskId,
+        child_id: &TaskId,
+        linked: bool,
+    ) -> Result<bool> {
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        require_ios_epic(&mut tx, workspace, epic_id).await?;
+        let outcome = if linked {
+            add_task_to_epic_in_transaction(&mut tx, workspace, child_id, epic_id).await?
+        } else {
+            remove_task_from_epic_in_transaction(&mut tx, workspace, child_id, epic_id).await?
+        };
+        tx.commit().await?;
+        Ok(outcome.changed)
+    }
 }
