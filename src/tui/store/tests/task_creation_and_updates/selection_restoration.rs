@@ -54,7 +54,7 @@ async fn unchanged_single_and_batch_edits_preserve_state_without_undo() {
         .update_project_for_tasks(
             priority.selected,
             std::slice::from_ref(&task_id),
-            "aven".to_string(),
+            store.tasks[selected].task.project_key.clone(),
         )
         .await
         .unwrap()

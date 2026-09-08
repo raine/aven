@@ -136,7 +136,7 @@ async fn unchanged_title_edit_leaves_pending_change_count() {
 async fn unchanged_task_fields_leave_pending_change_count() {
     let (dir, pool, mut store) = test_store_with_pool().await;
     store.create_project("Side".to_string()).await.unwrap();
-    let (task_id, _selected) = create_selected_task(&mut store, "Stable").await;
+    let (task_id, selected) = create_selected_task(&mut store, "Stable").await;
     let pending_before = pending_change_count(&pool).await;
     let mut conn = pool.acquire().await.unwrap();
 
@@ -147,7 +147,7 @@ async fn unchanged_task_fields_leave_pending_change_count() {
         TaskUpdate {
             title: Some("Stable".to_string()),
             description: Some(String::new()),
-            project: Some("aven".to_string()),
+            project: Some(store.tasks[selected].task.project_key.clone()),
             status: Some("inbox".to_string()),
             priority: Some("none".to_string()),
             ..TaskUpdate::default()

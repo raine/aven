@@ -8,6 +8,7 @@ async fn availability_transition_refreshes_tasks_sidebar_and_project_counts() {
             TaskDraft {
                 metadata: Vec::new(),
                 title: "Scheduled store task".to_string(),
+                project: Some("aven".to_string()),
                 available_at: Some("2999-03-08T05:00:00Z".to_string()),
                 due_on: None,
                 ..task_draft("")

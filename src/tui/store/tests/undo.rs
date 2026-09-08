@@ -811,12 +811,8 @@ async fn undo_project_conflict_resolution_uses_project_ids() {
     let workspace_id = store.active_workspace.id.clone();
 
     let mut conn = pool.acquire().await.unwrap();
-    let app_id: String =
-        sqlx::query_scalar("SELECT id FROM projects WHERE workspace_id = ? AND key = 'aven'")
-            .bind(&workspace_id)
-            .fetch_one(&mut *conn)
-            .await
-            .unwrap();
+    let app_id = store.tasks[selected].task.project_id.to_string();
+    let app_key = store.tasks[selected].task.project_key.clone();
     let ops_id: String =
         sqlx::query_scalar("SELECT id FROM projects WHERE workspace_id = ? AND key = 'ops'")
             .bind(&workspace_id)
@@ -862,7 +858,7 @@ async fn undo_project_conflict_resolution_uses_project_ids() {
 
     store.undo_last(None).await.unwrap();
     store.refresh(Some(&task_id)).await.unwrap();
-    assert_eq!(store.tasks[selected].task.project_key, "aven");
+    assert_eq!(store.tasks[selected].task.project_key, app_key);
     assert!(store.tasks[selected].has_conflict);
 }
 
