@@ -32,7 +32,8 @@ resolve_stash_record() {
     [[ "$subject" == *"$stash_message" ]] || continue
     [[ -z "$expected" || "$oid" == "$expected" ]] || continue
     printf '%s\t%s\n' "$selector" "$oid"
-    return
+    # A bare return inside an EXIT trap can inherit the original failure status.
+    return 0
   done < <(git reflog show --format='%gd%x09%H%x09%gs' refs/stash 2>/dev/null || true)
   return 1
 }

@@ -190,7 +190,10 @@ mod tests {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use serde::Serialize;
 
-    use super::*;
+    use super::{
+        MAX_ENCODED_PAYLOAD_CHARS, MAX_PAIRING_PAYLOAD_BYTES, PAIRING_INVITATION_URI_PREFIX,
+        PairingInvitation, PairingInvitationError, REDACTED,
+    };
 
     const TEST_SERVER: &str = "https://sync.example.test:8443/aven";
     const TEST_TOKEN: &str = "pairing-token-fixture-0123456789";

@@ -15,6 +15,9 @@ set -euo pipefail
 [[ "$(cat unstaged)" == original ]]
 [[ ! -e untracked ]]
 sleep .3
+if [[ "${FIXTURE_DROP_OWN_STASH:-0}" == 1 ]]; then
+  git stash drop --quiet 'stash@{0}'
+fi
 exit "${FIXTURE_CHECK_STATUS:-0}"
 MOCK
 chmod +x "$tmp/bin/"*
@@ -55,9 +58,27 @@ wait "$second"
 verify "$tmp/repo"
 verify "$tmp/second"
 printf 'ok: concurrent worktree hooks preserve staged, unstaged, untracked and unrelated stash state\n'
-if (cd "$tmp/repo" && FIXTURE_CHECK_STATUS=1 hooks/pre-commit); then
-  printf 'error: failed validation must reject the commit\n' >&2
+status=0
+(cd "$tmp/repo" && FIXTURE_CHECK_STATUS=1 hooks/pre-commit) >"$tmp/failed-check.log" 2>&1 || status=$?
+cat "$tmp/failed-check.log"
+if [[ "$status" != 1 ]]; then
+  printf 'error: failed validation must reject the commit with status 1\n' >&2
+  exit 1
+fi
+grep -Fq 'pre-commit checks failed' "$tmp/failed-check.log"
+if grep -Eq '^error:|^stash object preserved:' "$tmp/failed-check.log"; then
+  printf 'error: failed validation must not break stash cleanup\n' >&2
   exit 1
 fi
 verify "$tmp/repo"
 printf 'ok: failing checks restore only their own stash\n'
+
+status=0
+(cd "$tmp/repo" && FIXTURE_CHECK_STATUS=1 FIXTURE_DROP_OWN_STASH=1 hooks/pre-commit) >"$tmp/missing-stash.log" 2>&1 || status=$?
+[[ "$status" == 1 ]]
+grep -Eq '^error: applied stash [0-9a-f]+ is missing from the shared reflog$' "$tmp/missing-stash.log"
+preserved="$(sed -n 's/^stash object preserved: //p' "$tmp/missing-stash.log")"
+[[ -n "$preserved" ]]
+git -C "$tmp/repo" cat-file -e "$preserved^{commit}"
+verify "$tmp/repo"
+printf 'ok: genuinely missing stash records still fail and preserve the restored object\n'
