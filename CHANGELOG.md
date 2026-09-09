@@ -3,6 +3,12 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.38 (2026-09-09)
+
+- Prepare a [mobile pairing invitation](https://aven.raine.dev/sync/#pair-a-mobile-device) with `aven sync pair` or `:pair-mobile` in the TUI. Display a QR code or use `aven sync pair --copy` to copy the invitation for the upcoming iOS app.
+- Linked task references in the TUI use their own project's color, making cross-project relationships easier to recognize.
+- Fix: Undoing a note deletion no longer prevents undoing that note's creation when the changes have not yet synced.
+
 ## v0.1.37 (2026-09-07)
 
 - View and edit [custom task metadata in the TUI](https://aven.raine.dev/tui/#custom-metadata), with inline editing for short values and external-editor support for multiline values. ([#9](https://github.com/raine/aven/issues/9))
