@@ -135,25 +135,13 @@ content, sync payloads, and raw server responses.
 
 ### Image attachments during sync
 
-#### How attachment sync works
+Images sync automatically but may arrive after their tasks. If an image shows
+`pending download` or sync reports `complete=false`, run `aven sync` again or
+let the running daemon finish in the background.
 
-Aven syncs an attachment record and its image file as related but separate data. The record identifies the task, media type, dimensions, and other attachment information. The image file is stored and transferred separately. This keeps normal task changes responsive even when images are large or a device is temporarily offline.
-
-The cross-device flow is:
-
-1. The task and attachment record sync through the normal change stream.
-2. The image uploads to the sync server in a separate, bounded transfer.
-3. Another device can receive the task and attachment record before it receives the image. That device shows `pending download` until a later sync transfers the file.
-4. Each device tracks its own local image availability and storage quota. The server enforces a separate quota for each workspace.
-5. Images are addressed by their content, so identical image bytes share storage and transfer identity instead of creating independent copies.
-6. Deleting an attachment syncs that change. Image bytes with no remaining references become eligible for cleanup after the configured grace period rather than disappearing immediately.
-
-This separation also affects data portability. [Back up and restore](/backups/)
-compares complete backup archives with portable JSON exports.
-
-Sync output reports image upload and download counts, transferred sizes, remaining work, and completion state. Run `aven sync` again when it reports `complete=false`. Interactive sync continues automatically while it can make progress. A configured, running daemon resumes remaining work in the background.
-
-`error attachment-quota-exceeded` can refer to storage on this device or to the server workspace. For local storage, remove eligible images with `aven attachment prune` or increase [`quota_bytes`](/configuration/#retention-and-storage-limits). For server storage, increase `server_workspace_quota_bytes` in the server's configuration. Local pruning does not reduce server workspace usage. Task changes already downloaded remain available, and missing images can download on a later sync.
+If sync reports `attachment-quota-exceeded`, increase the relevant
+[storage limit](/configuration/#retention-and-storage-limits): `quota_bytes`
+on the device or `server_workspace_quota_bytes` on the server.
 
 :::note[Server pinning]
 A local database pins the sync server it has used. Use a fresh database for a different server.
