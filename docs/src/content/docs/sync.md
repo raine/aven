@@ -83,60 +83,30 @@ aven sync
 
 ## Pair a mobile device
 
-Aven iOS is a companion to the terminal UI. Prepare a pairing invitation on the
-desktop after connecting the computer and iPhone to the same VPN or private
-network:
+Configure sync with a server your iPhone can reach and a shared `sync.auth_token`.
+If using a VPN, connect both devices first.
+
+On your desktop, run:
 
 ```sh
 aven sync pair
 ```
 
-From the TUI task list, open the command panel with `:` and choose
-`:pair-mobile`. The **Pair mobile device** overlay uses the same invitation, QR rows,
-and server precedence as `aven sync pair`: `AVEN_SYNC_SERVER` precedes
-`sync.server_url` when no command-line override is available. Its network
-guidance wraps to the available width, and constrained terminals show the CLI
-fallback instead of a partial QR. Press Escape or click outside the overlay to
-close it.
+Scan the QR code during Aven iOS onboarding. In the TUI, you can also open the
+command panel with `:` and choose `:pair-mobile`.
 
-The command displays a QR code containing the configured `sync.server_url` and
-the existing shared `sync.auth_token`. Scan it during Aven iOS onboarding. The
-desktop command only produces the invitation: it does not open the task
-database, contact the sync server, change configuration, or run sync. A terminal
-uses black-on-white ANSI styling unless `NO_COLOR` is present. Redirected output
-uses plain rows without escape sequences or a terminal-width check.
+To pair without a camera, run `aven sync pair --copy` on your local desktop,
+transfer the clipboard to your iPhone, and tap **Paste** during onboarding.
 
-To pair without the camera, copy the invitation from your local desktop:
-
-```sh
-aven sync pair --copy
-```
-
-This mode writes the complete invitation directly to the clipboard and prints
-only a confirmation with the server origin, not the invitation or a QR code.
-Transfer it to your iPhone using a trusted clipboard-sharing method, then tap
-**Paste** during onboarding. The invitation contains the shared sync credential;
-clipboard history and sharing services may retain it. Rotate `sync.auth_token`
-to invalidate existing invitations.
-
-Clipboard copying supports macOS (`pbcopy`) and Linux desktop sessions
-(`wl-copy` or `xclip`). Missing or failing clipboard helpers return an error
-without printing the invitation. SSH sessions are rejected: run the command on
-the local desktop or scan the QR code. `--copy` supports the same `--server`
-override and configuration precedence as QR output, and does not require a
-terminal wide enough for a QR code.
-
-The invitation must contain a URL the iPhone can reach. If the desktop uses a
-loopback or desktop-only URL, pass the phone-reachable address explicitly:
+If your desktop's configured server address is not reachable from your iPhone,
+override it for the invitation:
 
 ```sh
 aven sync pair --server http://10.0.0.1:3746
 ```
 
-The explicit value applies only to the invitation and does not change
-`sync.server_url`. Pairing rejects loopback URLs and requires a configured,
-nonempty `sync.auth_token`. Public HTTPS and reverse-proxy deployments remain
-valid phone-reachable server configurations.
+Treat the QR code and copied invitation like a password: both contain your
+shared sync token.
 
 ## Sync a client
 
