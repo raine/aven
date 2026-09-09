@@ -5,7 +5,6 @@ description: Release notes for aven.
 
 ## v0.1.38 (2026-09-09)
 
-- Prepare a [mobile pairing invitation](https://aven.raine.dev/sync/#pair-a-mobile-device) with `aven sync pair` or `:pair-mobile` in the TUI. Display a QR code or use `aven sync pair --copy` to copy the invitation for the upcoming iOS app.
 - Linked task references in the TUI use their own project's color, making cross-project relationships easier to recognize.
 - Fix: Undoing a note deletion no longer prevents undoing that note's creation when the changes have not yet synced.
 
