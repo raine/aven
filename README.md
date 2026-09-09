@@ -1,4 +1,8 @@
-# aven
+<h1>
+  <a href="https://aven.raine.dev#gh-light-mode-only"><img src="docs/src/assets/aven-logo-grape-violet-light.svg" width="48" height="48" align="absmiddle" alt="Aven logo"></a>
+  <a href="https://aven.raine.dev#gh-dark-mode-only"><img src="docs/src/assets/aven-logo-grape-violet.svg" width="48" height="48" align="absmiddle" alt="Aven logo"></a>
+  aven
+</h1>
 
 `aven` is a local-first task manager for power users and agents. It gives you one overview across
 projects, task capture from wherever work appears, first-class agent workflows, workspace isolation,
@@ -20,7 +24,7 @@ Docs: <https://aven.raine.dev>
   <a href="meta/ios-dark.webp#gh-dark-mode-only"><img src="meta/ios-dark.webp" width="24%" alt="Aven iOS queue in dark mode with the TUI demo tasks, priorities, and project labels in an iPhone frame"></a>
 </p>
 
-*Your tasks, away from the terminal. Aven for iPhone is coming soon.*
+*Your tasks, away from the terminal. Aven for iOS is coming soon.*
 
 ## Why aven?
 
