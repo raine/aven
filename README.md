@@ -14,7 +14,13 @@ If you find aven useful, consider sharing it with others who might benefit from 
 
 Docs: <https://aven.raine.dev>
 
-![aven TUI showing the queue view across workspace projects](meta/tui.webp)
+<p>
+  <a href="meta/tui.webp"><img src="meta/tui.webp" width="74%" alt="aven TUI showing the queue view across workspace projects"></a>
+  <a href="meta/ios-light.webp#gh-light-mode-only"><img src="meta/ios-light.webp" width="24%" alt="Aven iOS queue in light mode with the TUI demo tasks, priorities, and project labels in an iPhone frame"></a>
+  <a href="meta/ios-dark.webp#gh-dark-mode-only"><img src="meta/ios-dark.webp" width="24%" alt="Aven iOS queue in dark mode with the TUI demo tasks, priorities, and project labels in an iPhone frame"></a>
+</p>
+
+*Your tasks, away from the terminal. Aven for iPhone is coming soon.*
 
 ## Why aven?
 
