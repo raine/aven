@@ -2808,10 +2808,25 @@ mod tests {
         assert!(captured.state.is_none());
         assert_eq!(captured.display_ref, captured.task_id.to_string());
         assert!(!captured.undo_token.is_empty());
+        let mutation_target = store
+            .capture_ios_queue_task(
+                &workspace.id,
+                IosTaskCapture {
+                    title: "Mutation target".into(),
+                    description: String::new(),
+                    project: Some("ios".into()),
+                    priority: TaskPriority::None,
+                    due_on: None,
+                    labels: Vec::new(),
+                },
+            )
+            .await
+            .unwrap();
+        // Mutations can invalidate capture undo even after their values are restored.
         let changed = store
             .mutate_ios_queue_task(
                 &workspace.id,
-                &captured.task_id,
+                &mutation_target.task_id,
                 IosQueueMutation {
                     kind: IosQueueMutationKind::SetPriority,
                     priority: Some(TaskPriority::High),
@@ -2821,11 +2836,11 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(changed.task_id, captured.task_id);
+        assert_eq!(changed.task_id, mutation_target.task_id);
         assert!(changed.state.is_none());
         assert_eq!(
             store
-                .ios_task_detail(&workspace.id, &captured.task_id)
+                .ios_task_detail(&workspace.id, &mutation_target.task_id)
                 .await
                 .unwrap()
                 .priority,
@@ -2840,7 +2855,7 @@ mod tests {
         );
         assert_eq!(
             store
-                .ios_task_detail(&workspace.id, &captured.task_id)
+                .ios_task_detail(&workspace.id, &mutation_target.task_id)
                 .await
                 .unwrap()
                 .priority,
