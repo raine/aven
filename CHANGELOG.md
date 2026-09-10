@@ -3,6 +3,10 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.39 (2026-09-10)
+
+- Press `!` to choose a task's priority directly from TUI task lists or task details.
+
 ## v0.1.38 (2026-09-09)
 
 - Linked task references in the TUI use their own project's color, making cross-project relationships easier to recognize.

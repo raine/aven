@@ -24,7 +24,7 @@ zstd = "0.13"
 
 [package]
 name = "aven"
-version = "0.1.38"
+version = "0.1.39"
 edition = "2024"
 rust-version = "1.96"
 authors = ["Raine"]
