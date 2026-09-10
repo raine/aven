@@ -136,6 +136,7 @@ Direct shortcuts cover frequent lifecycle changes:
 | Key | Action |
 | --- | --- |
 | `s` | Choose status |
+| `!` | Choose priority |
 | `d` | Mark done |
 | `x` | Mark canceled |
 | `n` | Add a note |

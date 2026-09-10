@@ -393,7 +393,7 @@ mod tests {
     fn resolver_reports_missing_and_empty_inputs() {
         assert_eq!(resolve_shortcut(&[]), ShortcutLookup::Missing);
         assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('!')]),
+            resolve_shortcut(&[KeyCode::Char('~')]),
             ShortcutLookup::Missing
         );
     }
@@ -667,6 +667,22 @@ mod tests {
             resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char(']')]),
             ShortcutLookup::Found(Action::GoForward)
         );
+    }
+
+    #[test]
+    fn priority_shortcuts_open_picker_in_list_and_detail() {
+        for context in [CommandContext::Normal, CommandContext::Detail] {
+            for keys in [
+                vec![KeyCode::Char('!')],
+                vec![KeyCode::Char('e'), KeyCode::Char('p')],
+                vec![KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('p')],
+            ] {
+                assert_eq!(
+                    resolve_shortcut_for(context, &keys),
+                    ShortcutLookup::Found(Action::BeginEditPriority)
+                );
+            }
+        }
     }
 
     #[test]

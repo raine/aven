@@ -1200,6 +1200,10 @@ pub(crate) const COMMANDS: &[BuiltInCommand] = &[
         "Tasks",
         &[
             KeySequence {
+                codes: &[KeyCode::Char('!')],
+                label: "!",
+            },
+            KeySequence {
                 codes: &[KeyCode::Char('e'), KeyCode::Char('p')],
                 label: "e p",
             },
