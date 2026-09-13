@@ -1746,6 +1746,9 @@ pub(crate) struct SyncArgs {
     /// Override the configured sync server URL
     #[arg(long)]
     pub(crate) server: Option<String>,
+    /// Emit the versioned sync result as JSON
+    #[arg(long)]
+    pub(crate) json: bool,
 }
 
 #[derive(Subcommand)]
@@ -1783,6 +1786,7 @@ mod tests {
     fn sync_existing_forms_parse() {
         for args in [
             vec!["aven", "sync"],
+            vec!["aven", "sync", "--json"],
             vec!["aven", "sync", "--server", "https://sync.example.test"],
             vec!["aven", "sync", "status"],
         ] {
@@ -1802,6 +1806,7 @@ mod tests {
                     copy: false
                 })),
                 server: None,
+                json: false,
             }))
         ));
 
@@ -1820,6 +1825,7 @@ mod tests {
             Some(Commands::Sync(SyncArgs {
                 command: Some(SyncSubcommand::Pair(pair)),
                 server: Some(parent),
+                json: false,
             })) => {
                 assert!(pair.copy);
                 assert_eq!(pair.server.as_deref(), Some("https://pair.example.test"));

@@ -21,18 +21,6 @@ const SYNC_CLIENT_ID: &str = "GGGGGGGGGGGGGGGG";
 const MAX_PUSH_BATCH: usize = 256;
 const MAX_PULL_BATCH: usize = 512;
 
-fn sync_round_values(output: &str, key: &str) -> Vec<u64> {
-    output
-        .lines()
-        .filter(|line| line.starts_with("synced "))
-        .filter_map(|line| {
-            line.split_whitespace()
-                .find_map(|field| field.strip_prefix(&format!("{key}=")))
-                .and_then(|value| value.parse().ok())
-        })
-        .collect()
-}
-
 fn add_daily_recurrence(env: &TestEnv, db: &std::path::Path, title: &str) -> (String, String) {
     add_recurrence(env, db, title, "daily")
 }
@@ -71,7 +59,7 @@ fn add_recurrence(
 
 fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) {
     let output = ok(env.aven(db, ["sync", "--server", &server.url]));
-    contains_all(&output, &["synced", "cursor="]);
+    contains_all(&output, &["Cursor"]);
 }
 
 fn exec_sql(db: &std::path::Path, sql: &str) {
@@ -2342,7 +2330,10 @@ fn sync_client_skips_already_stored_pulled_change_in_applied_count() {
     let output = ok(env.aven(&db, ["sync", "--server", server.url()]));
     contains_all(
         &output,
-        &["pushed=0", "pulled=0", &format!("cursor={cursor}")],
+        &[
+            "Everything is up to date",
+            &format!("Cursor       {cursor}"),
+        ],
     );
     let expected_cursor = cursor.to_string();
     assert_eq!(
@@ -2637,7 +2628,7 @@ fn sync_client_drains_paged_remote_changes() {
         ));
     }
     let output_a = ok(env.aven(&a, ["sync", "--server", &server.url]));
-    contains_all(&output_a, &["pushed=", "pulled=0", "cursor="]);
+    contains_all(&output_a, &["Sync complete", "Changes", "received"]);
     let server_cursor_before_pull = query_sql_scalar(
         &env.path("server.sqlite"),
         "SELECT max(server_seq) FROM changes",
@@ -2645,7 +2636,7 @@ fn sync_client_drains_paged_remote_changes() {
     let output_b = ok(env.aven(&b, ["sync", "--server", &server.url]));
     contains_all(
         &output_b,
-        &["pushed=0", &format!("pulled={server_cursor_before_pull}")],
+        &[&format!("0 sent, {server_cursor_before_pull} received")],
     );
 
     assert_eq!(
@@ -2678,7 +2669,10 @@ fn sync_client_drains_paged_local_changes() {
     let output = ok(env.aven(&a, ["sync", "--server", &server.url]));
     contains_all(
         &output,
-        &[&format!("pushed={expected_push}"), "pulled=0", "cursor="],
+        &[
+            &format!("{expected_push} sent, 0 received"),
+            "Sync complete",
+        ],
     );
 
     assert_eq!(
@@ -3303,9 +3297,9 @@ fn attachment_metadata_and_blobs_round_trip_through_real_sync_server() {
     let task_id = local_task_id(&a, "attachment target");
     seed_local_attachment_change(&a, &task_id);
     let push_output = ok(env.aven(&a, ["sync", "--server", &server.url]));
-    contains_all(&push_output, &["blob_uploaded=1", "blob_downloaded=0"]);
+    contains_all(&push_output, &["1 uploaded", "0 downloaded"]);
     let pull_output = ok(env.aven(&b, ["sync", "--server", &server.url]));
-    contains_all(&pull_output, &["blob_uploaded=0", "blob_downloaded=1"]);
+    contains_all(&pull_output, &["0 uploaded", "1 downloaded"]);
 
     assert_eq!(scalar_i64(&b, "SELECT count(*) FROM task_attachments"), 1);
     assert_eq!(scalar_i64(&b, "SELECT count(*) FROM blob_inventory"), 1);
@@ -3346,28 +3340,20 @@ fn attachment_backlog_syncs_in_bounded_unique_hash_rounds() {
         ],
     ));
 
-    let push_output = ok(env.aven(&a, ["sync", "--server", &server.url]));
-    let uploads = sync_round_values(&push_output, "blob_uploaded");
-    assert_eq!(uploads.iter().sum::<u64>(), 17, "{push_output}");
-    assert!(uploads.iter().all(|count| *count <= 16), "{push_output}");
-    contains_all(
-        &push_output,
-        &["blob_upload_remaining=1", "complete=false", "complete=true"],
-    );
+    let push_output = ok(env.aven(&a, ["sync", "--server", &server.url, "--json"]));
+    let push_report: Value = serde_json::from_str(&push_output).expect("sync result JSON");
+    assert_eq!(push_report["version"], 1);
+    assert_eq!(push_report["blob_uploaded"], 17);
+    assert_eq!(push_report["blob_upload_remaining"], 0);
+    assert_eq!(push_report["complete"], true);
     contains_none(&push_output, &["bounded attachments", "bounded-0.png"]);
 
-    let pull_output = ok(env.aven(&b, ["sync", "--server", &server.url]));
-    let downloads = sync_round_values(&pull_output, "blob_downloaded");
-    assert_eq!(downloads.iter().sum::<u64>(), 17, "{pull_output}");
-    assert!(downloads.iter().all(|count| *count <= 16), "{pull_output}");
-    contains_all(
-        &pull_output,
-        &[
-            "blob_download_remaining=1",
-            "complete=false",
-            "complete=true",
-        ],
-    );
+    let pull_output = ok(env.aven(&b, ["sync", "--server", &server.url, "--json"]));
+    let pull_report: Value = serde_json::from_str(&pull_output).expect("sync result JSON");
+    assert_eq!(pull_report["version"], 1);
+    assert_eq!(pull_report["blob_downloaded"], 17);
+    assert_eq!(pull_report["blob_download_remaining"], 0);
+    assert_eq!(pull_report["complete"], true);
     contains_none(&pull_output, &["bounded attachments", "bounded-0.png"]);
     assert_eq!(scalar_i64(&b, "SELECT count(*) FROM task_attachments"), 18);
     assert_eq!(scalar_i64(&b, "SELECT count(*) FROM blob_inventory"), 17);
@@ -3423,14 +3409,7 @@ fn pulled_attachment_on_deleted_task_does_not_schedule_blob_download() {
 
     let output = ok(env.aven(&db, ["sync", "--server", server.url()]));
 
-    contains_all(
-        &output,
-        &[
-            "blob_downloaded=0",
-            "blob_download_remaining=0",
-            "complete=true",
-        ],
-    );
+    contains_all(&output, &["Sync complete", "1 received", "Cursor       1"]);
     assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("1"));
     assert_eq!(scalar_i64(&db, "SELECT count(*) FROM blob_inventory"), 0);
     server.finish();

@@ -52,7 +52,7 @@ fn repeated_sync_is_idempotent_and_acknowledges_changes() {
     ok(env.aven_stdin(&a, ["note", &task_ref, "--stdin"], "only once\n"));
 
     let first = sync(&env, &a, &server);
-    contains_all(&first, &["pushed=4", "pulled=0", "cursor="]);
+    contains_all(&first, &["Sync complete", "4 sent, 0 received", "Cursor"]);
     assert_eq!(
         scalar_i64(&a, "SELECT count(*) FROM changes WHERE server_seq IS NULL"),
         0
@@ -61,13 +61,13 @@ fn repeated_sync_is_idempotent_and_acknowledges_changes() {
 
     sync(&env, &b, &server);
     let repeat_b = sync(&env, &b, &server);
-    contains_all(&repeat_b, &["pushed=0", "pulled=0"]);
+    contains_all(&repeat_b, &["Everything is up to date"]);
     assert_eq!(scalar_i64(&b, "SELECT count(*) FROM tasks"), 1);
     assert_eq!(scalar_i64(&b, "SELECT count(*) FROM notes"), 1);
     assert_eq!(scalar_i64(&b, "SELECT count(*) FROM task_labels"), 1);
 
     let repeat_a = sync(&env, &a, &server);
-    contains_all(&repeat_a, &["pushed=0", "pulled=0"]);
+    contains_all(&repeat_a, &["Everything is up to date"]);
     assert_eq!(meta_value(&a, "sync_cursor"), Some(first_cursor));
 }
 
@@ -170,7 +170,7 @@ sync:
     contains_all(&flag_list, &[&task_ref, "flag task"]);
 
     let sync = ok(env.aven_config(["--db", flag_db.to_str().expect("utf8 db path"), "sync"]));
-    contains_all(&sync, &["synced", "pushed="]);
+    contains_all(&sync, &["Sync complete", "Changes"]);
     assert_eq!(
         meta_value(&flag_db, "sync_server_url"),
         Some(server.url.clone())

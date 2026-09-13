@@ -7,7 +7,7 @@ use common::{TestEnv, TestServer, command, contains_all, contains_none, extract_
 
 fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) {
     let output = ok(env.aven(db, ["sync", "--server", &server.url]));
-    contains_all(&output, &["synced", "cursor="]);
+    contains_all(&output, &["aven sync", "cursor", "result: complete"]);
 }
 
 #[test]
