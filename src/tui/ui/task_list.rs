@@ -30,7 +30,8 @@ use crate::tui::theme::{
     SELECTED_INACTIVE, YELLOW,
 };
 use crate::tui::widgets::{
-    age_style, label_cell, priority_icon, priority_short, status_chip, status_span, title_cell,
+    age_style, label_cell, priority_icon, priority_short, status_chip, status_icon_cell,
+    status_span, title_cell,
 };
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -85,6 +86,7 @@ struct TaskRowState {
 struct TaskListCellLayout<'a> {
     widths: &'a [usize; 9],
     state_column: Option<TableColumn>,
+    compact_status: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -284,6 +286,7 @@ fn render_task_list(
         model.render_mode,
         model.has_deferred_rows,
         model.due_order,
+        store.config().tui.table.compact_status,
     );
 
     if store.tasks.is_empty() {
@@ -369,6 +372,7 @@ fn build_task_list_render_model(
     let has_deferred_rows = projection.view.render_mode == TaskListRenderMode::Flat
         && visible_tasks.iter().any(|item| is_deferred(item, now));
     let configured_columns = &store.config().tui.table.columns;
+    let compact_status = store.config().tui.table.compact_status;
     let layout = TableLayout::resolve(&columns, configured_columns, area.width);
     let state_column = layout.state_column();
     let column_widths = layout.widths();
@@ -410,6 +414,7 @@ fn build_task_list_render_model(
                         TaskListCellLayout {
                             widths: &column_widths,
                             state_column,
+                            compact_status,
                         },
                         TaskRowState {
                             selected,
@@ -430,6 +435,7 @@ fn build_task_list_render_model(
                         TaskListCellLayout {
                             widths: &column_widths,
                             state_column,
+                            compact_status,
                         },
                         TaskRowState {
                             selected,
@@ -484,6 +490,7 @@ fn build_task_list_render_model(
                         TaskListCellLayout {
                             widths: &column_widths,
                             state_column,
+                            compact_status,
                         },
                         TaskRowState {
                             selected,
@@ -555,11 +562,20 @@ fn task_list_columns_for_tasks(
         TableColumn::Labels => Constraint::Length(label_width),
         TableColumn::Metadata => Constraint::Length(metadata_width),
         TableColumn::Project => Constraint::Length(project_width),
-        TableColumn::Status => Constraint::Length(10),
+        TableColumn::Status => Constraint::Length(status_column_width(store)),
         TableColumn::Priority => Constraint::Length(priority_width),
         TableColumn::Time => Constraint::Length(5),
         TableColumn::Robot => Constraint::Length(ROBOT_MARKER.width() as u16 + 2),
     })
+}
+
+/// Width of the status column, including the gutter that follows it.
+fn status_column_width(store: &TuiStore) -> u16 {
+    if store.config().tui.table.compact_status {
+        2
+    } else {
+        10
+    }
 }
 
 fn render_task_scrollbar(
@@ -705,6 +721,7 @@ fn render_task_header(
     render_mode: TaskListRenderMode,
     has_deferred_rows: bool,
     due_order: bool,
+    compact_status: bool,
 ) {
     let style = Style::new()
         .fg(INVERSE_FG)
@@ -727,7 +744,7 @@ fn render_task_header(
             TableColumn::Labels => "LABELS",
             TableColumn::Metadata | TableColumn::Robot => "",
             TableColumn::Project => "PROJECT",
-            TableColumn::Status => "STATUS",
+            TableColumn::Status => status_header(compact_status),
             TableColumn::Priority => "P",
             TableColumn::Time => time_header,
         };
@@ -748,6 +765,10 @@ fn label_header_cell(label: &str, max_width: usize) -> Line<'static> {
     }
     let padding = max_width.saturating_sub(label_width + 1);
     Line::from(format!("{}{label} ", " ".repeat(padding)))
+}
+
+fn status_header(compact_status: bool) -> &'static str {
+    if compact_status { "S" } else { "STATUS" }
 }
 
 fn render_group_row(frame: &mut Frame, label: &str, count: usize, area: Rect) {
@@ -836,10 +857,19 @@ fn build_task_row_cells(
         TaskListCellLayout {
             widths: column_widths,
             state_column: Some(TableColumn::Ref),
+            compact_status: false,
         },
         state,
         epic_selection,
     )
+}
+
+fn status_cell(status: &str, compact_status: bool) -> Line<'static> {
+    if compact_status {
+        status_icon_cell(status)
+    } else {
+        status_chip(status)
+    }
 }
 
 fn build_task_row_cells_for_columns(
@@ -894,7 +924,9 @@ fn build_task_row_cells_for_columns(
                 TableColumn::Project => {
                     project_cell(item, column_widths[TableColumn::Project as usize])
                 }
-                TableColumn::Status => status_chip(item.task.status.as_str()),
+                TableColumn::Status => {
+                    status_cell(item.task.status.as_str(), cell_layout.compact_status)
+                }
                 TableColumn::Priority => Line::from(Span::styled(
                     priority_icon(item.task.priority.as_str()),
                     theme::priority_style(item.task.priority.as_str()).add_modifier(Modifier::BOLD),
@@ -1145,7 +1177,9 @@ fn build_epic_parent_row_cells_for_columns(
                 TableColumn::Project => {
                     project_cell(item, column_widths[TableColumn::Project as usize])
                 }
-                TableColumn::Status => status_chip(item.task.status.as_str()),
+                TableColumn::Status => {
+                    status_cell(item.task.status.as_str(), cell_layout.compact_status)
+                }
                 TableColumn::Priority => Line::from(Span::styled(
                     priority_icon(item.task.priority.as_str()),
                     theme::priority_style(item.task.priority.as_str()).add_modifier(Modifier::BOLD),
@@ -1175,6 +1209,7 @@ fn build_epic_child_row_cells(
         TaskListCellLayout {
             widths: column_widths,
             state_column: Some(TableColumn::Ref),
+            compact_status: false,
         },
         state,
         epic_selection,
@@ -1236,7 +1271,9 @@ fn build_epic_child_row_cells_for_columns(
                 TableColumn::Project => {
                     project_cell(item, column_widths[TableColumn::Project as usize])
                 }
-                TableColumn::Status => status_chip(item.task.status.as_str()),
+                TableColumn::Status => {
+                    status_cell(item.task.status.as_str(), cell_layout.compact_status)
+                }
                 TableColumn::Priority => Line::from(Span::styled(
                     priority_icon(item.task.priority.as_str()),
                     theme::priority_style(item.task.priority.as_str()).add_modifier(Modifier::BOLD),
@@ -2320,6 +2357,7 @@ mod tests {
             TaskListCellLayout {
                 widths: &layout.widths(),
                 state_column: layout.state_column(),
+                compact_status: false,
             },
             TaskRowState {
                 selected: true,
@@ -3147,6 +3185,7 @@ mod tests {
                     TaskListRenderMode::Flat,
                     false,
                     false,
+                    false,
                 )
             })
             .unwrap();
@@ -3179,6 +3218,7 @@ mod tests {
                     TableLayout::resolve(&columns, &TableColumn::ALL, frame.area().width),
                     TaskListRenderMode::Flat,
                     true,
+                    false,
                     false,
                 )
             })
@@ -3213,6 +3253,7 @@ mod tests {
                     TaskListRenderMode::Flat,
                     false,
                     true,
+                    false,
                 )
             })
             .unwrap();
@@ -3271,6 +3312,7 @@ mod tests {
                         TaskListRenderMode::Epics,
                         false,
                         due_order,
+                        false,
                     )
                 })
                 .unwrap();
@@ -3367,6 +3409,86 @@ mod tests {
         task.task.priority = TaskPriority::High;
 
         assert_eq!(priority_column_width_from_tasks(&[task]), 3);
+    }
+
+    #[tokio::test]
+    async fn default_status_column_shows_text_header_and_status() {
+        let store = test_store_with_tasks(vec![task_list_item("task")]).await;
+        let buffer = render_task_list_buffer(&store, 140, 8);
+        let rendered = buffer_text(&buffer);
+
+        assert!(rendered.contains("STATUS"), "{rendered}");
+        assert!(rendered.contains("□ todo"), "{rendered}");
+    }
+
+    #[tokio::test]
+    async fn compact_status_column_shows_single_letter_header_and_icon() {
+        let mut store = test_store_with_tasks(vec![task_list_item("task")]).await;
+        let mut config = crate::config::AppConfig::default();
+        config.tui.table.compact_status = true;
+        store.set_config(config);
+
+        let area = Rect::new(0, 0, 140, 8);
+        let buffer = render_task_list_buffer(&store, area.width, area.height);
+        let table_state = TableState::default();
+        let projection = TaskListProjection::from_table_state(
+            &store,
+            &table_state,
+            area.height.saturating_sub(1) as usize,
+        );
+        let visual_row = task_visual_row(&store, 0).unwrap();
+        let status_area = task_list_status_area(&store, &projection, area, visual_row as u16);
+
+        assert_eq!(status_area.width, 1);
+        assert_eq!(buffer[(status_area.x, area.y)].symbol(), "S");
+        assert_eq!(buffer[(status_area.x, status_area.y)].symbol(), "□");
+        let rendered = buffer_text(&buffer);
+        assert!(!rendered.contains("STATUS"), "{rendered}");
+        assert!(!rendered.contains("□ todo"), "{rendered}");
+
+        let hit = task_status_at_position(&store, &table_state, area, status_area.x, status_area.y)
+            .unwrap();
+        assert_eq!(hit.task_index, 0);
+        assert!(
+            task_status_at_position(
+                &store,
+                &table_state,
+                area,
+                status_area.x.saturating_add(1),
+                status_area.y,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn compact_status_column_applies_to_epic_child_rows() {
+        let item = task_list_item("child");
+        let widths = [14, 40, 1, 6, 9, 2, 3, 5, 0];
+
+        let cells = build_epic_child_row_cells_for_columns(
+            &item,
+            false,
+            None,
+            TaskTimeContext {
+                now_seconds: 0,
+                render_mode: TaskListRenderMode::Epics,
+                due_order: false,
+            },
+            TaskListCellLayout {
+                widths: &widths,
+                state_column: Some(TableColumn::Ref),
+                compact_status: true,
+            },
+            TaskRowState {
+                selected: false,
+                focused: false,
+                marked: false,
+            },
+            EpicSelectionContext::default(),
+        );
+
+        assert_eq!(cells[TableColumn::Status as usize].to_string(), "□");
     }
 
     #[tokio::test]

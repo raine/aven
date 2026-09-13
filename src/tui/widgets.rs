@@ -27,22 +27,50 @@ pub(crate) fn priority_short(priority: &str) -> &'static str {
     }
 }
 
+/// Icon and label for each status.
+///
+/// The icon is the compact rendering of the status and must stay distinct for
+/// every status so an icon-only column remains unambiguous.
+fn status_parts(status: &str) -> Option<(&'static str, &'static str)> {
+    match status {
+        "active" => Some(("●", "active")),
+        "todo" => Some(("□", "todo")),
+        "inbox" => Some(("▣", "inbox")),
+        "backlog" => Some(("◌", "back")),
+        "done" => Some(("✓", "done")),
+        "canceled" => Some(("×", "cancel")),
+        _ => None,
+    }
+}
+
 pub(crate) fn status_chip(status: &str) -> Line<'static> {
     Line::from(status_span(status))
 }
 
+/// Single-glyph status cell used by the compact status column.
+///
+/// The glyph is the same one the textual status cell starts with, so compact
+/// and textual renderings stay recognizable as the same status.
+pub(crate) fn status_icon_cell(status: &str) -> Line<'static> {
+    Line::from(status_icon_span(status))
+}
+
+pub(crate) fn status_icon_span(status: &str) -> Span<'static> {
+    status_span_inner(status, true)
+}
+
 pub(crate) fn status_span(status: &str) -> Span<'static> {
-    let label = match status {
-        "active" => "● active",
-        "todo" => "□ todo",
-        "inbox" => "▣ inbox",
-        "backlog" => "◌ back",
-        "done" => "✓ done",
-        "canceled" => "× cancel",
-        _ => status,
+    status_span_inner(status, false)
+}
+
+fn status_span_inner(status: &str, icons_only: bool) -> Span<'static> {
+    let label = match status_parts(status) {
+        Some((icon, _)) if icons_only => icon.to_string(),
+        Some((icon, text)) => format!("{icon} {text}"),
+        None => status.to_string(),
     };
     Span::styled(
-        label.to_string(),
+        label,
         theme::status_style(status).add_modifier(Modifier::BOLD),
     )
 }
@@ -147,6 +175,33 @@ fn label_summary_text(labels: &[String]) -> String {
 mod tests {
     use super::*;
     use crate::tui::test_support::task_list_item;
+
+    #[test]
+    fn status_icons_cover_every_status_distinctly() {
+        let mut icons = std::collections::BTreeSet::new();
+
+        for status in crate::choices::STATUSES {
+            let icon = status_icon_span(status).content.to_string();
+
+            assert_eq!(icon.chars().count(), 1, "{status}");
+            assert!(icons.insert(icon.clone()), "{status} reuses {icon}");
+            assert!(
+                status_span(status).content.starts_with(&icon),
+                "{status} text does not start with {icon}"
+            );
+        }
+
+        assert_eq!(icons.len(), crate::choices::STATUSES.len());
+    }
+
+    #[test]
+    fn status_icon_cell_uses_status_style() {
+        let cell = status_icon_cell("done");
+
+        assert_eq!(cell.to_string(), "✓");
+        assert_eq!(cell.spans[0].style.fg, theme::status_style("done").fg);
+        assert!(cell.spans[0].style.add_modifier.contains(Modifier::BOLD));
+    }
 
     #[test]
     fn label_cell_right_aligns_summary_when_space_allows() {

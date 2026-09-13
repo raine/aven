@@ -211,6 +211,7 @@ pub(super) fn render_columns(
     let active_column = table_state
         .selected()
         .and_then(|selected| board.position(selected).map(|(column, _)| column));
+    let compact_status = store.config().tui.table.compact_status;
     for (index, column) in board.columns.iter().enumerate() {
         let lane = &layout.lanes[index];
         let active = active_column == Some(index);
@@ -290,7 +291,7 @@ pub(super) fn render_columns(
             } else {
                 label.to_string()
             };
-            let mut marker_spans = terminal_status_spans(item);
+            let mut marker_spans = terminal_status_spans(item, compact_status);
             marker_spans.extend(card_marker_spans(
                 item,
                 interaction.marked_task_ids.contains(&item.task.id),
@@ -550,17 +551,23 @@ fn card_heading_line(
     Line::from(spans)
 }
 
-fn terminal_status_spans(item: &crate::query::TaskListItem) -> Vec<Span<'static>> {
-    let label = match item.task.status.as_str() {
-        "done" => "✓ done",
-        "canceled" => "× canceled",
+fn terminal_status_spans(
+    item: &crate::query::TaskListItem,
+    compact_status: bool,
+) -> Vec<Span<'static>> {
+    let status = item.task.status.as_str();
+    let label = match (status, compact_status) {
+        ("done", true) => "✓",
+        ("canceled", true) => "×",
+        ("done", false) => "✓ done",
+        ("canceled", false) => "× canceled",
         _ => return Vec::new(),
     };
     vec![
         Span::raw(" "),
         Span::styled(
             label,
-            theme::status_style(item.task.status.as_str()).add_modifier(Modifier::BOLD),
+            theme::status_style(status).add_modifier(Modifier::BOLD),
         ),
     ]
 }
@@ -794,7 +801,7 @@ mod tests {
     fn terminal_cards_show_status_markers() {
         let mut task = item(0);
         task.task.status = TaskStatus::Done;
-        let done = terminal_status_spans(&task);
+        let done = terminal_status_spans(&task, false);
         assert_eq!(
             done.iter()
                 .map(|span| span.content.as_ref())
@@ -804,7 +811,7 @@ mod tests {
         assert_eq!(done[1].style.fg, theme::status_style("done").fg);
 
         task.task.status = TaskStatus::Canceled;
-        let canceled = terminal_status_spans(&task);
+        let canceled = terminal_status_spans(&task, false);
         assert_eq!(
             canceled
                 .iter()
@@ -813,6 +820,19 @@ mod tests {
             " × canceled"
         );
         assert_eq!(canceled[1].style.fg, theme::status_style("canceled").fg);
+    }
+
+    #[test]
+    fn compact_terminal_cards_show_icon_only_status_markers() {
+        let mut task = item(0);
+        task.task.status = TaskStatus::Done;
+        assert_eq!(terminal_status_spans(&task, true)[1].content, "✓");
+
+        task.task.status = TaskStatus::Canceled;
+        assert_eq!(terminal_status_spans(&task, true)[1].content, "×");
+
+        task.task.status = TaskStatus::Active;
+        assert!(terminal_status_spans(&task, true).is_empty());
     }
 
     #[test]

@@ -82,12 +82,15 @@ impl Default for TuiConfig {
 pub struct TaskTableConfig {
     #[serde(default = "default_table_columns")]
     pub columns: Vec<TableColumn>,
+    #[serde(default)]
+    pub compact_status: bool,
 }
 
 impl Default for TaskTableConfig {
     fn default() -> Self {
         Self {
             columns: default_table_columns(),
+            compact_status: false,
         }
     }
 }
@@ -1146,6 +1149,21 @@ mod tests {
             config.tui.table.columns
         );
         assert_eq!(config.tui.columns, default_task_columns());
+    }
+
+    #[test]
+    fn compact_status_defaults_off_and_loads_under_the_table_settings() {
+        for yaml in ["{}", "tui: {}", "tui:\n  table: {}"] {
+            assert!(!load_config(yaml).unwrap().tui.table.compact_status);
+        }
+        assert!(!TaskTableConfig::default().compact_status);
+
+        let config = load_config("tui:\n  table:\n    compact_status: true\n").unwrap();
+        assert!(config.tui.table.compact_status);
+        assert_eq!(config.tui.table.columns, default_table_columns());
+
+        let text = serde_yaml::to_string(&config).unwrap();
+        assert!(load_config(&text).unwrap().tui.table.compact_status);
     }
 
     #[test]

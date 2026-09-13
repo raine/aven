@@ -308,7 +308,7 @@ that column. Aven rejects empty lists, unknown names, and duplicates. Omit
 | `labels` | Label summary, or child rollup summary in the Epics view |
 | `metadata` | The blank-headed indicator column: notes, dependencies, epic relationships, overdue, deleted and deferred markers |
 | `project` | Project key |
-| `status` | Status icon and text |
+| `status` | Status icon and text, or icon only with [compact status](#compact-status-column) |
 | `priority` | Priority indicator, headed `P` |
 | `time` | Time value with a context-dependent heading: `IDLE`, `WHEN`, `DUE`, `ACT`, `TIME`, or `AGE` |
 
@@ -325,6 +325,34 @@ there is no status cell to click.
 
 This setting does not change board lanes (`tui.columns`), group ordering, the
 selected-task preview, or the separate Recurring and Recent Actions tables.
+
+### Compact status column
+
+`tui.table.compact_status` renders the task list status column as one icon per
+task instead of icon and text, and shortens the column header to `S`. This
+keeps narrow task lists readable without hiding status. Every status has its own
+icon:
+
+| Status | Icon |
+| --- | --- |
+| `inbox` | `▣` |
+| `backlog` | `◌` |
+| `todo` | `□` |
+| `active` | `●` |
+| `done` | `✓` |
+| `canceled` | `×` |
+
+```yaml
+tui:
+  table:
+    compact_status: true
+```
+
+The option is off by default. It applies to the task list status column,
+including epics and their expanded child rows, and to the status marker on
+column-board cards. Task details, status pickers, and the selected-task preview
+continue to show status text. Hiding `status` from `tui.table.columns` still
+hides the column entirely.
 
 ## TUI columns
 
