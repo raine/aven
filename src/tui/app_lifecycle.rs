@@ -412,6 +412,15 @@ impl App {
         let undo_description = available_undo
             .map(|undo| undo.undo_label())
             .unwrap_or_else(|| "nothing to undo".to_string());
+        let visible_marked_task_count = if let Some(choice) = self.footer_choice.as_ref() {
+            if choice.selection.uses_marks() {
+                choice.selection.len()
+            } else {
+                0
+            }
+        } else {
+            self.bulk_scope_marked_task_count()
+        };
         ViewState {
             focus: self.list.focus(),
             overlay: None,
@@ -442,7 +451,7 @@ impl App {
             copy_description_available: selected_task
                 .is_some_and(|task| !task.task.description.is_empty()),
             copy_notes_available: selected_task.is_some_and(|task| task.has_notes),
-            visible_marked_task_count: self.bulk_scope_marked_task_count(),
+            visible_marked_task_count,
             custom_command_marked_task_count: self.marked_task_ids_in_view().len(),
             footer_choice_mode: self.footer_choice.as_ref().map(|choice| choice.mode),
             sidebar_visible: self.list.sidebar_visible(),

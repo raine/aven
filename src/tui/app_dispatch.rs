@@ -183,7 +183,7 @@ impl App {
         priority: &'static str,
     ) -> Result<()> {
         self.footer_choice = None;
-        self.submit_edit_priority(selection, false, priority.to_string())
+        self.submit_edit_priority(selection, priority.to_string())
             .await?;
         Ok(())
     }

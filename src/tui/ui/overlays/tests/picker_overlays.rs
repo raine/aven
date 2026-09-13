@@ -56,22 +56,17 @@ fn workspace_picker_shows_direct_filter_hints_and_no_match_state() {
 
 #[test]
 fn priority_picker_shows_priority_icons() {
-    for (kind, title) in [
-        (PickerKind::EditPriority, "Edit task: priority"),
-        (PickerKind::AddTaskPriority, "Add task: priority"),
-    ] {
-        let rendered = render_overlay_view(OverlayView::Picker(PickerView {
-            kind,
-            title: title.to_string(),
-            items: borrow_slice(vec![picker_item("urgent", "urgent")]),
-            visible_indices: vec![0],
-            ..picker_view()
-        }));
-        assert!(rendered.contains(priority_icon("urgent")));
-        assert!(rendered.contains("urgent"));
-        assert!(rendered.contains("Enter"));
-        assert!(rendered.contains("submit"));
-    }
+    let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+        kind: PickerKind::AddTaskPriority,
+        title: "Add task: priority".to_string(),
+        items: borrow_slice(vec![picker_item("urgent", "urgent")]),
+        visible_indices: vec![0],
+        ..picker_view()
+    }));
+    assert!(rendered.contains(priority_icon("urgent")));
+    assert!(rendered.contains("urgent"));
+    assert!(rendered.contains("Enter"));
+    assert!(rendered.contains("submit"));
 }
 
 #[test]

@@ -252,7 +252,25 @@ async fn empty_project_retry_keeps_captured_targets() {
 }
 
 #[tokio::test]
-async fn submit_edit_priority_updates_only_marked_tasks() {
+async fn priority_shortcut_uses_footer_chooser_for_marked_tasks() {
+    let mut app = test_app().await;
+    let [first_id, second_id, _third_id] =
+        create_and_select_titled_tasks(&mut app, ["first", "second", "third"]).await;
+    app.list.mark(first_id);
+    app.list.mark(second_id);
+
+    app.begin_edit_priority();
+
+    assert!(app.overlay.is_none());
+    assert_eq!(
+        app.footer_choice.as_ref().map(|choice| choice.mode),
+        Some(FooterChoiceMode::Priority)
+    );
+    assert_eq!(app.view().visible_marked_task_count, 2);
+}
+
+#[tokio::test]
+async fn priority_footer_applies_only_to_captured_marked_tasks() {
     let mut app = test_app().await;
     let [first_id, second_id, third_id] =
         create_and_select_titled_tasks(&mut app, ["first", "second", "third"]).await;
@@ -260,14 +278,142 @@ async fn submit_edit_priority_updates_only_marked_tasks() {
     app.list.mark(second_id.clone());
     app.begin_edit_priority();
 
-    let (selection, mixed) = match &app.overlay {
-        Some(OverlayState::Picker(PickerState {
-            intent: PickerIntent::EditPriority { selection, mixed },
-            ..
-        })) => (selection.clone(), *mixed),
-        overlay => panic!("expected priority edit intent, got {overlay:?}"),
-    };
-    app.submit_edit_priority(selection, mixed, "high".to_string())
+    app.list.clear_marks();
+    app.list.mark(third_id.clone());
+    assert_eq!(app.view().visible_marked_task_count, 2);
+
+    app.dispatch_key(key(KeyCode::Char('h')), (80, 24).into())
+        .await
+        .unwrap();
+
+    assert_eq!(task_item(&app, &first_id).task.priority, TaskPriority::High);
+    assert_eq!(
+        task_item(&app, &second_id).task.priority,
+        TaskPriority::High
+    );
+    assert_eq!(task_item(&app, &third_id).task.priority, TaskPriority::None);
+}
+
+#[tokio::test]
+async fn priority_footer_handles_mixed_existing_priorities() {
+    let mut app = test_app().await;
+    let first = create_and_select_task(
+        &mut app,
+        TaskDraft {
+            metadata: Vec::new(),
+            priority: "low".to_string(),
+            ..test_task_draft("first")
+        },
+    )
+    .await;
+    let first_id = app.store.tasks[first].task.id.clone();
+    let second = create_and_select_task(
+        &mut app,
+        TaskDraft {
+            metadata: Vec::new(),
+            priority: "urgent".to_string(),
+            ..test_task_draft("second")
+        },
+    )
+    .await;
+    let second_id = app.store.tasks[second].task.id.clone();
+    app.list.mark(first_id.clone());
+    app.list.mark(second_id.clone());
+
+    app.begin_edit_priority();
+    app.dispatch_key(key(KeyCode::Char('m')), (80, 24).into())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        task_item(&app, &first_id).task.priority,
+        TaskPriority::Medium
+    );
+    assert_eq!(
+        task_item(&app, &second_id).task.priority,
+        TaskPriority::Medium
+    );
+}
+
+#[tokio::test]
+async fn cancelling_priority_footer_preserves_existing_values() {
+    let mut app = test_app().await;
+    let first = create_and_select_task(
+        &mut app,
+        TaskDraft {
+            metadata: Vec::new(),
+            priority: "low".to_string(),
+            ..test_task_draft("first")
+        },
+    )
+    .await;
+    let first_id = app.store.tasks[first].task.id.clone();
+    let second = create_and_select_task(
+        &mut app,
+        TaskDraft {
+            metadata: Vec::new(),
+            priority: "urgent".to_string(),
+            ..test_task_draft("second")
+        },
+    )
+    .await;
+    let second_id = app.store.tasks[second].task.id.clone();
+    app.list.mark(first_id.clone());
+    app.list.mark(second_id.clone());
+
+    app.begin_edit_priority();
+    app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+        .await
+        .unwrap();
+
+    assert!(app.footer_choice.is_none());
+    assert_eq!(task_item(&app, &first_id).task.priority, TaskPriority::Low);
+    assert_eq!(
+        task_item(&app, &second_id).task.priority,
+        TaskPriority::Urgent
+    );
+}
+
+#[tokio::test]
+async fn priority_footer_failure_restores_captured_selector_for_retry() {
+    let (_dir, pool, mut app) = test_app_with_pool().await;
+    let [first_id, second_id, third_id] =
+        create_and_select_titled_tasks(&mut app, ["first", "second", "third"]).await;
+    app.list.mark(first_id.clone());
+    app.list.mark(second_id.clone());
+    app.begin_edit_priority();
+    app.list.clear_marks();
+    app.list.mark(third_id.clone());
+
+    sqlx::query(
+        "CREATE TRIGGER reject_priority_undo BEFORE INSERT ON tui_undo_entries
+         BEGIN SELECT RAISE(FAIL, 'injected priority undo failure'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    app.dispatch_key(key(KeyCode::Char('h')), (80, 24).into())
+        .await
+        .unwrap();
+
+    assert!(app.overlay.is_none());
+    assert_eq!(
+        app.footer_choice.as_ref().map(|choice| choice.mode),
+        Some(FooterChoiceMode::Priority)
+    );
+    assert_eq!(app.view().visible_marked_task_count, 2);
+    assert_eq!(task_item(&app, &first_id).task.priority, TaskPriority::None);
+    assert_eq!(
+        task_item(&app, &second_id).task.priority,
+        TaskPriority::None
+    );
+
+    sqlx::query("DROP TRIGGER reject_priority_undo")
+        .execute(&pool)
+        .await
+        .unwrap();
+    app.dispatch_key(key(KeyCode::Char('h')), (80, 24).into())
         .await
         .unwrap();
 

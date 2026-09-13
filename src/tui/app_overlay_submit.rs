@@ -507,16 +507,6 @@ impl App {
                     self.open_edit_project_picker(selection);
                 }
             },
-            PickerIntent::EditPriority { selection, mixed } => match values.first() {
-                Some(priority) => {
-                    self.submit_edit_priority(selection, mixed, priority.clone())
-                        .await?;
-                }
-                None => {
-                    self.set_warning("no matching priority");
-                    self.open_edit_priority_picker_for_selection(selection);
-                }
-            },
             PickerIntent::EditEpic { selection, mixed } => match values.first() {
                 Some(value) => {
                     self.submit_edit_epic(selection, mixed, value.clone())

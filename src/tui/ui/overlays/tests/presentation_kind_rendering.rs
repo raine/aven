@@ -188,19 +188,6 @@ fn project_picker_kinds_control_submit_hints_with_changed_titles() {
 }
 
 #[test]
-fn priority_picker_kind_controls_icon_rendering_with_changed_title() {
-    let rendered = render_overlay_view(OverlayView::Picker(PickerView {
-        kind: PickerKind::EditPriority,
-        title: "Changed priority title".to_string(),
-        items: borrow_slice(vec![picker_item("urgent", "urgent")]),
-        visible_indices: vec![0],
-        ..picker_view()
-    }));
-    assert!(rendered.contains("Changed priority title"));
-    assert!(rendered.contains(priority_icon("urgent")));
-}
-
-#[test]
 fn add_task_priority_kind_uses_priority_renderer() {
     let rendered = render_overlay_view(OverlayView::Picker(PickerView {
         kind: PickerKind::AddTaskPriority,

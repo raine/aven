@@ -654,10 +654,6 @@ pub(crate) enum PickerIntent {
         selection: TaskSelection,
         mixed: bool,
     },
-    EditPriority {
-        selection: TaskSelection,
-        mixed: bool,
-    },
     EditEpic {
         selection: TaskSelection,
         mixed: bool,

@@ -732,49 +732,11 @@ impl App {
     }
 
     pub(super) fn begin_edit_priority_for(&mut self, selection: TaskSelection) {
-        if selection.len() == 1 {
-            self.footer_choice = Some(FooterChoiceState {
-                mode: FooterChoiceMode::Priority,
-                selection,
-            });
-            return;
-        }
-        self.open_edit_priority_picker_for_selection(selection);
-    }
-
-    pub(super) fn open_edit_priority_picker_for_selection(&mut self, selection: TaskSelection) {
-        let (aggregate, selected) =
-            Self::aggregate_value(&selection, |item| item.task.priority.to_string());
-        self.open_edit_priority_picker(selection, aggregate, selected);
-    }
-
-    fn open_edit_priority_picker(
-        &mut self,
-        selection: TaskSelection,
-        aggregate: EditAggregate,
-        selected: String,
-    ) {
-        let mut items = self.store.priority_picker_items(&selected);
-        if aggregate == EditAggregate::Mixed {
-            items.insert(
-                0,
-                PickerItem {
-                    label: "Keep existing values (current: varies)".to_string(),
-                    value: String::new(),
-                    selected: true,
-                },
-            );
-        }
-        let title = Self::batch_edit_title(&selection, "priority");
-        self.open_picker_overlay(
-            PickerIntent::EditPriority {
-                selection,
-                mixed: aggregate == EditAggregate::Mixed,
-            },
-            title,
-            items,
-            false,
-        );
+        self.pending_shortcut.clear();
+        self.footer_choice = Some(FooterChoiceState {
+            mode: FooterChoiceMode::Priority,
+            selection,
+        });
     }
 
     pub(super) fn begin_edit_epic(&mut self) {
@@ -1149,13 +1111,8 @@ impl App {
     pub(super) async fn submit_edit_priority(
         &mut self,
         selection: TaskSelection,
-        mixed: bool,
         priority: String,
     ) -> Result<()> {
-        if priority.is_empty() && mixed {
-            self.set_info(format!("priority unchanged on {} tasks", selection.len()));
-            return Ok(());
-        }
         let priority = crate::choices::TaskPriority::parse(&priority)?;
         let result = self
             .store
@@ -1166,9 +1123,10 @@ impl App {
             .await
             .map(Some);
         self.apply_edit_mutation(result, |app| {
-            let (aggregate, selected) =
-                Self::aggregate_value(&selection, |item| item.task.priority.to_string());
-            app.open_edit_priority_picker(selection, aggregate, selected);
+            app.footer_choice = Some(FooterChoiceState {
+                mode: FooterChoiceMode::Priority,
+                selection,
+            });
         });
         Ok(())
     }

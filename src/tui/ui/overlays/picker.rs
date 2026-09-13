@@ -257,7 +257,7 @@ fn generic_picker_submit_label(kind: PickerKind) -> Option<&'static str> {
 }
 
 fn priority_picker_submit_label(kind: PickerKind) -> Option<&'static str> {
-    matches!(kind, PickerKind::EditPriority | PickerKind::AddTaskPriority).then_some("submit")
+    matches!(kind, PickerKind::AddTaskPriority).then_some("submit")
 }
 
 pub(in crate::tui::ui) fn project_picker_line(item: &PickerItem, selected: bool) -> Line<'static> {
