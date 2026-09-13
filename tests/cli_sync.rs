@@ -2,6 +2,7 @@ mod common;
 
 use std::time::{Duration, Instant};
 
+use aven_core::sync::wire::SYNC_PROTOCOL_VERSION;
 use common::{
     TestEnv, TestProcess, TestServer, command_with_db, contains_all, contains_none, extract_ref,
     fail, meta_value, ok, png_bytes, scalar_i64,
@@ -19,7 +20,6 @@ const SYNC_OPPOSITE_DEP_CHANGE_ID: &str = "FFFFFFFFFFFFFFFF";
 const SYNC_CLIENT_ID: &str = "GGGGGGGGGGGGGGGG";
 const MAX_PUSH_BATCH: usize = 256;
 const MAX_PULL_BATCH: usize = 512;
-const SYNC_PROTOCOL_VERSION: u32 = 16;
 
 fn sync_round_values(output: &str, key: &str) -> Vec<u64> {
     output
