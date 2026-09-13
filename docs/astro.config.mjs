@@ -4,7 +4,7 @@ import starlight from '@astrojs/starlight';
 import starlightLlmsTxt from 'starlight-llms-txt';
 
 export default defineConfig({
-  site: 'https://aven.raine.dev',
+  site: 'https://aventasks.dev',
   redirects: {
     '/workflows': '/getting-started/#next-steps',
   },
@@ -47,7 +47,7 @@ export default defineConfig({
         {
           label: 'Start here',
           items: [
-            { label: 'What is aven?', link: '/' },
+            { label: 'What is aven?', slug: 'overview' },
             { label: 'Getting started', slug: 'getting-started' },
             { label: 'Concepts', slug: 'concepts' },
             { label: 'Coming from Taskwarrior', slug: 'taskwarrior' },

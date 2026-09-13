@@ -44,6 +44,19 @@ Apple-side validation, not just bundled host tests.
 | Recurrence domain | validated series IDs, anchored daily, weekly, monthly, and yearly interval rules, direct slot navigation, Monday-anchored weekly expansion, month-end and leap-day clamping, series-zone slot timing, DST resolution, deterministic occurrence identity, local aggregate operations, recurrence hydration, series reports, and grouped history | `crates/aven-core/src/recurrence.rs`, `crates/aven-core/src/recurrence/`, `crates/aven-core/src/operations/recurrence.rs`, `crates/aven-core/src/query/recurrence.rs` | Schedule math and occurrence identity stay pure and device-independent. Core recurrence operations atomically own template snapshots, projection reconciliation, outcomes, lifecycle, stable refs, and eligible immediate undo. Local scalar and structural task mutations use the typed gate in `operations/recurrence.rs` inside the owning transaction. The operation supplies the timestamp for reconciliation and outcome resolution, and scalar callers handle `Proceed`, `NoChange`, and `Handled` before generic writes. Core reports batch-hydrate summaries, group historical presentation, and keep direct detail access separate from ordinary task visibility. |
 | Tests and tooling | core extraction tests, CLI integration tests, feature-oriented TUI app, store, and overlay test modules, SQL index checks, just tasks | `crates/aven-core/tests/`, `tests/`, `src/tui/app_tests/`, `src/tui/store/tests/`, `src/tui/ui/overlays/tests/`, `justfile` | Add focused tests near the owning package and feature module, and rely on commit hooks for the full gate. |
 
+## Website
+
+`docs/` builds the public site with Astro. `docs/src/pages/index.astro` and
+`docs/src/styles/landing.css` own the standalone landing page. Starlight owns the
+documentation routes in `docs/src/content/docs/`, starting with `overview.md` and
+`getting-started.md`; its navigation is configured in `docs/astro.config.mjs`.
+Product screenshots and locally served, licensed fonts live in `docs/public/`.
+Validate website changes with `cd docs && bun run build` and inspect layout and
+interactions in a browser. Landing styles must stay independent of the docs theme.
+Use standalone SVG components for landing-page icons. Importing the Starlight
+components barrel can pull its global reset into the landing page and override
+body typography and background colors.
+
 ## Runtime flows
 
 ### CLI command flow

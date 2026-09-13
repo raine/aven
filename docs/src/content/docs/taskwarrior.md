@@ -76,7 +76,7 @@ Safety constraints:
 
 Discovery:
 
-1. Read `https://aven.raine.dev/llms-full.txt` for aven's system model, CLI
+1. Read `https://aventasks.dev/llms-full.txt` for aven's system model, CLI
    guidance, installation options, and configuration. Do not initialize, install,
    or change aven during discovery.
 2. Resolve the exact `task` command I use, including aliases, shell functions,

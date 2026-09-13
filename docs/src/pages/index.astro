@@ -1,0 +1,288 @@
+---
+import logo from '../assets/aven-logo-grape-violet.svg';
+import wordmark from '../assets/aven-landing-wordmark.svg';
+import '../styles/landing.css';
+import ExternalLinkIcon from '../components/ExternalLinkIcon.astro';
+import GitHubIcon from '../components/GitHubIcon.astro';
+import AvenLettering from '../components/AvenLettering.astro';
+
+const heroViews = [
+  { id: 'queue', label: 'Queue', src: '/tui.webp', alt: 'Aven terminal UI showing a shared task queue, project sidebar, priorities, and selected task context.' },
+  { id: 'columns', label: 'Columns', src: '/columns.webp', alt: 'Aven columns view showing tasks grouped into Inbox, Backlog, Todo, Active, and Done.' },
+  { id: 'add-task', label: 'Add task', src: '/add-task.webp', alt: 'Aven task composer over the queue, with title, description, project, status, priority, labels, and schedule fields.' },
+  { id: 'search', label: 'Search', src: '/search.webp', alt: 'Aven search for offline showing three tasks across projects, with matches in task titles and descriptions.' },
+];
+
+const features = [
+  { label: '▸ NEEDS ACTION · FOCUS · SOON', title: 'Separate projects. One queue.', description: 'See what needs attention across your projects, or narrow your scope. Use separate workspaces to keep independent task collections apart.', color: 'violet', href: '/organize-tasks/' },
+  { label: 'DUE DATES · RECURRING', title: 'Give work its own time.', description: 'Due dates, deferred tasks, and recurring schedules. Keep later work out of the way until it belongs in front of you.', color: 'orange', href: '/schedule-tasks/' },
+  { label: 'MARKDOWN · NOTES · IMAGES', title: 'Keep the context attached.', description: 'Markdown, notes, images, epics, and dependencies. Everything you need to pick up where you left off.', color: 'pink', href: '/concepts/' },
+  { label: 'KEYS · COMMANDS · UNDO', title: 'Stay on the keyboard.', description: 'Move, filter, edit, and undo without reaching for the mouse. A command palette fills in the gaps.', color: 'blue', href: '/tui/' },
+  { label: 'SQLITE · OFFLINE', title: 'Local is the default.', description: 'Your tasks live in SQLite, outside your repositories. Work offline. Switch branches. Keep your data.', color: 'green', href: '/backups/' },
+  { label: 'SYNC · SELF-HOSTED', title: 'Sync you control', description: 'Works fully offline. Need it on more machines? Run the sync server on a Raspberry Pi and connect over your own network.', color: 'yellow', href: '/sync/' },
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#121110" />
+    <title>aven | Your tasks. Your terminal.</title>
+    <meta name="description" content="A local-first task manager for developers and coding agents. A keyboard-first terminal UI, a compact CLI, and one shared queue. Your tasks live in SQLite. Sync is optional." />
+    <link rel="canonical" href="https://aventasks.dev/" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preload" href="/fonts/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="aven | Your tasks. Your terminal." />
+    <meta property="og:description" content="Local-first task management for developers and coding agents." />
+    <meta property="og:url" content="https://aventasks.dev/" />
+    <meta property="og:image" content="https://aventasks.dev/aven-social.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="2400" />
+    <meta property="og:image:height" content="1260" />
+    <meta property="og:image:alt" content="Aven: Your tasks. Your terminal. A terminal task queue alongside the Aven logo." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="aven | Your tasks. Your terminal." />
+    <meta name="twitter:description" content="Local-first task management for developers and coding agents." />
+    <meta name="twitter:image" content="https://aventasks.dev/aven-social.png" />
+    <meta name="twitter:image:alt" content="Aven: Your tasks. Your terminal. A terminal task queue alongside the Aven logo." />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="container">
+      <header class="site-header">
+        <a class="brand" href="/" aria-label="aven home">
+          <img src={logo.src} alt="" width="34" height="34" />
+          <AvenLettering />
+        </a>
+        <nav aria-label="Main navigation">
+          <a class="features-link" href="#features">Features</a>
+          <a href="/getting-started/">Docs</a>
+          <a href="https://github.com/raine/aven"><GitHubIcon /> GitHub</a>
+        </nav>
+      </header>
+
+      <main id="main">
+        <section class="hero" aria-labelledby="hero-heading">
+          <p class="eyebrow hero-eyebrow">Local-first <span>· Terminal</span> <span>· Agent-ready</span></p>
+          <div class="hero-intro">
+            <h1 id="hero-heading">Your tasks.<br /><span>Your terminal.</span></h1>
+            <div class="hero-description">
+              <p>Aven is a task manager for power users. Keep work from every project in one queue, with a keyboard-driven TUI for you and a compact CLI for your coding agents. Work across devices with optional self-hosted sync.</p>
+              <a class="hero-docs" href="/getting-started/">
+                Read the docs
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                  <path d="M4 12h16m-6-6 6 6-6 6" />
+                </svg>
+              </a>
+            </div>
+          </div>
+          <div class="install-widget hero-install" id="install">
+            <div class="hero-install-row">
+              <div class="install-command">
+                <span class="prompt" aria-hidden="true">$</span>
+                <code>brew install raine/aven/aven</code>
+                <button type="button" data-copy-command aria-label="Copy install command">copy</button>
+              </div>
+              <div class="install-options" role="group" aria-label="Installation method">
+                <button type="button" data-method="brew" aria-pressed="true">brew</button>
+                <button type="button" data-method="curl" aria-pressed="false">curl</button>
+              </div>
+            </div>
+            <p class="hero-install-hint">then <code>aven</code>, or <code>aven demo</code> to try it with sample data.</p>
+            <p class="install-note" data-copy-status role="status"></p>
+            <noscript><p class="install-note">For the curl command, see <a href="/getting-started/">installation instructions</a>.</p></noscript>
+          </div>
+          <figure class="hero-product" data-hero-showcase>
+            <div class="hero-tabs" role="tablist" aria-label="Explore Aven" hidden>
+              {heroViews.map((view, index) => (
+                <button type="button" role="tab" id={`hero-tab-${view.id}`} aria-controls={`hero-panel-${view.id}`} aria-selected={index === 0 ? 'true' : 'false'} tabindex={index === 0 ? 0 : -1}>{view.label}</button>
+              ))}
+            </div>
+            <div class="screenshot-frame">
+              <div class="window-bar"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>aven</span></div>
+              <div class="hero-panels">
+                {heroViews.map((view, index) => (
+                  <div id={`hero-panel-${view.id}`} role="tabpanel" aria-labelledby={`hero-tab-${view.id}`} aria-hidden={index !== 0 ? 'true' : 'false'} tabindex="0" inert={index !== 0} hidden={index !== 0}>
+                    <img src={view.src} width="1992" height="1322" alt={view.alt} fetchpriority={index === 0 ? 'high' : 'auto'} loading={index === 0 ? 'eager' : 'lazy'} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </figure>
+        </section>
+
+        <section class="section agent-section" aria-labelledby="agents-heading">
+          <div class="section-copy">
+            <p class="eyebrow">Agent-first CLI</p>
+            <h2 id="agents-heading">Your agents work from the same queue you do.</h2>
+            <p>The CLI output is compact, stable, and token-efficient. Start an agent in a repository and aven infers the project. Reference tasks in prompts and handoffs with short IDs like APP-7KQ9. Agents pick up ready work, capture follow-ups, update status, and leave handoff notes that outlive the chat session.</p>
+            <a class="text-link" href="/agents/">Work with agents <span aria-hidden="true">→</span></a>
+          </div>
+          <div class="terminal" role="region" aria-label="Example agent session">
+            <div class="session-titlebar"><span>Agent session</span><span class="session-example">example</span></div>
+            <div class="terminal-session">
+              <p class="session-start">Session start · project context loaded via <code>aven prime</code> hook</p>
+              <div class="session-user"><span class="session-user-label">User</span><p>What's ready to work on?</p></div>
+              <div class="session-answer">
+                <p>Two tasks are ready:</p>
+                <ul>
+                  <li><span class="violet">APP-7KQ9</span> Add scoped API tokens</li>
+                  <li><span class="violet">APP-M4R2</span> Test token expiry</li>
+                </ul>
+              </div>
+              <div class="session-user"><span class="session-user-label">User</span><p>Add a task to document token rotation.</p></div>
+              <p class="session-tool"><span aria-hidden="true"></span> Bash <code>aven add "Document token rotation"</code></p>
+              <p class="session-answer">Created <span class="violet">APP-P8N3</span>: Document token rotation.<span class="terminal-cursor" aria-hidden="true"></span></p>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="features" aria-label="Features">
+          <div class="feature-grid">
+            {features.map((feature) => (
+              <a class="feature" href={feature.href}>
+                <p class:list={['feature-label', feature.color]}>
+                  {feature.label.split(' · ').map((term, index) => (
+                    <span class="feature-label-term">{index > 0 && <span class="feature-label-separator">· </span>}{term}</span>
+                  ))}
+                </p>
+                <h3>{feature.title}</h3>
+                <p class="feature-description">{feature.description}</p>
+              </a>
+            ))}
+          </div>
+        </section>
+
+        <section class="section detail-section" aria-labelledby="context-heading">
+          <div class="detail-copy">
+            <p class="eyebrow">Task context</p>
+            <h2 id="context-heading">Keep the context with the task.</h2>
+            <p>Keep descriptions, notes, and dependencies together. Copy a Markdown task report for handoffs.</p>
+          </div>
+          <div class="screenshot-frame">
+            <div class="window-bar"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>aven</span></div>
+            <img src="/task-detail.webp" width="1992" height="1322" alt="Aven task detail showing a Markdown description alongside the task's project, status, priority, labels, and reference." loading="lazy" />
+          </div>
+        </section>
+
+        <section class="section capture-section" aria-labelledby="capture-heading">
+          <div class="detail-copy">
+            <p class="eyebrow">Quick capture</p>
+            <h2 id="capture-heading">Capture a task. Get back to work.</h2>
+            <p>Open the composer in a tmux popup without leaving your current terminal. Turn rough notes into a structured task draft with your configured agent, then review before saving.</p>
+            <a class="text-link" href="/tui/#run-aven-from-tmux">Set up tmux capture <span aria-hidden="true">→</span></a>
+          </div>
+          <div class="screenshot-frame">
+            <img src="/landing-tmux-capture.webp" width="3024" height="1898" alt="Aven task composer in a tmux popup over an active terminal workspace." loading="lazy" />
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="mobile-heading">
+          <div class="mobile-preview">
+            <div class="mobile-copy">
+              <p class="eyebrow">Coming soon · iOS</p>
+              <h2 id="mobile-heading">Your tasks, away from the terminal.</h2>
+              <p>Aven for iOS shows the same queue, priorities, and project labels, synced through the server you already run.</p>
+            </div>
+            <img src="/ios-dark.webp" width="1326" height="2742" alt="Aven for iOS showing the synced task queue with priorities and project labels in dark mode." loading="lazy" />
+          </div>
+        </section>
+
+        <section class="closing-section" aria-label="Get started with aven">
+          <img src={wordmark.src} width="334" height="102" alt="aven" />
+          <p>Inspired by Taskwarrior. Built for my own daily use, shared for yours.</p>
+          <a class="text-link closing-comparison" href="/taskwarrior/">Coming from Taskwarrior? See how Aven compares <span aria-hidden="true">→</span></a>
+          <div class="closing-actions">
+            <a class="closing-button closing-primary" href="/getting-started/">Get started</a>
+            <a class="closing-button" href="https://github.com/raine/aven">View on GitHub</a>
+          </div>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <div><a class="brand" href="/" aria-label="aven home"><img src={logo.src} alt="" width="25" height="25" /><AvenLettering /></a></div>
+        <nav aria-label="Footer navigation"><a href="/getting-started/">Docs</a><a href="/changelog/">Changelog</a><a href="https://github.com/raine/aven">Source <ExternalLinkIcon /></a></nav>
+      </footer>
+    </div>
+  </body>
+</html>
+
+<script>
+  document.querySelectorAll<HTMLElement>('[data-hero-showcase]').forEach((showcase) => {
+    const tablist = showcase.querySelector<HTMLElement>('[role="tablist"]')!;
+    const tabs = Array.from(tablist.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+    const panels = Array.from(showcase.querySelectorAll<HTMLElement>('[role="tabpanel"]'));
+    const select = (index: number) => {
+      tabs.forEach((tab, position) => {
+        tab.setAttribute('aria-selected', String(position === index));
+        tab.tabIndex = position === index ? 0 : -1;
+        panels[position].setAttribute('aria-hidden', String(position !== index));
+        panels[position].inert = position !== index;
+      });
+    };
+    tabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => select(index));
+      tab.addEventListener('keydown', (event) => {
+        let next: number;
+        switch (event.key) {
+          case 'ArrowRight': next = (index + 1) % tabs.length; break;
+          case 'ArrowLeft': next = (index + tabs.length - 1) % tabs.length; break;
+          case 'Home': next = 0; break;
+          case 'End': next = tabs.length - 1; break;
+          default: return;
+        }
+        event.preventDefault();
+        select(next);
+        tabs[next].focus();
+      });
+    });
+    panels.forEach((panel) => { panel.hidden = false; });
+    tablist.hidden = false;
+  });
+
+  const commands = {
+    brew: 'brew install raine/aven/aven',
+    curl: 'curl -fsSL https://raw.githubusercontent.com/raine/aven/main/scripts/install | bash',
+  };
+  document.querySelectorAll<HTMLElement>('.install-widget').forEach((widget) => {
+    const command = widget.querySelector<HTMLElement>('.install-command code')!;
+    const copyButton = widget.querySelector<HTMLButtonElement>('[data-copy-command]')!;
+    const status = widget.querySelector<HTMLElement>('[data-copy-status]')!;
+    const methods = widget.querySelectorAll<HTMLButtonElement>('[data-method]');
+    const defaultStatus = status.textContent;
+    const copyLabel = copyButton.textContent;
+    let selection = 0;
+
+    methods.forEach((button) => {
+      button.addEventListener('click', () => {
+        const method = button.dataset.method as keyof typeof commands;
+        selection += 1;
+        command.textContent = commands[method];
+        methods.forEach((option) => option.setAttribute('aria-pressed', String(option === button)));
+        copyButton.textContent = copyLabel;
+        status.textContent = defaultStatus;
+      });
+    });
+
+    copyButton.addEventListener('click', async () => {
+      const currentSelection = selection;
+      try {
+        await navigator.clipboard.writeText(command.textContent!);
+        if (currentSelection !== selection) return;
+        copyButton.textContent = 'Copied';
+        status.textContent = defaultStatus;
+      } catch {
+        if (currentSelection !== selection) return;
+        const range = document.createRange();
+        range.selectNodeContents(command);
+        const selectedText = window.getSelection();
+        selectedText?.removeAllRanges();
+        selectedText?.addRange(range);
+        status.textContent = 'Clipboard unavailable. Copy the selected command manually.';
+      }
+    });
+  });
+</script>
