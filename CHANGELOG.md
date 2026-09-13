@@ -6,6 +6,7 @@ description: Release notes for aven.
 ## Unreleased
 
 - Choose which [TUI task-list columns](https://aven.raine.dev/configuration/#tui-table-columns) appear and their order with `tui.table.columns`.
+- Enable the experimental [TUI robot column](https://aven.raine.dev/configuration/#tui-robot-column) to spot agent-created tasks, using CLI creation as the indicator. Opt-in and disabled by default.
 
 ## v0.1.39 (2026-09-10)
 

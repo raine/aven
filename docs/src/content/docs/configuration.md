@@ -246,6 +246,22 @@ update:
 
 Set `AVEN_NO_UPDATE_CHECK=1` to disable automatic checks for one environment. The environment variable takes precedence over `update.automatic_checks`. `aven update` and the TUI's explicit update command are available with either setting.
 
+## TUI robot column
+
+This experimental column makes it easier to spot tasks created by agents,
+using CLI creation as the indicator. It is opt-in and disabled by default.
+
+Add `robot` before `title` in `tui.table.columns` to show a dim Nerd Font robot
+for CLI-created tasks.
+
+```yaml
+tui:
+  table:
+    columns: [ref, robot, title, labels, metadata, project, status, priority, time]
+```
+
+TUI-created, API-created, iOS-created, and unknown historical sources stay blank.
+
 ## TUI sidebar views
 
 `tui.sidebar.views` controls which task views appear in the sidebar and their
@@ -282,12 +298,13 @@ tui:
 
 List the columns in the order you want them to appear. Remove a name to hide
 that column. Aven rejects empty lists, unknown names, and duplicates. Omit
-`columns` to use all columns in the default order.
+`columns` to use the default columns and order.
 
 | Name | Content |
 | --- | --- |
 | `ref` | Task reference, selection and mark indicators, and epic tree markers |
 | `title` | Task title, including inline title editing |
+| `robot` | Optional [agent creation marker](#tui-robot-column), hidden by default |
 | `labels` | Label summary, or child rollup summary in the Epics view |
 | `metadata` | The blank-headed indicator column: notes, dependencies, epic relationships, overdue, deleted and deferred markers |
 | `project` | Project key |

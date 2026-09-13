@@ -5,7 +5,7 @@ use crate::config::TableColumn;
 /// Frame-local content geometry indexed by semantic identity, not display position.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct TableLayout {
-    cells: [Rect; 8],
+    cells: [Rect; 9],
     state_column: Option<TableColumn>,
     state_gutter: Rect,
 }
@@ -13,7 +13,7 @@ pub(super) struct TableLayout {
 impl TableLayout {
     const STATE_GUTTER_WIDTH: u16 = 3;
 
-    pub(super) fn resolve(columns: &[Constraint; 8], order: &[TableColumn], width: u16) -> Self {
+    pub(super) fn resolve(columns: &[Constraint; 9], order: &[TableColumn], width: u16) -> Self {
         // Zero-width semantic columns are omitted before adding gutters. Fixed widths include
         // their default gutters, while content width stays semantic.
         let cells = Self::resolve_cells(columns, order, width, 0);
@@ -42,11 +42,11 @@ impl TableLayout {
     }
 
     fn resolve_cells(
-        columns: &[Constraint; 8],
+        columns: &[Constraint; 9],
         order: &[TableColumn],
         width: u16,
         offset: u16,
-    ) -> [Rect; 8] {
+    ) -> [Rect; 9] {
         let visible = order
             .iter()
             .copied()
@@ -67,7 +67,7 @@ impl TableLayout {
             }
         });
         let areas = Layout::horizontal(constraints).split(Rect::new(offset, 0, width, 1));
-        let mut cells = [Rect::default(); 8];
+        let mut cells = [Rect::default(); 9];
         for (position, (column, area)) in visible.iter().zip(areas.iter()).enumerate() {
             let mut area = *area;
             if position + 1 < visible.len() {
@@ -78,7 +78,7 @@ impl TableLayout {
         cells
     }
 
-    fn inline_state_column(cells: &[Rect; 8], order: &[TableColumn]) -> Option<TableColumn> {
+    fn inline_state_column(cells: &[Rect; 9], order: &[TableColumn]) -> Option<TableColumn> {
         if cells[TableColumn::Ref as usize].width >= Self::STATE_GUTTER_WIDTH
             && order.contains(&TableColumn::Ref)
         {
@@ -110,7 +110,7 @@ impl TableLayout {
         Rect::new(row.x.saturating_add(area.x), row.y, area.width, row.height)
     }
 
-    pub(super) fn widths(self) -> [usize; 8] {
+    pub(super) fn widths(self) -> [usize; 9] {
         self.cells.map(|area| area.width as usize)
     }
 }
@@ -130,9 +130,10 @@ mod tests {
             Constraint::Length(10),
             Constraint::Length(0),
             Constraint::Length(5),
+            Constraint::Length(0),
         ];
         let original = TableLayout::resolve(&columns, &TableColumn::ALL, 120).widths();
-        for rotation in 0..8 {
+        for rotation in 0..TableColumn::ALL.len() {
             let mut order = TableColumn::ALL;
             order.rotate_left(rotation);
             let widths = TableLayout::resolve(&columns, &order, 120).widths();
@@ -155,6 +156,7 @@ mod tests {
             Constraint::Length(10),
             Constraint::Length(3),
             Constraint::Length(5),
+            Constraint::Length(0),
         ];
         let layout = TableLayout::resolve(
             &columns,
@@ -195,6 +197,7 @@ mod tests {
             Constraint::Length(10),
             Constraint::Length(3),
             Constraint::Length(5),
+            Constraint::Length(0),
         ];
         let layout = TableLayout::resolve(&columns, &[TableColumn::Title, TableColumn::Time], 40);
         assert_eq!(layout.state_column(), Some(TableColumn::Title));
@@ -217,6 +220,7 @@ mod tests {
             Constraint::Length(10),
             Constraint::Length(3),
             Constraint::Length(5),
+            Constraint::Length(0),
         ];
         for (column, content_width) in [
             (TableColumn::Status, 9),
@@ -242,6 +246,7 @@ mod tests {
             Constraint::Length(10),
             Constraint::Length(0),
             Constraint::Length(5),
+            Constraint::Length(0),
         ];
         for column in [
             TableColumn::Labels,
@@ -266,10 +271,11 @@ mod tests {
             Constraint::Length(10),
             Constraint::Length(0),
             Constraint::Length(5),
+            Constraint::Length(0),
         ];
         for width in [40, 64, 89, 90, 120, 200] {
             let row = Rect::new(7, 3, width, 1);
-            let original = Layout::horizontal(columns).areas::<8>(row);
+            let original = Layout::horizontal(columns).areas::<9>(row);
             let layout = TableLayout::resolve(&columns, &TableColumn::ALL, width);
             let last_visible = TableColumn::ALL
                 .into_iter()

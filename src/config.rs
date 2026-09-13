@@ -103,10 +103,11 @@ pub enum TableColumn {
     Status,
     Priority,
     Time,
+    Robot,
 }
 
 impl TableColumn {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Ref,
         Self::Title,
         Self::Labels,
@@ -115,6 +116,7 @@ impl TableColumn {
         Self::Status,
         Self::Priority,
         Self::Time,
+        Self::Robot,
     ];
 
     pub fn name(self) -> &'static str {
@@ -127,12 +129,16 @@ impl TableColumn {
             Self::Status => "status",
             Self::Priority => "priority",
             Self::Time => "time",
+            Self::Robot => "robot",
         }
     }
 }
 
 fn default_table_columns() -> Vec<TableColumn> {
-    TableColumn::ALL.to_vec()
+    TableColumn::ALL
+        .into_iter()
+        .filter(|column| *column != TableColumn::Robot)
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1126,7 +1132,7 @@ mod tests {
         for yaml in ["{}", "tui: {}", "tui:\n  table: {}"] {
             assert_eq!(
                 load_config(yaml).unwrap().tui.table.columns,
-                TableColumn::ALL
+                default_table_columns()
             );
         }
         let config = load_config("tui:\n  table:\n    columns: [status, priority, ref]").unwrap();
@@ -1143,6 +1149,25 @@ mod tests {
     }
 
     #[test]
+    fn robot_table_column_is_opt_in() {
+        assert!(
+            !TaskTableConfig::default()
+                .columns
+                .contains(&TableColumn::Robot)
+        );
+        let config = load_config("tui:\n  table:\n    columns: [ref, robot, title]\n").unwrap();
+        assert_eq!(
+            config.tui.table.columns,
+            [TableColumn::Ref, TableColumn::Robot, TableColumn::Title]
+        );
+        let text = serde_yaml::to_string(&config).unwrap();
+        assert_eq!(
+            load_config(&text).unwrap().tui.table.columns,
+            config.tui.table.columns
+        );
+    }
+
+    #[test]
     fn table_columns_reject_empty_duplicate_and_unknown_columns() {
         for (columns, expected) in [
             ("[]", "tui.table.columns must include at least one column"),
@@ -1150,7 +1175,7 @@ mod tests {
                 "[ref, title, labels, metadata, project, status, priority, ref]",
                 "tui.table.columns contains duplicate column ref",
             ),
-            ("[robot]", "unknown variant `robot`"),
+            ("[missing]", "unknown variant `missing`"),
         ] {
             let error =
                 load_config(&format!("tui:\n  table:\n    columns: {columns}")).unwrap_err();
