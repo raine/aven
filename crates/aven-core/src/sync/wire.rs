@@ -19,7 +19,7 @@ use crate::recurrence::{
 };
 use crate::task_fields::TaskField;
 
-pub const SYNC_PROTOCOL_VERSION: u32 = 17;
+pub const SYNC_PROTOCOL_VERSION: u32 = 18;
 const MAX_CHANGE_PAYLOAD_BYTES: usize = 64 * 1024;
 
 pub(crate) fn serialize_change_payload(payload: &Value) -> Result<String> {
@@ -1911,7 +1911,7 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(serde_json::to_value(delete).unwrap(), delete_value);
-        assert_eq!(SYNC_PROTOCOL_VERSION, 17);
+        assert_eq!(SYNC_PROTOCOL_VERSION, 18);
     }
 
     #[test]

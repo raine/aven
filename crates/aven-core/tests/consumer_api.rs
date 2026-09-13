@@ -546,6 +546,33 @@ async fn consumer_api_creation_sync_and_export_preserve_task_sources() {
         .unwrap();
     drop(first);
 
+    let database = Database::open(&first_path).await.unwrap();
+    let core_workspace = database.resolve_workspace("default").await.unwrap();
+    let android = database
+        .create_task(
+            &core_workspace,
+            aven_core::operations::TaskDraft {
+                title: "Android task".to_string(),
+                description: String::new(),
+                project: Some("Core".to_string()),
+                status: "inbox".to_string(),
+                priority: "none".to_string(),
+                source: aven_core::choices::TaskSource::Android,
+                labels: Vec::new(),
+                metadata: Vec::new(),
+                available_at: None,
+                due_on: None,
+                is_epic: false,
+            },
+        )
+        .await
+        .unwrap();
+    let sources = [
+        (captured.task_id.clone(), "ios".to_string()),
+        (android.task.id, "android".to_string()),
+    ];
+    drop(database);
+
     assert_eq!(task_source(&first_path, &captured.task_id).await, "ios");
     assert_eq!(task_source(&first_path, &created.id).await, "api");
     exchange(&first_path, &server).await;
@@ -553,46 +580,49 @@ async fn consumer_api_creation_sync_and_export_preserve_task_sources() {
     assert_eq!(task_source(&second_path, &created.id).await, "api");
     assert_eq!(task_source(&second_path, &captured.task_id).await, "ios");
 
-    for (path, title) in [(&first_path, "first title"), (&second_path, "second title")] {
-        Store::open(path)
+    for (task_id, source) in &sources {
+        assert_eq!(task_source(&second_path, task_id).await, *source);
+        for (path, title) in [(&first_path, "first title"), (&second_path, "second title")] {
+            Store::open(path)
+                .await
+                .unwrap()
+                .update_task(
+                    &workspace.id,
+                    task_id,
+                    UpdateTask {
+                        title: Some(title.to_string()),
+                        ..UpdateTask::default()
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        exchange(&first_path, &server).await;
+        exchange(&second_path, &server).await;
+        let second = Store::open(&second_path).await.unwrap();
+        let conflicts = second
+            .inspect_conflicts(&workspace.id, task_id)
             .await
-            .unwrap()
-            .update_task(
+            .unwrap();
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(task_source(&second_path, task_id).await, *source);
+        second
+            .resolve_conflict(
                 &workspace.id,
-                &captured.task_id,
-                UpdateTask {
-                    title: Some(title.to_string()),
-                    ..UpdateTask::default()
-                },
+                task_id,
+                ConflictField::Title,
+                conflicts[0].variant_a.clone(),
+                conflicts[0].variant_b.clone(),
+                ConflictResolution::Remote,
             )
             .await
             .unwrap();
+        drop(second);
+        exchange(&second_path, &server).await;
+        exchange(&first_path, &server).await;
+        assert_eq!(task_source(&first_path, task_id).await, *source);
+        assert_eq!(task_source(&second_path, task_id).await, *source);
     }
-    exchange(&first_path, &server).await;
-    exchange(&second_path, &server).await;
-    let second = Store::open(&second_path).await.unwrap();
-    let conflicts = second
-        .inspect_conflicts(&workspace.id, &captured.task_id)
-        .await
-        .unwrap();
-    assert_eq!(conflicts.len(), 1);
-    assert_eq!(task_source(&second_path, &captured.task_id).await, "ios");
-    second
-        .resolve_conflict(
-            &workspace.id,
-            &captured.task_id,
-            ConflictField::Title,
-            conflicts[0].variant_a.clone(),
-            conflicts[0].variant_b.clone(),
-            ConflictResolution::Remote,
-        )
-        .await
-        .unwrap();
-    drop(second);
-    exchange(&second_path, &server).await;
-    exchange(&first_path, &server).await;
-    assert_eq!(task_source(&first_path, &captured.task_id).await, "ios");
-    assert_eq!(task_source(&second_path, &captured.task_id).await, "ios");
 
     let replica = Database::open(&second_path).await.unwrap();
     let export = replica
@@ -606,7 +636,9 @@ async fn consumer_api_creation_sync_and_export_preserve_task_sources() {
     imported.import_data(&export).await.unwrap();
     drop(imported);
     assert_eq!(task_source(&imported_path, &created.id).await, "api");
-    assert_eq!(task_source(&imported_path, &captured.task_id).await, "ios");
+    for (task_id, source) in sources {
+        assert_eq!(task_source(&imported_path, &task_id).await, source);
+    }
 }
 
 #[tokio::test]

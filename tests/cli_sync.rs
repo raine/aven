@@ -2718,7 +2718,7 @@ fn old_request_protocol_version_is_rejected_before_changes_are_stored() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let body = serde_json::json!({
-        "protocol_version": 15,
+        "protocol_version": 17,
         "client_id": "old-client",
         "after": 0,
         "changes": [project_change_json("old-version-change", "old-version")]
@@ -2729,7 +2729,7 @@ fn old_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        &format!("error sync-protocol-unsupported client=15 server={SYNC_PROTOCOL_VERSION}"),
+        &format!("error sync-protocol-unsupported client=17 server={SYNC_PROTOCOL_VERSION}"),
     );
 }
 

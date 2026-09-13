@@ -54,6 +54,7 @@ pub enum TaskSource {
     Tui,
     Api,
     Ios,
+    Android,
     #[default]
     Unknown,
 }
@@ -65,6 +66,7 @@ impl TaskSource {
             Self::Tui => "tui",
             Self::Api => "api",
             Self::Ios => "ios",
+            Self::Android => "android",
             Self::Unknown => "unknown",
         }
     }
@@ -75,6 +77,7 @@ impl TaskSource {
             "tui" => Ok(Self::Tui),
             "api" => Ok(Self::Api),
             "ios" => Ok(Self::Ios),
+            "android" => Ok(Self::Android),
             "unknown" => Ok(Self::Unknown),
             _ => Err(InvalidTaskSource(value.to_string())),
         }
@@ -100,6 +103,7 @@ pub const TASK_SOURCES: &[&str] = &[
     TaskSource::Tui.as_str(),
     TaskSource::Api.as_str(),
     TaskSource::Ios.as_str(),
+    TaskSource::Android.as_str(),
     TaskSource::Unknown.as_str(),
 ];
 
@@ -250,10 +254,12 @@ mod tests {
         assert_eq!(TaskSource::Api.as_str(), "api");
         assert_eq!(TaskSource::parse("ios").unwrap(), TaskSource::Ios);
         assert_eq!(TaskSource::Ios.to_string(), "ios");
+        assert_eq!(TaskSource::parse("android").unwrap(), TaskSource::Android);
+        assert_eq!(TaskSource::Android.as_str(), "android");
         assert_eq!(TaskSource::Unknown.to_string(), "unknown");
         assert_eq!(
             TaskSource::parse("agent").unwrap_err().to_string(),
-            "error invalid-task-source input=agent choices=cli,tui,api,ios,unknown"
+            "error invalid-task-source input=agent choices=cli,tui,api,ios,android,unknown"
         );
 
         assert_eq!(TaskStatus::parse("active").unwrap(), TaskStatus::Active);

@@ -941,7 +941,11 @@ fn build_task_row_cells_for_columns(
 fn task_origin_cell(item: &TaskListItem) -> Line<'static> {
     let marker = match item.task.source {
         TaskSource::Cli => ROBOT_MARKER,
-        TaskSource::Tui | TaskSource::Api | TaskSource::Ios | TaskSource::Unknown => "",
+        TaskSource::Tui
+        | TaskSource::Api
+        | TaskSource::Ios
+        | TaskSource::Android
+        | TaskSource::Unknown => "",
     };
     Line::from(Span::styled(
         marker,
@@ -2596,6 +2600,7 @@ mod tests {
                     TaskSource::Tui,
                     TaskSource::Api,
                     TaskSource::Ios,
+                    TaskSource::Android,
                     TaskSource::Unknown,
                 ] {
                     let mut store = epic_test_store(true).await;
