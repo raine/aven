@@ -47,6 +47,47 @@ async fn update_task_fields_refresh_selected_task() {
     assert_eq!(task.title, "New");
     assert_eq!(task.description, "new body");
     assert_eq!(task.priority, TaskPriority::Urgent);
+    assert_eq!(task.status, TaskStatus::Todo);
+}
+
+#[tokio::test]
+async fn priority_edit_preserves_low_priority_and_non_inbox_statuses() {
+    let mut store = test_store().await;
+    let (inbox_id, inbox_selected) = create_selected_task(&mut store, "Low inbox").await;
+    store
+        .set_exact_priority(Some(inbox_selected), "low")
+        .await
+        .unwrap();
+
+    let (backlog_id, backlog_selected) = create_selected_task(&mut store, "High backlog").await;
+    store
+        .update_status(Some(backlog_selected), "backlog")
+        .await
+        .unwrap();
+    let backlog_selected = store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == backlog_id)
+        .unwrap();
+    store
+        .set_exact_priority(Some(backlog_selected), "high")
+        .await
+        .unwrap();
+
+    let inbox = store
+        .tasks
+        .iter()
+        .find(|item| item.task.id == inbox_id)
+        .unwrap();
+    assert_eq!(inbox.task.status, TaskStatus::Inbox);
+    assert_eq!(inbox.task.priority, TaskPriority::Low);
+    let backlog = store
+        .tasks
+        .iter()
+        .find(|item| item.task.id == backlog_id)
+        .unwrap();
+    assert_eq!(backlog.task.status, TaskStatus::Backlog);
+    assert_eq!(backlog.task.priority, TaskPriority::High);
 }
 
 #[tokio::test]

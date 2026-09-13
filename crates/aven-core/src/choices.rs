@@ -210,6 +210,10 @@ impl TaskPriority {
         }
     }
 
+    pub const fn promotes_inbox_to_todo(self) -> bool {
+        matches!(self, Self::Medium | Self::High | Self::Urgent)
+    }
+
     pub fn parse(value: &str) -> Result<Self, InvalidTaskPriority> {
         match value {
             "none" => Ok(Self::None),

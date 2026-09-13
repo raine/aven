@@ -45,6 +45,7 @@ async fn set_exact_priority_for_tasks_sets_priority_on_each_marked_task() {
             .find(|item| item.task.id == task_id)
             .unwrap();
         assert_eq!(item.task.priority, TaskPriority::High);
+        assert_eq!(item.task.status, TaskStatus::Todo);
     }
 }
 

@@ -146,7 +146,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 ## Domain rules
 
 - Status values are `inbox`, `backlog`, `todo`, `active`, `done`, and `canceled`.
-- Priority values are `none`, `low`, `medium`, `high`, and `urgent`.
+- Priority values are `none`, `low`, `medium`, `high`, and `urgent`. Assigning `medium`, `high`, or `urgent` promotes an inbox task to todo, including during creation. Other statuses and priorities do not trigger status changes.
 - Task source values are `cli`, `tui`, `api`, `ios`, `android`, and `unknown`. `TaskSource` is a closed enum; unfamiliar values are rejected, not normalized or mapped to `unknown`. iOS queue capture assigns `ios`; generic consumer creation assigns `api`. Existing sources are never reclassified. Only absent values at compatibility boundaries default to `unknown`. Sync protocol 18 requires clients and server to understand `android`; older clients must upgrade before syncing, opening an upgraded database, or importing exports with unsupported sources. Source is immutable and excluded from scalar field versioning, conflict resolution, and undo field mutations. Keep the enum and SQLite source constraint aligned.
 - New entity IDs come from typed constructors in `aven_core::ids`, which return 16 Crockford Base32 characters from 80 random bits.
 - Timestamps come from `aven_core::ids::now()` and are UTC strings.

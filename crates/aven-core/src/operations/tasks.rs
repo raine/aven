@@ -1218,6 +1218,11 @@ async fn insert_task(
 ) -> Result<InsertedTask> {
     let status = TaskStatus::parse(&draft.status)?;
     let priority = TaskPriority::parse(&draft.priority)?;
+    let status = if status == TaskStatus::Inbox && priority.promotes_inbox_to_todo() {
+        TaskStatus::Todo
+    } else {
+        status
+    };
     let available_at = draft.available_at.as_deref().unwrap_or("");
     let due_on = draft.due_on.as_deref().unwrap_or("");
     let id = TaskId::new();
@@ -1560,6 +1565,20 @@ async fn apply_task_update(
     } else {
         Vec::new()
     };
+    let promote_inbox = if update
+        .status
+        .as_deref()
+        .is_none_or(|status| status == TaskStatus::Inbox.as_str())
+        && update.priority.as_deref().is_some_and(|priority| {
+            TaskPriority::parse(priority).is_ok_and(TaskPriority::promotes_inbox_to_todo)
+        }) {
+        get_task_in_workspace(conn, workspace, task_id)
+            .await?
+            .status
+            == TaskStatus::Inbox
+    } else {
+        false
+    };
     let mut changed = false;
     if let Some(title) = update.title.as_deref() {
         changed |= update_task_field(conn, workspace, task_id, "title", title).await?;
@@ -1571,7 +1590,9 @@ async fn apply_task_update(
         let project = resolve_or_create_project_in_workspace(conn, &workspace.id, project).await?;
         changed |= set_task_project(conn, workspace, task_id, &project).await?;
     }
-    if let Some(status) = update.status.as_deref() {
+    if promote_inbox {
+        changed |= update_task_field(conn, workspace, task_id, "status", "todo").await?;
+    } else if let Some(status) = update.status.as_deref() {
         changed |= update_task_field(conn, workspace, task_id, "status", status).await?;
     }
     if let Some(priority) = update.priority.as_deref() {

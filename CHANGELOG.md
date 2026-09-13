@@ -5,6 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Setting medium, high, or urgent priority moves inbox tasks to todo, including when creating tasks.
 - Fix: Pressing `!` for marked tasks uses the same `n`, `l`, `m`, `h`, and `u` priority shortcuts as a single task.
 - `aven sync` shows a concise summary with readable attachment sizes and remaining work; use `--json` for exact structured results.
 - Choose which [TUI task-list columns](https://aven.raine.dev/configuration/#tui-table-columns) appear and their order with `tui.table.columns`.

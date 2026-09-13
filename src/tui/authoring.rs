@@ -45,7 +45,8 @@ impl AddTaskPriorityChoice {
     }
 
     fn drives_derived_status(&self) -> bool {
-        matches!(self, Self::HumanSelected(value) if value != "none")
+        crate::choices::TaskPriority::parse(self.value())
+            .is_ok_and(crate::choices::TaskPriority::promotes_inbox_to_todo)
     }
 }
 
@@ -66,6 +67,12 @@ pub(crate) fn derived_add_task_status<'a>(
     recurring: bool,
 ) -> &'a str {
     match status {
+        AddTaskStatusChoice::Explicit(status)
+            if status == crate::choices::TaskStatus::Inbox.as_str()
+                && priority.drives_derived_status() =>
+        {
+            crate::choices::TaskStatus::Todo.as_str()
+        }
         AddTaskStatusChoice::Explicit(status) => status,
         AddTaskStatusChoice::Derived => automatic_add_task_status(priority, recurring),
     }
@@ -885,6 +892,36 @@ mod tests {
     }
 
     #[test]
+    fn add_task_priority_promotes_only_inbox_action_priorities() {
+        for priority in ["medium", "high", "urgent"] {
+            assert_eq!(
+                derived_add_task_status(
+                    &AddTaskStatusChoice::Explicit("inbox".to_string()),
+                    &AddTaskPriorityChoice::Literal(priority.to_string()),
+                    false,
+                ),
+                "todo"
+            );
+        }
+        assert_eq!(
+            derived_add_task_status(
+                &AddTaskStatusChoice::Derived,
+                &AddTaskPriorityChoice::HumanSelected("low".to_string()),
+                false,
+            ),
+            "inbox"
+        );
+        assert_eq!(
+            derived_add_task_status(
+                &AddTaskStatusChoice::Explicit("backlog".to_string()),
+                &AddTaskPriorityChoice::HumanSelected("urgent".to_string()),
+                false,
+            ),
+            "backlog"
+        );
+    }
+
+    #[test]
     fn add_task_status_defaults_to_inbox_and_can_be_set() {
         let mut state = AuthoringState::default();
         state.begin_add_task(None, None);
@@ -1055,7 +1092,7 @@ mod tests {
     }
 
     #[test]
-    fn inferred_priority_remains_literal_for_derived_inbox_status() {
+    fn inferred_priority_promotes_derived_inbox_status() {
         let mut state = AuthoringState::default();
         state.begin_add_task(None, None);
         assert!(
@@ -1080,7 +1117,7 @@ mod tests {
         let AddTaskTitleSubmit::Create(create) = state.submit_add_task() else {
             panic!("parsed task should be ready to create");
         };
-        assert_eq!(create.draft.status, "inbox");
+        assert_eq!(create.draft.status, "todo");
         assert_eq!(create.draft.priority, "high");
     }
 
