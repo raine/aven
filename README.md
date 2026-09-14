@@ -1,6 +1,6 @@
 <h1>
-  <a href="https://aven.raine.dev#gh-light-mode-only"><img src="docs/src/assets/aven-logo-grape-violet-light.svg" width="48" height="48" align="absmiddle" alt="Aven logo"></a>
-  <a href="https://aven.raine.dev#gh-dark-mode-only"><img src="docs/src/assets/aven-logo-grape-violet.svg" width="48" height="48" align="absmiddle" alt="Aven logo"></a>
+  <a href="https://aventasks.dev#gh-light-mode-only"><img src="docs/src/assets/aven-logo-grape-violet-light.svg" width="48" height="48" align="absmiddle" alt="Aven logo"></a>
+  <a href="https://aventasks.dev#gh-dark-mode-only"><img src="docs/src/assets/aven-logo-grape-violet.svg" width="48" height="48" align="absmiddle" alt="Aven logo"></a>
   aven
 </h1>
 
@@ -16,7 +16,7 @@ If you've tried aven, feedback is welcome! Please
 
 If you find aven useful, consider sharing it with others who might benefit from it.
 
-Docs: <https://aven.raine.dev>
+Docs: <https://aventasks.dev/getting-started/>
 
 <p>
   <a href="meta/tui.webp"><img src="meta/tui.webp" width="74%" alt="aven TUI showing the queue view across workspace projects"></a>
@@ -28,33 +28,33 @@ Docs: <https://aven.raine.dev>
 
 ## Why aven?
 
-The CLI is agent-first, while the [power-user TUI](https://aven.raine.dev/tui/) gives humans a
+The CLI is agent-first, while the [power-user TUI](https://aventasks.dev/tui/) gives humans a
 keyboard-driven path to every action.
 
-The [queue view](https://aven.raine.dev/concepts/#queue) brings together tasks from every project
+The [queue view](https://aventasks.dev/concepts/#queue) brings together tasks from every project
 and shows what needs action, what is blocked, and what to focus on next.
 
 Aven keeps tasks in a local SQLite database instead of tracked files inside each project repo. You
 and your agents can capture and update tasks offline, independent of git state, branches, worktrees,
 or checkouts. If you need the same tasks on more than one device, you can
-[sync them through a server you control](https://aven.raine.dev/sync/).
+[sync them through a server you control](https://aventasks.dev/sync/).
 
 Repositories map to projects by default. Aven creates a project when you add its first task, and
 gives each task a short Jira/Linear-style ID such as `APP-7KQ9`. Aven can generate them without a
 server connection, and the project prefix shows where each task belongs.
 
-[Workspaces](https://aven.raine.dev/organize-tasks/#separate-work-with-workspaces) keep personal and
+[Workspaces](https://aventasks.dev/organize-tasks/#separate-work-with-workspaces) keep personal and
 work tasks in separate views while sharing one database. You can map a directory such as `~/work` to
 a workspace. When you run aven from that directory, it selects the workspace automatically.
 
 Markdown descriptions, append-style notes, and
-[image attachments](https://aven.raine.dev/tui/#image-attachments) keep task context available to
+[image attachments](https://aventasks.dev/tui/#image-attachments) keep task context available to
 you and your agents. Copy a complete task report as Markdown or
-[publish it as an unlisted GitHub gist](https://aven.raine.dev/tui/#publish-a-task-report-as-a-github-gist)
+[publish it as an unlisted GitHub gist](https://aventasks.dev/tui/#publish-a-task-report-as-a-github-gist)
 when you want to share that context. You can capture work through natural-language input, a tmux
 popup, or agent-friendly commands, then schedule it to appear when it needs your attention.
 
-Inspired by Taskwarrior. See [aven and Taskwarrior](https://aven.raine.dev/taskwarrior/).
+Inspired by Taskwarrior. See [aven and Taskwarrior](https://aventasks.dev/taskwarrior/).
 
 ## Quick start
 
@@ -84,19 +84,19 @@ aven demo
 
 Every demo run starts from the same sample data, and changes are discarded on exit.
 
-See [Getting started](https://aven.raine.dev/getting-started/) for first-run usage.
+See [Getting started](https://aventasks.dev/getting-started/) for first-run usage.
 
 ## Documentation
 
-- [What is aven?](https://aven.raine.dev/)
-- [Getting started](https://aven.raine.dev/getting-started/)
-- [Concepts](https://aven.raine.dev/concepts/)
-- [Using the TUI](https://aven.raine.dev/tui/)
-- [Organizing tasks](https://aven.raine.dev/organize-tasks/)
-- [Scheduling tasks](https://aven.raine.dev/schedule-tasks/)
-- [Recurring tasks](https://aven.raine.dev/recurring-tasks/)
-- [Work with agents](https://aven.raine.dev/agents/)
-- [Sync across devices](https://aven.raine.dev/sync/)
-- [Back up and restore](https://aven.raine.dev/backups/)
-- [Command reference](https://aven.raine.dev/command-reference/)
-- [Configuration](https://aven.raine.dev/configuration/)
+- [What is aven?](https://aventasks.dev/)
+- [Getting started](https://aventasks.dev/getting-started/)
+- [Concepts](https://aventasks.dev/concepts/)
+- [Using the TUI](https://aventasks.dev/tui/)
+- [Organizing tasks](https://aventasks.dev/organize-tasks/)
+- [Scheduling tasks](https://aventasks.dev/schedule-tasks/)
+- [Recurring tasks](https://aventasks.dev/recurring-tasks/)
+- [Work with agents](https://aventasks.dev/agents/)
+- [Sync across devices](https://aventasks.dev/sync/)
+- [Back up and restore](https://aventasks.dev/backups/)
+- [Command reference](https://aventasks.dev/command-reference/)
+- [Configuration](https://aventasks.dev/configuration/)
