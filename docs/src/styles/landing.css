@@ -79,7 +79,7 @@ h1 > span { color: #a49c95; }
 .window-dots i:nth-child(3) { background: #28c840; }
 .screenshot-frame img { width: 100%; }
 .section { padding-top: 112px; scroll-margin-top: 30px; }
-h2 { font-size: 43px; font-weight: 500; line-height: 1.14; letter-spacing: -2px; margin-top: 18px; }
+h2 { font-size: 43px; font-weight: 500; line-height: 1.14; letter-spacing: -2px; margin-top: 18px; text-wrap: balance; }
 .section-copy > p:not(.eyebrow) { color: var(--muted); font-size: 15px; line-height: 1.8; letter-spacing: -.15px; }
 .feature-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 .feature { background: var(--page); padding: 30px 26px 34px; }
