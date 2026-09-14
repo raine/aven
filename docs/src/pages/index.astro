@@ -96,7 +96,7 @@ const features = [
             <noscript><p class="install-note">For the curl command, see <a href="/getting-started/">installation instructions</a>.</p></noscript>
           </div>
           <figure class="hero-product" data-hero-showcase>
-            <div class="hero-tabs" role="tablist" aria-label="Explore Aven" hidden>
+            <div class="hero-tabs" role="tablist" aria-label="Explore Aven" data-pending>
               {heroViews.map((view, index) => (
                 <button type="button" role="tab" id={`hero-tab-${view.id}`} aria-controls={`hero-panel-${view.id}`} aria-selected={index === 0 ? 'true' : 'false'} tabindex={index === 0 ? 0 : -1}>{view.label}</button>
               ))}
@@ -240,7 +240,7 @@ const features = [
       });
     });
     panels.forEach((panel) => { panel.hidden = false; });
-    tablist.hidden = false;
+    tablist.removeAttribute('data-pending');
   });
 
   const commands = {

@@ -259,7 +259,7 @@ h2 { font-size: 43px; font-weight: 500; line-height: 1.14; letter-spacing: -2px;
 }
 @keyframes cursor-blink { 50% { opacity: 0; } }
 
-.hero-tabs:not([hidden]) { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.hero-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
 .hero-tabs button { padding: 10px 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--muted); font: 13px/1.6 var(--mono); }
 .hero-tabs button:hover { border-color: #796086; color: var(--ink); }
 .hero-tabs button[aria-selected='true'] { border-color: #624a7b; background: #241c2c; color: #dac4f3; }
@@ -269,6 +269,8 @@ h2 { font-size: 43px; font-weight: 500; line-height: 1.14; letter-spacing: -2px;
 .hero-panels > [role='tabpanel'] { grid-area: 1 / 1; min-width: 0; opacity: 0; transition: opacity 220ms ease-in-out; pointer-events: none; }
 .hero-panels > [aria-hidden='false'] { opacity: 1; pointer-events: auto; z-index: 1; }
 @media (max-width: 600px) {
-  .hero-tabs:not([hidden]) { gap: 6px; }
+  .hero-tabs { gap: 6px; }
   .hero-tabs button { padding-inline: 10px; font-size: 12px; }
 }
+
+.hero-tabs[data-pending] { visibility: hidden; }
