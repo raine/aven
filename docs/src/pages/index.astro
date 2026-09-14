@@ -5,6 +5,7 @@ import '../styles/landing.css';
 import ExternalLinkIcon from '../components/ExternalLinkIcon.astro';
 import GitHubIcon from '../components/GitHubIcon.astro';
 import AvenLettering from '../components/AvenLettering.astro';
+import ArrowRightIcon from '../components/ArrowRightIcon.astro';
 
 const heroViews = [
   { id: 'queue', label: 'Queue', src: '/tui.webp', alt: 'Aven terminal UI showing a shared task queue, project sidebar, priorities, and selected task context.' },
@@ -73,9 +74,7 @@ const features = [
               <p>Aven is a task manager for power users. Keep work from every project in one queue, with a keyboard-driven TUI for you and a compact CLI for your coding agents. Work across devices with optional self-hosted sync.</p>
               <a class="hero-docs" href="/getting-started/">
                 Read the docs
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-                  <path d="M4 12h16m-6-6 6 6-6 6" />
-                </svg>
+                <ArrowRightIcon />
               </a>
             </div>
           </div>
@@ -119,7 +118,7 @@ const features = [
             <p class="eyebrow">Agent-first CLI</p>
             <h2 id="agents-heading">Your agents work from the same queue you do.</h2>
             <p>The CLI output is compact, stable, and token-efficient. Start an agent in a repository and aven infers the project. Reference tasks in prompts and handoffs with short IDs like APP-7KQ9. Agents pick up ready work, capture follow-ups, update status, and leave handoff notes that outlive the chat session.</p>
-            <a class="text-link" href="/agents/">Work with agents <span aria-hidden="true">→</span></a>
+            <a class="text-link" href="/agents/">Work with agents <ArrowRightIcon /></a>
           </div>
           <div class="terminal" role="region" aria-label="Example agent session">
             <div class="session-titlebar"><span>Agent session</span><span class="session-example">example</span></div>
@@ -173,7 +172,7 @@ const features = [
             <p class="eyebrow">Quick capture</p>
             <h2 id="capture-heading">Capture a task. Get back to work.</h2>
             <p>Open the composer in a tmux popup without leaving your current terminal. Turn rough notes into a structured task draft with your configured agent, then review before saving.</p>
-            <a class="text-link" href="/tui/#run-aven-from-tmux">Set up tmux capture <span aria-hidden="true">→</span></a>
+            <a class="text-link" href="/tui/#run-aven-from-tmux">Set up tmux capture <ArrowRightIcon /></a>
           </div>
           <div class="screenshot-frame">
             <img src="/landing-tmux-capture.webp" width="3024" height="1898" alt="Aven task composer in a tmux popup over an active terminal workspace." loading="lazy" />
@@ -194,7 +193,7 @@ const features = [
         <section class="closing-section" aria-label="Get started with aven">
           <img src={wordmark.src} width="334" height="102" alt="aven" />
           <p>Inspired by Taskwarrior. Built for my own daily use, shared for yours.</p>
-          <a class="text-link closing-comparison" href="/taskwarrior/">Coming from Taskwarrior? See how Aven <span class="comparison-ending">compares <span aria-hidden="true">→</span></span></a>
+          <a class="text-link closing-comparison" href="/taskwarrior/">Coming from Taskwarrior? See how Aven <span class="comparison-ending">compares <ArrowRightIcon /></span></a>
           <div class="closing-actions">
             <a class="closing-button closing-primary" href="/getting-started/">Get started</a>
             <a class="closing-button" href="https://github.com/raine/aven">View on GitHub</a>
