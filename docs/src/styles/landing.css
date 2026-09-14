@@ -274,4 +274,15 @@ h2 { font-size: 43px; font-weight: 500; line-height: 1.14; letter-spacing: -2px;
   .hero-tabs button { padding-inline: 10px; font-size: 12px; }
 }
 
+@media (max-width: 1000px), (pointer: coarse) {
+  .site-header .brand, .site-footer .brand,
+  .site-header nav a, .site-footer nav a,
+  .hero-install [data-copy-command], .hero-install .install-options button,
+  .hero-tabs button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .site-header nav a, .site-footer nav a { justify-content: center; }
+}
+
 .hero-tabs[data-pending] { visibility: hidden; }
