@@ -175,7 +175,7 @@ h2 { font-size: 43px; font-weight: 500; line-height: 1.14; letter-spacing: -2px;
 .site-footer > div { display: flex; align-items: center; gap: 23px; }
 .site-footer .brand { gap: 7px; color: var(--ink); }
 .site-footer .brand-lettering { width: 64px; height: 17px; }
-.site-footer nav { font-size: 14px; }
+.site-footer nav { flex-wrap: wrap; font-size: 14px; }
 
 @media (min-width: 1500px) {
   .hero { padding-top: 94px; }

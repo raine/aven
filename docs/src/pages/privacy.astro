@@ -1,0 +1,119 @@
+---
+import logo from '../assets/aven-logo-grape-violet.svg';
+import AvenLettering from '../components/AvenLettering.astro';
+import GitHubIcon from '../components/GitHubIcon.astro';
+import ExternalLinkIcon from '../components/ExternalLinkIcon.astro';
+import '../styles/landing.css';
+import '../styles/privacy.css';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#121110" />
+    <title>Privacy policy | aven</title>
+    <meta name="description" content="How Aven handles local task data, self-hosted sync, remote images, crash reports, and support messages." />
+    <link rel="canonical" href="https://aventasks.dev/privacy/" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preload" href="/fonts/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Privacy policy | aven" />
+    <meta property="og:description" content="Local-first tasks. A clear account of where your data goes." />
+    <meta property="og:url" content="https://aventasks.dev/privacy/" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="container">
+      <header class="site-header">
+        <a class="brand" href="/" aria-label="aven home">
+          <img src={logo.src} alt="" width="34" height="34" />
+          <AvenLettering />
+        </a>
+        <nav aria-label="Main navigation">
+          <a class="features-link" href="/#features">Features</a>
+          <a href="/getting-started/">Docs</a>
+          <a href="https://github.com/raine/aven"><GitHubIcon /> GitHub</a>
+        </nav>
+      </header>
+
+      <main id="main" class="privacy-page">
+        <header class="privacy-heading">
+          <p class="eyebrow">Your data</p>
+          <h1>Privacy policy</h1>
+          <p class="privacy-updated">Last updated: <time datetime="2026-09-14">September 14, 2026</time></p>
+          <p class="privacy-intro">Your tasks live on your devices and, when you sync, on a server you choose. Aven has no advertising or usage analytics, and we do not operate a hosted task service.</p>
+        </header>
+
+        <div class="privacy-content">
+          <p>This policy covers the Aven terminal app, CLI, and iPhone companion. Aven is provided by Zendit Oy, Finland ("we" or "us").</p>
+
+          <section aria-labelledby="local-data">
+            <h2 id="local-data">Local storage</h2>
+            <p>Aven stores tasks, projects, labels, notes, schedules, and related data in a local database. Image attachments and app settings are also stored on your device. This data may be included in device or filesystem backups according to your backup settings.</p>
+            <p>On iPhone, the server address and pairing credential are stored in the system Keychain. They are not synchronized through iCloud Keychain. Aven does not use iCloud to sync tasks.</p>
+          </section>
+
+          <section aria-labelledby="sync">
+            <h2 id="sync">Sync to your own server</h2>
+            <p>Desktop sync is optional. The iPhone companion connects to a user-operated sync server. Once connected, Aven sends task content, attachments, changes, workspace and sync-client identifiers, and authentication information to the server you configure.</p>
+            <p>We and our partners have no access to your sync server. Its operator controls access, logs, retention, and backups. The server can read the content it stores: Aven sync is not end-to-end encrypted.</p>
+            <p>Use HTTPS or a trusted private network. HTTPS encrypts data in transit; HTTP connections do not and can expose task content and credentials to network observers. Keep pairing invitations and tokens private.</p>
+          </section>
+
+          <section aria-labelledby="images">
+            <h2 id="images">Images and external links</h2>
+            <p>Synced image attachments are transferred through your configured server. Separately, Markdown descriptions and notes can contain images hosted on other websites. On iPhone, these remote images are not fetched until you tap to load them.</p>
+            <p>Loading a remote image contacts its host, which receives your IP address, the requested URL, and request metadata. An image URL may contain information that identifies you. The host's privacy policy applies. Links you choose to open are also subject to the destination's data handling.</p>
+          </section>
+
+          <section aria-labelledby="permissions">
+            <h2 id="permissions">Camera and local network</h2>
+            <p>The iPhone app can use the camera to scan a pairing QR code. Camera images are not saved or uploaded by this pairing flow; only the decoded invitation is used to connect. Local-network permission lets the app reach a sync server on your network. You can manage these permissions in iOS Settings.</p>
+          </section>
+
+          <section aria-labelledby="integrations">
+            <h2 id="integrations">Desktop integrations and updates</h2>
+            <p>If you configure a coding agent or a natural-language task intake command, that tool can receive the input and task context you give it. Tools that use a remote AI service handle that information under their own provider's policy. These integrations are your choice, not an Aven-operated AI service.</p>
+            <p>The desktop app can contact GitHub to check for updates and download releases. GitHub receives ordinary network request information, such as your IP address. These requests do not upload your task database.</p>
+          </section>
+
+          <section aria-labelledby="diagnostics">
+            <h2 id="diagnostics">Crash reports</h2>
+            <p>Aven has no third-party crash-reporting SDK, advertising SDK, or usage analytics. Apple may collect iOS crash diagnostics and make reports available to us depending on your diagnostic-sharing settings. We use Apple-provided reports to diagnose and fix bugs.</p>
+            <p>Crash reports can include technical details, diagnostic messages, paths, and potentially sensitive context. They are not guaranteed to be free of personal information. You can manage diagnostic sharing in iOS Settings; Apple's privacy policy governs its handling of these reports.</p>
+          </section>
+
+          <section aria-labelledby="support">
+            <h2 id="support">Support messages</h2>
+            <p>If you contact us, we receive your contact details, message, and any diagnostics or files you choose to send. We use them only to provide support and fix bugs. We keep correspondence while it is useful for those purposes and delete it when no longer needed; we do not promise a fixed deletion deadline.</p>
+            <p>Please do not send pairing tokens or unnecessary task content. <a href="https://github.com/raine/aven/issues">GitHub issues</a> are public. Use <a href="mailto:raine@zendit.fi">email</a> for private support.</p>
+          </section>
+
+          <section aria-labelledby="deletion">
+            <h2 id="deletion">Deleting your data</h2>
+            <p>On iPhone, <strong>Disconnect and erase</strong> removes the local pairing profile and task replica and may discard unsynced work. It does not delete server data or revoke the server credential. To remove server copies or revoke access, manage your server or contact its operator.</p>
+            <p>Deleting a task is not a guarantee of immediate permanent erasure: copies may remain in sync history, other devices, or backups. Local deletion does not erase independently retained backups or Apple diagnostics. We cannot delete data from a server we do not control.</p>
+          </section>
+
+          <section aria-labelledby="contact">
+            <h2 id="contact">Questions and privacy requests</h2>
+            <p>Contact <a href="mailto:raine@zendit.fi">raine@zendit.fi</a> with questions about this policy or requests to access, correct, or delete personal information you have sent us.</p>
+            <p>Zendit Oy<br />Finland</p>
+          </section>
+
+          <section aria-labelledby="changes">
+            <h2 id="changes">Changes to this policy</h2>
+            <p>We will post any changes on this page and update the revision date above.</p>
+          </section>
+        </div>
+      </main>
+
+      <footer class="site-footer">
+        <div><a class="brand" href="/" aria-label="aven home"><img src={logo.src} alt="" width="25" height="25" /><AvenLettering /></a></div>
+        <nav aria-label="Footer navigation"><a href="/getting-started/">Docs</a><a href="/changelog/">Changelog</a><a href="/privacy/" aria-current="page">Privacy</a><a href="https://github.com/raine/aven">Source <ExternalLinkIcon /></a></nav>
+      </footer>
+    </div>
+  </body>
+</html>

@@ -47,7 +47,9 @@ Apple-side validation, not just bundled host tests.
 ## Website
 
 `docs/` builds the public site with Astro. `docs/src/pages/index.astro` and
-`docs/src/styles/landing.css` own the standalone landing page. Starlight owns the
+`docs/src/styles/landing.css` own the standalone landing page. The privacy policy
+at `docs/src/pages/privacy.astro` shares the landing styles, with reading-layout
+styles in `docs/src/styles/privacy.css`. Starlight owns the
 documentation routes in `docs/src/content/docs/`, starting with `overview.md` and
 `getting-started.md`; its navigation is configured in `docs/astro.config.mjs`.
 Product screenshots and locally served, licensed fonts live in `docs/public/`.
