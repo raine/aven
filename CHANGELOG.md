@@ -5,6 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- The TUI marked-task footer shows `Esc` as the preferred shortcut for clearing marks.
 - Fix: `aven demo` stays local-only and no longer shows its sample data as waiting to sync.
 - The website includes an Aven privacy policy covering self-hosted sync, diagnostics, and support.
 - Fix: Multiline text pasted into TUI editors keeps its line breaks in terminals using CSI-u keyboard encoding.

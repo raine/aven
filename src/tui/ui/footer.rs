@@ -88,11 +88,15 @@ fn bulk_footer_segments(count: usize) -> Vec<BulkFooterSegment> {
 }
 
 fn bulk_action_segment(label: &str, action: Action) -> BulkFooterSegment {
-    let keys = CommandContext::Normal
-        .commands()
-        .find(|command| command.action == action)
-        .and_then(|command| command.keys(CommandContext::Normal).first())
-        .map_or("", |keys| keys.label);
+    let keys = if action == Action::ClearMarks {
+        "Esc/t C"
+    } else {
+        CommandContext::Normal
+            .commands()
+            .find(|command| command.action == action)
+            .and_then(|command| command.keys(CommandContext::Normal).first())
+            .map_or("", |keys| keys.label)
+    };
     let mut spans = key(keys);
     spans.push(Span::styled(format!(" {label}  "), Style::new().fg(FG_DIM)));
     BulkFooterSegment {
@@ -543,7 +547,7 @@ mod tests {
 
         assert!(rendered.contains("● 3 marked"));
         assert!(rendered.contains("actions"));
-        assert!(rendered.contains("t C"));
+        assert!(rendered.contains("Esc/t C"));
         assert!(rendered.contains("clear"));
         assert!(rendered.contains("undo"));
         assert!(!rendered.contains("detail"));
