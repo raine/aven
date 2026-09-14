@@ -164,7 +164,8 @@ h2 { font-size: 43px; font-weight: 500; line-height: 1.14; letter-spacing: -2px;
 .closing-section { padding: 90px 0 70px; text-align: center; }
 .closing-section > img { width: 190px; height: auto; margin-inline: auto; }
 .closing-section > p { max-width: 540px; margin: 28px auto 0; color: #bfbcb4; font-size: 17px; line-height: 1.65; text-wrap: balance; }
-.closing-comparison { margin-top: 18px; font-size: 14px; line-height: 1.6; }
+.closing-comparison { display: inline-block; margin-top: 18px; font-size: 14px; line-height: 1.6; }
+.comparison-ending { white-space: nowrap; }
 .closing-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; margin-top: 30px; }
 .closing-button { border: 1px solid #35332f; border-radius: 8px; background: #222321; padding: 13px 22px; color: var(--ink); font: 14px/1.5 var(--mono); }
 .closing-button:hover { border-color: #706960; }
