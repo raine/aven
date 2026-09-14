@@ -5,6 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Fix: Multiline text pasted into TUI editors keeps its line breaks in terminals using CSI-u keyboard encoding.
 - Setting medium, high, or urgent priority moves inbox tasks to todo, including when creating tasks.
 - Fix: Pressing `!` for marked tasks uses the same `n`, `l`, `m`, `h`, and `u` priority shortcuts as a single task.
 - `aven sync` shows a concise summary with readable attachment sizes and remaining work; use `--json` for exact structured results.

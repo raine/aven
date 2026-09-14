@@ -1351,6 +1351,22 @@ mod tests {
     }
 
     #[test]
+    fn add_task_description_paste_restores_csi_u_ctrl_j_newlines() {
+        let first = "d3e8ada7 (HEAD -> main) center the TUI search dialog (12 minutes ago)";
+        let second = "039cb018 keep demo sync state local (12 minutes ago)";
+        let outcome = handle_generic_overlay_paste(
+            &format!("{first}\x1b[106;5u{second}"),
+            OverlayState::AddTask(add_task_state(AddTaskStep::Description)),
+        );
+        let OverlayState::AddTask(state) = outcome else {
+            panic!("expected add task state");
+        };
+        assert_eq!(state.description.buffer.lines, vec![first, second]);
+        assert_eq!(state.description.buffer.row, 1);
+        assert_eq!(state.description.buffer.column, second.len());
+    }
+
+    #[test]
     fn add_task_title_paste_flattens_newlines() {
         let outcome = handle_generic_overlay_paste(
             "one\ntwo",

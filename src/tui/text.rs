@@ -1,7 +1,9 @@
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub(crate) fn normalize_pasted_newlines(text: &str) -> String {
-    text.replace("\r\n", "\n").replace('\r', "\n")
+    text.replace("\x1b[106;5u", "\n")
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
 }
 
 pub(crate) fn char_boundary_at_or_before(input: &str, index: usize) -> usize {
@@ -170,8 +172,13 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_crlf_and_cr_newlines() {
+    fn normalizes_pasted_newline_encodings() {
         assert_eq!(normalize_pasted_newlines("a\r\nb\rc"), "a\nb\nc");
+        assert_eq!(normalize_pasted_newlines("a\x1b[106;5ub"), "a\nb");
+        assert_eq!(
+            normalize_pasted_newlines("a\x1b[107;5ub\x1b[106;2uc"),
+            "a\x1b[107;5ub\x1b[106;2uc"
+        );
     }
 
     #[test]

@@ -140,7 +140,15 @@ mod tests {
 
     #[test]
     fn exact_values_and_paste_preserve_opaque_text() {
-        for value in ["", " \t ", "\r", "\r\n", "é\r中\r\n\n ", "last\n\n"] {
+        for value in [
+            "",
+            " \t ",
+            "\r",
+            "\r\n",
+            "é\r中\r\n\n ",
+            "last\n\n",
+            "\x1b[106;5u",
+        ] {
             let original = TextBuffer::from_value(value.to_string());
             assert_eq!(original.lines.join("\n"), value);
             assert_eq!(original.baseline_value(), value);
