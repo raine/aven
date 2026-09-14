@@ -483,6 +483,9 @@ fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
     if let Some(priority) = &modifiers.priority {
         parts.push(vec![filter_part(format!("priority={priority}"))]);
     }
+    if modifiers.hide_ai_created {
+        parts.push(vec![filter_part("hide_ai_created")]);
+    }
     match modifiers.closed {
         crate::tui::store::ClosedTaskVisibility::Default => {}
         crate::tui::store::ClosedTaskVisibility::Included => {
@@ -640,6 +643,7 @@ mod tests {
             filter_modifiers: TaskFilterModifiers {
                 label: Some("backend".to_string()),
                 priority: Some("urgent".to_string()),
+                hide_ai_created: true,
                 closed: crate::tui::store::ClosedTaskVisibility::Included,
                 include_deleted: true,
                 deleted_only: false,
@@ -659,13 +663,13 @@ mod tests {
         assert!(spans_text(header_metrics(&store, false)).contains("conflicts 1"));
         assert_eq!(
             spans_text(active_filter_spans(&store)),
-            " │ filter label=backend priority=urgent include_closed include_deleted matches=2"
+            " │ filter label=backend priority=urgent hide_ai_created include_closed include_deleted matches=2"
         );
 
         store.view_state.filter_modifiers.deleted_only = true;
         assert_eq!(
             spans_text(active_filter_spans(&store)),
-            " │ filter label=backend priority=urgent include_closed deleted_only matches=2"
+            " │ filter label=backend priority=urgent hide_ai_created include_closed deleted_only matches=2"
         );
         store.view_state.filter_modifiers.deleted_only = false;
         store.view_state.filter_modifiers.closed = crate::tui::store::ClosedTaskVisibility::Only;

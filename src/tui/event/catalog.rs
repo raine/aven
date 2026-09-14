@@ -1586,6 +1586,16 @@ pub(crate) const COMMANDS: &[BuiltInCommand] = &[
         Action::CycleRecurringLifecycleFilter,
     ),
     BuiltInCommand::implemented(
+        "filter-ai-created",
+        "toggle AI-created task visibility",
+        "Filters",
+        &[KeySequence {
+            codes: &[KeyCode::Char('f'), KeyCode::Char('a')],
+            label: "f a",
+        }],
+        Action::ToggleAiCreatedFilter,
+    ),
+    BuiltInCommand::implemented(
         "filter-clear",
         "clear all filters",
         "Filters",

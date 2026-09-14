@@ -117,6 +117,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginAddWorkspace
             | Action::BeginRenameWorkspace
             | Action::ClearFilters
+            | Action::ToggleAiCreatedFilter
             | Action::ToggleClosedFilter
             | Action::ToggleDeletedFilter
             | Action::CycleRecurringLifecycleFilter
@@ -1158,6 +1159,10 @@ mod tests {
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('f'), KeyCode::Char('p')]),
             ShortcutLookup::Found(Action::BeginFilterPriority)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('f'), KeyCode::Char('a')]),
+            ShortcutLookup::Found(Action::ToggleAiCreatedFilter)
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('f'), KeyCode::Char('d')]),

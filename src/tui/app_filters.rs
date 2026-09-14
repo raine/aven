@@ -270,6 +270,17 @@ impl App {
         Ok(())
     }
 
+    pub(super) async fn toggle_ai_created_filter(&mut self) -> Result<()> {
+        let previous = self.capture_navigation_state();
+        let selected = self
+            .store
+            .toggle_ai_created_filter_restoring(&navigation_restore(&previous))
+            .await?;
+        self.push_navigation_state(previous);
+        self.apply_filter_selection(selected);
+        Ok(())
+    }
+
     pub(super) async fn toggle_closed_filter(&mut self) -> Result<()> {
         if !self.store.view_state.query.supports_closed_filter() {
             self.set_warning("Closed visibility is available in Queue, Open, and Epics views");

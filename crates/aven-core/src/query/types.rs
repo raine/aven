@@ -1,4 +1,5 @@
 use crate::attachments::AttachmentBytesState;
+use crate::choices::TaskSource;
 use crate::ids::{TaskId, WorkspaceId};
 use crate::metadata::TaskMetadataValue;
 use crate::queue::QueueMeta;
@@ -75,6 +76,7 @@ pub struct TaskFilters {
     pub statuses: Vec<String>,
     pub priority: Option<String>,
     pub label: Option<String>,
+    pub excluded_sources: Vec<TaskSource>,
     pub metadata: Vec<MetadataFilter>,
     pub has_metadata: Vec<String>,
     pub missing_metadata: Vec<String>,

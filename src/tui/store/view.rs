@@ -205,6 +205,18 @@ impl TuiStore {
             .selected)
     }
 
+    pub(crate) async fn toggle_ai_created_filter_restoring(
+        &mut self,
+        restore: &SelectionRestore,
+    ) -> Result<Option<usize>> {
+        let mut view_state = self.view_state.clone();
+        view_state.filter_modifiers.hide_ai_created = !view_state.filter_modifiers.hide_ai_created;
+        Ok(self
+            .refresh_replacement(restore, Some(view_state), None)
+            .await?
+            .selected)
+    }
+
     #[cfg(test)]
     pub(crate) async fn toggle_closed_filter(&mut self) -> Result<Option<usize>> {
         self.toggle_closed_filter_restoring(&SelectionRestore::Default)

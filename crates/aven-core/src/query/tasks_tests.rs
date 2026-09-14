@@ -74,6 +74,54 @@ async fn empty_task_id_restriction_matches_nothing() {
 }
 
 #[tokio::test]
+async fn task_list_excludes_selected_sources() {
+    let (_temp, mut conn) = test_conn().await;
+    seed_default_project(&mut conn).await;
+    insert_test_task(
+        &mut conn,
+        "0000000000000001",
+        "AI-created task",
+        "todo",
+        "none",
+        "001",
+    )
+    .await;
+    insert_test_task(
+        &mut conn,
+        "0000000000000002",
+        "TUI-created task",
+        "todo",
+        "none",
+        "002",
+    )
+    .await;
+    sqlx::query("UPDATE tasks SET source = 'cli' WHERE id = '0000000000000001'")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE tasks SET source = 'tui' WHERE id = '0000000000000002'")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+    let items = list_task_items_in_workspace(
+        &mut conn,
+        &crate::workspaces::default_workspace_id(),
+        TaskFilters {
+            excluded_sources: vec![crate::choices::TaskSource::Cli],
+            ..TaskFilters::default()
+        },
+        TaskQueryMode::Flat,
+        TaskSort::Created,
+        SortDirection::Asc,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(listed_titles(&items), ["TUI-created task"]);
+}
+
+#[tokio::test]
 async fn queue_view_hides_done_and_canceled_tasks() {
     let (_temp, mut conn) = test_conn().await;
     seed_default_project(&mut conn).await;

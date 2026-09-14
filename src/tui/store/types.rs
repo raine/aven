@@ -270,6 +270,7 @@ impl TaskProjectionOrigin {
 pub(crate) struct TaskFilterModifiers {
     pub(crate) label: Option<String>,
     pub(crate) priority: Option<String>,
+    pub(crate) hide_ai_created: bool,
     pub(crate) closed: ClosedTaskVisibility,
     pub(crate) include_deleted: bool,
     pub(crate) deleted_only: bool,
@@ -364,6 +365,11 @@ impl TaskViewState {
         let mut filters = TaskFilters {
             label: self.filter_modifiers.label.clone(),
             priority: self.filter_modifiers.priority.clone(),
+            excluded_sources: if self.filter_modifiers.hide_ai_created {
+                vec![crate::choices::TaskSource::Cli]
+            } else {
+                Vec::new()
+            },
             include_deleted: self.filter_modifiers.include_deleted,
             deleted_only: self.filter_modifiers.deleted_only,
             task_ids: self.projection_origin.task_id_filter(),
@@ -549,6 +555,22 @@ mod tests {
 
         assert_eq!(state.query, TaskQuery::Queue);
         assert_eq!(state.layout, TaskLayout::List);
+    }
+
+    #[test]
+    fn ai_created_filter_excludes_cli_source() {
+        let state = TaskViewState {
+            filter_modifiers: TaskFilterModifiers {
+                hide_ai_created: true,
+                ..TaskFilterModifiers::default()
+            },
+            ..TaskViewState::default()
+        };
+
+        assert_eq!(
+            state.filters().excluded_sources,
+            vec![crate::choices::TaskSource::Cli]
+        );
     }
 
     #[test]

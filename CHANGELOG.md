@@ -13,6 +13,7 @@ description: Release notes for aven.
 - `aven sync` shows a concise summary with readable attachment sizes and remaining work; use `--json` for exact structured results.
 - Choose which [TUI task-list columns](https://aven.raine.dev/configuration/#tui-table-columns) appear and their order with `tui.table.columns`.
 - Enable the experimental [TUI robot column](https://aven.raine.dev/configuration/#tui-robot-column) to spot agent-created tasks, using CLI creation as the indicator. Opt-in and disabled by default.
+- Hide AI-created tasks from TUI views with the `filter-ai-created` command or `f a` shortcut.
 - Render the [TUI status column](https://aven.raine.dev/configuration/#compact-status-column) as icons only with `tui.table.compact_status`. Off by default.
 - The website and documentation use [aventasks.dev](https://aventasks.dev).
 

@@ -138,6 +138,7 @@ pub(crate) enum Action {
     BeginAddWorkspace,
     BeginRenameWorkspace,
     ClearFilters,
+    ToggleAiCreatedFilter,
     ToggleClosedFilter,
     ToggleDeletedFilter,
     CycleRecurringLifecycleFilter,
@@ -197,6 +198,7 @@ impl Action {
                 | Self::BeginScopeProject
                 | Self::BeginSwitchWorkspace
                 | Self::ClearFilters
+                | Self::ToggleAiCreatedFilter
                 | Self::ToggleClosedFilter
                 | Self::ToggleDeletedFilter
                 | Self::CycleRecurringLifecycleFilter

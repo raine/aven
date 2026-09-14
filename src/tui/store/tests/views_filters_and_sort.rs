@@ -897,6 +897,49 @@ async fn query_anchor_preserves_task_identity_across_sorting() {
 }
 
 #[tokio::test]
+async fn ai_created_filter_hides_cli_source_tasks() {
+    let (_dir, pool, mut store) = test_store_with_pool().await;
+    store
+        .create_task(task_draft("AI-created task"), None)
+        .await
+        .unwrap();
+    store
+        .create_task(task_draft("TUI-created task"), None)
+        .await
+        .unwrap();
+    let ai_task_id = store
+        .tasks
+        .iter()
+        .find(|item| item.task.title == "AI-created task")
+        .unwrap()
+        .task
+        .id
+        .clone();
+    let mut conn = pool.acquire().await.unwrap();
+    sqlx::query("UPDATE tasks SET source = 'cli' WHERE id = ?")
+        .bind(&ai_task_id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    drop(conn);
+
+    store
+        .toggle_ai_created_filter_restoring(&SelectionRestore::Default)
+        .await
+        .unwrap();
+
+    assert!(store.view_state.filter_modifiers.hide_ai_created);
+    assert_eq!(
+        store
+            .tasks
+            .iter()
+            .map(|item| item.task.title.as_str())
+            .collect::<Vec<_>>(),
+        ["TUI-created task"]
+    );
+}
+
+#[tokio::test]
 async fn query_anchor_uses_clamped_flat_position_when_task_is_hidden() {
     let mut store = test_store().await;
     for title in ["First urgent", "Second urgent"] {

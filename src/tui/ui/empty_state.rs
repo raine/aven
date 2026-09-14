@@ -77,6 +77,7 @@ pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
     let has_narrowing_filters = modifiers.deleted_only
         || modifiers.label.is_some()
         || modifiers.priority.is_some()
+        || modifiers.hide_ai_created
         || (modifiers.closed == ClosedTaskVisibility::Only
             && store.view_state.query != TaskQuery::Epics);
     match &store.view_state.projection_origin {
@@ -137,6 +138,7 @@ pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
 
     if modifiers.label.is_some()
         || modifiers.priority.is_some()
+        || modifiers.hide_ai_created
         || (modifiers.closed == ClosedTaskVisibility::Only
             && store.view_state.query != TaskQuery::Epics)
     {

@@ -346,6 +346,15 @@ async fn select_tasks(
         query.push("t.priority = ");
         query.push_bind(priority);
     }
+    if !filters.excluded_sources.is_empty() {
+        push_filter_prefix(&mut query, &mut filters_added);
+        query.push("t.source NOT IN (");
+        let mut separated = query.separated(", ");
+        for source in filters.excluded_sources {
+            separated.push_bind(source.as_str());
+        }
+        separated.push_unseparated(")");
+    }
     if let Some(label) = label {
         push_filter_prefix(&mut query, &mut filters_added);
         query.push("t.id IN (SELECT tl.task_id FROM task_labels tl INDEXED BY idx_task_labels_workspace_label_task WHERE tl.workspace_id = ");

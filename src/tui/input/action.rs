@@ -139,6 +139,7 @@ impl App {
             Action::BeginAddWorkspace => self.begin_add_workspace(),
             Action::BeginRenameWorkspace => self.begin_rename_workspace(),
             Action::ClearFilters => self.clear_filters().await?,
+            Action::ToggleAiCreatedFilter => self.toggle_ai_created_filter().await?,
             Action::ToggleClosedFilter => self.toggle_closed_filter().await?,
             Action::ToggleDeletedFilter => self.toggle_deleted_filter().await?,
             Action::CycleRecurringLifecycleFilter => {
