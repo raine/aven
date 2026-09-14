@@ -1427,11 +1427,11 @@ mod tests {
     }
 
     #[test]
-    fn add_task_explicit_status_wins_over_priority_changes() {
+    fn add_task_priority_promotes_explicit_inbox_and_preserves_todo() {
         let mut inbox = add_task_state(AddTaskStep::Status);
         assert!(inbox.apply_status_choice("inbox"));
         assert!(inbox.apply_priority_choice("high"));
-        assert_eq!(inbox.effective_status(), "inbox");
+        assert_eq!(inbox.effective_status(), "todo");
         assert!(inbox.apply_priority_choice("none"));
         assert_eq!(inbox.effective_status(), "inbox");
 
@@ -1466,7 +1466,7 @@ mod tests {
         let mut state = add_task_state(AddTaskStep::Status);
         state.apply_priority_choice("high");
         state.apply_status_choice("inbox");
-        assert_eq!(state.effective_status(), "inbox");
+        assert_eq!(state.effective_status(), "todo");
 
         assert!(state.apply_status_choice(crate::tui::store::ADD_TASK_STATUS_AUTO_VALUE));
         assert!(state.status_is_automatic());

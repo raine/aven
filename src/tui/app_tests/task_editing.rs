@@ -521,7 +521,7 @@ async fn edit_priority_picker_prefills_current_priority() {
         app.store.tasks[selected].task.priority,
         TaskPriority::Urgent
     );
-    assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Inbox);
+    assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Todo);
 }
 
 #[tokio::test]

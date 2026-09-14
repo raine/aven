@@ -214,14 +214,14 @@ async fn ios_capture_is_local_workspace_scoped_and_reversible() {
         .await
         .unwrap();
     assert_eq!(detail.description, "    code block\n\n- item\n");
-    assert_eq!(row.status, TaskStatus::Inbox);
+    assert_eq!(row.status, TaskStatus::Todo);
     assert_eq!(row.priority, TaskPriority::High);
     assert_eq!(row.due_on.as_deref(), Some(due_on.as_str()));
     assert_eq!(
         row.label.as_ref().map(|label| label.first.as_str()),
         Some("capture")
     );
-    assert_eq!(row.band, QueueBand::Triage);
+    assert_eq!(row.band, QueueBand::Focus);
 
     for input in [
         IosTaskCapture {

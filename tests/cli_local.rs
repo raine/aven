@@ -1072,7 +1072,7 @@ fn creates_db_and_captures_task() {
             "ref=",
             &format!("ref={bare}"),
             "project=app",
-            "status=inbox",
+            "status=todo",
             "priority=high",
             r#"title="fix sync conflict display""#,
         ],
@@ -1081,13 +1081,13 @@ fn creates_db_and_captures_task() {
     let list = ok(env.aven(&db, ["list"]));
     contains_all(
         &list,
-        &[&task_ref, "status=inbox", "priority=high", "labels=bug"],
+        &[&task_ref, "status=todo", "priority=high", "labels=bug"],
     );
 
     let shown = ok(env.aven(&db, ["show", &task_ref]));
     contains_all(
         &shown,
-        &[&task_ref, "status=inbox", "priority=high", "labels=bug"],
+        &[&task_ref, "status=todo", "priority=high", "labels=bug"],
     );
 }
 

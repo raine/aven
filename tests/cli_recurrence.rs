@@ -514,7 +514,7 @@ fn ordinary_tasks_keep_compatible_behavior_and_json_shape() {
     let env = TestEnv::new();
     let db = env.db("recurrence-compat.sqlite");
     let created = ok(env.aven(&db, ["add", "Ordinary task", "--priority", "medium"]));
-    contains_all(&created, &["status=inbox", "priority=medium"]);
+    contains_all(&created, &["status=todo", "priority=medium"]);
     let task_ref = created.split_whitespace().nth(1).unwrap();
 
     let json: serde_json::Value =

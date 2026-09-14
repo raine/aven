@@ -1250,9 +1250,17 @@ fn independent_field_edits_converge() {
     let a = env.db("client-a.sqlite");
     let b = env.db("client-b.sqlite");
 
-    let task_ref = extract_ref(&ok(
-        env.aven(&a, ["add", "merge fields", "--project", "app"])
-    ));
+    let task_ref = extract_ref(&ok(env.aven(
+        &a,
+        [
+            "add",
+            "merge fields",
+            "--project",
+            "app",
+            "--status",
+            "todo",
+        ],
+    )));
     sync(&env, &a, &server);
     sync(&env, &b, &server);
 
