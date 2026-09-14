@@ -49,18 +49,10 @@ impl TuiStore {
     }
 
     pub(super) async fn load_sync_status(&self) -> Result<TuiSyncStatus> {
-        let config = match app_config::AppConfig::load() {
-            Ok(config) => config,
-            Err(error) => {
-                return Ok(TuiSyncStatus {
-                    config_error: Some(format!("{error:#}")),
-                    ..TuiSyncStatus::default()
-                });
-            }
-        };
+        let config = self.config();
         let persistence = self.database.sync_persistence_status().await?;
         let pinned_server = persistence.pinned_server.clone();
-        let configured_server = configured_server_check(&config);
+        let configured_server = configured_server_check(config);
         let server_match = configured_server
             .as_ref()
             .filter(|server| server.ok)
@@ -77,7 +69,7 @@ impl TuiStore {
                     )
                 })
             });
-        let daemon_server = daemon_server_check(&config);
+        let daemon_server = daemon_server_check(config);
         let daemon_wake = match config.wake_addr() {
             Ok(addr) => SyncStatusCheck::new(true, addr.to_string()),
             Err(error) => SyncStatusCheck::new(false, format!("{error:#}")),

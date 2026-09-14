@@ -548,6 +548,12 @@ fn header_status(store: &TuiStore) -> Paragraph<'static> {
 }
 
 fn sync_status_label(store: &TuiStore) -> (Color, String) {
+    if !store.sync_status.enabled
+        && !store.sync_status.runtime_allowed
+        && store.database_path().file_name() == Some(std::ffi::OsStr::new("demo.sqlite"))
+    {
+        return (GREEN, "sync".to_string());
+    }
     super::sync_status_model::sync_status_summary(&store.sync_status).badge()
 }
 

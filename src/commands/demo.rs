@@ -96,6 +96,7 @@ where
     seed_demo(&database, &workspace, DemoClock::now()).await?;
 
     let mut config = AppConfig::default();
+    config.sync.disable_override = true;
     config.local.db_path = Some(db_path.clone());
     config.local.blob_dir = Some(blob_dir);
 

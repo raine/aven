@@ -114,6 +114,7 @@ pub(super) fn sync_status_summary(status: &TuiSyncStatus) -> SyncStatusSummary {
         SyncHealth::Attention
     } else {
         match state {
+            StatusState::Disabled if !status.enabled => SyncHealth::LocalOnly,
             StatusState::Disabled if !status.runtime_allowed => SyncHealth::RuntimeDisabled,
             StatusState::Disabled => SyncHealth::LocalOnly,
             StatusState::Unconfigured | StatusState::Failed | StatusState::Unavailable => {
