@@ -285,4 +285,9 @@ h2 { font-size: 43px; font-weight: 500; line-height: 1.14; letter-spacing: -2px;
   .site-header nav a, .site-footer nav a { justify-content: center; }
 }
 
+@media (max-width: 600px) {
+  .hero-install [data-copy-command], .hero-install .install-options button,
+  .hero-tabs button { min-height: 40px; }
+}
+
 .hero-tabs[data-pending] { visibility: hidden; }
