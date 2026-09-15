@@ -59,7 +59,7 @@ code { font-family: var(--mono); }
 .hero-eyebrow span { white-space: nowrap; }
 .status-dot { display: inline-block; flex: 0 0 auto; width: 6px; height: 6px; background: currentColor; border-radius: 50%; }
 .hero-intro { display: grid; grid-template-columns: 1.5fr 1fr; gap: 64px; align-items: start; margin-top: 24px; }
-h1 { font-size: clamp(68px, 7.3vw, 102px); font-weight: 500; line-height: 1.01; letter-spacing: -6.5px; }
+h1 { font-size: clamp(48px, 6.7vw, 86px); font-weight: 500; line-height: 1.01; letter-spacing: -5px; }
 h1 > span { color: #a49c95; }
 .hero-description { padding-bottom: 5px; }
 .hero-description > p:first-child { max-width: 365px; color: var(--muted); font-size: 17px; line-height: 1.7; letter-spacing: -.35px; }
@@ -185,7 +185,7 @@ h2 { font-size: 43px; font-weight: 500; line-height: 1.14; letter-spacing: -2px;
   .hero-intro { gap: 35px; }
   .hero-intro { grid-template-columns: 1fr; }
   .hero-description > p:first-child { max-width: 500px; }
-  h1 { font-size: 78px; letter-spacing: -5px; }
+  h1 { font-size: 68px; letter-spacing: -4px; }
   .hero-description > p:first-child { font-size: 15px; }
   .feature-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .feature:nth-child(3) { border-top-right-radius: 0; }
@@ -210,7 +210,7 @@ h2 { font-size: 43px; font-weight: 500; line-height: 1.14; letter-spacing: -2px;
   .eyebrow { font-size: 9px; letter-spacing: 1.1px; }
   .hero-eyebrow { font-size: 13px; letter-spacing: .08em; }
   .hero-intro { grid-template-columns: 1fr; gap: 25px; margin-top: 23px; }
-  h1 { font-size: clamp(59px, 11.5vw, 83px); letter-spacing: -4px; }
+  h1 { font-size: clamp(48px, 10vw, 68px); letter-spacing: -3px; }
   .hero-description > p:first-child { max-width: 470px; font-size: 16px; }
   .hero-docs { margin-top: 23px; }
   .hero-product { margin-top: 38px; }
@@ -240,7 +240,7 @@ h2 { font-size: 43px; font-weight: 500; line-height: 1.14; letter-spacing: -2px;
 }
 
 @media (max-width: 400px) {
-  h1 { font-size: clamp(46px, 14.6vw, 57px); letter-spacing: -3px; }
+  h1 { font-size: 12.3vw; letter-spacing: -2.5px; }
   .install-command { font-size: 10px; padding-inline: 12px; gap: 7px; }
   .hero-install .install-command { font-size: 11px; padding-inline: 12px; gap: 8px; }
   .site-footer nav { gap: 14px; }

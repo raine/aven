@@ -5,6 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- The website presents Aven as local-first task management for power users and their agents.
 - The TUI marked-task footer shows `Esc` as the preferred shortcut for clearing marks.
 - Fix: `aven demo` stays local-only and no longer shows its sample data as waiting to sync.
 - The website includes an Aven privacy policy covering self-hosted sync, diagnostics, and support.
