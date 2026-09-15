@@ -987,6 +987,12 @@ async fn undo_creation_preserves_independent_notes_and_relationships() {
                     .add_note(workspace, &task_id, "Independent note".into())
                     .await
                     .unwrap();
+                sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE id = ?")
+                    .bind("2099-01-01T00:00:00Z")
+                    .bind(&task_id)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
             }
             "blocked" => {
                 store

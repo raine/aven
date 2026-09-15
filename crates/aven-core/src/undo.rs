@@ -955,7 +955,15 @@ async fn apply_undo_command(
             attachment_ids,
             attachment_change_ids,
         } => {
-            let current = task_snapshot(conn, workspace_id, task_id).await?;
+            let mut current = task_snapshot(conn, workspace_id, task_id).await?;
+            let has_independent_state =
+                task_has_independent_creation_state(conn, workspace_id, task_id).await?;
+            // Note changes advance queue activity without changing authored task fields.
+            if has_independent_state {
+                current
+                    .queue_activity_at
+                    .clone_from(&expected.queue_activity_at);
+            }
             if current != *expected {
                 bail!("error undo-state-changed task_id={task_id} field=task");
             }
@@ -979,7 +987,7 @@ async fn apply_undo_command(
                     && labels_clear
                     && attachment_changes_clear
                     && related_state_clear
-                    && !task_has_independent_creation_state(conn, workspace_id, task_id).await?
+                    && !has_independent_state
                     && current_attachment_ids == *attachment_ids
                 {
                     hard_delete_created_task(
