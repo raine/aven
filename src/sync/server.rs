@@ -7,13 +7,23 @@ use std::time::Duration;
 use anyhow::{Result, bail};
 use aven_core::db::Database;
 use aven_core::sync::seed_claim::{Secret, StorageNotEmpty};
+use axum::Router;
+use axum::body::Body;
+use axum::extract::State;
+use axum::http::{HeaderMap, Request, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::server::graceful::GracefulShutdown;
 use hyper_util::service::TowerToHyperService;
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
+use tower_http::compression::CompressionLayer;
+use tower_http::decompression::RequestDecompressionLayer;
 use tracing::{info, warn};
 
+use crate::ai::{self, AiService};
 use crate::cli::{ServerArgs, ServerSetupArgs, ServerSubcommand};
 use crate::config;
 use crate::signals::shutdown_signal;
@@ -137,6 +147,31 @@ fn is_private_address(address: IpAddr) -> bool {
     }
 }
 
+#[derive(Clone)]
+struct AiAuthState {
+    auth_token: Option<String>,
+}
+
+async fn verify_ai_auth(
+    State(state): State<AiAuthState>,
+    headers: HeaderMap,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let authorized = state.auth_token.as_deref().is_some_and(|expected| {
+        headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .is_some_and(|token| token == expected)
+    });
+    if authorized {
+        next.run(request).await
+    } else {
+        StatusCode::UNAUTHORIZED.into_response()
+    }
+}
+
 /// Serves the seed, enrollment and tail/image routers. Each operation
 /// authenticates against the stored vault. The server does not terminate TLS,
 /// so non-loopback binds need an independently protected network.
@@ -177,9 +212,25 @@ async fn serve(
         workspace_quota_bytes: u64::try_from(image_policy.quota_bytes).unwrap_or(0),
     };
     tokio::spawn(prune_images(database.clone(), image_policy.grace));
+    let ai_service = Arc::new(AiService::from_config(config));
+    let ai_auth = AiAuthState {
+        auth_token: config.sync_auth_token().map(str::to_string),
+    };
+    let ai_app = Router::new()
+        .route("/ai/capabilities", get(ai::capabilities_handler))
+        .route(
+            "/ai/completions",
+            post(ai::completion_handler)
+                .layer(axum::extract::DefaultBodyLimit::max(ai::MAX_REQUEST_BYTES)),
+        )
+        .layer(RequestDecompressionLayer::new())
+        .layer(middleware::from_fn_with_state(ai_auth, verify_ai_auth))
+        .layer(CompressionLayer::new())
+        .with_state(ai_service);
     let app = crate::seed_bootstrap_http::router(database.clone(), publication_policy)
         .merge(crate::peer_enrollment_http::router(database.clone()))
-        .merge(crate::encrypted_tail_http::router(database, image_policy));
+        .merge(crate::encrypted_tail_http::router(database, image_policy))
+        .merge(ai_app);
     let listener = TcpListener::bind(bind).await?;
     let addr = listener.local_addr()?;
     info!(bind = %addr, "sync server starting");

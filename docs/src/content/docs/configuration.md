@@ -83,6 +83,16 @@ project:
 sync:
   enabled: true
   interval_seconds: 30
+  auth_token: "shared-ai-secret"
+
+ai:
+  provider: ollama
+  model: llama3.2
+  endpoint: "http://127.0.0.1:11434"
+  timeout_seconds: 45
+  max_output_tokens: 2048
+  max_concurrent_requests: 2
+  requests_per_minute: 10
 
 daemon:
   wake_addr: "127.0.0.1:47631"
@@ -147,6 +157,22 @@ agent:
     args: ["-p", "--no-session-persistence", "--bare", "{prompt}"]
     timeout_seconds: 45
 ```
+
+## AI completion service
+
+The optional `ai` section configures the generic completion service hosted by
+`aven server`. `provider` and `model` must be set together. The defaults are a
+45-second timeout, 2,048 output tokens, two concurrent requests, and ten
+requests per minute. `endpoint` is supported for llamafile, Ollama, and OpenAI.
+Set `sync.auth_token` to the shared bearer token accepted by the AI routes.
+End-to-end encrypted sync uses separate device credentials.
+
+Provider credentials are deliberately excluded from ordinary configuration and
+from `aven config get` and `aven config set`. API-key providers read protected
+server-process environment variables. OAuth providers use the owner-only
+`private/ai` directory below Aven's config directory. See [AI completion
+server](/ai-completions/) for provider setup, privacy, limits, and the HTTP
+contract.
 
 ## Database path
 

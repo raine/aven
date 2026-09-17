@@ -34,6 +34,10 @@ pub fn config_file_path() -> Result<PathBuf> {
     Ok(path)
 }
 
+pub fn ai_private_dir_path() -> Result<PathBuf> {
+    Ok(config_dir_path()?.join("private").join("ai"))
+}
+
 fn state_dir_path() -> Result<PathBuf> {
     let mut dir = env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)

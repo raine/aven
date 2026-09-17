@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 mod administration;
+mod ai;
 mod data_safety;
 mod help;
 mod recurrence;
@@ -29,6 +30,7 @@ pub(crate) use administration::{
     ProjectPathSubcommand, ProjectSubcommand, SelfUpdateArgs, SkillCommand, SkillInstallArgs,
     SkillSubcommand, WorkspaceCommand, WorkspaceSubcommand,
 };
+pub(crate) use ai::{AiCommand, AiSubcommand};
 pub(crate) use data_safety::{
     AttachmentAddArgs, AttachmentCommand, AttachmentDeleteArgs, AttachmentGetArgs,
     AttachmentListArgs, AttachmentPruneArgs, AttachmentSubcommand, BackupCommand,
@@ -88,6 +90,8 @@ pub(crate) enum Commands {
     /// Create a task
     #[command(after_long_help = ADD_EXAMPLES)]
     Add(AddArgs),
+    /// Manage the server AI completion service
+    Ai(AiCommand),
     /// Inspect and modify task dependencies
     Dep(DepCommand),
     /// Inspect and modify related-task links

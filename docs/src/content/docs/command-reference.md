@@ -1060,6 +1060,27 @@ Command failures print a plain explanation, a next step, and a stable code in
 square brackets. The full internal error chain is written to the log rather
 than repeated on standard error.
 
+### `aven ai`
+
+Manage the optional generic AI completion service without opening the task
+database.
+
+```sh
+aven ai providers
+aven ai login [provider]
+aven ai status [--json]
+aven ai check
+```
+
+`providers` lists the Rig-backed provider registry, credential source, schema
+strategy, and explicit exclusions. `login` starts an interactive OAuth device
+flow for ChatGPT or GitHub Copilot. `status` inspects local configuration and
+credential presence without contacting a provider. `check` makes one synthetic,
+billable JSON-schema completion through the configured provider.
+
+See [AI completion server](/ai-completions/) for configuration, limits,
+credential storage, and the HTTP contract.
+
 ### `aven server`
 
 Serve end-to-end encrypted sync from storage prepared by `aven server setup`.
@@ -1090,7 +1111,10 @@ proxy in front of it. Both commands refuse storage
 that holds
 change history, including storage from the unencrypted sync of earlier
 releases. The server shuts down gracefully on an operating-system termination
-signal.
+signal. The server also exposes authenticated `GET /ai/capabilities` and
+`POST /ai/completions` when AI is configured. AI always requires the bearer token
+from `sync.auth_token`, including on loopback; encrypted sync uses its separate
+device credentials.
 
 ```sh
 aven server setup --data /srv/aven/server.sqlite --url http://100.100.20.30:3746
