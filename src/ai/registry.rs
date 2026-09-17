@@ -1,10 +1,12 @@
 use std::env;
 use std::fmt::Debug;
 use std::future::Future;
+use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use std::pin::Pin;
 
 use anyhow::{Context, Result, anyhow, bail};
+use crossterm::style::{Color, Stylize};
 use rig_core::client::{CompletionClient, Nothing};
 use rig_core::completion::{
     CompletionError, CompletionModel, CompletionRequest, CompletionResponse,
@@ -248,6 +250,43 @@ macro_rules! api_key_model {
     }};
 }
 
+fn provider_display_name(provider: &str) -> &str {
+    match provider {
+        "chatgpt" => "ChatGPT",
+        "copilot" => "GitHub Copilot",
+        _ => provider,
+    }
+}
+
+fn print_device_prompt(provider: &str, uri: &str, code: &str) {
+    let styled = io::stdout().is_terminal() && env::var_os("NO_COLOR").is_none();
+    print!(
+        "{}",
+        format_device_prompt(provider_display_name(provider), uri, code, styled)
+    );
+    let _ = io::stdout().flush();
+}
+
+fn format_device_prompt(provider: &str, uri: &str, code: &str, styled: bool) -> String {
+    if styled {
+        format!(
+            "\n{}\n\n  {}  {}\n  {}  {}\n\n{}\n",
+            format!("Authenticate with {provider}")
+                .with(Color::Cyan)
+                .bold(),
+            "Open".with(Color::Cyan),
+            uri.with(Color::White),
+            "Code".with(Color::Cyan),
+            code.with(Color::Yellow).bold(),
+            "Waiting for authorization...".with(Color::DarkGrey)
+        )
+    } else {
+        format!(
+            "\nAuthenticate with {provider}\n\n  Open  {uri}\n  Code  {code}\n\nWaiting for authorization...\n"
+        )
+    }
+}
+
 fn chatgpt_client(
     private_dir: &Path,
     allow_device_flow: bool,
@@ -262,10 +301,7 @@ fn chatgpt_client(
         .http_client(BoundedHttpClient::default());
     let builder = if allow_device_flow {
         builder.on_device_code(|prompt| {
-            println!(
-                "Open {} and enter code {}",
-                prompt.verification_uri, prompt.user_code
-            )
+            print_device_prompt("chatgpt", &prompt.verification_uri, &prompt.user_code)
         })
     } else {
         builder
@@ -284,10 +320,7 @@ fn copilot_client(
         .http_client(BoundedHttpClient::default());
     let builder = if allow_device_flow {
         builder.on_device_code(|prompt| {
-            println!(
-                "Open {} and enter code {}",
-                prompt.verification_uri, prompt.user_code
-            )
+            print_device_prompt("copilot", &prompt.verification_uri, &prompt.user_code)
         })
     } else {
         builder
@@ -423,6 +456,17 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
+
+    #[test]
+    fn device_prompt_separates_the_url_and_code() {
+        let prompt =
+            format_device_prompt("ChatGPT", "https://example.com/device", "ABCD-EFGH", false);
+        assert_eq!(
+            prompt,
+            "\nAuthenticate with ChatGPT\n\n  Open  https://example.com/device\n  Code  ABCD-EFGH\n\nWaiting for authorization...\n"
+        );
+        assert!(format_device_prompt("ChatGPT", "url", "code", true).contains("\u{1b}["));
+    }
 
     #[test]
     fn provider_inventory_is_unique_and_local_provider_constructs_offline() {
