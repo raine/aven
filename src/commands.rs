@@ -1,3 +1,4 @@
+mod ai;
 mod attachments;
 mod bulk_update;
 mod config;
@@ -22,6 +23,7 @@ mod text;
 mod validation;
 mod workspaces;
 
+pub(crate) use self::ai::cmd_ai;
 pub(crate) use self::attachments::cmd_attachment;
 pub(crate) use self::bulk_update::cmd_bulk_update;
 pub(crate) use self::config::cmd_config;

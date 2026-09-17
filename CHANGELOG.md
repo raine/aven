@@ -3,6 +3,10 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## Unreleased
+
+- Self-host a [generic AI completion service](https://aventasks.dev/ai-completions/) with configurable Rig providers, private credentials, authenticated routes, and bounded usage.
+
 ## v0.1.51 (2026-10-21)
 
 - New: Switch workspaces from the TUI sidebar, with available open task counts for each workspace. ([#35](https://github.com/raine/aven/issues/35))

@@ -9,12 +9,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::WorkspaceId;
 
+mod ai;
 mod custom_commands;
 mod paths;
 #[cfg(test)]
 mod test_support;
 mod tui;
 
+pub use ai::AiConfig;
 pub(crate) use custom_commands::DEFAULT_CUSTOM_COMMAND_TIMEOUT_SECONDS;
 pub use custom_commands::{
     CustomTuiCommandConfig, CustomTuiCommandExecution, CustomTuiCommandSuccess,
@@ -22,8 +24,8 @@ pub use custom_commands::{
 };
 pub(crate) use paths::expand_tilde_from;
 pub use paths::{
-    config_dir_path, config_file_path, debug_db_path_from_env, default_db_path,
-    default_server_data_path, expand_tilde, resolve_blob_dir, resolve_db_path,
+    ai_private_dir_path, config_dir_path, config_file_path, debug_db_path_from_env,
+    default_db_path, default_server_data_path, expand_tilde, resolve_blob_dir, resolve_db_path,
 };
 pub use tui::{
     SidebarView, TableColumn, TaskColumnConfig, TaskTableConfig, TuiAppearance, TuiConfig,
@@ -48,6 +50,8 @@ pub struct AppConfig {
     pub scope: DefaultScope,
     #[serde(default)]
     pub sync: SyncConfig,
+    #[serde(default, skip_serializing_if = "AiConfig::is_empty")]
+    pub ai: AiConfig,
     #[serde(default)]
     pub daemon: DaemonConfig,
     #[serde(default)]
@@ -269,6 +273,9 @@ pub struct SyncConfig {
     #[serde(skip)]
     pub(crate) disable_override: bool,
     pub interval_seconds: Option<u64>,
+    /// Bearer token required by the optional AI completion routes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
     /// Terminal glyphs for device invitation QR codes.
     #[serde(default)]
     pub qr_glyphs: QrGlyphsConfig,
@@ -290,6 +297,7 @@ impl Default for SyncConfig {
             enabled: false,
             disable_override: false,
             interval_seconds: Some(DEFAULT_SYNC_INTERVAL_SECONDS),
+            auth_token: None,
             qr_glyphs: QrGlyphsConfig::Auto,
         }
     }
@@ -400,7 +408,8 @@ impl AppConfig {
     pub fn validate(&self) -> Result<()> {
         tui::validate(&self.tui)?;
         self.reminders.digest_time()?;
-        custom_commands::validate(&self.tui.commands)
+        custom_commands::validate(&self.tui.commands)?;
+        ai::validate(&self.ai)
     }
 
     pub fn has_project_override(
@@ -420,6 +429,14 @@ impl AppConfig {
             .interval_seconds
             .unwrap_or(DEFAULT_SYNC_INTERVAL_SECONDS)
             .max(1)
+    }
+
+    pub fn sync_auth_token(&self) -> Option<&str> {
+        self.sync
+            .auth_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
     }
 
     pub(crate) fn sync_is_allowed(&self) -> bool {

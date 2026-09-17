@@ -144,6 +144,21 @@ fn server_attachment_settings_remain_loadable_and_configurable() {
 }
 
 #[test]
+fn ai_config_is_optional_and_bounded() {
+    let config = load_config("ai:\n  provider: ollama\n  model: llama3.2\n").unwrap();
+    assert_eq!(config.ai.provider.as_deref(), Some("ollama"));
+    assert_eq!(config.ai.timeout_seconds(), 45);
+    assert_eq!(config.ai.max_output_tokens(), 2048);
+
+    assert!(load_config("ai:\n  provider: ollama\n").is_err());
+    assert!(load_config("ai:\n  provider: ollama\n  model: m\n  max_output_tokens: 0\n").is_err());
+    assert!(
+        load_config("ai:\n  provider: ollama\n  model: m\n  endpoint: file:///tmp/model\n")
+            .is_err()
+    );
+}
+
+#[test]
 fn local_inline_images_defaults_to_auto() {
     let config = AppConfig::default();
 

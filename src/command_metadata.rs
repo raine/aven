@@ -105,6 +105,7 @@ impl Commands {
                 log_mode: logging::LogMode::Cli,
                 wakes_daemon: args.command.wakes_daemon(),
             },
+            Self::Ai(_) => CommandMetadata::cli(),
             Self::Config(_) => CommandMetadata::cli(),
             Self::Backup(_) => CommandMetadata::cli(),
             Self::Export(_) => CommandMetadata::cli(),

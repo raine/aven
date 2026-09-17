@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::filter::Directive;
 
 const APP_DIR: &str = "aven";
 const LOG_FILE: &str = "aven.log";
@@ -22,7 +23,7 @@ pub(crate) enum LogMode {
 pub(crate) fn init(mode: LogMode) -> Result<()> {
     LOGS_TO_STDERR.store(mode.uses_stderr(), Ordering::Relaxed);
     let filter = std::env::var("AVEN_LOG").unwrap_or_else(|_| "aven=info".to_string());
-    let filter = EnvFilter::try_new(filter).context("invalid AVEN_LOG filter")?;
+    let filter = privacy_filter(&filter)?;
     if mode.uses_stderr() {
         init_stderr(filter)?;
     } else {
@@ -30,6 +31,13 @@ pub(crate) fn init(mode: LogMode) -> Result<()> {
     }
     install_panic_hook();
     Ok(())
+}
+
+fn privacy_filter(value: &str) -> Result<EnvFilter> {
+    Ok(EnvFilter::try_new(value)
+        .context("invalid AVEN_LOG filter")?
+        .add_directive("rig=off".parse::<Directive>()?)
+        .add_directive("rig_core=off".parse::<Directive>()?))
 }
 
 impl LogMode {
@@ -144,7 +152,15 @@ fn panic_message(info: &PanicHookInfo<'_>) -> String {
 mod tests {
     use std::panic::Location;
 
-    use super::{LogMode, format_panic_location};
+    use super::{LogMode, format_panic_location, privacy_filter};
+
+    #[test]
+    fn rig_content_logging_stays_disabled_under_verbose_filters() {
+        let filter = privacy_filter("trace,rig=trace,rig_core=trace").unwrap();
+        let rendered = filter.to_string();
+        assert!(rendered.contains("rig=off"));
+        assert!(rendered.contains("rig_core=off"));
+    }
 
     #[test]
     fn missing_home_and_state_only_disable_default_logging() {
