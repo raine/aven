@@ -5,7 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
-- Self-host a [generic AI completion service](https://aventasks.dev/ai-completions/) with configurable Rig providers, private credentials, authenticated routes, and bounded usage.
+- Self-host a [generic AI completion service](https://aventasks.dev/ai-completions/) with configurable Rig providers, guided OAuth login, private credentials, authenticated routes, and bounded usage.
 
 ## v0.1.51 (2026-10-21)
 
