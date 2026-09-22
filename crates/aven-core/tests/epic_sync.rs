@@ -204,6 +204,7 @@ async fn apply(path: &Path, request: SyncRequest, response: SyncResponse) {
         .unwrap()
         .apply_client_sync_page(ApplySyncPage {
             request,
+            sync_generation: 0,
             response,
             attempted_at: "2026-09-06T00:00:00Z".to_string(),
             previous_pushed: 0,
@@ -430,6 +431,7 @@ async fn failed_epic_page_rolls_back_membership_acknowledgements_and_cursor() {
     let error = db
         .apply_client_sync_page(ApplySyncPage {
             request: request.clone(),
+            sync_generation: 0,
             response: invalid,
             attempted_at: "2026-09-06T00:00:00Z".to_string(),
             previous_pushed: 0,

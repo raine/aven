@@ -110,6 +110,8 @@ pub fn shm_path(path: &Path) -> PathBuf {
 
 pub async fn restore_database_file(target: &Path, source: &Path) -> Result<PathBuf> {
     validate_sqlite_source(source).await?;
+    ensure_file_has_no_active_local_shared_capture(source, "source").await?;
+    ensure_file_has_no_active_local_shared_capture(target, "target").await?;
     let safety = create_restore_safety_backup(target).await?;
     let staging = target.with_extension("restore-staging");
     if staging.exists() {
@@ -181,6 +183,7 @@ pub(crate) async fn backup_database_with_connection(
     conn: &mut SqliteConnection,
     backup: &Path,
 ) -> Result<()> {
+    ensure_connection_has_no_active_local_shared_capture(conn, "backup source").await?;
     let parent = backup.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent).with_context(|| format!("could not create {}", parent.display()))?;
     let staging_dir = tempfile::Builder::new()
@@ -196,6 +199,54 @@ pub(crate) async fn backup_database_with_connection(
     fs::rename(&staging, backup)
         .with_context(|| format!("could not replace {}", backup.display()))?;
     Ok(())
+}
+
+async fn ensure_connection_has_no_active_local_shared_capture(
+    conn: &mut SqliteConnection,
+    role: &str,
+) -> Result<()> {
+    let table_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(
+             SELECT 1 FROM sqlite_master
+             WHERE type = 'table' AND name = 'local_shared_capture_journal'
+         )",
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    if !table_exists {
+        return Ok(());
+    }
+    let active: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM local_shared_capture_journal WHERE singleton = 1)",
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    if active {
+        bail!(
+            "error local-shared-capture-active role={} hint=cancel-never-dispatched-capture-first",
+            role.replace(' ', "-")
+        );
+    }
+    Ok(())
+}
+
+pub(crate) async fn ensure_file_has_no_active_local_shared_capture(
+    path: &Path,
+    role: &str,
+) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut conn = SqliteConnection::connect_with(
+        &SqliteConnectOptions::new()
+            .filename(path)
+            .read_only(true)
+            .foreign_keys(true)
+            .busy_timeout(Duration::from_secs(5)),
+    )
+    .await
+    .with_context(|| format!("could not open {} {}", role, path.display()))?;
+    ensure_connection_has_no_active_local_shared_capture(&mut conn, role).await
 }
 
 fn prune_migration_backups(path: &Path) -> Result<()> {

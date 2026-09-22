@@ -565,6 +565,7 @@ async fn exchange_bounded(client_path: &Path, server: &Database, pull_limit: u32
     client
         .apply_client_sync_page(ApplySyncPage {
             request: page.request,
+            sync_generation: 0,
             response: SyncResponse {
                 protocol_version: SYNC_PROTOCOL_VERSION,
                 cursor,

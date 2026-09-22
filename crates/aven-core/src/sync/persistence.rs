@@ -42,11 +42,13 @@ pub struct ClientSyncPage {
     pub request: SyncRequest,
     pub pending: usize,
     pub(crate) behavior_protocol: u32,
+    pub sync_generation: i64,
 }
 
 #[derive(Debug)]
 pub struct ApplySyncPage {
     pub request: SyncRequest,
+    pub sync_generation: i64,
     pub response: SyncResponse,
     pub attempted_at: String,
     pub previous_pushed: i64,

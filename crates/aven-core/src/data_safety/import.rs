@@ -68,6 +68,7 @@ pub(super) async fn replace_from_export(
                 | "sync_server_url"
                 | "sync_cursor"
                 | "local_seq"
+                | "sync_generation"
                 | "sync_established_protocol"
                 | "sync_blocked_protocol"
         ) {

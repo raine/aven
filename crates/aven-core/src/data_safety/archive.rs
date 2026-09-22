@@ -169,6 +169,8 @@ pub(super) async fn restore_backup_archive(
     validate_archive_entries(&entries, &manifest)?;
     let database_path = staging.path().join(&manifest.database);
     validate_sqlite_file(&database_path).await?;
+    db::ensure_file_has_no_active_local_shared_capture(&database_path, "restore-source").await?;
+    db::ensure_file_has_no_active_local_shared_capture(db_path, "restore-target").await?;
     let mut facts_by_hash = HashMap::with_capacity(manifest.objects.len());
     for object in &manifest.objects {
         let path = staging

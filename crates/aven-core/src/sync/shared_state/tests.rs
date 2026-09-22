@@ -1,4 +1,8 @@
+use std::io::Cursor;
+use std::time::Duration as StdDuration;
+
 use chrono::{Duration, TimeZone, Utc};
+use image::{DynamicImage, ImageFormat, RgbaImage};
 use serde_json::Value;
 
 use crate::sync::ApplySyncPage;
@@ -8,9 +12,10 @@ use super::*;
 use crate::choices::TaskSource;
 use crate::ids::TaskId;
 use crate::operations::{
-    CreateRecurrenceSeriesParams, RecurrenceSeriesDraft, TaskDraft, TaskUpdate,
+    CreateRecurrenceSeriesParams, RecurrenceSeriesDraft, TaskCreationUndo, TaskDraft, TaskUpdate,
 };
 use crate::recurrence::{RecurrenceDuePolicy, RecurrenceRule, RecurrenceSchedule};
+use crate::undo::UndoContext;
 use crate::workspaces::Workspace;
 
 async fn fresh() -> (tempfile::TempDir, Database, Workspace) {
@@ -22,6 +27,18 @@ async fn fresh() -> (tempfile::TempDir, Database, Workspace) {
         .unwrap();
     drop(conn);
     (dir, database, workspace)
+}
+
+fn png_bytes_with_dimensions(width: u32, height: u32) -> Vec<u8> {
+    let mut bytes = Cursor::new(Vec::new());
+    DynamicImage::ImageRgba8(RgbaImage::new(width, height))
+        .write_to(&mut bytes, ImageFormat::Png)
+        .unwrap();
+    bytes.into_inner()
+}
+
+fn png_bytes() -> Vec<u8> {
+    png_bytes_with_dimensions(2, 1)
 }
 
 fn draft(title: &str) -> TaskDraft {
@@ -91,6 +108,7 @@ impl TestStream {
                 .unwrap();
             replica
                 .apply_client_sync_page(ApplySyncPage {
+                    sync_generation: 0,
                     request: SyncRequest {
                         protocol_version: Some(SYNC_PROTOCOL_VERSION),
                         client_id: "ZZZZZZZZZZZZZZZZ".into(),
@@ -648,5 +666,521 @@ async fn imported_baseline_and_subsequent_operations_converge_after_install() {
             .conflicts
             .iter()
             .all(|row| row.resolved == 1)
+    );
+}
+
+#[tokio::test]
+async fn durable_capture_reopens_original_snapshot_after_later_edits() {
+    let temp = tempfile::tempdir().unwrap();
+    let db_path = temp.path().join("db.sqlite");
+    let blob_dir = temp.path().join("blobs");
+    let database = Database::open(&db_path).await.unwrap();
+    let mut conn = database.acquire_writer().await.unwrap();
+    let workspace = crate::workspaces::ensure_default_workspace(&mut conn)
+        .await
+        .unwrap();
+    drop(conn);
+    let captured_task = task(&database, &workspace, "captured title").await;
+    let before_cursor = database.meta("sync_cursor").await.unwrap();
+    let before_sequences: Vec<(String, Option<i64>)> = {
+        let mut conn = database.acquire_reader().await.unwrap();
+        sqlx::query_as("SELECT change_id, server_seq FROM changes ORDER BY local_seq")
+            .fetch_all(&mut *conn)
+            .await
+            .unwrap()
+    };
+
+    let capture = database
+        .capture_local_shared_state_never_dispatched(&blob_dir)
+        .await
+        .unwrap();
+    let candidate_id = capture.candidate_id().to_string();
+    let stream_id = capture.stream_id().to_string();
+    database
+        .update_task(
+            &workspace,
+            &captured_task,
+            TaskUpdate {
+                title: Some("later title".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    drop(database);
+
+    let reopened = Database::open(&db_path).await.unwrap();
+    let resumed = reopened
+        .resume_local_shared_state_never_dispatched()
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(resumed.candidate_id(), candidate_id);
+    assert_eq!(resumed.stream_id(), stream_id);
+    assert_eq!(
+        resumed
+            .shared_state()
+            .snapshot
+            .tables
+            .tasks
+            .iter()
+            .find(|row| row.id == captured_task)
+            .unwrap()
+            .title,
+        "captured title"
+    );
+    assert_eq!(reopened.meta("sync_cursor").await.unwrap(), before_cursor);
+    let after_sequences: Vec<(String, Option<i64>)> = {
+        let mut conn = reopened.acquire_reader().await.unwrap();
+        sqlx::query_as(
+            "SELECT change_id, server_seq FROM changes
+             WHERE change_id IN (SELECT change_id FROM local_shared_capture_changes)
+             ORDER BY local_seq",
+        )
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap()
+    };
+    assert_eq!(after_sequences, before_sequences);
+    reopened
+        .cancel_local_shared_state_never_dispatched(&candidate_id)
+        .await
+        .unwrap();
+    let current = reopened
+        .export_data("2026-09-21T12:02:00Z".into())
+        .await
+        .unwrap();
+    assert_eq!(
+        current
+            .tables
+            .tasks
+            .iter()
+            .find(|row| row.id == captured_task)
+            .unwrap()
+            .title,
+        "later title"
+    );
+}
+
+#[tokio::test]
+async fn failed_durable_capture_rolls_back_journal_floor_and_ownership() {
+    let (temp, database, _workspace) = fresh().await;
+    let hash = "ab".repeat(32);
+    {
+        let mut conn = database.acquire_writer().await.unwrap();
+        sqlx::query(
+            "INSERT INTO blob_inventory(
+                 sha256, byte_size, media_type, available, first_seen_at, last_verified_at
+             ) VALUES (?, 10, 'image/png', 1, '2026-09-21T12:00:00Z',
+                 '2026-09-21T12:00:00Z')",
+        )
+        .bind(&hash)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        db::set_meta(&mut conn, "local_seq", "41").await.unwrap();
+    }
+
+    let error = database
+        .capture_local_shared_state_never_dispatched(&temp.path().join("blobs"))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("selected-image-missing"));
+    let mut conn = database.acquire_reader().await.unwrap();
+    let journals: i64 = sqlx::query_scalar("SELECT count(*) FROM local_shared_capture_journal")
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    let pins: i64 = sqlx::query_scalar("SELECT count(*) FROM local_shared_capture_pins")
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    assert_eq!((journals, pins), (0, 0));
+    assert_eq!(
+        db::get_meta(&mut conn, "local_seq")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("41")
+    );
+    assert_eq!(
+        db::get_meta(&mut conn, "sync_generation")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("0")
+    );
+}
+
+#[tokio::test]
+async fn captured_history_blocks_general_and_recurrence_undo_atomically() {
+    let (temp, database, workspace) = fresh().await;
+    let created = database
+        .create_task_with_undo(
+            &workspace,
+            draft("undo protected"),
+            TaskCreationUndo::TuiTask,
+        )
+        .await
+        .unwrap();
+    database
+        .capture_local_shared_state_never_dispatched(&temp.path().join("blobs"))
+        .await
+        .unwrap();
+    let error = database
+        .apply_latest_tui_undo(&workspace.id)
+        .await
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("protected-history"));
+    assert!(
+        database
+            .task_undo_snapshot(&workspace.id, &created.task.id)
+            .await
+            .is_ok()
+    );
+    assert!(
+        database
+            .latest_tui_undo_presentation(&workspace.id)
+            .await
+            .unwrap()
+            .is_some(),
+        "the failed owning transaction must not consume undo"
+    );
+
+    database
+        .cancel_local_shared_state_never_dispatched(
+            database
+                .resume_local_shared_state_never_dispatched()
+                .await
+                .unwrap()
+                .unwrap()
+                .candidate_id(),
+        )
+        .await
+        .unwrap();
+    database.clear_pending_tui_undo_entries().await.unwrap();
+    let at = Utc::now();
+    let series = database
+        .create_recurrence_series(
+            &workspace,
+            CreateRecurrenceSeriesParams::new(RecurrenceSeriesDraft {
+                title: "protected recurrence".into(),
+                description: String::new(),
+                project: "app".into(),
+                priority: "none".into(),
+                initial_status: "todo".into(),
+                labels: vec![],
+                metadata: vec![],
+                schedule: RecurrenceSchedule::new(
+                    RecurrenceRule::daily(),
+                    "UTC".parse().unwrap(),
+                    at.date_naive(),
+                    None,
+                    RecurrenceDuePolicy::SameDay,
+                ),
+            })
+            .at(at),
+        )
+        .await
+        .unwrap();
+    database
+        .mutate_tasks(
+            &workspace,
+            vec![(
+                series.task.id.clone(),
+                TaskUpdate {
+                    status: Some("done".into()),
+                    ..Default::default()
+                },
+            )],
+            UndoContext::tui("complete recurrence"),
+        )
+        .await
+        .unwrap();
+    database
+        .capture_local_shared_state_never_dispatched(&temp.path().join("blobs"))
+        .await
+        .unwrap();
+    let before = database
+        .export_data("2026-09-21T18:00:00Z".into())
+        .await
+        .unwrap();
+    let error = database
+        .apply_latest_tui_undo(&workspace.id)
+        .await
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("protected-history"));
+    let after = database
+        .export_data("2026-09-21T18:00:00Z".into())
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(before.tables).unwrap(),
+        serde_json::to_value(after.tables).unwrap()
+    );
+}
+
+#[tokio::test]
+async fn durable_pin_survives_cleanup_until_idempotent_local_cancellation() {
+    let (temp, database, workspace) = fresh().await;
+    let blob_dir = temp.path().join("blobs");
+    let task_id = task(&database, &workspace, "image owner").await;
+    let bytes = png_bytes();
+    let hash = crate::attachments::storage::sha256_hex(&bytes);
+    let object = crate::attachments::storage::object_path(&blob_dir, &hash).unwrap();
+    std::fs::create_dir_all(object.parent().unwrap()).unwrap();
+    std::fs::write(&object, &bytes).unwrap();
+    let extra_bytes = png_bytes_with_dimensions(1, 2);
+    let extra_hash = crate::attachments::storage::sha256_hex(&extra_bytes);
+    let extra_object = crate::attachments::storage::object_path(&blob_dir, &extra_hash).unwrap();
+    std::fs::write(&extra_object, &extra_bytes).unwrap();
+    let unavailable_hash = "cd".repeat(32);
+    let attachment_id = crate::ids::new_id();
+    {
+        let mut conn = database.acquire_writer().await.unwrap();
+        crate::attachments::storage::upsert_inventory_available(
+            &mut conn,
+            &hash,
+            i64::try_from(bytes.len()).unwrap(),
+            "image/png",
+        )
+        .await
+        .unwrap();
+        crate::attachments::storage::upsert_inventory_available(
+            &mut conn,
+            &extra_hash,
+            i64::try_from(extra_bytes.len()).unwrap(),
+            "image/png",
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blob_inventory(
+                 sha256, byte_size, media_type, available, first_seen_at, last_verified_at
+             ) VALUES (?, 9, 'image/png', 0, '2026-09-21T12:00:00Z', NULL)",
+        )
+        .bind(&unavailable_hash)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO task_attachments(
+                 workspace_id, attachment_id, task_id, sha256, byte_size, media_type,
+                 filename, alt_text, width, height, created_at, created_by_change_id,
+                 deleted, deleted_at, deleted_by_change_id
+             ) VALUES (?, ?, ?, ?, ?, 'image/png', 'selected.png', NULL, 2, 1,
+                 '2026-09-21T12:00:00Z', NULL, 0, NULL, NULL)",
+        )
+        .bind(&workspace.id)
+        .bind(&attachment_id)
+        .bind(&task_id)
+        .bind(&hash)
+        .bind(i64::try_from(bytes.len()).unwrap())
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    }
+    let capture = database
+        .capture_local_shared_state_never_dispatched(&blob_dir)
+        .await
+        .unwrap();
+    let candidate_id = capture.candidate_id().to_string();
+    {
+        let mut conn = database.acquire_reader().await.unwrap();
+        let classes: Vec<(String, String)> = sqlx::query_as(
+            "SELECT sha256, classification FROM local_shared_capture_images ORDER BY sha256",
+        )
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
+        assert!(classes.contains(&(hash.clone(), "current_selected".into())));
+        assert!(classes.contains(&(extra_hash.clone(), "extra_selected".into())));
+        assert!(classes.contains(&(unavailable_hash, "unavailable".into())));
+        let pins: Vec<String> =
+            sqlx::query_scalar("SELECT sha256 FROM local_shared_capture_pins ORDER BY sha256")
+                .fetch_all(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(pins.len(), 2);
+        assert!(pins.contains(&hash));
+        assert!(pins.contains(&extra_hash));
+    }
+    database
+        .delete_task_attachment(&workspace, &attachment_id)
+        .await
+        .unwrap();
+    let policy = crate::attachments::lifecycle::LifecyclePolicy {
+        grace: StdDuration::ZERO,
+        ..Default::default()
+    };
+    let pinned = database
+        .prune_attachments(&blob_dir, policy, true)
+        .await
+        .unwrap();
+    assert_eq!(pinned.pruned.count, 0);
+    assert!(object.exists());
+
+    assert!(
+        database
+            .cancel_local_shared_state_never_dispatched(&candidate_id)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !database
+            .cancel_local_shared_state_never_dispatched(&candidate_id)
+            .await
+            .unwrap()
+    );
+    let released = database
+        .prune_attachments(&blob_dir, policy, true)
+        .await
+        .unwrap();
+    assert_eq!(released.pruned.count, 2);
+    assert!(!object.exists());
+    assert!(!extra_object.exists());
+}
+
+#[tokio::test]
+async fn active_local_capture_fences_sync_backup_import_and_restore() {
+    let (temp, database, workspace) = fresh().await;
+    task(&database, &workspace, "fenced").await;
+    let prepared = database
+        .prepare_client_sync_page("https://sync.test".into(), 0, 10)
+        .await
+        .unwrap();
+    let stale_request = prepared.request.clone();
+    let stale_generation = prepared.sync_generation;
+    let portable = database
+        .export_data("2026-09-21T12:00:00Z".into())
+        .await
+        .unwrap();
+    let capture = database
+        .capture_local_shared_state_never_dispatched(&temp.path().join("blobs"))
+        .await
+        .unwrap();
+    let candidate_id = capture.candidate_id().to_string();
+
+    let response = SyncResponse {
+        protocol_version: SYNC_PROTOCOL_VERSION,
+        changes: vec![],
+        push_acks: vec![],
+        cursor: prepared.request.after,
+        has_more: false,
+    };
+    let error = database
+        .apply_client_sync_page(ApplySyncPage {
+            request: prepared.request,
+            sync_generation: prepared.sync_generation,
+            response,
+            attempted_at: "2026-09-21T12:01:00Z".into(),
+            previous_pushed: 0,
+            previous_pulled: 0,
+        })
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("local-shared-capture-active"));
+    assert!(
+        database
+            .prepare_client_sync_page("https://sync.test".into(), 1, 10)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("local-shared-capture-active")
+    );
+    assert!(
+        database
+            .import_data(&portable)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("local-shared-capture-active")
+    );
+    let backup = temp.path().join("backup.sqlite");
+    assert!(
+        db::backup_database(database.path(), &backup)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("local-shared-capture-active")
+    );
+    let archive = temp.path().join("backup.tar.zst");
+    assert!(
+        database
+            .create_backup_archive(&temp.path().join("blobs"), &archive)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("local-shared-capture-active")
+    );
+
+    let restore_source = temp.path().join("restore-source.sqlite");
+    let inactive = Database::open(&restore_source).await.unwrap();
+    drop(inactive);
+    assert!(
+        db::restore_database_file(database.path(), &restore_source)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("local-shared-capture-active")
+    );
+
+    database
+        .cancel_local_shared_state_never_dispatched(&candidate_id)
+        .await
+        .unwrap();
+    let stale_response = SyncResponse {
+        protocol_version: SYNC_PROTOCOL_VERSION,
+        changes: vec![],
+        push_acks: vec![],
+        cursor: stale_request.after,
+        has_more: false,
+    };
+    let error = database
+        .apply_client_sync_page(ApplySyncPage {
+            request: stale_request,
+            sync_generation: stale_generation,
+            response: stale_response,
+            attempted_at: "2026-09-21T12:02:00Z".into(),
+            previous_pushed: 0,
+            previous_pulled: 0,
+        })
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("sync-generation-changed"));
+}
+
+#[tokio::test]
+async fn malformed_persisted_capture_fails_closed() {
+    let (temp, database, workspace) = fresh().await;
+    task(&database, &workspace, "malformed").await;
+    database
+        .capture_local_shared_state_never_dispatched(&temp.path().join("blobs"))
+        .await
+        .unwrap();
+    {
+        let mut conn = database.acquire_writer().await.unwrap();
+        sqlx::query("UPDATE local_shared_capture_journal SET snapshot_json = '{\"version\":999}'")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+    }
+    assert!(
+        database
+            .resume_local_shared_state_never_dispatched()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("malformed")
+    );
+    assert!(
+        database
+            .prepare_client_sync_page("https://sync.test".into(), 1, 10)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("local-shared-capture-active")
     );
 }

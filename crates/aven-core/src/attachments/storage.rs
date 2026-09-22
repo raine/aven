@@ -101,50 +101,61 @@ pub async fn remove_staged_blob_if_unreferenced(
     blob_dir: &Path,
     sha256: &str,
 ) {
-    let referenced = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM task_attachments WHERE sha256 = ?)",
+    let Ok(mut tx) = crate::db::begin_immediate(conn).await else {
+        return;
+    };
+    let protected = sqlx::query_scalar::<_, bool>(
+        "SELECT
+             EXISTS(SELECT 1 FROM task_attachments WHERE sha256 = ?)
+             OR EXISTS(
+                 SELECT 1 FROM changes
+                 WHERE server_seq IS NULL AND op_type = 'attachment_add'
+                   AND json_extract(payload, '$.sha256') = ?
+             )
+             OR EXISTS(
+                 SELECT 1 FROM blob_leases WHERE sha256 = ? AND expires_at > ?
+             )
+             OR EXISTS(
+                 SELECT 1 FROM blob_upload_reservations
+                 WHERE sha256 = ? AND expires_at > ?
+             )
+             OR EXISTS(SELECT 1 FROM local_shared_capture_pins WHERE sha256 = ?)",
     )
     .bind(sha256)
-    .fetch_one(&mut *conn)
-    .await;
-    let pending_upload = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(
-            SELECT 1 FROM changes
-            WHERE server_seq IS NULL AND op_type = 'attachment_add'
-              AND json_extract(payload, '$.sha256') = ?
-         )",
-    )
     .bind(sha256)
-    .fetch_one(&mut *conn)
-    .await;
-    let active_lease = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM blob_leases WHERE sha256 = ? AND expires_at > ?)",
-    )
     .bind(sha256)
     .bind(now())
-    .fetch_one(&mut *conn)
+    .bind(sha256)
+    .bind(now())
+    .bind(sha256)
+    .fetch_one(&mut *tx)
     .await;
-    if matches!(referenced, Ok(false))
-        && matches!(pending_upload, Ok(false))
-        && matches!(active_lease, Ok(false))
-        && let Ok(path) = object_path(blob_dir, sha256)
-    {
-        match fs::remove_file(path) {
-            Ok(()) => {
-                let _ = sqlx::query("DELETE FROM blob_inventory WHERE sha256 = ?")
-                    .bind(sha256)
-                    .execute(&mut *conn)
-                    .await;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let _ = sqlx::query("DELETE FROM blob_inventory WHERE sha256 = ?")
-                    .bind(sha256)
-                    .execute(&mut *conn)
-                    .await;
-            }
-            Err(_) => {}
+    if !matches!(protected, Ok(false)) {
+        let _ = tx.rollback().await;
+        return;
+    }
+    let Ok(path) = object_path(blob_dir, sha256) else {
+        let _ = tx.rollback().await;
+        return;
+    };
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => {
+            let _ = tx.rollback().await;
+            return;
         }
     }
+    if sqlx::query("DELETE FROM blob_inventory WHERE sha256 = ?")
+        .bind(sha256)
+        .execute(&mut *tx)
+        .await
+        .is_err()
+    {
+        let _ = tx.rollback().await;
+        return;
+    }
+    let _ = tx.commit().await;
 }
 
 fn write_object_atomically(path: &Path, bytes: &[u8]) -> Result<bool> {

@@ -338,6 +338,11 @@ pub(crate) async fn undo_recurrence_resolution(
             .bind(&status_change_id)
             .fetch_one(&mut *conn)
             .await?;
+    crate::sync::shared_state::ensure_changes_not_local_capture_protected(
+        conn,
+        &[outcome_change_id, &status_change_id],
+    )
+    .await?;
 
     let successor = load_projected_occurrence(conn, workspace_id, &series.id).await?;
     match series.state {
@@ -589,6 +594,11 @@ async fn remove_materialized_occurrence(
         &series.schedule(),
         occurrence.slot_on,
     )?;
+    crate::sync::shared_state::ensure_changes_not_local_capture_protected(
+        conn,
+        &[&identity.task_change_id, &identity.occurrence_change_id],
+    )
+    .await?;
     sqlx::query(
         "DELETE FROM recurrence_occurrences
          WHERE workspace_id = ? AND series_id = ? AND slot_on = ?",

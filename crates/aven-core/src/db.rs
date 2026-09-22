@@ -24,7 +24,10 @@ pub use backup::{
     backup_database, default_backup_path, default_sqlite_backup_path, restore_database_file,
     shm_path, wal_path,
 };
-pub(crate) use backup::{backup_database_with_connection, create_restore_safety_backup};
+pub(crate) use backup::{
+    backup_database_with_connection, create_restore_safety_backup,
+    ensure_file_has_no_active_local_shared_capture,
+};
 pub(crate) use changes::{IdentifiedChange, insert_change, insert_change_with_identity};
 pub(crate) use field_versions::{
     conflict_exists, entity_conflict_exists, entity_field_version, field_version,
@@ -208,6 +211,7 @@ async fn initialize_meta(pool: &SqlitePool) -> Result<()> {
     insert_meta_if_missing(&mut conn, "client_id", &new_id()).await?;
     insert_meta_if_missing(&mut conn, "sync_cursor", "0").await?;
     insert_meta_if_missing(&mut conn, "local_seq", "0").await?;
+    insert_meta_if_missing(&mut conn, "sync_generation", "0").await?;
     Ok(())
 }
 

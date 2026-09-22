@@ -114,6 +114,7 @@ impl Database {
             .await?
             .context("missing target client_id")?;
         let mut tx = db::begin_immediate(&mut conn).await?;
+        crate::sync::shared_state::ensure_no_active_local_shared_capture(&mut tx).await?;
         import::replace_from_export(&mut tx, export, &target_client_id).await?;
         let report = integrity::database_report(&mut tx).await?;
         ensure_integrity_ok(&report)?;
@@ -137,6 +138,7 @@ impl Database {
 
     pub async fn create_backup_archive(&self, blob_dir: &Path, output: &Path) -> Result<()> {
         let mut conn = self.acquire_writer().await?;
+        crate::sync::shared_state::ensure_no_active_local_shared_capture(&mut conn).await?;
         let hashes: Vec<String> = sqlx::query_scalar(
             "SELECT sha256 FROM blob_inventory WHERE available = 1 ORDER BY sha256",
         )

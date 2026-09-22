@@ -88,8 +88,10 @@ impl Database {
         protocol: Option<u32>,
     ) -> Result<ClientSyncPage> {
         let mut conn = self.acquire_writer().await?;
+        super::super::shared_state::ensure_no_active_local_shared_capture(&mut conn).await?;
         validate_sync_server(&mut conn, &server).await?;
         let behavior_protocol = super::super::protocol::replica_protocol(&mut conn).await?;
+        let sync_generation = sync_generation(&mut conn).await?;
         let protocol = protocol.unwrap_or(behavior_protocol);
         super::super::protocol::validate_behavior_protocol(protocol)?;
         if protocol < behavior_protocol {
@@ -119,6 +121,7 @@ impl Database {
         }
         Ok(ClientSyncPage {
             behavior_protocol,
+            sync_generation,
             pending: request.changes.len(),
             request,
         })
@@ -155,6 +158,13 @@ impl Database {
         let mut conn = self.acquire_writer().await?;
         apply_sync_response(&mut conn, page, expected_behavior).await
     }
+}
+
+async fn sync_generation(conn: &mut SqliteConnection) -> Result<i64> {
+    Ok(crate::db::get_meta(conn, "sync_generation")
+        .await?
+        .unwrap_or_else(|| "0".to_string())
+        .parse::<i64>()?)
 }
 
 async fn sync_cursor(conn: &mut SqliteConnection) -> Result<i64> {
@@ -235,6 +245,15 @@ pub(super) async fn apply_sync_response(
 ) -> Result<usize> {
     let mut applied = 0;
     let mut tx = begin_immediate(conn).await?;
+    super::super::shared_state::ensure_no_active_local_shared_capture(&mut tx).await?;
+    let current_generation = sync_generation(&mut tx).await?;
+    if current_generation != page.sync_generation {
+        bail!(
+            "error stale-sync-page sync-generation-changed expected={} prepared={}",
+            current_generation,
+            page.sync_generation
+        );
+    }
     let current_behavior = super::super::protocol::replica_protocol(&mut tx).await?;
     if expected_behavior.is_some_and(|expected| expected != current_behavior) {
         bail!("error stale-sync-page replica-protocol-changed");
@@ -528,6 +547,7 @@ mod tests {
             server_seq: Some(4),
         };
         let page = ApplySyncPage {
+            sync_generation: 0,
             request: SyncRequest {
                 protocol_version: Some(SYNC_PROTOCOL_VERSION),
                 client_id: "local".to_string(),

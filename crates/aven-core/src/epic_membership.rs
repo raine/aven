@@ -613,6 +613,7 @@ mod tests {
         };
         database
             .apply_client_sync_page(ApplySyncPage {
+                sync_generation: 0,
                 request: SyncRequest {
                     protocol_version: Some(SYNC_PROTOCOL_VERSION),
                     client_id: "local".to_string(),

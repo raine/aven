@@ -417,6 +417,7 @@ async fn frozen_released_protocol_18_history_replays_to_identical_state() {
     client
         .apply_client_sync_page(ApplySyncPage {
             request: page.request,
+            sync_generation: page.sync_generation,
             response: SyncResponse {
                 protocol_version: 18,
                 cursor: changes.last().unwrap().server_seq.unwrap(),

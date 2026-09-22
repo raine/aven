@@ -664,6 +664,7 @@ impl SyncSession {
                     .apply_client_sync_page_with_context(
                         ApplySyncPage {
                             request,
+                            sync_generation: active.page.sync_generation,
                             response: decoded,
                             attempted_at: self.attempted_at.clone(),
                             previous_pushed: self.summary.pushed,

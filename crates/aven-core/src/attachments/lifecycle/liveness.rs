@@ -19,6 +19,9 @@ pub(super) fn live_blob_references_sql(sha256_expr: &str) -> String {
              ON st.workspace_id = sbr.workspace_id AND st.task_id = sbr.task_id
            WHERE sbr.sha256 = {sha256_expr} AND sbr.deleted = 0
              AND COALESCE(st.deleted, 0) = 0
+         ) OR EXISTS(
+           SELECT 1 FROM local_shared_capture_pins pin
+           WHERE pin.sha256 = {sha256_expr}
          )"
     )
 }
@@ -179,6 +182,7 @@ pub(super) async fn is_protected(
              SELECT 1 FROM blob_upload_reservations WHERE sha256 = ? AND expires_at > ?
            )"
     )))
+    .bind(sha256)
     .bind(sha256)
     .bind(sha256)
     .bind(sha256)
