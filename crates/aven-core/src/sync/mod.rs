@@ -4,6 +4,7 @@ mod persistence;
 mod planner;
 pub mod protocol;
 mod session;
+mod shared_state;
 pub mod wire;
 
 pub use persistence::{
@@ -14,3 +15,4 @@ pub use session::{
     SyncPageOutcome, SyncRequestContext, SyncRequestTimeout, SyncRetryDecision, SyncSession,
     SyncSessionSummary, classify_pairing_connection_validation_response,
 };
+pub use shared_state::{SharedStateCapture, SharedStateInstallReport};

@@ -3,8 +3,8 @@ use crate::ids::{MetadataFieldId, ProjectId, TaskId, WorkspaceId};
 use crate::recurrence::RecurrenceSeriesId;
 use serde::{Deserialize, Serialize};
 
-pub(super) const EXPORT_FORMAT: &str = "aven-export";
-pub(super) const EXPORT_VERSION: i64 = 3;
+pub(crate) const EXPORT_FORMAT: &str = "aven-export";
+pub(crate) const EXPORT_VERSION: i64 = 3;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AvenExport {

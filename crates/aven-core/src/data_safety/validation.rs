@@ -59,8 +59,12 @@ pub(super) fn accepted_history_server(export: &AvenExport) -> Result<Option<Stri
 }
 
 pub(super) fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
-    use crate::sync::protocol::{MAINTAINED_PROTOCOL_BASELINE, validate_operation};
     accepted_history_server(export)?;
+    validate_shared_snapshot(export)
+}
+
+pub(crate) fn validate_shared_snapshot(export: &AvenExport) -> Result<()> {
+    use crate::sync::protocol::{MAINTAINED_PROTOCOL_BASELINE, validate_operation};
     for row in &export.tables.tasks {
         validate_operation(
             MAINTAINED_PROTOCOL_BASELINE,

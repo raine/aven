@@ -2,14 +2,14 @@ use anyhow::Result;
 use sqlx::sqlite::SqliteRow;
 use sqlx::{FromRow, SqliteConnection};
 
-pub(super) async fn scan_rows<T>(conn: &mut SqliteConnection, sql: &'static str) -> Result<Vec<T>>
+pub(crate) async fn scan_rows<T>(conn: &mut SqliteConnection, sql: &'static str) -> Result<Vec<T>>
 where
     T: for<'r> FromRow<'r, SqliteRow> + Send + Unpin,
 {
     Ok(sqlx::query_as::<_, T>(sql).fetch_all(conn).await?)
 }
 
-pub(super) async fn import_workspaces(
+pub(crate) async fn import_workspaces(
     tx: &mut SqliteConnection,
     rows: &[super::WorkspaceRow],
 ) -> Result<()> {
@@ -29,7 +29,7 @@ pub(super) async fn import_workspaces(
     Ok(())
 }
 
-pub(super) async fn import_projects(
+pub(crate) async fn import_projects(
     tx: &mut SqliteConnection,
     rows: &[super::ProjectRow],
 ) -> Result<()> {
@@ -51,7 +51,7 @@ pub(super) async fn import_projects(
     Ok(())
 }
 
-pub(super) async fn import_project_id_aliases(
+pub(crate) async fn import_project_id_aliases(
     tx: &mut SqliteConnection,
     rows: &[super::ProjectIdAliasRow],
 ) -> Result<()> {
@@ -68,7 +68,7 @@ pub(super) async fn import_project_id_aliases(
     Ok(())
 }
 
-pub(super) async fn import_project_paths(
+pub(crate) async fn import_project_paths(
     tx: &mut SqliteConnection,
     rows: &[super::ProjectPathRow],
 ) -> Result<()> {
@@ -83,7 +83,7 @@ pub(super) async fn import_project_paths(
     Ok(())
 }
 
-pub(super) async fn import_labels(
+pub(crate) async fn import_labels(
     tx: &mut SqliteConnection,
     rows: &[super::LabelRow],
 ) -> Result<()> {
@@ -98,7 +98,7 @@ pub(super) async fn import_labels(
     Ok(())
 }
 
-pub(super) async fn import_metadata_fields(
+pub(crate) async fn import_metadata_fields(
     tx: &mut SqliteConnection,
     rows: &[super::MetadataFieldRow],
 ) -> Result<()> {
@@ -118,7 +118,7 @@ pub(super) async fn import_metadata_fields(
     Ok(())
 }
 
-pub(super) async fn import_metadata_field_id_aliases(
+pub(crate) async fn import_metadata_field_id_aliases(
     tx: &mut SqliteConnection,
     rows: &[super::MetadataFieldIdAliasRow],
 ) -> Result<()> {
@@ -137,7 +137,7 @@ pub(super) async fn import_metadata_field_id_aliases(
     Ok(())
 }
 
-pub(super) async fn import_task_metadata(
+pub(crate) async fn import_task_metadata(
     tx: &mut SqliteConnection,
     rows: &[super::TaskMetadataRow],
 ) -> Result<()> {
@@ -159,7 +159,7 @@ pub(super) async fn import_task_metadata(
     Ok(())
 }
 
-pub(super) async fn import_tasks(tx: &mut SqliteConnection, rows: &[super::TaskRow]) -> Result<()> {
+pub(crate) async fn import_tasks(tx: &mut SqliteConnection, rows: &[super::TaskRow]) -> Result<()> {
     for row in rows {
         let source = crate::choices::TaskSource::parse(&row.source)?;
         sqlx::query(
@@ -186,7 +186,7 @@ pub(super) async fn import_tasks(tx: &mut SqliteConnection, rows: &[super::TaskR
     Ok(())
 }
 
-pub(super) async fn import_task_labels(
+pub(crate) async fn import_task_labels(
     tx: &mut SqliteConnection,
     rows: &[super::TaskLabelRow],
 ) -> Result<()> {
@@ -201,7 +201,7 @@ pub(super) async fn import_task_labels(
     Ok(())
 }
 
-pub(super) async fn import_notes(tx: &mut SqliteConnection, rows: &[super::NoteRow]) -> Result<()> {
+pub(crate) async fn import_notes(tx: &mut SqliteConnection, rows: &[super::NoteRow]) -> Result<()> {
     for row in rows {
         sqlx::query(
             "INSERT INTO notes(workspace_id, id, task_id, body, created_at, change_id) VALUES (?, ?, ?, ?, ?, ?)",
@@ -218,7 +218,7 @@ pub(super) async fn import_notes(tx: &mut SqliteConnection, rows: &[super::NoteR
     Ok(())
 }
 
-pub(super) async fn import_task_dependencies(
+pub(crate) async fn import_task_dependencies(
     tx: &mut SqliteConnection,
     rows: &[super::TaskDependencyRow],
 ) -> Result<()> {
@@ -236,7 +236,7 @@ pub(super) async fn import_task_dependencies(
     Ok(())
 }
 
-pub(super) async fn import_task_related_links(
+pub(crate) async fn import_task_related_links(
     tx: &mut SqliteConnection,
     rows: &[super::TaskRelatedLinkRow],
 ) -> Result<()> {
@@ -255,7 +255,7 @@ pub(super) async fn import_task_related_links(
     Ok(())
 }
 
-pub(super) async fn import_task_epic_links(
+pub(crate) async fn import_task_epic_links(
     tx: &mut SqliteConnection,
     rows: &[super::TaskEpicLinkRow],
 ) -> Result<()> {
@@ -273,7 +273,7 @@ pub(super) async fn import_task_epic_links(
     Ok(())
 }
 
-pub(super) async fn import_task_attachments(
+pub(crate) async fn import_task_attachments(
     tx: &mut SqliteConnection,
     rows: &[super::TaskAttachmentRow],
 ) -> Result<()> {
@@ -302,7 +302,7 @@ pub(super) async fn import_task_attachments(
     Ok(())
 }
 
-pub(super) async fn import_blob_inventory(
+pub(crate) async fn import_blob_inventory(
     tx: &mut SqliteConnection,
     rows: &[super::BlobInventoryExportRow],
 ) -> Result<()> {
@@ -320,7 +320,7 @@ pub(super) async fn import_blob_inventory(
     Ok(())
 }
 
-pub(super) async fn import_recurrence_series(
+pub(crate) async fn import_recurrence_series(
     tx: &mut SqliteConnection,
     rows: &[super::RecurrenceSeriesRow],
 ) -> Result<()> {
@@ -353,7 +353,7 @@ pub(super) async fn import_recurrence_series(
     Ok(())
 }
 
-pub(super) async fn import_recurrence_series_labels(
+pub(crate) async fn import_recurrence_series_labels(
     tx: &mut SqliteConnection,
     rows: &[super::RecurrenceSeriesLabelRow],
 ) -> Result<()> {
@@ -370,7 +370,7 @@ pub(super) async fn import_recurrence_series_labels(
     Ok(())
 }
 
-pub(super) async fn import_recurrence_series_metadata(
+pub(crate) async fn import_recurrence_series_metadata(
     tx: &mut SqliteConnection,
     rows: &[super::RecurrenceSeriesMetadataRow],
 ) -> Result<()> {
@@ -392,7 +392,7 @@ pub(super) async fn import_recurrence_series_metadata(
     Ok(())
 }
 
-pub(super) async fn import_recurrence_occurrences(
+pub(crate) async fn import_recurrence_occurrences(
     tx: &mut SqliteConnection,
     rows: &[super::RecurrenceOccurrenceRow],
 ) -> Result<()> {
@@ -415,7 +415,7 @@ pub(super) async fn import_recurrence_occurrences(
     Ok(())
 }
 
-pub(super) async fn import_recurrence_pause_intervals(
+pub(crate) async fn import_recurrence_pause_intervals(
     tx: &mut SqliteConnection,
     rows: &[super::RecurrencePauseIntervalRow],
 ) -> Result<()> {
@@ -438,7 +438,7 @@ pub(super) async fn import_recurrence_pause_intervals(
     Ok(())
 }
 
-pub(super) async fn import_changes(
+pub(crate) async fn import_changes(
     tx: &mut SqliteConnection,
     rows: &[super::ChangeRow],
 ) -> Result<()> {
@@ -463,7 +463,7 @@ pub(super) async fn import_changes(
     Ok(())
 }
 
-pub(super) async fn import_field_versions(
+pub(crate) async fn import_field_versions(
     tx: &mut SqliteConnection,
     rows: &[super::FieldVersionRow],
 ) -> Result<()> {
@@ -482,7 +482,7 @@ pub(super) async fn import_field_versions(
     Ok(())
 }
 
-pub(super) async fn import_conflicts(
+pub(crate) async fn import_conflicts(
     tx: &mut SqliteConnection,
     rows: &[super::ConflictRow],
 ) -> Result<()> {
@@ -512,7 +512,7 @@ pub(super) async fn import_conflicts(
 }
 
 #[allow(dead_code)]
-pub(super) async fn import_meta(tx: &mut SqliteConnection, rows: &[super::MetaRow]) -> Result<()> {
+pub(crate) async fn import_meta(tx: &mut SqliteConnection, rows: &[super::MetaRow]) -> Result<()> {
     for row in rows {
         sqlx::query("INSERT INTO meta(key, value) VALUES (?, ?)")
             .bind(&row.key)

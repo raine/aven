@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 use crate::db::{self, Database};
 
 mod archive;
-mod export_types;
+pub(crate) mod export_types;
 mod import;
 mod integrity;
 mod scan;
-mod tables;
-mod validation;
+pub(crate) mod tables;
+pub(crate) mod validation;
 
 pub use export_types::{
     AvenExport, BlobInventoryExportRow, ChangeRow, ConflictRow, ExportTables, FieldVersionRow,
@@ -39,38 +39,48 @@ pub(crate) fn ensure_integrity_ok(report: &IntegrityReport) -> Result<()> {
     integrity::ensure_ok(report)
 }
 
+pub(crate) async fn integrity_report_in_transaction(
+    conn: &mut sqlx::SqliteConnection,
+) -> Result<IntegrityReport> {
+    integrity::database_report(conn).await
+}
+
+pub(crate) async fn scan_export_tables(conn: &mut sqlx::SqliteConnection) -> Result<ExportTables> {
+    Ok(ExportTables {
+        workspaces: scan::scan_workspaces(conn).await?,
+        projects: scan::scan_projects(conn).await?,
+        project_paths: scan::scan_project_paths(conn).await?,
+        project_id_aliases: scan::scan_project_id_aliases(conn).await?,
+        labels: scan::scan_labels(conn).await?,
+        metadata_fields: scan::scan_metadata_fields(conn).await?,
+        metadata_field_id_aliases: scan::scan_metadata_field_id_aliases(conn).await?,
+        tasks: scan::scan_tasks(conn).await?,
+        task_metadata: scan::scan_task_metadata(conn).await?,
+        task_labels: scan::scan_task_labels(conn).await?,
+        notes: scan::scan_notes(conn).await?,
+        task_dependencies: scan::scan_task_dependencies(conn).await?,
+        task_epic_links: scan::scan_task_epic_links(conn).await?,
+        task_related_links: scan::scan_task_related_links(conn).await?,
+        task_attachments: scan::scan_task_attachments(conn).await?,
+        blob_inventory: scan::scan_blob_inventory(conn).await?,
+        recurrence_series: scan::scan_recurrence_series(conn).await?,
+        recurrence_series_labels: scan::scan_recurrence_series_labels(conn).await?,
+        recurrence_series_metadata: scan::scan_recurrence_series_metadata(conn).await?,
+        recurrence_occurrences: scan::scan_recurrence_occurrences(conn).await?,
+        recurrence_pause_intervals: scan::scan_recurrence_pause_intervals(conn).await?,
+        changes: scan::scan_changes(conn).await?,
+        field_versions: scan::scan_field_versions(conn).await?,
+        conflicts: scan::scan_conflicts(conn).await?,
+        meta: scan::scan_meta(conn).await?,
+    })
+}
+
 impl Database {
     pub async fn export_data(&self, exported_at: String) -> Result<AvenExport> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = db::begin_immediate(&mut conn).await?;
         let schema_version = db::current_schema_version(&mut tx).await?;
-        let tables = ExportTables {
-            workspaces: scan::scan_workspaces(&mut tx).await?,
-            projects: scan::scan_projects(&mut tx).await?,
-            project_paths: scan::scan_project_paths(&mut tx).await?,
-            project_id_aliases: scan::scan_project_id_aliases(&mut tx).await?,
-            labels: scan::scan_labels(&mut tx).await?,
-            metadata_fields: scan::scan_metadata_fields(&mut tx).await?,
-            metadata_field_id_aliases: scan::scan_metadata_field_id_aliases(&mut tx).await?,
-            tasks: scan::scan_tasks(&mut tx).await?,
-            task_metadata: scan::scan_task_metadata(&mut tx).await?,
-            task_labels: scan::scan_task_labels(&mut tx).await?,
-            notes: scan::scan_notes(&mut tx).await?,
-            task_dependencies: scan::scan_task_dependencies(&mut tx).await?,
-            task_epic_links: scan::scan_task_epic_links(&mut tx).await?,
-            task_related_links: scan::scan_task_related_links(&mut tx).await?,
-            task_attachments: scan::scan_task_attachments(&mut tx).await?,
-            blob_inventory: scan::scan_blob_inventory(&mut tx).await?,
-            recurrence_series: scan::scan_recurrence_series(&mut tx).await?,
-            recurrence_series_labels: scan::scan_recurrence_series_labels(&mut tx).await?,
-            recurrence_series_metadata: scan::scan_recurrence_series_metadata(&mut tx).await?,
-            recurrence_occurrences: scan::scan_recurrence_occurrences(&mut tx).await?,
-            recurrence_pause_intervals: scan::scan_recurrence_pause_intervals(&mut tx).await?,
-            changes: scan::scan_changes(&mut tx).await?,
-            field_versions: scan::scan_field_versions(&mut tx).await?,
-            conflicts: scan::scan_conflicts(&mut tx).await?,
-            meta: scan::scan_meta(&mut tx).await?,
-        };
+        let tables = scan_export_tables(&mut tx).await?;
         let version = if tables.task_related_links.is_empty() {
             2
         } else {
