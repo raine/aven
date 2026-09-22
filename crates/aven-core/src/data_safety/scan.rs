@@ -6,8 +6,9 @@ use super::{
     BlobInventoryExportRow, ChangeRow, ConflictRow, FieldVersionRow, LabelRow, MetaRow,
     MetadataFieldIdAliasRow, MetadataFieldRow, NoteRow, ProjectIdAliasRow, ProjectPathRow,
     ProjectRow, RecurrenceOccurrenceRow, RecurrencePauseIntervalRow, RecurrenceSeriesLabelRow,
-    RecurrenceSeriesMetadataRow, RecurrenceSeriesRow, TaskAttachmentRow, TaskDependencyRow,
-    TaskEpicLinkRow, TaskLabelRow, TaskMetadataRow, TaskRelatedLinkRow, TaskRow, WorkspaceRow,
+    RecurrenceSeriesMetadataRow, RecurrenceSeriesRow, SharedHistoryProvenanceRow,
+    TaskAttachmentRow, TaskDependencyRow, TaskEpicLinkRow, TaskLabelRow, TaskMetadataRow,
+    TaskRelatedLinkRow, TaskRow, WorkspaceRow,
 };
 
 pub(super) async fn scan_workspaces(conn: &mut SqliteConnection) -> Result<Vec<WorkspaceRow>> {
@@ -197,6 +198,17 @@ pub(super) async fn scan_recurrence_pause_intervals(
 
 pub(super) async fn scan_changes(conn: &mut SqliteConnection) -> Result<Vec<ChangeRow>> {
     tables::scan_rows(conn, "SELECT change_id, client_id, local_seq, entity_type, entity_id, field, op_type, payload, base_version, created_at, server_seq FROM changes").await
+}
+
+pub(super) async fn scan_shared_history_provenance(
+    conn: &mut SqliteConnection,
+) -> Result<Vec<SharedHistoryProvenanceRow>> {
+    tables::scan_rows(
+        conn,
+        "SELECT change_id, source_server_seq, source_pending_rank
+         FROM shared_history_provenance",
+    )
+    .await
 }
 
 pub(super) async fn scan_field_versions(

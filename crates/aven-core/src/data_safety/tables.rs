@@ -463,6 +463,25 @@ pub(crate) async fn import_changes(
     Ok(())
 }
 
+pub(crate) async fn import_shared_history_provenance(
+    tx: &mut SqliteConnection,
+    rows: &[super::SharedHistoryProvenanceRow],
+) -> Result<()> {
+    for row in rows {
+        sqlx::query(
+            "INSERT INTO shared_history_provenance(
+                 change_id, source_server_seq, source_pending_rank
+             ) VALUES (?, ?, ?)",
+        )
+        .bind(&row.change_id)
+        .bind(row.source_server_seq)
+        .bind(row.source_pending_rank)
+        .execute(&mut *tx)
+        .await?;
+    }
+    Ok(())
+}
+
 pub(crate) async fn import_field_versions(
     tx: &mut SqliteConnection,
     rows: &[super::FieldVersionRow],

@@ -15,9 +15,9 @@ pub use export_types::{
     AvenExport, BlobInventoryExportRow, ChangeRow, ConflictRow, ExportTables, FieldVersionRow,
     LabelRow, MetaRow, MetadataFieldIdAliasRow, MetadataFieldRow, NoteRow, ProjectIdAliasRow,
     ProjectPathRow, ProjectRow, RecurrenceOccurrenceRow, RecurrencePauseIntervalRow,
-    RecurrenceSeriesLabelRow, RecurrenceSeriesMetadataRow, RecurrenceSeriesRow, TaskAttachmentRow,
-    TaskDependencyRow, TaskEpicLinkRow, TaskLabelRow, TaskMetadataRow, TaskRelatedLinkRow, TaskRow,
-    WorkspaceRow,
+    RecurrenceSeriesLabelRow, RecurrenceSeriesMetadataRow, RecurrenceSeriesRow,
+    SharedHistoryProvenanceRow, TaskAttachmentRow, TaskDependencyRow, TaskEpicLinkRow,
+    TaskLabelRow, TaskMetadataRow, TaskRelatedLinkRow, TaskRow, WorkspaceRow,
 };
 use export_types::{EXPORT_FORMAT, EXPORT_VERSION};
 
@@ -69,6 +69,7 @@ pub(crate) async fn scan_export_tables(conn: &mut sqlx::SqliteConnection) -> Res
         recurrence_occurrences: scan::scan_recurrence_occurrences(conn).await?,
         recurrence_pause_intervals: scan::scan_recurrence_pause_intervals(conn).await?,
         changes: scan::scan_changes(conn).await?,
+        shared_history_provenance: scan::scan_shared_history_provenance(conn).await?,
         field_versions: scan::scan_field_versions(conn).await?,
         conflicts: scan::scan_conflicts(conn).await?,
         meta: scan::scan_meta(conn).await?,
@@ -81,10 +82,12 @@ impl Database {
         let mut tx = db::begin_immediate(&mut conn).await?;
         let schema_version = db::current_schema_version(&mut tx).await?;
         let tables = scan_export_tables(&mut tx).await?;
-        let version = if tables.task_related_links.is_empty() {
+        let version = if !tables.shared_history_provenance.is_empty() {
+            EXPORT_VERSION
+        } else if tables.task_related_links.is_empty() {
             2
         } else {
-            EXPORT_VERSION
+            export_types::RELATED_LINKS_EXPORT_VERSION
         };
         tx.commit().await?;
         Ok(AvenExport {

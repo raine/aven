@@ -31,6 +31,7 @@ pub(super) async fn replace_from_export(
         "DELETE FROM notes",
         "DELETE FROM conflicts",
         "DELETE FROM field_versions",
+        "DELETE FROM shared_history_provenance",
         "DELETE FROM changes",
         "DELETE FROM project_paths",
         "DELETE FROM project_id_aliases",
@@ -56,7 +57,7 @@ pub(super) async fn replace_from_export(
         .max()
         .unwrap_or(0);
     db::set_meta(tx, "local_seq", &local_seq.to_string()).await?;
-    if let Some(server) = super::validation::accepted_history_server(export)? {
+    if let Some(server) = super::validation::portable_history_server(export)? {
         db::set_meta(tx, "sync_server_url", &server).await?;
     }
 
@@ -156,6 +157,7 @@ pub(super) async fn replace_from_export(
             .await?;
     }
     tables::import_changes(tx, &changes).await?;
+    tables::import_shared_history_provenance(tx, &export.tables.shared_history_provenance).await?;
     tables::import_task_related_links(tx, &export.tables.task_related_links).await?;
     tables::import_field_versions(tx, &field_versions).await?;
     tables::import_conflicts(tx, &conflicts).await?;

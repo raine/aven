@@ -1,11 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{Context, Result, ensure};
-use sqlx::FromRow;
-
-use crate::data_safety::export_types::{AvenExport, EXPORT_FORMAT, EXPORT_VERSION};
+use crate::data_safety::export_types::{
+    AvenExport, EXPORT_FORMAT, EXPORT_VERSION, RELATED_LINKS_EXPORT_VERSION,
+    SharedHistoryProvenanceRow,
+};
 use crate::data_safety::{self, tables, validation};
 use crate::db::{self, Database};
+use anyhow::{Context, Result, ensure};
 
 /// A consistent, installation-ready copy of shared domain state and retained history.
 ///
@@ -15,27 +16,12 @@ use crate::db::{self, Database};
 #[derive(Debug)]
 pub struct SharedStateCapture {
     snapshot: AvenExport,
-    provenance: Vec<HistoryProvenance>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct HistoryProvenance {
-    change_id: String,
-    source_server_seq: Option<i64>,
-    source_pending_rank: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SharedStateInstallReport {
     pub prefix_count: u64,
     pub attachment_count: u64,
-}
-
-#[derive(FromRow)]
-struct StoredProvenance {
-    change_id: String,
-    source_server_seq: Option<i64>,
-    source_pending_rank: Option<i64>,
 }
 
 impl Database {
@@ -49,16 +35,11 @@ impl Database {
         let mut tx = db::begin_immediate(&mut conn).await?;
         let schema_version = db::current_schema_version(&mut tx).await?;
         let mut tables = data_safety::scan_export_tables(&mut tx).await?;
-        let stored = sqlx::query_as::<_, StoredProvenance>(
-            "SELECT change_id, source_server_seq, source_pending_rank
-             FROM shared_history_provenance",
-        )
-        .fetch_all(&mut *tx)
-        .await?
-        .into_iter()
-        .map(|row| (row.change_id.clone(), row))
-        .collect::<HashMap<_, _>>();
         tx.commit().await?;
+        let stored = std::mem::take(&mut tables.shared_history_provenance)
+            .into_iter()
+            .map(|row| (row.change_id.clone(), row))
+            .collect::<HashMap<_, _>>();
 
         tables.project_paths.clear();
         tables
@@ -105,13 +86,13 @@ impl Database {
         for (position, index) in order.enumerate() {
             let row = &mut tables.changes[index];
             let source = if let Some(stored) = stored.get(&row.change_id) {
-                HistoryProvenance {
+                SharedHistoryProvenanceRow {
                     change_id: row.change_id.clone(),
                     source_server_seq: stored.source_server_seq,
                     source_pending_rank: stored.source_pending_rank,
                 }
             } else if let Some(source_server_seq) = row.server_seq {
-                HistoryProvenance {
+                SharedHistoryProvenanceRow {
                     change_id: row.change_id.clone(),
                     source_server_seq: Some(source_server_seq),
                     source_pending_rank: None,
@@ -120,7 +101,7 @@ impl Database {
                 let pending_rank = pending_ranks
                     .get(&index)
                     .context("pending history order is incomplete")?;
-                HistoryProvenance {
+                SharedHistoryProvenanceRow {
                     change_id: row.change_id.clone(),
                     source_server_seq: None,
                     source_pending_rank: Some(i64::try_from(*pending_rank)?),
@@ -130,16 +111,23 @@ impl Database {
             provenance.push(source);
         }
 
+        tables.shared_history_provenance = provenance;
+        let version = if !tables.shared_history_provenance.is_empty() {
+            EXPORT_VERSION
+        } else if tables.task_related_links.is_empty() {
+            2
+        } else {
+            RELATED_LINKS_EXPORT_VERSION
+        };
         let capture = SharedStateCapture {
             snapshot: AvenExport {
                 format: EXPORT_FORMAT.to_string(),
-                version: EXPORT_VERSION,
+                version,
                 exported_at: crate::ids::now(),
                 schema_version,
                 blobs_included: false,
                 tables,
             },
-            provenance,
         };
         capture.validate()?;
         Ok(capture)
@@ -200,18 +188,7 @@ impl Database {
         tables::import_task_related_links(&mut tx, &t.task_related_links).await?;
         tables::import_field_versions(&mut tx, &t.field_versions).await?;
         tables::import_conflicts(&mut tx, &t.conflicts).await?;
-        for row in &capture.provenance {
-            sqlx::query(
-                "INSERT INTO shared_history_provenance(
-                     change_id, source_server_seq, source_pending_rank
-                 ) VALUES (?, ?, ?)",
-            )
-            .bind(&row.change_id)
-            .bind(row.source_server_seq)
-            .bind(row.source_pending_rank)
-            .execute(&mut *tx)
-            .await?;
-        }
+        tables::import_shared_history_provenance(&mut tx, &t.shared_history_provenance).await?;
         for row in &t.meta {
             db::set_meta(&mut tx, &row.key, &row.value).await?;
         }
@@ -252,17 +229,19 @@ impl SharedStateCapture {
             .map(|row| row.change_id.as_str())
             .collect::<HashSet<_>>();
         let provenance_ids = self
-            .provenance
+            .snapshot
+            .tables
+            .shared_history_provenance
             .iter()
             .map(|row| row.change_id.as_str())
             .collect::<HashSet<_>>();
         ensure!(
             change_ids.len() == self.snapshot.tables.changes.len()
-                && provenance_ids.len() == self.provenance.len()
+                && provenance_ids.len() == self.snapshot.tables.shared_history_provenance.len()
                 && change_ids == provenance_ids,
             "error invalid-shared-state history provenance does not match retained history"
         );
-        for row in &self.provenance {
+        for row in &self.snapshot.tables.shared_history_provenance {
             ensure!(
                 matches!(
                     (row.source_server_seq, row.source_pending_rank),

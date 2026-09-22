@@ -9,7 +9,7 @@ use crate::ids::{ProjectId, TaskId, WorkspaceId};
 use crate::recurrence::RecurrenceSeriesId;
 
 use super::AvenExport;
-use super::export_types::{EXPORT_FORMAT, EXPORT_VERSION};
+use super::export_types::{EXPORT_FORMAT, EXPORT_VERSION, RELATED_LINKS_EXPORT_VERSION};
 
 pub(super) mod recurrence;
 
@@ -20,7 +20,10 @@ pub(super) async fn ensure_supported_export(
     if export.format != EXPORT_FORMAT {
         bail!("error export-format-unsupported format={}", export.format);
     }
-    if !matches!(export.version, 1 | 2 | EXPORT_VERSION) {
+    if !matches!(
+        export.version,
+        1 | 2 | RELATED_LINKS_EXPORT_VERSION | EXPORT_VERSION
+    ) {
         bail!(
             "error export-version-unsupported version={}",
             export.version
@@ -58,9 +61,86 @@ pub(super) fn accepted_history_server(export: &AvenExport) -> Result<Option<Stri
     Ok(Some(server.trim_end_matches('/').to_string()))
 }
 
+pub(super) fn portable_history_server(export: &AvenExport) -> Result<Option<String>> {
+    let has_accepted_history = export
+        .tables
+        .changes
+        .iter()
+        .any(|change| change.server_seq.is_some());
+    if !has_accepted_history {
+        return Ok(None);
+    }
+    if export
+        .tables
+        .meta
+        .iter()
+        .any(|row| row.key == "sync_server_url")
+    {
+        return accepted_history_server(export);
+    }
+    let accepted_ids = export
+        .tables
+        .changes
+        .iter()
+        .filter(|change| change.server_seq.is_some())
+        .map(|change| change.change_id.as_str())
+        .collect::<HashSet<_>>();
+    let provenance_ids = export
+        .tables
+        .shared_history_provenance
+        .iter()
+        .map(|row| row.change_id.as_str())
+        .collect::<HashSet<_>>();
+    ensure!(
+        export.version == EXPORT_VERSION && accepted_ids.is_subset(&provenance_ids),
+        "error invalid-export-snapshot accepted sync history is missing its server identity or complete shared-history provenance"
+    );
+    Ok(None)
+}
+
 pub(super) fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
-    accepted_history_server(export)?;
+    portable_history_server(export)?;
     validate_shared_snapshot(export)
+}
+
+fn validate_shared_history_provenance(export: &AvenExport) -> Result<()> {
+    let rows = &export.tables.shared_history_provenance;
+    ensure!(
+        rows.is_empty() || export.version == EXPORT_VERSION,
+        "error invalid-export-snapshot shared-history provenance requires version {EXPORT_VERSION}"
+    );
+    ensure!(
+        export.version != EXPORT_VERSION || !rows.is_empty(),
+        "error invalid-export-snapshot version {EXPORT_VERSION} requires shared-history provenance"
+    );
+    let changes = export
+        .tables
+        .changes
+        .iter()
+        .map(|change| (change.change_id.as_str(), change))
+        .collect::<HashMap<_, _>>();
+    let mut ids = HashSet::new();
+    for row in rows {
+        ensure!(
+            ids.insert(row.change_id.as_str()),
+            "error invalid-export-snapshot shared-history provenance identity is duplicated"
+        );
+        let change = changes
+            .get(row.change_id.as_str())
+            .context("error invalid-export-snapshot shared-history provenance change is missing")?;
+        ensure!(
+            change.server_seq.is_some(),
+            "error invalid-export-snapshot shared-history provenance change is not in the effective prefix"
+        );
+        ensure!(
+            matches!(
+                (row.source_server_seq, row.source_pending_rank),
+                (Some(1..), None) | (None, Some(1..))
+            ),
+            "error invalid-export-snapshot shared-history provenance order is invalid"
+        );
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_shared_snapshot(export: &AvenExport) -> Result<()> {
@@ -98,14 +178,15 @@ pub(crate) fn validate_shared_snapshot(export: &AvenExport) -> Result<()> {
         )?;
     }
     ensure!(
-        export.version == EXPORT_VERSION
+        export.version >= RELATED_LINKS_EXPORT_VERSION
             || (export.tables.task_related_links.is_empty()
                 && !export.tables.changes.iter().any(|change| matches!(
                     change.op_type.as_str(),
                     "related_add" | "related_remove"
                 ))),
-        "error invalid-export-snapshot related links require version {EXPORT_VERSION}; related changes are not supported in older versions"
+        "error invalid-export-snapshot related links require version {RELATED_LINKS_EXPORT_VERSION}; related changes are not supported in older versions"
     );
+    validate_shared_history_provenance(export)?;
     let mut workspace_ids = HashSet::new();
     for workspace in &export.tables.workspaces {
         if workspace_ids.contains(&workspace.id) {

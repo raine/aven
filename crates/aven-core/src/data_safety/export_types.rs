@@ -4,7 +4,8 @@ use crate::recurrence::RecurrenceSeriesId;
 use serde::{Deserialize, Serialize};
 
 pub(crate) const EXPORT_FORMAT: &str = "aven-export";
-pub(crate) const EXPORT_VERSION: i64 = 3;
+pub(crate) const EXPORT_VERSION: i64 = 4;
+pub(crate) const RELATED_LINKS_EXPORT_VERSION: i64 = 3;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AvenExport {
@@ -52,6 +53,8 @@ pub struct ExportTables {
     #[serde(default)]
     pub recurrence_pause_intervals: Vec<RecurrencePauseIntervalRow>,
     pub changes: Vec<ChangeRow>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shared_history_provenance: Vec<SharedHistoryProvenanceRow>,
     pub field_versions: Vec<FieldVersionRow>,
     pub conflicts: Vec<ConflictRow>,
     pub meta: Vec<MetaRow>,
@@ -302,6 +305,13 @@ pub struct ChangeRow {
     pub base_version: Option<String>,
     pub created_at: String,
     pub server_seq: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
+pub struct SharedHistoryProvenanceRow {
+    pub change_id: String,
+    pub source_server_seq: Option<i64>,
+    pub source_pending_rank: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
