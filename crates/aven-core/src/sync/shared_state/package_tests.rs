@@ -61,10 +61,11 @@ async fn source_with_history() -> (tempfile::TempDir, Database, String) {
 #[tokio::test]
 async fn encrypted_package_round_trips_and_retries_exact_bytes() {
     let (source_dir, source, task_id) = source_with_history().await;
-    source
+    let durable = source
         .capture_local_shared_state_never_dispatched(source_dir.path())
         .await
         .unwrap();
+    let original_snapshot = serde_json::to_value(&durable.shared_state().snapshot).unwrap();
     let key = package_key();
     let first = source
         .package_local_shared_state_never_dispatched(package_context(), &key)
@@ -117,11 +118,19 @@ async fn encrypted_package_round_trips_and_retries_exact_bytes() {
         )
         .await
         .unwrap();
+    let source_path = source_dir.path().join("source.sqlite");
+    drop(source);
+    let source = Database::open(&source_path).await.unwrap();
     let retry = source
         .package_local_shared_state_never_dispatched(package_context(), &key)
         .await
         .unwrap();
     assert_eq!(first, retry);
+    let decrypted = decrypt_package(&retry, &key).unwrap();
+    assert_eq!(
+        serde_json::to_value(&decrypted.snapshot).unwrap(),
+        original_snapshot
+    );
     let mut different_context = package_context();
     different_context.generation_id[0] ^= 1;
     assert!(
@@ -175,6 +184,24 @@ async fn encrypted_package_round_trips_and_retries_exact_bytes() {
         installed.tables.changes.len()
     );
     assert!(installed.tables.changes.len() >= 2);
+
+    assert!(
+        source
+            .cancel_local_shared_state_never_dispatched(retry.candidate_id())
+            .await
+            .unwrap()
+    );
+    let mut conn = source.acquire_writer().await.unwrap();
+    let remaining: (i64, i64, i64) = sqlx::query_as(
+        "SELECT
+             (SELECT count(*) FROM local_shared_capture_journal),
+             (SELECT count(*) FROM local_shared_capture_packages),
+             (SELECT count(*) FROM local_shared_capture_package_chunks)",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+    assert_eq!(remaining, (0, 0, 0));
 }
 
 #[tokio::test]
