@@ -303,11 +303,14 @@ ordered apply; page effects, mappings, liveness and cursor commit together. Bad
 pages roll back, and same-ID divergence preserves pending work instead of merging
 or inventing a new ID. Membership sequence, content sequence and local_seq differ.
 
-`encrypted_tail/recurrence.rs` classifies affected series and deterministic
-materialization operations. Page apply reuses the recurrence aggregate operations
-and reconciles affected series once after ordered apply, inside the same
-transaction, without replaying prefix history over materialized snapshot rows.
-Lifecycle resolution can generate history needed by a later page record; only
+`encrypted_tail/recurrence.rs` identifies deterministic materialization operations.
+Encrypted page apply reuses the recurrence aggregate operations without generating
+wall-clock projections at page boundaries or replaying prefix history over the
+materialized snapshot. Reaching the current server watermark does not prove an
+author's pending history is fully uploaded. Normal local mutations and reports
+own clock-driven projection reconciliation. Lifecycle conflict resolution retains
+its operation-owned reconciliation at the authenticated `changed_at`, inside the
+page transaction. This can generate history needed by a later page record; only
 validated deterministic operations with canonical equality can rank that pending
 history as an echo. Retained prefix identities never become tail submissions.
 Concurrent completion shares successor identities. Concurrent generation from

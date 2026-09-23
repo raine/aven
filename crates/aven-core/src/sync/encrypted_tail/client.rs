@@ -451,7 +451,6 @@ impl Database {
         }
         let mut attachment_hashes = HashSet::new();
         let mut dependency_workspaces = HashSet::new();
-        let mut affected_series = HashSet::new();
         // Validate every mapping and local comparison before any domain effects.
         let mut local_presence = Vec::with_capacity(changes.len());
         for (accepted, change) in page.records.iter().zip(&changes) {
@@ -504,9 +503,6 @@ impl Database {
                     apply_new_remote_change(&mut tx, &change, &mut attachment_hashes).await?;
                 }
             }
-            if let Some(series) = super::recurrence::affected_series(&change)? {
-                affected_series.insert(series);
-            }
             if let Some(workspace) = super::dependencies::affected_workspace(&change)? {
                 dependency_workspaces.insert(workspace.to_owned());
             }
@@ -514,14 +510,6 @@ impl Database {
             super::labels::reconcile(&mut tx, authority.prefix, &change).await?;
             super::attachments::client::accept(&mut tx, accepted, &change).await?;
             record_acceptance_and_clear_outbox(&mut tx, accepted).await?;
-        }
-        let at = chrono::Utc::now();
-        for (workspace, series) in affected_series {
-            let workspace = crate::workspaces::workspace_for_id(&mut tx, &workspace).await?;
-            crate::operations::recurrence::reconcile_recurrence_series_in_transaction(
-                &mut tx, &workspace, &series, at,
-            )
-            .await?;
         }
         for workspace in dependency_workspaces {
             super::dependencies::reconcile(&mut tx, authority.prefix, &workspace).await?;

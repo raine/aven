@@ -216,7 +216,16 @@ async fn lifecycle_resolution_reinserts_later_page_records_with_canonical_equali
 }
 
 #[tokio::test]
-async fn historical_small_pages_expose_premature_clock_projection() {
+async fn historical_one_record_pages_preserve_authored_current_slot() {
+    historical_replay(false).await;
+}
+
+#[tokio::test]
+async fn historical_interleaved_uploads_preserve_authored_current_slot() {
+    historical_replay(true).await;
+}
+
+async fn historical_replay(interleaved: bool) {
     let f = fixture().await;
     converge(&f).await;
     let c = Client::new(&f.origin).unwrap();
@@ -243,19 +252,48 @@ async fn historical_small_pages_expose_premature_clock_projection() {
         title(&f.seed, task.as_str()).await,
         "sequentially edited template"
     );
-    let task_change: String = sqlx::query_scalar(
-        "SELECT change_id FROM changes WHERE entity_id=? AND op_type='create_task'",
-    )
-    .bind(&task)
-    .fetch_one(&mut *aven_core::test_support::acquire(&f.seed).await.unwrap())
-    .await
-    .unwrap();
-    // One author, all records accepted before the peer starts replaying the backlog.
-    push_only(&c, &f.seed_store, &f.seed, &f.origin).await;
+    let (task_change, projection_change, pending): (String, String, Vec<String>) = {
+        let mut conn = aven_core::test_support::acquire(&f.seed).await.unwrap();
+        let task_change = sqlx::query_scalar(
+            "SELECT change_id FROM changes WHERE entity_id=? AND op_type='create_task'",
+        )
+        .bind(&task)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let projection_change = sqlx::query_scalar(
+            "SELECT change_id FROM changes WHERE op_type='project_recurrence_occurrence'
+             AND json_extract(payload, '$.task_id')=?",
+        )
+        .bind(&task)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let pending = sqlx::query_scalar(
+            "SELECT change_id FROM changes WHERE server_seq IS NULL ORDER BY local_seq",
+        )
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
+        (task_change, projection_change, pending)
+    };
+    // A single offline author creates all domain changes before either replay mode starts.
+    if !interleaved {
+        push_only(&c, &f.seed_store, &f.seed, &f.origin).await;
+    }
+    let seed_inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
+    let history_before = scalar(&f.peer, "SELECT count(*) FROM changes").await;
     let mut watermark = None;
-    let mut prematurely_created = false;
-    for _ in 0..16 {
+    let mut received_task = false;
+    let mut received_projection = false;
+    assert!(pending.len() > 3);
+    for (index, expected_id) in pending.iter().enumerate() {
+        if interleaved {
+            c.push(&seed_inputs.authority, &seed_inputs.bearer, &f.seed, None)
+                .await
+                .unwrap();
+        }
         let before = f
             .peer
             .encrypted_tail_cursor(&inputs.authority)
@@ -276,40 +314,84 @@ async fn historical_small_pages_expose_premature_clock_projection() {
         else {
             panic!()
         };
-        watermark = Some(page.watermark);
         assert_eq!(page.records.len(), 1);
-        if let Err(error) = f
-            .peer
+        assert_eq!(&page.records[0].mapping.operation_id, expected_id);
+        assert_eq!(page.cursor, before + 1);
+        assert_eq!(page.has_more, !interleaved && index + 1 < pending.len());
+        if interleaved {
+            // Each partial upload is the current high water, not a complete authoring batch.
+            assert_eq!(page.cursor, page.watermark);
+        } else if let Some(target) = watermark {
+            assert_eq!(page.watermark, target);
+        } else {
+            watermark = Some(page.watermark);
+        }
+        f.peer
             .apply_encrypted_tail_page(&inputs.authority, &page)
             .await
-        {
-            assert!(
-                error.to_string().contains("same-id-divergence"),
-                "{error:#}"
-            );
-            assert!(prematurely_created);
-            assert_eq!(page.records[0].mapping.operation_id, task_change);
-            assert_eq!(
-                f.peer
-                    .encrypted_tail_cursor(&inputs.authority)
-                    .await
-                    .unwrap(),
-                before
-            );
-            assert_eq!(title(&f.peer, task.as_str()).await, "daily");
-            return;
-        }
-        let early: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tasks WHERE id=? AND title='daily')")
-                .bind(&task)
-                .fetch_one(&mut *aven_core::test_support::acquire(&f.peer).await.unwrap())
+            .unwrap();
+        received_task |= *expected_id == task_change;
+        received_projection |= *expected_id == projection_change;
+        assert_eq!(
+            f.peer
+                .encrypted_tail_cursor(&inputs.authority)
                 .await
-                .unwrap();
-        prematurely_created |= early;
-        assert!(
-            page.has_more,
-            "expected current-slot divergence before backlog end"
+                .unwrap(),
+            page.cursor
         );
+        assert_eq!(
+            scalar(&f.peer, "SELECT count(*) FROM changes").await,
+            history_before + index as i64 + 1
+        );
+        assert_eq!(
+            scalar(
+                &f.peer,
+                "SELECT count(*) FROM changes WHERE server_seq IS NULL"
+            )
+            .await,
+            0
+        );
+        let (has_task, has_projection): (bool, bool) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM tasks WHERE id=?),
+                    EXISTS(SELECT 1 FROM recurrence_occurrences WHERE task_id=?)",
+        )
+        .bind(&task)
+        .bind(&task)
+        .fetch_one(&mut *aven_core::test_support::acquire(&f.peer).await.unwrap())
+        .await
+        .unwrap();
+        assert_eq!(
+            has_task, received_task,
+            "page reception must not author a current-slot task"
+        );
+        assert_eq!(
+            has_projection, received_projection,
+            "page reception must not author a current-slot link"
+        );
+        if has_task {
+            assert_eq!(
+                title(&f.peer, task.as_str()).await,
+                "sequentially edited template"
+            );
+        }
     }
-    panic!("bounded fixture pull budget");
+    assert!(received_task && received_projection);
+    assert!(
+        f.seed
+            .encrypted_tail_idle(&seed_inputs.authority)
+            .await
+            .unwrap()
+    );
+    assert!(f.peer.encrypted_tail_idle(&inputs.authority).await.unwrap());
+    assert_eq!(
+        scalar(&f.peer, "SELECT count(*) FROM recurrence_occurrences").await,
+        2
+    );
+    assert!(
+        f.peer
+            .recurrence_series_conflicts(&w, &created.series.id, None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
