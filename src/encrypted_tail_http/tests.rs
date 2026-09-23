@@ -1965,3 +1965,357 @@ async fn checkpoint_metadata_resolution_rejects_unsendable_value() {
         );
     }
 }
+
+async fn shared_note(
+    f: &Fixture,
+) -> (
+    aven_core::workspaces::Workspace,
+    aven_core::ids::TaskId,
+    String,
+) {
+    converge(f).await;
+    let w = f.seed.list_workspaces().await.unwrap().remove(0);
+    let task = f
+        .seed
+        .create_task(&w, draft("shared note owner"))
+        .await
+        .unwrap()
+        .task;
+    let note = f
+        .seed
+        .add_note(&w, &task.id, "initial".into())
+        .await
+        .unwrap();
+    converge(f).await;
+    (w, task.id, note.note_id)
+}
+
+async fn note_body(db: &Database, note: &str) -> Option<String> {
+    let mut conn = aven_core::test_support::acquire(db).await.unwrap();
+    sqlx::query_scalar("SELECT body FROM notes WHERE id=?")
+        .bind(note)
+        .fetch_optional(&mut *conn)
+        .await
+        .unwrap()
+}
+
+async fn drain_note_order(f: &Fixture, seed_first: bool) {
+    let c = Client::new(&f.origin).unwrap();
+    if seed_first {
+        converge(f).await;
+    } else {
+        drain(&c, &f.peer_store, &f.peer).await;
+        drain(&c, &f.seed_store, &f.seed).await;
+        drain(&c, &f.peer_store, &f.peer).await;
+    }
+    converge(f).await;
+    for db in [&f.seed, &f.peer] {
+        assert_eq!(
+            scalar(db, "SELECT count(*) FROM changes WHERE server_seq IS NULL").await,
+            0
+        );
+        assert_eq!(
+            scalar(db, "SELECT count(*) FROM local_e2ee_outbox").await,
+            0
+        );
+    }
+}
+
+#[tokio::test]
+async fn checkpoint_concurrent_note_edits_follow_accepted_order() {
+    for seed_first in [true, false] {
+        for edits in [1, 3] {
+            let f = fixture().await;
+            let (w, task, note) = shared_note(&f).await;
+            for i in 0..edits {
+                f.seed
+                    .edit_note(&w, &task, &note, format!("seed offline edit {i}"))
+                    .await
+                    .unwrap();
+                f.peer
+                    .edit_note(&w, &task, &note, format!("peer offline edit {i}"))
+                    .await
+                    .unwrap();
+            }
+            drain_note_order(&f, seed_first).await;
+            let last = if seed_first { "peer" } else { "seed" };
+            let expected = format!("{last} offline edit {}", edits - 1);
+            for db in [&f.seed, &f.peer] {
+                assert_eq!(
+                    note_body(db, &note).await.as_deref(),
+                    Some(expected.as_str())
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn checkpoint_note_pending_edit_survives_frozen_acceptance_and_restart() {
+    let f = fixture().await;
+    let (w, task, note) = shared_note(&f).await;
+    f.peer
+        .edit_note(&w, &task, &note, "remote first".into())
+        .await
+        .unwrap();
+    let client = Client::new(&f.origin).unwrap();
+    drain(&client, &f.peer_store, &f.peer).await;
+    f.seed
+        .edit_note(&w, &task, &note, "frozen".into())
+        .await
+        .unwrap();
+    let record = {
+        let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+        f.seed
+            .prepare_encrypted_tail(&inputs.authority)
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    f.seed
+        .edit_note(&w, &task, &note, "later pending".into())
+        .await
+        .unwrap();
+    {
+        let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+        let a = &inputs.authority;
+        assert_eq!(
+            f.seed.prepare_encrypted_tail(a).await.unwrap().unwrap(),
+            record
+        );
+        let Reply::Appended(mapping) = client
+            .exchange(&a.context, &inputs.bearer, Operation::Append { record })
+            .await
+            .unwrap()
+        else {
+            panic!("append");
+        };
+        f.seed.observe_encrypted_tail(a, &mapping).await.unwrap();
+        let Reply::Found(accepted) = client
+            .exchange(
+                &a.context,
+                &inputs.bearer,
+                Operation::Lookup {
+                    operation_id: mapping.operation_id.clone(),
+                    expected: Some(mapping),
+                },
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("lookup");
+        };
+        let cursor = f.seed.encrypted_tail_cursor(a).await.unwrap();
+        f.seed
+            .verify_encrypted_tail_outcome(a, &accepted)
+            .await
+            .unwrap();
+        assert_eq!(f.seed.encrypted_tail_cursor(a).await.unwrap(), cursor);
+        assert_eq!(
+            note_body(&f.seed, &note).await.as_deref(),
+            Some("later pending")
+        );
+    }
+    let reopened = Database::open(f.seed.path()).await.unwrap();
+    {
+        let inputs = f
+            .seed_store
+            .tail_inputs(&reopened, &f.origin)
+            .await
+            .unwrap();
+        let a = &inputs.authority;
+        let Reply::Page(page) = client
+            .exchange(
+                &a.context,
+                &inputs.bearer,
+                Operation::Pull {
+                    after: reopened.encrypted_tail_cursor(a).await.unwrap(),
+                    limit: 16,
+                    watermark: None,
+                },
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("pull");
+        };
+        reopened.apply_encrypted_tail_page(a, &page).await.unwrap();
+        assert_eq!(
+            note_body(&reopened, &note).await.as_deref(),
+            Some("later pending")
+        );
+        assert_eq!(
+            scalar(
+                &reopened,
+                "SELECT count(*) FROM changes WHERE server_seq IS NULL"
+            )
+            .await,
+            1
+        );
+    }
+    drain_note_order(&f, false).await;
+    for db in [&f.seed, &f.peer] {
+        assert_eq!(note_body(db, &note).await.as_deref(), Some("later pending"));
+    }
+}
+
+#[tokio::test]
+async fn checkpoint_note_delete_wins_over_edits_and_undo_restores() {
+    for seed_first in [true, false] {
+        let f = fixture().await;
+        let (w, task, note) = shared_note(&f).await;
+        f.seed
+            .edit_note(&w, &task, &note, "offline edit".into())
+            .await
+            .unwrap();
+        f.peer
+            .delete_note_with_tui_undo(&w, &task, &note)
+            .await
+            .unwrap();
+        drain_note_order(&f, seed_first).await;
+        for db in [&f.seed, &f.peer] {
+            assert_eq!(note_body(db, &note).await, None);
+        }
+        f.peer.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
+        converge(&f).await;
+        for db in [&f.seed, &f.peer] {
+            assert_eq!(note_body(db, &note).await.as_deref(), Some("initial"));
+        }
+        f.seed
+            .edit_note_with_tui_undo(&w, &task, &note, "undo edit".into())
+            .await
+            .unwrap();
+        converge(&f).await;
+        f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
+        converge(&f).await;
+        for db in [&f.seed, &f.peer] {
+            assert_eq!(note_body(db, &note).await.as_deref(), Some("initial"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn checkpoint_note_undo_preserves_frozen_history_and_pending_restoration() {
+    let f = fixture().await;
+    let (w, task, note) = shared_note(&f).await;
+    f.seed
+        .edit_note_with_tui_undo(&w, &task, &note, "frozen edit".into())
+        .await
+        .unwrap();
+    let record = {
+        let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+        f.seed
+            .prepare_encrypted_tail(&inputs.authority)
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
+    {
+        let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+        assert_eq!(
+            f.seed
+                .prepare_encrypted_tail(&inputs.authority)
+                .await
+                .unwrap()
+                .unwrap(),
+            record
+        );
+    }
+    converge(&f).await;
+    assert_eq!(note_body(&f.peer, &note).await.as_deref(), Some("initial"));
+    f.seed
+        .delete_note_with_tui_undo(&w, &task, &note)
+        .await
+        .unwrap();
+    let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+    let record = f
+        .seed
+        .prepare_encrypted_tail(&inputs.authority)
+        .await
+        .unwrap()
+        .unwrap();
+    drop(inputs);
+    f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
+    f.seed
+        .edit_note(&w, &task, &note, "restored pending edit".into())
+        .await
+        .unwrap();
+    {
+        let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+        assert_eq!(
+            f.seed
+                .prepare_encrypted_tail(&inputs.authority)
+                .await
+                .unwrap()
+                .unwrap(),
+            record
+        );
+    }
+    converge(&f).await;
+    for db in [&f.seed, &f.peer] {
+        assert_eq!(
+            note_body(db, &note).await.as_deref(),
+            Some("restored pending edit")
+        );
+    }
+}
+
+#[tokio::test]
+async fn checkpoint_note_creation_undo_respects_history_ownership() {
+    let f = fixture().await;
+    let (w, task, _) = shared_note(&f).await;
+    let pending = f
+        .seed
+        .add_note_with_tui_undo(&w, &task, "pending add".into())
+        .await
+        .unwrap();
+    f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
+    assert_eq!(note_body(&f.seed, &pending.note_id).await, None);
+    let frozen = f
+        .seed
+        .add_note_with_tui_undo(&w, &task, "frozen add".into())
+        .await
+        .unwrap();
+    let record = {
+        let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+        f.seed
+            .prepare_encrypted_tail(&inputs.authority)
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    let error = f.seed.apply_latest_tui_undo(&w.id).await.err().unwrap();
+    assert!(
+        error.to_string().contains("encrypted-history-owned"),
+        "{error:#}"
+    );
+    assert_eq!(
+        note_body(&f.seed, &frozen.note_id).await.as_deref(),
+        Some("frozen add")
+    );
+    {
+        let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+        assert_eq!(
+            f.seed
+                .prepare_encrypted_tail(&inputs.authority)
+                .await
+                .unwrap()
+                .unwrap(),
+            record
+        );
+    }
+    converge(&f).await;
+    let error = f.seed.apply_latest_tui_undo(&w.id).await.err().unwrap();
+    assert!(
+        error.to_string().contains("undo-state-changed"),
+        "{error:#}"
+    );
+    for db in [&f.seed, &f.peer] {
+        assert_eq!(note_body(db, &pending.note_id).await, None);
+        assert_eq!(
+            note_body(db, &frozen.note_id).await.as_deref(),
+            Some("frozen add")
+        );
+    }
+}

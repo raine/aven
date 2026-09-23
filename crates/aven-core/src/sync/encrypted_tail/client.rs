@@ -201,6 +201,7 @@ impl Database {
         domain::validate_state(&mut tx, &c).await?;
         p::update_change_server_seq(&mut tx, &c.change_id, Some(r.mapping.sequence)).await?;
         p::reconcile_epic_change(&mut tx, &c).await?;
+        super::notes::reconcile(&mut tx, a.prefix, &c).await?;
         save(&mut tx, r).await?;
         tx.commit().await?;
         Ok(())
@@ -273,6 +274,7 @@ impl Database {
                 }
                 p::reconcile_epic_change(&mut tx, &c).await?;
             }
+            super::notes::reconcile(&mut tx, a.prefix, &c).await?;
             save(&mut tx, r).await?;
         }
         crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(

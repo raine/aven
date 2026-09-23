@@ -299,6 +299,15 @@ ordered apply; page effects, mappings, liveness and cursor commit together. Bad
 pages roll back, and same-ID divergence preserves pending work instead of merging
 or inventing a new ID. Membership sequence, content sequence and local_seq differ.
 
+`encrypted_tail/notes.rs` reconciles each affected note from retained tail commands
+in accepted sequence order, followed by pending local push order. Verified outcomes
+and page application both reconcile inside their transaction, including local
+echoes. Prefix history is not replayed over the published note baseline. Edits
+replace bodies only while a note exists; deletion requires a later add (including
+undo restoration) to recreate it. Replay preserves the establishing add identity
+and timestamp and does not repeat task activity writes. Retaining these tail
+commands is required; pruning them needs a separate confirmed-baseline contract.
+
 Authenticated None/Parent projections carry only minimal parent-retention inputs.
 `persistence/parent_liveness.rs::ParentState` is shared by plaintext retention,
 bootstrap projection and encrypted admission. Captured parent state is the tail

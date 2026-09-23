@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Fix: Concurrent note edits converge in experimental encrypted sync without overwriting later pending edits.
+
 - Fix: Metadata conflict resolution rejects values that exceed metadata limits without changing the conflict or blocking later sync.
 
 - Fix: Concurrent plaintext sync and image requests no longer fail with `installation-busy`.

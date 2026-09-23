@@ -2,6 +2,7 @@
 mod client;
 mod codec;
 mod domain;
+mod notes;
 mod server;
 
 use super::{LocalSharedStatePackageKey, seed_claim::peer};
