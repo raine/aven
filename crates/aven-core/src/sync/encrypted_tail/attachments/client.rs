@@ -1,12 +1,22 @@
 use super::super::{Accepted, Authority, codec, domain::Projection, hash, valid};
 use super::codec::Descriptor;
 use crate::{
-    db::{Database, begin_immediate},
+    db::{self, Database, begin_immediate},
     sync::{LocalSharedStatePackageKey, bootstrap_format, wire::ChangeWire},
 };
 use anyhow::{Context as _, Result, ensure};
 use sqlx::SqliteConnection;
 use std::path::Path;
+
+const DOWNLOAD_CURSOR: &str = "e2ee_image_download_after";
+const DOWNLOAD_CANDIDATES: &str = "
+    FROM local_e2ee_image_references r
+    JOIN local_e2ee_image_objects o ON o.object=r.object
+    JOIN task_attachments a ON a.workspace_id=r.workspace AND a.attachment_id=r.reference
+    JOIN tasks t ON t.workspace_id=a.workspace_id AND t.id=a.task_id
+    WHERE a.deleted=0 AND t.deleted=0
+      AND (o.verified=0 OR NOT EXISTS(
+          SELECT 1 FROM blob_inventory b WHERE b.sha256=o.sha256 AND b.available=1))";
 
 pub(crate) async fn initialize(
     conn: &mut SqliteConnection,
@@ -17,6 +27,7 @@ pub(crate) async fn initialize(
     key: &LocalSharedStatePackageKey,
 ) -> Result<()> {
     let index = bootstrap_format::attachment_index(package, key)?;
+    db::set_meta(conn, DOWNLOAD_CURSOR, "").await?;
     sqlx::query("INSERT INTO local_e2ee_image_initialization(singleton,association,sync_generation,prefix_count,descriptor) VALUES(1,?,?,?,?)").bind(association).bind(generation).bind(prefix).bind(hash(&package.descriptor).as_slice()).execute(&mut *conn).await?;
     for (image, sha) in index.objects {
         let d = Descriptor {
@@ -311,15 +322,30 @@ pub struct Download {
     sha256: String,
 }
 impl Database {
-    /// Selects one missing live object from authenticated mappings, never server hints.
-    pub async fn encrypted_image_download(&self, a: &Authority) -> Result<Option<Download>> {
+    /// Selects and advances past one pending object before transfer. The local
+    /// cursor orders attempts, not acceptance, validation or content progress.
+    pub async fn prepare_encrypted_image_download(
+        &self,
+        a: &Authority,
+    ) -> Result<Option<Download>> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         super::super::client::validate_binding_and_cursor(&mut tx, a).await?;
-        let rows:Vec<(String,Vec<u8>,String)>=sqlx::query_as("SELECT r.workspace,o.descriptor,o.sha256 FROM local_e2ee_image_references r JOIN local_e2ee_image_objects o ON o.object=r.object JOIN task_attachments a ON a.workspace_id=r.workspace AND a.attachment_id=r.reference JOIN tasks t ON t.workspace_id=a.workspace_id AND t.id=a.task_id WHERE a.deleted=0 AND t.deleted=0 AND (o.verified=0 OR NOT EXISTS(SELECT 1 FROM blob_inventory b WHERE b.sha256=o.sha256 AND b.available=1)) GROUP BY o.object ORDER BY o.object LIMIT 1").fetch_all(&mut *tx).await?;
-        let result = rows
-            .into_iter()
-            .next()
+        let after = hex::decode(
+            db::get_meta(&mut tx, DOWNLOAD_CURSOR)
+                .await?
+                .unwrap_or_default(),
+        )
+        .context("error encrypted-image-download-cursor")?;
+        valid(after.is_empty() || after.len() == 32)?;
+        let row: Option<(String, Vec<u8>, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT r.workspace,o.descriptor,o.sha256 {DOWNLOAD_CANDIDATES}
+             GROUP BY o.object ORDER BY (o.object<=?),o.object LIMIT 1"
+        )))
+        .bind(after)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let result = row
             .map(|(workspace, bytes, sha256)| -> Result<_> {
                 let d = Descriptor::decode(&bytes)?;
                 Ok(Download {
@@ -332,8 +358,21 @@ impl Database {
                 })
             })
             .transpose()?;
+        if let Some(download) = &result {
+            db::set_meta(&mut tx, DOWNLOAD_CURSOR, &hex::encode(download.object)).await?;
+        }
         tx.commit().await?;
         Ok(result)
+    }
+    /// Observes pending downloads without consuming a selection turn.
+    pub async fn encrypted_image_download_pending(&self, a: &Authority) -> Result<bool> {
+        let mut conn = self.acquire_reader().await?;
+        super::super::client::validate_binding_and_cursor(&mut conn, a).await?;
+        Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT EXISTS(SELECT 1 {DOWNLOAD_CANDIDATES})"
+        )))
+        .fetch_one(&mut *conn)
+        .await?)
     }
     pub async fn install_encrypted_image(
         &self,

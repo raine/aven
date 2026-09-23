@@ -387,6 +387,10 @@ separate metadata completion from pending, failed or unavailable images.
 `Client::round` still reports remote-watermark completion AND local metadata idle,
 not image availability. Download failure never rolls back committed metadata.
 Full decoder facts, hash, length, AEAD and frozen commitments precede availability.
+A local association-scoped selection cursor advances before each download attempt
+and wraps through pending objects, so failed/unavailable images cannot starve later
+ones across client or process restarts. Pending-work observations do not advance
+this cursor. It is scheduling bookkeeping, not validation or a sync watermark.
 Local downloads retain existing local capacity policy; the internal adapter uses
 its defaults. `router_with_policy` accepts operator-owned server policy, with the
 ordinary server's 30-day/10 GiB defaults, not local seven-day grace. Tickets reuse

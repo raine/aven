@@ -4,6 +4,10 @@ use aven_core::sync::encrypted_tail::attachments::{
 };
 
 async fn add_image(f: &Fixture) -> String {
+    add_image_with_width(f, 7).await
+}
+
+async fn add_image_with_width(f: &Fixture, width: u32) -> String {
     let w = f.peer.list_workspaces().await.unwrap().remove(0);
     let task = f
         .peer
@@ -13,7 +17,7 @@ async fn add_image(f: &Fixture) -> String {
         .task;
     drain(&Client::new(&f.origin).unwrap(), &f.peer_store, &f.peer).await;
     let mut bytes = std::io::Cursor::new(Vec::new());
-    ::image::DynamicImage::new_rgb8(7, 3)
+    ::image::DynamicImage::new_rgb8(width, 3)
         .write_to(&mut bytes, ::image::ImageFormat::Png)
         .unwrap();
     f.peer
@@ -777,4 +781,93 @@ async fn shared_refs_count_once_and_last_unref_starts_grace() {
         .await
         .unwrap();
     assert_eq!(scalar(&f.server,"SELECT count(*) FROM server_e2ee_images WHERE bootstrap IS NULL AND unreferenced_at IS NOT NULL").await,1);
+}
+
+#[tokio::test]
+async fn unavailable_first_image_does_not_starve_later_downloads() {
+    failed_first_image_does_not_starve_later_downloads(false).await;
+}
+
+#[tokio::test]
+async fn corrupt_first_image_does_not_starve_later_downloads() {
+    failed_first_image_does_not_starve_later_downloads(true).await;
+}
+
+async fn failed_first_image_does_not_starve_later_downloads(corrupt: bool) {
+    let f = fixture().await;
+    converge(&f).await;
+    let client = Client::new(&f.origin).unwrap();
+    for width in [7, 8] {
+        add_image_with_width(&f, width).await;
+        let result = client
+            .attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+            .await
+            .unwrap();
+        assert!(result.metadata_caught_up);
+        assert_eq!(result.images, ImageTransfer::Complete);
+    }
+    let objects: Vec<(Vec<u8>, String)> = sqlx::query_as(
+        "SELECT object,sha256 FROM local_e2ee_image_objects WHERE origin!='bootstrap' ORDER BY object",
+    ).fetch_all(&mut *aven_core::test_support::acquire(&f.peer).await.unwrap()).await.unwrap();
+    assert_eq!(objects.len(), 2);
+    let fault = if corrupt {
+        "UPDATE server_e2ee_image_chunks SET bytes=zeroblob(length(bytes)) WHERE object=?"
+    } else {
+        "DELETE FROM server_e2ee_image_chunks WHERE object=?"
+    };
+    sqlx::query(sqlx::AssertSqlSafe(fault.to_owned()))
+        .bind(&objects[0].0)
+        .execute(&mut *aven_core::test_support::acquire(&f.server).await.unwrap())
+        .await
+        .unwrap();
+    let missing_path = f.root.path().join("objects/sha256").join(&objects[0].1);
+    let available_path = f.root.path().join("objects/sha256").join(&objects[1].1);
+    assert!(!missing_path.exists() && !available_path.exists());
+    for round in 0..3 {
+        // Reopening the receiver cannot reset selection to the failing object.
+        let receiver = Database::open(f.seed.path()).await.unwrap();
+        let result = Client::new(&f.origin)
+            .unwrap()
+            .attachment_round(&f.seed_store, &receiver, f.root.path())
+            .await
+            .unwrap();
+        assert!(result.metadata_caught_up);
+        assert_ne!(result.images, ImageTransfer::Complete);
+        if round == 0 {
+            assert_eq!(
+                result.images,
+                if corrupt {
+                    ImageTransfer::Failed
+                } else {
+                    ImageTransfer::Unavailable
+                }
+            );
+            assert_eq!(
+                scalar(&f.seed, "SELECT count(*) FROM task_attachments").await,
+                3
+            );
+        }
+    }
+    assert!(
+        available_path.exists(),
+        "an unavailable earlier object must not starve this image"
+    );
+    assert!(!missing_path.exists());
+    let states: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT sha256,verified FROM local_e2ee_image_objects WHERE origin!='bootstrap' ORDER BY object",
+    ).fetch_all(&mut *aven_core::test_support::acquire(&f.seed).await.unwrap()).await.unwrap();
+    assert_eq!(
+        states,
+        vec![(objects[0].1.clone(), false), (objects[1].1.clone(), true)]
+    );
+    assert_eq!(
+        std::fs::read(available_path).unwrap(),
+        std::fs::read(
+            f.root
+                .path()
+                .join("peer-blobs/objects/sha256")
+                .join(&objects[1].1),
+        )
+        .unwrap()
+    );
 }

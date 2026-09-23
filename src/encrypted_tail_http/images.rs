@@ -322,7 +322,7 @@ impl Client {
         db: &Database,
         blob_dir: &Path,
     ) -> Result<ImageTransfer> {
-        if let Some(download) = db.encrypted_image_download(a).await?
+        if let Some(download) = db.prepare_encrypted_image_download(a).await?
             && !db
                 .complete_encrypted_image_from_local(
                     a,
@@ -369,7 +369,7 @@ impl Client {
             )
             .await?;
         }
-        if db.encrypted_image_download(a).await?.is_some() {
+        if db.encrypted_image_download_pending(a).await? {
             Ok(ImageTransfer::Pending)
         } else if db.encrypted_images_unavailable(a).await? {
             Ok(ImageTransfer::Unavailable)
