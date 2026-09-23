@@ -41,18 +41,47 @@ pub fn artifacts(descriptor: &[u8], catalogs: &[Vec<u8>; 3]) -> Result<Vec<Recip
         .collect())
 }
 
-pub(crate) struct VerifiedContent {
+/// Published metadata required for a fresh join, independent of image storage.
+pub struct Metadata {
+    pub descriptor: Vec<u8>,
+    pub catalogs: [Vec<u8>; 3],
+    pub state: Vec<Vec<u8>>,
+    pub manifest: Vec<Vec<u8>>,
+}
+
+pub(super) struct MetadataView<'a> {
+    pub descriptor: &'a [u8],
+    pub catalogs: &'a [Vec<u8>; 3],
+    pub state: &'a [Vec<u8>],
+    pub manifest: &'a [Vec<u8>],
+}
+impl<'a> From<&'a Package> for MetadataView<'a> {
+    fn from(p: &'a Package) -> Self {
+        Self {
+            descriptor: &p.descriptor,
+            catalogs: &p.catalogs,
+            state: &p.state,
+            manifest: &p.manifest,
+        }
+    }
+}
+
+pub(crate) struct VerifiedMetadata {
     pub capture: SharedStateCapture,
-    pub images: Vec<(String, Zeroizing<Vec<u8>>)>,
+    pub index: AttachmentIndex,
 }
 
 pub(crate) fn decrypt(
-    package: &Package,
+    metadata: &Metadata,
     key: &LocalSharedStatePackageKey,
-) -> Result<VerifiedContent> {
-    let mut images = Vec::new();
-    let (capture, _) = decrypt_domain_images(package, key, |hash, bytes| {
-        images.push((hash.to_owned(), bytes))
-    })?;
-    Ok(VerifiedContent { capture, images })
+) -> anyhow::Result<VerifiedMetadata> {
+    let view = MetadataView {
+        descriptor: &metadata.descriptor,
+        catalogs: &metadata.catalogs,
+        state: &metadata.state,
+        manifest: &metadata.manifest,
+    };
+    let (capture, mappings) = decrypt_metadata(&view, key)?;
+    let index = index_from_mappings(&view, &mappings)?;
+    Ok(VerifiedMetadata { capture, index })
 }

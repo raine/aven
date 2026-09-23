@@ -169,7 +169,7 @@ async fn post_capture_edit_does_not_contaminate_seed_baseline_or_retry() {
         .unwrap();
     crate::peer_enrollment_http::Client::new(&f.origin)
         .unwrap()
-        .install(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+        .install(&f.peer_store, &f.peer)
         .await
         .unwrap();
     assert_eq!(f.seed.meta("sync_cursor").await.unwrap(), cursor);
@@ -456,7 +456,7 @@ async fn missing_or_mismatched_baseline_refuses_sync_and_exact_install_retry() {
         );
         let error = crate::peer_enrollment_http::Client::new(&f.origin)
             .unwrap()
-            .install(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+            .install(&f.peer_store, &f.peer)
             .await
             .unwrap_err();
         assert!(

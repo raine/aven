@@ -5,6 +5,17 @@ use anyhow::Context as _;
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashSet;
 
+pub(super) const INITIAL_IMAGE_WATERMARK: &str = "e2ee_initial_image_watermark";
+
+// Missing catch-up state never proves that initial image demand is safe.
+pub(super) async fn initial_image_watermark(conn: &mut SqliteConnection) -> Result<String> {
+    let state = db::get_meta(conn, INITIAL_IMAGE_WATERMARK)
+        .await?
+        .context("error encrypted-image-initial-catch-up")?;
+    valid(state == "pending" || state == "ready" || state.parse::<i64>().is_ok_and(|n| n >= 0))?;
+    Ok(state)
+}
+
 pub(super) async fn validate_binding_and_cursor(
     conn: &mut SqliteConnection,
     authority: &Authority,
@@ -377,6 +388,25 @@ impl Database {
         tx.commit().await?;
         Ok(())
     }
+    /// The first installed tail target remains fixed across bounded rounds/restarts.
+    pub async fn encrypted_tail_initial_watermark(
+        &self,
+        authority: &Authority,
+    ) -> Result<Option<i64>> {
+        let mut conn = self.acquire_reader().await?;
+        validate_binding_and_cursor(&mut conn, authority).await?;
+        Ok(initial_image_watermark(&mut conn).await?.parse().ok())
+    }
+
+    pub async fn encrypted_images_initial_catch_up_complete(
+        &self,
+        authority: &Authority,
+    ) -> Result<bool> {
+        let mut conn = self.acquire_reader().await?;
+        validate_binding_and_cursor(&mut conn, authority).await?;
+        Ok(initial_image_watermark(&mut conn).await? == "ready")
+    }
+
     pub async fn apply_encrypted_tail_page(
         &self,
         authority: &Authority,
@@ -411,6 +441,15 @@ impl Database {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         valid(validate_binding_and_cursor(&mut tx, authority).await? == page.after)?;
+        let initial = initial_image_watermark(&mut tx).await?;
+        let target = if initial == "pending" {
+            Some(page.watermark)
+        } else {
+            initial.parse::<i64>().ok()
+        };
+        if let Some(target) = target {
+            valid(page.watermark == target && page.after <= target)?;
+        }
         let mut attachment_hashes = HashSet::new();
         let mut dependency_workspaces = HashSet::new();
         // Validate every mapping and local comparison before any domain effects.
@@ -471,6 +510,15 @@ impl Database {
         .await?;
         crate::sync::protocol::establish_protocol(&mut tx, 18).await?;
         db::set_meta(&mut tx, "sync_cursor", &page.cursor.to_string()).await?;
+        if let Some(target) = target {
+            let state = if page.cursor >= target {
+                "ready".into()
+            } else {
+                target.to_string()
+            };
+            db::set_meta(&mut tx, INITIAL_IMAGE_WATERMARK, &state).await?;
+        }
+
         #[cfg(any(test, feature = "test-support"))]
         super::crash_at("before-page-commit");
         tx.commit().await?;

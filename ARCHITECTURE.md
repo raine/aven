@@ -236,20 +236,21 @@ response. They create no leases, bootstrap pins or replacement image bytes.
 Downloads are bounded, sequential and memory-only. Restart discards partial bytes
 and redownloads the same protected publication, never a server-selected candidate.
 `package/publication/download.rs` derives recipes from the existing descriptor and
-committed catalog validators. The existing domain/manifest/chunk authentication
-also verifies private/public mapping agreement; installation validates image
-length, hash, media and dimensions. Every selected current or extra image is
-required. Missing lifecycle-owned bytes leave installation incomplete.
+committed catalog validators. Its metadata-only join input authenticates the
+same domain, manifest and private/public mapping agreement without requiring
+image records. Complete seed publication and adoption still require all selected
+current and extra image bytes; neither uses a missing-image bypass. A published
+image catalog remains authenticated mapping history even after legitimate pruning.
 
 The fresh-target transaction rechecks enrollment identity and emptiness, then uses
 the same shared-state import allowlist as plain installation without relaxing its
 bound-target refusal. It installs materialized state and dense retained history,
-not replayed operations. Durable attachment object writes precede available metadata
-and the atomic stream/prefix/checkpoint receipt. Orphan and trash reconciliation
-hold SQLite writer exclusion across ownership checks and filesystem changes, so
-cleanup cannot remove bytes adopted between the check and deletion. Rolled-back
-installation may leave ordinary orphan objects, but no visible partial domain state;
-retry can reuse them and normal lifecycle cleanup can remove them.
+not replayed operations. Image mappings, unavailable inventory, the initial catch-up
+marker and stream/prefix/checkpoint receipt commit together. Join installation has
+no filesystem side effects and does not take a blob directory. Explicitly absent
+bootstrap mappings remain distinct from mapped images whose bytes are unavailable.
+Image demand is computed after the installation's initial tail watermark is reached;
+ordinary transfer then validates bytes before making local inventory available.
 
 The host records completion separately in protected storage after the DB commit.
 An exact receipt retry validates protected authority and association locally,
@@ -264,9 +265,10 @@ authorization. No shipping setup command is exposed.
 Focused evidence: `cargo test --lib 'peer_enrollment_http::tests::install::'`,
 shared-state codec/install/adoption tests and plaintext attachment lifecycle tests.
 The loopback fixture includes synthetic retained conflicts, not encrypted conflict
-generation. Subprocess exits exercise download, file staging, pre-commit and
-post-commit boundaries. These are process-restart tests, not power-loss, mobile
-resource or independent interoperability evidence.
+generation. Subprocess exits exercise metadata download/import, pre-commit and
+post-commit boundaries, plus initial tail page rollback and committed restart.
+These are process-restart tests, not power-loss, mobile resource or independent
+interoperability evidence.
 
 ### Internal encrypted ordinary-task rounds
 
@@ -386,6 +388,13 @@ one image per direction. The caller supplies the local blob directory; results
 separate metadata completion from pending, failed or unavailable images.
 `Client::round` still reports remote-watermark completion AND local metadata idle,
 not image availability. Download failure never rolls back committed metadata.
+Fresh peer installation starts a local initial-image catch-up marker as pending.
+The first validated tail page atomically captures its finite watermark with page
+effects. Subsequent bounded rounds request that same watermark until reached,
+then mark the initial catch-up complete. Restart and exact install retry preserve
+this state; later appends do not extend the target. Seed adoption begins complete.
+Missing bookkeeping fails closed, without inferred backfill. Core download
+selection refuses before initial catch-up, and the host reports images Pending.
 Full decoder facts, hash, length, AEAD and frozen commitments precede availability.
 A local association-scoped selection cursor advances before each download attempt
 and wraps through pending objects, so failed/unavailable images cannot starve later

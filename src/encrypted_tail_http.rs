@@ -320,6 +320,7 @@ impl Client {
     }
     async fn pull(&self, a: &tail::Authority, bearer: &Secret, db: &Database) -> Result<bool> {
         let after = db.encrypted_tail_cursor(a).await?;
+        let watermark = db.encrypted_tail_initial_watermark(a).await?;
         let Reply::Page(page) = self
             .exchange(
                 &a.context,
@@ -327,14 +328,17 @@ impl Client {
                 Operation::Pull {
                     after,
                     limit: tail::PAGE_COUNT,
-                    watermark: None,
+                    watermark,
                 },
             )
             .await?
         else {
             anyhow::bail!("error encrypted-tail-reply")
         };
-        ensure!(page.after == after, "error encrypted-tail-cursor");
+        ensure!(
+            page.after == after && watermark.is_none_or(|w| page.watermark == w),
+            "error encrypted-tail-cursor"
+        );
         db.apply_encrypted_tail_page(a, &page).await?;
         Ok(!page.has_more)
     }

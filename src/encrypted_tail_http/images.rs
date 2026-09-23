@@ -160,12 +160,16 @@ impl Client {
         };
         let caught_up =
             self.pull(a, &inputs.bearer, db).await? && db.encrypted_tail_idle(a).await?;
-        let images = match self.download_image(a, &inputs.bearer, db, blob_dir).await {
-            Ok(ImageTransfer::Complete) if db.encrypted_image_upload_pending(a).await? => {
-                image_state.unwrap_or(ImageTransfer::Pending)
+        let images = if !db.encrypted_images_initial_catch_up_complete(a).await? {
+            image_state.unwrap_or(ImageTransfer::Pending)
+        } else {
+            match self.download_image(a, &inputs.bearer, db, blob_dir).await {
+                Ok(ImageTransfer::Complete) if db.encrypted_image_upload_pending(a).await? => {
+                    image_state.unwrap_or(ImageTransfer::Pending)
+                }
+                Ok(status) => image_state.unwrap_or(status),
+                Err(_) => ImageTransfer::Failed,
             }
-            Ok(status) => image_state.unwrap_or(status),
-            Err(_) => ImageTransfer::Failed,
         };
         Ok(AttachmentRound {
             metadata_caught_up: caught_up,

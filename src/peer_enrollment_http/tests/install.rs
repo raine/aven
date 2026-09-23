@@ -72,6 +72,7 @@ async fn shared(db: &Database) -> serde_json::Value {
         .meta
         .retain(|r| r.key.starts_with("epic_membership_baseline:"));
     for row in &mut export.tables.blob_inventory {
+        row.available = 0;
         row.last_verified_at = None;
         row.first_seen_at.clear();
     }
@@ -90,13 +91,37 @@ async fn independent_http_install_preserves_shared_domain_history_images_and_lat
     assert_ne!(identity, f.source.meta("client_id").await.unwrap());
     let blobs = f.root.path().join("peer-blobs");
     assert_eq!(count(&f.peer, "tasks").await, 0);
-    let result = f.client.install(&f.store, &f.peer, &blobs).await.unwrap();
+    let result = f.client.install(&f.store, &f.peer).await.unwrap();
     assert!(result.prefix_count > 4);
     assert_eq!(result.attachment_count, 1);
     assert_eq!(shared(&f.peer).await, shared(&f.source).await);
     assert_eq!(count(&f.peer, "conflicts").await, 1);
     assert_eq!(count(&f.peer, "local_peer_snapshot_install").await, 1);
     assert_eq!(f.peer.meta("client_id").await.unwrap(), identity);
+    assert_eq!(
+        f.peer
+            .meta("e2ee_initial_image_watermark")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("pending")
+    );
+    assert!(!blobs.join("objects/sha256").exists());
+    let available: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM blob_inventory WHERE available=1")
+            .fetch_one(&mut *aven_core::test_support::acquire(&f.peer).await.unwrap())
+            .await
+            .unwrap();
+    assert_eq!(available, 0);
+    let transfer = crate::encrypted_tail_http::Client::new(&f.client.locator)
+        .unwrap()
+        .attachment_round(&f.store, &f.peer, &blobs)
+        .await
+        .unwrap();
+    assert_eq!(
+        transfer.images,
+        crate::encrypted_tail_http::ImageTransfer::Complete
+    );
     for image in std::fs::read_dir(f.root.path().join("objects/sha256")).unwrap() {
         let image = image.unwrap();
         assert_eq!(
@@ -128,10 +153,7 @@ async fn independent_http_install_preserves_shared_domain_history_images_and_lat
     f.task.abort();
     let reopened = Database::open(f.peer.path()).await.unwrap();
     let store = isolated_store(reopened.path(), &f.root.path().join("peer-keys"));
-    assert_eq!(
-        f.client.install(&store, &reopened, &blobs).await.unwrap(),
-        result
-    );
+    assert_eq!(f.client.install(&store, &reopened).await.unwrap(), result);
     assert_eq!(shared(&reopened).await, after);
     assert!(
         reopened
@@ -228,14 +250,19 @@ async fn published_http_requires_exact_current_context_and_never_restores_missin
         .await
         .unwrap();
     drop(conn);
-    assert!(
-        f.client
-            .install(&f.store, &f.peer, &f.root.path().join("peer-blobs"))
-            .await
-            .is_err()
+    f.client.install(&f.store, &f.peer).await.unwrap();
+    assert!(count(&f.peer, "tasks").await > 0);
+    assert_eq!(count(&f.peer, "local_peer_snapshot_install").await, 1);
+    let transfer = crate::encrypted_tail_http::Client::new(&f.client.locator)
+        .unwrap()
+        .attachment_round(&f.store, &f.peer, &f.root.path().join("peer-blobs"))
+        .await
+        .unwrap();
+    assert!(transfer.metadata_caught_up);
+    assert_eq!(
+        transfer.images,
+        crate::encrypted_tail_http::ImageTransfer::Unavailable
     );
-    assert_eq!(count(&f.peer, "tasks").await, 0);
-    assert_eq!(count(&f.peer, "local_peer_snapshot_install").await, 0);
     assert_eq!(count(&f.server, "server_e2ee_image_chunks").await, 0);
     assert_eq!(owned, f.package.images[0].records[0]);
     let mut conn = aven_core::test_support::acquire(&f.server).await.unwrap();
@@ -300,8 +327,16 @@ async fn substituted_http_catalog_and_chunk_refuse_without_visible_domain() {
         .await
         .unwrap();
         drop(conn);
-        assert!(f.client.install(&f.store, &f.peer, &blobs).await.is_err());
+        assert!(f.client.install(&f.store, &f.peer).await.is_err());
         assert_eq!(count(&f.peer, "tasks").await, 0);
+        assert_eq!(count(&f.peer, "local_peer_snapshot_install").await, 0);
+        assert_eq!(count(&f.peer, "local_e2ee_image_initialization").await, 0);
+        assert_eq!(count(&f.peer, "local_e2ee_image_objects").await, 0);
+        assert_eq!(
+            f.peer.meta("e2ee_initial_image_watermark").await.unwrap(),
+            None
+        );
+        assert!(!blobs.exists());
         let mut conn = aven_core::test_support::acquire(&f.server).await.unwrap();
         sqlx::query(
             "UPDATE server_bootstrap_chunks SET bytes=? WHERE component=? AND chunk_index=0",
@@ -312,7 +347,7 @@ async fn substituted_http_catalog_and_chunk_refuse_without_visible_domain() {
         .await
         .unwrap();
     }
-    f.client.install(&f.store, &f.peer, &blobs).await.unwrap();
+    f.client.install(&f.store, &f.peer).await.unwrap();
 }
 
 #[tokio::test]
@@ -326,9 +361,15 @@ async fn transactional_failure_and_nonempty_target_never_publish_partial_state()
         let mut conn = aven_core::test_support::acquire(&f.peer).await.unwrap();
         sqlx::query(fault).execute(&mut *conn).await.unwrap();
         drop(conn);
-        assert!(f.client.install(&f.store, &f.peer, &blobs).await.is_err());
+        assert!(f.client.install(&f.store, &f.peer).await.is_err());
         assert_eq!(count(&f.peer, "tasks").await, 0);
         assert_eq!(count(&f.peer, "blob_inventory").await, 0);
+        assert_eq!(count(&f.peer, "local_e2ee_image_initialization").await, 0);
+        assert_eq!(
+            f.peer.meta("e2ee_initial_image_watermark").await.unwrap(),
+            None
+        );
+        assert!(!blobs.exists());
         assert_eq!(count(&f.peer, "local_e2ee_dependency_baseline").await, 0);
         assert_eq!(count(&f.peer, "local_e2ee_dependency_edges").await, 0);
         let mut conn = aven_core::test_support::acquire(&f.peer).await.unwrap();
@@ -338,7 +379,7 @@ async fn transactional_failure_and_nonempty_target_never_publish_partial_state()
             .unwrap();
         drop(conn);
         let reopened = Database::open(f.peer.path()).await.unwrap();
-        f.client.install(&f.store, &reopened, &blobs).await.unwrap();
+        f.client.install(&f.store, &reopened).await.unwrap();
         let state = shared(&reopened).await;
         // Receipt mismatch is a refusal, not a reinstall or cursor repair.
         let mut conn = aven_core::test_support::acquire(&reopened).await.unwrap();
@@ -347,7 +388,7 @@ async fn transactional_failure_and_nonempty_target_never_publish_partial_state()
             .await
             .unwrap();
         drop(conn);
-        assert!(f.client.install(&f.store, &reopened, &blobs).await.is_err());
+        assert!(f.client.install(&f.store, &reopened).await.is_err());
         assert_eq!(shared(&reopened).await, state);
     }
 }
@@ -361,17 +402,17 @@ async fn process_worker() {
     let store = isolated_store(peer.path(), &root.join("peer-keys"));
     Client::new(&origin)
         .unwrap()
-        .install(&store, &peer, &root.join("peer-blobs"))
+        .install(&store, &peer)
         .await
         .unwrap();
     panic!("expected process exit");
 }
 
 #[tokio::test]
-async fn process_restart_download_files_and_atomic_commit_boundaries() {
+async fn process_restart_download_metadata_and_atomic_commit_boundaries() {
     let f = enrolled().await;
     let identity = f.peer.meta("client_id").await.unwrap();
-    for stage in ["download", "files", "before-commit", "after-commit"] {
+    for stage in ["download", "metadata", "before-commit", "after-commit"] {
         let output = tokio::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
@@ -409,33 +450,24 @@ async fn process_restart_download_files_and_atomic_commit_boundaries() {
         .await
         .unwrap();
         if stage != "after-commit" {
-            if stage != "download" {
-                assert_eq!(
-                    std::fs::read_dir(blobs.join("objects/sha256"))
-                        .unwrap()
-                        .count(),
-                    0
-                );
-            }
             assert_eq!(count(&peer, "tasks").await, 0);
             assert_eq!(count(&peer, "changes").await, 0);
         } else {
             assert_eq!(shared(&peer).await, shared(&f.source).await);
+            assert!(!blobs.join("objects/sha256").exists());
             assert_eq!(
-                std::fs::read_dir(blobs.join("objects/sha256"))
+                peer.meta("e2ee_initial_image_watermark")
+                    .await
                     .unwrap()
-                    .count(),
-                1
+                    .as_deref(),
+                Some("pending")
             );
         }
     }
     f.task.abort();
     let peer = Database::open(f.peer.path()).await.unwrap();
     let store = isolated_store(peer.path(), &f.root.path().join("peer-keys"));
-    f.client
-        .install(&store, &peer, &f.root.path().join("peer-blobs"))
-        .await
-        .unwrap();
+    f.client.install(&store, &peer).await.unwrap();
     assert_eq!(count(&peer, "local_peer_snapshot_install").await, 1);
     assert_eq!(shared(&peer).await, shared(&f.source).await);
 }
@@ -464,16 +496,10 @@ async fn local_edit_after_enrollment_blocks_install_and_protected_loss_blocks_re
         .await
         .unwrap();
     let before = shared(&f.peer).await;
-    assert!(
-        f.client
-            .install(&f.store, &f.peer, &f.root.path().join("peer-blobs"))
-            .await
-            .is_err()
-    );
+    assert!(f.client.install(&f.store, &f.peer).await.is_err());
     assert_eq!(before, shared(&f.peer).await);
     let f = enrolled().await;
-    let blobs = f.root.path().join("peer-blobs");
-    f.client.install(&f.store, &f.peer, &blobs).await.unwrap();
+    f.client.install(&f.store, &f.peer).await.unwrap();
     let before = shared(&f.peer).await;
     let copy_path = f.root.path().join("copied.sqlite");
     let mut conn = aven_core::test_support::acquire(&f.peer).await.unwrap();
@@ -485,12 +511,7 @@ async fn local_edit_after_enrollment_blocks_install_and_protected_loss_blocks_re
     drop(conn);
     let copied = Database::open(&copy_path).await.unwrap();
     let copied_store = isolated_store(copied.path(), &f.root.path().join("peer-keys"));
-    assert!(
-        f.client
-            .install(&copied_store, &copied, &blobs)
-            .await
-            .is_err()
-    );
+    assert!(f.client.install(&copied_store, &copied).await.is_err());
     assert_eq!(shared(&copied).await, before);
     let path = std::fs::read_dir(f.root.path().join("peer-keys"))
         .unwrap()
@@ -504,13 +525,13 @@ async fn local_edit_after_enrollment_blocks_install_and_protected_loss_blocks_re
         })
         .unwrap();
     std::fs::remove_file(path).unwrap();
-    assert!(f.client.install(&f.store, &f.peer, &blobs).await.is_err());
+    assert!(f.client.install(&f.store, &f.peer).await.is_err());
     assert_eq!(before, shared(&f.peer).await);
 }
 
 #[tokio::test]
-async fn foreign_image_and_dishonest_descriptor_response_cannot_select_a_publication() {
-    let mut f = enrolled().await;
+async fn foreign_image_fails_transfer_and_dishonest_descriptor_refuses_install() {
+    let f = enrolled().await;
     let other = enrolled().await;
     let blobs = f.root.path().join("peer-blobs");
     let mut conn = aven_core::test_support::acquire(&f.server).await.unwrap();
@@ -520,8 +541,20 @@ async fn foreign_image_and_dishonest_descriptor_response_cannot_select_a_publica
         .await
         .unwrap();
     drop(conn);
-    assert!(f.client.install(&f.store, &f.peer, &blobs).await.is_err());
-    assert_eq!(count(&f.peer, "tasks").await, 0);
+    f.client.install(&f.store, &f.peer).await.unwrap();
+    assert!(count(&f.peer, "tasks").await > 0);
+    let transfer = crate::encrypted_tail_http::Client::new(&f.client.locator)
+        .unwrap()
+        .attachment_round(&f.store, &f.peer, &blobs)
+        .await
+        .unwrap();
+    assert_eq!(
+        transfer.images,
+        crate::encrypted_tail_http::ImageTransfer::Failed
+    );
+    assert!(!blobs.join("objects/sha256").exists());
+
+    let mut f = enrolled().await;
     f.task.abort();
     let _ = (&mut f.task).await;
     let listener = tokio::net::TcpListener::bind(f.client.locator.strip_prefix("http://").unwrap())
@@ -539,13 +572,13 @@ async fn foreign_image_and_dishonest_descriptor_response_cannot_select_a_publica
         axum::serve(listener, app).await.unwrap();
     });
     let client = Client::new(&f.client.locator).unwrap();
-    let error = client.install(&f.store, &f.peer, &blobs).await.unwrap_err();
+    let error = client.install(&f.store, &f.peer).await.unwrap_err();
     assert_eq!(error.to_string(), "error snapshot-descriptor-substitution");
     assert_eq!(count(&f.peer, "tasks").await, 0);
 }
 
 #[tokio::test]
-async fn control_request_cap_rejects_padding_while_large_published_image_installs() {
+async fn control_request_cap_rejects_padding_while_large_published_image_reads_succeed() {
     let f = enrolled().await;
     let peer = f
         .store
@@ -599,9 +632,8 @@ async fn control_request_cap_rejects_padding_while_large_published_image_install
         panic!("expected published image");
     };
     assert_eq!(bytes, f.package.images[0].records[0]);
-    f.client
-        .install(&f.store, &f.peer, &f.root.path().join("peer-blobs"))
-        .await
-        .unwrap();
+    f.client.install(&f.store, &f.peer).await.unwrap();
     assert_eq!(shared(&f.peer).await, shared(&f.source).await);
 }
+
+mod attachments;

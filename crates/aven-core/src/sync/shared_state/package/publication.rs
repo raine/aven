@@ -391,16 +391,8 @@ pub(super) fn membership(package: &EncryptedLocalSharedStatePackage) -> Result<[
 /// image-byte obligations without a key. Catalogs are aggregate-verified before
 /// any records are trusted. No partial catalog can establish completeness.
 pub fn validate_keyless(package: &Package) -> Result<Completeness> {
-    let d = Descriptor::decode(&package.descriptor)?;
-    for (i, bytes) in package.catalogs.iter().enumerate() {
-        d.catalogs[i].verify(bytes, i as u8 + 1)?;
-    }
-    let state = decode_state_catalog(&package.catalogs[0])?;
-    catalog::prefix_decode(&package.catalogs[1], d.prefix)?;
-    let images = Images::decode(&package.catalogs[2])?;
-    state.verify(&package.state, d.context(), d.stream, d.bootstrap, 2, 1)?;
-    d.manifest
-        .verify(&package.manifest, d.context(), d.stream, d.bootstrap, 2, 2)?;
+    let metadata = download::MetadataView::from(package);
+    let (d, images) = validate_metadata(&metadata)?;
     valid(images.objects.len() == package.images.len())?;
     for (object, records) in images.objects.iter().zip(&package.images) {
         valid(object.id == records.object_id)?;
@@ -420,6 +412,20 @@ pub fn validate_keyless(package: &Package) -> Result<Completeness> {
     })
 }
 
+fn validate_metadata(metadata: &download::MetadataView<'_>) -> Result<(Descriptor, Images)> {
+    let d = Descriptor::decode(metadata.descriptor)?;
+    for (i, bytes) in metadata.catalogs.iter().enumerate() {
+        d.catalogs[i].verify(bytes, i as u8 + 1)?;
+    }
+    let state = decode_state_catalog(&metadata.catalogs[0])?;
+    catalog::prefix_decode(&metadata.catalogs[1], d.prefix)?;
+    let images = Images::decode(&metadata.catalogs[2])?;
+    state.verify(metadata.state, d.context(), d.stream, d.bootstrap, 2, 1)?;
+    d.manifest
+        .verify(metadata.manifest, d.context(), d.stream, d.bootstrap, 2, 2)?;
+    Ok((d, images))
+}
+
 fn decrypt_domain(
     package: &Package,
     key: &LocalSharedStatePackageKey,
@@ -433,13 +439,47 @@ fn decrypt_domain_images(
     mut accept_image: impl FnMut(&str, Zeroizing<Vec<u8>>),
 ) -> Result<(SharedStateCapture, Vec<domain::Mapping>)> {
     validate_keyless(package)?;
-    let d = Descriptor::decode(&package.descriptor)?;
-    let state = decode_state_catalog(&package.catalogs[0])?;
+    let metadata = download::MetadataView::from(package);
+    let (capture, mappings) = decrypt_metadata(&metadata, key)?;
+    let (d, images) = validate_metadata(&metadata)?;
+    for (object, records) in images.objects.iter().zip(&package.images) {
+        let mapping = mappings
+            .iter()
+            .find(|m| m.object == Some(object.id))
+            .ok_or(Error::Invalid)?;
+        let image_key = crypto::derive_image_key(key, d.context(), object.id)
+            .map_err(|_| Error::Authentication)?;
+        let bytes = Zeroizing::new(
+            crypto::decrypt_artifact(
+                &object.artifact.encrypted(&records.records),
+                d.context(),
+                d.stream,
+                object.id,
+                1,
+                0,
+                &image_key,
+                size(IMAGE_LIMIT)?,
+            )
+            .map_err(|_| Error::Authentication)?,
+        );
+        valid(hex::encode(crypto::sha256(&bytes)) == mapping.sha256)?;
+        accept_image(&mapping.sha256, bytes);
+    }
+    Ok((capture, mappings))
+}
+
+fn decrypt_metadata(
+    metadata: &download::MetadataView<'_>,
+    key: &LocalSharedStatePackageKey,
+) -> Result<(SharedStateCapture, Vec<domain::Mapping>)> {
+    validate_metadata(metadata)?;
+    let d = Descriptor::decode(metadata.descriptor)?;
+    let state = decode_state_catalog(&metadata.catalogs[0])?;
     let state_key = crypto::derive_bootstrap_class_key(key, d.context(), d.stream, d.bootstrap, 1)
         .map_err(|_| Error::Authentication)?;
     let plaintext = Zeroizing::new(
         crypto::decrypt_artifact(
-            &state.encrypted(&package.state),
+            &state.encrypted(metadata.state),
             d.context(),
             d.stream,
             d.bootstrap,
@@ -456,7 +496,7 @@ fn decrypt_domain_images(
             .map_err(|_| Error::Authentication)?;
     let manifest = Zeroizing::new(
         crypto::decrypt_artifact(
-            &d.manifest.encrypted(&package.manifest),
+            &d.manifest.encrypted(metadata.manifest),
             d.context(),
             d.stream,
             d.bootstrap,
@@ -487,9 +527,9 @@ fn decrypt_domain_images(
     capture.validate().map_err(|_| Error::Invalid)?;
     valid(
         projection::prefix(&capture.snapshot.tables)?
-            == catalog::prefix_decode(&package.catalogs[1], d.prefix)?,
+            == catalog::prefix_decode(&metadata.catalogs[1], d.prefix)?,
     )?;
-    let images = Images::decode(&package.catalogs[2])?;
+    let images = Images::decode(&metadata.catalogs[2])?;
     let expected = projection::images(
         &capture.snapshot.tables,
         &mappings,
@@ -500,29 +540,6 @@ fn decrypt_domain_images(
         },
     )?;
     valid(images == expected)?;
-    for (object, records) in images.objects.iter().zip(&package.images) {
-        let mapping = mappings
-            .iter()
-            .find(|m| m.object == Some(object.id))
-            .ok_or(Error::Invalid)?;
-        let image_key = crypto::derive_image_key(key, d.context(), object.id)
-            .map_err(|_| Error::Authentication)?;
-        let bytes = Zeroizing::new(
-            crypto::decrypt_artifact(
-                &object.artifact.encrypted(&records.records),
-                d.context(),
-                d.stream,
-                object.id,
-                1,
-                0,
-                &image_key,
-                size(IMAGE_LIMIT)?,
-            )
-            .map_err(|_| Error::Authentication)?,
-        );
-        valid(hex::encode(crypto::sha256(&bytes)) == mapping.sha256)?;
-        accept_image(&mapping.sha256, bytes);
-    }
     Ok((capture, mappings))
 }
 
@@ -649,8 +666,15 @@ pub(crate) fn attachment_index(
     key: &LocalSharedStatePackageKey,
 ) -> anyhow::Result<AttachmentIndex> {
     let (_, mappings) = decrypt_domain_images(package, key, |_, _| {})?;
-    let descriptor = Descriptor::decode(&package.descriptor)?;
-    let images = Images::decode(&package.catalogs[2])?;
+    index_from_mappings(&download::MetadataView::from(package), &mappings)
+}
+
+fn index_from_mappings(
+    metadata: &download::MetadataView<'_>,
+    mappings: &[domain::Mapping],
+) -> anyhow::Result<AttachmentIndex> {
+    let descriptor = Descriptor::decode(metadata.descriptor)?;
+    let images = Images::decode(&metadata.catalogs[2])?;
     let objects = images
         .objects
         .into_iter()

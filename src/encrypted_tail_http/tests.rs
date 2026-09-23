@@ -248,10 +248,14 @@ async fn fixture_with_image_availability(
         .unwrap();
     assert!(enrollment.admit(&seed_store, &seed).await.unwrap());
     assert!(enrollment.complete(&peer_store, &peer).await.unwrap());
-    enrollment
-        .install(&peer_store, &peer, &root.path().join("peer-blobs"))
+    enrollment.install(&peer_store, &peer).await.unwrap();
+    let initial = Client::new(&origin)
+        .unwrap()
+        .attachment_round(&peer_store, &peer, &root.path().join("peer-blobs"))
         .await
         .unwrap();
+    assert!(initial.metadata_caught_up);
+    assert_eq!(initial.images, ImageTransfer::Complete);
     assert_ne!(
         seed.meta("client_id").await.unwrap(),
         peer.meta("client_id").await.unwrap()
@@ -1692,10 +1696,7 @@ async fn checkpoint_overlapping_rounds_repeated_offline_edits_and_reinstall() {
     );
     converge(&f).await;
     let enrollment = crate::peer_enrollment_http::Client::new(&f.origin).unwrap();
-    enrollment
-        .install(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
-        .await
-        .unwrap();
+    enrollment.install(&f.peer_store, &f.peer).await.unwrap();
     seed_bootstrap_http::Client::new(&f.origin)
         .unwrap()
         .resume(&f.seed_store, &f.seed)

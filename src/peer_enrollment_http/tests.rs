@@ -10,6 +10,7 @@ async fn serve(db: Database) -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let app = seed_bootstrap_http::router(db.clone(), Some(setup()), Default::default())
+        .merge(crate::encrypted_tail_http::router(db.clone()))
         .merge(router(db));
     let task = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();

@@ -658,7 +658,6 @@ impl ProtectedLocalKeyStore {
         db: &Database,
         transport: &crate::peer_enrollment_http::Client,
         locator: &str,
-        blob_dir: &Path,
     ) -> Result<aven_core::sync::SharedStateInstallReport> {
         let guard = InstallationGuard::acquire(db.path())?;
         self.validate_database(db)?;
@@ -693,14 +692,7 @@ impl ProtectedLocalKeyStore {
             .download(&peer, &verified, &record.descriptor)
             .await?;
         let report = db
-            .install_peer_snapshot(
-                &verified,
-                id.incarnation,
-                &id.client,
-                &guard,
-                &package,
-                blob_dir,
-            )
+            .install_peer_snapshot(&verified, id.incarnation, &id.client, &guard, &package)
             .await?;
         self.save_phase(db, &id, Artifact::Installed, &head).await?;
         Ok(report)

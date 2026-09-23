@@ -638,3 +638,24 @@ fn declared_resource_limits_refuse_before_artifact_allocation() {
     bytes[23] = 2;
     assert_eq!(Declaration::read(&mut Reader(&bytes)), Err(Error::Invalid));
 }
+
+#[tokio::test]
+async fn metadata_join_authentication_does_not_relax_complete_seed_validation() {
+    let (_, _, _, _, mut package) = specimen().await;
+    let metadata = download::Metadata {
+        descriptor: package.descriptor.clone(),
+        catalogs: package.catalogs.clone(),
+        state: package.state.clone(),
+        manifest: package.manifest.clone(),
+    };
+    let joined = download::decrypt(&metadata, &package_key()).unwrap();
+    assert!(!joined.index.objects.is_empty());
+    assert!(!joined.capture.snapshot.tables.task_attachments.is_empty());
+    package.images.clear();
+    assert!(validate_keyless(&package).is_err());
+    assert!(decrypt_domain(&package, &package_key()).is_err());
+    assert!(attachment_index(&package, &package_key()).is_err());
+    let mut tampered = metadata;
+    tampered.manifest[0][210] ^= 1;
+    assert!(download::decrypt(&tampered, &package_key()).is_err());
+}

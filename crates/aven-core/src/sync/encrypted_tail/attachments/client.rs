@@ -27,8 +27,35 @@ pub(crate) async fn initialize(
     key: &LocalSharedStatePackageKey,
 ) -> Result<()> {
     let index = bootstrap_format::attachment_index(package, key)?;
+    initialize_index(
+        conn,
+        association,
+        generation,
+        prefix,
+        &hash(&package.descriptor),
+        index,
+        true,
+    )
+    .await
+}
+
+pub(crate) async fn initialize_index(
+    conn: &mut SqliteConnection,
+    association: &str,
+    generation: i64,
+    prefix: i64,
+    descriptor: &[u8; 32],
+    index: bootstrap_format::AttachmentIndex,
+    verified: bool,
+) -> Result<()> {
     db::set_meta(conn, DOWNLOAD_CURSOR, "").await?;
-    sqlx::query("INSERT INTO local_e2ee_image_initialization(singleton,association,sync_generation,prefix_count,descriptor) VALUES(1,?,?,?,?)").bind(association).bind(generation).bind(prefix).bind(hash(&package.descriptor).as_slice()).execute(&mut *conn).await?;
+    db::set_meta(
+        conn,
+        super::super::client::INITIAL_IMAGE_WATERMARK,
+        if verified { "ready" } else { "pending" },
+    )
+    .await?;
+    sqlx::query("INSERT INTO local_e2ee_image_initialization(singleton,association,sync_generation,prefix_count,descriptor) VALUES(1,?,?,?,?)").bind(association).bind(generation).bind(prefix).bind(descriptor.as_slice()).execute(&mut *conn).await?;
     for (image, sha) in index.objects {
         let d = Descriptor {
             vault: index.context.vault_id,
@@ -37,7 +64,7 @@ pub(crate) async fn initialize(
             object: image.id,
             artifact: image.artifact,
         };
-        sqlx::query("INSERT INTO local_e2ee_image_objects(object,descriptor,sha256,origin,verified) VALUES(?,?,?,'bootstrap',1)").bind(d.object.as_slice()).bind(d.encode()?).bind(sha).execute(&mut *conn).await?;
+        sqlx::query("INSERT INTO local_e2ee_image_objects(object,descriptor,sha256,origin,verified) VALUES(?,?,?,'bootstrap',?)").bind(d.object.as_slice()).bind(d.encode()?).bind(sha).bind(verified).execute(&mut *conn).await?;
     }
     for r in index.references {
         sqlx::query("INSERT INTO local_e2ee_image_references(workspace,reference,parent,object,origin,deleted) VALUES(?,?,?,?,'bootstrap',?)").bind(r.workspace).bind(r.reference).bind(r.task).bind(r.object.map(|id|id.to_vec())).bind(r.deleted).execute(&mut *conn).await?;
@@ -52,6 +79,7 @@ pub(crate) async fn validate(
 ) -> Result<()> {
     let ok:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM local_e2ee_image_initialization WHERE singleton=1 AND association=? AND prefix_count=? AND descriptor=? AND association=(SELECT value FROM meta WHERE key='e2ee_association') AND sync_generation=CAST((SELECT value FROM meta WHERE key='sync_generation') AS INTEGER))").bind(association).bind(prefix).bind(descriptor.as_slice()).fetch_one(&mut *conn).await?;
     ensure!(ok, "error encrypted-image-reinitialization-required");
+    super::super::client::initial_image_watermark(conn).await?;
     let missing:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_attachments a WHERE NOT EXISTS(SELECT 1 FROM local_e2ee_image_references r WHERE r.workspace=a.workspace_id AND r.reference=a.attachment_id) AND NOT EXISTS(SELECT 1 FROM changes c WHERE c.change_id=a.created_by_change_id AND c.server_seq IS NULL))").fetch_one(conn).await?;
     ensure!(!missing, "error encrypted-image-reinitialization-required");
     Ok(())
@@ -331,6 +359,10 @@ impl Database {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         super::super::client::validate_binding_and_cursor(&mut tx, a).await?;
+        ensure!(
+            super::super::client::initial_image_watermark(&mut tx).await? == "ready",
+            "error encrypted-image-initial-catch-up"
+        );
         let after = hex::decode(
             db::get_meta(&mut tx, DOWNLOAD_CURSOR)
                 .await?

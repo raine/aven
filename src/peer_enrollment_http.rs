@@ -303,11 +303,8 @@ impl Client {
         &self,
         store: &ProtectedLocalKeyStore,
         db: &Database,
-        blob_dir: &std::path::Path,
     ) -> Result<aven_core::sync::SharedStateInstallReport> {
-        store
-            .install_peer_snapshot(db, self, &self.locator, blob_dir)
-            .await
+        store.install_peer_snapshot(db, self, &self.locator).await
     }
 
     pub(crate) async fn download(
@@ -315,9 +312,9 @@ impl Client {
         peer: &peer::PeerAuthority,
         verified: &peer::VerifiedEnrollment,
         descriptor: &[u8],
-    ) -> Result<aven_core::sync::bootstrap_format::Package> {
+    ) -> Result<aven_core::sync::bootstrap_format::download::Metadata> {
         use aven_core::sync::{
-            bootstrap_format::{self, ImageRecords, Package},
+            bootstrap_format::{self, download::Metadata},
             bootstrap_staging::{Component, MAX_CHUNKS, MAX_STORAGE_BYTES},
         };
         let b = verified.publication().binding();
@@ -349,12 +346,11 @@ impl Client {
             read(None, 0).await? == descriptor,
             "error snapshot-descriptor-substitution"
         );
-        let mut package = Package {
+        let mut package = Metadata {
             descriptor: descriptor.to_vec(),
             catalogs: Default::default(),
             state: vec![],
             manifest: vec![],
-            images: vec![],
         };
         let mut total = 0_u64;
         let mut chunks = 0_u64;
@@ -384,6 +380,9 @@ impl Client {
             }
         }
         for recipe in bootstrap_format::download::artifacts(descriptor, &package.catalogs)? {
+            if matches!(recipe.component, Component::Image(_)) {
+                continue;
+            }
             let mut records = Vec::new();
             for (index, length) in recipe.lengths.into_iter().enumerate() {
                 let bytes = read(Some(recipe.component), u64::try_from(index)?).await?;
@@ -404,9 +403,6 @@ impl Client {
             match recipe.component {
                 Component::Manifest => package.manifest = records,
                 Component::State => package.state = records,
-                Component::Image(object_id) => {
-                    package.images.push(ImageRecords { object_id, records })
-                }
                 _ => anyhow::bail!("error snapshot-component"),
             }
         }

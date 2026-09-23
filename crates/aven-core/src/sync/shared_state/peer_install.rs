@@ -76,17 +76,14 @@ impl Database {
         Ok(receipt)
     }
 
-    /// Only complete authenticated content enters the shared-state transaction.
-    /// Files are durable before metadata commits; failures leave harmless objects,
-    /// not visible partial state. No failure cleanup can delete adopted bytes.
+    /// Authenticated metadata and mappings commit independently of image bytes.
     pub async fn install_peer_snapshot(
         &self,
         verified: &VerifiedEnrollment,
         enrollment: [u8; 32],
         client: &str,
         guard: &InstallationGuard,
-        package: &bootstrap_format::Package,
-        blob_dir: &Path,
+        package: &bootstrap_format::download::Metadata,
     ) -> Result<SharedStateInstallReport> {
         if let Some(report) = self
             .peer_snapshot_receipt(verified, enrollment, client, guard)
@@ -99,40 +96,11 @@ impl Database {
             Sha256::digest(&package.descriptor).as_slice() == binding.descriptor_commitment,
             "error snapshot-publication-mismatch"
         );
-        let bootstrap_format::download::VerifiedContent { capture, images } =
+        let bootstrap_format::download::VerifiedMetadata { mut capture, index } =
             bootstrap_format::download::decrypt(package, verified.key())?;
-        let mut validated = Vec::with_capacity(images.len());
-        for (hash, bytes) in images {
-            let inventory = capture
-                .snapshot
-                .tables
-                .blob_inventory
-                .iter()
-                .find(|b| b.sha256 == hash)
-                .context("error snapshot-image-mapping")?;
-            ensure!(
-                i64::try_from(bytes.len())? == inventory.byte_size,
-                "error snapshot-image-length"
-            );
-            let image = crate::attachments::decode::validate_image(
-                bytes.to_vec(),
-                Some(inventory.media_type.clone()),
-            )
-            .await
-            .map_err(|_| anyhow::anyhow!("error snapshot-image-invalid"))?;
-            for row in capture
-                .snapshot
-                .tables
-                .task_attachments
-                .iter()
-                .filter(|a| a.sha256 == hash)
-            {
-                ensure!(
-                    row.width == Some(image.facts.width) && row.height == Some(image.facts.height),
-                    "error snapshot-image-dimensions"
-                );
-            }
-            validated.push((hash, image));
+        for blob in &mut capture.snapshot.tables.blob_inventory {
+            blob.available = 0;
+            blob.last_verified_at = None;
         }
         let mut conn = self.acquire_writer().await?;
         let mut tx = db::begin_immediate(&mut conn).await?;
@@ -145,19 +113,8 @@ impl Database {
         let occupied: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM local_seed_source) OR EXISTS(SELECT 1 FROM local_seed_publication_intent) OR EXISTS(SELECT 1 FROM local_seed_genesis_pin) OR EXISTS(SELECT 1 FROM server_seed_claim) OR EXISTS(SELECT 1 FROM meta WHERE key IN ('sync_server_url','e2ee_association'))").fetch_one(&mut *tx).await?;
         ensure!(!occupied, "error snapshot-target-not-fresh");
         let report = install_in_transaction(&mut tx, &capture).await?;
-        for (hash, image) in validated {
-            let stored =
-                crate::attachments::storage::stage_blob(blob_dir, &hash, &image.bytes).await?;
-            crate::attachments::storage::upsert_inventory_available(
-                &mut tx,
-                &hash,
-                stored.byte_size,
-                &image.facts.media_type,
-            )
-            .await?;
-        }
         #[cfg(any(test, feature = "test-support"))]
-        crash_at("files");
+        crash_at("metadata");
         let hashes = capture
             .snapshot
             .tables
@@ -186,13 +143,14 @@ impl Database {
             &capture.snapshot.tables.task_dependencies,
         )
         .await?;
-        crate::sync::encrypted_tail::attachments::client::initialize(
+        crate::sync::encrypted_tail::attachments::client::initialize_index(
             &mut tx,
             &association,
             generation,
             i64::try_from(binding.prefix_count)?,
-            package,
-            verified.key(),
+            &binding.descriptor_commitment,
+            index,
+            false,
         )
         .await?;
         db::set_meta(&mut tx, "sync_generation", &generation.to_string()).await?;
