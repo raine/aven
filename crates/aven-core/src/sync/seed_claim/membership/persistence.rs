@@ -12,9 +12,9 @@ pub const MAX_EVIDENCE_JSON_BYTES: usize = 4 * MAX_CHAIN_BYTES + 4096;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceRecord {
-    #[serde(deserialize_with = "record_bytes")]
+    #[serde(deserialize_with = "declaration_bytes")]
     pub declaration: Vec<u8>,
-    #[serde(deserialize_with = "record_bytes")]
+    #[serde(deserialize_with = "request_bytes")]
     pub request: Vec<u8>,
     #[serde(deserialize_with = "record_bytes")]
     pub record: Vec<u8>,
@@ -22,11 +22,11 @@ pub struct EvidenceRecord {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Evidence {
-    #[serde(deserialize_with = "record_bytes")]
+    #[serde(deserialize_with = "genesis_bytes")]
     pub genesis: Vec<u8>,
-    #[serde(deserialize_with = "record_bytes")]
+    #[serde(deserialize_with = "publication_bytes")]
     pub publication: Vec<u8>,
-    #[serde(deserialize_with = "record_bytes")]
+    #[serde(deserialize_with = "descriptor_bytes")]
     pub descriptor: Vec<u8>,
     #[serde(deserialize_with = "records")]
     pub admissions: Vec<EvidenceRecord>,
@@ -65,7 +65,36 @@ where
     d.deserialize_seq(Visitor::<T, N>(std::marker::PhantomData))
 }
 fn record_bytes<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Vec<u8>, D::Error> {
-    bounded::<D, u8, MAX_RECORD_BYTES>(d)
+    bounded::<D, u8, { 1403 + 164 * MAX_DEVICES }>(d)
+}
+// The aggregate of every independently bounded field fits before allocation.
+const _: () = assert!(
+    (MAX_DEVICES - 1) * (1403 + 164 * MAX_DEVICES + DECLARATION_BYTES + REQUEST_BYTES)
+        + GENESIS_BYTES
+        + PUBLICATION_BYTES
+        + 1024
+        <= MAX_CHAIN_BYTES
+);
+fn declaration_bytes<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Vec<u8>, D::Error> {
+    bounded::<D, u8, DECLARATION_BYTES>(d)
+}
+fn request_bytes<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Vec<u8>, D::Error> {
+    bounded::<D, u8, REQUEST_BYTES>(d)
+}
+fn genesis_bytes<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Vec<u8>, D::Error> {
+    bounded::<D, u8, GENESIS_BYTES>(d)
+}
+fn publication_bytes<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Vec<u8>, D::Error> {
+    bounded::<D, u8, PUBLICATION_BYTES>(d)
+}
+fn descriptor_bytes<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Vec<u8>, D::Error> {
+    bounded::<D, u8, 1024>(d)
 }
 fn records<'de, D: serde::Deserializer<'de>>(
     d: D,
@@ -73,6 +102,24 @@ fn records<'de, D: serde::Deserializer<'de>>(
     bounded::<D, EvidenceRecord, { MAX_DEVICES - 1 }>(d)
 }
 impl Evidence {
+    /// Verify the complete chain while retaining the exact original enrollment.
+    pub fn enrollment(&self, peer: &Joiner, outcome: Hash) -> Result<VerifiedEnrollment> {
+        let current = self.verify()?;
+        let g = Genesis::from_record(&self.genesis)?;
+        let mut before = Membership::from_publication(&g, &self.descriptor, &self.publication)?;
+        for a in &self.admissions {
+            if hash(&a.record) == outcome {
+                let verified = peer.verify_enrollment(&before, &a.declaration, &a.record)?;
+                ensure!(
+                    current.extends(verified.membership()),
+                    "error membership-fork"
+                );
+                return Ok(verified);
+            }
+            before = before.append(&a.declaration, &a.request, &a.record)?;
+        }
+        anyhow::bail!("error enrollment-outcome-missing")
+    }
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         ensure!(
             bytes.len() <= MAX_EVIDENCE_JSON_BYTES,
@@ -119,7 +166,7 @@ impl Evidence {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Mailbox {
-    #[serde(deserialize_with = "record_bytes")]
+    #[serde(deserialize_with = "declaration_bytes")]
     pub declaration: Vec<u8>,
     pub request: Option<Vec<u8>>,
     pub admission: Option<Vec<u8>>,
@@ -439,3 +486,49 @@ impl Database {
 }
 #[cfg(test)]
 mod tests;
+
+impl Database {
+    pub async fn membership_checkpoint_mirror(&self) -> Result<Option<(Hash, u64, Hash, Hash)>> {
+        let mut conn = self.acquire_reader().await?;
+        type Row = (Vec<u8>, i64, Vec<u8>, Vec<u8>);
+        let row: Option<Row> = sqlx::query_as("SELECT identity,sequence,head,evidence FROM local_membership_checkpoint WHERE singleton=1").fetch_optional(&mut *conn).await?;
+        row.map(|(id, seq, head, evidence)| {
+            Ok((
+                id.try_into()
+                    .map_err(|_| anyhow::anyhow!("error membership-mirror"))?,
+                u64::try_from(seq)?,
+                head.try_into()
+                    .map_err(|_| anyhow::anyhow!("error membership-mirror"))?,
+                evidence
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("error membership-mirror"))?,
+            ))
+        })
+        .transpose()
+    }
+    pub async fn mirror_membership_checkpoint(
+        &self,
+        identity: Hash,
+        m: &Membership,
+        evidence: Hash,
+    ) -> Result<()> {
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM local_peer_enrollment WHERE identity=? AND client_id=(SELECT value FROM meta WHERE key='client_id'))").bind(identity.as_slice()).fetch_one(&mut *tx).await?;
+        ensure!(valid, "error membership-identity");
+        type MirrorRow = (Vec<u8>, i64, Vec<u8>, Vec<u8>);
+        let old: Option<MirrorRow> = sqlx::query_as("SELECT identity,sequence,head,evidence FROM local_membership_checkpoint WHERE singleton=1").fetch_optional(&mut *tx).await?;
+        if let Some((id, seq, head, digest)) = old {
+            ensure!(
+                id == identity
+                    && m.head_at(u64::try_from(seq)?).is_some_and(|h| head == h)
+                    && (seq != m.sequence() as i64 || digest == evidence),
+                "error membership-mirror"
+            );
+        }
+        sqlx::query("INSERT INTO local_membership_checkpoint(singleton,identity,sequence,head,evidence) VALUES(1,?,?,?,?) ON CONFLICT(singleton) DO UPDATE SET sequence=excluded.sequence,head=excluded.head,evidence=excluded.evidence")
+            .bind(identity.as_slice()).bind(m.sequence() as i64).bind(m.head().as_slice()).bind(evidence.as_slice()).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+}

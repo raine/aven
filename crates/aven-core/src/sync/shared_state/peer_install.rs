@@ -4,7 +4,7 @@ use super::*;
 use crate::db::installation::InstallationGuard;
 use crate::sync::{
     bootstrap_staging::Component,
-    seed_claim::peer::{self, VerifiedEnrollment},
+    seed_claim::{membership::VerifiedEnrollment, peer},
 };
 use sha2::{Digest, Sha256};
 
@@ -20,9 +20,9 @@ impl Database {
     ) -> Result<Vec<u8>> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = db::begin_immediate(&mut conn).await?;
-        let current = peer::persistence::current(&mut tx).await?;
-        current.authenticate(auth, true)?;
-        let binding = current.publication.binding();
+        let current = crate::sync::seed_claim::membership::persistence::current(&mut tx).await?;
+        current.membership.authenticate(auth, false)?;
+        let binding = current.membership.publication().binding();
         ensure!(
             binding.descriptor_commitment == descriptor,
             "error snapshot-publication-mismatch"
@@ -30,7 +30,7 @@ impl Database {
         let bytes = match component {
             None => {
                 ensure!(index == 0, "error snapshot-index");
-                current.descriptor
+                current.evidence.descriptor
             }
             Some(Component::Image(object)) => {
                 // SQLite owns the bytes. A prune transaction cannot invalidate
@@ -157,7 +157,7 @@ impl Database {
         db::set_meta(&mut tx, "sync_cursor", &binding.prefix_count.to_string()).await?;
         db::set_meta(&mut tx, "e2ee_association", &association).await?;
         sqlx::query("INSERT INTO local_peer_snapshot_install(singleton,enrollment,checkpoint,descriptor,stream,prefix_count,client_id,association,sync_generation,attachment_count) VALUES(1,?,?,?,?,?,?,?,?,?)")
-            .bind(enrollment.as_slice()).bind(verified.admission().commitment().as_slice()).bind(binding.descriptor_commitment.as_slice()).bind(binding.stream_id.as_slice()).bind(i64::try_from(binding.prefix_count)?).bind(client).bind(association).bind(generation).bind(i64::try_from(report.attachment_count)?).execute(&mut *tx).await?;
+            .bind(enrollment.as_slice()).bind(verified.checkpoint().as_slice()).bind(binding.descriptor_commitment.as_slice()).bind(binding.stream_id.as_slice()).bind(i64::try_from(binding.prefix_count)?).bind(client).bind(association).bind(generation).bind(i64::try_from(report.attachment_count)?).execute(&mut *tx).await?;
         #[cfg(any(test, feature = "test-support"))]
         crash_at("before-commit");
         tx.commit().await?;
@@ -200,7 +200,7 @@ async fn receipt(
     }
     let b = verified.publication().binding();
     let count: Option<i64> = sqlx::query_scalar("SELECT attachment_count FROM local_peer_snapshot_install WHERE singleton=1 AND enrollment=? AND checkpoint=? AND descriptor=? AND stream=? AND prefix_count=? AND client_id=? AND association=? AND association=(SELECT value FROM meta WHERE key='e2ee_association') AND sync_generation=CAST((SELECT value FROM meta WHERE key='sync_generation') AS INTEGER) AND CAST((SELECT value FROM meta WHERE key='sync_cursor') AS INTEGER)>=prefix_count")
-        .bind(enrollment.as_slice()).bind(verified.admission().commitment().as_slice()).bind(b.descriptor_commitment.as_slice()).bind(b.stream_id.as_slice()).bind(i64::try_from(b.prefix_count)?).bind(client).bind(association(verified)).fetch_optional(&mut *conn).await?;
+        .bind(enrollment.as_slice()).bind(verified.checkpoint().as_slice()).bind(b.descriptor_commitment.as_slice()).bind(b.stream_id.as_slice()).bind(i64::try_from(b.prefix_count)?).bind(client).bind(association(verified)).fetch_optional(&mut *conn).await?;
     crate::sync::encrypted_tail::dependencies::validate(
         conn,
         &association(verified),

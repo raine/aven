@@ -32,6 +32,9 @@ pub(super) async fn handle(State(server): State<Arc<Server>>, request: Request) 
                 }
                 _ => (StatusCode::INTERNAL_SERVER_ERROR, "encrypted_image_refused").into_response(),
             },
+            Ok(Err(error)) if is_stale(&error) => {
+                (StatusCode::CONFLICT, "membership-stale").into_response()
+            }
             Ok(Err(_)) => (StatusCode::CONFLICT, "encrypted_image_refused").into_response(),
             Err(_) => (StatusCode::REQUEST_TIMEOUT, "encrypted_image_timeout").into_response(),
         },
@@ -128,6 +131,22 @@ impl Client {
         db: &Database,
         blob_dir: &Path,
     ) -> Result<AttachmentRound> {
+        let enrollment = crate::peer_enrollment_http::Client::new(&self.locator)?;
+        enrollment.refresh(store, db).await?;
+        match self.attachment_round_once(store, db, blob_dir).await {
+            Err(error) if is_stale(&error) => {
+                enrollment.refresh(store, db).await?;
+                self.attachment_round_once(store, db, blob_dir).await
+            }
+            result => result,
+        }
+    }
+    async fn attachment_round_once(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        blob_dir: &Path,
+    ) -> Result<AttachmentRound> {
         let inputs = store.tail_inputs(db, &self.locator).await?;
         let a = &inputs.authority;
         if let Some((id, _)) = db.encrypted_tail_frozen_record(a).await? {
@@ -156,6 +175,7 @@ impl Client {
                 self.push(a, &inputs.bearer, db, ticket).await?;
                 None
             }
+            Err(error) if is_stale(&error) => return Err(error),
             Err(_) => Some(ImageTransfer::Failed),
         };
         let caught_up =
@@ -168,6 +188,7 @@ impl Client {
                     image_state.unwrap_or(ImageTransfer::Pending)
                 }
                 Ok(status) => image_state.unwrap_or(status),
+                Err(error) if is_stale(&error) => return Err(error),
                 Err(_) => ImageTransfer::Failed,
             }
         };
@@ -283,6 +304,28 @@ impl Client {
     }
     /// Repairs one known reference without changing its descriptor or metadata.
     pub async fn repair_attachment(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        blob_dir: &Path,
+        workspace: &str,
+        reference: &str,
+    ) -> Result<()> {
+        let enrollment = crate::peer_enrollment_http::Client::new(&self.locator)?;
+        enrollment.refresh(store, db).await?;
+        match self
+            .repair_attachment_once(store, db, blob_dir, workspace, reference)
+            .await
+        {
+            Err(error) if is_stale(&error) => {
+                enrollment.refresh(store, db).await?;
+                self.repair_attachment_once(store, db, blob_dir, workspace, reference)
+                    .await
+            }
+            result => result,
+        }
+    }
+    async fn repair_attachment_once(
         &self,
         store: &ProtectedLocalKeyStore,
         db: &Database,

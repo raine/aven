@@ -1,3 +1,5 @@
+use sha2::Digest;
+
 use super::*;
 use crate::{
     protected_local_keys::{EnrollmentReadiness, tests::isolated_store},
@@ -76,17 +78,24 @@ async fn loopback_independent_peer_exact_reopen_and_current_authorization() {
         .await
         .unwrap();
     let exact = peer.protected_storage_bytes();
-    let (seed, p, d) = store.prepare_invitation(&db, &origin, None).await.unwrap();
-    assert_ne!(peer.device(), seed.genesis().device_id());
-    assert_ne!(peer.bearer().expose(), seed.bearer().expose());
+    let inputs = store.active_inputs(&db, &origin).await.unwrap();
+    let d = store
+        .prepare_invitation(&db, &inputs, None, None)
+        .await
+        .unwrap();
+    let context = Context::active(&inputs);
+    let bearer = Secret::new(*inputs.bearer().expose());
+    assert_ne!(peer.device(), inputs.device());
+    assert_ne!(peer.bearer().expose(), inputs.bearer().expose());
     let mail = server
-        .peer_mailbox(peer.vault(), peer.handle())
+        .membership_mailbox(peer.vault(), peer.handle())
         .await
         .unwrap();
-    let (_, _, candidate) = store
-        .prepare_admission(&db, &origin, mail.request.as_ref().unwrap())
+    let candidate = store
+        .prepare_admission(&db, &inputs, &d, mail.request.as_ref().unwrap())
         .await
         .unwrap();
+    drop(inputs);
     assert_eq!(
         store.enrollment_readiness(&db).await.unwrap(),
         EnrollmentReadiness::UnresolvedDisclosure
@@ -101,29 +110,23 @@ async fn loopback_independent_peer_exact_reopen_and_current_authorization() {
     );
     let error = store.tail_inputs(&db, &origin).await.err().unwrap();
     assert_eq!(error.to_string(), "error withdrawal-required-unsupported");
-    // The unresolved-disclosure fence precedes ordinary locator validation.
+    // A different locator cannot bypass the disclosure fence.
     let error = store
         .tail_inputs(&db, "https://other.invalid")
         .await
         .err()
         .unwrap();
-    assert_eq!(error.to_string(), "error withdrawal-required-unsupported");
+    assert_eq!(error.to_string(), "error enrollment-context");
     // Real server commit with a deliberately unconsumed success result models a
     // lost reply. Restarted host resends the already protected candidate.
-    let context = Context {
-        vault: peer.vault(),
-        genesis: seed.genesis().commitment(),
-        device: seed.genesis().device_id(),
-        credential_version: 1,
-        head: p.commitment(),
-    };
     client
         .exchange(
             Operation::Admit {
                 context: context.clone(),
-                record: candidate.record().to_vec(),
+                handle: d.handle,
+                record: candidate.clone(),
             },
-            Some(seed.bearer()),
+            Some(&bearer),
         )
         .await
         .unwrap();
@@ -133,7 +136,8 @@ async fn loopback_independent_peer_exact_reopen_and_current_authorization() {
             .exchange(
                 Operation::Admit {
                     context: context.clone(),
-                    record: candidate.record().to_vec()
+                    handle: d.handle,
+                    record: candidate.clone()
                 },
                 Some(&wrong)
             )
@@ -142,7 +146,15 @@ async fn loopback_independent_peer_exact_reopen_and_current_authorization() {
     );
     assert!(
         client
-            .exchange(Operation::Descriptor { context }, Some(seed.bearer()))
+            .exchange(
+                Operation::Published {
+                    context,
+                    descriptor: [0; 32],
+                    component: None,
+                    index: 0
+                },
+                Some(&bearer)
+            )
             .await
             .is_err()
     );
@@ -181,7 +193,7 @@ async fn loopback_independent_peer_exact_reopen_and_current_authorization() {
             .as_slice(),
         exact.as_slice()
     );
-    assert!(client.invite(&store, &db, expiry()).await.is_err());
+
     assert!(
         peer_store
             .prepare_seed_claim(&peer_db, [9; 32])
@@ -189,7 +201,7 @@ async fn loopback_independent_peer_exact_reopen_and_current_authorization() {
             .is_err()
     );
     assert!(peer_store.load_or_create().is_err());
-    let head = candidate.commitment();
+    let head = sha2::Sha256::digest(&candidate).into();
     assert_eq!(
         store.enrollment_readiness(&db).await.unwrap(),
         EnrollmentReadiness::Enrolled { head }
@@ -283,11 +295,12 @@ async fn loopback_independent_peer_exact_reopen_and_current_authorization() {
         .unwrap();
     assert!(client.complete(&peer_store, &peer_db).await.is_err());
     assert!(client.admit(&store, &db).await.is_err());
-    let saved: Vec<u8> = sqlx::query_scalar("SELECT declaration FROM server_peer_invitation")
-        .fetch_one(&server_pool)
-        .await
-        .unwrap();
-    assert_eq!(saved, d.record());
+    let saved: Vec<u8> =
+        sqlx::query_scalar("SELECT declaration FROM server_membership_invitations")
+            .fetch_one(&server_pool)
+            .await
+            .unwrap();
+    assert_eq!(saved, d.declaration);
     task.abort();
 }
 
@@ -364,13 +377,11 @@ async fn tampered_grant_and_protected_loss_cannot_complete_or_regenerate() {
         .await
         .unwrap();
     let evidence = server
-        .peer_mailbox(peer.vault(), peer.handle())
+        .membership_mailbox(peer.vault(), peer.handle())
         .await
-        .unwrap()
-        .evidence
         .unwrap();
     let mut bad = evidence.clone();
-    bad.admission[1200] ^= 1;
+    bad.admission.as_mut().unwrap()[1200] ^= 1;
     assert!(peer_store.pin_peer_response(&target, &bad).await.is_err());
     assert_eq!(
         peer_store.enrollment_readiness(&target).await.unwrap(),
@@ -592,7 +603,7 @@ async fn edit_after_protected_identity_before_pin_survives_refused_completion() 
     assert!(client.request(&peer_store, &target, None).await.is_err());
     assert!(
         server
-            .peer_mailbox(vault, handle)
+            .membership_mailbox(vault, handle)
             .await
             .unwrap()
             .request
@@ -623,7 +634,8 @@ async fn control_exchange_retains_small_response_cap() {
     let client = Client::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
     let body = serde_json::to_vec(&Reply::Mailbox(Mailbox {
         request: Some(vec![0; CONTROL_LIMIT]),
-        evidence: None,
+        declaration: vec![],
+        admission: None,
     }))
     .unwrap();
     assert!(body.len() > CONTROL_LIMIT && body.len() < PUBLISHED_RESPONSE_LIMIT);

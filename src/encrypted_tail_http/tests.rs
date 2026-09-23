@@ -309,7 +309,12 @@ async fn drain(client: &Client, store: &ProtectedLocalKeyStore, db: &Database) {
             Ok(false) => {}
             // Nonblocking installation exclusion can be briefly retained by a
             // concurrently spawned child until its close-on-exec descriptors close.
-            Err(error) if error.to_string() == "error installation-busy" => {
+            Err(error)
+                if matches!(
+                    error.to_string().as_str(),
+                    "error installation-busy" | "error enrollment-busy"
+                ) =>
+            {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
             Err(error) => panic!("{error:#}"),
@@ -2652,3 +2657,5 @@ mod metadata_limits;
 mod attachments;
 
 mod recurrence;
+
+mod membership;

@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Experimental encrypted sync lets any enrolled device invite another device and keeps existing devices syncing after it joins.
+
 - Encrypted sync supports recurring tasks, including template edits, lifecycle changes and completion, without creating conflicting occurrences while catching up.
 
 - Fix: Encrypted peer installation preserves task metadata when older attachment bytes have been pruned. Image downloads follow initial metadata catch-up.

@@ -6,7 +6,8 @@ use aven_core::{
     db::Database,
     sync::seed_claim::{
         Secret,
-        peer::{self, Evidence, Invitation, Mailbox},
+        membership::{self, Evidence, Invitation, Mailbox},
+        peer,
     },
 };
 use axum::{
@@ -33,6 +34,15 @@ struct Context {
     head: [u8; 32],
 }
 impl Context {
+    fn active(inputs: &crate::protected_local_keys::peer::ActiveInputs) -> Self {
+        Self {
+            vault: inputs.membership.genesis().context().vault_id,
+            genesis: inputs.membership.genesis().commitment(),
+            device: inputs.device(),
+            credential_version: 1,
+            head: inputs.membership.head(),
+        }
+    }
     fn auth<'a>(&self, bearer: &'a Secret) -> peer::Authentication<'a> {
         peer::Authentication {
             vault: self.vault,
@@ -62,9 +72,10 @@ enum Operation {
     },
     Admit {
         context: Context,
+        handle: [u8; 32],
         record: Vec<u8>,
     },
-    Descriptor {
+    Membership {
         context: Context,
     },
     Published {
@@ -80,8 +91,8 @@ enum Reply {
     Done,
     Registered(peer::RegistrationStatus),
     Mailbox(Mailbox),
-    Admitted(Evidence),
-    Descriptor(Vec<u8>),
+    Admitted(Vec<u8>),
+    Membership(Evidence),
     Published(Vec<u8>),
 }
 struct Server {
@@ -105,7 +116,22 @@ async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response
         )
         .await
         {
-            Ok(Ok(reply)) => axum::Json(reply).into_response(),
+            Ok(Ok(reply)) => match serde_json::to_vec(&reply) {
+                Ok(bytes)
+                    if bytes.len()
+                        <= match &reply {
+                            Reply::Membership(_) => membership::MAX_EVIDENCE_JSON_BYTES,
+                            Reply::Published(_) => PUBLISHED_RESPONSE_LIMIT,
+                            _ => CONTROL_LIMIT,
+                        } =>
+                {
+                    ([(header::CONTENT_TYPE, "application/json")], bytes).into_response()
+                }
+                _ => (StatusCode::BAD_REQUEST, "enrollment-refused").into_response(),
+            },
+            Ok(Err(error)) if is_stale(&error) => {
+                (StatusCode::CONFLICT, "membership-stale").into_response()
+            }
             _ => (StatusCode::BAD_REQUEST, "enrollment-refused").into_response(),
         }
     } else {
@@ -162,17 +188,17 @@ async fn dispatch(db: &Database, request: Request) -> Result<Reply> {
             handle,
             request,
         } => {
-            db.post_peer_request(vault, handle, &request).await?;
+            db.post_membership_request(vault, handle, &request).await?;
             Reply::Done
         }
         Operation::Mailbox { vault, handle } => {
-            Reply::Mailbox(db.peer_mailbox(vault, handle).await?)
+            Reply::Mailbox(db.membership_mailbox(vault, handle).await?)
         }
         Operation::Register {
             context,
             declaration,
         } => Reply::Registered(
-            db.register_peer_invitation(
+            db.register_membership_invitation(
                 &context.auth(
                     credential
                         .as_ref()
@@ -182,13 +208,18 @@ async fn dispatch(db: &Database, request: Request) -> Result<Reply> {
             )
             .await?,
         ),
-        Operation::Admit { context, record } => Reply::Admitted(
-            db.admit_first_peer(
+        Operation::Admit {
+            context,
+            handle,
+            record,
+        } => Reply::Admitted(
+            db.admit_membership_device(
                 &context.auth(
                     credential
                         .as_ref()
                         .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?,
                 ),
+                handle,
                 &record,
             )
             .await?,
@@ -211,8 +242,8 @@ async fn dispatch(db: &Database, request: Request) -> Result<Reply> {
             )
             .await?,
         ),
-        Operation::Descriptor { context } => Reply::Descriptor(
-            db.peer_enrollment_descriptor(
+        Operation::Membership { context } => Reply::Membership(
+            db.membership_evidence(
                 &context.auth(
                     credential
                         .as_ref()
@@ -242,6 +273,8 @@ impl Client {
     async fn exchange(&self, op: Operation, secret: Option<&Secret>) -> Result<Reply> {
         let response_limit = if matches!(&op, Operation::Published { .. }) {
             PUBLISHED_RESPONSE_LIMIT
+        } else if matches!(&op, Operation::Membership { .. }) {
+            membership::MAX_EVIDENCE_JSON_BYTES
         } else {
             CONTROL_LIMIT
         };
@@ -267,6 +300,28 @@ impl Client {
             .send()
             .await
             .map_err(|_| anyhow::anyhow!("error enrollment-network outcome-unknown"))?;
+        if response.status() != StatusCode::OK {
+            let status = response.status();
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|_| anyhow::anyhow!("error enrollment-network outcome-unknown"))?
+            {
+                ensure!(
+                    chunk.len() <= 256 - bytes.len(),
+                    "error enrollment-refused outcome-unknown"
+                );
+                bytes.extend_from_slice(&chunk);
+            }
+            if status == StatusCode::CONFLICT && bytes == b"membership-stale" {
+                anyhow::bail!(membership::StaleContext);
+            }
+            if status == StatusCode::SERVICE_UNAVAILABLE && bytes == b"enrollment-busy" {
+                anyhow::bail!("error enrollment-busy");
+            }
+            anyhow::bail!("error enrollment-refused outcome-unknown");
+        }
         ensure!(
             response.status() == StatusCode::OK
                 && response
@@ -309,8 +364,11 @@ impl Client {
 
     pub(crate) async fn download(
         &self,
-        peer: &peer::PeerAuthority,
-        verified: &peer::VerifiedEnrollment,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        identity: [u8; 32],
+        peer: &membership::Joiner,
+        verified: &membership::VerifiedEnrollment,
         descriptor: &[u8],
     ) -> Result<aven_core::sync::bootstrap_format::download::Metadata> {
         use aven_core::sync::{
@@ -318,29 +376,48 @@ impl Client {
             bootstrap_staging::{Component, MAX_CHUNKS, MAX_STORAGE_BYTES},
         };
         let b = verified.publication().binding();
-        let context = Context {
-            vault: peer.vault(),
-            genesis: verified.genesis().commitment(),
-            device: peer.device(),
-            credential_version: 1,
-            head: verified.admission().commitment(),
-        };
-        let read = async |component, index| -> Result<Vec<u8>> {
-            let Reply::Published(bytes) = self
-                .exchange(
-                    Operation::Published {
-                        context: context.clone(),
-                        descriptor: b.descriptor_commitment,
-                        component,
-                        index,
-                    },
-                    Some(peer.bearer()),
-                )
-                .await?
-            else {
-                anyhow::bail!("error snapshot-response");
+        let mut floor = verified.membership().clone();
+        let mut retried = false;
+        let mut read = async |component, index| -> Result<Vec<u8>> {
+            // Every new component read authenticates its own current context.
+            let mut context = Context {
+                vault: peer.vault(),
+                genesis: verified.genesis().commitment(),
+                device: peer.device(),
+                credential_version: 1,
+                head: floor.head(),
             };
-            Ok(bytes)
+            let evidence = self.membership(&context, peer.bearer()).await?;
+            floor = store
+                .adopt_download_refresh(db, identity, peer, verified.key(), &evidence)
+                .await?;
+            context.head = floor.head();
+            loop {
+                match self
+                    .exchange(
+                        Operation::Published {
+                            context: context.clone(),
+                            descriptor: b.descriptor_commitment,
+                            component,
+                            index,
+                        },
+                        Some(peer.bearer()),
+                    )
+                    .await
+                {
+                    Ok(Reply::Published(bytes)) => return Ok(bytes),
+                    Err(error) if is_stale(&error) && !retried => {
+                        retried = true;
+                        let evidence = self.membership(&context, peer.bearer()).await?;
+                        floor = store
+                            .adopt_download_refresh(db, identity, peer, verified.key(), &evidence)
+                            .await?;
+                        context.head = floor.head();
+                    }
+                    Err(error) => return Err(error),
+                    _ => anyhow::bail!("error snapshot-response"),
+                }
+            }
         };
         ensure!(
             read(None, 0).await? == descriptor,
@@ -408,41 +485,74 @@ impl Client {
         }
         Ok(package)
     }
-    /// Returns the secret invitation only after exact registration is resolved.
+    async fn membership(&self, context: &Context, bearer: &Secret) -> Result<Evidence> {
+        let Reply::Membership(evidence) = self
+            .exchange(
+                Operation::Membership {
+                    context: context.clone(),
+                },
+                Some(bearer),
+            )
+            .await?
+        else {
+            anyhow::bail!("error membership-response");
+        };
+        evidence.verify()?;
+        Ok(evidence)
+    }
+    pub(crate) async fn refresh_inputs(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        inputs: &mut crate::protected_local_keys::peer::ActiveInputs,
+    ) -> Result<()> {
+        let evidence = self
+            .membership(&Context::active(inputs), inputs.bearer())
+            .await?;
+        store.adopt_refresh(db, inputs, evidence).await
+    }
+    pub(crate) async fn refresh(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+    ) -> Result<()> {
+        let mut inputs = store.active_inputs(db, &self.locator).await?;
+        self.refresh_inputs(store, db, &mut inputs).await
+    }
     pub async fn invite(
         &self,
         store: &ProtectedLocalKeyStore,
         db: &Database,
         expires: u64,
     ) -> Result<Invitation> {
-        let (seed, p, d) = store
-            .prepare_invitation(db, &self.locator, Some(expires))
+        let mut inputs = store.active_inputs(db, &self.locator).await?;
+        self.refresh_inputs(store, db, &mut inputs).await?;
+        let journal = store
+            .prepare_invitation(db, &inputs, Some(expires), None)
             .await?;
-        let context = Context {
-            vault: seed.genesis().context().vault_id,
-            genesis: seed.genesis().commitment(),
-            device: seed.genesis().device_id(),
-            credential_version: 1,
-            head: p.commitment(),
-        };
-        ensure!(
-            matches!(
-                self.exchange(
+        for attempt in 0..2 {
+            match self
+                .exchange(
                     Operation::Register {
-                        context,
-                        declaration: d.record().to_vec()
+                        context: Context::active(&inputs),
+                        declaration: journal.declaration.clone(),
                     },
-                    Some(seed.bearer())
+                    Some(inputs.bearer()),
                 )
-                .await?,
-                Reply::Registered(peer::RegistrationStatus::Open)
-            ),
-            "error enrollment-invitation-unavailable"
-        );
-        store.registered_invitation(db, &d).await
+                .await
+            {
+                Ok(Reply::Registered(peer::RegistrationStatus::Open)) => {
+                    return store.registered_invitation(db, &inputs, &journal).await;
+                }
+                Err(error) if is_stale(&error) && attempt == 0 => {
+                    self.refresh_inputs(store, db, &mut inputs).await?
+                }
+                Err(error) => return Err(error),
+                _ => anyhow::bail!("error enrollment-invitation-unavailable"),
+            }
+        }
+        unreachable!()
     }
-    /// Protects an independently generated peer, then posts its one frozen request.
-    /// Use None on restart. Passing another invitation never replaces an identity.
     pub async fn request(
         &self,
         store: &ProtectedLocalKeyStore,
@@ -467,15 +577,24 @@ impl Client {
         );
         Ok(())
     }
-    /// Admits only the retained recipient. A lost reply leaves a disclosure fence.
     pub async fn admit(&self, store: &ProtectedLocalKeyStore, db: &Database) -> Result<bool> {
-        // Resumption cannot create or renew an invitation.
-        let (seed, _, d) = store.prepare_invitation(db, &self.locator, None).await?;
+        self.admit_handle(store, db, None).await
+    }
+    /// Exact historical outcomes remain addressable after subsequent invitations.
+    pub async fn admit_handle(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        handle: Option<[u8; 32]>,
+    ) -> Result<bool> {
+        let mut inputs = store.active_inputs(db, &self.locator).await?;
+        self.refresh_inputs(store, db, &mut inputs).await?;
+        let journal = store.prepare_invitation(db, &inputs, None, handle).await?;
         let Reply::Mailbox(mail) = self
             .exchange(
                 Operation::Mailbox {
-                    vault: seed.genesis().context().vault_id,
-                    handle: d.handle(),
+                    vault: inputs.membership.genesis().context().vault_id,
+                    handle: journal.handle,
                 },
                 None,
             )
@@ -486,37 +605,36 @@ impl Client {
         let Some(request) = mail.request else {
             return Ok(false);
         };
-        let (seed, p, a) = store.prepare_admission(db, &self.locator, &request).await?;
-        let mut context = Context {
-            vault: seed.genesis().context().vault_id,
-            genesis: seed.genesis().commitment(),
-            device: seed.genesis().device_id(),
-            credential_version: 1,
-            head: p.commitment(),
-        };
-        let Reply::Admitted(evidence) = self
-            .exchange(
-                Operation::Admit {
-                    context: context.clone(),
-                    record: a.record().to_vec(),
-                },
-                Some(seed.bearer()),
-            )
-            .await?
-        else {
-            anyhow::bail!("error enrollment-response");
-        };
-        context.head = a.commitment();
-        let Reply::Descriptor(descriptor) = self
-            .exchange(Operation::Descriptor { context }, Some(seed.bearer()))
-            .await?
-        else {
-            anyhow::bail!("error enrollment-response");
-        };
-        store.finish_inviter(db, &evidence, &descriptor).await?;
-        Ok(true)
+        for attempt in 0..2 {
+            let record = store
+                .prepare_admission(db, &inputs, &journal, &request)
+                .await?;
+            match self
+                .exchange(
+                    Operation::Admit {
+                        context: Context::active(&inputs),
+                        handle: journal.handle,
+                        record: record.clone(),
+                    },
+                    Some(inputs.bearer()),
+                )
+                .await
+            {
+                Ok(Reply::Admitted(accepted)) => {
+                    ensure!(accepted == record, "error enrollment-outcome-mismatch");
+                    self.refresh_inputs(store, db, &mut inputs).await?;
+                    store.finish_inviter(db, &inputs, &journal, &record).await?;
+                    return Ok(true);
+                }
+                Err(error) if is_stale(&error) && attempt == 0 => {
+                    self.refresh_inputs(store, db, &mut inputs).await?
+                }
+                Err(error) => return Err(error),
+                _ => anyhow::bail!("error enrollment-response"),
+            }
+        }
+        unreachable!()
     }
-    /// Verifies and protects complete admission key coverage, not task installation.
     pub async fn complete(&self, store: &ProtectedLocalKeyStore, db: &Database) -> Result<bool> {
         let peer = store.prepare_peer(db, &self.locator, None).await?;
         let Reply::Mailbox(mail) = self
@@ -531,27 +649,24 @@ impl Client {
         else {
             anyhow::bail!("error enrollment-response");
         };
-        let Some(evidence) = mail.evidence else {
+        if mail.admission.is_none() {
             return Ok(false);
-        };
-        let grant = store.pin_peer_response(db, &evidence).await?;
+        }
+        let grant = store.pin_peer_response(db, &mail).await?;
         let context = Context {
             vault: peer.vault(),
             genesis: grant.genesis,
             device: peer.device(),
             credential_version: 1,
-            head: grant.head,
+            head: grant.outcome,
         };
-        let Reply::Descriptor(descriptor) = self
-            .exchange(Operation::Descriptor { context }, Some(peer.bearer()))
-            .await?
-        else {
-            anyhow::bail!("error enrollment-response");
-        };
-        store.finish_peer(db, &evidence, &descriptor).await?;
+        let evidence = self.membership(&context, peer.bearer()).await?;
+        store.finish_peer(db, &evidence).await?;
         Ok(true)
     }
 }
-
+fn is_stale(error: &anyhow::Error) -> bool {
+    error.is::<membership::StaleContext>()
+}
 #[cfg(test)]
 mod tests;

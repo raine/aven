@@ -37,12 +37,12 @@ pub(super) async fn authorize_current(
     }
     let (sequence, commitment) =
         head.ok_or_else(|| anyhow::anyhow!("error bootstrap-membership-unsupported"))?;
-    if sequence == 2 {
-        let current = crate::sync::seed_claim::peer::persistence::current(conn).await?;
+    if sequence >= 2 {
+        let current = crate::sync::seed_claim::membership::persistence::current(conn).await?;
         return Ok((
-            current.genesis,
+            current.membership.genesis().clone(),
             Some(PublicationOutcome {
-                publication: current.publication,
+                publication: current.membership.publication().clone(),
             }),
         ));
     }

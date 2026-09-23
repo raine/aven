@@ -37,6 +37,9 @@ impl<'a> Device<'a> {
         )?;
         Ok(member)
     }
+    pub fn validate(&self, membership: &Membership) -> Result<()> {
+        self.active(membership).map(|_| ())
+    }
     pub fn prepare_invitation(
         &self,
         membership: &Membership,
@@ -208,6 +211,21 @@ impl Joiner {
     pub fn generate(invitation: Invitation) -> Result<Self> {
         Ok(Self(PeerAuthority::generate(invitation)?))
     }
+    pub fn protected_storage_bytes(&self) -> Zeroizing<Vec<u8>> {
+        self.0.protected_storage_bytes()
+    }
+    pub fn from_protected_storage(bytes: &[u8]) -> Result<Self> {
+        Ok(Self(PeerAuthority::from_protected_storage(bytes)?))
+    }
+    pub fn matches_invitation(&self, invitation: &Invitation) -> bool {
+        self.0.matches_invitation(invitation)
+    }
+    pub fn vault(&self) -> Hash {
+        self.0.vault()
+    }
+    pub fn handle(&self) -> Hash {
+        self.0.handle()
+    }
     pub fn device(&self) -> Hash {
         self.0.device()
     }
@@ -322,6 +340,15 @@ pub struct VerifiedEnrollment {
     key: LocalSharedStatePackageKey,
 }
 impl VerifiedEnrollment {
+    pub fn genesis(&self) -> &Genesis {
+        self.membership.genesis()
+    }
+    pub fn publication(&self) -> &Publication {
+        self.membership.publication()
+    }
+    pub fn checkpoint(&self) -> Hash {
+        self.membership.head()
+    }
     pub fn membership(&self) -> &Membership {
         &self.membership
     }

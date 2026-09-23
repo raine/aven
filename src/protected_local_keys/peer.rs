@@ -1,90 +1,75 @@
-//! Installation-bound, append-only first-peer enrollment ownership.
+//! Independent installation identity, inbound enrollment and outbound journals.
+use super::membership::EvidenceRef;
 use super::*;
 use anyhow::{Context, Result, ensure};
 use aven_core::db::installation::InstallationGuard;
 use aven_core::sync::{
     SeedPublicationIntent,
     seed_claim::{
-        Publication, SeedAuthority,
-        peer::{self, Declaration, Evidence, Invitation, PeerAuthority},
+        Secret, SeedAuthority,
+        membership::{
+            self, Declaration, Device, Evidence, Invitation, Joiner, Membership, VerifiedEnrollment,
+        },
     },
 };
 use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Copy)]
-enum Artifact {
-    Identity,
-    Registered,
-    Bound,
-    Candidate,
-    Sent,
-    Response,
-    Verified,
-    Ready,
-    Installed,
-}
-impl Artifact {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Identity => "peer-identity",
-            Self::Registered => "peer-registered",
-            Self::Bound => "peer-bound",
-            Self::Candidate => "peer-candidate",
-            Self::Sent => "peer-sent",
-            Self::Response => "peer-response",
-            Self::Verified => "peer-verified",
-            Self::Ready => "peer-ready",
-            Self::Installed => "peer-installed",
-        }
-    }
-    fn size(self) -> usize {
-        match self {
-            Self::Identity => 8192,
-            Self::Bound => 2048,
-            Self::Candidate => 8192,
-            Self::Response | Self::Verified => 32768,
-            _ => 128,
-        }
-    }
-}
-const PHASES: [Artifact; 8] = [
-    Artifact::Registered,
-    Artifact::Bound,
-    Artifact::Candidate,
-    Artifact::Sent,
-    Artifact::Response,
-    Artifact::Verified,
-    Artifact::Ready,
-    Artifact::Installed,
-];
-
+type Hash = [u8; 32];
+const IDENTITY_LIMIT: usize = 8192;
+const JOURNAL_LIMIT: usize = 4096;
+const CANDIDATE_LIMIT: usize = 4 * membership::MAX_RECORD_BYTES + 1024;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Identity {
     role: String,
     client: String,
-    incarnation: [u8; 32],
+    incarnation: Hash,
     locator: String,
     authority: Vec<u8>,
-    declaration: Vec<u8>,
 }
 impl Drop for Identity {
     fn drop(&mut self) {
         self.authority.zeroize();
     }
 }
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Outbound {
+    pub handle: Hash,
+    invitation: Vec<u8>,
+    pub declaration: Vec<u8>,
+}
+impl Drop for Outbound {
+    fn drop(&mut self) {
+        self.invitation.zeroize();
+    }
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Candidate {
+    predecessor: EvidenceRef,
+    record: Vec<u8>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Verified {
+    evidence: EvidenceRef,
+    outcome: Hash,
+    key: Vec<u8>,
+}
+impl Drop for Verified {
+    fn drop(&mut self) {
+        self.key.zeroize();
+    }
+}
 
-/// Negative dispatch gate. Enrollment success is not encrypted-tail readiness.
 #[derive(Debug, PartialEq, Eq)]
 pub enum EnrollmentReadiness {
     NotSelected,
     Pending,
     UnresolvedDisclosure,
-    Enrolled { head: [u8; 32] },
+    Enrolled { head: Hash },
 }
 impl EnrollmentReadiness {
-    /// Encrypted dispatch must consult this fence in addition to current
-    /// membership, key coverage and its own installed/ordinary-sync readiness.
     pub fn require_resolved_disclosure(&self) -> Result<()> {
         ensure!(
             !matches!(self, Self::UnresolvedDisclosure),
@@ -97,88 +82,70 @@ impl EnrollmentReadiness {
         Ok(())
     }
 }
-
+enum Keys {
+    Seed(Box<SeedAuthority>),
+    Peer(Box<Joiner>),
+}
+impl Keys {
+    fn authority(&self) -> Device<'_> {
+        match self {
+            Self::Seed(s) => Device::seed(s),
+            Self::Peer(p) => p.authority(),
+        }
+    }
+    fn device(&self) -> Hash {
+        match self {
+            Self::Seed(s) => s.genesis().device_id(),
+            Self::Peer(p) => p.device(),
+        }
+    }
+    fn bearer(&self) -> &Secret {
+        match self {
+            Self::Seed(s) => s.bearer(),
+            Self::Peer(p) => p.bearer(),
+        }
+    }
+}
+pub(crate) struct ActiveInputs {
+    id: Identity,
+    keys: Keys,
+    pub membership: Membership,
+    pub evidence: Evidence,
+    key: LocalSharedStatePackageKey,
+    _installation: InstallationGuard,
+    _lock: File,
+}
+impl ActiveInputs {
+    pub fn device(&self) -> Hash {
+        self.keys.device()
+    }
+    pub fn bearer(&self) -> &Secret {
+        self.keys.bearer()
+    }
+}
 impl ProtectedLocalKeyStore {
     pub(super) fn peer_authority_exists(&self) -> StoreResult<bool> {
-        Ok(
-            read_restricted_file(&self.peer_marker(Artifact::Identity), 32)?.is_some()
-                || self
-                    .adoption_backend(Artifact::Identity.name())
-                    .load_bounded(Artifact::Identity.size())?
-                    .is_some(),
-        )
+        Ok(read_restricted_file(
+            &self
+                .directory
+                .join(format!("{}.peer-identity-authority", self.account)),
+            32,
+        )?
+        .is_some()
+            || self
+                .adoption_backend("peer-identity")
+                .load_bounded(IDENTITY_LIMIT)?
+                .is_some())
     }
-    fn peer_marker(&self, a: Artifact) -> PathBuf {
-        self.directory
-            .join(format!("{}.{}-authority", self.account, a.name()))
-    }
-    fn read_peer_record(&self, a: Artifact, required: bool) -> Result<Option<Zeroizing<Vec<u8>>>> {
-        let marker = read_restricted_file(&self.peer_marker(a), 32)?;
-        let stored = self.adoption_backend(a.name()).load_bounded(a.size())?;
-        let Some(stored) = stored else {
-            ensure!(
-                !required && marker.is_none(),
-                "error enrollment-protected-missing"
-            );
-            return Ok(None);
-        };
-        let digest = Sha256::digest(&stored);
-        ensure!(
-            marker
-                .as_ref()
-                .is_none_or(|m| m.as_slice() == digest.as_slice()),
-            "error enrollment-protected-corrupt"
-        );
-        let account = hex::decode(&self.account)?;
-        ensure!(
-            &stored[..8] == b"AVENPER1" && stored[8..40] == account,
-            "error enrollment-protected-context"
-        );
-        let len = u32::from_be_bytes(stored[40..44].try_into()?) as usize;
-        ensure!(
-            len <= a.size() - 44 && stored[44 + len..].iter().all(|b| *b == 0),
-            "error enrollment-protected-framing"
-        );
-        if marker.is_none() {
-            write_restricted_new(&self.peer_marker(a), &digest)?;
-        }
-        Ok(Some(Zeroizing::new(stored[44..44 + len].to_vec())))
-    }
-    fn write_peer_record(&self, a: Artifact, payload: &[u8]) -> Result<()> {
-        ensure!(
-            payload.len() <= a.size() - 44,
-            "error enrollment-protected-limit"
-        );
-        if let Some(saved) = self.read_peer_record(a, false)? {
-            ensure!(
-                saved.as_slice() == payload,
-                "error enrollment-protected-conflict"
-            );
-            return Ok(());
-        }
-        let mut frame = Zeroizing::new(vec![0; a.size()]);
-        frame[..8].copy_from_slice(b"AVENPER1");
-        frame[8..40].copy_from_slice(&hex::decode(&self.account)?);
-        frame[40..44].copy_from_slice(&(payload.len() as u32).to_be_bytes());
-        frame[44..44 + payload.len()].copy_from_slice(payload);
-        self.adoption_backend(a.name()).create(&frame)?;
-        let saved = self
-            .read_peer_record(a, true)?
-            .context("error enrollment-protected-missing")?;
-        ensure!(
-            saved.as_slice() == payload,
-            "error enrollment-protected-write"
-        );
-        #[cfg(test)]
-        if std::env::var("AVEN_PEER_CRASH_KIND").ok().as_deref() == Some(a.name()) {
-            std::process::exit(79);
-        }
-        Ok(())
-    }
-    async fn phase(&self, db: &Database, a: Artifact) -> Result<Option<Zeroizing<Vec<u8>>>> {
-        let pin = db.enrollment_artifact(a.name()).await?;
-        let bytes = self.read_peer_record(a, pin.is_some())?;
-        if let (Some(pin), Some(bytes)) = (pin, bytes.as_ref()) {
+    async fn phase(
+        &self,
+        db: &Database,
+        name: &str,
+        size: usize,
+    ) -> Result<Option<Zeroizing<Vec<u8>>>> {
+        let pin = db.enrollment_artifact(name).await?;
+        let bytes = self.read_owned(name, size, pin.is_some())?;
+        if let (Some(pin), Some(bytes)) = (pin, &bytes) {
             ensure!(
                 pin == Sha256::digest(bytes.as_slice()).as_slice(),
                 "error enrollment-phase-mismatch"
@@ -190,18 +157,18 @@ impl ProtectedLocalKeyStore {
         &self,
         db: &Database,
         id: &Identity,
-        a: Artifact,
+        name: &str,
+        size: usize,
         bytes: &[u8],
     ) -> Result<()> {
-        // A surviving mirror is a loss detector, never permission to reconstruct.
-        self.phase(db, a).await?;
-        self.write_peer_record(a, bytes)?;
-        db.pin_enrollment_artifact(id.incarnation, a.name(), Sha256::digest(bytes).into())
+        self.phase(db, name, size).await?;
+        self.write_owned(name, size, bytes)?;
+        db.pin_enrollment_artifact(id.incarnation, name, Sha256::digest(bytes).into())
             .await
     }
     async fn identity(&self, db: &Database, guard: &InstallationGuard) -> Result<Option<Identity>> {
         let pin = db.enrollment_pin().await?;
-        let Some(bytes) = self.read_peer_record(Artifact::Identity, pin.is_some())? else {
+        let Some(bytes) = self.read_owned("peer-identity", IDENTITY_LIMIT, pin.is_some())? else {
             return Ok(None);
         };
         let id: Identity = serde_json::from_slice(&bytes)
@@ -211,19 +178,17 @@ impl ProtectedLocalKeyStore {
             "error enrollment-protected-framing"
         );
         if pin.is_none() {
-            for a in PHASES {
-                ensure!(
-                    self.phase(db, a).await?.is_none(),
-                    "error enrollment-database-lost"
-                );
-            }
+            ensure!(
+                self.read_owned("peer-ready", 128, false)?.is_none()
+                    && self.read_owned("peer-sent", 128, false)?.is_none()
+                    && self
+                        .read_owned("outbound-0", JOURNAL_LIMIT, false)?
+                        .is_none(),
+                "error enrollment-database-lost"
+            );
         }
         db.pin_enrollment(id.incarnation, &id.client, &id.role, guard)
             .await?;
-        // Validate every surviving mirror/record before permitting any operation.
-        for a in PHASES {
-            self.phase(db, a).await?;
-        }
         Ok(Some(id))
     }
     fn adopted_inputs(&self, seed: &SeedAuthority) -> Result<SeedPublicationIntent> {
@@ -241,99 +206,457 @@ impl ProtectedLocalKeyStore {
             seed.genesis(),
         )
     }
-    pub(crate) async fn prepare_invitation(
+    async fn seed_inputs(
         &self,
         db: &Database,
-        locator: &str,
-        expires: Option<u64>,
-    ) -> Result<(SeedAuthority, Publication, Declaration)> {
-        let guard = InstallationGuard::acquire(db.path())?;
-        self.validate_database(db)?;
-        ensure!(locator.len() <= 2048, "error enrollment-locator-limit");
-        let client = db.adopted_enrollment_client().await?;
-        let package = self.load_required()?;
-        prepare_directory(&self.directory)?;
-        let _lock = self.lock()?;
+    ) -> Result<(SeedAuthority, Evidence, LocalSharedStatePackageKey)> {
+        let package = self.load_required_locked()?;
         let seed = self.required_seed(&package)?;
         let intent = self.adopted_inputs(&seed)?;
+        let (saved, state) = db
+            .seed_publication_intent_bytes()
+            .await?
+            .context("error seed-intent-missing")?;
+        ensure!(
+            state == "adopted" && saved == intent.protected_storage_bytes(),
+            "error seed-intent-mismatch"
+        );
+        let source = self.decode_source(
+            &self
+                .load_adoption_record("source", 104, true)?
+                .context("error seed-source-missing")?,
+            &seed,
+        )?;
+        ensure!(
+            db.seed_source_pin().await?.as_deref() == Some(source.protected_storage_bytes()),
+            "error seed-source-mismatch"
+        );
         let publication = intent.publication(seed.genesis())?;
-        let id = match self.identity(db, &guard).await? {
+        let evidence = Evidence {
+            genesis: seed.genesis().record().to_vec(),
+            publication: publication.record().to_vec(),
+            descriptor: intent.descriptor().to_vec(),
+            admissions: vec![],
+        };
+        Ok((
+            seed,
+            evidence,
+            LocalSharedStatePackageKey::new(*package.package_key().protected_storage_bytes()),
+        ))
+    }
+    pub(crate) async fn active_inputs(&self, db: &Database, locator: &str) -> Result<ActiveInputs> {
+        let installation = InstallationGuard::acquire(db.path())?;
+        self.validate_database(db)?;
+        ensure!(locator.len() <= 2048, "error enrollment-locator-limit");
+        prepare_directory(&self.directory)?;
+        let lock = self.lock()?;
+        let id = match self.identity(db, &installation).await? {
             Some(id) => id,
             None => {
-                let (inv, d) = seed.prepare_peer_invitation(
-                    &publication,
-                    expires.context("error enrollment-invitation-required")?,
-                )?;
+                let client = db.adopted_enrollment_client().await?;
+                self.seed_inputs(db).await?;
                 let id = Identity {
                     role: "inviter".into(),
                     client,
-                    incarnation: *aven_core::sync::seed_claim::Secret::generate()?.expose(),
+                    incarnation: *Secret::generate()?.expose(),
                     locator: locator.into(),
-                    authority: inv.protected_storage_bytes().to_vec(),
-                    declaration: d.record().to_vec(),
+                    authority: vec![],
                 };
-                self.write_peer_record(
-                    Artifact::Identity,
+                self.write_owned(
+                    "peer-identity",
+                    IDENTITY_LIMIT,
                     &Zeroizing::new(serde_json::to_vec(&id)?),
                 )?;
-                db.pin_enrollment(id.incarnation, &id.client, &id.role, &guard)
+                db.pin_enrollment(id.incarnation, &id.client, &id.role, &installation)
                     .await?;
                 id
             }
         };
+        ensure!(id.locator == locator, "error enrollment-context");
+        let (keys, original, key) = if id.role == "peer" {
+            ensure!(
+                self.phase(db, "peer-ready", 128).await?.is_some(),
+                "error enrollment-unresolved"
+            );
+            let (peer, verified, record) = self.verified_peer(db, &id).await?;
+            let installed = self
+                .phase(db, "peer-installed", 128)
+                .await?
+                .context("error snapshot-not-installed")?;
+            ensure!(
+                installed.as_slice() == verified.checkpoint()
+                    && db
+                        .peer_snapshot_receipt(&verified, id.incarnation, &id.client, &installation)
+                        .await?
+                        .is_some(),
+                "error snapshot-receipt-mismatch"
+            );
+            (
+                Keys::Peer(Box::new(peer)),
+                self.load_evidence(&record.evidence)?,
+                LocalSharedStatePackageKey::new(*verified.key().protected_storage_bytes()),
+            )
+        } else {
+            ensure!(
+                db.adopted_enrollment_client().await? == id.client,
+                "error enrollment-client-mismatch"
+            );
+            let (seed, evidence, key) = self.seed_inputs(db).await?;
+            (Keys::Seed(Box::new(seed)), evidence, key)
+        };
+        let original_membership = original.verify()?;
+        let (membership, evidence) =
+            if let Some((m, r)) = self.membership_floor(db, id.incarnation).await? {
+                (m, self.load_evidence(&r)?)
+            } else {
+                ensure!(
+                    id.role == "inviter" && self.journals(db).await?.is_empty(),
+                    "error membership-floor-missing"
+                );
+                let m = self
+                    .adopt_membership(db, id.incarnation, &original, &key)
+                    .await?;
+                (m, original)
+            };
         ensure!(
-            id.role == "inviter" && id.locator == locator,
-            "error enrollment-context"
+            membership.extends(&original_membership),
+            "error membership-original-mismatch"
         );
-        let declaration = Declaration::from_record(seed.genesis(), &publication, &id.declaration)?;
-        Ok((seed, publication, declaration))
+        keys.authority().validate(&membership)?;
+        membership.validate_key(&key)?;
+        for journal in self.journals(db).await? {
+            if let Some(ready) = self.phase(db, &journal.name("ready"), 128).await? {
+                ensure!(
+                    membership.contains_head(&ready.as_slice().try_into()?),
+                    "error enrollment-checkpoint-mismatch"
+                );
+            }
+        }
+        Ok(ActiveInputs {
+            id,
+            keys,
+            membership,
+            evidence,
+            key,
+            _installation: installation,
+            _lock: lock,
+        })
+    }
+    pub(crate) async fn adopt_refresh(
+        &self,
+        db: &Database,
+        inputs: &mut ActiveInputs,
+        evidence: Evidence,
+    ) -> Result<()> {
+        let m = evidence.verify()?;
+        ensure!(m.extends(&inputs.membership), "error membership-floor-fork");
+        inputs.keys.authority().validate(&m)?;
+        inputs.membership = self
+            .adopt_membership(db, inputs.id.incarnation, &evidence, &inputs.key)
+            .await?;
+        inputs.evidence = evidence;
+        Ok(())
+    }
+    async fn journals(&self, db: &Database) -> Result<Vec<Outbound>> {
+        let mut journals = Vec::new();
+        let mut gap = false;
+        for index in 0..membership::MAX_INVITATIONS {
+            let Some(bytes) = self
+                .phase(db, &format!("outbound-{index}"), JOURNAL_LIMIT)
+                .await?
+            else {
+                gap = true;
+                continue;
+            };
+            ensure!(!gap, "error enrollment-journal-missing");
+            let journal: Outbound = serde_json::from_slice(&bytes)
+                .map_err(|_| anyhow::anyhow!("error enrollment-journal-corrupt"))?;
+            let invitation = Invitation::from_protected_storage(&journal.invitation)?;
+            ensure!(
+                journal.handle == invitation.handle(),
+                "error enrollment-journal-corrupt"
+            );
+            for (phase, size) in [("registered", 128), ("bound", 2048), ("ready", 128)] {
+                self.phase(db, &journal.name(phase), size).await?;
+            }
+            let mut gap = false;
+            let bound = self.phase(db, &journal.name("bound"), 2048).await?;
+            let ready = self.phase(db, &journal.name("ready"), 128).await?;
+            let mut resolved = ready.is_none();
+            for candidate in 0..membership::MAX_CANDIDATES {
+                let bytes = self
+                    .phase(
+                        db,
+                        &journal.name(&format!("candidate-{candidate}")),
+                        CANDIDATE_LIMIT,
+                    )
+                    .await?;
+                let sent = self
+                    .phase(db, &journal.name(&format!("sent-{candidate}")), 128)
+                    .await?;
+                if let Some(bytes) = bytes {
+                    ensure!(!gap, "error enrollment-candidate-missing");
+                    let saved: Candidate = serde_json::from_slice(&bytes)?;
+                    let before = self.load_evidence(&saved.predecessor)?.verify()?;
+                    let after = before.append(
+                        &journal.declaration,
+                        bound.as_ref().context("error enrollment-binding-missing")?,
+                        &saved.record,
+                    )?;
+                    if let Some(sent) = &sent {
+                        ensure!(
+                            sent.as_slice() == after.head(),
+                            "error enrollment-sent-mismatch"
+                        );
+                    }
+                    if ready.as_ref().is_some_and(|r| r.as_slice() == after.head()) {
+                        ensure!(sent.is_some(), "error enrollment-sent-missing");
+                        resolved = true;
+                    }
+                } else {
+                    gap = true;
+                    ensure!(sent.is_none(), "error enrollment-candidate-missing");
+                }
+            }
+            ensure!(resolved, "error enrollment-candidate-missing");
+            journals.push(journal);
+        }
+        Ok(journals)
+    }
+    async fn outbound_readiness(&self, db: &Database) -> Result<Option<EnrollmentReadiness>> {
+        for journal in self.journals(db).await? {
+            if self.phase(db, &journal.name("ready"), 128).await?.is_some() {
+                continue;
+            }
+            let sent = self
+                .phase(db, &journal.name("sent-0"), 128)
+                .await?
+                .is_some();
+            return Ok(Some(if sent {
+                EnrollmentReadiness::UnresolvedDisclosure
+            } else {
+                EnrollmentReadiness::Pending
+            }));
+        }
+        Ok(None)
+    }
+    pub(crate) async fn prepare_invitation(
+        &self,
+        db: &Database,
+        inputs: &ActiveInputs,
+        expires: Option<u64>,
+        handle: Option<Hash>,
+    ) -> Result<Outbound> {
+        let mut journals = self.journals(db).await?;
+        if let Some(handle) = handle {
+            return journals
+                .into_iter()
+                .find(|j| j.handle == handle)
+                .context("error enrollment-invitation-missing");
+        }
+        if expires.is_none() {
+            return journals
+                .pop()
+                .context("error enrollment-invitation-missing");
+        }
+        for journal in &journals {
+            if self.phase(db, &journal.name("ready"), 128).await?.is_none() {
+                // Exact registration retry retains the immutable invitation.
+                ensure!(
+                    self.phase(db, &journal.name("sent-0"), 128)
+                        .await?
+                        .is_none(),
+                    "error withdrawal-required-unsupported"
+                );
+                return journals
+                    .pop()
+                    .context("error enrollment-invitation-missing");
+            }
+        }
+        ensure!(
+            journals.len() < membership::MAX_INVITATIONS,
+            "error membership-limit"
+        );
+        let (invitation, d) = inputs.keys.authority().prepare_invitation(
+            &inputs.membership,
+            expires.context("error enrollment-expiry")?,
+        )?;
+        let journal = Outbound {
+            handle: invitation.handle(),
+            invitation: invitation.protected_storage_bytes().to_vec(),
+            declaration: d.record().to_vec(),
+        };
+        self.save_phase(
+            db,
+            &inputs.id,
+            &format!("outbound-{}", journals.len()),
+            JOURNAL_LIMIT,
+            &Zeroizing::new(serde_json::to_vec(&journal)?),
+        )
+        .await?;
+        Ok(journal)
     }
     pub(crate) async fn registered_invitation(
         &self,
         db: &Database,
-        declaration: &Declaration,
+        inputs: &ActiveInputs,
+        journal: &Outbound,
     ) -> Result<Invitation> {
-        let guard = InstallationGuard::acquire(db.path())?;
-        self.validate_database(db)?;
-        let _lock = self.lock()?;
-        let id = self
-            .identity(db, &guard)
-            .await?
-            .context("error enrollment-missing")?;
+        self.save_phase(
+            db,
+            &inputs.id,
+            &journal.name("registered"),
+            128,
+            &Sha256::digest(&journal.declaration),
+        )
+        .await?;
+        Invitation::from_protected_storage(&journal.invitation)
+    }
+    pub(crate) async fn prepare_admission(
+        &self,
+        db: &Database,
+        inputs: &ActiveInputs,
+        journal: &Outbound,
+        request: &[u8],
+    ) -> Result<Vec<u8>> {
         ensure!(
-            id.role == "inviter" && id.declaration == declaration.record(),
-            "error enrollment-context"
+            self.phase(db, &journal.name("registered"), 128)
+                .await?
+                .is_some(),
+            "error enrollment-not-registered"
         );
-        self.save_phase(db, &id, Artifact::Registered, &declaration.commitment())
+        // Binding precedes even tentative grant preparation, and never rebinds.
+        self.save_phase(db, &inputs.id, &journal.name("bound"), 2048, request)
             .await?;
-        Invitation::from_protected_storage(&id.authority)
+        let d = Declaration::from_record(&inputs.membership, &journal.declaration)?;
+        let mut index = 0;
+        for attempt in 0..membership::MAX_CANDIDATES {
+            let Some(bytes) = self
+                .phase(
+                    db,
+                    &journal.name(&format!("candidate-{attempt}")),
+                    CANDIDATE_LIMIT,
+                )
+                .await?
+            else {
+                break;
+            };
+            let candidate: Candidate = serde_json::from_slice(&bytes)?;
+            let predecessor = self.load_evidence(&candidate.predecessor)?.verify()?;
+            let result = predecessor.append(&journal.declaration, request, &candidate.record)?;
+            ensure!(
+                inputs.membership.extends(&predecessor),
+                "error enrollment-candidate-fork"
+            );
+            if inputs.membership.contains_head(&result.head())
+                || inputs.membership.head() == predecessor.head()
+            {
+                self.save_phase(
+                    db,
+                    &inputs.id,
+                    &journal.name(&format!("sent-{attempt}")),
+                    128,
+                    &result.head(),
+                )
+                .await?;
+                return Ok(candidate.record);
+            }
+            // A verified different successor at the signed slot resolves CAS loss.
+            ensure!(
+                inputs
+                    .membership
+                    .head_at(result.sequence())
+                    .is_some_and(|head| head != result.head()),
+                "error enrollment-candidate-unresolved"
+            );
+            index = attempt + 1;
+        }
+        ensure!(
+            index < membership::MAX_CANDIDATES,
+            "error membership-candidate-limit"
+        );
+        let inv = Invitation::from_protected_storage(&journal.invitation)?;
+        let record = inputs.keys.authority().prepare_admission(
+            &inputs.membership,
+            &d,
+            &inv,
+            request,
+            &inputs.key,
+        )?;
+        let candidate = Candidate {
+            predecessor: self.save_evidence(&inputs.evidence)?,
+            record: record.clone(),
+        };
+        self.save_phase(
+            db,
+            &inputs.id,
+            &journal.name(&format!("candidate-{index}")),
+            CANDIDATE_LIMIT,
+            &serde_json::to_vec(&candidate)?,
+        )
+        .await?;
+        self.save_phase(
+            db,
+            &inputs.id,
+            &journal.name(&format!("sent-{index}")),
+            128,
+            &Sha256::digest(&record),
+        )
+        .await?;
+        Ok(record)
+    }
+    pub(crate) async fn finish_inviter(
+        &self,
+        db: &Database,
+        inputs: &ActiveInputs,
+        journal: &Outbound,
+        record: &[u8],
+    ) -> Result<()> {
+        let head: Hash = Sha256::digest(record).into();
+        ensure!(
+            inputs.membership.contains_head(&head),
+            "error enrollment-outcome-missing"
+        );
+        let mut matched = false;
+        for attempt in 0..membership::MAX_CANDIDATES {
+            let Some(bytes) = self
+                .phase(
+                    db,
+                    &journal.name(&format!("candidate-{attempt}")),
+                    CANDIDATE_LIMIT,
+                )
+                .await?
+            else {
+                break;
+            };
+            let candidate: Candidate = serde_json::from_slice(&bytes)?;
+            if candidate.record == record {
+                let sent = self
+                    .phase(db, &journal.name(&format!("sent-{attempt}")), 128)
+                    .await?
+                    .context("error enrollment-sent-missing")?;
+                ensure!(sent.as_slice() == head, "error enrollment-sent-mismatch");
+                matched = true;
+            }
+        }
+        ensure!(matched, "error enrollment-outcome-mismatch");
+        self.save_phase(db, &inputs.id, &journal.name("ready"), 128, &head)
+            .await
     }
     pub(crate) async fn prepare_peer(
         &self,
         db: &Database,
         locator: &str,
         invitation: Option<Invitation>,
-    ) -> Result<PeerAuthority> {
+    ) -> Result<Joiner> {
         let guard = InstallationGuard::acquire(db.path())?;
         self.validate_database(db)?;
         ensure!(locator.len() <= 2048, "error enrollment-locator-limit");
         prepare_directory(&self.directory)?;
         let _lock = self.lock()?;
         let id = match self.identity(db, &guard).await? {
-            Some(id) => {
-                if let Some(invitation) = invitation.as_ref() {
-                    ensure!(
-                        id.role == "peer"
-                            && PeerAuthority::from_protected_storage(&id.authority)?
-                                .matches_invitation(invitation),
-                        "error enrollment-invitation-conflict"
-                    );
-                }
-                id
-            }
+            Some(id) => id,
             None => {
-                // Reject the wrong target before irreversible opt-in, under the
-                // same installation interlock used by supported replacement.
                 let client = db.peer_target_preflight().await?;
                 guard.ensure_unbound()?;
                 ensure!(
@@ -342,19 +665,24 @@ impl ProtectedLocalKeyStore {
                         && !self.seed_authority_exists()?,
                     "error enrollment-existing-authority"
                 );
-                let invitation = invitation.context("error enrollment-invitation-required")?;
+                let peer = Joiner::generate(
+                    invitation
+                        .as_ref()
+                        .map(|i| Invitation::from_protected_storage(&i.protected_storage_bytes()))
+                        .transpose()?
+                        .context("error enrollment-invitation-required")?,
+                )?;
                 guard.fence()?;
-                let peer = PeerAuthority::generate(invitation)?;
                 let id = Identity {
                     role: "peer".into(),
                     client,
-                    incarnation: *aven_core::sync::seed_claim::Secret::generate()?.expose(),
+                    incarnation: *Secret::generate()?.expose(),
                     locator: locator.into(),
                     authority: peer.protected_storage_bytes().to_vec(),
-                    declaration: vec![],
                 };
-                self.write_peer_record(
-                    Artifact::Identity,
+                self.write_owned(
+                    "peer-identity",
+                    IDENTITY_LIMIT,
                     &Zeroizing::new(serde_json::to_vec(&id)?),
                 )?;
                 db.pin_enrollment(id.incarnation, &id.client, &id.role, &guard)
@@ -366,63 +694,22 @@ impl ProtectedLocalKeyStore {
             id.role == "peer" && id.locator == locator,
             "error enrollment-context"
         );
-        let peer = PeerAuthority::from_protected_storage(&id.authority)?;
-        self.save_phase(db, &id, Artifact::Sent, &Sha256::digest(peer.request()))
+        let peer = Joiner::from_protected_storage(&id.authority)?;
+        ensure!(
+            invitation
+                .as_ref()
+                .is_none_or(|i| peer.matches_invitation(i)),
+            "error enrollment-invitation-conflict"
+        );
+        self.save_phase(db, &id, "peer-sent", 128, &Sha256::digest(peer.request()))
             .await?;
         Ok(peer)
-    }
-    pub(crate) async fn prepare_admission(
-        &self,
-        db: &Database,
-        locator: &str,
-        request: &[u8],
-    ) -> Result<(SeedAuthority, Publication, peer::Admission)> {
-        let guard = InstallationGuard::acquire(db.path())?;
-        self.validate_database(db)?;
-        db.adopted_enrollment_client().await?;
-        let package = self.load_required()?;
-        let _lock = self.lock()?;
-        let seed = self.required_seed(&package)?;
-        let intent = self.adopted_inputs(&seed)?;
-        let p = intent.publication(seed.genesis())?;
-        let id = self
-            .identity(db, &guard)
-            .await?
-            .context("error enrollment-missing")?;
-        ensure!(
-            id.role == "inviter" && id.locator == locator,
-            "error enrollment-context"
-        );
-        ensure!(
-            self.phase(db, Artifact::Registered).await?.is_some(),
-            "error enrollment-not-registered"
-        );
-        let inv = Invitation::from_protected_storage(&id.authority)?;
-        seed.validate_peer_request(&inv, request)?;
-        self.save_phase(db, &id, Artifact::Bound, request).await?;
-        let d = Declaration::from_record(seed.genesis(), &p, &id.declaration)?;
-        let a = if let Some(bytes) = self.phase(db, Artifact::Candidate).await? {
-            peer::Admission::from_record(seed.genesis(), &p, &d, request, &bytes)?
-        } else {
-            ensure!(
-                self.phase(db, Artifact::Sent).await?.is_none(),
-                "error enrollment-candidate-lost"
-            );
-            let inv = Invitation::from_protected_storage(&id.authority)?;
-            let a = seed.prepare_peer_admission(&p, &d, &inv, request, package.package_key())?;
-            self.save_phase(db, &id, Artifact::Candidate, a.record())
-                .await?;
-            a
-        };
-        self.save_phase(db, &id, Artifact::Sent, &a.commitment())
-            .await?;
-        Ok((seed, p, a))
     }
     pub(crate) async fn pin_peer_response(
         &self,
         db: &Database,
-        evidence: &Evidence,
-    ) -> Result<peer::ProvisionalGrant> {
+        mail: &membership::Mailbox,
+    ) -> Result<membership::ProvisionalGrant> {
         let guard = InstallationGuard::acquire(db.path())?;
         self.validate_database(db)?;
         let _lock = self.lock()?;
@@ -431,18 +718,28 @@ impl ProtectedLocalKeyStore {
             .await?
             .context("error enrollment-missing")?;
         ensure!(id.role == "peer", "error enrollment-role");
-        let peer = PeerAuthority::from_protected_storage(&id.authority)?;
-        let grant = peer.open_provisional(evidence)?;
-        self.save_phase(db, &id, Artifact::Response, &serde_json::to_vec(evidence)?)
-            .await?;
+        let peer = Joiner::from_protected_storage(&id.authority)?;
+        ensure!(
+            mail.request.as_deref() == Some(peer.request()),
+            "error enrollment-request-mismatch"
+        );
+        let grant = peer.open_provisional(
+            &mail.declaration,
+            mail.admission
+                .as_deref()
+                .context("error enrollment-outcome-missing")?,
+        )?;
+        self.save_phase(
+            db,
+            &id,
+            "peer-response",
+            CANDIDATE_LIMIT + 4096,
+            &serde_json::to_vec(mail)?,
+        )
+        .await?;
         Ok(grant)
     }
-    pub(crate) async fn finish_peer(
-        &self,
-        db: &Database,
-        evidence: &Evidence,
-        descriptor: &[u8],
-    ) -> Result<()> {
+    pub(crate) async fn finish_peer(&self, db: &Database, evidence: &Evidence) -> Result<()> {
         let guard = InstallationGuard::acquire(db.path())?;
         self.validate_database(db)?;
         let _lock = self.lock()?;
@@ -452,207 +749,75 @@ impl ProtectedLocalKeyStore {
             .context("error enrollment-missing")?;
         ensure!(id.role == "peer", "error enrollment-role");
         let response = self
-            .phase(db, Artifact::Response)
+            .phase(db, "peer-response", CANDIDATE_LIMIT + 4096)
             .await?
             .context("error enrollment-response-missing")?;
-        ensure!(
-            response.as_slice() == serde_json::to_vec(evidence)?,
-            "error enrollment-response-changed"
-        );
-        let peer = PeerAuthority::from_protected_storage(&id.authority)?;
-        let verified = peer.verify_enrollment(evidence, descriptor)?;
+        let mail: membership::Mailbox = serde_json::from_slice(&response)?;
+        let peer = Joiner::from_protected_storage(&id.authority)?;
+        let grant = peer.open_provisional(
+            &mail.declaration,
+            mail.admission
+                .as_deref()
+                .context("error enrollment-outcome-missing")?,
+        )?;
+        let verified = evidence.enrollment(&peer, grant.outcome)?;
+        let current = evidence.verify()?;
+        peer.authority().validate(&current)?;
+        // Retain only the original outcome's ancestry, never a mutable Ready value.
+        let mut original = evidence.clone();
+        original
+            .admissions
+            .truncate(verified.membership().sequence() as usize - 1);
         let record = Verified {
-            evidence: evidence.clone(),
-            descriptor: descriptor.to_vec(),
+            evidence: self.save_evidence(&original)?,
+            outcome: grant.outcome,
             key: verified.key().protected_storage_bytes().to_vec(),
         };
         self.save_phase(
             db,
             &id,
-            Artifact::Verified,
+            "peer-verified",
+            2048,
             &Zeroizing::new(serde_json::to_vec(&record)?),
         )
         .await?;
-        self.save_phase(db, &id, Artifact::Ready, &verified.admission().commitment())
+        if let Some((floor, _)) = self.membership_floor(db, id.incarnation).await?
+            && floor.extends(&current)
+        {
+            self.save_phase(db, &id, "peer-ready", 128, &record.outcome)
+                .await?;
+            return Ok(());
+        }
+        self.adopt_membership(db, id.incarnation, evidence, verified.key())
+            .await?;
+        self.save_phase(db, &id, "peer-ready", 128, &record.outcome)
             .await
     }
-    pub(crate) async fn finish_inviter(
+    async fn verified_peer(
         &self,
         db: &Database,
-        evidence: &Evidence,
-        descriptor: &[u8],
-    ) -> Result<()> {
-        let guard = InstallationGuard::acquire(db.path())?;
-        self.validate_database(db)?;
-        let package = self.load_required()?;
-        let _lock = self.lock()?;
-        let id = self
-            .identity(db, &guard)
+        id: &Identity,
+    ) -> Result<(Joiner, VerifiedEnrollment, Verified)> {
+        let ready = self
+            .phase(db, "peer-ready", 128)
             .await?
-            .context("error enrollment-missing")?;
-        ensure!(id.role == "inviter", "error enrollment-role");
-        let seed = self.required_seed(&package)?;
-        let intent = self.adopted_inputs(&seed)?;
-        let p = intent.publication(seed.genesis())?;
-        let d = Declaration::from_record(seed.genesis(), &p, &id.declaration)?;
-        let request = self
-            .phase(db, Artifact::Bound)
+            .context("error enrollment-not-ready")?;
+        let bytes = self
+            .phase(db, "peer-verified", 2048)
             .await?
-            .context("error enrollment-binding-missing")?;
-        let candidate = self
-            .phase(db, Artifact::Candidate)
-            .await?
-            .context("error enrollment-candidate-missing")?;
-        let a = peer::Admission::from_record(seed.genesis(), &p, &d, &request, &candidate)?;
-        evidence.validate_lengths()?;
+            .context("error enrollment-key-coverage-missing")?;
+        let record: Verified = serde_json::from_slice(&bytes)?;
+        let peer = Joiner::from_protected_storage(&id.authority)?;
+        let verified = self
+            .load_evidence(&record.evidence)?
+            .enrollment(&peer, record.outcome)?;
         ensure!(
-            evidence.genesis == seed.genesis().record()
-                && evidence.publication == p.record()
-                && evidence.declaration == d.record()
-                && evidence.request == request.as_slice()
-                && evidence.admission == a.record()
-                && descriptor == intent.descriptor(),
-            "error enrollment-outcome-mismatch"
+            ready.as_slice() == record.outcome
+                && verified.key().protected_storage_bytes().as_slice() == record.key,
+            "error enrollment-verified-corrupt"
         );
-        self.save_phase(db, &id, Artifact::Ready, &a.commitment())
-            .await
+        Ok((peer, verified, record))
     }
-    pub(crate) async fn tail_inputs(&self, db: &Database, locator: &str) -> Result<TailInputs> {
-        let installation = InstallationGuard::acquire(db.path())?;
-        self.validate_database(db)?;
-        prepare_directory(&self.directory)?;
-        let lock = self.lock()?;
-        let id = self
-            .identity(db, &installation)
-            .await?
-            .context("error enrollment-missing")?;
-        let ready = self.phase(db, Artifact::Ready).await?;
-        if ready.is_none() {
-            self.pending_readiness(db, &id)
-                .await?
-                .require_resolved_disclosure()?;
-        }
-        let ready = ready.context("error enrollment-not-ready")?;
-        let head: [u8; 32] = ready.as_slice().try_into()?;
-        ensure!(id.locator == locator, "error enrollment-context");
-        let (genesis, publication, device, bearer, key) = if id.role == "peer" {
-            let (peer, verified, _) = self.verified_peer(db, &id, &head).await?;
-            let installed = self
-                .phase(db, Artifact::Installed)
-                .await?
-                .context("error snapshot-not-installed")?;
-            ensure!(
-                installed.as_slice() == ready.as_slice()
-                    && db
-                        .peer_snapshot_receipt(&verified, id.incarnation, &id.client, &installation)
-                        .await?
-                        .is_some(),
-                "error snapshot-receipt-mismatch"
-            );
-            (
-                verified.genesis().clone(),
-                verified.publication().clone(),
-                peer.device(),
-                aven_core::sync::seed_claim::Secret::new(*peer.bearer().expose()),
-                LocalSharedStatePackageKey::new(*verified.key().protected_storage_bytes()),
-            )
-        } else {
-            ensure!(
-                id.role == "inviter" && db.adopted_enrollment_client().await? == id.client,
-                "error enrollment-role"
-            );
-            let package = self.load_required_locked()?;
-            let seed = self.required_seed(&package)?;
-            let intent = self.adopted_inputs(&seed)?;
-            let (saved, state) = db
-                .seed_publication_intent_bytes()
-                .await?
-                .context("error seed-intent-missing")?;
-            ensure!(
-                state == "adopted" && saved == intent.protected_storage_bytes(),
-                "error seed-intent-mismatch"
-            );
-            let source = self
-                .load_adoption_record("source", 104, true)?
-                .context("error seed-source-missing")?;
-            let source = self.decode_source(&source, &seed)?;
-            ensure!(
-                db.seed_source_pin().await?.as_deref() == Some(source.protected_storage_bytes()),
-                "error seed-source-mismatch"
-            );
-            let publication = intent.publication(seed.genesis())?;
-            let declaration =
-                Declaration::from_record(seed.genesis(), &publication, &id.declaration)?;
-            let request = self
-                .phase(db, Artifact::Bound)
-                .await?
-                .context("error enrollment-binding-missing")?;
-            let candidate = self
-                .phase(db, Artifact::Candidate)
-                .await?
-                .context("error enrollment-candidate-missing")?;
-            ensure!(
-                Sha256::digest(candidate.as_slice()).as_slice() == head,
-                "error enrollment-checkpoint-mismatch"
-            );
-            let admission = peer::Admission::from_record(
-                seed.genesis(),
-                &publication,
-                &declaration,
-                &request,
-                &candidate,
-            )?;
-            ensure!(
-                ready.as_slice() == admission.commitment(),
-                "error enrollment-checkpoint-mismatch"
-            );
-            (
-                seed.genesis().clone(),
-                publication,
-                seed.genesis().device_id(),
-                aven_core::sync::seed_claim::Secret::new(*seed.bearer().expose()),
-                LocalSharedStatePackageKey::new(*package.package_key().protected_storage_bytes()),
-            )
-        };
-        let b = publication.binding();
-        let association = format!(
-            "{}:{}:{}",
-            hex::encode(b.vault_id),
-            hex::encode(b.stream_id),
-            hex::encode(b.bootstrap_id)
-        );
-        ensure!(
-            db.meta("e2ee_association").await?.as_deref() == Some(association.as_str()),
-            "error encrypted-tail-association"
-        );
-        let authority = aven_core::sync::encrypted_tail::Authority {
-            context: aven_core::sync::encrypted_tail::Context {
-                vault: b.vault_id,
-                genesis: genesis.commitment(),
-                device,
-                credential_version: 1,
-                head,
-                stream: b.stream_id,
-                descriptor: b.descriptor_commitment,
-            },
-            generation: genesis.context().generation_id,
-            key,
-            prefix: i64::try_from(b.prefix_count)?,
-            association,
-            sync_generation: db
-                .meta("sync_generation")
-                .await?
-                .context("error encrypted-tail-generation")?
-                .parse()?,
-        };
-        Ok(TailInputs {
-            authority,
-            bearer,
-            _installation: installation,
-            _lock: lock,
-        })
-    }
-
     pub(crate) async fn install_peer_snapshot(
         &self,
         db: &Database,
@@ -670,34 +835,96 @@ impl ProtectedLocalKeyStore {
             id.role == "peer" && id.locator == locator,
             "error enrollment-context"
         );
-        let ready = self
-            .phase(db, Artifact::Ready)
-            .await?
-            .context("error enrollment-not-ready")?;
-        let (peer, verified, record) = self.verified_peer(db, &id, ready.as_slice()).await?;
-        let head = verified.admission().commitment();
-        let completed = self.phase(db, Artifact::Installed).await?;
+        let (peer, verified, record) = self.verified_peer(db, &id).await?;
+        let completed = self.phase(db, "peer-installed", 128).await?;
         if let Some(report) = db
             .peer_snapshot_receipt(&verified, id.incarnation, &id.client, &guard)
             .await?
         {
-            self.save_phase(db, &id, Artifact::Installed, &head).await?;
+            self.membership_floor(db, id.incarnation)
+                .await?
+                .context("error membership-floor-missing")?;
+            self.save_phase(db, &id, "peer-installed", 128, &verified.checkpoint())
+                .await?;
             return Ok(report);
         }
         ensure!(
             completed.is_none(),
             "error snapshot-installed-database-lost"
         );
+        self.membership_floor(db, id.incarnation)
+            .await?
+            .context("error membership-floor-missing")?;
         let package = transport
-            .download(&peer, &verified, &record.descriptor)
+            .download(
+                self,
+                db,
+                id.incarnation,
+                &peer,
+                &verified,
+                &self.load_evidence(&record.evidence)?.descriptor,
+            )
             .await?;
         let report = db
             .install_peer_snapshot(&verified, id.incarnation, &id.client, &guard, &package)
             .await?;
-        self.save_phase(db, &id, Artifact::Installed, &head).await?;
+        self.save_phase(db, &id, "peer-installed", 128, &verified.checkpoint())
+            .await?;
         Ok(report)
     }
-    /// Tail dispatch must check this fence. Enrolled is not installed or synced.
+    pub(crate) async fn adopt_download_refresh(
+        &self,
+        db: &Database,
+        identity: Hash,
+        peer: &Joiner,
+        key: &LocalSharedStatePackageKey,
+        evidence: &Evidence,
+    ) -> Result<Membership> {
+        peer.authority().validate(&evidence.verify()?)?;
+        self.adopt_membership(db, identity, evidence, key).await
+    }
+    pub(crate) async fn tail_inputs(&self, db: &Database, locator: &str) -> Result<TailInputs> {
+        let inputs = self.active_inputs(db, locator).await?;
+        if let Some(readiness) = self.outbound_readiness(db).await? {
+            readiness.require_resolved_disclosure()?;
+        }
+        let b = inputs.membership.publication().binding();
+        let association = format!(
+            "{}:{}:{}",
+            hex::encode(b.vault_id),
+            hex::encode(b.stream_id),
+            hex::encode(b.bootstrap_id)
+        );
+        ensure!(
+            db.meta("e2ee_association").await?.as_deref() == Some(association.as_str()),
+            "error encrypted-tail-association"
+        );
+        let authority = aven_core::sync::encrypted_tail::Authority {
+            context: aven_core::sync::encrypted_tail::Context {
+                vault: b.vault_id,
+                genesis: inputs.membership.genesis().commitment(),
+                device: inputs.device(),
+                credential_version: 1,
+                head: inputs.membership.head(),
+                stream: b.stream_id,
+                descriptor: b.descriptor_commitment,
+            },
+            generation: inputs.membership.genesis().context().generation_id,
+            key: LocalSharedStatePackageKey::new(*inputs.key.protected_storage_bytes()),
+            prefix: i64::try_from(b.prefix_count)?,
+            association,
+            sync_generation: db
+                .meta("sync_generation")
+                .await?
+                .context("error encrypted-tail-generation")?
+                .parse()?,
+        };
+        Ok(TailInputs {
+            authority,
+            bearer: Secret::new(*inputs.bearer().expose()),
+            _inputs: inputs,
+        })
+    }
     pub async fn enrollment_readiness(&self, db: &Database) -> Result<EnrollmentReadiness> {
         let guard = InstallationGuard::acquire(db.path())?;
         self.validate_database(db)?;
@@ -706,73 +933,28 @@ impl ProtectedLocalKeyStore {
         let Some(id) = self.identity(db, &guard).await? else {
             return Ok(EnrollmentReadiness::NotSelected);
         };
-        if let Some(ready) = self.phase(db, Artifact::Ready).await? {
-            let head: [u8; 32] = ready.as_slice().try_into()?;
-            if id.role == "peer" {
-                self.verified_peer(db, &id, &head).await?;
-            } else {
-                let candidate = self
-                    .phase(db, Artifact::Candidate)
-                    .await?
-                    .context("error enrollment-candidate-missing")?;
-                ensure!(
-                    Sha256::digest(candidate.as_slice()).as_slice() == head,
-                    "error enrollment-checkpoint-mismatch"
-                );
-            }
-            return Ok(EnrollmentReadiness::Enrolled { head });
+        if let Some(readiness) = self.outbound_readiness(db).await? {
+            return Ok(readiness);
         }
-        self.pending_readiness(db, &id).await
-    }
-
-    async fn pending_readiness(&self, db: &Database, id: &Identity) -> Result<EnrollmentReadiness> {
-        Ok(
-            if id.role == "inviter" && self.phase(db, Artifact::Sent).await?.is_some() {
-                EnrollmentReadiness::UnresolvedDisclosure
-            } else {
-                EnrollmentReadiness::Pending
-            },
-        )
-    }
-
-    async fn verified_peer(
-        &self,
-        db: &Database,
-        id: &Identity,
-        ready: &[u8],
-    ) -> Result<(PeerAuthority, peer::VerifiedEnrollment, Verified)> {
-        let bytes = self
-            .phase(db, Artifact::Verified)
-            .await?
-            .context("error enrollment-key-coverage-missing")?;
-        let record: Verified = serde_json::from_slice(&bytes)
-            .map_err(|_| anyhow::anyhow!("error enrollment-verified-corrupt"))?;
-        let peer = PeerAuthority::from_protected_storage(&id.authority)?;
-        let verified = peer.verify_enrollment(&record.evidence, &record.descriptor)?;
-        ensure!(
-            ready == verified.admission().commitment()
-                && verified.key().protected_storage_bytes().as_slice() == record.key,
-            "error enrollment-verified-corrupt"
-        );
-        Ok((peer, verified, record))
+        if id.role == "peer" && self.phase(db, "peer-ready", 128).await?.is_none() {
+            return Ok(EnrollmentReadiness::Pending);
+        }
+        let Some((m, _)) = self.membership_floor(db, id.incarnation).await? else {
+            return Ok(EnrollmentReadiness::Pending);
+        };
+        if id.role == "peer" {
+            self.verified_peer(db, &id).await?;
+        }
+        Ok(EnrollmentReadiness::Enrolled { head: m.head() })
     }
 }
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Verified {
-    evidence: Evidence,
-    descriptor: Vec<u8>,
-    key: Vec<u8>,
-}
-impl Drop for Verified {
-    fn drop(&mut self) {
-        self.key.zeroize();
+impl Outbound {
+    fn name(&self, phase: &str) -> String {
+        format!("invite-{}-{phase}", hex::encode(self.handle))
     }
 }
-
 pub(crate) struct TailInputs {
     pub authority: aven_core::sync::encrypted_tail::Authority,
-    pub bearer: aven_core::sync::seed_claim::Secret,
-    _installation: InstallationGuard,
-    _lock: File,
+    pub bearer: Secret,
+    _inputs: ActiveInputs,
 }

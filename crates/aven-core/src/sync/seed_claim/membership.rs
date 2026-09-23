@@ -10,6 +10,8 @@ pub use persistence::{
     Evidence, EvidenceRecord, MAX_CANDIDATES, MAX_EVIDENCE_JSON_BYTES, MAX_INVITATIONS, Mailbox,
 };
 #[cfg(test)]
+mod test_support;
+#[cfg(test)]
 mod tests;
 
 pub use super::peer::Invitation;
@@ -128,14 +130,25 @@ impl Membership {
             "error enrollment-unauthorized"
         );
         ensure!(
-            if ancestor {
-                self.heads.contains(&auth.head)
-            } else {
-                auth.head == self.head()
-            },
-            "error enrollment-context-stale"
+            self.heads.contains(&auth.head),
+            "error membership-context-unknown"
         );
+        if !ancestor && auth.head != self.head() {
+            anyhow::bail!(StaleContext);
+        }
         Ok(())
+    }
+    pub fn head_at(&self, sequence: u64) -> Option<Hash> {
+        sequence
+            .checked_sub(1)
+            .and_then(|n| self.heads.get(n as usize))
+            .copied()
+    }
+    pub fn validate_key(&self, key: &LocalSharedStatePackageKey) -> Result<()> {
+        check(
+            generation_commitment(self.genesis.context, key.protected_storage_bytes())
+                == self.genesis.generation_commitment,
+        )
     }
     pub fn contains_head(&self, head: &Hash) -> bool {
         self.heads.contains(head)
@@ -181,3 +194,13 @@ impl Membership {
         Ok(next)
     }
 }
+
+/// A verified ancestor context may be refreshed once; it never authorizes content.
+#[derive(Debug)]
+pub struct StaleContext;
+impl fmt::Display for StaleContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("error enrollment-context-stale")
+    }
+}
+impl std::error::Error for StaleContext {}

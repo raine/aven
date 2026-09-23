@@ -173,17 +173,22 @@ async fn published_http_requires_exact_current_context_and_never_restores_missin
         .unwrap();
     let mail = f
         .server
-        .peer_mailbox(peer.vault(), peer.handle())
+        .membership_mailbox(peer.vault(), peer.handle())
         .await
         .unwrap();
-    let evidence = mail.evidence.unwrap();
-    let grant = peer.open_provisional(&evidence).unwrap();
+    let evidence = mail;
+    let grant = peer
+        .open_provisional(
+            &evidence.declaration,
+            evidence.admission.as_deref().unwrap(),
+        )
+        .unwrap();
     let context = Context {
         vault: peer.vault(),
         genesis: grant.genesis,
         device: peer.device(),
         credential_version: 1,
-        head: grant.head,
+        head: grant.outcome,
     };
     let descriptor = sha2::Sha256::digest(&f.package.descriptor).into();
     for field in 0..7 {
@@ -215,8 +220,8 @@ async fn published_http_requires_exact_current_context_and_never_restores_missin
         );
     }
     let seed_store = isolated_store(f.source.path(), &f.root.path().join("keys"));
-    let (seed, _, _) = seed_store
-        .prepare_invitation(&f.source, &f.client.locator, None)
+    let seed = seed_store
+        .active_inputs(&f.source, &f.client.locator)
         .await
         .unwrap();
     assert!(
@@ -573,7 +578,7 @@ async fn foreign_image_fails_transfer_and_dishonest_descriptor_refuses_install()
     });
     let client = Client::new(&f.client.locator).unwrap();
     let error = client.install(&f.store, &f.peer).await.unwrap_err();
-    assert_eq!(error.to_string(), "error snapshot-descriptor-substitution");
+    assert_eq!(error.to_string(), "error membership-response");
     assert_eq!(count(&f.peer, "tasks").await, 0);
 }
 
@@ -587,19 +592,22 @@ async fn control_request_cap_rejects_padding_while_large_published_image_reads_s
         .unwrap();
     let evidence = f
         .server
-        .peer_mailbox(peer.vault(), peer.handle())
+        .membership_mailbox(peer.vault(), peer.handle())
         .await
-        .unwrap()
-        .evidence
         .unwrap();
-    let grant = peer.open_provisional(&evidence).unwrap();
+    let grant = peer
+        .open_provisional(
+            &evidence.declaration,
+            evidence.admission.as_deref().unwrap(),
+        )
+        .unwrap();
     let op = Operation::Published {
         context: Context {
             vault: peer.vault(),
             genesis: grant.genesis,
             device: peer.device(),
             credential_version: 1,
-            head: grant.head,
+            head: grant.outcome,
         },
         descriptor: sha2::Sha256::digest(&f.package.descriptor).into(),
         component: Some(Component::Image(f.package.images[0].object_id)),

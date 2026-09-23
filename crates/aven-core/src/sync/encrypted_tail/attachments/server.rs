@@ -3,7 +3,7 @@ use super::{codec::Descriptor, *};
 use crate::{
     attachments::lifecycle::LifecyclePolicy,
     db::{Database, begin_immediate},
-    sync::seed_claim::{Secret, peer},
+    sync::seed_claim::Secret,
 };
 use anyhow::{Context as _, Result, ensure};
 use sqlx::SqliteConnection;
@@ -169,9 +169,11 @@ impl Database {
     ) -> Result<Reply> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        let current = peer::persistence::current(&mut tx).await?;
-        current.authenticate(&context.authentication(bearer), true)?;
-        let binding = current.publication.binding();
+        let current = crate::sync::seed_claim::membership::persistence::current(&mut tx).await?;
+        current
+            .membership
+            .authenticate(&context.authentication(bearer), false)?;
+        let binding = current.membership.publication().binding();
         valid(
             context.stream == binding.stream_id
                 && context.descriptor == binding.descriptor_commitment,
@@ -188,7 +190,7 @@ impl Database {
                 valid(
                     d.vault == context.vault
                         && d.stream == context.stream
-                        && d.generation == current.genesis.context().generation_id,
+                        && d.generation == current.membership.genesis().context().generation_id,
                 )?;
                 let old: Option<Option<Vec<u8>>> =
                     sqlx::query_scalar("SELECT descriptor FROM server_e2ee_images WHERE object=?")

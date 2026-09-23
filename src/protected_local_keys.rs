@@ -1,5 +1,6 @@
 mod adoption;
-mod peer;
+mod membership;
+pub(crate) mod peer;
 mod seed;
 pub use peer::EnrollmentReadiness;
 

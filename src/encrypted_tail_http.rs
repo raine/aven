@@ -65,8 +65,9 @@ async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response
                 _ => (StatusCode::INTERNAL_SERVER_ERROR, "encrypted_tail_refused").into_response(),
             },
             Ok(Err(e)) => {
-                let category = if e.to_string() == "error encrypted-tail-prefix-identity-collision"
-                {
+                let category = if is_stale(&e) {
+                    "membership-stale"
+                } else if e.to_string() == "error encrypted-tail-prefix-identity-collision" {
                     "prefix_identity_collision"
                 } else {
                     "encrypted_tail_refused"
@@ -216,6 +217,9 @@ impl Client {
                 );
                 bytes.extend(chunk);
             }
+            if bytes == b"membership-stale" {
+                anyhow::bail!(aven_core::sync::seed_claim::membership::StaleContext);
+            }
             if bytes == b"prefix_identity_collision" {
                 anyhow::bail!("error encrypted-tail-prefix-identity-collision")
             }
@@ -256,6 +260,17 @@ impl Client {
     /// True means the remote watermark is caught up and local metadata is idle.
     /// Image availability is reported separately by `attachment_round`.
     pub async fn round(&self, store: &ProtectedLocalKeyStore, db: &Database) -> Result<bool> {
+        let enrollment = crate::peer_enrollment_http::Client::new(&self.locator)?;
+        enrollment.refresh(store, db).await?;
+        match self.round_once(store, db).await {
+            Err(error) if is_stale(&error) => {
+                enrollment.refresh(store, db).await?;
+                self.round_once(store, db).await
+            }
+            result => result,
+        }
+    }
+    async fn round_once(&self, store: &ProtectedLocalKeyStore, db: &Database) -> Result<bool> {
         let inputs = store.tail_inputs(db, &self.locator).await?;
         let a = &inputs.authority;
         self.push(a, &inputs.bearer, db, None).await?;
@@ -345,3 +360,7 @@ impl Client {
 }
 #[cfg(test)]
 mod tests;
+
+fn is_stale(error: &anyhow::Error) -> bool {
+    error.is::<aven_core::sync::seed_claim::membership::StaleContext>()
+}

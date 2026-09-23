@@ -42,9 +42,11 @@ impl Database {
     ) -> Result<Reply> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        let current = peer::persistence::current(&mut tx).await?;
-        current.authenticate(&context.authentication(bearer), true)?;
-        let binding = current.publication.binding();
+        let current = crate::sync::seed_claim::membership::persistence::current(&mut tx).await?;
+        current
+            .membership
+            .authenticate(&context.authentication(bearer), false)?;
+        let binding = current.membership.publication().binding();
         valid(
             context.stream == binding.stream_id
                 && context.descriptor == binding.descriptor_commitment,
@@ -62,7 +64,7 @@ impl Database {
                 if let Some(old) = found(&mut tx, &e.id).await? {
                     Reply::Appended(old.mapping)
                 } else {
-                    valid(e.generation == current.genesis.context().generation_id)?;
+                    valid(e.generation == current.membership.genesis().context().generation_id)?;
                     if let domain::Projection::Ref { descriptor, .. } = &e.projection {
                         valid(
                             super::attachments::codec::Descriptor::decode(descriptor)?.generation

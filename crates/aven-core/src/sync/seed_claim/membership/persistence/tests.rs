@@ -1,5 +1,5 @@
 use super::*;
-use crate::sync::seed_claim::peer::tests::Fixture;
+use crate::sync::seed_claim::membership::test_support::Fixture;
 
 fn auth<'a>(f: &Fixture, head: Hash, device: Hash, bearer: &'a Secret) -> Authentication<'a> {
     Authentication {

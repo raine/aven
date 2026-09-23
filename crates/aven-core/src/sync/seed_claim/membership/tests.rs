@@ -365,27 +365,6 @@ fn resigned_invalid_state_actions_packages_and_old_versions_refuse() {
             )
             .is_err()
     );
-    let (old_inv, old_d) = f
-        .seed
-        .prepare_peer_invitation(&f.membership.publication, 100)
-        .unwrap();
-    assert!(Declaration::from_record(&f.membership, old_d.record()).is_err());
-    let old_peer = peer::PeerAuthority::generate(copy_invitation(&old_inv)).unwrap();
-    let old = f
-        .seed
-        .prepare_peer_admission(
-            &f.membership.publication,
-            &old_d,
-            &old_inv,
-            old_peer.request(),
-            &f.key,
-        )
-        .unwrap();
-    assert!(
-        f.membership
-            .append(old_d.record(), old_peer.request(), old.record())
-            .is_err()
-    );
 }
 
 #[test]
