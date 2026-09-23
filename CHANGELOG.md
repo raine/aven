@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Fix: Concurrent plaintext sync and image requests no longer fail with `installation-busy`.
+
 - Protect installations explicitly opted into experimental encrypted sync from plaintext sync and backup replacement.
 
 ## v0.1.41 (2026-09-22)

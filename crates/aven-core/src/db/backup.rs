@@ -84,8 +84,7 @@ pub async fn backup_database(source: &Path, backup: &Path) -> Result<()> {
     if !source.is_file() {
         bail!("could not open source {}", source.display());
     }
-    let installation = super::installation::InstallationGuard::acquire(source)?;
-    installation.ensure_unbound()?;
+    let _installation = super::installation::InstallationGuard::acquire_plaintext(source)?;
     backup_database_unlocked(source, backup).await
 }
 

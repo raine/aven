@@ -196,8 +196,11 @@ later progress, even after separate retry-safe capture/package/pin cleanup.
 `db/installation.rs::InstallationGuard` resolves canonical parent plus basename,
 including a missing final database path, and rejects final symlinks/hard-link
 ambiguity. Its persistent marker is refusal only, never source authority. Core
-physical SQLite and archive restore hold the same short-lived lock across
-replacement. Import and plaintext metadata/blob entry points reject selected
+physical SQLite and archive restore hold the same short-lived exclusive lock
+across replacement. Ordinary plaintext operations and backups use shared locks,
+so overlapping requests retain SQLite writer serialization instead of spuriously
+contending on installation exclusion. Acquisition is nonblocking; shared holders
+cannot establish the denial marker. Import and plaintext metadata/blob entry points reject selected
 installations, including after capture cleanup or loss of SQLite source metadata.
 This is not a database-lifetime lock; raw live replacement is unsupported. An
 early opted-in setup failure can leave replacement fenced with no reset API.
