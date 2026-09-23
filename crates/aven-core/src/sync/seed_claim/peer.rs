@@ -6,7 +6,7 @@
 pub(crate) mod persistence;
 pub use persistence::{Authentication, Mailbox, RegistrationStatus};
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use super::*;
 use crate::sync::bootstrap_format::DOMAIN_VERSION;

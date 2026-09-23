@@ -4,16 +4,16 @@ use crate::{
     sync::{bootstrap_format, bootstrap_staging as staging},
 };
 
-struct Fixture {
-    dir: tempfile::TempDir,
-    db: Database,
-    seed: SeedAuthority,
-    key: LocalSharedStatePackageKey,
-    package: bootstrap_format::Package,
-    publication: Publication,
+pub(crate) struct Fixture {
+    pub(crate) dir: tempfile::TempDir,
+    pub(crate) db: Database,
+    pub(crate) seed: SeedAuthority,
+    pub(crate) key: LocalSharedStatePackageKey,
+    pub(crate) package: bootstrap_format::Package,
+    pub(crate) publication: Publication,
 }
 impl Fixture {
-    async fn new() -> Self {
+    pub(crate) async fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let source = Database::open(&dir.path().join("source.db")).await.unwrap();
         let context = LocalSharedStatePackageContext {

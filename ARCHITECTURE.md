@@ -617,6 +617,25 @@ authority does not access production Keychain items. Encrypted ordinary tail,
 fresh join, pairing/recovery UX, general membership and iOS remain outside this
 transport boundary.
 
+### Transactional repeatable membership
+
+`seed_claim/membership/persistence.rs` owns bounded complete signed history,
+handle-keyed invitation/request/outcome storage and the vault clock high-water.
+Each operation replays signed predecessors before authenticating the current
+credential. Only the evidence read permits a verified ancestor request context;
+admission and exact historical outcome retries require the current head.
+Admission, invitation outcome and head commit together without changing content
+allocation or image ownership. Unsupported old invitation stores refuse without
+conversion or domain deletion. SQLite invitation indexes are projections, not
+positive authority. Protected ownership and transport select the runtime owner;
+the persistence API itself does not establish host readiness.
+
+Focused tests: `cargo test -p aven-core --lib 'sync::seed_claim::membership::persistence::tests::'`.
+They include independent-pool admission races, SQL write faults, same-recipient
+successor preparation, repeated peer invitation, retained expiry and clock
+rollback, and invitation/evidence bounds. These are not HTTP or protected-store
+power-loss evidence.
+
 ### Fixed first-peer enrollment
 
 `sync::seed_claim::peer` owns the fixed sequence-two invitation admission, strict

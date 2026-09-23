@@ -5,6 +5,10 @@
 //! transitions and enrollment versions fail closed.
 mod admission;
 mod pairing;
+pub(crate) mod persistence;
+pub use persistence::{
+    Evidence, EvidenceRecord, MAX_CANDIDATES, MAX_EVIDENCE_JSON_BYTES, MAX_INVITATIONS, Mailbox,
+};
 #[cfg(test)]
 mod tests;
 
@@ -101,6 +105,40 @@ impl Membership {
     /// Ancestry, not a claim that either checkpoint is the latest server head.
     pub fn extends(&self, previous: &Self) -> bool {
         self.genesis == previous.genesis && self.heads.starts_with(&previous.heads)
+    }
+    /// Authenticate the actual credential before examining its requested head.
+    pub fn authenticate(
+        &self,
+        auth: &super::peer::Authentication<'_>,
+        ancestor: bool,
+    ) -> Result<()> {
+        ensure!(
+            auth.credential_version == 1
+                && auth.vault == self.genesis.context.vault_id
+                && auth.genesis == self.genesis.commitment(),
+            "error enrollment-unauthorized"
+        );
+        let member = self.member(&auth.device)?;
+        ensure!(
+            bool::from(member.verifier.ct_eq(&credential_verifier(
+                auth.vault,
+                auth.device,
+                auth.bearer
+            ))),
+            "error enrollment-unauthorized"
+        );
+        ensure!(
+            if ancestor {
+                self.heads.contains(&auth.head)
+            } else {
+                auth.head == self.head()
+            },
+            "error enrollment-context-stale"
+        );
+        Ok(())
+    }
+    pub fn contains_head(&self, head: &Hash) -> bool {
+        self.heads.contains(head)
     }
     fn member(&self, device: &Hash) -> Result<&Member> {
         self.members
