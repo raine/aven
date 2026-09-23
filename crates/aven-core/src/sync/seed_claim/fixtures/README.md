@@ -21,3 +21,22 @@ recovery or pending rotation. Core, state and attachments are respectively
 Tests also construct newly signed invalid records, verify strict parser and
 cross-field rejection, and demonstrate that signed opaque self-package validity
 must be checked by the client rather than inferred by the server.
+
+## Same-generation membership
+
+`membership.json` freezes exact AVID v2 declarations, unchanged PSK requests and
+AVAD v2 / AVGS v4 / AVGA v4 admissions for a seed inviting a peer, then that peer
+inviting a third device. Both records use the same admission format. Tests rebuild
+and compare every byte, not only the stored SHA256 values.
+
+The fixture uses the genesis inputs above and the publication framing fixture in
+`publication/tests.rs`. It does not assert bootstrap ciphertext completeness.
+Artificial peer inputs use repeated bytes: device 32/42, Ed25519 seed 33/43,
+HPKE derive-keypair IKM 34/44, bearer 35/45, invitation PSK 31/41. Request sender
+ChaCha20Rng seeds are repeated 36/46; grant sender seed is repeated 90. Expiries
+are 2000000000/2000000001. These are test-only deterministic values, not production
+entropy or independently reproduced interoperability evidence. Production uses
+fallible OS-seeded single-shot HPKE; exact retries retain the resulting bytes.
+
+The pure membership parser rejects old fixed first-peer enrollment versions.
+Genesis/publication and unchanged request framing retain their original meaning.

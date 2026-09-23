@@ -26,7 +26,7 @@ fn check(ok: bool) -> Result<()> {
     Ok(())
 }
 
-fn verify(pk: &[u8; 32], label: &str, fields: &[&[u8]], signature: &[u8]) -> Result<()> {
+pub(super) fn verify(pk: &[u8; 32], label: &str, fields: &[&[u8]], signature: &[u8]) -> Result<()> {
     VerifyingKey::from_bytes(pk)
         .and_then(|key| key.verify_strict(&cce(label, fields), &Signature::from_slice(signature)?))
         .map_err(|_| anyhow::anyhow!("error enrollment-signature"))
@@ -34,9 +34,9 @@ fn verify(pk: &[u8; 32], label: &str, fields: &[&[u8]], signature: &[u8]) -> Res
 
 /// Secret-bearing out-of-band handoff. Locator ownership remains with the host.
 pub struct Invitation {
-    vault: [u8; 32],
-    inviter: [u8; 32],
-    psk: Secret,
+    pub(super) vault: [u8; 32],
+    pub(super) inviter: [u8; 32],
+    pub(super) psk: Secret,
 }
 
 impl fmt::Debug for Invitation {
@@ -162,15 +162,20 @@ impl SeedAuthority {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-struct Recipient {
-    device: [u8; 32],
-    sign: [u8; 32],
-    hpke: [u8; 32],
-    verifier: [u8; 32],
-    pop: [u8; 64],
+pub(super) struct Recipient {
+    pub(super) device: [u8; 32],
+    pub(super) sign: [u8; 32],
+    pub(super) hpke: [u8; 32],
+    pub(super) verifier: [u8; 32],
+    pub(super) pop: [u8; 64],
 }
 impl Recipient {
-    fn pop_message(&self, vault: &[u8; 32], handle: &[u8; 32], inviter: &[u8; 32]) -> Vec<u8> {
+    pub(super) fn pop_message(
+        &self,
+        vault: &[u8; 32],
+        handle: &[u8; 32],
+        inviter: &[u8; 32],
+    ) -> Vec<u8> {
         cce(
             "aven-e2ee/v1/pairing/request-pop",
             &[
@@ -186,7 +191,12 @@ impl Recipient {
             ],
         )
     }
-    fn verify(&self, vault: &[u8; 32], handle: &[u8; 32], inviter: &[u8; 32]) -> Result<()> {
+    pub(super) fn verify(
+        &self,
+        vault: &[u8; 32],
+        handle: &[u8; 32],
+        inviter: &[u8; 32],
+    ) -> Result<()> {
         VerifyingKey::from_bytes(&self.sign)
             .and_then(|key| {
                 key.verify_strict(
@@ -196,7 +206,7 @@ impl Recipient {
             })
             .map_err(|_| anyhow::anyhow!("error enrollment-pop"))
     }
-    fn plaintext(&self) -> Vec<u8> {
+    pub(super) fn plaintext(&self) -> Vec<u8> {
         let mut out = vec![1];
         for v in [self.device, self.sign, self.hpke, self.verifier] {
             bytes(&mut out, &v);
@@ -206,7 +216,7 @@ impl Recipient {
         bytes(&mut out, &self.pop);
         out
     }
-    fn parse(raw: &[u8]) -> Result<Self> {
+    pub(super) fn parse(raw: &[u8]) -> Result<Self> {
         check(raw.len() == 221)?;
         let mut r = Reader(raw);
         check(r.take(1)? == [1])?;
@@ -227,7 +237,7 @@ impl Recipient {
             pop,
         })
     }
-    fn row(&self, handle: [u8; 32]) -> Vec<u8> {
+    pub(super) fn row(&self, handle: [u8; 32]) -> Vec<u8> {
         let mut out = Vec::new();
         for v in [self.device, self.sign, self.hpke, self.verifier] {
             out.extend(v);
@@ -238,7 +248,7 @@ impl Recipient {
     }
 }
 
-fn seal(
+pub(super) fn seal(
     inv: &Invitation,
     public: &[u8; 32],
     info: &[u8],
@@ -260,7 +270,7 @@ fn seal(
     .map_err(|_| anyhow::anyhow!("error enrollment-seal"))?;
     Ok((enc.to_bytes().to_vec(), cipher))
 }
-fn open(
+pub(super) fn open(
     inv: &Invitation,
     private: &Secret,
     info: &[u8],
@@ -281,7 +291,7 @@ fn open(
         .map(Zeroizing::new)
         .map_err(|_| anyhow::anyhow!("error enrollment-open"))
 }
-fn request_parts<'a>(raw: &'a [u8], handle: &[u8; 32]) -> Result<(&'a [u8], &'a [u8])> {
+pub(super) fn request_parts<'a>(raw: &'a [u8], handle: &[u8; 32]) -> Result<(&'a [u8], &'a [u8])> {
     check(raw.len() == REQUEST_BYTES)?;
     let mut r = Reader(raw);
     check(r.take(1)? == [1])?;
@@ -294,12 +304,12 @@ fn request_parts<'a>(raw: &'a [u8], handle: &[u8; 32]) -> Result<(&'a [u8], &'a 
 
 /// Independent peer authority. Exact storage includes its one frozen request.
 pub struct PeerAuthority {
-    device: [u8; 32],
-    signing: Secret,
-    recipient: Secret,
-    bearer: Secret,
-    invitation: Invitation,
-    request: Vec<u8>,
+    pub(super) device: [u8; 32],
+    pub(super) signing: Secret,
+    pub(super) recipient: Secret,
+    pub(super) bearer: Secret,
+    pub(super) invitation: Invitation,
+    pub(super) request: Vec<u8>,
 }
 impl fmt::Debug for PeerAuthority {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -342,7 +352,7 @@ impl PeerAuthority {
         peer.request = request;
         Ok(peer)
     }
-    fn recipient(&self) -> Result<Recipient> {
+    pub(super) fn recipient(&self) -> Result<Recipient> {
         let private = HpkePrivate::from_bytes(self.recipient.expose())
             .map_err(|_| anyhow::anyhow!("error enrollment-recipient"))?;
         let signer = SigningKey::from_bytes(self.signing.expose());

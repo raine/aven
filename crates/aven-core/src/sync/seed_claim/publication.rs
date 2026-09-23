@@ -71,7 +71,7 @@ impl PublicationBinding {
         })
     }
 
-    fn tuple(&self) -> Vec<u8> {
+    pub(super) fn tuple(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(136);
         for value in [
             self.bootstrap_id,
