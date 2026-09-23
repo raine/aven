@@ -556,3 +556,22 @@ fn old_tags_cannot_be_resigned_into_the_new_profile() {
         );
     }
 }
+
+#[test]
+fn protected_generation_coverage_revalidates_exact_complete_commitments() {
+    let f = fixture();
+    let keys = f.membership.verify_initial_key(&f.key).unwrap();
+    let bytes = keys.protected_storage_bytes();
+    assert_eq!(bytes.len(), 112);
+    VerifiedKeys::from_protected_storage(&f.membership, &bytes).unwrap();
+    for i in 0..bytes.len() {
+        assert!(VerifiedKeys::from_protected_storage(&f.membership, &bytes[..i]).is_err());
+        let mut changed = bytes.to_vec();
+        changed[i] ^= 1;
+        assert!(VerifiedKeys::from_protected_storage(&f.membership, &changed).is_err());
+    }
+    let mut extra = bytes.to_vec();
+    extra.push(0);
+    assert!(VerifiedKeys::from_protected_storage(&f.membership, &extra).is_err());
+    assert!(VerifiedKeys::from_protected_storage(&f.membership, &vec![0; 2345]).is_err());
+}

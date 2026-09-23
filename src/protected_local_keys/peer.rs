@@ -1,5 +1,5 @@
 //! Independent installation identity, inbound enrollment and outbound journals.
-use super::membership::EvidenceRef;
+use super::membership::{EvidenceRef, FLOOR_LIMIT};
 use super::*;
 use anyhow::{Context, Result, ensure};
 use aven_core::db::installation::InstallationGuard;
@@ -8,7 +8,8 @@ use aven_core::sync::{
     seed_claim::{
         Secret, SeedAuthority,
         membership::{
-            self, Declaration, Device, Evidence, Invitation, Joiner, Membership, VerifiedEnrollment,
+            self, Declaration, Device, Evidence, Invitation, Joiner, Membership,
+            VerifiedEnrollment, VerifiedKeys,
         },
     },
 };
@@ -111,11 +112,14 @@ pub(crate) struct ActiveInputs {
     keys: Keys,
     pub membership: Membership,
     pub evidence: Evidence,
-    key: LocalSharedStatePackageKey,
+    coverage: VerifiedKeys,
     _installation: InstallationGuard,
     _lock: File,
 }
 impl ActiveInputs {
+    pub fn generation_keys(&self) -> &VerifiedKeys {
+        &self.coverage
+    }
     pub fn device(&self) -> Hash {
         self.keys.device()
     }
@@ -186,9 +190,14 @@ impl ProtectedLocalKeyStore {
                     "error enrollment-protected-missing"
                 );
             }
-            for sequence in 1..=membership::MAX_DEVICES {
+            for sequence in 1..=membership::MAX_TRANSITIONS + 1 {
                 ensure!(
-                    self.read_owned(&format!("membership-floor-{sequence}"), 512, false)?
+                    self.read_owned(&format!("membership-floor-{sequence}"), FLOOR_LIMIT, false)?
+                        .is_none(),
+                    "error enrollment-protected-missing"
+                );
+                ensure!(
+                    self.read_owned(&format!("membership-coverage-{sequence}"), 4096, false)?
                         .is_none(),
                     "error enrollment-protected-missing"
                 );
@@ -297,7 +306,7 @@ impl ProtectedLocalKeyStore {
             }
         };
         ensure!(id.locator == locator, "error enrollment-context");
-        let (keys, original, key) = if id.role == "peer" {
+        let (keys, original, original_keys) = if id.role == "peer" {
             ensure!(
                 self.phase(db, "peer-ready", 128).await?.is_some(),
                 "error enrollment-unresolved"
@@ -318,7 +327,10 @@ impl ProtectedLocalKeyStore {
             (
                 Keys::Peer(Box::new(peer)),
                 self.load_evidence(&record.evidence)?,
-                LocalSharedStatePackageKey::new(*verified.key().protected_storage_bytes()),
+                VerifiedKeys::from_protected_storage(
+                    verified.membership(),
+                    &verified.keys().protected_storage_bytes(),
+                )?,
             )
         } else {
             ensure!(
@@ -326,28 +338,29 @@ impl ProtectedLocalKeyStore {
                 "error enrollment-client-mismatch"
             );
             let (seed, evidence, key) = self.seed_inputs(db).await?;
-            (Keys::Seed(Box::new(seed)), evidence, key)
+            let coverage = evidence.verify()?.verify_initial_key(&key)?;
+            (Keys::Seed(Box::new(seed)), evidence, coverage)
         };
         let original_membership = original.verify()?;
-        let (membership, evidence) =
-            if let Some((m, r)) = self.membership_floor(db, id.incarnation).await? {
-                (m, self.load_evidence(&r)?)
+        let (membership, evidence, coverage) =
+            if let Some((m, r, coverage)) = self.membership_floor(db, id.incarnation).await? {
+                (m, self.load_evidence(&r)?, coverage)
             } else {
                 ensure!(
                     id.role == "inviter" && self.journals(db).await?.is_empty(),
                     "error membership-floor-missing"
                 );
                 let m = self
-                    .adopt_membership(db, id.incarnation, &original, &key)
+                    .adopt_membership(db, id.incarnation, &original, &original_keys)
                     .await?;
-                (m, original)
+                (m, original, original_keys)
             };
         ensure!(
             membership.extends(&original_membership),
             "error membership-original-mismatch"
         );
         keys.authority().validate(&membership)?;
-        membership.validate_key(&key)?;
+        coverage.validate(&membership)?;
         for journal in self.journals(db).await? {
             if let Some(ready) = self.phase(db, &journal.name("ready"), 128).await? {
                 ensure!(
@@ -361,7 +374,7 @@ impl ProtectedLocalKeyStore {
             keys,
             membership,
             evidence,
-            key,
+            coverage,
             _installation: installation,
             _lock: lock,
         })
@@ -372,12 +385,18 @@ impl ProtectedLocalKeyStore {
         inputs: &mut ActiveInputs,
         evidence: Evidence,
     ) -> Result<()> {
-        let m = evidence.verify()?;
-        ensure!(m.extends(&inputs.membership), "error membership-floor-fork");
-        inputs.keys.authority().validate(&m)?;
-        inputs.membership = self
-            .adopt_membership(db, inputs.id.incarnation, &evidence, &inputs.key)
+        let (membership, coverage) = self
+            .refresh_membership(
+                db,
+                inputs.id.incarnation,
+                inputs.keys.authority(),
+                &evidence,
+                &inputs.membership,
+                &inputs.coverage,
+            )
             .await?;
+        inputs.membership = membership;
+        inputs.coverage = coverage;
         inputs.evidence = evidence;
         Ok(())
     }
@@ -607,7 +626,7 @@ impl ProtectedLocalKeyStore {
             &d,
             &inv,
             request,
-            &inputs.membership.verify_initial_key(&inputs.key)?,
+            inputs.generation_keys(),
         )?;
         let candidate = Candidate {
             predecessor: self.save_evidence(&inputs.evidence)?,
@@ -790,7 +809,6 @@ impl ProtectedLocalKeyStore {
         )?;
         let verified = evidence.enrollment(&peer, grant.outcome)?;
         let current = evidence.verify()?;
-        peer.authority().validate(&current)?;
         // Retain only the original outcome's ancestry, never a mutable Ready value.
         let mut original = evidence.clone();
         original
@@ -809,15 +827,23 @@ impl ProtectedLocalKeyStore {
             &Zeroizing::new(serde_json::to_vec(&record)?),
         )
         .await?;
-        if let Some((floor, _)) = self.membership_floor(db, id.incarnation).await?
+        if let Some((floor, _, _)) = self.membership_floor(db, id.incarnation).await?
             && floor.extends(&current)
         {
+            peer.authority().validate(&floor)?;
             self.save_phase(db, &id, "peer-ready", 128, &record.outcome)
                 .await?;
             return Ok(());
         }
-        self.adopt_membership(db, id.incarnation, evidence, verified.key())
-            .await?;
+        self.refresh_membership(
+            db,
+            id.incarnation,
+            peer.authority(),
+            evidence,
+            verified.membership(),
+            verified.keys(),
+        )
+        .await?;
         self.save_phase(db, &id, "peer-ready", 128, &record.outcome)
             .await
     }
@@ -870,9 +896,11 @@ impl ProtectedLocalKeyStore {
             .peer_snapshot_receipt(&verified, id.incarnation, &id.client, &guard)
             .await?
         {
-            self.membership_floor(db, id.incarnation)
+            let (floor, _, _) = self
+                .membership_floor(db, id.incarnation)
                 .await?
                 .context("error membership-floor-missing")?;
+            peer.authority().validate(&floor)?;
             self.save_phase(db, &id, "peer-installed", 128, &verified.checkpoint())
                 .await?;
             return Ok(report);
@@ -881,9 +909,11 @@ impl ProtectedLocalKeyStore {
             completed.is_none(),
             "error snapshot-installed-database-lost"
         );
-        self.membership_floor(db, id.incarnation)
+        let (floor, _, _) = self
+            .membership_floor(db, id.incarnation)
             .await?
             .context("error membership-floor-missing")?;
+        peer.authority().validate(&floor)?;
         let package = transport
             .download(
                 self,
@@ -906,17 +936,30 @@ impl ProtectedLocalKeyStore {
         db: &Database,
         identity: Hash,
         peer: &Joiner,
-        key: &LocalSharedStatePackageKey,
+        verified: &VerifiedEnrollment,
         evidence: &Evidence,
     ) -> Result<Membership> {
-        peer.authority().validate(&evidence.verify()?)?;
-        self.adopt_membership(db, identity, evidence, key).await
+        Ok(self
+            .refresh_membership(
+                db,
+                identity,
+                peer.authority(),
+                evidence,
+                verified.membership(),
+                verified.keys(),
+            )
+            .await?
+            .0)
     }
     pub(crate) async fn tail_inputs(&self, db: &Database, locator: &str) -> Result<TailInputs> {
         let inputs = self.active_inputs(db, locator).await?;
         if let Some(readiness) = self.outbound_readiness(db).await? {
             readiness.require_resolved_disclosure()?;
         }
+        ensure!(
+            !inputs.membership.rotation_pending() && inputs.membership.generations().len() == 1,
+            "error membership-transition-unsupported"
+        );
         let b = inputs.membership.publication().binding();
         let association = format!(
             "{}:{}:{}",
@@ -939,7 +982,12 @@ impl ProtectedLocalKeyStore {
                 descriptor: b.descriptor_commitment,
             },
             generation: inputs.membership.genesis().context().generation_id,
-            key: LocalSharedStatePackageKey::new(*inputs.key.protected_storage_bytes()),
+            key: LocalSharedStatePackageKey::new(
+                *inputs
+                    .coverage
+                    .key(inputs.membership.genesis().context().generation_id)?
+                    .protected_storage_bytes(),
+            ),
             prefix: i64::try_from(b.prefix_count)?,
             association,
             sync_generation: db
@@ -968,11 +1016,17 @@ impl ProtectedLocalKeyStore {
         if id.role == "peer" && self.phase(db, "peer-ready", 128).await?.is_none() {
             return Ok(EnrollmentReadiness::Pending);
         }
-        let Some((m, _)) = self.membership_floor(db, id.incarnation).await? else {
+        let Some((m, _, _)) = self.membership_floor(db, id.incarnation).await? else {
             return Ok(EnrollmentReadiness::Pending);
         };
         if id.role == "peer" {
-            self.verified_peer(db, &id).await?;
+            self.verified_peer(db, &id)
+                .await?
+                .0
+                .authority()
+                .validate(&m)?;
+        } else {
+            Device::seed(&self.seed_inputs(db).await?.0).validate(&m)?;
         }
         Ok(EnrollmentReadiness::Enrolled { head: m.head() })
     }

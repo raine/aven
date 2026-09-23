@@ -424,7 +424,7 @@ impl Client {
             };
             let evidence = self.membership(&context, peer.bearer()).await?;
             floor = store
-                .adopt_download_refresh(db, identity, peer, verified.key(), &evidence)
+                .adopt_download_refresh(db, identity, peer, verified, &evidence)
                 .await?;
             context.head = floor.head();
             loop {
@@ -445,7 +445,7 @@ impl Client {
                         retried = true;
                         let evidence = self.membership(&context, peer.bearer()).await?;
                         floor = store
-                            .adopt_download_refresh(db, identity, peer, verified.key(), &evidence)
+                            .adopt_download_refresh(db, identity, peer, verified, &evidence)
                             .await?;
                         context.head = floor.head();
                     }

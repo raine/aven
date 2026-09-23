@@ -1357,7 +1357,7 @@ async fn pull_only_stops_after_second_head_race_without_uploading() {
 }
 
 #[tokio::test]
-async fn unsupported_rotation_refresh_does_not_advance_protected_floor() {
+async fn pending_refresh_advances_protected_floor_but_ordinary_dispatch_stays_blocked() {
     let f = fixture().await;
     let seed = f
         .seed_store
@@ -1381,13 +1381,21 @@ async fn unsupported_rotation_refresh_does_not_advance_protected_floor() {
             request: vec![],
             record,
         });
+    f.seed_store
+        .adopt_refresh(&f.seed, &mut inputs, evidence)
+        .await
+        .unwrap();
+    assert_ne!(inputs.membership.head(), head);
+    let next = inputs.membership.head();
+    drop(inputs);
+    assert_eq!(floor_head(&f.seed).await, next);
     assert!(
         f.seed_store
-            .adopt_refresh(&f.seed, &mut inputs, evidence)
+            .tail_inputs(&f.seed, &f.origin)
             .await
-            .is_err()
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("transition-unsupported")
     );
-    assert_eq!(inputs.membership.head(), head);
-    drop(inputs);
-    assert_eq!(floor_head(&f.seed).await, head);
 }

@@ -2,10 +2,11 @@
 use super::*;
 use anyhow::{Context, Result, ensure};
 use aven_core::sync::seed_claim::membership::{
-    Evidence, MAX_DEVICES, MAX_EVIDENCE_JSON_BYTES, Membership,
+    Device, Evidence, MAX_EVIDENCE_JSON_BYTES, MAX_TRANSITIONS, Membership, VerifiedKeys,
 };
 use serde::{Deserialize, Serialize};
 type Hash = [u8; 32];
+pub(super) const FLOOR_LIMIT: usize = 1024;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct EvidenceRef {
@@ -19,6 +20,7 @@ struct Floor {
     head: Hash,
     previous: u64,
     evidence: EvidenceRef,
+    coverage: Hash,
 }
 
 impl ProtectedLocalKeyStore {
@@ -154,11 +156,11 @@ impl ProtectedLocalKeyStore {
         &self,
         db: &Database,
         identity: Hash,
-    ) -> Result<Option<(Membership, EvidenceRef)>> {
-        let mut latest: Option<(Membership, EvidenceRef)> = None;
-        for sequence in 1..=MAX_DEVICES {
+    ) -> Result<Option<(Membership, EvidenceRef, VerifiedKeys)>> {
+        let mut latest: Option<(Membership, EvidenceRef, VerifiedKeys)> = None;
+        for sequence in 1..=MAX_TRANSITIONS + 1 {
             let kind = format!("membership-floor-{sequence}");
-            let Some(bytes) = self.read_owned(&kind, 512, false)? else {
+            let Some(bytes) = self.read_owned(&kind, FLOOR_LIMIT, false)? else {
                 continue;
             };
             let floor: Floor = serde_json::from_slice(&bytes)
@@ -170,7 +172,7 @@ impl ProtectedLocalKeyStore {
                     && m.head() == floor.head,
                 "error membership-floor-corrupt"
             );
-            if let Some((before, _)) = &latest {
+            if let Some((before, _, _)) = &latest {
                 ensure!(
                     floor.previous == before.sequence() && m.extends(before),
                     "error membership-floor-fork"
@@ -178,22 +180,30 @@ impl ProtectedLocalKeyStore {
             } else {
                 ensure!(floor.previous == 0, "error membership-floor-missing");
             }
-            latest = Some((m, floor.evidence));
+            let coverage = self
+                .read_owned(&format!("membership-coverage-{sequence}"), 4096, true)?
+                .context("error membership-coverage-missing")?;
+            ensure!(
+                Sha256::digest(&coverage).as_slice() == floor.coverage,
+                "error membership-coverage-corrupt"
+            );
+            let keys = VerifiedKeys::from_protected_storage(&m, &coverage)?;
+            latest = Some((m, floor.evidence, keys));
         }
         if let Some((id, sequence, head, digest)) = db.membership_checkpoint_mirror().await? {
-            let (m, _) = latest.as_ref().context("error membership-floor-missing")?;
+            let (m, _, _) = latest.as_ref().context("error membership-floor-missing")?;
             ensure!(
                 id == identity && m.head_at(sequence) == Some(head),
                 "error membership-mirror"
             );
             let bytes = self
-                .read_owned(&format!("membership-floor-{sequence}"), 512, true)?
+                .read_owned(&format!("membership-floor-{sequence}"), FLOOR_LIMIT, true)?
                 .context("error membership-floor-missing")?;
             let floor: Floor = serde_json::from_slice(&bytes)
                 .map_err(|_| anyhow::anyhow!("error membership-floor-corrupt"))?;
             ensure!(floor.evidence.digest == digest, "error membership-mirror");
         }
-        if let Some((m, reference)) = &latest {
+        if let Some((m, reference, _)) = &latest {
             db.mirror_membership_checkpoint(identity, m, reference.digest)
                 .await?;
         }
@@ -205,37 +215,112 @@ impl ProtectedLocalKeyStore {
         db: &Database,
         identity: Hash,
         evidence: &Evidence,
-        key: &LocalSharedStatePackageKey,
+        keys: &VerifiedKeys,
     ) -> Result<Membership> {
         let m = evidence.verify()?;
-        ensure!(
-            !m.rotation_pending(),
-            "error membership-transition-unsupported"
-        );
-        m.validate_key(key)?;
+        keys.validate(&m)?;
         let before = self.membership_floor(db, identity).await?;
-        if let Some((before, _)) = &before {
+        if let Some((before, _, _)) = &before {
             ensure!(m.extends(before), "error membership-floor-fork");
         }
+        let coverage = keys.protected_storage_bytes();
+        self.write_owned(
+            &format!("membership-coverage-{}", m.sequence()),
+            4096,
+            &coverage,
+        )?;
         let reference = self.save_evidence(evidence)?;
         if before
             .as_ref()
-            .is_none_or(|(before, _)| before.sequence() != m.sequence())
+            .is_none_or(|(before, _, _)| before.sequence() != m.sequence())
         {
             let floor = Floor {
                 sequence: m.sequence(),
                 head: m.head(),
-                previous: before.as_ref().map_or(0, |(m, _)| m.sequence()),
+                previous: before.as_ref().map_or(0, |(m, _, _)| m.sequence()),
                 evidence: reference.clone(),
+                coverage: Sha256::digest(&coverage).into(),
             };
             self.write_owned(
                 &format!("membership-floor-{}", m.sequence()),
-                512,
+                FLOOR_LIMIT,
                 &serde_json::to_vec(&floor)?,
             )?;
         }
         db.mirror_membership_checkpoint(identity, &m, reference.digest)
             .await?;
         Ok(m)
+    }
+    /// Replay only authenticated descendants, retaining each required recipient key.
+    pub(super) async fn refresh_membership(
+        &self,
+        db: &Database,
+        identity: Hash,
+        device: Device<'_>,
+        evidence: &Evidence,
+        original: &Membership,
+        original_keys: &VerifiedKeys,
+    ) -> Result<(Membership, VerifiedKeys)> {
+        let target = evidence.verify()?;
+        let (mut before, mut keys) =
+            if let Some((m, _, keys)) = self.membership_floor(db, identity).await? {
+                ensure!(m.extends(original), "error membership-original-mismatch");
+                (m, keys)
+            } else {
+                (
+                    original.clone(),
+                    VerifiedKeys::from_protected_storage(
+                        original,
+                        &original_keys.protected_storage_bytes(),
+                    )?,
+                )
+            };
+        device.validate(&before)?;
+        ensure!(target.extends(&before), "error membership-floor-fork");
+        for transition in evidence
+            .transitions
+            .iter()
+            .skip(before.sequence() as usize - 1)
+        {
+            let next = before.append(
+                &transition.declaration,
+                &transition.request,
+                &transition.record,
+            )?;
+            if device.validate(&next).is_err() {
+                // Signed removal is a durable denial, not an inference from a network error.
+                let mut removal = evidence.clone();
+                removal.transitions.truncate(next.sequence() as usize - 1);
+                self.adopt_membership(db, identity, &removal, &keys).await?;
+                anyhow::bail!("error enrollment-revoked");
+            }
+            if next.generations().len() != before.generations().len() {
+                keys = device.receive_rotation(&before, &transition.record, &keys)?;
+            }
+            keys.validate(&next)?;
+            before = next;
+        }
+        self.adopt_membership(db, identity, evidence, &keys).await?;
+        Ok((target, keys))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn largest_floor_fits_protected_frame() {
+        let floor = Floor {
+            sequence: 129,
+            head: [255; 32],
+            previous: 128,
+            evidence: EvidenceRef {
+                digest: [255; 32],
+                length: MAX_EVIDENCE_JSON_BYTES,
+            },
+            coverage: [255; 32],
+        };
+        let bytes = serde_json::to_vec(&floor).unwrap();
+        assert!(bytes.len() + 44 <= FLOOR_LIMIT);
     }
 }

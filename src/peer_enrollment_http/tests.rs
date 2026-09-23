@@ -885,3 +885,5 @@ async fn management_loopback_authenticates_removed_seed_before_stale_hint() {
     );
     task.abort();
 }
+
+mod rotation;

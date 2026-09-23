@@ -417,6 +417,8 @@ fn encoded_maxima_and_freeze_reserves_are_exercised_with_signed_history() {
     let plain =
         admission::grant_plaintext(&m, &d, peer.request(), &peer.0.recipient().unwrap(), &keys);
     assert_eq!(plain.len(), 2699);
+    assert_eq!(keys.protected_storage_bytes().len(), 2344);
+    VerifiedKeys::from_protected_storage(&m, &keys.protected_storage_bytes()).unwrap();
     peer.verify_enrollment(&m, d.record(), &raw).unwrap();
     assert!(Device::seed(&f.seed).prepare_revoke(&next, &[]).is_err());
 

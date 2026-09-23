@@ -634,10 +634,10 @@ transition and worst-case record budget.
 original enrollment validation at its historical predecessor. Genesis/publication
 bytes and bootstrap identity remain unchanged. These pure APIs establish signed
 intent and key coverage, not server commit, protected storage or runtime readiness.
-The server journal admits AddDevice, Revoke and Rotate. Protected refresh still
-refuses pending or multi-generation state. End-to-end removal requires protected
-key-history and ordinary outbox/image cutover integration. Server acceptance is
-not host readiness.
+The server journal admits AddDevice, Revoke and Rotate. Protected refresh retains
+complete historical key coverage across these transitions. Ordinary host dispatch
+still refuses pending or multi-generation state until outbox/image cutover is
+integrated; key coverage and server acceptance are not content readiness.
 
 ### Transactional repeatable membership
 
@@ -685,13 +685,21 @@ journal protects exact request binding, candidate and Sent facts before disclosu
 Only a verified different successor at the candidate's signed slot permits a new
 candidate for the same recipient. Unfinished invitations block ordinary dispatch,
 including on already-installed peers. Expiry does not withdraw a disclosed key or
-clear this fence; cancellation, removal, rotation and recovery remain unsupported.
+clear this fence. No client removal/rotation dispatcher, signed cancellation or
+recovery path clears it.
 
 `src/protected_local_keys/membership.rs` owns append-only protected checkpoint
 records and commitment-addressed public evidence outside replaceable SQLite.
-Each checkpoint binds verified complete ancestry and the unchanged generation key.
-Readback precedes the SQLite loss-detection mirror. Protected-ahead recovery moves
-only forward; missing established material or a conflicting mirror refuses.
+Each checkpoint binds verified ancestry and the digest of complete protected
+historical generation coverage. The same installation-bound append-only owner
+persists coverage before its checkpoint and SQLite loss-detection mirror. Core
+`VerifiedKeys` revalidates the exact ordered generation set and every commitment
+on load. Refresh replays each intervening transition and opens the device's own
+rotation package; fresh enrollment supplies every historical key. Pending state
+retains old coverage. A verified signed removal can persist a denying checkpoint,
+but an arbitrary server error cannot establish removal. Protected-ahead recovery
+moves only forward; missing established coverage, ancestry or a conflicting
+mirror refuses without reconstructing trust from SQLite or the network.
 Installation and store exclusion cover management exchanges and ordinary rounds.
 Original installation receipts, association, cursors, dependency baseline, image
 mappings and initial finite catch-up watermark never become mutable membership.
@@ -704,12 +712,18 @@ authentication or network errors. Retry retains completed metadata work and the
 same selected image rather than advancing the download selector again. Fresh join completion pins the PSK-authenticated
 outcome before retrieving full ancestry and can finish after later admissions.
 Every published component read is independently authorized; refresh preserves the
-immutable component and original install checkpoint.
+immutable component and original install checkpoint. Fresh installs always decrypt
+the immutable bootstrap with its original generation key, including when enrollment
+or subsequent refresh covers several newer generations. Completed install retries
+remain local and never reset later domain edits.
 
 Focused tests: core membership tests, `peer_enrollment_http::tests::`,
 `encrypted_tail_http::tests::membership::` and existing tail/image suites. The
 three-client fixtures use independent databases, protected stores and blob roots,
-real loopback HTTP and core mutations. SQL faults and subprocess exits are not
+real loopback HTTP and core mutations. `peer_enrollment_http::tests::rotation::`
+covers offline multi-rotation coverage, fresh historical bootstrap installation,
+immutable receipt retries, protected-before-mirror failures and missing/corrupt
+coverage. SQL faults and subprocess exits are not
 power-loss, Keychain, mobile, interoperability or independent security evidence.
 
 ### Sync flow
