@@ -1,3 +1,5 @@
+pub mod publication;
+
 use std::fmt;
 use std::path::Path;
 
@@ -1537,3 +1539,6 @@ fn vec_to_array(bytes: Vec<u8>, name: &str) -> Result<[u8; 32]> {
 #[cfg(test)]
 #[path = "package_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod test_support;

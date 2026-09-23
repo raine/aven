@@ -15,6 +15,7 @@ pub use session::{
     SyncPageOutcome, SyncRequestContext, SyncRequestTimeout, SyncRetryDecision, SyncSession,
     SyncSessionSummary, classify_pairing_connection_validation_response,
 };
+pub use shared_state::bootstrap_format;
 pub use shared_state::{
     DecryptedLocalSharedStateImage, EncryptedLocalSharedStateImage,
     EncryptedLocalSharedStatePackage, LocalSharedStatePackageContext, LocalSharedStatePackageKey,

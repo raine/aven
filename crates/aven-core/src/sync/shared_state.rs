@@ -11,6 +11,8 @@ use anyhow::{Context, Result, ensure};
 
 mod package;
 
+pub use package::publication as bootstrap_format;
+
 pub use package::{
     DecryptedLocalSharedStateImage, EncryptedLocalSharedStateImage,
     EncryptedLocalSharedStatePackage, LocalSharedStatePackageContext, LocalSharedStatePackageKey,
@@ -41,6 +43,7 @@ pub struct NeverDispatchedLocalSharedCapture {
     candidate_id: String,
     stream_id: String,
     capture: SharedStateCapture,
+    images: Vec<PersistedCaptureImage>,
 }
 
 impl NeverDispatchedLocalSharedCapture {
@@ -241,6 +244,7 @@ impl Database {
             capture: SharedStateCapture {
                 snapshot: persisted.snapshot,
             },
+            images: persisted.images,
         })
     }
 
@@ -604,6 +608,7 @@ async fn load_persisted_local_capture(
         candidate_id,
         stream_id,
         capture,
+        images: persisted.images,
     }))
 }
 

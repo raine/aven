@@ -162,6 +162,26 @@ body typography and background colors.
 - `src/tui/app_lifecycle.rs` polls background completion, including application-owned custom command processes, hydrates selected task detail before detail frames, coordinates image emission after frame draws, runs terminal custom commands while the TUI loop is suspended, and performs orderly shutdown. `src/tui/app_custom_commands.rs` applies successful custom-command refresh and shutdown policies through the application lifecycle after process completion and terminal restoration, using the committed-projection refresh path before any refresh-dependent shutdown. `src/tui/custom_command.rs` purely plans expanded programs, static argv and environment, effective working directories and deadlines, and the versioned metadata-only JSON contract from application-supplied invocation paths. `src/tui/custom_command_runtime.rs` applies planned noninteractive process values and owns invocation identity and phase, direct process creation, concurrent input and bounded output I/O, whole-operation deadlines, asynchronous completion, and lifecycle cleanup. Waiting commands use application-owned cancellation and Unix process-group termination, while successful background input handoffs detach from application shutdown. `src/tui/terminal_command.rs` owns protected context-file delivery, inherited terminal process execution, foreground terminal process-group control on Unix, configured timeout cleanup through the shared process supervisor, and restoration-before-policy ordering. `src/tui/platform.rs` owns the RAII terminal suspension boundary shared by terminal commands and external editors, including raw mode, alternate screen, cursor, mouse capture, bracketed paste, and keyboard enhancements. Application terminal preparation reconciles inline-image state and forces a complete redraw after restoration. Attachment detail sections combine committed metadata with app-owned pending and failed preparation state.
 - `src/tui/app_update.rs` coordinates update discovery and a unified Software Update overlay that presents target-release notes, install metadata, actions, progress, and outcomes in one fixed frame. `src/update/` owns release discovery, verification, install classification, and executable replacement. `src/tui/changelog.rs` fetches and caches canonical GitHub `CHANGELOG.md` content shared by the update review and historical changelog reader.
 
+### Experimental bootstrap package codec
+
+`crates/aven-core/src/sync/shared_state/package/publication.rs`, exposed as
+`sync::bootstrap_format`, owns the bounded experimental descriptor, three clear
+catalogs, encrypted typed-domain stream and keyless completeness validator.
+Its module documentation specifies the exact profile. Children own binary
+framing, catalog checks, dedicated domain DTOs and captured image/reference
+projections. Domain DTOs are independent of public export compatibility; explicit
+conversions reuse shared snapshot validation without a legacy server URL.
+
+This is a pure, in-memory codec, not persisted publication authority. Construction
+requires the immutable durable capture and its authenticated local package,
+allocates a fresh ephemeral bootstrap identity, and copies frozen image identities
+and ciphertext unchanged. It cannot rewrite or promote the existing local
+candidate, and rebuilding is not retry. Client validation compares decrypted
+history and image mappings to the capture; keyless validation checks only clear
+structure, commitments and complete selected bytes. No transport, authorization,
+claim, signed membership, READY, adoption or installation path consumes this
+format. Durable freezing and cancellation ownership remain a separate boundary.
+
 ### Sync flow
 
 1. Local mutations append operation-log rows in `changes`. Both ordinary and explicit-identity insertion helpers enforce the persisted replica protocol through `sync/protocol.rs` inside the owning transaction, before sequence allocation. They also share the wire validator's 64 KiB serialized UTF-8 JSON payload limit and return typed validation errors inside the owning mutation transaction. Existing operation history is preserved.
