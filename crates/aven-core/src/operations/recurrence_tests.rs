@@ -1110,7 +1110,7 @@ async fn task_mutation_routing_rejects_delete_reopen_and_archived_edits() {
             .contains("recurrence-current-delete")
     );
 
-    let resolved_at = format_utc(current_at + chrono::Duration::hours(1));
+    let resolved_at = format_utc(current_at);
     let resolved = resolve(
         &mut conn,
         &workspace,
