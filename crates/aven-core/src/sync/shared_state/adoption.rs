@@ -553,6 +553,13 @@ impl Database {
                 i64::try_from(binding.prefix_count)?,
             )
             .await?;
+            crate::sync::encrypted_tail::attachments::client::validate(
+                &mut tx,
+                &association,
+                i64::try_from(binding.prefix_count)?,
+                &binding.descriptor_commitment,
+            )
+            .await?;
             tx.commit().await?;
             return Ok(false);
         }
@@ -617,6 +624,15 @@ impl Database {
             next,
             i64::try_from(binding.prefix_count)?,
             &capture.capture.snapshot.tables.task_dependencies,
+        )
+        .await?;
+        crate::sync::encrypted_tail::attachments::client::initialize(
+            &mut tx,
+            &association,
+            next,
+            i64::try_from(binding.prefix_count)?,
+            &package.upload_package(),
+            key,
         )
         .await?;
         db::set_meta(&mut tx, "sync_generation", &next.to_string()).await?;

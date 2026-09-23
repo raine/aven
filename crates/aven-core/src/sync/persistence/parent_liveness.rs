@@ -92,6 +92,12 @@ pub(crate) struct ParentState {
     pub protected: bool,
 }
 impl ParentState {
+    /// A reference hint can add protection but cannot establish deletion evidence.
+    pub fn protect_hint(&mut self, deleted: bool, version: Option<&str>) {
+        self.protected |=
+            self.version.is_none() || self.version.as_deref() != version || self.deleted != deleted;
+    }
+
     pub fn apply(&mut self, action: u8, id: &str, deleted: bool, version: Option<&str>) {
         if action == 0 {
             if self.version.is_none() {

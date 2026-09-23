@@ -144,6 +144,11 @@ impl Database {
                     && publication.binding().descriptor_commitment == request.descriptor_commitment,
                 "error bootstrap-publication-conflict"
             );
+            crate::sync::encrypted_tail::attachments::server::initialized(
+                &mut tx,
+                &request.descriptor_commitment,
+            )
+            .await?;
             tx.commit().await?;
             return Ok(outcome);
         }
@@ -173,6 +178,10 @@ impl Database {
                 .await?
                 .concat(),
         )?;
+        ensure!(
+            images.parents.len() <= 262144 && images.references.len() <= 262144,
+            "error encrypted-image-metadata-limit"
+        );
         sqlx::query("INSERT INTO server_bootstrap_publication(singleton, bootstrap, descriptor, signed_record, published_at) VALUES (1, ?, ?, ?, ?)")
             .bind(id.as_slice()).bind(descriptor).bind(request.record).bind(published_at).execute(&mut *tx).await?;
         for (rank, operation) in prefix {
@@ -187,10 +196,25 @@ impl Database {
                 .bind(parent.workspace).bind(parent.task).bind(parent.deleted).bind(parent.protected).bind(parent.version)
                 .execute(&mut *tx).await?;
         }
+        sqlx::query(
+            "INSERT INTO server_e2ee_image_initialization(singleton,descriptor) VALUES(1,?)",
+        )
+        .bind(request.descriptor_commitment.as_slice())
+        .execute(&mut *tx)
+        .await?;
         for image in images.objects {
+            let binding = d.binding();
+            let image_descriptor = crate::sync::encrypted_tail::attachments::codec::Descriptor {
+                vault: binding.vault,
+                stream: binding.stream,
+                generation: binding.generation,
+                object: image.id,
+                artifact: image.artifact.clone(),
+            }
+            .encode()?;
             let bytes: u64 = image.artifact.chunks.iter().map(|c| c.length).sum();
-            sqlx::query("INSERT INTO server_e2ee_images(object, bootstrap, byte_size, unreferenced_at) VALUES (?, ?, ?, ?)")
-                .bind(image.id.as_slice()).bind(id.as_slice()).bind(i64::try_from(bytes)?).bind(published_at).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO server_e2ee_images(object, bootstrap, byte_size, unreferenced_at,descriptor,origin,complete) VALUES (?, ?, ?, ?,?,'bootstrap',1)")
+                .bind(image.id.as_slice()).bind(id.as_slice()).bind(i64::try_from(bytes)?).bind(published_at).bind(image_descriptor).execute(&mut *tx).await?;
             sqlx::query("INSERT INTO server_e2ee_image_chunks(object, chunk_index, bytes) SELECT ?, chunk_index, bytes FROM server_bootstrap_chunks WHERE bootstrap = ? AND component = ?")
                 .bind(image.id.as_slice()).bind(id.as_slice()).bind(Component::Image(image.id).key()).execute(&mut *tx).await?;
             sqlx::query(
@@ -202,6 +226,15 @@ impl Database {
             .await?;
         }
         for reference in images.references {
+            if let Some(object) = reference.object {
+                sqlx::query(
+                    "INSERT OR IGNORE INTO server_e2ee_image_scopes(object,workspace) VALUES(?,?)",
+                )
+                .bind(object.as_slice())
+                .bind(&reference.workspace)
+                .execute(&mut *tx)
+                .await?;
+            }
             sqlx::query("INSERT INTO server_e2ee_image_references(workspace, reference, parent, deleted, object) VALUES (?, ?, ?, ?, ?)")
                 .bind(reference.workspace).bind(reference.reference).bind(reference.task).bind(reference.deleted)
                 .bind(reference.object.map(|id| id.to_vec())).execute(&mut *tx).await?;

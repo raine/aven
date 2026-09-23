@@ -56,9 +56,70 @@ async fn fixture_with_dependency_edit(
     relations: bool,
     dependency_after_capture: bool,
 ) -> Fixture {
+    fixture_with_image_availability(
+        shared,
+        note_after_capture,
+        relations,
+        dependency_after_capture,
+        false,
+    )
+    .await
+}
+async fn fixture_with_image_availability(
+    shared: bool,
+    note_after_capture: Option<bool>,
+    relations: bool,
+    dependency_after_capture: bool,
+    unavailable: bool,
+) -> Fixture {
     let root = tempfile::tempdir().unwrap();
     let (seed, seed_store, authority, _) =
         crate::seed_bootstrap_http::tests::fixture(root.path()).await;
+    if unavailable {
+        let capture = seed
+            .resume_local_shared_state_never_dispatched()
+            .await
+            .unwrap()
+            .unwrap();
+        seed.cancel_local_shared_state_never_dispatched(capture.candidate_id())
+            .await
+            .unwrap();
+        let w = seed.list_workspaces().await.unwrap().remove(0);
+        let task: aven_core::ids::TaskId =
+            sqlx::query_scalar("SELECT task_id FROM task_attachments")
+                .fetch_one(&mut *aven_core::test_support::acquire(&seed).await.unwrap())
+                .await
+                .unwrap();
+        seed.update_task(
+            &w,
+            &task,
+            TaskUpdate {
+                deleted: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let reference: String = sqlx::query_scalar("SELECT attachment_id FROM task_attachments")
+            .fetch_one(&mut *aven_core::test_support::acquire(&seed).await.unwrap())
+            .await
+            .unwrap();
+        seed.delete_task_attachment(&w, &reference).await.unwrap();
+        for entry in std::fs::read_dir(root.path().join("objects/sha256")).unwrap() {
+            std::fs::remove_file(entry.unwrap().path()).unwrap();
+        }
+        sqlx::query("UPDATE blob_inventory SET available=0")
+            .execute(&mut *aven_core::test_support::acquire(&seed).await.unwrap())
+            .await
+            .unwrap();
+        seed.capture_local_shared_state_never_dispatched(root.path())
+            .await
+            .unwrap();
+        seed_store
+            .package_seed_capture(&seed, root.path(), [9; 32])
+            .await
+            .unwrap();
+    }
     let mut snapshot_note = None;
     if shared || note_after_capture.is_some() || relations {
         let capture = seed
@@ -439,6 +500,7 @@ async fn frozen_restart_lost_ack_and_server_restart_keep_exact_identity() {
             &context,
             &bearer,
             Operation::Append {
+                ticket: None,
                 record: record.clone(),
             },
         )
@@ -463,6 +525,7 @@ async fn frozen_restart_lost_ack_and_server_restart_keep_exact_identity() {
             &context,
             &bearer,
             Operation::Append {
+                ticket: None,
                 record: record.clone(),
             },
         )
@@ -626,6 +689,7 @@ async fn current_auth_prefix_tamper_and_whole_page_rollback() {
                 &wrong,
                 &inputs.bearer,
                 Operation::Append {
+                    ticket: None,
                     record: frozen.clone()
                 }
             )
@@ -638,6 +702,7 @@ async fn current_auth_prefix_tamper_and_whole_page_rollback() {
             &a.context,
             &Secret::new([0; 32]),
             Operation::Append {
+                ticket: None,
                 record: frozen.clone()
             }
         )
@@ -649,6 +714,7 @@ async fn current_auth_prefix_tamper_and_whole_page_rollback() {
             &a.context,
             &inputs.bearer,
             Operation::Append {
+                ticket: None,
                 record: frozen[..20].to_vec()
             }
         )
@@ -669,7 +735,10 @@ async fn current_auth_prefix_tamper_and_whole_page_rollback() {
         .exchange(
             &a.context,
             &inputs.bearer,
-            Operation::Append { record: collision },
+            Operation::Append {
+                ticket: None,
+                record: collision,
+            },
         )
         .await
         .err()
@@ -681,6 +750,7 @@ async fn current_auth_prefix_tamper_and_whole_page_rollback() {
             &a.context,
             &inputs.bearer,
             Operation::Append {
+                ticket: None,
                 record: frozen.clone(),
             },
         )
@@ -759,11 +829,15 @@ async fn process_worker() {
     let root = std::path::PathBuf::from(std::env::var_os("AVEN_TAIL_ROOT").unwrap());
     let db = Database::open(&root.join("peer.sqlite")).await.unwrap();
     let store = isolated_store(db.path(), &root.join("peer-keys"));
-    Client::new(&std::env::var("AVEN_TAIL_ORIGIN").unwrap())
-        .unwrap()
-        .round(&store, &db)
-        .await
-        .unwrap();
+    let client = Client::new(&std::env::var("AVEN_TAIL_ORIGIN").unwrap()).unwrap();
+    if std::env::var_os("AVEN_TAIL_IMAGES").is_some() {
+        client
+            .attachment_round(&store, &db, &root.join("peer-blobs"))
+            .await
+            .unwrap();
+    } else {
+        client.round(&store, &db).await.unwrap();
+    }
 }
 #[tokio::test]
 async fn process_exit_before_dispatch_after_acceptance_and_during_page_commit() {
@@ -992,28 +1066,33 @@ async fn same_id_different_ciphertext_requires_equal_domain_not_identity() {
 }
 
 #[tokio::test]
-async fn attachment_pending_prefix_is_refused_without_partial_task_acceptance() {
+async fn attachment_add_transfer_and_explicit_delete_use_independent_clients() {
     let f = fixture().await;
     converge(&f).await;
     let w = f.peer.list_workspaces().await.unwrap().remove(0);
     let task = f
         .peer
-        .create_task(&w, draft("must remain local"))
+        .create_task(&w, draft("image parent"))
         .await
         .unwrap()
         .task;
-    let bytes = files(&f.root.path().join("objects/sha256")).remove(0);
-    f.peer
+    let mut image_bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(3, 2)
+        .write_to(&mut image_bytes, image::ImageFormat::Png)
+        .unwrap();
+    let bytes = image_bytes.into_inner();
+    let added = f
+        .peer
         .add_task_attachment(
             &w,
             &f.root.path().join("peer-blobs"),
             Default::default(),
             &task.id,
             aven_core::operations::AttachmentAddInput {
-                filename: None,
+                filename: Some("local.png".into()),
                 alt_text: None,
                 declared_media_type: None,
-                bytes,
+                bytes: bytes.clone(),
                 optimization_policy: aven_core::attachments::ImageOptimizationPolicy::Preserve,
                 dedupe_existing: false,
             },
@@ -1021,43 +1100,60 @@ async fn attachment_pending_prefix_is_refused_without_partial_task_acceptance() 
         .await
         .unwrap();
     let c = Client::new(&f.origin).unwrap();
-    assert!(c.round(&f.peer_store, &f.peer).await.is_err());
-    assert_eq!(
-        scalar(&f.server, "SELECT count(*) FROM server_e2ee_tail").await,
-        1
-    );
-    assert_eq!(
-        scalar(&f.peer, "SELECT count(*) FROM local_e2ee_outbox").await,
-        0
+    for round in 0..4 {
+        let result = c
+            .attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+            .await
+            .unwrap();
+        if round == 0 {
+            assert_eq!(result.images, ImageTransfer::Pending);
+        }
+        assert_ne!(result.images, ImageTransfer::Failed);
+        if result.metadata_caught_up {
+            break;
+        }
+    }
+    assert!(
+        c.attachment_round(&f.seed_store, &f.seed, f.root.path())
+            .await
+            .unwrap()
+            .metadata_caught_up
     );
     assert_eq!(
         scalar(
-            &f.peer,
-            "SELECT count(*) FROM changes WHERE server_seq IS NULL"
+            &f.seed,
+            "SELECT count(*) FROM task_attachments WHERE deleted=0"
         )
         .await,
         2
     );
-    assert_eq!(title(&f.peer, task.id.as_str()).await, "must remain local");
-    let remote = f
-        .seed
-        .create_task(&w, draft("read while upload blocked"))
+    assert_eq!(
+        scalar(
+            &f.server,
+            "SELECT count(*) FROM server_e2ee_images WHERE origin IS NOT NULL AND complete=1"
+        )
+        .await,
+        2
+    );
+    f.seed
+        .delete_task_attachment(&w, &added.outcome.attachment.attachment_id)
         .await
-        .unwrap()
-        .task;
-    drain(&c, &f.seed_store, &f.seed).await;
-    assert!(c.pull_only_round(&f.peer_store, &f.peer).await.unwrap());
-    assert_eq!(
-        title(&f.peer, remote.id.as_str()).await,
-        "read while upload blocked"
-    );
+        .unwrap();
+    let result = c
+        .attachment_round(&f.seed_store, &f.seed, f.root.path())
+        .await
+        .unwrap();
+    assert!(result.metadata_caught_up);
+    c.attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+        .await
+        .unwrap();
     assert_eq!(
         scalar(
             &f.peer,
-            "SELECT count(*) FROM changes WHERE server_seq IS NULL"
+            "SELECT count(*) FROM task_attachments WHERE deleted=1"
         )
         .await,
-        2
+        1
     );
 }
 
@@ -1199,7 +1295,10 @@ async fn deletion_conflict_force_and_exact_retry_keep_conservative_parent_protec
         .exchange(
             &inputs.authority.context,
             &inputs.bearer,
-            Operation::Append { record },
+            Operation::Append {
+                ticket: None,
+                record,
+            },
         )
         .await
         .unwrap()
@@ -1467,6 +1566,7 @@ async fn stalled_http_bodies_time_out_and_release_both_admission_permits() {
         .await
         .unwrap();
     let server = Arc::new(Server {
+        image_policy: crate::config::AttachmentLifecycleConfig::default().server_policy(),
         db,
         gate: tokio::sync::Semaphore::new(2),
     });
@@ -1552,6 +1652,7 @@ async fn successful_tail_response_is_not_cacheable() {
         .unwrap();
     let response = handle(
         State(Arc::new(Server {
+            image_policy: crate::config::AttachmentLifecycleConfig::default().server_policy(),
             db: f.server.clone(),
             gate: tokio::sync::Semaphore::new(2),
         })),
@@ -1824,6 +1925,7 @@ async fn checkpoint_observed_mapping_and_stale_page_contradictions() {
             &a.context,
             &inputs.bearer,
             Operation::Append {
+                ticket: None,
                 record: record.clone(),
             },
         )
@@ -2160,7 +2262,14 @@ async fn checkpoint_note_pending_edit_survives_frozen_acceptance_and_restart() {
             record
         );
         let Reply::Appended(mapping) = client
-            .exchange(&a.context, &inputs.bearer, Operation::Append { record })
+            .exchange(
+                &a.context,
+                &inputs.bearer,
+                Operation::Append {
+                    ticket: None,
+                    record,
+                },
+            )
             .await
             .unwrap()
         else {
@@ -2572,3 +2681,5 @@ mod relations;
 
 mod dependencies;
 mod metadata_limits;
+
+mod attachments;

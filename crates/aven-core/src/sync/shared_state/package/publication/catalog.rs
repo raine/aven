@@ -19,7 +19,7 @@ pub(crate) struct Chunk {
 }
 
 impl Artifact {
-    pub(super) fn from_encrypted(artifact: &EncryptedArtifact) -> Result<Self> {
+    pub(crate) fn from_encrypted(artifact: &EncryptedArtifact) -> Result<Self> {
         let chunks = artifact
             .chunks
             .iter()
@@ -66,7 +66,7 @@ impl Artifact {
         }
         Ok(())
     }
-    pub(super) fn read(r: &mut Reader<'_>, maximum: u64, image: bool) -> Result<Self> {
+    pub(crate) fn read(r: &mut Reader<'_>, maximum: u64, image: bool) -> Result<Self> {
         let total = r.u64()?;
         bound(total, maximum)?;
         let aggregate = r.array()?;
@@ -136,7 +136,7 @@ impl Artifact {
         .map_err(|_| Error::Invalid)?;
         valid(nonce == chunk.nonce)
     }
-    pub(super) fn encrypted(&self, records: &[Vec<u8>]) -> EncryptedArtifact {
+    pub(crate) fn encrypted(&self, records: &[Vec<u8>]) -> EncryptedArtifact {
         EncryptedArtifact {
             total_plaintext_bytes: self.total,
             aggregate_commitment: self.aggregate,

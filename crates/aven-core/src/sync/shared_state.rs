@@ -10,7 +10,7 @@ use crate::db::{self, Database};
 use anyhow::{Context, Result, ensure};
 
 pub mod adoption;
-mod package;
+pub(crate) mod package;
 mod peer_install;
 
 pub use package::publication as bootstrap_format;

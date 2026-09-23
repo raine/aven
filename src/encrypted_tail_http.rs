@@ -18,6 +18,8 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+mod images;
+pub use images::{AttachmentRound, ImageTransfer};
 const PATH: &str = "/e2ee/tail/v1";
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 #[derive(Serialize, Deserialize)]
@@ -30,13 +32,25 @@ struct Envelope<T> {
 struct Server {
     db: Database,
     gate: tokio::sync::Semaphore,
+    image_policy: aven_core::attachments::LifecyclePolicy,
 }
 pub fn router(db: Database) -> Router {
+    router_with_policy(
+        db,
+        crate::config::AttachmentLifecycleConfig::default().server_policy(),
+    )
+}
+pub fn router_with_policy(
+    db: Database,
+    image_policy: aven_core::attachments::LifecyclePolicy,
+) -> Router {
     Router::new()
         .route(PATH, post(handle))
+        .route(images::PATH, post(images::handle))
         .with_state(Arc::new(Server {
             db,
             gate: tokio::sync::Semaphore::new(2),
+            image_policy,
         }))
 }
 async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response {
@@ -144,6 +158,27 @@ impl Client {
         } else {
             tail::CONTROL_LIMIT
         };
+        self.exchange_to(
+            PATH,
+            context,
+            bearer,
+            operation,
+            request_limit,
+            response_limit,
+        )
+        .await
+    }
+    async fn exchange_to<O: Serialize, R: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        context: &Context,
+        bearer: &Secret,
+        operation: O,
+        request_limit: usize,
+        response_limit: usize,
+    ) -> Result<R> {
+        let mut endpoint = self.transport.endpoint.clone();
+        endpoint.set_path(path);
         let mut correlation = [0; 32];
         getrandom::fill(&mut correlation)
             .map_err(|_| anyhow::anyhow!("error encrypted-tail-entropy"))?;
@@ -161,7 +196,7 @@ impl Client {
         let mut response = self
             .transport
             .http
-            .post(self.transport.endpoint.clone())
+            .post(endpoint)
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::AUTHORIZATION, authorization)
             .body(bytes)
@@ -210,7 +245,7 @@ impl Client {
             );
             bytes.extend(chunk);
         }
-        let response: Envelope<Reply> = serde_json::from_slice(&bytes)
+        let response: Envelope<R> = serde_json::from_slice(&bytes)
             .map_err(|_| anyhow::anyhow!("error encrypted-tail-http"))?;
         ensure!(
             response.context == *context && response.correlation == correlation,
@@ -218,13 +253,25 @@ impl Client {
         );
         Ok(response.operation)
     }
-    /// Bounded internal round. False means more work, never cursor-only success.
+    /// True means the remote watermark is caught up and local metadata is idle.
+    /// Image availability is reported separately by `attachment_round`.
     pub async fn round(&self, store: &ProtectedLocalKeyStore, db: &Database) -> Result<bool> {
         let inputs = store.tail_inputs(db, &self.locator).await?;
         let a = &inputs.authority;
+        self.push(a, &inputs.bearer, db, None).await?;
+        let caught_up = self.pull(a, &inputs.bearer, db).await?;
+        Ok(caught_up && db.encrypted_tail_idle(a).await?)
+    }
+    async fn push(
+        &self,
+        a: &tail::Authority,
+        bearer: &Secret,
+        db: &Database,
+        ticket: Option<tail::attachments::Ticket>,
+    ) -> Result<()> {
         if let Some(record) = db.prepare_encrypted_tail(a).await? {
             let Reply::Appended(mapping) = self
-                .exchange(&a.context, &inputs.bearer, Operation::Append { record })
+                .exchange(&a.context, bearer, Operation::Append { ticket, record })
                 .await?
             else {
                 anyhow::bail!("error encrypted-tail-reply")
@@ -244,7 +291,7 @@ impl Client {
                 let Reply::Found(record) = self
                     .exchange(
                         &a.context,
-                        &inputs.bearer,
+                        bearer,
                         Operation::Lookup {
                             operation_id: mapping.operation_id.clone(),
                             expected: Some(mapping.clone()),
@@ -259,8 +306,7 @@ impl Client {
             };
             db.verify_encrypted_tail_outcome(a, &accepted).await?;
         }
-        let caught_up = self.pull(a, &inputs.bearer, db).await?;
-        Ok(caught_up && db.encrypted_tail_idle(a).await?)
+        Ok(())
     }
     /// Reads one authorized page without preparing uploads. True refers only to
     /// this remote watermark, never to unresolved local work or overall readiness.

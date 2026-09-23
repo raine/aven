@@ -22,6 +22,8 @@ pub(super) fn live_blob_references_sql(sha256_expr: &str) -> String {
          ) OR EXISTS(
            SELECT 1 FROM local_shared_capture_pins pin
            WHERE pin.sha256 = {sha256_expr}
+         ) OR EXISTS(
+           SELECT 1 FROM local_e2ee_image_preparation pin WHERE pin.sha256 = {sha256_expr}
          )"
     )
 }
@@ -182,6 +184,7 @@ pub(super) async fn is_protected(
              SELECT 1 FROM blob_upload_reservations WHERE sha256 = ? AND expires_at > ?
            )"
     )))
+    .bind(sha256)
     .bind(sha256)
     .bind(sha256)
     .bind(sha256)

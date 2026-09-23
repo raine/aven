@@ -8,6 +8,19 @@ use std::{collections::HashSet, fmt};
 #[derive(Clone, PartialEq, Eq)]
 pub(super) enum Projection {
     None,
+    Ref {
+        workspace: String,
+        task: String,
+        reference: String,
+        descriptor: Vec<u8>,
+        deleted: bool,
+        version: Option<String>,
+    },
+    Unref {
+        workspace: String,
+        task: String,
+        reference: String,
+    },
     Parent {
         action: u8,
         workspace: String,
@@ -18,6 +31,41 @@ pub(super) enum Projection {
 }
 impl Projection {
     pub fn encode(&self) -> Vec<u8> {
+        match self {
+            Self::Ref {
+                workspace,
+                task,
+                reference,
+                descriptor,
+                deleted,
+                version,
+            } => {
+                let mut out = vec![2];
+                for text in [workspace, task, reference] {
+                    codec::encode_text(&mut out, text);
+                }
+                out.extend((descriptor.len() as u32).to_be_bytes());
+                out.extend(descriptor);
+                out.push(u8::from(*deleted));
+                out.push(u8::from(version.is_some()));
+                if let Some(v) = version {
+                    codec::encode_text(&mut out, v);
+                }
+                return out;
+            }
+            Self::Unref {
+                workspace,
+                task,
+                reference,
+            } => {
+                let mut out = vec![3];
+                for text in [workspace, task, reference] {
+                    codec::encode_text(&mut out, text);
+                }
+                return out;
+            }
+            _ => {}
+        }
         let Self::Parent {
             action,
             workspace,
@@ -85,6 +133,18 @@ pub(super) fn validate(c: &ChangeWire) -> Result<Projection> {
         }
         "create_project" => &["key", "name", "prefix", "created_at"],
         "create_label" => &["name", "created_at"],
+        "attachment_add" => &[
+            "attachment_id",
+            "sha256",
+            "byte_size",
+            "media_type",
+            "filename",
+            "alt_text",
+            "width",
+            "height",
+            "created_at",
+        ],
+        "attachment_delete" => &["attachment_id", "filename", "media_type", "deleted_at"],
         _ => anyhow::bail!("error encrypted-tail-operation-unsupported"),
     };
     ensure!(
@@ -141,7 +201,45 @@ pub(super) fn validate(c: &ChangeWire) -> Result<Projection> {
             version: c.base_version.clone(),
         });
     }
+    if matches!(c.op_type.as_str(), "attachment_add" | "attachment_delete") {
+        valid(c.field.as_deref() == Some("attachments") && c.base_version.is_none())?;
+    }
+    if c.op_type == "attachment_delete" {
+        return Ok(Projection::Unref {
+            workspace: workspace.into(),
+            task: c.entity_id.clone(),
+            reference: p["attachment_id"]
+                .as_str()
+                .context("error encrypted-image-reference")?
+                .into(),
+        });
+    }
     Ok(Projection::None)
+}
+
+pub(super) fn validate_projection(c: &ChangeWire, projection: &Projection) -> Result<()> {
+    let expected = validate(c)?;
+    if c.op_type == "attachment_add" {
+        let Projection::Ref {
+            workspace,
+            task,
+            reference,
+            descriptor,
+            ..
+        } = projection
+        else {
+            anyhow::bail!("error encrypted-image-projection")
+        };
+        let d = super::attachments::codec::Descriptor::decode(descriptor)?;
+        valid(
+            c.payload["workspace_id"].as_str() == Some(workspace)
+                && c.entity_id == *task
+                && c.payload["attachment_id"].as_str() == Some(reference)
+                && c.payload["byte_size"].as_u64() == Some(d.artifact.total),
+        )
+    } else {
+        valid(expected == *projection)
+    }
 }
 
 pub(super) async fn validate_state(

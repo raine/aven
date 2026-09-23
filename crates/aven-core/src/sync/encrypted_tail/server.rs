@@ -52,7 +52,7 @@ impl Database {
         let (n,high):(i64,i64)=sqlx::query_as("SELECT prefix_count,high_water FROM server_e2ee_allocator WHERE singleton=1 AND stream=?").bind(context.stream.as_slice()).fetch_one(&mut *tx).await?;
         valid(n == i64::try_from(binding.prefix_count)?)?;
         let reply = match op {
-            Operation::Append { record } => {
+            Operation::Append { record, ticket } => {
                 let e = codec::parse(&record)?;
                 valid(e.vault == context.vault && e.stream == context.stream)?;
                 ensure!(
@@ -63,6 +63,12 @@ impl Database {
                     Reply::Appended(old.mapping)
                 } else {
                     valid(e.generation == current.genesis.context().generation_id)?;
+                    if let domain::Projection::Ref { descriptor, .. } = &e.projection {
+                        valid(
+                            super::attachments::codec::Descriptor::decode(descriptor)?.generation
+                                == e.generation,
+                        )?;
+                    }
                     let sequence = high
                         .checked_add(1)
                         .context("error encrypted-tail-sequence-exhausted")?;
@@ -73,6 +79,14 @@ impl Database {
                     };
                     sqlx::query("INSERT INTO server_e2ee_tail(operation_id,sequence,commitment,record) VALUES(?,?,?,?)")
                         .bind(&e.id).bind(sequence).bind(mapping.commitment.as_slice()).bind(&record).execute(&mut *tx).await?;
+                    super::attachments::server::admit(
+                        &mut tx,
+                        context,
+                        &e.id,
+                        &e.projection,
+                        ticket.as_ref(),
+                    )
+                    .await?;
                     apply_parent(&mut tx, &e.id, &e.projection).await?;
                     sqlx::query("UPDATE server_e2ee_allocator SET high_water=? WHERE singleton=1")
                         .bind(sequence)
@@ -161,6 +175,12 @@ async fn apply_parent(conn: &mut SqliteConnection, id: &str, p: &domain::Project
         return Ok(());
     };
     let existing:Option<(Option<String>,bool,bool)>=sqlx::query_as("SELECT version,deleted,protected FROM server_e2ee_image_parents WHERE workspace=? AND parent=?").bind(workspace).bind(task).fetch_optional(&mut *conn).await?;
+    if existing.is_none() {
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM server_e2ee_image_parents")
+            .fetch_one(&mut *conn)
+            .await?;
+        valid(count < 262144)?;
+    }
     let mut state = existing
         .map(|(version, deleted, protected)| ParentState {
             version,
@@ -171,7 +191,6 @@ async fn apply_parent(conn: &mut SqliteConnection, id: &str, p: &domain::Project
     state.apply(*action, id, *deleted, version.as_deref());
     sqlx::query("INSERT INTO server_e2ee_image_parents(workspace,parent,version,deleted,protected) VALUES(?,?,?,?,?) ON CONFLICT(workspace,parent) DO UPDATE SET version=excluded.version,deleted=excluded.deleted,protected=excluded.protected")
         .bind(workspace).bind(task).bind(state.version).bind(state.deleted).bind(state.protected).execute(&mut *conn).await?;
-    sqlx::query("UPDATE server_e2ee_images SET unreferenced_at=CASE WHEN EXISTS(SELECT 1 FROM server_e2ee_image_references r JOIN server_e2ee_image_parents p ON p.workspace=r.workspace AND p.parent=r.parent WHERE r.object=server_e2ee_images.object AND r.deleted=0 AND (p.deleted=0 OR p.protected=1 OR p.version IS NULL)) THEN NULL ELSE COALESCE(unreferenced_at,unixepoch()) END WHERE object IN (SELECT object FROM server_e2ee_image_references WHERE workspace=? AND parent=?)")
-        .bind(workspace).bind(task).execute(conn).await?;
+    super::attachments::server::refresh(conn, chrono::Utc::now().timestamp()).await?;
     Ok(())
 }

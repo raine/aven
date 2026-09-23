@@ -186,6 +186,15 @@ impl Database {
             &capture.snapshot.tables.task_dependencies,
         )
         .await?;
+        crate::sync::encrypted_tail::attachments::client::initialize(
+            &mut tx,
+            &association,
+            generation,
+            i64::try_from(binding.prefix_count)?,
+            package,
+            verified.key(),
+        )
+        .await?;
         db::set_meta(&mut tx, "sync_generation", &generation.to_string()).await?;
         db::set_meta(&mut tx, "sync_cursor", &binding.prefix_count.to_string()).await?;
         db::set_meta(&mut tx, "e2ee_association", &association).await?;
@@ -238,6 +247,13 @@ async fn receipt(
         conn,
         &association(verified),
         i64::try_from(b.prefix_count)?,
+    )
+    .await?;
+    crate::sync::encrypted_tail::attachments::client::validate(
+        conn,
+        &association(verified),
+        i64::try_from(b.prefix_count)?,
+        &b.descriptor_commitment,
     )
     .await?;
     Ok(Some(SharedStateInstallReport {

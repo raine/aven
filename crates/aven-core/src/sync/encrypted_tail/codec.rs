@@ -42,7 +42,7 @@ pub(super) struct Envelope<'a> {
 pub(super) fn parse(record: &[u8]) -> Result<Envelope<'_>> {
     valid(record.len() <= RECORD_LIMIT)?;
     let mut r = Reader(record);
-    let header = r.blob(1232)?;
+    let header = r.blob(4544)?;
     let body = r.blob(131072 + 16)?;
     valid(r.0.is_empty() && body.len() >= 16)?;
     let mut r = Reader(header);
@@ -54,7 +54,7 @@ pub(super) fn parse(record: &[u8]) -> Result<Envelope<'_>> {
     let id = std::str::from_utf8(r.blob(256)?)?.to_owned();
     valid(!id.is_empty())?;
     valid(r.array::<4>()? == 18u32.to_be_bytes())?;
-    let projection = Projection::decode(r.blob(784)?)?;
+    let projection = Projection::decode(r.blob(4096)?)?;
     let nonce = r.blob(24)?.try_into()?;
     valid(r.0.is_empty())?;
     Ok(Envelope {
@@ -82,8 +82,17 @@ fn key(a: &Authority) -> Zeroizing<[u8; 32]> {
         .expect("fixed HKDF length");
     result
 }
+#[cfg(test)]
 pub(super) fn seal(a: &Authority, change: &ChangeWire) -> Result<Vec<u8>> {
     let projection = domain::validate(change)?;
+    seal_projection(a, change, &projection)
+}
+pub(super) fn seal_projection(
+    a: &Authority,
+    change: &ChangeWire,
+    projection: &Projection,
+) -> Result<Vec<u8>> {
+    domain::validate_projection(change, projection)?;
     let plain = Zeroizing::new(serde_json::to_vec(change)?);
     valid(plain.len() <= 131072)?;
     let mut random = [0; 56];
@@ -137,7 +146,12 @@ pub(super) fn open(a: &Authority, record: &[u8]) -> Result<ChangeWire> {
             .map_err(|_| anyhow::anyhow!("error encrypted-tail-authentication"))?,
     );
     let change = domain::decode(&plain)?;
-    valid(change.change_id == e.id && domain::validate(&change)? == e.projection)?;
+    valid(change.change_id == e.id)?;
+    domain::validate_projection(&change, &e.projection)?;
+    if let Projection::Ref { descriptor, .. } = &e.projection {
+        let d = super::attachments::codec::Descriptor::decode(descriptor)?;
+        valid(d.vault == e.vault && d.stream == e.stream && d.generation == a.generation)?;
+    }
     Ok(change)
 }
 pub(super) fn encode_text(out: &mut Vec<u8>, s: &str) {
@@ -171,6 +185,45 @@ pub(super) fn decode_projection(input: &[u8]) -> Result<Projection> {
                 task,
                 deleted: deleted == 1,
                 version,
+            }
+        }
+        kind @ (2 | 3) => {
+            let mut text = || -> Result<String> {
+                let s = std::str::from_utf8(r.blob(256)?)?.to_owned();
+                valid(!s.is_empty())?;
+                Ok(s)
+            };
+            let workspace = text()?;
+            let task = text()?;
+            let reference = text()?;
+            if kind == 3 {
+                Projection::Unref {
+                    workspace,
+                    task,
+                    reference,
+                }
+            } else {
+                let descriptor = r.blob(1984)?.to_vec();
+                super::attachments::codec::Descriptor::decode(&descriptor)?;
+                let deleted = r.take(1)?[0];
+                valid(deleted <= 1)?;
+                let version = match r.take(1)?[0] {
+                    0 => None,
+                    1 => {
+                        let s = std::str::from_utf8(r.blob(256)?)?.to_owned();
+                        valid(!s.is_empty())?;
+                        Some(s)
+                    }
+                    _ => anyhow::bail!("error encrypted-image-hint"),
+                };
+                Projection::Ref {
+                    workspace,
+                    task,
+                    reference,
+                    descriptor,
+                    deleted: deleted == 1,
+                    version,
+                }
             }
         }
         _ => anyhow::bail!("error encrypted-tail-projection"),

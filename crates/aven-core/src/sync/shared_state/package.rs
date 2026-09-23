@@ -274,16 +274,16 @@ impl DecryptedLocalSharedStateImage {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct EncryptedArtifact {
+pub(crate) struct EncryptedArtifact {
     total_plaintext_bytes: u64,
     aggregate_commitment: [u8; 32],
-    chunks: Vec<EncryptedChunk>,
+    pub(crate) chunks: Vec<EncryptedChunk>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct EncryptedChunk {
+pub(crate) struct EncryptedChunk {
     record_commitment: [u8; 32],
-    record: Vec<u8>,
+    pub(crate) record: Vec<u8>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -584,7 +584,7 @@ fn derive_bootstrap_class_key(
     Ok(Zeroizing::new(output))
 }
 
-fn derive_image_key(
+pub(crate) fn derive_image_key(
     key: &LocalSharedStatePackageKey,
     context: LocalSharedStatePackageContext,
     object_id: [u8; 32],
@@ -610,7 +610,7 @@ fn cce(label: &[u8], fields: &[&[u8]]) -> Result<Vec<u8>> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn encrypt_artifact(
+pub(crate) fn encrypt_artifact(
     plaintext: &[u8],
     context: LocalSharedStatePackageContext,
     stream_id: [u8; 32],
@@ -676,7 +676,7 @@ fn encrypt_artifact(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn decrypt_artifact(
+pub(crate) fn decrypt_artifact(
     artifact: &EncryptedArtifact,
     context: LocalSharedStatePackageContext,
     stream_id: [u8; 32],
@@ -762,7 +762,7 @@ fn expected_chunk_plaintext_len(index: usize, count: usize, total: usize) -> Res
 }
 
 #[allow(clippy::too_many_arguments)]
-fn chunk_header(
+pub(crate) fn chunk_header(
     context: LocalSharedStatePackageContext,
     stream_id: [u8; 32],
     artifact_id: [u8; 32],

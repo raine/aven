@@ -1,4 +1,5 @@
 //! Internal ordinary encrypted task stream. Membership remains chain-owned.
+pub mod attachments;
 mod client;
 mod codec;
 pub(crate) mod dependencies;
@@ -12,9 +13,9 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub const RECORD_LIMIT: usize = 132328;
+pub const RECORD_LIMIT: usize = 135640;
 pub const CONTROL_LIMIT: usize = 16384;
-pub const APPEND_LIMIT: usize = 545696;
+pub const APPEND_LIMIT: usize = 558944;
 pub const RESPONSE_LIMIT: usize = 4259840;
 pub const PAGE_BYTES: usize = 1048576;
 pub const PAGE_COUNT: usize = 16;
@@ -71,6 +72,7 @@ pub struct Accepted {
 #[serde(deny_unknown_fields)]
 pub enum Operation {
     Append {
+        ticket: Option<attachments::Ticket>,
         record: Vec<u8>,
     },
     Lookup {

@@ -259,6 +259,7 @@ async fn dependencies_preserve_undo_and_later_intent_through_acceptance_reopen_a
                     &a.context,
                     &inputs.bearer,
                     Operation::Append {
+                        ticket: None,
                         record: record.clone(),
                     },
                 )

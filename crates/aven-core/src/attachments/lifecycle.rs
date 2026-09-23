@@ -18,7 +18,7 @@ pub const DEFAULT_LOCAL_GRACE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 pub const DEFAULT_ORIGINAL_QUOTA_BYTES: i64 = 10 * 1024 * 1024 * 1024;
 pub const DEFAULT_PREVIEW_QUOTA_BYTES: u64 = 512 * 1024 * 1024;
 pub const DEFAULT_MAINTENANCE_LIMIT: usize = 128;
-const LEASE_TTL: Duration = Duration::from_secs(10 * 60);
+pub(crate) const LEASE_TTL: Duration = Duration::from_secs(10 * 60);
 
 pub trait Clock: Send + Sync {
     fn now(&self) -> DateTime<Utc>;

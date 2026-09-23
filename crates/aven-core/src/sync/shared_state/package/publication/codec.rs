@@ -52,7 +52,7 @@ pub(super) fn text(out: &mut Vec<u8>, value: &str) -> Result<()> {
     bytes(out, value.as_bytes())
 }
 
-pub(super) struct Reader<'a>(pub &'a [u8]);
+pub(crate) struct Reader<'a>(pub &'a [u8]);
 
 impl<'a> Reader<'a> {
     pub fn take(&mut self, n: usize) -> Result<&'a [u8]> {

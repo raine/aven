@@ -57,8 +57,8 @@
 //! in-memory codec has bounded multiple-copy overhead and is not a streaming
 //! installer or a measured mobile resource profile.
 
-mod catalog;
-mod codec;
+pub(crate) mod catalog;
+pub(crate) mod codec;
 mod domain;
 
 /// Version of the encrypted AVBD domain, independent of plaintext sync/export.
@@ -635,3 +635,37 @@ pub fn validate_against_capture(
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) struct AttachmentIndex {
+    pub context: crypto::LocalSharedStatePackageContext,
+    pub stream: [u8; 32],
+    pub objects: Vec<(catalog::Image, String)>,
+    pub references: Vec<catalog::Reference>,
+}
+
+/// The caller receives mappings only after complete public/private authentication.
+pub(crate) fn attachment_index(
+    package: &Package,
+    key: &LocalSharedStatePackageKey,
+) -> anyhow::Result<AttachmentIndex> {
+    let (_, mappings) = decrypt_domain_images(package, key, |_, _| {})?;
+    let descriptor = Descriptor::decode(&package.descriptor)?;
+    let images = Images::decode(&package.catalogs[2])?;
+    let objects = images
+        .objects
+        .into_iter()
+        .map(|image| {
+            let mapping = mappings
+                .iter()
+                .find(|m| m.object == Some(image.id))
+                .ok_or(Error::Invalid)?;
+            Ok((image, mapping.sha256.clone()))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(AttachmentIndex {
+        context: descriptor.context(),
+        stream: descriptor.stream,
+        objects,
+        references: images.references,
+    })
+}

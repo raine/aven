@@ -5,7 +5,7 @@ use anyhow::Context as _;
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashSet;
 
-async fn validate_binding_and_cursor(
+pub(super) async fn validate_binding_and_cursor(
     conn: &mut SqliteConnection,
     authority: &Authority,
 ) -> Result<i64> {
@@ -24,6 +24,13 @@ async fn validate_binding_and_cursor(
         .parse::<i64>()?;
     valid(cursor >= authority.prefix)?;
     super::dependencies::validate(conn, &authority.association, authority.prefix).await?;
+    super::attachments::client::validate(
+        conn,
+        &authority.association,
+        authority.prefix,
+        &authority.context.descriptor,
+    )
+    .await?;
     Ok(cursor)
 }
 
@@ -246,7 +253,8 @@ impl Database {
             }
         }
         let record = if let Some(change) = first_pending {
-            let record = codec::seal(authority, &change)?;
+            let projection = super::attachments::client::projection(&mut tx, &change).await?;
+            let record = codec::seal_projection(authority, &change, &projection)?;
             // Check the full decoder contract before committing dispatch authority.
             require_canonical_equality(&change, &codec::open(authority, &record)?)?;
             sqlx::query(
@@ -364,6 +372,7 @@ impl Database {
         if let Some(workspace) = super::dependencies::affected_workspace(&change)? {
             super::dependencies::reconcile(&mut tx, authority.prefix, workspace).await?;
         }
+        super::attachments::client::accept(&mut tx, accepted, &change).await?;
         record_acceptance_and_clear_outbox(&mut tx, accepted).await?;
         tx.commit().await?;
         Ok(())
@@ -448,6 +457,7 @@ impl Database {
             }
             super::notes::reconcile(&mut tx, authority.prefix, &change).await?;
             super::labels::reconcile(&mut tx, authority.prefix, &change).await?;
+            super::attachments::client::accept(&mut tx, accepted, &change).await?;
             record_acceptance_and_clear_outbox(&mut tx, accepted).await?;
         }
         for workspace in dependency_workspaces {

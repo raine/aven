@@ -145,6 +145,7 @@ async fn labels_preserve_undo_and_later_intent_through_acceptance_reopen_and_pag
                     &a.context,
                     &inputs.bearer,
                     Operation::Append {
+                        ticket: None,
                         record: record.clone(),
                     },
                 )

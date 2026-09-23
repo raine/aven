@@ -283,8 +283,9 @@ chain resolver with the exact expected head, stream and published descriptor.
 Task create/edit/delete/restore, notes, labels, metadata, dependencies, related
 links and epics reuse existing domain apply/conflict and ordering reconciliation.
 Project/label creation prerequisites are supported. The closed subset rejects
-recurrence aggregates, occurrence-task mutations, new attachment operations and
-other administrative operations. Pending work is preflighted before freezing;
+recurrence aggregates, occurrence-task mutations and other administrative
+operations. Attachment mutations use authenticated Ref/Unref and a separate
+bounded image transfer entry with an explicit local blob directory. Pending work is preflighted before freezing;
 unsupported compound work blocks rather than uploading only its supported parts.
 Preflight is capped at 4096 rows/16 MiB. Those limits and the fixed two-device
 membership implementation are internal refusal boundaries, not product policy.
@@ -333,8 +334,8 @@ Authenticated None/Parent projections carry only minimal parent-retention inputs
 bootstrap projection and encrypted admission. Captured parent state is the tail
 baseline. The keyless server reduces Parent exactly once on new acceptance,
 atomically with allocation and affected image grace timestamps. Retries do not
-repeat it; force resolution never clears sticky protection. No new reference
-lifecycle, image pruner or snapshot rewrite is present.
+repeat it; force resolution never clears sticky protection. Ref/Unref admission shares this reducer and its grace predicate. Snapshot bytes
+are never rewritten.
 
 Run `cargo test --lib 'encrypted_tail_http::tests::'` for the real seed publication,
 independent enrollment/install and bidirectional task harness. It includes exact
@@ -343,6 +344,62 @@ page rollback and explicit refusal tests. Controlled same-ID fixtures exercise
 canonical verification, not deterministic recurrence convergence. That recurrence
 release gate, rotation, recovery, shipping setup, UI, iOS and the comprehensive
 integration/simplification review remain separate work.
+
+### Internal encrypted attachment transfer
+
+`sync/encrypted_tail/attachments/{codec,client,server}.rs` owns immutable image
+recipes, local preparation and verified installation, and keyless server object
+admission. It reuses the image chunks and generation/object key derivation in
+`shared_state/package.rs` and the publication Artifact codec. Plaintext hashes
+remain in local CAS and encrypted domain content, never server descriptors.
+
+Fresh publication initializes descriptor/provenance ownership on existing opaque
+image tables; adoption and peer installation initialize association-scoped local
+mappings, including explicitly unmapped unavailable references. Exact retries
+validate initialization. Missing initialization in older bound development DBs
+refuses transfer without backfill, reinstallation or deleting domain data.
+The dependency baseline remains a separate local association-lifetime owner.
+
+Preparation pins source plaintext and immutable history and freezes exact image
+and operation records before dispatch. Saved-nonce reconstruction hashes an owned
+source buffer before encryption and verifies all frozen commitments before use.
+Accepted representation comparison remains independent of canonical domain
+comparison. Verified outcomes adopt the accepted mapping, never the abandoned
+prepared one. Insert-once references retain deletion tombstones; task undo uses
+existing local-history fences or task deletion, not reference resurrection.
+
+The server stores opaque chunk bytes in SQLite, not plaintext CAS files. Scoped
+current-membership authorization, immutable descriptors, storage epochs and
+caller-owned expiring reservation tickets guard PUT, completion and Ref admission.
+Ref requires verified complete bytes and live same-workspace reuse or a valid
+capacity promise. Accepted operation retries bypass new storage admission even
+after Unref or pruning. Hints can only add sticky parent protection. Shared-object
+quota counts distinct protected objects plus nonduplicated reservations;
+restoration/protection may exceed quota without losing existing promises.
+Bounded transactional pruning deletes chunk rows, advances the storage epoch and
+retains descriptors/provenance/reference tombstones. Published image catalogs are
+not permanent image-byte pins. SQLite/WAL physical size is not logical quota.
+
+`src/encrypted_tail_http/images.rs` supplies isolated `/e2ee/images/v1` transport
+and `Client::attachment_round`. Each call handles one metadata round and at most
+one image per direction. The caller supplies the local blob directory; results
+separate metadata completion from pending, failed or unavailable images.
+`Client::round` still reports remote-watermark completion AND local metadata idle,
+not image availability. Download failure never rolls back committed metadata.
+Full decoder facts, hash, length, AEAD and frozen commitments precede availability.
+Local downloads retain existing local capacity policy; the internal adapter uses
+its defaults. `router_with_policy` accepts operator-owned server policy, with the
+ordinary server's 30-day/10 GiB defaults, not local seven-day grace. Tickets reuse
+the ordinary ten-minute TTL, not bootstrap's 24-hour staging reservation.
+
+Targeted `Client::repair_attachment` reconstructs only a known authenticated
+mapping and obtains protection before uploading exact bytes. Automatic repair
+scans, background scheduling, disk-backed ciphertext, rotation, additional devices,
+recovery and shipping CLI/mobile integration remain outside this path.
+
+Focused tests: `cargo test --lib 'encrypted_tail_http::tests::attachments::'`,
+`cargo test -p aven-core --lib 'sync::encrypted_tail::attachments::'`, the existing
+tail/bootstrap/install suites, and plaintext attachment lifecycle regressions.
 
 ### Bootstrap publication format and local package ownership
 
@@ -478,7 +535,8 @@ ordinary reference/parent ownership in `server_e2ee_images`,
 start grace at publication; contested or unknown parents retain protection even
 when their objects are selected extras. Metadata-only unmapped references create
 no byte obligation. Workspace usage is distinct protected ciphertext objects,
-not snapshot roots or grace bytes. No broad opaque-image GC is implemented.
+not snapshot roots or grace bytes. Bounded opaque-image pruning belongs to `encrypted_tail/attachments`, never
+the legacy plaintext blob maintenance path.
 Staging ensure, PUT and reclamation cannot mutate published data.
 
 Core tests exercise actual crypto and SQLite, including independent pools,
