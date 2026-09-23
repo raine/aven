@@ -634,9 +634,10 @@ transition and worst-case record budget.
 original enrollment validation at its historical predecessor. Genesis/publication
 bytes and bootstrap identity remain unchanged. These pure APIs establish signed
 intent and key coverage, not server commit, protected storage or runtime readiness.
-The live persistence engine admits only AddDevice, and protected refresh refuses
-pending or multi-generation state. Runtime removal and rotation require coupled
-server authorization, protected key-history and ordinary outbox/image integration.
+The server journal admits AddDevice, Revoke and Rotate. Protected refresh still
+refuses pending or multi-generation state. End-to-end removal requires protected
+key-history and ordinary outbox/image cutover integration. Server acceptance is
+not host readiness.
 
 ### Transactional repeatable membership
 
@@ -645,17 +646,29 @@ handle-keyed invitation/request/outcome storage and the vault clock high-water.
 Each operation replays signed predecessors before authenticating the current
 credential. Only the evidence read permits a verified ancestor request context;
 admission and exact historical outcome retries require the current head.
-Admission, invitation outcome and head commit together without changing content
-allocation or image ownership. Unsupported old invitation stores refuse without
-conversion or domain deletion. SQLite invitation indexes are projections, not
+A single transition journal and head commit with invitation outcomes. Revoke
+atomically denies removed credentials, terminally expires their unused invitations
+and deletes their image tickets; Rotate requires the exact unchanged allocator H.
+Management preparation returns authenticated bounded evidence and H. Historical
+outcomes require current authentication, while surviving public enrollment
+mailboxes retain only their immutable original grant after inviter removal.
+Unsupported admission-only stores refuse without conversion or domain deletion.
+The tail resolves accepted IDs before freeze/generation rules; new operations
+require unfrozen current generation. All image mutations, including release and
+prune, are frozen while rotation is pending. Historical object access/repair/reuse
+requires an exact descriptor with bootstrap or accepted-tail provenance; complete
+never-admitted old-generation uploads do not qualify. SQLite invitation indexes are projections, not
 positive authority. Protected ownership and transport select the runtime owner;
 the persistence API itself does not establish host readiness.
 
 Focused tests: `cargo test -p aven-core --lib 'sync::seed_claim::membership::persistence::tests::'`.
-They include independent-pool admission races, SQL write faults, same-recipient
+They include independent-pool admission/management races, SQL write faults, same-recipient
 successor preparation, repeated peer invitation, retained expiry and clock
 rollback, and invitation/evidence bounds. These are not HTTP or protected-store
-power-loss evidence.
+power-loss evidence. Content and image cutover/race tests live under
+`encrypted_tail/server/rotation_tests.rs`; run `cargo test -p aven-core --lib
+'sync::encrypted_tail::'`. The isolated enrollment HTTP adapter exposes management
+preparation/application, but the host has no management dispatcher.
 
 ### Protected enrollment, checkpoints and refresh
 

@@ -227,7 +227,7 @@ async fn admission_writes_are_atomic_and_missing_history_never_authorizes() {
     let (d, peer, raw) = prepare(Device::seed(&f.seed), &m, &f, 3700);
     register(&f, &a, &d, &peer).await;
     for (table, action) in [
-        ("server_membership_admissions", "INSERT"),
+        ("server_membership_transitions", "INSERT"),
         ("server_membership_invitations", "UPDATE"),
         ("server_e2ee_membership_head", "UPDATE"),
     ] {
@@ -266,7 +266,7 @@ async fn admission_writes_are_atomic_and_missing_history_never_authorizes() {
     f.db.admit_membership_device_at(&a, d.handle(), &raw, 100)
         .await
         .unwrap();
-    sqlx::query("DELETE FROM server_membership_admissions")
+    sqlx::query("DELETE FROM server_membership_transitions")
         .execute(&mut *f.db.acquire_writer().await.unwrap())
         .await
         .unwrap();
@@ -528,3 +528,5 @@ async fn occupied_invalid_request_and_signed_history_corruption_fail_closed() {
             .is_err()
     );
 }
+
+mod rotation;

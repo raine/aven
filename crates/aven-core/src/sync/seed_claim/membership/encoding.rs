@@ -20,15 +20,15 @@ pub(super) fn components(raw: &[u8]) -> Result<Components<'_>> {
     r.end()?;
     Ok(parts)
 }
-pub(super) fn action(core: &[u8]) -> Result<u8> {
+pub(super) fn signer_action(core: &[u8]) -> Result<(Hash, u8)> {
     let mut r = Reader(core);
     check(r.take(1)? == [1])?;
     r.blob(32)?;
     r.take(8)?;
     r.blob(32)?;
     check(r.take(1)? == [1])?;
-    r.blob(32)?;
-    Ok(r.take(1)?[0])
+    let signer = r.blob(32)?.try_into()?;
+    Ok((signer, r.take(1)?[0]))
 }
 pub(super) fn state(m: &Membership) -> Vec<u8> {
     let mut out = b"AVGS\0\x05\x01".to_vec();

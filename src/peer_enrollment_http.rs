@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 const PATH: &str = "/e2ee/enrollment/v1";
-const CONTROL_LIMIT: usize = 4 * peer::CONTROL_LIMIT + 4096;
+const CONTROL_LIMIT: usize = 4 * membership::MAX_RECORD_BYTES + 4096;
 const PUBLISHED_RESPONSE_LIMIT: usize = 4 * (1_048_576 + 222) + 4096;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -78,6 +78,13 @@ enum Operation {
     Membership {
         context: Context,
     },
+    PrepareManagement {
+        context: Context,
+    },
+    Manage {
+        context: Context,
+        record: Vec<u8>,
+    },
     Published {
         context: Context,
         descriptor: [u8; 32],
@@ -93,6 +100,8 @@ enum Reply {
     Mailbox(Mailbox),
     Admitted(Vec<u8>),
     Membership(Evidence),
+    PreparedManagement(membership::ManagementPreparation),
+    Managed(Vec<u8>),
     Published(Vec<u8>),
 }
 struct Server {
@@ -121,6 +130,9 @@ async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response
                     if bytes.len()
                         <= match &reply {
                             Reply::Membership(_) => membership::MAX_EVIDENCE_JSON_BYTES,
+                            Reply::PreparedManagement(_) => {
+                                membership::MAX_EVIDENCE_JSON_BYTES + 128
+                            }
                             Reply::Published(_) => PUBLISHED_RESPONSE_LIMIT,
                             _ => CONTROL_LIMIT,
                         } =>
@@ -183,6 +195,27 @@ async fn dispatch(db: &Database, request: Request) -> Result<Reply> {
     let op: Operation =
         serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("error enrollment-http"))?;
     Ok(match op {
+        Operation::PrepareManagement { context } => Reply::PreparedManagement(
+            db.prepare_membership_management(
+                &context.auth(
+                    credential
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?,
+                ),
+            )
+            .await?,
+        ),
+        Operation::Manage { context, record } => Reply::Managed(
+            db.apply_membership_management(
+                &context.auth(
+                    credential
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?,
+                ),
+                &record,
+            )
+            .await?,
+        ),
         Operation::Post {
             vault,
             handle,
@@ -273,6 +306,8 @@ impl Client {
     async fn exchange(&self, op: Operation, secret: Option<&Secret>) -> Result<Reply> {
         let response_limit = if matches!(&op, Operation::Published { .. }) {
             PUBLISHED_RESPONSE_LIMIT
+        } else if matches!(&op, Operation::PrepareManagement { .. }) {
+            membership::MAX_EVIDENCE_JSON_BYTES + 128
         } else if matches!(&op, Operation::Membership { .. }) {
             membership::MAX_EVIDENCE_JSON_BYTES
         } else {

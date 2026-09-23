@@ -712,3 +712,176 @@ async fn occupied_enrollment_permit_returns_uncacheable_busy_response() {
     assert_eq!(response.text().await.unwrap(), "enrollment-refused");
     task.abort();
 }
+
+#[tokio::test]
+async fn management_loopback_authenticates_removed_seed_before_stale_hint() {
+    let root = tempfile::tempdir().unwrap();
+    let (db, store, server, origin, task) = adopted(root.path()).await;
+    let seed = store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
+    let inputs = store.active_inputs(&db, &origin).await.unwrap();
+    let m = inputs.membership.clone();
+    drop(inputs);
+    let keys = m
+        .verify_initial_key(store.load_required().unwrap().package_key())
+        .unwrap();
+    let device = membership::Device::seed(&seed);
+    let (inv, d) = device.prepare_invitation(&m, expiry()).unwrap();
+    let joiner = membership::Joiner::generate(
+        Invitation::from_protected_storage(&inv.protected_storage_bytes()).unwrap(),
+    )
+    .unwrap();
+    let record = device
+        .prepare_admission(&m, &d, &inv, joiner.request(), &keys)
+        .unwrap();
+    let mut context = Context {
+        vault: m.genesis().context().vault_id,
+        genesis: m.genesis().commitment(),
+        device: seed.genesis().device_id(),
+        credential_version: 1,
+        head: m.head(),
+    };
+    let client = Client::new(&origin).unwrap();
+    client
+        .exchange(
+            Operation::Register {
+                context: context.clone(),
+                declaration: d.record().to_vec(),
+            },
+            Some(seed.bearer()),
+        )
+        .await
+        .unwrap();
+    client
+        .exchange(
+            Operation::Post {
+                vault: context.vault,
+                handle: d.handle(),
+                request: joiner.request().to_vec(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    client
+        .exchange(
+            Operation::Admit {
+                context: context.clone(),
+                handle: d.handle(),
+                record: record.clone(),
+            },
+            Some(seed.bearer()),
+        )
+        .await
+        .unwrap();
+    let m = m.append(d.record(), joiner.request(), &record).unwrap();
+    context.device = joiner.device();
+    context.head = m.head();
+    let Reply::PreparedManagement(prep) = client
+        .exchange(
+            Operation::PrepareManagement {
+                context: context.clone(),
+            },
+            Some(joiner.bearer()),
+        )
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(prep.evidence.verify().unwrap().head(), m.head());
+    let revoke = joiner
+        .authority()
+        .prepare_revoke(&m, &[seed.genesis().device_id()])
+        .unwrap();
+    client
+        .exchange(
+            Operation::Manage {
+                context: context.clone(),
+                record: revoke.clone(),
+            },
+            Some(joiner.bearer()),
+        )
+        .await
+        .unwrap();
+    let stale = client
+        .exchange(
+            Operation::PrepareManagement {
+                context: context.clone(),
+            },
+            Some(joiner.bearer()),
+        )
+        .await
+        .err()
+        .unwrap();
+    assert!(is_stale(&stale));
+    context.device = seed.genesis().device_id();
+    for op in [
+        Operation::PrepareManagement {
+            context: context.clone(),
+        },
+        Operation::Membership {
+            context: context.clone(),
+        },
+        Operation::Manage {
+            context: context.clone(),
+            record: revoke.clone(),
+        },
+        Operation::Admit {
+            context: context.clone(),
+            handle: d.handle(),
+            record,
+        },
+    ] {
+        let e = client
+            .exchange(op, Some(seed.bearer()))
+            .await
+            .err()
+            .unwrap();
+        assert!(!is_stale(&e));
+    }
+    let pending = m.append(&[], &[], &revoke).unwrap();
+    context.device = joiner.device();
+    context.head = pending.head();
+    let rotation = joiner
+        .authority()
+        .prepare_rotation(&pending, &keys, prep.high_water)
+        .unwrap();
+    client
+        .exchange(
+            Operation::Manage {
+                context: context.clone(),
+                record: rotation.clone(),
+            },
+            Some(joiner.bearer()),
+        )
+        .await
+        .unwrap();
+    let rotated = pending.append(&[], &[], &rotation).unwrap();
+    context.head = rotated.head();
+    let Reply::PreparedManagement(after) = client
+        .exchange(
+            Operation::PrepareManagement { context },
+            Some(joiner.bearer()),
+        )
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(after.high_water, prep.high_water);
+    assert_eq!(after.evidence.verify().unwrap().head(), rotated.head());
+    assert!(
+        server
+            .membership_evidence(&peer::Authentication {
+                vault: m.genesis().context().vault_id,
+                genesis: m.genesis().commitment(),
+                device: seed.genesis().device_id(),
+                credential_version: 1,
+                head: rotated.head(),
+                bearer: seed.bearer()
+            })
+            .await
+            .is_err()
+    );
+    task.abort();
+}

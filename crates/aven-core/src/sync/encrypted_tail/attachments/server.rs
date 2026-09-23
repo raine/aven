@@ -1,5 +1,6 @@
 use super::super::{Context, hash, valid};
 use super::{codec::Descriptor, *};
+use crate::sync::seed_claim::membership::Membership;
 use crate::{
     attachments::lifecycle::LifecyclePolicy,
     db::{Database, begin_immediate},
@@ -159,6 +160,19 @@ async fn status(
         expires_at,
     }))
 }
+async fn eligible_object(
+    conn: &mut SqliteConnection,
+    m: &Membership,
+    d: &Descriptor,
+) -> Result<()> {
+    valid(m.generations().iter().any(|g| g.id == d.generation))?;
+    if d.generation != m.current_generation().id {
+        let admitted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_e2ee_images WHERE object=? AND origin IS NOT NULL AND descriptor=?)")
+            .bind(d.object.as_slice()).bind(d.encode()?).fetch_one(conn).await?;
+        valid(admitted)?;
+    }
+    Ok(())
+}
 impl Database {
     pub async fn encrypted_image_exchange(
         &self,
@@ -173,6 +187,11 @@ impl Database {
         current
             .membership
             .authenticate(&context.authentication(bearer), false)?;
+        ensure!(
+            !current.membership.rotation_pending()
+                || matches!(&op, Operation::Status { .. } | Operation::Read { .. }),
+            "error membership-rotation-pending"
+        );
         let binding = current.membership.publication().binding();
         valid(
             context.stream == binding.stream_id
@@ -187,11 +206,8 @@ impl Database {
             } => {
                 workspace.parse::<crate::ids::WorkspaceId>()?;
                 let d = Descriptor::decode(&descriptor)?;
-                valid(
-                    d.vault == context.vault
-                        && d.stream == context.stream
-                        && d.generation == current.membership.genesis().context().generation_id,
-                )?;
+                valid(d.vault == context.vault && d.stream == context.stream)?;
+                eligible_object(&mut tx, &current.membership, &d).await?;
                 let old: Option<Option<Vec<u8>>> =
                     sqlx::query_scalar("SELECT descriptor FROM server_e2ee_images WHERE object=?")
                         .bind(d.object.as_slice())
@@ -250,7 +266,9 @@ impl Database {
                 }
                 Reply::Pruned(objects.len())
             }
-            other => dispatch_existing(&mut tx, context, other, policy, now).await?,
+            other => {
+                dispatch_existing(&mut tx, context, &current.membership, other, policy, now).await?
+            }
         };
         tx.commit().await?;
         Ok(reply)
@@ -259,6 +277,7 @@ impl Database {
 async fn dispatch_existing(
     conn: &mut SqliteConnection,
     context: &Context,
+    membership: &Membership,
     op: Operation,
     policy: LifecyclePolicy,
     now: i64,
@@ -305,6 +324,7 @@ async fn dispatch_existing(
     scope(conn, &object, workspace).await?;
     let (d, epoch, _) = load(conn, &object, &commitment).await?;
     valid(d.vault == context.vault && d.stream == context.stream)?;
+    eligible_object(conn, membership, &d).await?;
     match &op {
         Operation::Status { .. } => status(conn, &d, workspace, &context.device, now).await,
         Operation::Ensure { expected_epoch, .. } => {
@@ -419,6 +439,7 @@ async fn dispatch_existing(
 pub(in crate::sync::encrypted_tail) async fn admit(
     conn: &mut SqliteConnection,
     context: &Context,
+    membership: &Membership,
     id: &str,
     p: &super::super::domain::Projection,
     t: Option<&Ticket>,
@@ -436,6 +457,7 @@ pub(in crate::sync::encrypted_tail) async fn admit(
         } => {
             initialized(conn, &context.descriptor).await?;
             let d = Descriptor::decode(descriptor)?;
+            eligible_object(conn, membership, &d).await?;
             let (_, _, complete) = load(conn, &d.object, &hash(descriptor)).await?;
             valid(complete && d.vault == context.vault && d.stream == context.stream)?;
             let records: Vec<Vec<u8>> = sqlx::query_scalar(

@@ -13,9 +13,9 @@ mod rotation;
 pub use keys::VerifiedKeys;
 pub use rotation::Generation;
 pub(crate) mod persistence;
-pub use persistence::{MAX_CANDIDATES, MAX_INVITATIONS};
+pub use persistence::{MAX_CANDIDATES, MAX_INVITATIONS, ManagementPreparation};
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
 
@@ -136,7 +136,9 @@ impl Membership {
                 && auth.genesis == self.genesis.commitment(),
             "error enrollment-unauthorized"
         );
-        let member = self.member(&auth.device)?;
+        let member = self
+            .member(&auth.device)
+            .map_err(|_| anyhow::anyhow!("error enrollment-unauthorized"))?;
         ensure!(
             bool::from(member.verifier.ct_eq(&credential_verifier(
                 auth.vault,
@@ -186,7 +188,7 @@ impl Membership {
     /// Expiry, current bearer authorization and atomic server CAS are separate.
     pub fn append(&self, declaration: &[u8], request: &[u8], record: &[u8]) -> Result<Self> {
         let (core, _, _, _) = encoding::components(record)?;
-        let action = encoding::action(core)?;
+        let (_, action) = encoding::signer_action(core)?;
         let mut next = match action {
             3 => {
                 let declaration = Declaration::from_record(self, declaration)?;

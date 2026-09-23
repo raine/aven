@@ -51,8 +51,14 @@ impl Database {
             context.stream == binding.stream_id
                 && context.descriptor == binding.descriptor_commitment,
         )?;
-        let (n,high):(i64,i64)=sqlx::query_as("SELECT prefix_count,high_water FROM server_e2ee_allocator WHERE singleton=1 AND stream=?").bind(context.stream.as_slice()).fetch_one(&mut *tx).await?;
-        valid(n == i64::try_from(binding.prefix_count)?)?;
+        let n = i64::try_from(binding.prefix_count)?;
+        let high = i64::try_from(
+            crate::sync::seed_claim::membership::persistence::allocator(
+                &mut tx,
+                &current.membership,
+            )
+            .await?,
+        )?;
         let reply = match op {
             Operation::Append { record, ticket } => {
                 let e = codec::parse(&record)?;
@@ -64,13 +70,11 @@ impl Database {
                 if let Some(old) = found(&mut tx, &e.id).await? {
                     Reply::Appended(old.mapping)
                 } else {
-                    valid(e.generation == current.membership.genesis().context().generation_id)?;
-                    if let domain::Projection::Ref { descriptor, .. } = &e.projection {
-                        valid(
-                            super::attachments::codec::Descriptor::decode(descriptor)?.generation
-                                == e.generation,
-                        )?;
-                    }
+                    ensure!(
+                        !current.membership.rotation_pending(),
+                        "error membership-rotation-pending"
+                    );
+                    valid(e.generation == current.membership.current_generation().id)?;
                     let sequence = high
                         .checked_add(1)
                         .context("error encrypted-tail-sequence-exhausted")?;
@@ -84,6 +88,7 @@ impl Database {
                     super::attachments::server::admit(
                         &mut tx,
                         context,
+                        &current.membership,
                         &e.id,
                         &e.projection,
                         ticket.as_ref(),
@@ -196,3 +201,6 @@ async fn apply_parent(conn: &mut SqliteConnection, id: &str, p: &domain::Project
     super::attachments::server::refresh(conn, chrono::Utc::now().timestamp()).await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod rotation_tests;
