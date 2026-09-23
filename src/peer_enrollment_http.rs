@@ -98,17 +98,18 @@ pub fn router(db: Database) -> Router {
         }))
 }
 async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response {
-    let Ok(_permit) = server.gate.try_acquire() else {
-        return (StatusCode::SERVICE_UNAVAILABLE, "enrollment-busy").into_response();
-    };
-    let mut response = match tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        dispatch(&server.db, request),
-    )
-    .await
-    {
-        Ok(Ok(reply)) => axum::Json(reply).into_response(),
-        _ => (StatusCode::BAD_REQUEST, "enrollment-refused").into_response(),
+    let mut response = if let Ok(_permit) = server.gate.try_acquire() {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            dispatch(&server.db, request),
+        )
+        .await
+        {
+            Ok(Ok(reply)) => axum::Json(reply).into_response(),
+            _ => (StatusCode::BAD_REQUEST, "enrollment-refused").into_response(),
+        }
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "enrollment-busy").into_response()
     };
     response.headers_mut().insert(
         header::CACHE_CONTROL,

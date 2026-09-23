@@ -650,3 +650,52 @@ async fn control_exchange_retains_small_response_cap() {
     assert_eq!(error.to_string(), "error enrollment-limit");
     task.abort();
 }
+
+#[tokio::test]
+async fn occupied_enrollment_permit_returns_uncacheable_busy_response() {
+    let root = tempfile::tempdir().unwrap();
+    let db = Database::open(&root.path().join("server.sqlite"))
+        .await
+        .unwrap();
+    let server = Arc::new(Server {
+        db,
+        gate: tokio::sync::Semaphore::new(1),
+    });
+    let permit = server.gate.acquire().await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let app = Router::new()
+        .route(PATH, post(handle))
+        .with_state(server.clone());
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{origin}{PATH}"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|h| h.to_str().ok()),
+        Some("no-store")
+    );
+    assert_eq!(response.text().await.unwrap(), "enrollment-busy");
+    assert_eq!(server.gate.available_permits(), 0);
+    drop(permit);
+    let response = client
+        .post(format!("{origin}{PATH}"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(response.text().await.unwrap(), "enrollment-refused");
+    task.abort();
+}
