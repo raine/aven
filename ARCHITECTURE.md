@@ -308,6 +308,13 @@ undo restoration) to recreate it. Replay preserves the establishing add identity
 and timestamp and does not repeat task activity writes. Retaining these tail
 commands is required; pruning them needs a separate confirmed-baseline contract.
 
+`encrypted_tail/labels.rs` assigns each affected task-label pair from its last
+retained tail command, using accepted sequence order followed by local pending
+push order. Accepted-only outcomes and incoming pages, including local echoes,
+reconcile transactionally. Pairs without tail commands keep their published
+materialization, not a replay of prefix history. This uses the same retained-tail
+requirement as notes and does not change dependency cycle arbitration.
+
 Authenticated None/Parent projections carry only minimal parent-retention inputs.
 `persistence/parent_liveness.rs::ParentState` is shared by plaintext retention,
 bootstrap projection and encrypted admission. Captured parent state is the tail

@@ -2,6 +2,7 @@
 mod client;
 mod codec;
 mod domain;
+mod labels;
 mod notes;
 mod server;
 

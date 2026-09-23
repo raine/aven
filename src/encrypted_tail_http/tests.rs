@@ -41,14 +41,18 @@ async fn fixture() -> Fixture {
     fixture_with_shared_images(false).await
 }
 async fn fixture_with_shared_images(shared: bool) -> Fixture {
-    fixture_with_snapshot_content(shared, None).await
+    fixture_with_snapshot_content(shared, None, false).await
 }
-async fn fixture_with_snapshot_content(shared: bool, note_after_capture: Option<bool>) -> Fixture {
+async fn fixture_with_snapshot_content(
+    shared: bool,
+    note_after_capture: Option<bool>,
+    relations: bool,
+) -> Fixture {
     let root = tempfile::tempdir().unwrap();
     let (seed, seed_store, authority, _) =
         crate::seed_bootstrap_http::tests::fixture(root.path()).await;
     let mut snapshot_note = None;
-    if shared || note_after_capture.is_some() {
+    if shared || note_after_capture.is_some() || relations {
         let capture = seed
             .resume_local_shared_state_never_dispatched()
             .await
@@ -81,6 +85,27 @@ async fn fixture_with_snapshot_content(shared: bool, note_after_capture: Option<
             )
             .await
             .unwrap();
+        }
+        if relations {
+            let mut owner = draft("snapshot relation owner");
+            owner.labels = vec!["tag".into(), "untouched".into()];
+            seed.create_label(&workspace, "tag").await.unwrap();
+            seed.create_label(&workspace, "untouched").await.unwrap();
+            let a = seed.create_task(&workspace, owner).await.unwrap().task;
+            let b = seed
+                .create_task(&workspace, draft("snapshot relation target"))
+                .await
+                .unwrap()
+                .task;
+            seed.add_task_dependency(&workspace, &a.id, &b.id)
+                .await
+                .unwrap();
+            seed.add_task_related_link(&workspace, &a.id, &b.id)
+                .await
+                .unwrap();
+            seed.add_task_to_epic(&workspace, &a.id, &b.id)
+                .await
+                .unwrap();
         }
         if note_after_capture.is_some() {
             let task = seed
@@ -2431,7 +2456,7 @@ async fn checkpoint_idle_check_preserves_frozen_work_and_checks_authority() {
 
 async fn assert_snapshot_note_edits_converge(edit_after_capture: bool) {
     for seed_first in [true, false] {
-        let f = fixture_with_snapshot_content(false, Some(edit_after_capture)).await;
+        let f = fixture_with_snapshot_content(false, Some(edit_after_capture), false).await;
         let w = f.seed.list_workspaces().await.unwrap().remove(0);
         let (task, note, created_at, add_change): (aven_core::ids::TaskId, String, String, String) = {
             let mut conn = aven_core::test_support::acquire(&f.seed).await.unwrap();
@@ -2521,3 +2546,5 @@ async fn checkpoint_snapshot_note_concurrent_edits_follow_accepted_order() {
 async fn checkpoint_snapshot_note_keeps_source_edit_between_capture_and_adoption() {
     assert_snapshot_note_edits_converge(true).await;
 }
+
+mod relations;

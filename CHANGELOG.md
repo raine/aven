@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Fix: Concurrent task label changes converge in experimental encrypted sync without overwriting later pending changes.
+
 - Fix: Encrypted enrollment busy responses consistently disable caching.
 
 - Fix: Finishing an encrypted sync round leaves later queued creations undoable until their own upload is prepared.

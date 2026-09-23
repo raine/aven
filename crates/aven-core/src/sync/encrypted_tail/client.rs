@@ -356,6 +356,7 @@ impl Database {
         .await?;
         persistence::reconcile_epic_change(&mut tx, &change).await?;
         super::notes::reconcile(&mut tx, authority.prefix, &change).await?;
+        super::labels::reconcile(&mut tx, authority.prefix, &change).await?;
         record_acceptance_and_clear_outbox(&mut tx, accepted).await?;
         tx.commit().await?;
         Ok(())
@@ -435,6 +436,7 @@ impl Database {
                 apply_new_remote_change(&mut tx, &change, &mut attachment_hashes).await?;
             }
             super::notes::reconcile(&mut tx, authority.prefix, &change).await?;
+            super::labels::reconcile(&mut tx, authority.prefix, &change).await?;
             record_acceptance_and_clear_outbox(&mut tx, accepted).await?;
         }
         crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
