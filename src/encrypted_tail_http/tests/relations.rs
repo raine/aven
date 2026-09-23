@@ -332,3 +332,45 @@ async fn label_reconciliation_preserves_related_and_epic_ordering() {
         }
     }
 }
+
+#[tokio::test]
+async fn opposite_dependencies_keep_the_minimum_id_direction() {
+    for seed_first in [true, false] {
+        let f = fixture().await;
+        let w = f.seed.list_workspaces().await.unwrap().remove(0);
+        let mut tasks = Vec::new();
+        for _ in 0..2 {
+            tasks.push(
+                f.seed
+                    .create_task(&w, draft("opposite dependency"))
+                    .await
+                    .unwrap()
+                    .task
+                    .id,
+            );
+        }
+        tasks.sort();
+        converge(&f).await;
+        f.seed
+            .add_task_dependency(&w, &tasks[1], &tasks[0])
+            .await
+            .unwrap();
+        f.peer
+            .add_task_dependency(&w, &tasks[0], &tasks[1])
+            .await
+            .unwrap();
+        if !seed_first {
+            drain(&Client::new(&f.origin).unwrap(), &f.peer_store, &f.peer).await;
+        }
+        converge(&f).await;
+        converge(&f).await;
+        assert_drained(&f).await;
+        for db in [&f.seed, &f.peer] {
+            let mut c = aven_core::test_support::acquire(db).await.unwrap();
+            let edges: Vec<(TaskId, TaskId)> = sqlx::query_as(
+                "SELECT task_id, depends_on_task_id FROM task_dependencies ORDER BY task_id, depends_on_task_id",
+            ).fetch_all(&mut *c).await.unwrap();
+            assert_eq!(edges, vec![(tasks[0].clone(), tasks[1].clone())]);
+        }
+    }
+}
