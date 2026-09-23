@@ -2,6 +2,7 @@
 use anyhow::{Context, Result, ensure};
 use sqlx::SqliteConnection;
 
+use crate::change_log::op_type;
 use crate::data_safety::TaskDependencyRow;
 use crate::sync::wire::ChangeWire;
 
@@ -20,12 +21,28 @@ pub(crate) async fn initialize(
         !occupied,
         "error encrypted-dependency-baseline-reinitialization-required"
     );
-    sqlx::query("INSERT INTO local_e2ee_dependency_baseline(singleton, association, sync_generation, prefix_count) VALUES (1, ?, ?, ?)")
-        .bind(association).bind(generation).bind(prefix).execute(&mut *conn).await?;
+    sqlx::query(
+        "INSERT INTO local_e2ee_dependency_baseline(
+             singleton, association, sync_generation, prefix_count
+         ) VALUES (1, ?, ?, ?)",
+    )
+    .bind(association)
+    .bind(generation)
+    .bind(prefix)
+    .execute(&mut *conn)
+    .await?;
     for edge in edges {
-        sqlx::query("INSERT INTO local_e2ee_dependency_edges(workspace_id, task_id, depends_on_task_id, created_at) VALUES (?, ?, ?, ?)")
-            .bind(&edge.workspace_id).bind(&edge.task_id).bind(&edge.depends_on_task_id).bind(&edge.created_at)
-            .execute(&mut *conn).await?;
+        sqlx::query(
+            "INSERT INTO local_e2ee_dependency_edges(
+                 workspace_id, task_id, depends_on_task_id, created_at
+             ) VALUES (?, ?, ?, ?)",
+        )
+        .bind(&edge.workspace_id)
+        .bind(&edge.task_id)
+        .bind(&edge.depends_on_task_id)
+        .bind(&edge.created_at)
+        .execute(&mut *conn)
+        .await?;
     }
     Ok(())
 }
@@ -40,7 +57,11 @@ pub(crate) async fn validate(
          WHERE singleton = 1 AND association = ? AND prefix_count = ?
            AND association = (SELECT value FROM meta WHERE key = 'e2ee_association')
            AND sync_generation = CAST((SELECT value FROM meta WHERE key = 'sync_generation') AS INTEGER))",
-    ).bind(association).bind(prefix).fetch_one(conn).await?;
+    )
+    .bind(association)
+    .bind(prefix)
+    .fetch_one(conn)
+    .await?;
     ensure!(
         matches,
         "error encrypted-dependency-baseline-reinitialization-required"
@@ -51,7 +72,7 @@ pub(crate) async fn validate(
 pub(super) fn affected_workspace(change: &ChangeWire) -> Result<Option<&str>> {
     if !matches!(
         change.op_type.as_str(),
-        "dependency_add" | "dependency_remove"
+        op_type::DEPENDENCY_ADD | op_type::DEPENDENCY_REMOVE
     ) {
         return Ok(None);
     }
@@ -69,11 +90,15 @@ pub(super) async fn reconcile(
     prefix: i64,
     workspace: &str,
 ) -> Result<()> {
-    let dangling: bool = sqlx::query_scalar("SELECT EXISTS(
-        SELECT 1 FROM local_e2ee_dependency_edges e WHERE e.workspace_id = ?
-        AND (NOT EXISTS(SELECT 1 FROM tasks t WHERE t.workspace_id=e.workspace_id AND t.id=e.task_id)
-          OR NOT EXISTS(SELECT 1 FROM tasks t WHERE t.workspace_id=e.workspace_id AND t.id=e.depends_on_task_id)))")
-        .bind(workspace).fetch_one(&mut *conn).await?;
+    let dangling: bool = sqlx::query_scalar(
+        "SELECT EXISTS(
+            SELECT 1 FROM local_e2ee_dependency_edges e WHERE e.workspace_id = ?
+            AND (NOT EXISTS(SELECT 1 FROM tasks t WHERE t.workspace_id=e.workspace_id AND t.id=e.task_id)
+              OR NOT EXISTS(SELECT 1 FROM tasks t WHERE t.workspace_id=e.workspace_id AND t.id=e.depends_on_task_id)))",
+    )
+    .bind(workspace)
+    .fetch_one(&mut *conn)
+    .await?;
     ensure!(
         !dangling,
         "error encrypted-dependency-baseline-reinitialization-required"
