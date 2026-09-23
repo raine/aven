@@ -597,3 +597,5 @@ async fn edit_after_protected_identity_before_pin_survives_refused_completion() 
     );
     task.abort();
 }
+
+mod install;

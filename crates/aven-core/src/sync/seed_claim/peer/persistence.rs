@@ -26,7 +26,7 @@ impl Current {
             .as_ref()
             .map_or(self.publication.commitment(), Admission::commitment)
     }
-    fn authenticate(&self, auth: &Authentication<'_>, require_head: bool) -> Result<()> {
+    pub(crate) fn authenticate(&self, auth: &Authentication<'_>, require_head: bool) -> Result<()> {
         check(
             auth.credential_version == 1
                 && auth.vault == self.genesis.context.vault_id

@@ -11,6 +11,7 @@ use anyhow::{Context, Result, ensure};
 
 pub mod adoption;
 mod package;
+mod peer_install;
 
 pub use package::publication as bootstrap_format;
 
@@ -319,62 +320,70 @@ impl Database {
         let mut tx = db::begin_immediate(&mut conn).await?;
         ensure_empty_target(&mut tx).await?;
 
-        let identity = db::get_meta(&mut tx, "client_id")
-            .await?
-            .context("missing target client identity")?;
-        ensure!(
-            !capture
-                .snapshot
-                .tables
-                .changes
-                .iter()
-                .any(|row| row.client_id == identity),
-            "error shared-state-install target identity is not distinct"
-        );
-
-        sqlx::query("DELETE FROM workspaces")
-            .execute(&mut *tx)
-            .await?;
-        let t = &capture.snapshot.tables;
-        tables::import_workspaces(&mut tx, &t.workspaces).await?;
-        tables::import_projects(&mut tx, &t.projects).await?;
-        tables::import_project_id_aliases(&mut tx, &t.project_id_aliases).await?;
-        tables::import_labels(&mut tx, &t.labels).await?;
-        tables::import_metadata_fields(&mut tx, &t.metadata_fields).await?;
-        tables::import_metadata_field_id_aliases(&mut tx, &t.metadata_field_id_aliases).await?;
-        tables::import_tasks(&mut tx, &t.tasks).await?;
-        tables::import_task_metadata(&mut tx, &t.task_metadata).await?;
-        tables::import_task_labels(&mut tx, &t.task_labels).await?;
-        tables::import_notes(&mut tx, &t.notes).await?;
-        tables::import_task_dependencies(&mut tx, &t.task_dependencies).await?;
-        tables::import_task_epic_links(&mut tx, &t.task_epic_links).await?;
-        tables::import_blob_inventory(&mut tx, &t.blob_inventory).await?;
-        tables::import_task_attachments(&mut tx, &t.task_attachments).await?;
-        tables::import_recurrence_series(&mut tx, &t.recurrence_series).await?;
-        tables::import_recurrence_series_labels(&mut tx, &t.recurrence_series_labels).await?;
-        tables::import_recurrence_series_metadata(&mut tx, &t.recurrence_series_metadata).await?;
-        tables::import_recurrence_occurrences(&mut tx, &t.recurrence_occurrences).await?;
-        tables::import_recurrence_pause_intervals(&mut tx, &t.recurrence_pause_intervals).await?;
-        tables::import_changes(&mut tx, &t.changes).await?;
-        tables::import_task_related_links(&mut tx, &t.task_related_links).await?;
-        tables::import_field_versions(&mut tx, &t.field_versions).await?;
-        tables::import_conflicts(&mut tx, &t.conflicts).await?;
-        tables::import_shared_history_provenance(&mut tx, &t.shared_history_provenance).await?;
-        for row in &t.meta {
-            db::set_meta(&mut tx, &row.key, &row.value).await?;
-        }
-        let local_seq = t.changes.iter().map(|row| row.local_seq).max().unwrap_or(0);
-        db::set_meta(&mut tx, "local_seq", &local_seq.to_string()).await?;
-        data_safety::ensure_integrity_ok(
-            &crate::data_safety::integrity_report_in_transaction(&mut tx).await?,
-        )?;
+        let report = install_in_transaction(&mut tx, capture).await?;
         tx.commit().await?;
 
-        Ok(SharedStateInstallReport {
-            prefix_count: u64::try_from(t.changes.len())?,
-            attachment_count: u64::try_from(t.task_attachments.len())?,
-        })
+        Ok(report)
     }
+}
+
+async fn install_in_transaction(
+    conn: &mut sqlx::SqliteConnection,
+    capture: &SharedStateCapture,
+) -> Result<SharedStateInstallReport> {
+    let identity = db::get_meta(conn, "client_id")
+        .await?
+        .context("missing target client identity")?;
+    ensure!(
+        !capture
+            .snapshot
+            .tables
+            .changes
+            .iter()
+            .any(|row| row.client_id == identity),
+        "error shared-state-install target identity is not distinct"
+    );
+
+    sqlx::query("DELETE FROM workspaces")
+        .execute(&mut *conn)
+        .await?;
+    let t = &capture.snapshot.tables;
+    tables::import_workspaces(conn, &t.workspaces).await?;
+    tables::import_projects(conn, &t.projects).await?;
+    tables::import_project_id_aliases(conn, &t.project_id_aliases).await?;
+    tables::import_labels(conn, &t.labels).await?;
+    tables::import_metadata_fields(conn, &t.metadata_fields).await?;
+    tables::import_metadata_field_id_aliases(conn, &t.metadata_field_id_aliases).await?;
+    tables::import_tasks(conn, &t.tasks).await?;
+    tables::import_task_metadata(conn, &t.task_metadata).await?;
+    tables::import_task_labels(conn, &t.task_labels).await?;
+    tables::import_notes(conn, &t.notes).await?;
+    tables::import_task_dependencies(conn, &t.task_dependencies).await?;
+    tables::import_task_epic_links(conn, &t.task_epic_links).await?;
+    tables::import_blob_inventory(conn, &t.blob_inventory).await?;
+    tables::import_task_attachments(conn, &t.task_attachments).await?;
+    tables::import_recurrence_series(conn, &t.recurrence_series).await?;
+    tables::import_recurrence_series_labels(conn, &t.recurrence_series_labels).await?;
+    tables::import_recurrence_series_metadata(conn, &t.recurrence_series_metadata).await?;
+    tables::import_recurrence_occurrences(conn, &t.recurrence_occurrences).await?;
+    tables::import_recurrence_pause_intervals(conn, &t.recurrence_pause_intervals).await?;
+    tables::import_changes(conn, &t.changes).await?;
+    tables::import_task_related_links(conn, &t.task_related_links).await?;
+    tables::import_field_versions(conn, &t.field_versions).await?;
+    tables::import_conflicts(conn, &t.conflicts).await?;
+    tables::import_shared_history_provenance(conn, &t.shared_history_provenance).await?;
+    for row in &t.meta {
+        db::set_meta(conn, &row.key, &row.value).await?;
+    }
+    let local_seq = t.changes.iter().map(|row| row.local_seq).max().unwrap_or(0);
+    db::set_meta(conn, "local_seq", &local_seq.to_string()).await?;
+    data_safety::ensure_integrity_ok(
+        &crate::data_safety::integrity_report_in_transaction(conn).await?,
+    )?;
+    Ok(SharedStateInstallReport {
+        prefix_count: u64::try_from(t.changes.len())?,
+        attachment_count: u64::try_from(t.task_attachments.len())?,
+    })
 }
 
 impl SharedStateCapture {
@@ -856,6 +865,10 @@ fn unavailable_image_has_validated_history(
 
 pub(crate) async fn ensure_empty_target(conn: &mut sqlx::SqliteConnection) -> Result<()> {
     adoption::ensure_unbound(conn).await?;
+    ensure_empty_domain(conn).await
+}
+
+async fn ensure_empty_domain(conn: &mut sqlx::SqliteConnection) -> Result<()> {
     let occupied: i64 = sqlx::query_scalar(
         "SELECT
              (SELECT count(*) FROM workspaces WHERE id != '0000000000000000')

@@ -63,6 +63,7 @@ mod domain;
 
 /// Version of the encrypted AVBD domain, independent of plaintext sync/export.
 pub const DOMAIN_VERSION: u32 = 1;
+pub mod download;
 mod projection;
 pub(crate) mod staging;
 
@@ -423,6 +424,14 @@ fn decrypt_domain(
     package: &Package,
     key: &LocalSharedStatePackageKey,
 ) -> Result<(SharedStateCapture, Vec<domain::Mapping>)> {
+    decrypt_domain_images(package, key, |_, _| {})
+}
+
+fn decrypt_domain_images(
+    package: &Package,
+    key: &LocalSharedStatePackageKey,
+    mut accept_image: impl FnMut(&str, Zeroizing<Vec<u8>>),
+) -> Result<(SharedStateCapture, Vec<domain::Mapping>)> {
     validate_keyless(package)?;
     let d = Descriptor::decode(&package.descriptor)?;
     let state = decode_state_catalog(&package.catalogs[0])?;
@@ -512,6 +521,7 @@ fn decrypt_domain(
             .map_err(|_| Error::Authentication)?,
         );
         valid(hex::encode(crypto::sha256(&bytes)) == mapping.sha256)?;
+        accept_image(&mapping.sha256, bytes);
     }
     Ok((capture, mappings))
 }

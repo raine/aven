@@ -21,6 +21,7 @@ enum Artifact {
     Response,
     Verified,
     Ready,
+    Installed,
 }
 impl Artifact {
     fn name(self) -> &'static str {
@@ -33,6 +34,7 @@ impl Artifact {
             Self::Response => "peer-response",
             Self::Verified => "peer-verified",
             Self::Ready => "peer-ready",
+            Self::Installed => "peer-installed",
         }
     }
     fn size(self) -> usize {
@@ -45,7 +47,7 @@ impl Artifact {
         }
     }
 }
-const PHASES: [Artifact; 7] = [
+const PHASES: [Artifact; 8] = [
     Artifact::Registered,
     Artifact::Bound,
     Artifact::Candidate,
@@ -53,6 +55,7 @@ const PHASES: [Artifact; 7] = [
     Artifact::Response,
     Artifact::Verified,
     Artifact::Ready,
+    Artifact::Installed,
 ];
 
 #[derive(Serialize, Deserialize)]
@@ -513,6 +516,70 @@ impl ProtectedLocalKeyStore {
         );
         self.save_phase(db, &id, Artifact::Ready, &a.commitment())
             .await
+    }
+    pub(crate) async fn install_peer_snapshot(
+        &self,
+        db: &Database,
+        transport: &crate::peer_enrollment_http::Client,
+        locator: &str,
+        blob_dir: &Path,
+    ) -> Result<aven_core::sync::SharedStateInstallReport> {
+        let guard = InstallationGuard::acquire(db.path())?;
+        self.validate_database(db)?;
+        let _lock = self.lock()?;
+        let id = self
+            .identity(db, &guard)
+            .await?
+            .context("error enrollment-missing")?;
+        ensure!(
+            id.role == "peer" && id.locator == locator,
+            "error enrollment-context"
+        );
+        let ready = self
+            .phase(db, Artifact::Ready)
+            .await?
+            .context("error enrollment-not-ready")?;
+        let bytes = self
+            .phase(db, Artifact::Verified)
+            .await?
+            .context("error enrollment-key-coverage-missing")?;
+        let record: Verified = serde_json::from_slice(&bytes)
+            .map_err(|_| anyhow::anyhow!("error enrollment-verified-corrupt"))?;
+        let peer = PeerAuthority::from_protected_storage(&id.authority)?;
+        let verified = peer.verify_enrollment(&record.evidence, &record.descriptor)?;
+        let head = verified.admission().commitment();
+        ensure!(
+            ready.as_slice() == head
+                && verified.key().protected_storage_bytes().as_slice() == record.key,
+            "error enrollment-verified-corrupt"
+        );
+        let completed = self.phase(db, Artifact::Installed).await?;
+        if let Some(report) = db
+            .peer_snapshot_receipt(&verified, id.incarnation, &id.client, &guard)
+            .await?
+        {
+            self.save_phase(db, &id, Artifact::Installed, &head).await?;
+            return Ok(report);
+        }
+        ensure!(
+            completed.is_none(),
+            "error snapshot-installed-database-lost"
+        );
+        let package = transport
+            .download(&peer, &verified, &record.descriptor)
+            .await?;
+        let report = db
+            .install_peer_snapshot(
+                &verified,
+                id.incarnation,
+                &id.client,
+                &guard,
+                &package,
+                blob_dir,
+            )
+            .await?;
+        self.save_phase(db, &id, Artifact::Installed, &head).await?;
+        Ok(report)
     }
     /// Must be checked by future tail dispatch. Enrolled is not installed or synced.
     pub async fn enrollment_readiness(&self, db: &Database) -> Result<EnrollmentReadiness> {

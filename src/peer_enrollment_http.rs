@@ -1,4 +1,4 @@
-//! Isolated first-peer enrollment, not shipping pairing or encrypted task sync.
+//! Isolated first-peer enrollment and published snapshot retrieval, not shipping sync.
 //! The public mailbox never exposes bootstrap chunks, images or credentials.
 use crate::{protected_local_keys::ProtectedLocalKeyStore, seed_bootstrap_http};
 use anyhow::{Result, ensure};
@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 const PATH: &str = "/e2ee/enrollment/v1";
-const LIMIT: usize = 4 * peer::CONTROL_LIMIT + 4096;
+const LIMIT: usize = 4 * (1_048_576 + 222) + 4096;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Context {
@@ -66,6 +66,12 @@ enum Operation {
     Descriptor {
         context: Context,
     },
+    Published {
+        context: Context,
+        descriptor: [u8; 32],
+        component: Option<aven_core::sync::bootstrap_staging::Component>,
+        index: u64,
+    },
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -75,6 +81,7 @@ enum Reply {
     Mailbox(Mailbox),
     Admitted(Evidence),
     Descriptor(Vec<u8>),
+    Published(Vec<u8>),
 }
 struct Server {
     db: Database,
@@ -184,6 +191,24 @@ async fn dispatch(db: &Database, request: Request) -> Result<Reply> {
             )
             .await?,
         ),
+        Operation::Published {
+            context,
+            descriptor,
+            component,
+            index,
+        } => Reply::Published(
+            db.published_snapshot_read(
+                &context.auth(
+                    credential
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?,
+                ),
+                descriptor,
+                component,
+                index,
+            )
+            .await?,
+        ),
         Operation::Descriptor { context } => Reply::Descriptor(
             db.peer_enrollment_descriptor(
                 &context.auth(
@@ -259,6 +284,121 @@ impl Client {
             bytes.extend_from_slice(&chunk);
         }
         serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("error enrollment-http"))
+    }
+    /// Installs only a protected, independently enrolled peer into a fresh target.
+    /// A completed retry is local and never rewinds later changes.
+    pub async fn install(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        blob_dir: &std::path::Path,
+    ) -> Result<aven_core::sync::SharedStateInstallReport> {
+        store
+            .install_peer_snapshot(db, self, &self.locator, blob_dir)
+            .await
+    }
+
+    pub(crate) async fn download(
+        &self,
+        peer: &peer::PeerAuthority,
+        verified: &peer::VerifiedEnrollment,
+        descriptor: &[u8],
+    ) -> Result<aven_core::sync::bootstrap_format::Package> {
+        use aven_core::sync::{
+            bootstrap_format::{self, ImageRecords, Package},
+            bootstrap_staging::{Component, MAX_CHUNKS, MAX_STORAGE_BYTES},
+        };
+        let b = verified.publication().binding();
+        let context = Context {
+            vault: peer.vault(),
+            genesis: verified.genesis().commitment(),
+            device: peer.device(),
+            credential_version: 1,
+            head: verified.admission().commitment(),
+        };
+        let read = async |component, index| -> Result<Vec<u8>> {
+            let Reply::Published(bytes) = self
+                .exchange(
+                    Operation::Published {
+                        context: context.clone(),
+                        descriptor: b.descriptor_commitment,
+                        component,
+                        index,
+                    },
+                    Some(peer.bearer()),
+                )
+                .await?
+            else {
+                anyhow::bail!("error snapshot-response");
+            };
+            Ok(bytes)
+        };
+        ensure!(
+            read(None, 0).await? == descriptor,
+            "error snapshot-descriptor-substitution"
+        );
+        let mut package = Package {
+            descriptor: descriptor.to_vec(),
+            catalogs: Default::default(),
+            state: vec![],
+            manifest: vec![],
+            images: vec![],
+        };
+        let mut total = 0_u64;
+        let mut chunks = 0_u64;
+        for (i, recipe) in bootstrap_format::download::catalogs(descriptor)?
+            .into_iter()
+            .enumerate()
+        {
+            for (index, length) in recipe.lengths.into_iter().enumerate() {
+                let bytes = read(Some(recipe.component), u64::try_from(index)?).await?;
+                ensure!(
+                    u64::try_from(bytes.len())? == length,
+                    "error snapshot-length"
+                );
+                total = total
+                    .checked_add(length)
+                    .ok_or_else(|| anyhow::anyhow!("error snapshot-limit"))?;
+                chunks += 1;
+                ensure!(
+                    total <= MAX_STORAGE_BYTES && chunks <= MAX_CHUNKS,
+                    "error snapshot-limit"
+                );
+                package.catalogs[i].extend(bytes);
+                #[cfg(test)]
+                if std::env::var("AVEN_SNAPSHOT_CRASH").as_deref() == Ok("download") {
+                    std::process::exit(83);
+                }
+            }
+        }
+        for recipe in bootstrap_format::download::artifacts(descriptor, &package.catalogs)? {
+            let mut records = Vec::new();
+            for (index, length) in recipe.lengths.into_iter().enumerate() {
+                let bytes = read(Some(recipe.component), u64::try_from(index)?).await?;
+                ensure!(
+                    u64::try_from(bytes.len())? == length,
+                    "error snapshot-length"
+                );
+                total = total
+                    .checked_add(length)
+                    .ok_or_else(|| anyhow::anyhow!("error snapshot-limit"))?;
+                chunks += 1;
+                ensure!(
+                    total <= MAX_STORAGE_BYTES && chunks <= MAX_CHUNKS,
+                    "error snapshot-limit"
+                );
+                records.push(bytes);
+            }
+            match recipe.component {
+                Component::Manifest => package.manifest = records,
+                Component::State => package.state = records,
+                Component::Image(object_id) => {
+                    package.images.push(ImageRecords { object_id, records })
+                }
+                _ => anyhow::bail!("error snapshot-component"),
+            }
+        }
+        Ok(package)
     }
     /// Returns the secret invitation only after exact registration is resolved.
     pub async fn invite(

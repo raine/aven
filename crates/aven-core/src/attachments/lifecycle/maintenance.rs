@@ -26,6 +26,17 @@ async fn reconcile_trash_files(
     blob_dir: &Path,
     files: Vec<super::filesystem::ScannedFile>,
 ) -> Result<()> {
+    let mut tx = begin_immediate(conn).await?;
+    reconcile_trash_files_in_transaction(&mut tx, blob_dir, files).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn reconcile_trash_files_in_transaction(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+    files: Vec<super::filesystem::ScannedFile>,
+) -> Result<()> {
     let hashes = files
         .iter()
         .filter(|file| validate_sha256(&file.name).is_ok())
@@ -147,6 +158,22 @@ pub async fn reconcile_missing_objects(
 }
 
 async fn reconcile_object_directory(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+    grace: Duration,
+    limit: usize,
+    clock: &dyn Clock,
+) -> Result<ByteCount> {
+    // Ownership checks and filesystem removal share writer exclusion with
+    // adoption. A stale scan must never remove an object adopted after its query.
+    let mut tx = begin_immediate(conn).await?;
+    let result =
+        reconcile_object_directory_in_transaction(&mut tx, blob_dir, grace, limit, clock).await?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+async fn reconcile_object_directory_in_transaction(
     conn: &mut SqliteConnection,
     blob_dir: &Path,
     grace: Duration,
@@ -444,6 +471,45 @@ mod tests {
 
         let summary = pruning.await.unwrap();
         assert_eq!(summary.pruned.count, 0);
+        assert!(path.exists());
+    }
+
+    #[tokio::test]
+    async fn orphan_cleanup_waits_for_transactional_object_adoption() {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("test.sqlite");
+        let pool = open_db(&db_path).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let blob_dir = temp.path().join("blobs");
+        let hash = "ab".repeat(32);
+        let path = object_path(&blob_dir, &hash).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"blob").unwrap();
+        let options = SqliteConnectOptions::new()
+            .filename(&db_path)
+            .busy_timeout(Duration::from_secs(5));
+        let mut cleanup_conn = SqliteConnection::connect_with(&options).await.unwrap();
+        let mut tx = begin_immediate(&mut conn).await.unwrap();
+        upsert_inventory_available(&mut tx, &hash, 4, "image/png")
+            .await
+            .unwrap();
+        let mut cleanup = tokio::spawn(async move {
+            reconcile_orphan_objects(
+                &mut cleanup_conn,
+                &blob_dir,
+                Duration::ZERO,
+                &TestClock::at("2030-07-01T00:00:00Z"),
+            )
+            .await
+            .unwrap()
+        });
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut cleanup)
+                .await
+                .is_err()
+        );
+        tx.commit().await.unwrap();
+        assert_eq!(cleanup.await.unwrap().count, 0);
         assert!(path.exists());
     }
 

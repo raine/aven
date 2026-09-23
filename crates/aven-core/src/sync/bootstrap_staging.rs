@@ -75,7 +75,7 @@ impl Component {
         }
     }
 
-    fn key(self) -> Vec<u8> {
+    pub(crate) fn key(self) -> Vec<u8> {
         match self {
             Self::DataCatalog => vec![0],
             Self::PrefixCatalog => vec![1],

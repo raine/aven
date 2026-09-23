@@ -21,6 +21,18 @@ pub(crate) async fn fixture(
     aven_core::sync::seed_claim::SeedAuthority,
     Package,
 ) {
+    fixture_with_domain(root, false).await
+}
+
+pub(crate) async fn fixture_with_domain(
+    root: &Path,
+    representative: bool,
+) -> (
+    Database,
+    ProtectedLocalKeyStore,
+    aven_core::sync::seed_claim::SeedAuthority,
+    Package,
+) {
     let db = Database::open(&root.join("client.sqlite")).await.unwrap();
     let workspace = db.list_workspaces().await.unwrap().remove(0);
     let task = db
@@ -63,6 +75,9 @@ pub(crate) async fn fixture(
     )
     .await
     .unwrap();
+    if representative {
+        representative_domain(&db, &workspace, &task.id).await;
+    }
     let store = isolated_store(db.path(), &root.join("keys"));
     let seed = store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
     store.prepare_seed_source(&db).await.unwrap();
@@ -74,17 +89,90 @@ pub(crate) async fn fixture(
         .await
         .unwrap()
         .upload_package();
-    db.update_task(
-        &workspace,
-        &task.id,
-        aven_core::operations::TaskUpdate {
-            title: Some("AFTER-CAPTURE".into()),
-            ..Default::default()
-        },
+    if !representative {
+        db.update_task(
+            &workspace,
+            &task.id,
+            aven_core::operations::TaskUpdate {
+                title: Some("AFTER-CAPTURE".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    }
+    (db, store, seed, package)
+}
+
+async fn representative_domain(
+    db: &Database,
+    ws: &aven_core::workspaces::Workspace,
+    task: &aven_core::ids::TaskId,
+) {
+    use aven_core::{operations::*, recurrence::*};
+    use chrono::{TimeZone, Utc};
+    let epic = db
+        .create_task(
+            ws,
+            TaskDraft {
+                title: "epic".into(),
+                description: "".into(),
+                project: Some("app".into()),
+                status: "todo".into(),
+                priority: "none".into(),
+                source: aven_core::choices::TaskSource::Cli,
+                labels: vec![],
+                metadata: vec![],
+                available_at: None,
+                due_on: None,
+                is_epic: true,
+            },
+        )
+        .await
+        .unwrap()
+        .task;
+    db.add_task_to_epic(ws, task, &epic.id).await.unwrap();
+    db.add_task_related_link(ws, task, &epic.id).await.unwrap();
+    for title in ["alpha", "beta"] {
+        db.update_task(
+            ws,
+            task,
+            TaskUpdate {
+                title: Some(title.into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    }
+    let at = Utc.with_ymd_and_hms(2026, 9, 21, 12, 0, 0).unwrap();
+    db.create_recurrence_series(
+        ws,
+        CreateRecurrenceSeriesParams::new(RecurrenceSeriesDraft {
+            title: "daily".into(),
+            description: "template".into(),
+            project: "app".into(),
+            priority: "none".into(),
+            initial_status: "todo".into(),
+            labels: vec![],
+            metadata: vec![],
+            schedule: RecurrenceSchedule::new(
+                RecurrenceRule::daily(),
+                "UTC".parse().unwrap(),
+                at.date_naive(),
+                None,
+                RecurrenceDuePolicy::SameDay,
+            ),
+        })
+        .at(at),
     )
     .await
     .unwrap();
-    (db, store, seed, package)
+    // Synthetic retained conflict: this fixture tests preservation, not conflict generation.
+    let mut conn = aven_core::test_support::acquire(db).await.unwrap();
+    let changes: Vec<String> = sqlx::query_scalar("SELECT change_id FROM changes WHERE entity_id=? AND field='title' ORDER BY local_seq DESC LIMIT 2").bind(task).fetch_all(&mut *conn).await.unwrap();
+    sqlx::query("INSERT INTO conflicts(workspace_id,entity_type,entity_id,task_id,field,base_version,local_value,remote_value,local_change_id,remote_change_id,variant_a,variant_b,created_at,resolved) VALUES(?,'task',?,?,'title',NULL,'beta','remote',?,?,'variant-a','variant-b','2026-09-21T12:30:00Z',0)")
+        .bind(&ws.id).bind(task).bind(task).bind(&changes[0]).bind(&changes[1]).execute(&mut *conn).await.unwrap();
 }
 
 async fn serve(db: Database) -> (Client, tokio::task::JoinHandle<()>) {
