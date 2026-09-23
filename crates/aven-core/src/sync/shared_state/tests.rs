@@ -680,8 +680,7 @@ async fn imported_baseline_and_subsequent_operations_converge_after_install() {
         .send(&source, &[&source, &installed], "2026-09-21T13:03:00Z")
         .await;
     // Both replicas generate the same deterministic recurrence identities at the
-    // same clock. Template metadata is intentionally absent: AVN-VWRD owns the
-    // known metadata-version divergence and this test must not normalize it away.
+    // same clock.
     source
         .reconcile_recurrence_series(&workspace, &series.series.id, at + Duration::days(1))
         .await
@@ -1355,5 +1354,145 @@ async fn malformed_persisted_capture_fails_closed() {
             .unwrap_err()
             .to_string()
             .contains("local-shared-capture-active")
+    );
+}
+
+#[tokio::test]
+async fn recurrence_reconciles_and_resolves_after_install_at_fixed_clocks() {
+    recurrence_continuation(false).await;
+}
+
+#[tokio::test]
+async fn recurrence_metadata_successor_converges_after_install() {
+    recurrence_continuation(true).await;
+}
+
+async fn recurrence_continuation(with_metadata: bool) {
+    use crate::operations::{CreateRecurrenceSeriesParams, RecurrenceSeriesDraft};
+    use crate::recurrence::{
+        RecurrenceDuePolicy, RecurrenceOutcome, RecurrenceRule, RecurrenceSchedule,
+    };
+    let (_a_dir, a, ws) = fresh().await;
+    let (_b_dir, b, _) = fresh().await;
+    // Public note and metadata mutations consult wall time, so keep the fixed
+    // occurrence clocks in the future to avoid archiving them during mutation.
+    let at = Utc.with_ymd_and_hms(2100, 9, 21, 12, 0, 0).unwrap();
+    let series = a
+        .create_recurrence_series(
+            &ws,
+            CreateRecurrenceSeriesParams::new(RecurrenceSeriesDraft {
+                title: "daily".into(),
+                description: "template".into(),
+                project: "app".into(),
+                priority: "none".into(),
+                initial_status: "todo".into(),
+                labels: vec!["habit".into()],
+                metadata: if with_metadata {
+                    vec![crate::metadata::TaskMetadataInput {
+                        expected_field_id: None,
+                        key: "ticket".into(),
+                        value: "42".into(),
+                    }]
+                } else {
+                    vec![]
+                },
+                schedule: RecurrenceSchedule::new(
+                    RecurrenceRule::daily(),
+                    "UTC".parse().unwrap(),
+                    at.date_naive(),
+                    None,
+                    RecurrenceDuePolicy::SameDay,
+                ),
+            })
+            .at(at)
+            .with_create_missing_labels(),
+        )
+        .await
+        .unwrap();
+    a.add_note(&ws, &series.task.id, "occurrence-local note".into())
+        .await
+        .unwrap();
+    let snapshot = a.capture_shared_state().await.unwrap();
+    b.install_shared_state(&snapshot).await.unwrap();
+    assert_recurrence_replicas_equal(&a, &b).await;
+    let mut stream = establish_test_prefix(&a, &b, &snapshot).await;
+    let tomorrow = at + chrono::Duration::days(1);
+    // Both replicas independently generate the same deterministic projection.
+    a.reconcile_recurrence_series(&ws, &series.series.id, tomorrow)
+        .await
+        .unwrap();
+    b.reconcile_recurrence_series(&ws, &series.series.id, tomorrow)
+        .await
+        .unwrap();
+    stream.send(&a, &[&a, &b], "2100-09-22T12:00:00Z").await;
+    stream.send(&b, &[&a, &b], "2100-09-22T12:00:00Z").await;
+    assert_recurrence_replicas_equal(&a, &b).await;
+    let current = b
+        .reconcile_recurrence_series(&ws, &series.series.id, tomorrow)
+        .await
+        .unwrap()
+        .occurrence
+        .unwrap();
+    {
+        let mut conn = b.acquire_writer().await.unwrap();
+        let mut tx = db::begin_immediate(&mut conn).await.unwrap();
+        crate::operations::recurrence::resolve_recurrence_occurrence_in_transaction(
+            &mut tx,
+            &ws,
+            current.task_id.as_ref().unwrap(),
+            RecurrenceOutcome::Completed,
+            "2100-09-22T13:00:00Z",
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+    }
+    stream.send(&b, &[&a, &b], "2100-09-22T13:00:00Z").await;
+    assert_recurrence_replicas_equal(&a, &b).await;
+    if with_metadata {
+        let successor: TaskId = b
+            .export_data("2100-09-22T14:00:00Z".into())
+            .await
+            .unwrap()
+            .tables
+            .recurrence_occurrences
+            .into_iter()
+            .find(|o| o.slot_on == "2100-09-23")
+            .unwrap()
+            .task_id
+            .parse()
+            .unwrap();
+        b.update_task(
+            &ws,
+            &successor,
+            TaskUpdate {
+                set_metadata: vec![crate::metadata::TaskMetadataInput {
+                    expected_field_id: None,
+                    key: "ticket".into(),
+                    value: "edited".into(),
+                }],
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        stream.send(&b, &[&a, &b], "2100-09-22T14:00:00Z").await;
+        assert_recurrence_replicas_equal(&a, &b).await;
+    }
+    let data = b.export_data("2100-09-22T14:00:00Z".into()).await.unwrap();
+    assert!(data.tables.recurrence_occurrences.len() >= 3);
+    assert_eq!(data.tables.notes.len(), 1);
+    assert_eq!(
+        !data.tables.recurrence_series_metadata.is_empty(),
+        with_metadata
+    );
+    assert!(!data.tables.recurrence_series_labels.is_empty());
+    assert!(data.tables.conflicts.is_empty());
+}
+
+async fn assert_recurrence_replicas_equal(a: &Database, b: &Database) {
+    assert_eq!(
+        normalized_shared(a.capture_shared_state().await.unwrap()),
+        normalized_shared(b.capture_shared_state().await.unwrap())
     );
 }
