@@ -1864,3 +1864,104 @@ async fn checkpoint_snapshot_shared_image_survives_parent_delete_restore() {
         2
     );
 }
+
+#[tokio::test]
+async fn checkpoint_metadata_resolution_rejects_unsendable_value() {
+    let f = fixture().await;
+    converge(&f).await;
+    let w = f.seed.list_workspaces().await.unwrap().remove(0);
+    let mut d = draft("metadata resolution bound");
+    d.metadata = vec![aven_core::metadata::TaskMetadataInput {
+        expected_field_id: None,
+        key: "owner".into(),
+        value: "initial".into(),
+    }];
+    let task = f.seed.create_task(&w, d).await.unwrap().task;
+    converge(&f).await;
+    for (db, value) in [(&f.seed, "seed"), (&f.peer, "peer")] {
+        db.update_task(
+            &w,
+            &task.id,
+            TaskUpdate {
+                set_metadata: vec![aven_core::metadata::TaskMetadataInput {
+                    expected_field_id: None,
+                    key: "owner".into(),
+                    value: value.into(),
+                }],
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    }
+    converge(&f).await;
+    let conflicts = f.seed.task_conflicts(&w, &task.id, None).await.unwrap();
+    assert_eq!(conflicts.len(), 1);
+    let oversized = "x".repeat(4097);
+    assert!(
+        f.seed
+            .update_task(
+                &w,
+                &task.id,
+                TaskUpdate {
+                    set_metadata: vec![aven_core::metadata::TaskMetadataInput {
+                        expected_field_id: None,
+                        key: "owner".into(),
+                        value: oversized.clone(),
+                    }],
+                    ..Default::default()
+                },
+            )
+            .await
+            .is_err()
+    );
+    let resolution = f
+        .seed
+        .resolve_conflict(&w, &task.id, &conflicts[0].field, &oversized)
+        .await;
+    assert!(
+        resolution.is_err(),
+        "oversized resolution must refuse before commit"
+    );
+    assert_eq!(
+        f.seed
+            .task_conflicts(&w, &task.id, None)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &f.seed,
+            "SELECT count(*) FROM task_metadata WHERE length(value)=4097"
+        )
+        .await,
+        0
+    );
+    f.seed
+        .resolve_conflict(&w, &task.id, &conflicts[0].field, &"x".repeat(4096))
+        .await
+        .unwrap();
+    f.seed
+        .create_task(&w, draft("later valid work"))
+        .await
+        .unwrap();
+    converge(&f).await;
+    for db in [&f.seed, &f.peer] {
+        assert_eq!(
+            scalar(db, "SELECT count(*) FROM changes WHERE server_seq IS NULL").await,
+            0
+        );
+        assert_eq!(
+            db.task_metadata(&w.id, &task.id).await.unwrap()[0].value,
+            "x".repeat(4096)
+        );
+        assert!(
+            db.task_conflicts(&w, &task.id, None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+}

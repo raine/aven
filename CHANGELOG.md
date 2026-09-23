@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Fix: Metadata conflict resolution rejects values that exceed metadata limits without changing the conflict or blocking later sync.
+
 - Fix: Concurrent plaintext sync and image requests no longer fail with `installation-busy`.
 
 - Protect installations explicitly opted into experimental encrypted sync from plaintext sync and backup replacement.

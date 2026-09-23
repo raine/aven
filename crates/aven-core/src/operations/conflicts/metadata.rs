@@ -7,7 +7,8 @@ use crate::db::{begin_immediate, insert_change, set_field_version};
 use crate::error::CoreError;
 use crate::ids::{MetadataFieldId, TaskId, now};
 use crate::metadata::{
-    decode_metadata_conflict_value, encode_metadata_conflict_value, metadata_field_by_id,
+    TaskMetadataInput, decode_metadata_conflict_value, encode_metadata_conflict_value,
+    metadata_field_by_id, validate_task_metadata_result,
 };
 use crate::refs::get_task_in_workspace;
 use crate::workspaces::Workspace;
@@ -60,6 +61,18 @@ pub(super) async fn resolve_metadata_conflict_value(
         ConflictResolutionValue::Explicit(value) => encode_metadata_conflict_value(Some(value))?,
     };
     let value = decode_metadata_conflict_value(&encoded)?;
+    let (set, remove) = match &value {
+        Some(value) => (
+            vec![TaskMetadataInput {
+                expected_field_id: Some(field_id.clone()),
+                key: field.key.clone(),
+                value: value.clone(),
+            }],
+            Vec::new(),
+        ),
+        None => (Vec::new(), vec![field.key.clone()]),
+    };
+    validate_task_metadata_result(&mut tx, &workspace.id, task_id, &set, &remove).await?;
     let changed_at = now();
     let (op, payload) = if let Some(value) = value.as_deref() {
         sqlx::query(
@@ -131,3 +144,6 @@ pub(super) async fn resolve_metadata_conflict_value(
         conflict_id: conflict.0,
     })
 }
+
+#[cfg(test)]
+mod tests;
