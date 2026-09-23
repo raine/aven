@@ -40,6 +40,7 @@ aven-core = { path = "crates/aven-core", version = "=0.1.32" }
 axum = "0.8"
 clap = { version = "4.5", features = ["derive"] }
 dirs = "6.0"
+getrandom = "0.4"
 hex.workspace = true
 image.workspace = true
 iana-time-zone = "0.1"
@@ -67,6 +68,7 @@ unicode-width = "0.2"
 url.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zeroize.workspace = true
 qrcode = { version = "0.14.1", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
@@ -74,6 +76,8 @@ libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys = "0.6"
+security-framework = { version = "3.7", default-features = false }
+security-framework-sys = { version = "2.15", default-features = false }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 notify-rust = "4"

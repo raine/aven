@@ -46,6 +46,14 @@ impl LocalSharedStatePackageKey {
     fn expose(&self) -> &[u8; 32] {
         &self.0
     }
+
+    /// Borrows key bytes only for persistence at a host protected-store boundary.
+    ///
+    /// Callers must not place these bytes in SQLite, settings, logs, exports, or
+    /// ordinary backups.
+    pub fn protected_storage_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
 }
 
 impl fmt::Debug for LocalSharedStatePackageKey {

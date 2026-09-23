@@ -309,6 +309,7 @@ dependencies = [
  "crossterm",
  "dirs",
  "flate2",
+ "getrandom 0.4.3",
  "hex",
  "iana-time-zone",
  "image",
@@ -320,6 +321,8 @@ dependencies = [
  "qrcode",
  "ratatui",
  "reqwest",
+ "security-framework",
+ "security-framework-sys",
  "semver",
  "serde",
  "serde_json",
@@ -336,6 +339,7 @@ dependencies = [
  "tracing-subscriber",
  "unicode-width",
  "url",
+ "zeroize",
  "zstd",
 ]
 

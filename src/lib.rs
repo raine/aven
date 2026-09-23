@@ -17,6 +17,7 @@ mod notification;
 mod operations;
 mod pairing;
 mod projects;
+pub mod protected_local_keys;
 mod recurrence_input;
 mod render;
 mod routing;
