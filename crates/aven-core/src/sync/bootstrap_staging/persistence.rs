@@ -1,3 +1,5 @@
+mod publication;
+
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, ensure};
@@ -76,20 +78,8 @@ fn now() -> Result<i64> {
 }
 
 async fn authorize(conn: &mut SqliteConnection, auth: &Authentication<'_>) -> Result<Genesis> {
-    let row: Option<(Vec<u8>, bool)> =
-        sqlx::query_as("SELECT genesis, genesis_only FROM server_seed_claim WHERE singleton = 1")
-            .fetch_optional(&mut *conn)
-            .await?;
-    let (record, genesis_only) =
-        row.ok_or_else(|| anyhow::anyhow!("error bootstrap-unauthorized"))?;
-    ensure!(genesis_only, "error bootstrap-unauthorized");
-    let genesis = Genesis::from_record(&record)?;
-    ensure!(
-        genesis.authorizes_bearer(auth.bearer)
-            && genesis.context().vault_id == auth.vault_id
-            && genesis.commitment() == auth.genesis_commitment,
-        "error bootstrap-unauthorized"
-    );
+    let (genesis, outcome) = publication::authorize_current(conn, auth).await?;
+    ensure!(outcome.is_none(), "error bootstrap-published");
     Ok(genesis)
 }
 
@@ -336,8 +326,13 @@ impl Database {
         let mut conn = self.acquire_reader().await?;
         use sqlx::Connection;
         let mut tx = conn.begin().await?;
-        authorize(&mut tx, auth).await?;
-        let result = status(&mut tx, &bootstrap_id).await?;
+        let (_, published) = publication::authorize_current(&mut tx, auth).await?;
+        let result = match published {
+            Some(outcome) if outcome.publication().binding().bootstrap_id == bootstrap_id => {
+                Status::Published(outcome)
+            }
+            _ => status(&mut tx, &bootstrap_id).await?,
+        };
         tx.commit().await?;
         Ok(result)
     }
@@ -357,15 +352,24 @@ impl Database {
     }
 
     /// Terminal even before declaration. Canceled IDs consume the finite lifetime
-    /// candidate budget and are never silently forgotten or reopened.
+    /// candidate budget and are never silently forgotten or reopened. Publication
+    /// wins return its immutable outcome instead, without deleting any data.
     pub async fn cancel_bootstrap_staging(
         &self,
         auth: &Authentication<'_>,
         bootstrap_id: [u8; 32],
-    ) -> Result<()> {
+    ) -> Result<Status> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        authorize(&mut tx, auth).await?;
+        let (_, published) = publication::authorize_current(&mut tx, auth).await?;
+        if let Some(outcome) = published {
+            ensure!(
+                outcome.publication().binding().bootstrap_id == bootstrap_id,
+                "error bootstrap-published"
+            );
+            tx.commit().await?;
+            return Ok(Status::Published(outcome));
+        }
         if candidate(&mut tx, &bootstrap_id).await?.is_none() {
             capacity(&mut tx).await?;
             sqlx::query("INSERT INTO server_bootstrap_candidates(bootstrap, canceled, epoch, expires_at, byte_budget, chunk_budget) VALUES (?, 1, 1, 0, 0, 0)")
@@ -379,7 +383,7 @@ impl Database {
                 .bind(bootstrap_id.as_slice()).execute(&mut *tx).await?;
         }
         tx.commit().await?;
-        Ok(())
+        Ok(Status::Canceled)
     }
 
     /// Authenticated reclamation serializes deletion and epoch fencing with PUT.

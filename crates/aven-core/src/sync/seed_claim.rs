@@ -1,13 +1,18 @@
-//! Experimental sequence-zero membership and one-vault claim, without transport.
+//! Sequence-zero membership and one-vault claim, without transport.
 //!
 //! The fixed genesis profile uses strict Ed25519 and an HPKE base-mode self grant.
 //! Operator setup authority, not the self signature, admits the first device.
 //! Public validation cannot prove the encrypted self grant is usable. Hosts must
 //! verify it and persist exact authority outside replaceable databases before use.
-//! This module neither enables encrypted sync nor changes plaintext sync.
+//! A fixed signed publication successor preserves genesis authority. Neither
+//! preparation nor server acceptance enables client sync or advances a local
+//! protected checkpoint. Exact profiles remain provisional format boundaries.
 
 mod codec;
 mod persistence;
+mod publication;
+
+pub use publication::{PUBLICATION_BYTES, Publication, PublicationBinding, PublicationOutcome};
 
 use std::fmt;
 

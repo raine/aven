@@ -1,9 +1,9 @@
-//! Authenticated bootstrap staging for a claimed seed.
-//! Publication and membership admission are handled separately.
+//! Authenticated staging and atomic initial snapshot publication for a claimed seed.
 //!
-//! All operations authenticate the stored genesis bearer and exact genesis context
-//! inside the transaction. Successor membership must set `genesis_only = 0` in
-//! its authorization transaction, retiring both staging and first-claim retries.
+//! All operations authenticate current supported membership inside the transaction.
+//! Publication installs its explicit membership head and retires genesis-only
+//! admission atomically. Published status, exact retry and cancel-to-outcome use
+//! that head, never historical genesis credentials across unsupported successors.
 //! A descriptor, device ID, setup secret or signature alone grants no staging access.
 //!
 //! Declaration freezes the exact profile-1 descriptor and explicit total byte and
@@ -13,14 +13,19 @@
 //! verify. Data requires its verified describing catalog. Manifest descriptors
 //! are inline. Verified means public framing/commitments, never AEAD/domain validity.
 //!
-//! SQLite blobs and presence commit together under the core writer gate. No staged
-//! files, HTTP, READY, signed PublishBootstrap, adoption or power-loss guarantee.
+//! SQLite blobs and presence commit together under the core writer gate. Signed
+//! PublishBootstrap couples complete staged bytes, immutable outcome, active prefix
+//! and image ownership, allocator=N and READY in one immediate transaction. Image
+//! bytes move to ordinary lifecycle ownership; immutable catalogs are not byte pins.
+//! There are no staged files, HTTP, client adoption, tail or power-loss guarantee.
 //! Limits bound logical retained payload, not SQLite/WAL/temp files, process memory
 //! or total disk use. Validation can materialize one bounded artifact (256 MiB)
 //! plus framing and one catalog (16 MiB); callers must separately bound concurrent
 //! requests.
 
 mod persistence;
+
+pub use crate::sync::seed_claim::{Publication, PublicationOutcome};
 #[cfg(test)]
 mod tests;
 
@@ -124,6 +129,8 @@ pub struct StagingStatus {
 pub enum Status {
     Missing,
     Canceled,
+    /// Immutable accepted intent. Callers validate it against pinned expectations.
+    Published(PublicationOutcome),
     Staging(StagingStatus),
 }
 
@@ -151,4 +158,28 @@ pub enum Reclaim {
     Quarantine,
     /// Actually remove all blobs. The descriptor remains frozen and resumable.
     All,
+}
+
+/// First admission preconditions. Record bytes are validated against the exact
+/// staged descriptor and trusted predecessor inside the transaction.
+pub struct PublishBootstrap<'a> {
+    pub bootstrap_id: [u8; 32],
+    pub descriptor_commitment: [u8; 32],
+    pub epoch: u64,
+    pub record: &'a [u8],
+}
+
+/// Operator-owned admission policy, not a value accepted from a remote requester.
+#[derive(Clone, Copy, Debug)]
+pub struct PublicationPolicy {
+    pub workspace_quota_bytes: u64,
+}
+
+impl Default for PublicationPolicy {
+    fn default() -> Self {
+        Self {
+            workspace_quota_bytes: crate::attachments::lifecycle::DEFAULT_ORIGINAL_QUOTA_BYTES
+                as u64,
+        }
+    }
 }

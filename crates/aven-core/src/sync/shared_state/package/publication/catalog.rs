@@ -5,21 +5,21 @@ use super::codec::*;
 use super::{Error, Result};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Artifact {
+pub(crate) struct Artifact {
     pub total: u64,
     pub aggregate: [u8; 32],
     pub chunks: Vec<Chunk>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Chunk {
+pub(crate) struct Chunk {
     pub length: u64,
     pub hash: [u8; 32],
     pub nonce: [u8; 24],
 }
 
 impl Artifact {
-    pub fn from_encrypted(artifact: &EncryptedArtifact) -> Result<Self> {
+    pub(super) fn from_encrypted(artifact: &EncryptedArtifact) -> Result<Self> {
         let chunks = artifact
             .chunks
             .iter()
@@ -66,7 +66,7 @@ impl Artifact {
         }
         Ok(())
     }
-    pub fn read(r: &mut Reader<'_>, maximum: u64, image: bool) -> Result<Self> {
+    pub(super) fn read(r: &mut Reader<'_>, maximum: u64, image: bool) -> Result<Self> {
         let total = r.u64()?;
         bound(total, maximum)?;
         let aggregate = r.array()?;
@@ -136,7 +136,7 @@ impl Artifact {
         .map_err(|_| Error::Invalid)?;
         valid(nonce == chunk.nonce)
     }
-    pub fn encrypted(&self, records: &[Vec<u8>]) -> EncryptedArtifact {
+    pub(super) fn encrypted(&self, records: &[Vec<u8>]) -> EncryptedArtifact {
         EncryptedArtifact {
             total_plaintext_bytes: self.total,
             aggregate_commitment: self.aggregate,
@@ -191,7 +191,7 @@ impl Declaration {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Parent {
+pub(crate) struct Parent {
     pub workspace: String,
     pub task: String,
     pub deleted: bool,
@@ -200,7 +200,7 @@ pub(super) struct Parent {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Reference {
+pub(crate) struct Reference {
     pub workspace: String,
     pub task: String,
     pub reference: String,
@@ -209,7 +209,7 @@ pub(super) struct Reference {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Image {
+pub(crate) struct Image {
     pub id: [u8; 32],
     // 1 current selected, 2 extra selected. Both require complete bytes.
     pub selection: u8,
@@ -217,7 +217,7 @@ pub(super) struct Image {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Images {
+pub(crate) struct Images {
     pub objects: Vec<Image>,
     pub parents: Vec<Parent>,
     pub references: Vec<Reference>,

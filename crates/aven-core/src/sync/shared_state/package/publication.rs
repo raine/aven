@@ -1,12 +1,14 @@
-//! Experimental, bounded publication-package codec and keyless completeness checks.
+//! Bounded publication-package codec and keyless completeness checks.
 //!
 //! Persistence belongs to the never-dispatched database package owner. The capture
 //! candidate ID is the bootstrap ID, not a freshly minted specimen identity.
-//! No dispatch, authorization, signature, or publication is provided. Membership
-//! predecessor bytes are context only. Production protocol, security review,
-//! cross-platform interoperability and durability validation remain required.
+//! This codec provides no authorization: membership predecessor bytes are context
+//! only. `seed_claim::Publication` authenticates that context and the descriptor;
+//! `bootstrap_staging` owns server publication. No production local dispatcher or
+//! adoption is provided. Security review, cross-platform interoperability and
+//! platform durability validation remain required.
 //!
-//! # Profile 1 byte contract (experimental, not security-approved)
+//! # Profile 1 byte contract (provisional, not released or security-approved)
 //!
 //! Integers are unsigned big-endian. Byte strings use a U64 length. IDs in
 //! descriptor/chunk context are raw 32 bytes; catalog domain IDs are nonempty

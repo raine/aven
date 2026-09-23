@@ -540,3 +540,5 @@ async fn protected_seed_claim_round_trip_keeps_secrets_out_of_tracing() {
         }
     }
 }
+
+mod publication;

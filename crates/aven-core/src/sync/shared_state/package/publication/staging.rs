@@ -18,6 +18,24 @@ impl DeclarationView {
         Descriptor::decode(bytes).map(Self)
     }
 
+    pub(crate) fn prefix_count(&self) -> u64 {
+        self.0.prefix
+    }
+
+    pub(crate) fn manifest_commitment(&self) -> [u8; 32] {
+        self.0.manifest.aggregate
+    }
+
+    pub(crate) fn prefix_rows(&self, bytes: &[u8]) -> Result<Vec<(u64, String)>> {
+        self.catalog(1, bytes)?;
+        catalog::prefix_decode(bytes, self.0.prefix)
+    }
+
+    pub(crate) fn image_rows(&self, bytes: &[u8]) -> Result<Images> {
+        self.catalog(2, bytes)?;
+        Images::decode(bytes)
+    }
+
     pub(crate) fn binding(&self) -> Binding {
         let d = &self.0;
         Binding {

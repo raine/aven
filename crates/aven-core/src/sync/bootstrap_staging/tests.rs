@@ -787,3 +787,5 @@ async fn competing_declarations_and_cancel_before_declare_races_serialize_across
             .is_err()
     );
 }
+
+mod publication;

@@ -39,7 +39,7 @@ Apple-side validation, not just bundled host tests.
 | Task metadata | workspace field definitions, task and recurrence-template values, field rename, metadata search and filters, sync aliases and conflicts, undo, and portable data | `crates/aven-core/src/metadata.rs`, `crates/aven-core/src/metadata/`, `crates/aven-core/src/sync/apply/metadata.rs`, `src/commands/metadata.rs`, `src/commands/tasks.rs` | Metadata fields have stable random IDs and canonical workspace-unique keys. Relations and conflict identities use field IDs so rename does not rewrite values. Recurrence template values copy into later materialized tasks. Full CLI, consumer, and TUI detail surfaces expose metadata; task summaries omit values. `src/tui/app_metadata.rs` coordinates the task field editor in `src/tui/overlay/metadata.rs` with captured task identity. Core metadata inputs can require an existing field identity and key within the write transaction. |
 | Image attachments | content-addressed object storage, image validation and optimization, attachment metadata, lifecycle policy, leases, atomic task attachment mutations, attachment read models, terminal previews, and secure viewer exports | `crates/aven-core/src/attachments/`, `crates/aven-core/src/operations/attachments.rs`, `crates/aven-core/src/operations/tasks/`, `crates/aven-core/src/task_enrichment/`, `src/attachments/` | Core owns durable attachment state and object lifecycle. Root modules own filesystem input and output, terminal preview rendering, secure temporary exports, configuration, and transport. |
 | Config and routing | config files, managed config text edits, path mappings, workspace resolution, and project inference | `src/config.rs`, `src/config/`, `src/config_edit.rs`, `src/workspaces.rs`, `src/projects.rs`, `src/routing.rs`, `src/operations/projects.rs` | CLI workspace selection and project inference share `InvocationRouting`, borrowing loaded config and caching canonical cwd and Git root on demand. Application code passes resolved routing inputs to the core. Managed entry text surgery belongs in `src/config_edit.rs`. |
-| Sync and daemon | Reqwest and Axum transport, protected local package keys, HTTP-client-independent sync sessions, shared-state capture and installation, cross-process host coordination, protocol validation and persistence, observational status reports, launchd service management, wake policy and loop | `src/protected_local_keys.rs`, `src/sync.rs`, `src/sync/`, `src/status.rs`, `src/daemon.rs`, `src/daemon/`, `crates/aven-core/src/sync/` | `src/protected_local_keys.rs` is the host boundary for the local capture package's vault, generation, and key. It scopes authority to a canonical database installation, uses a non-synchronizing login Keychain item on macOS or an owner-only state file on Linux, and persists authority before package creation. Root sync modules own Reqwest, Axum, host scheduling, and typed privacy-safe status projection. Core `SyncSession` prepares HTTP-shaped byte exchanges and owns outstanding page state, decoding, validation, acknowledgements, cursor advancement, remote apply, and conflict generation. `crates/aven-core/src/sync/shared_state.rs` captures materialized shared state plus retained history at one SQLite boundary, persists the single never-dispatched local capture with exact history and durable image ownership, and atomically installs shared state into a fresh database. `crates/aven-core/src/sync/shared_state/package.rs` owns the single durable never-dispatched upload package. Its `publication.rs` codec (exported as `sync::bootstrap_format`) encodes the domain, descriptor, three catalogs and encrypted manifest; the capture candidate ID is the bootstrap artifact ID. SQLite atomically freezes all exact bytes, image mappings and a journal-owned descriptor commitment. Reopen authenticates the frozen representation against the immutable capture without rereading live domain or image files. Missing/corrupt frozen data fails closed; local-only packages without publication components require explicit cancellation/recapture, never rewriting under the same ID. `EncryptedLocalSharedStatePackage::upload_package` returns exact components for keyless validation or context-bound client authentication. The package includes selected current and extra image bytes; validated unavailable metadata has no invented object mapping. Image objects use random identities and generation-derived keys. Private plaintext-hash mappings remain local and in encrypted domain records, not public descriptors. Core accepts protected key material and never persists it. The host accepts an explicit membership predecessor as context only, not authorization. Local package context alone is not claim authority. `sync/seed_claim.rs` owns the fixed signed genesis, HPKE self-package validation and one-vault SQLite admission; `src/protected_local_keys/seed.rs` persists installation-bound seed keys, bearer and exact genesis before use. `sync/bootstrap_staging.rs` authenticates the claimed seed and stores bounded exact catalog/chunk bytes in SQLite with candidate epochs and terminal cancellation. There is no dispatch, server publication, adoption, general membership transition, or shipping E2EE behavior; protocol/security review, interoperability, production resource limits and platform/power-loss durability remain gates. Root host operations hold the file lock across a complete interactive drain or one daemon round. |
+| Sync and daemon | Reqwest and Axum transport, protected local package keys, HTTP-client-independent sync sessions, shared-state capture and installation, cross-process host coordination, protocol validation and persistence, observational status reports, launchd service management, wake policy and loop | `src/protected_local_keys.rs`, `src/sync.rs`, `src/sync/`, `src/status.rs`, `src/daemon.rs`, `src/daemon/`, `crates/aven-core/src/sync/` | `src/protected_local_keys.rs` is the host boundary for the local capture package's vault, generation, and key. It scopes authority to a canonical database installation, uses a non-synchronizing login Keychain item on macOS or an owner-only state file on Linux, and persists authority before package creation. Root sync modules own Reqwest, Axum, host scheduling, and typed privacy-safe status projection. Core `SyncSession` prepares HTTP-shaped byte exchanges and owns outstanding page state, decoding, validation, acknowledgements, cursor advancement, remote apply, and conflict generation. `crates/aven-core/src/sync/shared_state.rs` captures materialized shared state plus retained history at one SQLite boundary, persists the single never-dispatched local capture with exact history and durable image ownership, and atomically installs shared state into a fresh database. `crates/aven-core/src/sync/shared_state/package.rs` owns the single durable never-dispatched upload package. Its `publication.rs` codec (exported as `sync::bootstrap_format`) encodes the domain, descriptor, three catalogs and encrypted manifest; the capture candidate ID is the bootstrap artifact ID. SQLite atomically freezes all exact bytes, image mappings and a journal-owned descriptor commitment. Reopen authenticates the frozen representation against the immutable capture without rereading live domain or image files. Missing/corrupt frozen data fails closed; local-only packages without publication components require explicit cancellation/recapture, never rewriting under the same ID. `EncryptedLocalSharedStatePackage::upload_package` returns exact components for keyless validation or context-bound client authentication. The package includes selected current and extra image bytes; validated unavailable metadata has no invented object mapping. Image objects use random identities and generation-derived keys. Private plaintext-hash mappings remain local and in encrypted domain records, not public descriptors. Core accepts protected key material and never persists it. The host accepts an explicit membership predecessor as context only, not authorization. Local package context alone is not claim authority. `sync/seed_claim.rs` owns the fixed signed genesis, HPKE self-package validation and one-vault SQLite admission; `src/protected_local_keys/seed.rs` persists installation-bound seed keys, bearer and exact genesis before use. `sync/bootstrap_staging.rs` authenticates current supported membership, stages bounded exact bytes, and atomically publishes the fixed signed genesis successor with complete catalogs, image ownership and allocator=N. Immutable outcomes are separate from current-head authority. There is no production dispatch, adoption, general membership engine, ordinary encrypted tail, or shipping E2EE behavior; protocol/security review, interoperability, production resource limits and platform/power-loss durability remain gates. Root host operations hold the file lock across a complete interactive drain or one daemon round. |
 | TUI app | launch-intent resolution, event loop, actions, overlays, store, rendering, natural add runtime, and platform helpers | `src/tui/store/launch.rs`, `src/tui/` | `TuiStore` owns a cloned core `Database` handle. The launch resolver turns CLI targets into one view state before app construction. UI modules render view models and never access SQLx or SQLite directly. |
 | Update delivery | cached GitHub release discovery, semantic version comparison, sync compatibility preflight, install ownership classification, verified direct replacement | `src/update.rs`, `src/update/` | Releases identify their active server protocol with a `sync-protocol-N` asset and cumulative client baseline with `sync-client-baseline-N`. Releases without a baseline marker retain exact-protocol meaning. Direct updates probe configured servers only when compatibility needs checking. Background checks are fail-silent and rate-limited. CLI and TUI flows own presentation and confirmation behavior. |
 | Shared domain types | validated IDs, status and priority values, task and project records, query DTOs, sync DTOs | `crates/aven-core/src/ids.rs`, `crates/aven-core/src/choices.rs`, `crates/aven-core/src/types.rs`, `crates/aven-core/src/query/types.rs`, `crates/aven-core/src/sync/wire.rs` and `crates/aven-core/src/sync/wire/` | Domain types are independent of CLI arguments, TUI state, and config files. Application-only rendering and input parsing remain under root `src/`. |
@@ -69,8 +69,8 @@ fixtures live in a `test_support.rs` beside them.
 | `crates/aven-core/src/sync/wire.rs` protocol constants, dispatch, attachment payloads | `envelope.rs` request and response bounds, `changes.rs` per-operation payload rules, `recurrence.rs` recurrence payload rules |
 | `crates/aven-core/src/sync/persistence.rs` page types | `client.rs` push bounding and response apply, `server.rs` sequence assignment, `blobs.rs` blob admission and liveness, `changes.rs` change identity and epic reconciliation, `status.rs` |
 | `crates/aven-core/src/sync/shared_state.rs` capture and install | `package.rs` durable freeze/load, protected-key inputs and shared chunk crypto; `package/publication.rs` exact publication codec and validation; `publication/domain.rs`, `catalog.rs`, `projection.rs` and `codec.rs` typed domain, committed catalogs, public/private agreement and bounded framing; `package/durable_tests.rs` restart, rollback, format refusal and process-exit evidence |
-| `crates/aven-core/src/sync/seed_claim.rs` fixed genesis and private authority | `seed_claim/codec.rs` bounded signed bytes; `seed_claim/persistence.rs` transactional one-vault admission and nonsecret local loss-detection pin; `src/protected_local_keys/seed.rs` host seed storage and package-context binding |
-| `crates/aven-core/src/sync/bootstrap_staging.rs` authenticated declaration, chunk, status, resume and cancellation contracts | `bootstrap_staging/persistence.rs` serialized SQLite staging and reclamation; `shared_state/package/publication/staging.rs` transaction-local views of the existing publication codec, not another format |
+| `crates/aven-core/src/sync/seed_claim.rs` fixed genesis and private authority | `seed_claim/codec.rs` immutable genesis bytes; `seed_claim/publication.rs` fixed signed successor and expected-descriptor verification; `seed_claim/persistence.rs` transactional one-vault admission and nonsecret local loss-detection pin; `src/protected_local_keys/seed.rs` host seed storage and package-context binding |
+| `crates/aven-core/src/sync/bootstrap_staging.rs` authenticated declaration, chunk, status, resume and cancellation contracts | `bootstrap_staging/persistence.rs` serialized SQLite staging and reclamation; `bootstrap_staging/persistence/publication.rs` current-head authorization, completeness, atomic READY and ownership transfer; `shared_state/package/publication/staging.rs` transaction-local views of the existing publication codec, not another format |
 | `src/cli.rs` `Cli` and `Commands` | argument families in `tasks.rs`, `relationships.rs`, `recurrence.rs`, `sync.rs`, `data_safety.rs`, `administration.rs`, `tui.rs`; `help.rs` owns styles, sections, and row rendering |
 | `src/config.rs` `AppConfig` and serialization | `paths.rs` path and server resolution, `tui.rs` lanes, table columns, and sidebar views, `custom_commands.rs` custom command config and validation |
 | `src/task_render.rs` shared task output entry points | `text.rs`, `json.rs`, `markdown.rs`, `attachments.rs` |
@@ -194,16 +194,18 @@ freezes bootstrap/stream identity and budgets; all PUTs and reclamation name its
 commitment and current candidate epoch. IDs, descriptor possession and setup
 credentials do not authorize staging.
 
-`server_seed_claim.genesis_only` gates both staging and claim retries. Future
-membership or publication transitions must retire this gate in their own
-transaction before successor authority can take effect. No general membership,
-credential replacement, unsigned publication, READY, transport, adoption or
-ordinary encrypted tail path is implemented by staging.
+`server_seed_claim.genesis_only` gates unpublished staging and claim retries.
+Publication retires it in the same transaction that installs an explicit current
+membership head. Published status, exact publication retry and cancel-to-outcome
+require that head to match the supported signed successor. A historical outcome
+alone never authorizes a credential. Unknown successor heads fail closed; no
+general membership, credential replacement or rotation engine is implemented.
 
 `server_bootstrap_candidates` owns one active frozen descriptor, expiry and
 candidate-scoped epoch, plus terminal bootstrap-ID cancellation tombstones.
-Cancellation works before declaration and releases staged blobs atomically.
-Only the claimed seed can allocate or reclaim staging. `server_bootstrap_chunks`
+Cancellation works before declaration and releases unpublished staged blobs
+atomically. Publication wins return the immutable outcome without deleting data.
+Only the currently authorized seed can allocate or reclaim unpublished staging. `server_bootstrap_chunks`
 stores exact bytes and presence in the same SQLite transaction, without staged
 files or a filesystem cleanup protocol. Failed writes roll back both bytes and
 presence. Status allocates nothing and distinguishes missing, quarantined and
@@ -228,10 +230,13 @@ storage bounds, not total SQLite/WAL/disk or concurrent-request memory bounds.
 Validation materializes at most one bounded encrypted artifact and catalog at a
 time. SQLite atomicity/restart tests do not establish power-loss durability.
 
-### Experimental first-device authority
+### First-device authority and signed initial publication
 
-`sync::seed_claim` accepts only sequence-zero genesis with one device, one initial
-generation, zero predecessor and no bootstrap, recovery or pending rotation.
+`sync::seed_claim::Genesis` accepts only sequence-zero genesis with one device,
+one initial generation, zero predecessor and no bootstrap, recovery or pending
+rotation. Its exact immutable format is separate from the fixed publication
+successor in `seed_claim/publication.rs`. These are provisional protocol format
+boundaries, not a released wire contract or security approval.
 Strict Ed25519 authenticates the fixed record and an HPKE base-mode self-package.
 The host decrypts and validates self coverage against its existing protected
 package secret before persisting seed authority. The keyless server checks public
@@ -254,9 +259,53 @@ Identical retries require that setup authority or the stored seed verifier's
 bearer; divergent records cannot replace authority. The result is an equality
 check against locally pinned intent, not READY or current membership proof.
 `server_seed_claim` stores only the public signed record, including encrypted self
-coverage and verifier. Successor membership integration must retire the stored `genesis_only` gate in
-its own transaction; both sequence-zero claim retries and staging check it.
+coverage and verifier. Publication retires the stored `genesis_only` gate in
+its own transaction. Sequence-zero claim retries remain retired after publication.
 Neither endpoint transport nor shipping plaintext sync consumes these APIs.
+
+`SeedAuthority::prepare_bootstrap_publication` authenticates the already-frozen
+package against its protected genesis and generation key before signing the
+fixed sequence-one successor. The signed tuple binds bootstrap, stream, exact
+descriptor and manifest commitments, and prefix boundary N. The public validator
+resolves the signing key from genesis and derives the entire expected resulting
+state, preserving device credentials and generation fields exactly. This is
+preparation only: no protected checkpoint advancement, dispatch ownership or
+adoption. The local `never_dispatched` journal remains unsuitable for production
+dispatch and must not be silently promoted by a host caller.
+
+`Database::publish_bootstrap` owns one immediate transaction for current-head
+and bearer authorization, predecessor/epoch/expiry checks, all three complete
+catalogs, every selected current and extra image, declaration budgets and
+operator-owned workspace quota, signed history and immutable outcome, active
+prefix and image projections, allocator=N and READY. Completeness reuses the
+publication codec, not a caller list or staging presence flags alone. The keyless
+server validates exact ciphertext framing and commitments, never domain plaintext
+or AEAD correctness. Empty prefix is valid; the durable high-water mark reserves
+1..N even without tail rows. Ordinary encrypted tail allocation is not implemented.
+
+`server_bootstrap_publication` retains exact signed intent and descriptor;
+`server_e2ee_membership_head` independently identifies current authority. Exact
+retries authenticate first, ignore obsolete staging epochs and mutable allocation,
+and return the retained result without recreating image ownership. Read-only
+status creates no reservation. Unsupported successor authority is explicitly
+rejected rather than falling back to historical seed credentials.
+
+Published descriptor, manifest, state/history and catalog bytes stay lifetime
+roots. Publication moves image chunks out of candidate staging into
+`server_e2ee_image_chunks`, with immutable catalog-backed object provenance and
+ordinary reference/parent ownership in `server_e2ee_images`,
+`server_e2ee_image_references` and `server_e2ee_image_parents`. Unprotected extras
+start grace at publication; contested or unknown parents retain protection even
+when their objects are selected extras. Metadata-only unmapped references create
+no byte obligation. Workspace usage is distinct protected ciphertext objects,
+not snapshot roots or grace bytes. No broad opaque-image GC is implemented.
+Staging ensure, PUT and reclamation cannot mutate published data.
+
+Core tests exercise actual crypto and SQLite, including independent pools,
+write-failure rollback and process exit after commit before response. Isolated
+host tests use restricted file-backed protected authority and frozen images.
+These are not HTTP/TLS, filesystem power-loss, Apple Keychain lifecycle or
+physical-iPhone validation, nor a complete two-client E2EE loop.
 
 ### Sync flow
 
@@ -401,8 +450,8 @@ SQLite stores synced task data and local UI state. Config files store local rout
 | Add or change TUI overlay behavior | the owning family under `src/tui/overlay/state/` (`authoring.rs`, `editors.rs`, `command_search.rs`), `src/tui/overlay/view.rs`, `src/tui/app_overlay_submit.rs` | typed intent payload, input helper, state builder, presentation-kind projection, exhaustive submit dispatch, cancellation, module-local tests | `cargo test --lib 'tui::overlay::'` |
 | Add or change TUI overlay rendering | `src/tui/ui/overlays.rs`, `src/tui/ui/overlays/` | overlay view models, shared dialog helpers, input helpers, theme | the owning feature module under `src/tui/ui/overlays/tests/` |
 | Change sync protocol, transport boundary, host coordination, shared-state bootstrap, or conflict handling | `crates/aven-core/src/db.rs`, `crates/aven-core/src/sync/session.rs`, `crates/aven-core/src/sync/shared_state.rs`, `crates/aven-core/src/sync/wire/` validation, `crates/aven-core/src/sync/persistence/` persistence, `crates/aven-core/src/sync/apply/`, `src/sync/coordination.rs` | `src/sync/server.rs`, `src/sync/client.rs` with output in `src/sync/client/render.rs`, `src/daemon.rs`, core consumer mappings, core mutation and field helpers, data-safety scanners and validators, migrations if persisted | focused shared-state module tests, core sync session tests, root coordination tests, `tests/cli_sync*.rs`, and `tests/cli_conflicts.rs`; focused bounded-sync checks include `cargo test --test cli_sync sync_server_returns_bounded_pull_pages`, `cargo test --test cli_sync sync_client_drains_paged_remote_changes`, `cargo test --test cli_sync sync_client_drains_paged_local_changes`, and `cargo test --test cli_sync wrong_response_protocol_version_is_rejected` |
-| Change experimental seed genesis, first claim, or protected authority | `crates/aven-core/src/sync/seed_claim.rs`, its `codec.rs` and `persistence.rs`, `src/protected_local_keys/seed.rs` | protected package ownership in `src/protected_local_keys.rs`, frozen bootstrap membership context, secret exclusion and same-path replacement | `cargo test -p aven-core --lib 'sync::seed_claim::tests::'`, `cargo test --lib 'protected_local_keys::'`, `cargo test -p aven-core --lib 'sync::shared_state::package::'`; isolated Keychain tests are explicitly ignored platform checks |
-| Change authenticated bootstrap staging | `crates/aven-core/src/sync/bootstrap_staging.rs`, `bootstrap_staging/persistence.rs` | `seed_claim/persistence.rs` genesis-only gate, `shared_state/package/publication/staging.rs` structural views, staging migration, and exact local package ownership | `cargo test -p aven-core --lib 'sync::bootstrap_staging::tests::'`, `cargo test -p aven-core --lib 'sync::seed_claim::tests::'`, `cargo test -p aven-core --lib 'sync::shared_state::package::'` |
+| Change seed genesis, first claim, signed initial publication, or protected authority | `crates/aven-core/src/sync/seed_claim.rs`, its `codec.rs` and `persistence.rs`, `src/protected_local_keys/seed.rs` | protected package ownership in `src/protected_local_keys.rs`, frozen bootstrap membership context, secret exclusion and same-path replacement | `cargo test -p aven-core --lib 'sync::seed_claim::tests::'`, `cargo test --lib 'protected_local_keys::'`, `cargo test -p aven-core --lib 'sync::shared_state::package::'`; isolated Keychain tests are explicitly ignored platform checks |
+| Change authenticated bootstrap staging | `crates/aven-core/src/sync/bootstrap_staging.rs`, `bootstrap_staging/persistence.rs` | `bootstrap_staging/persistence/publication.rs` current-head authorization and atomic READY, `seed_claim/publication.rs` signed profile, `shared_state/package/publication/staging.rs` structural views, staging/publication migrations, and exact local package ownership | `cargo test -p aven-core --lib 'sync::bootstrap_staging::tests::'`, `cargo test -p aven-core --lib 'sync::seed_claim::'`, `cargo test -p aven-core --lib 'sync::shared_state::package::'`, and `cargo test --lib 'protected_local_keys::seed::tests::publication::'` |
 | Add or change backup, export, or import commands | `src/cli/data_safety.rs`, `src/lib.rs`, `src/commands/data_safety/mod.rs`, `crates/aven-core/src/data_safety.rs`, `crates/aven-core/src/data_safety/` | the portable schema in `crates/aven-core/src/data_safety/export_types.rs`, export-payload rules under `crates/aven-core/src/data_safety/validation/`, live checks under `crates/aven-core/src/data_safety/integrity/`, core database open and migration behavior in `crates/aven-core/src/db.rs`, recurrence identity and schedule validation in `crates/aven-core/src/recurrence/`, doctor presentation in `src/commands/doctor/` | `tests/cli_data_safety.rs`, `tests/cli_doctor.rs` |
 | Change config, workspace, or project path routing | `src/config/paths.rs`, `src/config.rs`, `src/config_edit.rs`, `src/workspaces.rs`, `src/projects.rs` | config text writes, managed-entry edits, doctor, project commands, TUI workspace and project pickers | `tests/cli_config_daemon.rs`, `tests/cli_workspaces.rs`, `tests/cli_doctor.rs` |
 | Change natural-language task intake or agent primer | `src/task_intake.rs`, `src/recurrence_input.rs`, `src/skill.md`, `src/commands/skill.rs` | config schema, `aven prime`, add-task flows, `src/tui/app_intake.rs` for TUI intake state and lifecycle, `src/tui/natural_add_runtime.rs` for TUI background worker setup | `tests/cli_task_intake.rs`, `tests/cli_skill.rs`, focused add-task tests |
