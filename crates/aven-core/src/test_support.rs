@@ -156,3 +156,20 @@ pub async fn test_conn() -> (tempfile::TempDir, PoolConnection<Sqlite>) {
     let conn = database.acquire_reader().await.unwrap();
     (temp, conn)
 }
+
+/// Author a historical pause through the same transaction as the database API.
+pub async fn pause_recurrence_series_at(
+    database: &Database,
+    workspace: &Workspace,
+    series_id: &crate::recurrence::RecurrenceSeriesId,
+    at: chrono::DateTime<chrono::Utc>,
+) -> Result<crate::operations::RecurrenceStateOutcome> {
+    let mut conn = database.acquire_writer().await?;
+    crate::operations::recurrence::pause_recurrence_series(
+        &mut conn,
+        workspace,
+        series_id,
+        &at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+    )
+    .await
+}

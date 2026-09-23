@@ -10,6 +10,13 @@ use aven_core::{
 use chrono::Utc;
 
 pub(super) async fn create(db: &Database) -> aven_core::operations::RecurrenceCreateOutcome {
+    create_at(db, Utc::now()).await
+}
+
+async fn create_at(
+    db: &Database,
+    at: chrono::DateTime<Utc>,
+) -> aven_core::operations::RecurrenceCreateOutcome {
     let w = db.list_workspaces().await.unwrap().remove(0);
     db.create_recurrence_series(
         &w,
@@ -28,11 +35,12 @@ pub(super) async fn create(db: &Database) -> aven_core::operations::RecurrenceCr
             schedule: RecurrenceSchedule::new(
                 RecurrenceRule::daily(),
                 "UTC".parse().unwrap(),
-                Utc::now().date_naive(),
+                at.date_naive(),
                 None,
                 RecurrenceDuePolicy::SameDay,
             ),
-        }),
+        })
+        .at(at),
     )
     .await
     .unwrap()
@@ -674,3 +682,5 @@ async fn completion_can_arrive_one_operation_per_page() {
         2
     );
 }
+
+mod replay;
