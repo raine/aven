@@ -6,6 +6,7 @@ pub(crate) mod dependencies;
 mod domain;
 mod labels;
 mod notes;
+mod recurrence;
 mod server;
 
 use super::{LocalSharedStatePackageKey, seed_claim::peer};

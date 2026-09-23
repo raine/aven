@@ -131,6 +131,85 @@ pub(super) fn validate(c: &ChangeWire) -> Result<Projection> {
         "set_task_metadata" | "remove_task_metadata" => {
             &["field_id", "key", "value", "conflict_resolution"]
         }
+        "create_recurrence_series" => &[
+            "series_id",
+            "title",
+            "description",
+            "project_id",
+            "project_key",
+            "project_name",
+            "project_prefix",
+            "priority",
+            "initial_status",
+            "labels",
+            "metadata",
+            "frequency",
+            "interval",
+            "weekdays",
+            "timezone",
+            "start_on",
+            "available_local_time",
+            "due_policy",
+            "state",
+            "stopped_at",
+            "created_at",
+            "updated_at",
+        ],
+        "update_recurrence_template" => &[
+            "fields",
+            "base_versions",
+            "labels",
+            "labels_changed",
+            "updated_at",
+            "conflict_resolution",
+        ],
+        "project_recurrence_occurrence" => &[
+            "series_id",
+            "slot_on",
+            "task_id",
+            "projected_at",
+            "task_change_id",
+            "occurrence_change_id",
+            "task_field_version_seed",
+            "occurrence_field_version_seed",
+            "frequency",
+            "interval",
+            "weekdays",
+            "timezone",
+            "start_on",
+            "available_local_time",
+            "due_policy",
+        ],
+        "resolve_recurrence_occurrence" => &[
+            "slot_on",
+            "task_id",
+            "outcome",
+            "resolved_at",
+            "task_status",
+            "task_status_change_id",
+            "successor_task_id",
+            "conflict_resolution",
+            "frequency",
+            "interval",
+            "weekdays",
+            "timezone",
+            "start_on",
+            "available_local_time",
+            "due_policy",
+        ],
+        "set_recurrence_state" | "stop_recurrence_series" => {
+            &["state", "stopped_at", "changed_at", "conflict_resolution"]
+        }
+        "open_recurrence_pause" => &[
+            "interval_id",
+            "paused_at",
+            "suspended_slot_on",
+            "suspended_task_id",
+        ],
+        "close_recurrence_pause" => &["interval_id", "paused_at", "resumed_at"],
+        "set_recurrence_metadata" | "remove_recurrence_metadata" => {
+            &["field_id", "key", "value", "conflict_resolution"]
+        }
         "create_project" => &["key", "name", "prefix", "created_at"],
         "create_label" => &["name", "created_at"],
         "attachment_add" => &[
@@ -147,10 +226,6 @@ pub(super) fn validate(c: &ChangeWire) -> Result<Projection> {
         "attachment_delete" => &["attachment_id", "filename", "media_type", "deleted_at"],
         _ => anyhow::bail!("error encrypted-tail-operation-unsupported"),
     };
-    ensure!(
-        c.payload.get("series_id").is_none(),
-        "error encrypted-tail-recurrence-unsupported"
-    );
     crate::sync::wire::validate_local_change_shape(c)
         .and_then(|()| crate::sync::protocol::validate_change(18, c))
         .map_err(|_| anyhow::anyhow!("error encrypted-tail-domain"))?;
@@ -158,9 +233,32 @@ pub(super) fn validate(c: &ChangeWire) -> Result<Projection> {
         .payload
         .as_object()
         .context("error encrypted-tail-payload")?;
+    let occurrence_keys = [
+        "task_id",
+        "series_id",
+        "slot_on",
+        "updated_at",
+        "task_change_id",
+        "occurrence_change_id",
+        "occurrence_field_version_seed",
+        "frequency",
+        "interval",
+        "weekdays",
+        "timezone",
+        "start_on",
+        "available_local_time",
+        "due_policy",
+    ];
     valid(p.keys().all(|k| {
-        keys.contains(&k.as_str()) || matches!(k.as_str(), "workspace_id" | "workspace_key")
+        keys.contains(&k.as_str())
+            || matches!(k.as_str(), "workspace_id" | "workspace_key")
+            || (c.op_type == "create_task"
+                && p.get("series_id").is_some_and(Value::is_string)
+                && occurrence_keys.contains(&k.as_str()))
     }))?;
+    if let Some(flag) = p.get("conflict_resolution") {
+        valid(flag.is_boolean())?;
+    }
     let workspace = p
         .get("workspace_id")
         .and_then(Value::as_str)
@@ -240,26 +338,6 @@ pub(super) fn validate_projection(c: &ChangeWire, projection: &Projection) -> Re
     } else {
         valid(expected == *projection)
     }
-}
-
-pub(super) async fn validate_state(
-    conn: &mut sqlx::SqliteConnection,
-    c: &ChangeWire,
-) -> Result<()> {
-    validate(c)?;
-    if c.entity_type != "task" {
-        return Ok(());
-    }
-    for id in std::iter::once(c.entity_id.as_str()).chain(
-        ["depends_on_task_id", "related_task_id", "epic_task_id"]
-            .into_iter()
-            .filter_map(|k| c.payload[k].as_str()),
-    ) {
-        let recurrence:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM recurrence_occurrences WHERE workspace_id=? AND task_id=?)")
-            .bind(c.payload["workspace_id"].as_str()).bind(id).fetch_one(&mut *conn).await?;
-        ensure!(!recurrence, "error encrypted-tail-recurrence-unsupported");
-    }
-    Ok(())
 }
 
 pub(super) fn decode(bytes: &[u8]) -> Result<ChangeWire> {

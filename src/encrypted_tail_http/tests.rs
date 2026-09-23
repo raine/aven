@@ -72,6 +72,24 @@ async fn fixture_with_image_availability(
     dependency_after_capture: bool,
     unavailable: bool,
 ) -> Fixture {
+    fixture_with_recurrence_snapshot(
+        shared,
+        note_after_capture,
+        relations,
+        dependency_after_capture,
+        unavailable,
+        false,
+    )
+    .await
+}
+async fn fixture_with_recurrence_snapshot(
+    shared: bool,
+    note_after_capture: Option<bool>,
+    relations: bool,
+    dependency_after_capture: bool,
+    unavailable: bool,
+    recurrence: bool,
+) -> Fixture {
     let root = tempfile::tempdir().unwrap();
     let (seed, seed_store, authority, _) =
         crate::seed_bootstrap_http::tests::fixture(root.path()).await;
@@ -121,7 +139,7 @@ async fn fixture_with_image_availability(
             .unwrap();
     }
     let mut snapshot_note = None;
-    if shared || note_after_capture.is_some() || relations {
+    if shared || note_after_capture.is_some() || relations || recurrence {
         let capture = seed
             .resume_local_shared_state_never_dispatched()
             .await
@@ -131,6 +149,19 @@ async fn fixture_with_image_availability(
             .await
             .unwrap();
         let workspace = seed.list_workspaces().await.unwrap().remove(0);
+        if recurrence {
+            let created = self::recurrence::create(&seed).await;
+            seed.update_task(
+                &workspace,
+                &created.task.id,
+                TaskUpdate {
+                    title: Some("snapshot occurrence edit".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        }
         if shared {
             let task = seed
                 .create_task(&workspace, draft("shared image parent"))
@@ -1158,71 +1189,6 @@ async fn attachment_add_transfer_and_explicit_delete_use_independent_clients() {
         )
         .await,
         1
-    );
-}
-
-#[tokio::test]
-async fn recurring_local_work_is_explicitly_refused_without_partial_push() {
-    use aven_core::{
-        operations::{CreateRecurrenceSeriesParams, RecurrenceSeriesDraft},
-        recurrence::*,
-    };
-    use chrono::{TimeZone, Utc};
-    let f = fixture().await;
-    converge(&f).await;
-    let w = f.peer.list_workspaces().await.unwrap().remove(0);
-    let at = Utc.with_ymd_and_hms(2026, 9, 22, 12, 0, 0).unwrap();
-    f.peer
-        .create_recurrence_series(
-            &w,
-            CreateRecurrenceSeriesParams::new(RecurrenceSeriesDraft {
-                title: "deferred recurrence".into(),
-                description: "".into(),
-                project: "app".into(),
-                priority: "none".into(),
-                initial_status: "todo".into(),
-                labels: vec![],
-                metadata: vec![],
-                schedule: RecurrenceSchedule::new(
-                    RecurrenceRule::daily(),
-                    "UTC".parse().unwrap(),
-                    at.date_naive(),
-                    None,
-                    RecurrenceDuePolicy::SameDay,
-                ),
-            })
-            .at(at),
-        )
-        .await
-        .unwrap();
-    let pending = scalar(
-        &f.peer,
-        "SELECT count(*) FROM changes WHERE server_seq IS NULL",
-    )
-    .await;
-    assert!(pending > 1);
-    assert!(
-        Client::new(&f.origin)
-            .unwrap()
-            .round(&f.peer_store, &f.peer)
-            .await
-            .is_err()
-    );
-    assert_eq!(
-        scalar(
-            &f.peer,
-            "SELECT count(*) FROM changes WHERE server_seq IS NULL"
-        )
-        .await,
-        pending
-    );
-    assert_eq!(
-        scalar(&f.server, "SELECT count(*) FROM server_e2ee_tail").await,
-        1
-    );
-    assert_eq!(
-        scalar(&f.peer, "SELECT count(*) FROM local_e2ee_outbox").await,
-        0
     );
 }
 
@@ -2684,3 +2650,5 @@ mod dependencies;
 mod metadata_limits;
 
 mod attachments;
+
+mod recurrence;

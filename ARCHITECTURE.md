@@ -284,9 +284,10 @@ chain resolver with the exact expected head, stream and published descriptor.
 
 Task create/edit/delete/restore, notes, labels, metadata, dependencies, related
 links and epics reuse existing domain apply/conflict and ordering reconciliation.
-Project/label creation prerequisites are supported. The closed subset rejects
-recurrence aggregates, occurrence-task mutations and other administrative
-operations. Attachment mutations use authenticated Ref/Unref and a separate
+Project/label creation prerequisites and the existing recurrence vocabulary are
+supported: series creation, template/metadata updates, projection, outcomes,
+pause intervals, state changes and stop, including domain conflict resolution.
+Other administrative operations remain outside the closed subset. Attachment mutations use authenticated Ref/Unref and a separate
 bounded image transfer entry with an explicit local blob directory. Pending work is preflighted before freezing;
 unsupported compound work blocks rather than uploading only its supported parts.
 Preflight is capped at 4096 rows/16 MiB. Those limits and the fixed two-device
@@ -301,6 +302,21 @@ local origin. Acks never move the cursor. Verified local ranks precede incoming
 ordered apply; page effects, mappings, liveness and cursor commit together. Bad
 pages roll back, and same-ID divergence preserves pending work instead of merging
 or inventing a new ID. Membership sequence, content sequence and local_seq differ.
+
+`encrypted_tail/recurrence.rs` classifies affected series and deterministic
+materialization operations. Page apply reuses the recurrence aggregate operations
+and reconciles affected series once after ordered apply, inside the same
+transaction, without replaying prefix history over materialized snapshot rows.
+Lifecycle resolution can generate history needed by a later page record; only
+validated deterministic operations with canonical equality can rank that pending
+history as an echo. Retained prefix identities never become tail submissions.
+Concurrent completion shares successor identities. Concurrent generation from
+different templates can produce unequal meaning under the same deterministic ID;
+this remains an explicit integrity failure with pending evidence retained, not an
+identity-only acknowledgement or automatic conflict repair. Series lifecycle and
+outcome changes do not delete task rows or image references. Occurrence creation
+uses the existing Parent creation projection, and explicit task deletion uses the
+existing conservative Parent deletion projection.
 
 `encrypted_tail/notes.rs` reconciles each affected note from retained tail commands
 in accepted sequence order, followed by pending local push order. Verified outcomes
@@ -343,9 +359,11 @@ Run `cargo test --lib 'encrypted_tail_http::tests::'` for the real seed publicat
 independent enrollment/install and bidirectional task harness. It includes exact
 retry, server reopen, client subprocess exits, conflicts, retained images, invalid
 page rollback and explicit refusal tests. Controlled same-ID fixtures exercise
-canonical verification, not deterministic recurrence convergence. That recurrence
-release gate, rotation, recovery, shipping setup, UI, iOS and the comprehensive
-integration/simplification review remain separate work.
+canonical verification. `tests/recurrence.rs` also exercises actual independently
+generated deterministic successors, snapshot continuation, lifecycle and outcome
+conflicts, malformed compound rollback, lost acknowledgement and image retention.
+Rotation, recovery, shipping setup, UI, iOS and comprehensive integration review
+remain separate work.
 
 ### Internal encrypted attachment transfer
 

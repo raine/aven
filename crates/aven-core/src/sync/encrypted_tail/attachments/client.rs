@@ -218,7 +218,7 @@ impl Database {
                 total <= 16 * 1048576,
                 "error encrypted-tail-preflight-limit"
             );
-            super::super::domain::validate_state(&mut tx, &c).await?;
+            super::super::domain::validate(&c)?;
             if first.is_none() {
                 first = Some(c);
             }
