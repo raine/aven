@@ -448,3 +448,95 @@ async fn isolated_seed_keychain_reopen() {
     }
     assert!(cleanup.0.prepare_seed_claim(&db, [9; 32]).await.is_err());
 }
+
+#[tokio::test]
+async fn protected_seed_claim_round_trip_keeps_secrets_out_of_tracing() {
+    use aven_core::sync::seed_claim::{ClaimAuthentication, Secret, SetupAuthority};
+    use std::sync::{Arc, Mutex};
+    use tracing::instrument::WithSubscriber;
+
+    #[derive(Clone)]
+    struct LogSink(Arc<Mutex<Vec<u8>>>);
+    impl Write for LogSink {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let client = Database::open(&root.path().join("client.sqlite"))
+        .await
+        .unwrap();
+    let server = Database::open(&root.path().join("server.sqlite"))
+        .await
+        .unwrap();
+    let store = isolated_store(client.path(), &root.path().join("keys"));
+    let seed = store.prepare_seed_claim(&client, [9; 32]).await.unwrap();
+    let setup_secret = Secret::generate().unwrap();
+    let setup =
+        SetupAuthority::from_verifier([9; 32], SetupAuthority::verifier([9; 32], &setup_secret));
+    let wrong_secret = Secret::generate().unwrap();
+    let sink = LogSink(Arc::new(Mutex::new(Vec::new())));
+    let writer = sink.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_ansi(false)
+        .with_writer(move || writer.clone())
+        .finish();
+    let diagnostics = async {
+        tracing::info!("isolated seed claim trace capture");
+        let request = seed.genesis().claim_bytes();
+        let result = server
+            .admit_seed_claim(
+                &request,
+                Some(&setup),
+                ClaimAuthentication::SetupSecret(&setup_secret),
+            )
+            .await
+            .unwrap();
+        result.validate_pinned(seed.genesis()).unwrap();
+        let reopened = store.prepare_seed_claim(&client, [9; 32]).await.unwrap();
+        let retry = server
+            .admit_seed_claim(
+                &reopened.genesis().claim_bytes(),
+                None,
+                ClaimAuthentication::SeedBearer(reopened.bearer()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result, retry);
+        let error = server
+            .admit_seed_claim(
+                &request,
+                Some(&setup),
+                ClaimAuthentication::SetupSecret(&wrong_secret),
+            )
+            .await
+            .unwrap_err();
+        format!("{error:?} {seed:?} {result:?} {setup:?}")
+    }
+    .with_subscriber(subscriber)
+    .await;
+    let logs = sink.0.lock().unwrap();
+    assert!(!logs.is_empty());
+    let protected = seed.protected_storage_bytes();
+    let package = store.load_required().unwrap();
+    for secret in protected[..96].as_chunks::<32>().0.iter().chain([
+        setup_secret.expose(),
+        wrong_secret.expose(),
+        package.package_key().protected_storage_bytes(),
+    ]) {
+        for surface in [logs.as_slice(), diagnostics.as_bytes()] {
+            assert!(!surface.windows(32).any(|window| window == secret));
+            assert!(
+                !surface
+                    .windows(64)
+                    .any(|window| window == hex::encode(secret).as_bytes())
+            );
+        }
+    }
+}
