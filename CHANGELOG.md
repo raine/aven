@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Fix: Concurrent dependency changes converge in encrypted sync while preserving cycle protection and later pending edits.
+
 - Fix: Concurrent task label changes converge in encrypted sync without overwriting later pending changes.
 
 - Fix: Encrypted enrollment busy responses consistently disable caching.

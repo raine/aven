@@ -1,6 +1,7 @@
 //! Internal ordinary encrypted task stream. Membership remains chain-owned.
 mod client;
 mod codec;
+pub(crate) mod dependencies;
 mod domain;
 mod labels;
 mod notes;

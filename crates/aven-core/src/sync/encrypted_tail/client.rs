@@ -23,10 +23,14 @@ async fn validate_binding_and_cursor(
         .context("error encrypted-tail-cursor")?
         .parse::<i64>()?;
     valid(cursor >= authority.prefix)?;
+    super::dependencies::validate(conn, &authority.association, authority.prefix).await?;
     Ok(cursor)
 }
 
-async fn load_change(conn: &mut SqliteConnection, id: &str) -> Result<Option<ChangeWire>> {
+pub(super) async fn load_change(
+    conn: &mut SqliteConnection,
+    id: &str,
+) -> Result<Option<ChangeWire>> {
     let row = sqlx::query("SELECT * FROM changes WHERE change_id = ?")
         .bind(id)
         .fetch_optional(conn)
@@ -357,6 +361,9 @@ impl Database {
         persistence::reconcile_epic_change(&mut tx, &change).await?;
         super::notes::reconcile(&mut tx, authority.prefix, &change).await?;
         super::labels::reconcile(&mut tx, authority.prefix, &change).await?;
+        if let Some(workspace) = super::dependencies::affected_workspace(&change)? {
+            super::dependencies::reconcile(&mut tx, authority.prefix, workspace).await?;
+        }
         record_acceptance_and_clear_outbox(&mut tx, accepted).await?;
         tx.commit().await?;
         Ok(())
@@ -396,6 +403,7 @@ impl Database {
         let mut tx = begin_immediate(&mut conn).await?;
         valid(validate_binding_and_cursor(&mut tx, authority).await? == page.after)?;
         let mut attachment_hashes = HashSet::new();
+        let mut dependency_workspaces = HashSet::new();
         // Validate every mapping and local comparison before any domain effects.
         let mut local_presence = Vec::with_capacity(changes.len());
         for (accepted, change) in page.records.iter().zip(&changes) {
@@ -435,9 +443,15 @@ impl Database {
                 change.server_seq = Some(accepted.mapping.sequence);
                 apply_new_remote_change(&mut tx, &change, &mut attachment_hashes).await?;
             }
+            if let Some(workspace) = super::dependencies::affected_workspace(&change)? {
+                dependency_workspaces.insert(workspace.to_owned());
+            }
             super::notes::reconcile(&mut tx, authority.prefix, &change).await?;
             super::labels::reconcile(&mut tx, authority.prefix, &change).await?;
             record_acceptance_and_clear_outbox(&mut tx, accepted).await?;
+        }
+        for workspace in dependency_workspaces {
+            super::dependencies::reconcile(&mut tx, authority.prefix, &workspace).await?;
         }
         crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
             &mut tx,

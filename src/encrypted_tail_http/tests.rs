@@ -48,6 +48,14 @@ async fn fixture_with_snapshot_content(
     note_after_capture: Option<bool>,
     relations: bool,
 ) -> Fixture {
+    fixture_with_dependency_edit(shared, note_after_capture, relations, false).await
+}
+async fn fixture_with_dependency_edit(
+    shared: bool,
+    note_after_capture: Option<bool>,
+    relations: bool,
+    dependency_after_capture: bool,
+) -> Fixture {
     let root = tempfile::tempdir().unwrap();
     let (seed, seed_store, authority, _) =
         crate::seed_bootstrap_http::tests::fixture(root.path()).await;
@@ -127,6 +135,19 @@ async fn fixture_with_snapshot_content(
             .unwrap();
         seed_store
             .package_seed_capture(&seed, root.path(), [9; 32])
+            .await
+            .unwrap();
+    }
+    if dependency_after_capture {
+        let workspace = seed.list_workspaces().await.unwrap().remove(0);
+        let pair: (aven_core::ids::TaskId, aven_core::ids::TaskId) = {
+            let mut c = aven_core::test_support::acquire(&seed).await.unwrap();
+            sqlx::query_as("SELECT task_id, depends_on_task_id FROM task_dependencies")
+                .fetch_one(&mut *c)
+                .await
+                .unwrap()
+        };
+        seed.remove_task_dependency(&workspace, &pair.0, &pair.1)
             .await
             .unwrap();
     }
@@ -2548,3 +2569,5 @@ async fn checkpoint_snapshot_note_keeps_source_edit_between_capture_and_adoption
 }
 
 mod relations;
+
+mod dependencies;

@@ -461,6 +461,9 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
         Status::Published(accepted.clone())
     );
     let mut conn = aven_core::test_support::acquire(&client).await.unwrap();
+    let baseline_rows: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM local_e2ee_dependency_baseline) + (SELECT count(*) FROM local_e2ee_dependency_edges)")
+        .fetch_one(&mut *conn).await.unwrap();
+    assert_eq!(baseline_rows, 0);
     sqlx::query("DROP TRIGGER fail_adoption")
         .execute(&mut *conn)
         .await

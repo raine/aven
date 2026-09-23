@@ -178,6 +178,14 @@ impl Database {
             .checked_add(1)
             .context("error snapshot-generation")?;
         let association = association(verified);
+        crate::sync::encrypted_tail::dependencies::initialize(
+            &mut tx,
+            &association,
+            generation,
+            i64::try_from(binding.prefix_count)?,
+            &capture.snapshot.tables.task_dependencies,
+        )
+        .await?;
         db::set_meta(&mut tx, "sync_generation", &generation.to_string()).await?;
         db::set_meta(&mut tx, "sync_cursor", &binding.prefix_count.to_string()).await?;
         db::set_meta(&mut tx, "e2ee_association", &association).await?;
@@ -225,7 +233,13 @@ async fn receipt(
     }
     let b = verified.publication().binding();
     let count: Option<i64> = sqlx::query_scalar("SELECT attachment_count FROM local_peer_snapshot_install WHERE singleton=1 AND enrollment=? AND checkpoint=? AND descriptor=? AND stream=? AND prefix_count=? AND client_id=? AND association=? AND association=(SELECT value FROM meta WHERE key='e2ee_association') AND sync_generation=CAST((SELECT value FROM meta WHERE key='sync_generation') AS INTEGER) AND CAST((SELECT value FROM meta WHERE key='sync_cursor') AS INTEGER)>=prefix_count")
-        .bind(enrollment.as_slice()).bind(verified.admission().commitment().as_slice()).bind(b.descriptor_commitment.as_slice()).bind(b.stream_id.as_slice()).bind(i64::try_from(b.prefix_count)?).bind(client).bind(association(verified)).fetch_optional(conn).await?;
+        .bind(enrollment.as_slice()).bind(verified.admission().commitment().as_slice()).bind(b.descriptor_commitment.as_slice()).bind(b.stream_id.as_slice()).bind(i64::try_from(b.prefix_count)?).bind(client).bind(association(verified)).fetch_optional(&mut *conn).await?;
+    crate::sync::encrypted_tail::dependencies::validate(
+        conn,
+        &association(verified),
+        i64::try_from(b.prefix_count)?,
+    )
+    .await?;
     Ok(Some(SharedStateInstallReport {
         prefix_count: b.prefix_count,
         attachment_count: u64::try_from(count.context("error snapshot-receipt-mismatch")?)?,

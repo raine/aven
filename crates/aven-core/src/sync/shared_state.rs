@@ -896,7 +896,9 @@ async fn ensure_empty_domain(conn: &mut sqlx::SqliteConnection) -> Result<()> {
            + (SELECT count(*) FROM field_versions)
            + (SELECT count(*) FROM conflicts)
            + (SELECT count(*) FROM shared_history_provenance)
-           + (SELECT count(*) FROM local_shared_capture_journal)",
+           + (SELECT count(*) FROM local_shared_capture_journal)
+           + (SELECT count(*) FROM local_e2ee_dependency_baseline)
+           + (SELECT count(*) FROM local_e2ee_dependency_edges)",
     )
     .fetch_one(conn)
     .await?;

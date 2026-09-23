@@ -317,32 +317,39 @@ async fn substituted_http_catalog_and_chunk_refuse_without_visible_domain() {
 
 #[tokio::test]
 async fn transactional_failure_and_nonempty_target_never_publish_partial_state() {
-    let f = enrolled().await;
-    let blobs = f.root.path().join("peer-blobs");
-    let mut conn = aven_core::test_support::acquire(&f.peer).await.unwrap();
-    sqlx::query("CREATE TRIGGER reject_peer_install BEFORE INSERT ON local_peer_snapshot_install BEGIN SELECT RAISE(ABORT,'test'); END").execute(&mut *conn).await.unwrap();
-    drop(conn);
-    assert!(f.client.install(&f.store, &f.peer, &blobs).await.is_err());
-    assert_eq!(count(&f.peer, "tasks").await, 0);
-    assert_eq!(count(&f.peer, "blob_inventory").await, 0);
-    let mut conn = aven_core::test_support::acquire(&f.peer).await.unwrap();
-    sqlx::query("DROP TRIGGER reject_peer_install")
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-    drop(conn);
-    let reopened = Database::open(f.peer.path()).await.unwrap();
-    f.client.install(&f.store, &reopened, &blobs).await.unwrap();
-    let state = shared(&reopened).await;
-    // Receipt mismatch is a refusal, not a reinstall or cursor repair.
-    let mut conn = aven_core::test_support::acquire(&reopened).await.unwrap();
-    sqlx::query("UPDATE meta SET value='0' WHERE key='sync_cursor'")
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-    drop(conn);
-    assert!(f.client.install(&f.store, &reopened, &blobs).await.is_err());
-    assert_eq!(shared(&reopened).await, state);
+    for fault in [
+        "CREATE TRIGGER reject_peer_install BEFORE INSERT ON local_peer_snapshot_install BEGIN SELECT RAISE(ABORT,'test'); END",
+        "CREATE TRIGGER reject_peer_install BEFORE INSERT ON local_e2ee_dependency_baseline BEGIN SELECT RAISE(ABORT,'test'); END",
+    ] {
+        let f = enrolled().await;
+        let blobs = f.root.path().join("peer-blobs");
+        let mut conn = aven_core::test_support::acquire(&f.peer).await.unwrap();
+        sqlx::query(fault).execute(&mut *conn).await.unwrap();
+        drop(conn);
+        assert!(f.client.install(&f.store, &f.peer, &blobs).await.is_err());
+        assert_eq!(count(&f.peer, "tasks").await, 0);
+        assert_eq!(count(&f.peer, "blob_inventory").await, 0);
+        assert_eq!(count(&f.peer, "local_e2ee_dependency_baseline").await, 0);
+        assert_eq!(count(&f.peer, "local_e2ee_dependency_edges").await, 0);
+        let mut conn = aven_core::test_support::acquire(&f.peer).await.unwrap();
+        sqlx::query("DROP TRIGGER reject_peer_install")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+        let reopened = Database::open(f.peer.path()).await.unwrap();
+        f.client.install(&f.store, &reopened, &blobs).await.unwrap();
+        let state = shared(&reopened).await;
+        // Receipt mismatch is a refusal, not a reinstall or cursor repair.
+        let mut conn = aven_core::test_support::acquire(&reopened).await.unwrap();
+        sqlx::query("UPDATE meta SET value='0' WHERE key='sync_cursor'")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+        assert!(f.client.install(&f.store, &reopened, &blobs).await.is_err());
+        assert_eq!(shared(&reopened).await, state);
+    }
 }
 
 #[tokio::test]

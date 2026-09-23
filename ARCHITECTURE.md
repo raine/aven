@@ -315,6 +315,19 @@ reconcile transactionally. Pairs without tail commands keep their published
 materialization, not a replay of prefix history. This uses the same retained-tail
 requirement as notes and does not change dependency cycle arbitration.
 
+`encrypted_tail/dependencies.rs` rebuilds each affected workspace graph from a
+local association-lifetime materialized baseline plus retained dependency tail
+commands, in accepted sequence order followed by pending push order. It reuses
+the existing sequential cycle arbitration without replaying other domain actions
+or prefix history. Seed adoption initializes the baseline from the authenticated
+capture, never post-capture live state; peer installation uses the verified
+snapshot. The baseline identity and edges commit with adoption/installation and
+are excluded from portable state. Exact retries validate rather than replace it.
+Missing or mismatched baselines require explicit reinitialization; no inferred
+repair is supported. Outcome/page graph, history and cursor effects are atomic.
+Replay batches command IDs but still revisits retained graph history; retention
+and production-scale replay budgets require a separate confirmed-prefix contract.
+
 Authenticated None/Parent projections carry only minimal parent-retention inputs.
 `persistence/parent_liveness.rs::ParentState` is shared by plaintext retention,
 bootstrap projection and encrypted admission. Captured parent state is the tail

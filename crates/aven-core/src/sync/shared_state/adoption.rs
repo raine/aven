@@ -547,6 +547,12 @@ impl Database {
                         >= binding.prefix_count,
                 "error seed-adopted-association-changed"
             );
+            crate::sync::encrypted_tail::dependencies::validate(
+                &mut tx,
+                &association,
+                i64::try_from(binding.prefix_count)?,
+            )
+            .await?;
             tx.commit().await?;
             return Ok(false);
         }
@@ -605,6 +611,14 @@ impl Database {
             .generation
             .checked_add(1)
             .context("sync generation overflow")?;
+        crate::sync::encrypted_tail::dependencies::initialize(
+            &mut tx,
+            &association,
+            next,
+            i64::try_from(binding.prefix_count)?,
+            &capture.capture.snapshot.tables.task_dependencies,
+        )
+        .await?;
         db::set_meta(&mut tx, "sync_generation", &next.to_string()).await?;
         db::set_meta(&mut tx, "sync_cursor", &binding.prefix_count.to_string()).await?;
         db::set_meta(&mut tx, "e2ee_association", &association).await?;
