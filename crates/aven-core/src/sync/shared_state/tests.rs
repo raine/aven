@@ -72,6 +72,85 @@ fn wire(row: &crate::data_safety::ChangeRow) -> ChangeWire {
     serde_json::from_value(value).unwrap()
 }
 
+async fn apply_remote_attachment_change(
+    database: &Database,
+    workspace: &Workspace,
+    task_id: &TaskId,
+    attachment_id: &str,
+    sha256: &str,
+    delete: bool,
+) {
+    let export = database
+        .export_data("2026-09-21T12:00:00Z".into())
+        .await
+        .unwrap();
+    let mut change = wire(&export.tables.changes[0]);
+    change.change_id = crate::ids::new_id();
+    change.entity_type = "task".into();
+    change.entity_id = task_id.to_string();
+    change.field = Some("attachments".into());
+    change.op_type = if delete {
+        "attachment_delete".into()
+    } else {
+        "attachment_add".into()
+    };
+    change.base_version = None;
+    change.created_at = "2026-09-21T12:00:00Z".into();
+    change.payload = if delete {
+        serde_json::json!({
+            "workspace_id": workspace.id,
+            "workspace_key": workspace.key,
+            "attachment_id": attachment_id,
+            "deleted_at": "2026-09-21T12:01:00Z"
+        })
+    } else {
+        serde_json::json!({
+            "workspace_id": workspace.id,
+            "workspace_key": workspace.key,
+            "attachment_id": attachment_id,
+            "sha256": sha256,
+            "byte_size": 7,
+            "media_type": "image/png",
+            "filename": "remote.png",
+            "alt_text": null,
+            "width": 1,
+            "height": 1,
+            "created_at": "2026-09-21T12:00:00Z"
+        })
+    };
+    let after = database
+        .meta("sync_cursor")
+        .await
+        .unwrap()
+        .unwrap()
+        .parse::<i64>()
+        .unwrap();
+    change.server_seq = Some(after + 1);
+    database
+        .apply_client_sync_page(ApplySyncPage {
+            sync_generation: 0,
+            request: SyncRequest {
+                protocol_version: Some(SYNC_PROTOCOL_VERSION),
+                client_id: "remote".into(),
+                after,
+                pull_limit: Some(512),
+                changes: vec![],
+            },
+            response: SyncResponse {
+                protocol_version: SYNC_PROTOCOL_VERSION,
+                changes: vec![change],
+                push_acks: vec![],
+                cursor: after + 1,
+                has_more: false,
+            },
+            attempted_at: "2026-09-21T12:00:00Z".into(),
+            previous_pushed: 0,
+            previous_pulled: 0,
+        })
+        .await
+        .unwrap();
+}
+
 struct TestStream {
     next: i64,
 }
@@ -1150,6 +1229,100 @@ async fn active_local_capture_fences_sync_backup_import_and_restore() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("sync-generation-changed"));
+}
+
+#[tokio::test]
+async fn remote_current_attachment_without_inventory_fails_capture() {
+    let (temp, database, workspace) = fresh().await;
+    let task_id = task(&database, &workspace, "remote image owner").await;
+    let attachment_id = crate::ids::new_id();
+    let hash = "ab".repeat(32);
+    apply_remote_attachment_change(
+        &database,
+        &workspace,
+        &task_id,
+        &attachment_id,
+        &hash,
+        false,
+    )
+    .await;
+
+    let error = database
+        .capture_local_shared_state_never_dispatched(&temp.path().join("blobs"))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("attachment inventory missing"));
+    assert!(
+        database
+            .resume_local_shared_state_never_dispatched()
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn unavailable_current_image_fails_but_deleted_history_is_permitted() {
+    let (temp, database, workspace) = fresh().await;
+    let task_id = task(&database, &workspace, "remote image owner").await;
+    let attachment_id = crate::ids::new_id();
+    let hash = "cd".repeat(32);
+    apply_remote_attachment_change(
+        &database,
+        &workspace,
+        &task_id,
+        &attachment_id,
+        &hash,
+        false,
+    )
+    .await;
+    {
+        let mut conn = database.acquire_writer().await.unwrap();
+        sqlx::query(
+            "INSERT INTO blob_inventory(
+                 sha256, byte_size, media_type, available, first_seen_at
+             ) VALUES (?, 7, 'image/png', 0, '2026-09-21T12:00:00Z')",
+        )
+        .bind(&hash)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    }
+
+    let error = database
+        .capture_local_shared_state_never_dispatched(&temp.path().join("blobs"))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("required-image-unavailable"));
+    assert!(error.to_string().contains("complete image download"));
+
+    apply_remote_attachment_change(&database, &workspace, &task_id, &attachment_id, &hash, true)
+        .await;
+    let capture = database
+        .capture_local_shared_state_never_dispatched(&temp.path().join("blobs"))
+        .await
+        .unwrap();
+    let mut conn = database.acquire_reader().await.unwrap();
+    let classification: String = sqlx::query_scalar(
+        "SELECT classification FROM local_shared_capture_images
+         WHERE candidate_id = ? AND sha256 = ?",
+    )
+    .bind(capture.candidate_id())
+    .bind(&hash)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+    let pins: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM local_shared_capture_pins
+         WHERE candidate_id = ? AND sha256 = ?",
+    )
+    .bind(capture.candidate_id())
+    .bind(&hash)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+    assert_eq!(classification, "unavailable");
+    assert_eq!(pins, 0);
 }
 
 #[tokio::test]

@@ -714,6 +714,16 @@ async fn classify_and_validate_images(
     let mut result = Vec::with_capacity(tables.blob_inventory.len());
     for inventory in &tables.blob_inventory {
         if inventory.available == 0 {
+            ensure!(
+                !current_hashes.contains(inventory.sha256.as_str()),
+                "error local-shared-capture-required-image-unavailable sha256={} hint=\"complete image download or remove the live attachment before capture\"",
+                inventory.sha256
+            );
+            ensure!(
+                unavailable_image_has_validated_history(tables, &inventory.sha256)?,
+                "error local-shared-capture-unavailable-image-provenance-missing sha256={} hint=\"restore the image or explicitly delete its attachment before capture\"",
+                inventory.sha256
+            );
             result.push((inventory.sha256.clone(), "unavailable"));
             continue;
         }
@@ -764,6 +774,53 @@ async fn classify_and_validate_images(
         ));
     }
     Ok(result)
+}
+
+fn unavailable_image_has_validated_history(
+    tables: &crate::data_safety::export_types::ExportTables,
+    sha256: &str,
+) -> Result<bool> {
+    let attachments = tables
+        .task_attachments
+        .iter()
+        .filter(|attachment| attachment.sha256 == sha256)
+        .collect::<Vec<_>>();
+    if attachments.is_empty() {
+        return Ok(true);
+    }
+    let changes = tables
+        .changes
+        .iter()
+        .map(|change| (change.change_id.as_str(), change))
+        .collect::<HashMap<_, _>>();
+    for attachment in attachments {
+        if attachment.deleted != 1 {
+            return Ok(false);
+        }
+        let Some(change_id) = attachment.deleted_by_change_id.as_deref() else {
+            return Ok(false);
+        };
+        let Some(change) = changes.get(change_id) else {
+            return Ok(false);
+        };
+        let payload: serde_json::Value = serde_json::from_str(&change.payload)?;
+        if change.entity_type != "task"
+            || change.entity_id != attachment.task_id.as_str()
+            || change.field.as_deref() != Some("attachments")
+            || change.op_type != crate::change_log::op_type::ATTACHMENT_DELETE
+            || payload
+                .get("workspace_id")
+                .and_then(serde_json::Value::as_str)
+                != Some(attachment.workspace_id.as_str())
+            || payload
+                .get("attachment_id")
+                .and_then(serde_json::Value::as_str)
+                != Some(attachment.attachment_id.as_str())
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 async fn ensure_empty_target(conn: &mut sqlx::SqliteConnection) -> Result<()> {

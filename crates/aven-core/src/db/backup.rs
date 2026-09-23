@@ -184,6 +184,7 @@ pub(crate) async fn backup_database_with_connection(
     backup: &Path,
 ) -> Result<()> {
     ensure_connection_has_no_active_local_shared_capture(conn, "backup source").await?;
+    wait_at_backup_precheck_boundary(backup).await;
     let parent = backup.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent).with_context(|| format!("could not create {}", parent.display()))?;
     let staging_dir = tempfile::Builder::new()
@@ -196,6 +197,7 @@ pub(crate) async fn backup_database_with_connection(
         .execute(&mut *conn)
         .await
         .with_context(|| format!("could not back up database to {}", backup.display()))?;
+    ensure_file_has_no_active_local_shared_capture(&staging, "backup-snapshot").await?;
     fs::rename(&staging, backup)
         .with_context(|| format!("could not replace {}", backup.display()))?;
     Ok(())
@@ -248,6 +250,41 @@ pub(crate) async fn ensure_file_has_no_active_local_shared_capture(
     .with_context(|| format!("could not open {} {}", role, path.display()))?;
     ensure_connection_has_no_active_local_shared_capture(&mut conn, role).await
 }
+
+#[cfg(test)]
+type BackupPrecheckBarrier = (
+    PathBuf,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::sync::oneshot::Receiver<()>,
+);
+
+#[cfg(test)]
+static BACKUP_PRECHECK_BARRIER: std::sync::Mutex<Option<BackupPrecheckBarrier>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
+async fn wait_at_backup_precheck_boundary(backup: &Path) {
+    let barrier = {
+        let mut guard = BACKUP_PRECHECK_BARRIER
+            .lock()
+            .expect("backup test barrier poisoned");
+        if guard
+            .as_ref()
+            .is_some_and(|(expected, _, _)| expected == backup)
+        {
+            guard.take()
+        } else {
+            None
+        }
+    };
+    if let Some((_, reached, resume)) = barrier {
+        let _ = reached.send(());
+        let _ = resume.await;
+    }
+}
+
+#[cfg(not(test))]
+async fn wait_at_backup_precheck_boundary(_backup: &Path) {}
 
 fn prune_migration_backups(path: &Path) -> Result<()> {
     let Some(parent) = path.parent() else {
@@ -399,6 +436,47 @@ mod tests {
                 .unwrap()
                 .as_deref(),
             Some("target")
+        );
+    }
+
+    #[tokio::test]
+    async fn completed_snapshot_rejects_capture_committed_after_backup_precheck() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.sqlite");
+        let backup = temp.path().join("backup.sqlite");
+        let database = Database::open(&source).await.unwrap();
+        fs::write(&backup, b"existing destination").unwrap();
+        let existing = fs::read(&backup).unwrap();
+        let (reached_tx, reached_rx) = tokio::sync::oneshot::channel();
+        let (resume_tx, resume_rx) = tokio::sync::oneshot::channel();
+        *BACKUP_PRECHECK_BARRIER
+            .lock()
+            .expect("backup test barrier poisoned") = Some((backup.clone(), reached_tx, resume_rx));
+
+        let source_for_backup = source.clone();
+        let backup_for_worker = backup.clone();
+        let worker =
+            tokio::spawn(
+                async move { backup_database(&source_for_backup, &backup_for_worker).await },
+            );
+        reached_rx.await.unwrap();
+        database
+            .capture_local_shared_state_never_dispatched(&temp.path().join("blobs"))
+            .await
+            .unwrap();
+        resume_tx.send(()).unwrap();
+
+        let error = worker.await.unwrap().unwrap_err();
+        assert!(error.to_string().contains("role=backup-snapshot"));
+        assert_eq!(fs::read(&backup).unwrap(), existing);
+        assert!(
+            fs::read_dir(temp.path())
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .all(|entry| !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".aven-sqlite-backup-"))
         );
     }
 }
