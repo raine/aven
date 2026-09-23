@@ -3,6 +3,7 @@ mod blob;
 mod persistence;
 mod planner;
 pub mod protocol;
+pub mod seed_claim;
 mod session;
 pub(crate) mod shared_state;
 pub mod wire;

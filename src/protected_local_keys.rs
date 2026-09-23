@@ -1,3 +1,5 @@
+mod seed;
+
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -161,6 +163,9 @@ impl ProtectedLocalKeyStore {
                 Err(error(ProtectedLocalKeyStoreErrorKind::MissingAuthority))
             }
             None => {
+                if self.seed_authority_exists()? {
+                    return Err(error(ProtectedLocalKeyStoreErrorKind::MissingAuthority));
+                }
                 let key = generate_keyring()?;
                 let encoded = encode_keyring(&key);
                 self.backend.create(&encoded)?;
@@ -208,6 +213,7 @@ impl ProtectedLocalKeyStore {
         let protected = if database
             .has_local_shared_state_package_never_dispatched()
             .await?
+            || database.local_seed_genesis_commitment().await?.is_some()
         {
             self.load_required()?
         } else {
@@ -464,11 +470,24 @@ impl Backend {
     }
 
     fn load(&self) -> StoreResult<Option<Zeroizing<Vec<u8>>>> {
+        self.load_bounded(KEYRING_BYTES)
+    }
+
+    fn load_bounded(&self, expected_len: usize) -> StoreResult<Option<Zeroizing<Vec<u8>>>> {
         match self {
             #[cfg(target_os = "macos")]
-            Self::Keychain(backend) => backend.load(),
+            Self::Keychain(backend) => {
+                let bytes = backend.load()?;
+                if bytes
+                    .as_ref()
+                    .is_some_and(|bytes| bytes.len() != expected_len)
+                {
+                    return Err(error(ProtectedLocalKeyStoreErrorKind::Corrupt));
+                }
+                Ok(bytes)
+            }
             #[cfg(any(target_os = "linux", test))]
-            Self::File(backend) => backend.load(),
+            Self::File(backend) => backend.load(expected_len),
             #[cfg(test)]
             Self::FailWrite => Ok(None),
             #[cfg(test)]
@@ -497,8 +516,8 @@ struct FileBackend {
 
 #[cfg(any(target_os = "linux", test))]
 impl FileBackend {
-    fn load(&self) -> StoreResult<Option<Zeroizing<Vec<u8>>>> {
-        Ok(read_restricted_file(&self.path, KEYRING_BYTES)?.map(Zeroizing::new))
+    fn load(&self, expected_len: usize) -> StoreResult<Option<Zeroizing<Vec<u8>>>> {
+        Ok(read_restricted_file(&self.path, expected_len)?.map(Zeroizing::new))
     }
 
     fn create(&self, bytes: &[u8]) -> StoreResult<()> {
@@ -560,7 +579,7 @@ mod tests {
     use aven_core::api::{CreateTask, Store};
     use aven_core::choices::{TaskPriority, TaskStatus};
 
-    async fn captured_database(root: &Path) -> Database {
+    pub(super) async fn captured_database(root: &Path) -> Database {
         let path = root.join("source.sqlite");
         let store = Store::open(&path).await.unwrap();
         let workspace = store.list_workspaces().await.unwrap().remove(0);
@@ -589,7 +608,7 @@ mod tests {
         database
     }
 
-    fn isolated_store(database_path: &Path, root: &Path) -> ProtectedLocalKeyStore {
+    pub(super) fn isolated_store(database_path: &Path, root: &Path) -> ProtectedLocalKeyStore {
         let canonical = database_path.canonicalize().unwrap();
         let account = database_account(&canonical);
         ProtectedLocalKeyStore {
