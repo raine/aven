@@ -2319,3 +2319,82 @@ async fn checkpoint_note_creation_undo_respects_history_ownership() {
         );
     }
 }
+
+#[tokio::test]
+async fn checkpoint_round_completion_does_not_freeze_next_creation() {
+    let f = fixture().await;
+    converge(&f).await;
+    let w = f.seed.list_workspaces().await.unwrap().remove(0);
+    f.seed
+        .create_task(&w, draft("first queued creation"))
+        .await
+        .unwrap();
+    let second = f
+        .seed
+        .create_task_with_undo(
+            &w,
+            draft("second queued creation"),
+            aven_core::operations::TaskCreationUndo::TuiTask,
+        )
+        .await
+        .unwrap()
+        .task;
+    let client = Client::new(&f.origin).unwrap();
+    assert!(!client.round(&f.seed_store, &f.seed).await.unwrap());
+    assert_eq!(
+        scalar(&f.seed, "SELECT count(*) FROM local_e2ee_outbox").await,
+        0
+    );
+    assert_eq!(
+        scalar(
+            &f.seed,
+            "SELECT count(*) FROM changes WHERE server_seq IS NULL"
+        )
+        .await,
+        1
+    );
+    f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
+    assert_eq!(
+        scalar(
+            &f.seed,
+            &format!("SELECT count(*) FROM tasks WHERE id='{}'", second.id)
+        )
+        .await,
+        0
+    );
+    assert!(client.round(&f.seed_store, &f.seed).await.unwrap());
+}
+
+#[tokio::test]
+async fn checkpoint_idle_check_preserves_frozen_work_and_checks_authority() {
+    let f = fixture().await;
+    converge(&f).await;
+    let w = f.seed.list_workspaces().await.unwrap().remove(0);
+    f.seed
+        .create_task(&w, draft("frozen idle check"))
+        .await
+        .unwrap();
+    let mut inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+    assert!(!f.seed.encrypted_tail_idle(&inputs.authority).await.unwrap());
+    assert_eq!(
+        scalar(&f.seed, "SELECT count(*) FROM local_e2ee_outbox").await,
+        0
+    );
+    let record = f
+        .seed
+        .prepare_encrypted_tail(&inputs.authority)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!f.seed.encrypted_tail_idle(&inputs.authority).await.unwrap());
+    assert_eq!(
+        f.seed
+            .prepare_encrypted_tail(&inputs.authority)
+            .await
+            .unwrap()
+            .unwrap(),
+        record
+    );
+    inputs.authority.sync_generation += 1;
+    assert!(f.seed.encrypted_tail_idle(&inputs.authority).await.is_err());
+}

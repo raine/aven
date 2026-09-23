@@ -5,7 +5,9 @@ description: Release notes for aven.
 
 ## Unreleased
 
-- Fix: Concurrent note edits converge in experimental encrypted sync without overwriting later pending edits.
+- Fix: Finishing an encrypted sync round leaves later queued creations undoable until their own upload is prepared.
+
+- Fix: Concurrent note edits converge in encrypted sync without overwriting later pending edits.
 
 - Fix: Metadata conflict resolution rejects values that exceed metadata limits without changing the conflict or blocking later sync.
 

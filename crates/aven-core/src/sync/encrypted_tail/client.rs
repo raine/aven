@@ -96,6 +96,20 @@ impl Database {
         let mut conn = self.acquire_reader().await?;
         state(&mut conn, a).await
     }
+    /// Observes local work without validating, freezing or claiming its history.
+    pub async fn encrypted_tail_idle(&self, a: &Authority) -> Result<bool> {
+        let mut conn = self.acquire_reader().await?;
+        let mut tx = sqlx::Connection::begin(&mut *conn).await?;
+        state(&mut tx, a).await?;
+        let pending: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM local_e2ee_outbox)
+                 OR EXISTS(SELECT 1 FROM changes WHERE server_seq IS NULL)",
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(!pending)
+    }
     pub async fn prepare_encrypted_tail(&self, a: &Authority) -> Result<Option<Vec<u8>>> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;

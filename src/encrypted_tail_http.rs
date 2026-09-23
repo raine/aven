@@ -260,7 +260,7 @@ impl Client {
             db.verify_encrypted_tail_outcome(a, &accepted).await?;
         }
         let caught_up = self.pull(a, &inputs.bearer, db).await?;
-        Ok(caught_up && db.prepare_encrypted_tail(a).await?.is_none())
+        Ok(caught_up && db.encrypted_tail_idle(a).await?)
     }
     /// Reads one authorized page without preparing uploads. True refers only to
     /// this remote watermark, never to unresolved local work or overall readiness.
