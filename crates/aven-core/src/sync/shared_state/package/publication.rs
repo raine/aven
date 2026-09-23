@@ -1,11 +1,10 @@
 //! Experimental, bounded publication-package codec and keyless completeness checks.
 //!
-//! No persistence, dispatch, authorization, signature, or publication is provided.
-//! Construction makes an ephemeral specimen with a fresh bootstrap identity. It
-//! never rewrites a frozen local candidate. Images retain their exact original
-//! IDs, context and ciphertext; state/manifest use the fresh identity. Rebuilding
-//! is NOT retry. A future durable owner must freeze one representation before use.
-
+//! Persistence belongs to the never-dispatched database package owner. The capture
+//! candidate ID is the bootstrap ID, not a freshly minted specimen identity.
+//! No dispatch, authorization, signature, or publication is provided. Membership
+//! predecessor bytes are context only. Production protocol, security review,
+//! cross-platform interoperability and durability validation remain required.
 //!
 //! # Profile 1 byte contract (experimental, not security-approved)
 //!
@@ -15,7 +14,7 @@
 //! All parsers reject trailing bytes. SHA-256 commits exact bytes, not decoded JSON.
 //!
 //! * Descriptor: `AVBP || U16(1) || U8(1 suite)`, vault, stream, generation,
-//!   fresh bootstrap, predecessor membership commitment, U64 prefix count,
+//!   capture bootstrap, predecessor membership commitment, U64 prefix count,
 //!   three catalog declarations in class order, then manifest artifact descriptor.
 //! * Declaration: U8 class, U64 record count, U64 byte length, U64 transfer chunk
 //!   count, SHA-256. Catalog transfer chunks are contiguous 1 MiB byte slices
@@ -73,7 +72,6 @@ pub enum Error {
     Invalid,
     ResourceLimit,
     Authentication,
-    RandomnessUnavailable,
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -81,7 +79,6 @@ impl std::fmt::Display for Error {
             Self::Invalid => "invalid bootstrap representation",
             Self::ResourceLimit => "bootstrap codec resource limit exceeded",
             Self::Authentication => "bootstrap authentication failed",
-            Self::RandomnessUnavailable => "bootstrap randomness unavailable",
         })
     }
 }
@@ -227,34 +224,21 @@ fn manifest_plaintext(d: &Descriptor, stats: &domain::Stats) -> Vec<u8> {
     out
 }
 
-/// Builds a nonpersisted experimental specimen from a real immutable capture and
-/// its authenticated local package. `membership_predecessor` is opaque context,
-/// not authority. No signed membership claim is made or checked here.
-///
-/// The source package is not promoted, mutated, or made dispatchable. A fresh
-/// bootstrap ID prevents a different state/manifest representation under its
-/// frozen artifact identity. This method must never be used as a retry API.
-pub fn build_specimen(
+/// Constructs tentative bytes only for the durable owner's first freeze.
+/// Failed preparation may be rebuilt; committed bytes must only be loaded.
+pub(super) fn build(
     capture: &NeverDispatchedLocalSharedCapture,
-    local: &EncryptedLocalSharedStatePackage,
+    context: crypto::LocalSharedStatePackageContext,
+    images: &[crypto::EncryptedLocalSharedStateImage],
+    image_mappings: &[crypto::PrivateImageMapping],
     key: &LocalSharedStatePackageKey,
     membership_predecessor: [u8; 32],
-) -> Result<Package> {
-    valid(capture.candidate_id() == local.candidate_id())?;
-    valid(
-        crypto::decode_context_id(capture.stream_id(), "stream").map_err(|_| Error::Invalid)?
-            == local.stream_id,
-    )?;
-    let authenticated = crypto::decrypt_package(local, key).map_err(|_| Error::Authentication)?;
-    let selected = capture
-        .images
-        .iter()
-        .filter(|r| r.classification != "unavailable")
-        .map(|r| (r.sha256.clone(), r.classification.clone()))
-        .collect::<Vec<_>>();
-    crypto::validate_package_image_coverage(local, &selected).map_err(|_| Error::Invalid)?;
-    let frozen_mappings = local
-        .image_mappings
+) -> Result<EncryptedLocalSharedStatePackage> {
+    let stream_id =
+        crypto::decode_context_id(capture.stream_id(), "stream").map_err(|_| Error::Invalid)?;
+    let bootstrap = crypto::decode_context_id(capture.candidate_id(), "candidate")
+        .map_err(|_| Error::Invalid)?;
+    let frozen_mappings = image_mappings
         .iter()
         .map(|m| (m.source_sha256.as_str(), m.object_id))
         .collect::<std::collections::HashMap<_, _>>();
@@ -272,33 +256,15 @@ pub fn build_specimen(
         .collect::<Vec<_>>();
     let (plaintext, stats) = domain::encode(&capture.capture.snapshot.tables, &mappings)?;
     let plaintext = Zeroizing::new(plaintext);
-    valid(domain::encode(&authenticated.snapshot.tables, &mappings)?.0 == *plaintext)?;
-    let mut bootstrap = [0; 32];
-    getrandom::fill(&mut bootstrap).map_err(|_| Error::RandomnessUnavailable)?;
-    valid(
-        bootstrap
-            != crypto::decode_context_id(local.candidate_id(), "candidate")
-                .map_err(|_| Error::Invalid)?,
-    )?;
-    let state_key =
-        crypto::derive_bootstrap_class_key(key, local.context, local.stream_id, bootstrap, 1)
+    let state_key = crypto::derive_bootstrap_class_key(key, context, stream_id, bootstrap, 1)
+        .map_err(|_| Error::Authentication)?;
+    let state =
+        crypto::encrypt_artifact(&plaintext, context, stream_id, bootstrap, 2, 1, &state_key)
             .map_err(|_| Error::Authentication)?;
-    let state = crypto::encrypt_artifact(
-        &plaintext,
-        local.context,
-        local.stream_id,
-        bootstrap,
-        2,
-        1,
-        &state_key,
-    )
-    .map_err(|_| Error::Authentication)?;
-    let objects = local
-        .images
+    let objects = images
         .iter()
         .map(|image| {
-            let mapping = local
-                .image_mappings
+            let mapping = image_mappings
                 .iter()
                 .find(|m| m.object_id == image.object_id)
                 .ok_or(Error::Invalid)?;
@@ -329,9 +295,9 @@ pub fn build_specimen(
         image_catalog.encode()?,
     ];
     let mut d = Descriptor {
-        vault: local.context.vault_id,
-        stream: local.stream_id,
-        generation: local.context.generation_id,
+        vault: context.vault_id,
+        stream: stream_id,
+        generation: context.generation_id,
         bootstrap,
         membership: membership_predecessor,
         prefix: number(prefix.len())?,
@@ -346,13 +312,12 @@ pub fn build_specimen(
             chunks: Vec::new(),
         },
     };
-    let manifest_key =
-        crypto::derive_bootstrap_class_key(key, local.context, local.stream_id, bootstrap, 2)
-            .map_err(|_| Error::Authentication)?;
+    let manifest_key = crypto::derive_bootstrap_class_key(key, context, stream_id, bootstrap, 2)
+        .map_err(|_| Error::Authentication)?;
     let manifest = crypto::encrypt_artifact(
         &manifest_plaintext(&d, &stats),
-        local.context,
-        local.stream_id,
+        context,
+        stream_id,
         bootstrap,
         2,
         2,
@@ -360,24 +325,59 @@ pub fn build_specimen(
     )
     .map_err(|_| Error::Authentication)?;
     d.manifest = Artifact::from_encrypted(&manifest)?;
-    let mut images = local
-        .images
+    let mut image_records = images
         .iter()
         .map(|i| ImageRecords {
             object_id: i.object_id,
             records: artifact_records(&i.artifact),
         })
         .collect::<Vec<_>>();
-    images.sort_by_key(|i| i.object_id);
+    image_records.sort_by_key(|i| i.object_id);
     let package = Package {
         descriptor: d.encode()?,
         catalogs,
         state: artifact_records(&state),
         manifest: artifact_records(&manifest),
-        images,
+        images: image_records,
     };
-    validate_against_capture(&package, capture, local, key, membership_predecessor)?;
-    Ok(package)
+    let local = EncryptedLocalSharedStatePackage {
+        candidate_id: capture.candidate_id().to_owned(),
+        stream_id,
+        context,
+        state,
+        manifest,
+        images: images.to_vec(),
+        image_mappings: image_mappings.to_vec(),
+        descriptor: package.descriptor.clone(),
+        catalogs: package.catalogs.clone(),
+    };
+    validate_against_capture(&package, capture, &local, key, membership_predecessor)?;
+    Ok(local)
+}
+
+/// Authenticates all domain, manifest and image bytes under the supplied key and
+/// expected context. This does not establish membership authorization.
+pub fn authenticate(
+    package: &Package,
+    key: &LocalSharedStatePackageKey,
+    context: crypto::LocalSharedStatePackageContext,
+    stream_id: [u8; 32],
+    bootstrap_id: [u8; 32],
+    membership_predecessor: [u8; 32],
+) -> Result<()> {
+    let d = Descriptor::decode(&package.descriptor)?;
+    valid(
+        d.context() == context
+            && d.stream == stream_id
+            && d.bootstrap == bootstrap_id
+            && d.membership == membership_predecessor,
+    )?;
+    decrypt_domain(package, key)?;
+    Ok(())
+}
+
+pub(super) fn membership(package: &EncryptedLocalSharedStatePackage) -> Result<[u8; 32]> {
+    Ok(Descriptor::decode(&package.descriptor)?.membership)
 }
 
 /// Checks exact clear commitments, framing, canonical coverage and all selected
@@ -510,6 +510,51 @@ fn decrypt_domain(
     Ok((capture, mappings))
 }
 
+fn validate_local_metadata(local: &EncryptedLocalSharedStatePackage) -> Result<()> {
+    let d = Descriptor::decode(&local.descriptor)?;
+    valid(
+        d.context() == local.context
+            && d.stream == local.stream_id
+            && d.bootstrap
+                == crypto::decode_context_id(local.candidate_id(), "candidate")
+                    .map_err(|_| Error::Invalid)?,
+    )?;
+    valid(Artifact::from_encrypted(&local.state)? == decode_state_catalog(&local.catalogs[0])?)?;
+    valid(Artifact::from_encrypted(&local.manifest)? == d.manifest)?;
+    let images = Images::decode(&local.catalogs[2])?;
+    valid(images.objects.len() == local.images.len())?;
+    for image in &local.images {
+        let object = images
+            .objects
+            .iter()
+            .find(|o| o.id == image.object_id)
+            .ok_or(Error::Invalid)?;
+        valid(Artifact::from_encrypted(&image.artifact)? == object.artifact)?;
+    }
+    Ok(())
+}
+
+pub(super) fn decrypt_local(
+    local: &EncryptedLocalSharedStatePackage,
+    key: &LocalSharedStatePackageKey,
+) -> Result<SharedStateCapture> {
+    validate_local_metadata(local)?;
+    let (capture, mappings) = decrypt_domain(&local.upload_package(), key)?;
+    let mut selected = mappings
+        .into_iter()
+        .filter_map(|mapping| {
+            mapping.object.map(|object_id| crypto::PrivateImageMapping {
+                source_sha256: mapping.sha256,
+                classification: mapping.classification,
+                object_id,
+            })
+        })
+        .collect::<Vec<_>>();
+    selected.sort_by(|a, b| a.source_sha256.cmp(&b.source_sha256));
+    valid(selected == local.image_mappings)?;
+    Ok(capture)
+}
+
 /// Client-side check against the immutable source, not live rows. Also checks
 /// encrypted manifest/catalog agreement and private image hashes. This is not
 /// join installation and does not establish any trusted membership anchor.
@@ -520,6 +565,7 @@ pub fn validate_against_capture(
     key: &LocalSharedStatePackageKey,
     membership_predecessor: [u8; 32],
 ) -> Result<()> {
+    validate_local_metadata(local)?;
     let d = Descriptor::decode(&package.descriptor)?;
     valid(
         d.context() == local.context
@@ -532,7 +578,7 @@ pub fn validate_against_capture(
     )?;
     valid(
         d.bootstrap
-            != crypto::decode_context_id(local.candidate_id(), "candidate")
+            == crypto::decode_context_id(local.candidate_id(), "candidate")
                 .map_err(|_| Error::Invalid)?,
     )?;
     let (decoded, mappings) = decrypt_domain(package, key)?;

@@ -9,10 +9,15 @@ async fn encrypted_package_round_trips_and_retries_exact_bytes() {
         .capture_local_shared_state_never_dispatched(source_dir.path())
         .await
         .unwrap();
-    let original_snapshot = serde_json::to_value(&durable.shared_state().snapshot).unwrap();
+    let original_snapshot = sorted_tables(durable.shared_state());
     let key = package_key();
     let first = source
-        .package_local_shared_state_never_dispatched(source_dir.path(), package_context(), &key)
+        .package_local_shared_state_never_dispatched(
+            source_dir.path(),
+            package_context(),
+            &key,
+            [0x64; 32],
+        )
         .await
         .unwrap();
     let mut conn = source.acquire_writer().await.unwrap();
@@ -66,20 +71,27 @@ async fn encrypted_package_round_trips_and_retries_exact_bytes() {
     drop(source);
     let source = Database::open(&source_path).await.unwrap();
     let retry = source
-        .package_local_shared_state_never_dispatched(source_dir.path(), package_context(), &key)
+        .package_local_shared_state_never_dispatched(
+            source_dir.path(),
+            package_context(),
+            &key,
+            [0x64; 32],
+        )
         .await
         .unwrap();
     assert_eq!(first, retry);
     let decrypted = decrypt_package(&retry, &key).unwrap();
-    assert_eq!(
-        serde_json::to_value(&decrypted.snapshot).unwrap(),
-        original_snapshot
-    );
+    assert_eq!(sorted_tables(&decrypted), original_snapshot);
     let mut different_context = package_context();
     different_context.generation_id[0] ^= 1;
     assert!(
         source
-            .package_local_shared_state_never_dispatched(source_dir.path(), different_context, &key)
+            .package_local_shared_state_never_dispatched(
+                source_dir.path(),
+                different_context,
+                &key,
+                [0x64; 32]
+            )
             .await
             .is_err()
     );
@@ -88,7 +100,8 @@ async fn encrypted_package_round_trips_and_retries_exact_bytes() {
             .package_local_shared_state_never_dispatched(
                 source_dir.path(),
                 package_context(),
-                &LocalSharedStatePackageKey::new([0x99; 32])
+                &LocalSharedStatePackageKey::new([0x99; 32]),
+                [0x64; 32]
             )
             .await
             .is_err()
@@ -96,7 +109,12 @@ async fn encrypted_package_round_trips_and_retries_exact_bytes() {
     assert_eq!(
         first,
         source
-            .package_local_shared_state_never_dispatched(source_dir.path(), package_context(), &key)
+            .package_local_shared_state_never_dispatched(
+                source_dir.path(),
+                package_context(),
+                &key,
+                [0x64; 32]
+            )
             .await
             .unwrap()
     );
@@ -160,7 +178,12 @@ async fn selected_images_round_trip_and_retry_exact_persisted_ciphertext_after_r
         .unwrap();
     let key = package_key();
     let first = source
-        .package_local_shared_state_never_dispatched(source_dir.path(), package_context(), &key)
+        .package_local_shared_state_never_dispatched(
+            source_dir.path(),
+            package_context(),
+            &key,
+            [0x64; 32],
+        )
         .await
         .unwrap();
     assert_eq!(first.images().len(), 2);
@@ -218,7 +241,12 @@ async fn selected_images_round_trip_and_retry_exact_persisted_ciphertext_after_r
     drop(source);
     let reopened = Database::open(&path).await.unwrap();
     let retry = reopened
-        .package_local_shared_state_never_dispatched(source_dir.path(), package_context(), &key)
+        .package_local_shared_state_never_dispatched(
+            source_dir.path(),
+            package_context(),
+            &key,
+            [0x64; 32],
+        )
         .await
         .unwrap();
     assert_eq!(retry, first);
@@ -253,27 +281,28 @@ async fn selected_images_round_trip_and_retry_exact_persisted_ciphertext_after_r
 }
 
 #[tokio::test]
-async fn authentic_state_only_package_rejects_selected_image_capture_without_rewrite() {
+async fn incomplete_image_package_rejects_selected_capture_without_rewrite() {
     let (source_dir, source, task_id) = source_with_history().await;
     add_selected_images(source_dir.path(), &source, &task_id).await;
-    let capture = source
+    source
         .capture_local_shared_state_never_dispatched(source_dir.path())
         .await
         .unwrap();
     let key = package_key();
-    let state_only = encrypt_package(
-        capture.candidate_id(),
-        decode_context_id(capture.stream_id(), "stream").unwrap(),
-        package_context(),
-        capture.shared_state(),
-        &[],
-        &key,
-    )
-    .unwrap();
+    source
+        .package_local_shared_state_never_dispatched(
+            source_dir.path(),
+            package_context(),
+            &key,
+            [0x64; 32],
+        )
+        .await
+        .unwrap();
     let mut conn = source.acquire_writer().await.unwrap();
-    let mut tx = crate::db::begin_immediate(&mut conn).await.unwrap();
-    persist_package(&mut tx, &state_only).await.unwrap();
-    tx.commit().await.unwrap();
+    sqlx::query("DELETE FROM local_shared_capture_package_images")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
     let frozen: Vec<(i64, i64, Vec<u8>)> = sqlx::query_as(
         "SELECT class, chunk_index, record
          FROM local_shared_capture_package_chunks ORDER BY class, chunk_index",
@@ -284,7 +313,12 @@ async fn authentic_state_only_package_rejects_selected_image_capture_without_rew
     drop(conn);
 
     let error = source
-        .package_local_shared_state_never_dispatched(source_dir.path(), package_context(), &key)
+        .package_local_shared_state_never_dispatched(
+            source_dir.path(),
+            package_context(),
+            &key,
+            [0x64; 32],
+        )
         .await
         .unwrap_err();
     assert!(error.to_string().contains("image-coverage-mismatch"));
@@ -331,6 +365,7 @@ async fn selected_source_failure_preserves_pins_and_allows_cancellation_cleanup(
                 source_dir.path(),
                 package_context(),
                 &package_key(),
+                [0x64; 32],
             )
             .await
             .unwrap_err();
@@ -388,7 +423,8 @@ async fn wrong_key_and_interrupted_persistence_leave_no_install_or_partial_packa
             .package_local_shared_state_never_dispatched(
                 source_dir.path(),
                 package_context(),
-                &package_key()
+                &package_key(),
+                [0x64; 32]
             )
             .await
             .is_err()
@@ -416,6 +452,7 @@ async fn wrong_key_and_interrupted_persistence_leave_no_install_or_partial_packa
             source_dir.path(),
             package_context(),
             &package_key(),
+            [0x64; 32],
         )
         .await
         .unwrap();
@@ -582,6 +619,7 @@ async fn persisted_ciphertext_corruption_blocks_resume_without_repackaging() {
             source_dir.path(),
             package_context(),
             &package_key(),
+            [0x64; 32],
         )
         .await
         .unwrap();
@@ -608,9 +646,20 @@ async fn persisted_ciphertext_corruption_blocks_resume_without_repackaging() {
             .package_local_shared_state_never_dispatched(
                 source_dir.path(),
                 package_context(),
-                &package_key()
+                &package_key(),
+                [0x64; 32]
             )
             .await
             .is_err()
     );
+}
+
+fn sorted_tables(capture: &SharedStateCapture) -> serde_json::Value {
+    let mut tables = serde_json::to_value(&capture.snapshot.tables).unwrap();
+    for rows in tables.as_object_mut().unwrap().values_mut() {
+        rows.as_array_mut()
+            .unwrap()
+            .sort_by_key(|row| row.to_string());
+    }
+    tables
 }

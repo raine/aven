@@ -196,10 +196,13 @@ impl ProtectedLocalKeyStore {
     }
 
     /// Creates or reuses protected key material before freezing package bytes.
+    /// The predecessor is caller-supplied context, not membership authorization.
+    /// An existing freeze requires its established authority even if bytes are missing.
     pub async fn package_local_capture(
         &self,
         database: &Database,
         blob_dir: &Path,
+        membership_predecessor: [u8; 32],
     ) -> Result<EncryptedLocalSharedStatePackage, anyhow::Error> {
         self.validate_database(database)?;
         let protected = if database
@@ -215,6 +218,7 @@ impl ProtectedLocalKeyStore {
                 blob_dir,
                 protected.context(),
                 protected.package_key(),
+                membership_predecessor,
             )
             .await
     }
@@ -604,7 +608,7 @@ mod tests {
         let key_root = temp.path().join("authority");
         let store = isolated_store(database.path(), &key_root);
         let first = store
-            .package_local_capture(&database, temp.path())
+            .package_local_capture(&database, temp.path(), [0x64; 32])
             .await
             .unwrap();
         drop(store);
@@ -616,7 +620,7 @@ mod tests {
         let reopened = isolated_store(database.path(), &key_root);
         fs::remove_file(reopened.marker_path()).unwrap();
         let retry = reopened
-            .package_local_capture(&database, temp.path())
+            .package_local_capture(&database, temp.path(), [0x64; 32])
             .await
             .unwrap();
         assert_eq!(first, retry);
@@ -627,6 +631,16 @@ mod tests {
         };
         let encoded = Zeroizing::new(fs::read(key_path).unwrap());
         let raw_key = &encoded[72..104];
+        for path in [
+            database.path().to_path_buf(),
+            PathBuf::from(format!("{}-wal", database.path().display())),
+        ] {
+            match fs::read(path) {
+                Ok(bytes) => assert!(!bytes.windows(raw_key.len()).any(|window| window == raw_key)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => panic!("cannot inspect database bytes: {error}"),
+            }
+        }
         let exported = serde_json::to_vec(
             &database
                 .export_data("2026-09-22T00:00:00Z".into())
@@ -688,7 +702,7 @@ mod tests {
         let key_root = temp.path().join("authority");
         let store = isolated_store(database.path(), &key_root);
         store
-            .package_local_capture(&database, temp.path())
+            .package_local_capture(&database, temp.path(), [0x64; 32])
             .await
             .unwrap();
         let key_path = match &store.backend {
@@ -699,7 +713,7 @@ mod tests {
         fs::remove_file(store.marker_path()).unwrap();
 
         let error = store
-            .package_local_capture(&database, temp.path())
+            .package_local_capture(&database, temp.path(), [0x64; 32])
             .await
             .unwrap_err();
         assert_eq!(
@@ -725,7 +739,7 @@ mod tests {
         let store = isolated_store(first.path(), &key_root);
 
         let error = store
-            .package_local_capture(&second, second_root.path())
+            .package_local_capture(&second, second_root.path(), [0x64; 32])
             .await
             .unwrap_err();
         assert_eq!(

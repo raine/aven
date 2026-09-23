@@ -20,10 +20,15 @@ async fn specimen() -> (
         .await
         .unwrap();
     let local = database
-        .package_local_shared_state_never_dispatched(dir.path(), package_context(), &package_key())
+        .package_local_shared_state_never_dispatched(
+            dir.path(),
+            package_context(),
+            &package_key(),
+            [0x64; 32],
+        )
         .await
         .unwrap();
-    let package = build_specimen(&capture, &local, &package_key(), [0x64; 32]).unwrap();
+    let package = local.upload_package();
     (dir, database, capture, local, package)
 }
 
@@ -196,7 +201,12 @@ async fn real_capture_round_trip_images_privacy_and_unchanged_local_retry() {
     .unwrap();
     validate_against_capture(&package, &capture, &local, &package_key(), [0x64; 32]).unwrap();
     let retry = db
-        .package_local_shared_state_never_dispatched(dir.path(), package_context(), &package_key())
+        .package_local_shared_state_never_dispatched(
+            dir.path(),
+            package_context(),
+            &package_key(),
+            [0x64; 32],
+        )
         .await
         .unwrap();
     assert_eq!(retry, local);
@@ -206,8 +216,8 @@ async fn real_capture_round_trip_images_privacy_and_unchanged_local_retry() {
         .unwrap()
         .unwrap();
     validate_against_capture(&package, &resumed, &retry, &package_key(), [0x64; 32]).unwrap();
-    let rebuilt = build_specimen(&resumed, &retry, &package_key(), [0x64; 32]).unwrap();
-    assert_ne!(package.descriptor, rebuilt.descriptor);
+    let rebuilt = retry.upload_package();
+    assert_eq!(package.descriptor, rebuilt.descriptor);
     assert!(package.images == rebuilt.images);
     assert!(validate_against_capture(&package, &capture, &local, &package_key(), [0; 32]).is_err());
     assert!(
@@ -400,17 +410,22 @@ async fn unavailable_reference_has_no_object_or_byte_obligation() {
         .await
         .unwrap();
     let local = db
-        .package_local_shared_state_never_dispatched(dir.path(), package_context(), &package_key())
+        .package_local_shared_state_never_dispatched(
+            dir.path(),
+            package_context(),
+            &package_key(),
+            [0x64; 32],
+        )
         .await
         .unwrap();
-    let package = build_specimen(&capture, &local, &package_key(), [0; 32]).unwrap();
+    let package = local.upload_package();
     assert_eq!(validate_keyless(&package).unwrap().image_count, 0);
     let catalog = Images::decode(&package.catalogs[2]).unwrap();
     assert!(catalog.objects.is_empty());
     assert_eq!(catalog.references.len(), 1);
     assert!(catalog.references[0].deleted);
     assert_eq!(catalog.references[0].object, None);
-    validate_against_capture(&package, &capture, &local, &package_key(), [0; 32]).unwrap();
+    validate_against_capture(&package, &capture, &local, &package_key(), [0x64; 32]).unwrap();
     let mut bad = package;
     let mut catalog = catalog;
     catalog.references[0].object = Some([88; 32]);
@@ -425,15 +440,19 @@ async fn empty_capture_and_records_spanning_transport_chunks() {
     let db = crate::db::Database::open(&dir.path().join("empty.sqlite"))
         .await
         .unwrap();
-    let capture = db
-        .capture_local_shared_state_never_dispatched(dir.path())
+    db.capture_local_shared_state_never_dispatched(dir.path())
         .await
         .unwrap();
     let local = db
-        .package_local_shared_state_never_dispatched(dir.path(), package_context(), &package_key())
+        .package_local_shared_state_never_dispatched(
+            dir.path(),
+            package_context(),
+            &package_key(),
+            [0x64; 32],
+        )
         .await
         .unwrap();
-    let package = build_specimen(&capture, &local, &package_key(), [0; 32]).unwrap();
+    let package = local.upload_package();
     assert_eq!(validate_keyless(&package).unwrap().prefix_count, 0);
 
     // Materialized imported text can exceed an operation's payload limit and a
@@ -452,12 +471,17 @@ async fn empty_capture_and_records_spanning_transport_chunks() {
         .await
         .unwrap();
     let local = db
-        .package_local_shared_state_never_dispatched(dir.path(), package_context(), &package_key())
+        .package_local_shared_state_never_dispatched(
+            dir.path(),
+            package_context(),
+            &package_key(),
+            [0x64; 32],
+        )
         .await
         .unwrap();
-    let package = build_specimen(&capture, &local, &package_key(), [0; 32]).unwrap();
+    let package = local.upload_package();
     assert!(package.state.len() > 1);
-    validate_against_capture(&package, &capture, &local, &package_key(), [0; 32]).unwrap();
+    validate_against_capture(&package, &capture, &local, &package_key(), [0x64; 32]).unwrap();
     let mut reversed = package.clone();
     reversed.state.reverse();
     assert!(validate_keyless(&reversed).is_err());
