@@ -66,6 +66,10 @@ async fn loopback_independent_peer_exact_reopen_and_current_authorization() {
         .await
         .unwrap();
     assert!(!client.complete(&peer_store, &peer_db).await.unwrap());
+    for (keys, database) in [(&store, &db), (&peer_store, &peer_db)] {
+        let error = keys.tail_inputs(database, &origin).await.err().unwrap();
+        assert_eq!(error.to_string(), "error enrollment-unresolved");
+    }
     let peer = peer_store
         .prepare_peer(&peer_db, &origin, None)
         .await
@@ -94,6 +98,15 @@ async fn loopback_independent_peer_exact_reopen_and_current_authorization() {
             .require_resolved_disclosure()
             .is_err()
     );
+    let error = store.tail_inputs(&db, &origin).await.err().unwrap();
+    assert_eq!(error.to_string(), "error withdrawal-required-unsupported");
+    // The unresolved-disclosure fence precedes ordinary locator validation.
+    let error = store
+        .tail_inputs(&db, "https://other.invalid")
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.to_string(), "error withdrawal-required-unsupported");
     // Real server commit with a deliberately unconsumed success result models a
     // lost reply. Restarted host resends the already protected candidate.
     let context = Context {

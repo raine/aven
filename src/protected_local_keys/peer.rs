@@ -518,35 +518,25 @@ impl ProtectedLocalKeyStore {
             .await
     }
     pub(crate) async fn tail_inputs(&self, db: &Database, locator: &str) -> Result<TailInputs> {
-        self.enrollment_readiness(db)
-            .await?
-            .require_resolved_disclosure()?;
         let installation = InstallationGuard::acquire(db.path())?;
         self.validate_database(db)?;
+        prepare_directory(&self.directory)?;
         let lock = self.lock()?;
         let id = self
             .identity(db, &installation)
             .await?
             .context("error enrollment-missing")?;
-        ensure!(id.locator == locator, "error enrollment-context");
-        let ready = self
-            .phase(db, Artifact::Ready)
-            .await?
-            .context("error enrollment-not-ready")?;
-        let (genesis, publication, device, bearer, key) = if id.role == "peer" {
-            let bytes = self
-                .phase(db, Artifact::Verified)
+        let ready = self.phase(db, Artifact::Ready).await?;
+        if ready.is_none() {
+            self.pending_readiness(db, &id)
                 .await?
-                .context("error enrollment-key-coverage-missing")?;
-            let record: Verified = serde_json::from_slice(&bytes)
-                .map_err(|_| anyhow::anyhow!("error enrollment-verified-corrupt"))?;
-            let peer = PeerAuthority::from_protected_storage(&id.authority)?;
-            let verified = peer.verify_enrollment(&record.evidence, &record.descriptor)?;
-            ensure!(
-                ready.as_slice() == verified.admission().commitment()
-                    && verified.key().protected_storage_bytes().as_slice() == record.key,
-                "error enrollment-verified-corrupt"
-            );
+                .require_resolved_disclosure()?;
+        }
+        let ready = ready.context("error enrollment-not-ready")?;
+        let head: [u8; 32] = ready.as_slice().try_into()?;
+        ensure!(id.locator == locator, "error enrollment-context");
+        let (genesis, publication, device, bearer, key) = if id.role == "peer" {
+            let (peer, verified, _) = self.verified_peer(db, &id, &head).await?;
             let installed = self
                 .phase(db, Artifact::Installed)
                 .await?
@@ -601,6 +591,10 @@ impl ProtectedLocalKeyStore {
                 .phase(db, Artifact::Candidate)
                 .await?
                 .context("error enrollment-candidate-missing")?;
+            ensure!(
+                Sha256::digest(candidate.as_slice()).as_slice() == head,
+                "error enrollment-checkpoint-mismatch"
+            );
             let admission = peer::Admission::from_record(
                 seed.genesis(),
                 &publication,
@@ -637,7 +631,7 @@ impl ProtectedLocalKeyStore {
                 genesis: genesis.commitment(),
                 device,
                 credential_version: 1,
-                head: ready.as_slice().try_into()?,
+                head,
                 stream: b.stream_id,
                 descriptor: b.descriptor_commitment,
             },
@@ -681,20 +675,8 @@ impl ProtectedLocalKeyStore {
             .phase(db, Artifact::Ready)
             .await?
             .context("error enrollment-not-ready")?;
-        let bytes = self
-            .phase(db, Artifact::Verified)
-            .await?
-            .context("error enrollment-key-coverage-missing")?;
-        let record: Verified = serde_json::from_slice(&bytes)
-            .map_err(|_| anyhow::anyhow!("error enrollment-verified-corrupt"))?;
-        let peer = PeerAuthority::from_protected_storage(&id.authority)?;
-        let verified = peer.verify_enrollment(&record.evidence, &record.descriptor)?;
+        let (peer, verified, record) = self.verified_peer(db, &id, ready.as_slice()).await?;
         let head = verified.admission().commitment();
-        ensure!(
-            ready.as_slice() == head
-                && verified.key().protected_storage_bytes().as_slice() == record.key,
-            "error enrollment-verified-corrupt"
-        );
         let completed = self.phase(db, Artifact::Installed).await?;
         if let Some(report) = db
             .peer_snapshot_receipt(&verified, id.incarnation, &id.client, &guard)
@@ -735,19 +717,7 @@ impl ProtectedLocalKeyStore {
         if let Some(ready) = self.phase(db, Artifact::Ready).await? {
             let head: [u8; 32] = ready.as_slice().try_into()?;
             if id.role == "peer" {
-                let bytes = self
-                    .phase(db, Artifact::Verified)
-                    .await?
-                    .context("error enrollment-key-coverage-missing")?;
-                let record: Verified = serde_json::from_slice(&bytes)
-                    .map_err(|_| anyhow::anyhow!("error enrollment-verified-corrupt"))?;
-                let peer = PeerAuthority::from_protected_storage(&id.authority)?;
-                let verified = peer.verify_enrollment(&record.evidence, &record.descriptor)?;
-                ensure!(
-                    verified.admission().commitment() == head
-                        && verified.key().protected_storage_bytes().as_slice() == record.key,
-                    "error enrollment-verified-corrupt"
-                );
+                self.verified_peer(db, &id, &head).await?;
             } else {
                 let candidate = self
                     .phase(db, Artifact::Candidate)
@@ -760,6 +730,10 @@ impl ProtectedLocalKeyStore {
             }
             return Ok(EnrollmentReadiness::Enrolled { head });
         }
+        self.pending_readiness(db, &id).await
+    }
+
+    async fn pending_readiness(&self, db: &Database, id: &Identity) -> Result<EnrollmentReadiness> {
         Ok(
             if id.role == "inviter" && self.phase(db, Artifact::Sent).await?.is_some() {
                 EnrollmentReadiness::UnresolvedDisclosure
@@ -767,6 +741,28 @@ impl ProtectedLocalKeyStore {
                 EnrollmentReadiness::Pending
             },
         )
+    }
+
+    async fn verified_peer(
+        &self,
+        db: &Database,
+        id: &Identity,
+        ready: &[u8],
+    ) -> Result<(PeerAuthority, peer::VerifiedEnrollment, Verified)> {
+        let bytes = self
+            .phase(db, Artifact::Verified)
+            .await?
+            .context("error enrollment-key-coverage-missing")?;
+        let record: Verified = serde_json::from_slice(&bytes)
+            .map_err(|_| anyhow::anyhow!("error enrollment-verified-corrupt"))?;
+        let peer = PeerAuthority::from_protected_storage(&id.authority)?;
+        let verified = peer.verify_enrollment(&record.evidence, &record.descriptor)?;
+        ensure!(
+            ready == verified.admission().commitment()
+                && verified.key().protected_storage_bytes().as_slice() == record.key,
+            "error enrollment-verified-corrupt"
+        );
+        Ok((peer, verified, record))
     }
 }
 #[derive(Serialize, Deserialize)]
