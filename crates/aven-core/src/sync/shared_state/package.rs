@@ -1,4 +1,5 @@
 use std::fmt;
+use std::path::Path;
 
 use anyhow::{Context, Result, ensure};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
@@ -20,6 +21,13 @@ const CHUNK_RECORD_OVERHEAD: usize = 222;
 const MAX_STATE_PLAINTEXT_BYTES: usize = 256 * 1024 * 1024;
 const MAX_STATE_CHUNKS: usize = 256;
 const MAX_MANIFEST_PLAINTEXT_BYTES: usize = 1024 * 1024;
+const MAX_IMAGE_PLAINTEXT_BYTES: usize = crate::attachments::validation::MAX_BLOB_BYTES;
+const MAX_IMAGE_CHUNKS: usize = 25;
+const MAX_PACKAGE_IMAGE_COUNT: usize = 1024;
+const MAX_PACKAGE_IMAGE_PLAINTEXT_BYTES: usize = 256 * 1024 * 1024;
+const IMAGE_FAMILY: u8 = 1;
+const BOOTSTRAP_FAMILY: u8 = 2;
+const IMAGE_CLASS: u8 = 0;
 const STATE_CLASS: u8 = 1;
 const MANIFEST_CLASS: u8 = 2;
 
@@ -73,13 +81,29 @@ impl Drop for LocalSharedStatePackageKey {
 /// This value is transferable between local databases, but has no dispatch or
 /// publication behavior. Its format is a versioned local profile, not the E2EE
 /// wire contract.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct EncryptedLocalSharedStatePackage {
     candidate_id: String,
     stream_id: [u8; 32],
     context: LocalSharedStatePackageContext,
     state: EncryptedArtifact,
     manifest: EncryptedArtifact,
+    images: Vec<EncryptedLocalSharedStateImage>,
+    image_mappings: Vec<PrivateImageMapping>,
+}
+
+impl fmt::Debug for EncryptedLocalSharedStatePackage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EncryptedLocalSharedStatePackage")
+            .field("candidate_id", &self.candidate_id)
+            .field("stream_id", &self.stream_id)
+            .field("context", &self.context)
+            .field("state", &self.state)
+            .field("manifest", &self.manifest)
+            .field("image_count", &self.images.len())
+            .finish()
+    }
 }
 
 impl EncryptedLocalSharedStatePackage {
@@ -119,6 +143,10 @@ impl EncryptedLocalSharedStatePackage {
         &self.manifest.aggregate_commitment
     }
 
+    pub fn images(&self) -> &[EncryptedLocalSharedStateImage] {
+        &self.images
+    }
+
     pub fn state_chunks(&self) -> impl ExactSizeIterator<Item = (&[u8; 32], &[u8])> {
         self.state
             .chunks
@@ -131,6 +159,75 @@ impl EncryptedLocalSharedStatePackage {
             .chunks
             .iter()
             .map(|chunk| (&chunk.record_commitment, chunk.record.as_slice()))
+    }
+}
+
+/// One opaque encrypted image representation in a local capture package.
+///
+/// The descriptor exposes no plaintext hash or attachment metadata. Those
+/// mappings remain inside the encrypted manifest and local private persistence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EncryptedLocalSharedStateImage {
+    object_id: [u8; 32],
+    artifact: EncryptedArtifact,
+}
+
+impl EncryptedLocalSharedStateImage {
+    pub fn object_id(&self) -> &[u8; 32] {
+        &self.object_id
+    }
+
+    pub fn total_plaintext_bytes(&self) -> u64 {
+        self.artifact.total_plaintext_bytes
+    }
+
+    pub fn aggregate_commitment(&self) -> &[u8; 32] {
+        &self.artifact.aggregate_commitment
+    }
+
+    pub fn chunks(&self) -> impl ExactSizeIterator<Item = (&[u8; 32], &[u8])> {
+        self.artifact
+            .chunks
+            .iter()
+            .map(|chunk| (&chunk.record_commitment, chunk.record.as_slice()))
+    }
+}
+
+/// Authenticated plaintext recovered from a local image package.
+#[derive(PartialEq, Eq)]
+pub struct DecryptedLocalSharedStateImage {
+    source_sha256: String,
+    classification: String,
+    object_id: [u8; 32],
+    bytes: Zeroizing<Vec<u8>>,
+}
+
+impl fmt::Debug for DecryptedLocalSharedStateImage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DecryptedLocalSharedStateImage")
+            .field("classification", &self.classification)
+            .field("object_id", &self.object_id)
+            .field("byte_count", &self.bytes.len())
+            .finish()
+    }
+}
+
+impl DecryptedLocalSharedStateImage {
+    pub fn source_sha256(&self) -> &str {
+        &self.source_sha256
+    }
+
+    pub fn classification(&self) -> &str {
+        &self.classification
+    }
+
+    pub fn object_id(&self) -> &[u8; 32] {
+        &self.object_id
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
     }
 }
 
@@ -174,6 +271,16 @@ struct PackageManifest {
     attachment_metadata_count: u64,
     attachment_bytes_included: bool,
     state: ManifestArtifact,
+    #[serde(default)]
+    images: Vec<ManifestImage>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ManifestImage {
+    source_sha256: String,
+    classification: String,
+    object_id: String,
+    artifact: ManifestArtifact,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -188,6 +295,19 @@ struct ManifestArtifact {
 struct ManifestChunk {
     record_length: u64,
     record_commitment: String,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct PrivateImageMapping {
+    source_sha256: String,
+    classification: String,
+    object_id: [u8; 32],
+}
+
+struct SelectedImagePlaintext {
+    source_sha256: String,
+    classification: String,
+    bytes: Zeroizing<Vec<u8>>,
 }
 
 impl Database {
@@ -209,6 +329,7 @@ impl Database {
     /// or context mismatch fails without replacing the package.
     pub async fn package_local_shared_state_never_dispatched(
         &self,
+        blob_dir: &Path,
         context: LocalSharedStatePackageContext,
         key: &LocalSharedStatePackageKey,
     ) -> Result<EncryptedLocalSharedStatePackage> {
@@ -227,14 +348,26 @@ impl Database {
             decrypt_package(&package, key)?;
             return Ok(package);
         }
+        let selected: Vec<(String, String)> = sqlx::query_as(
+            "SELECT sha256, classification FROM local_shared_capture_images
+             WHERE candidate_id = ? AND classification != 'unavailable'
+             ORDER BY sha256",
+        )
+        .bind(&candidate_id)
+        .fetch_all(&mut *tx)
+        .await?;
         tx.commit().await?;
         drop(conn);
 
+        let selected =
+            load_selected_image_plaintexts(blob_dir, selected, &capture.shared_state().snapshot)
+                .await?;
         let package = encrypt_package(
             &candidate_id,
             stream_id,
             context,
             capture.shared_state(),
+            &selected,
             key,
         )?;
 
@@ -281,11 +414,25 @@ impl Database {
     }
 }
 
+/// Authenticates and decrypts all image objects in a local capture package.
+///
+/// This local API returns private plaintext mappings. It is not a network
+/// descriptor or publication format.
+pub fn decrypt_local_shared_state_package_images(
+    package: &EncryptedLocalSharedStatePackage,
+    key: &LocalSharedStatePackageKey,
+) -> Result<Vec<DecryptedLocalSharedStateImage>> {
+    let candidate = decode_context_id(&package.candidate_id, "candidate")?;
+    let manifest = decrypt_manifest(package, key, candidate)?;
+    decrypt_manifest_images(package, key, candidate, &manifest)
+}
+
 fn encrypt_package(
     candidate_id: &str,
     stream_id: [u8; 32],
     context: LocalSharedStatePackageContext,
     capture: &SharedStateCapture,
+    selected_images: &[SelectedImagePlaintext],
     key: &LocalSharedStatePackageKey,
 ) -> Result<EncryptedLocalSharedStatePackage> {
     let candidate = decode_context_id(candidate_id, "candidate")?;
@@ -298,12 +445,13 @@ fn encrypt_package(
         plaintext.len() <= MAX_STATE_PLAINTEXT_BYTES,
         "error encrypted-local-shared-package-too-large"
     );
-    let state_key = derive_class_key(key, context, stream_id, candidate, STATE_CLASS)?;
+    let state_key = derive_bootstrap_class_key(key, context, stream_id, candidate, STATE_CLASS)?;
     let state = encrypt_artifact(
         &plaintext,
         context,
         stream_id,
         candidate,
+        BOOTSTRAP_FAMILY,
         STATE_CLASS,
         &state_key,
     )?;
@@ -311,6 +459,55 @@ fn encrypt_package(
         state.chunks.len() <= MAX_STATE_CHUNKS,
         "error encrypted-local-shared-package-too-many-chunks"
     );
+
+    ensure!(
+        selected_images.len() <= MAX_PACKAGE_IMAGE_COUNT,
+        "error encrypted-local-shared-package-too-many-images"
+    );
+    let total_image_bytes = selected_images.iter().try_fold(0_usize, |total, image| {
+        total
+            .checked_add(image.bytes.len())
+            .context("image total overflow")
+    })?;
+    ensure!(
+        total_image_bytes <= MAX_PACKAGE_IMAGE_PLAINTEXT_BYTES,
+        "error encrypted-local-shared-package-images-too-large"
+    );
+    let mut images = Vec::with_capacity(selected_images.len());
+    let mut image_mappings = Vec::with_capacity(selected_images.len());
+    let mut manifest_images = Vec::with_capacity(selected_images.len());
+    for image in selected_images {
+        let object_id = random_id()?;
+        let image_key = derive_image_key(key, context, object_id)?;
+        let artifact = encrypt_artifact(
+            &image.bytes,
+            context,
+            stream_id,
+            object_id,
+            IMAGE_FAMILY,
+            IMAGE_CLASS,
+            &image_key,
+        )?;
+        ensure!(
+            artifact.chunks.len() <= MAX_IMAGE_CHUNKS,
+            "error encrypted-local-shared-package-image-too-many-chunks"
+        );
+        manifest_images.push(ManifestImage {
+            source_sha256: image.source_sha256.clone(),
+            classification: image.classification.clone(),
+            object_id: hex::encode(object_id),
+            artifact: manifest_artifact(&artifact)?,
+        });
+        images.push(EncryptedLocalSharedStateImage {
+            object_id,
+            artifact,
+        });
+        image_mappings.push(PrivateImageMapping {
+            source_sha256: image.source_sha256.clone(),
+            classification: image.classification.clone(),
+            object_id,
+        });
+    }
 
     let manifest_plaintext = serde_json::to_vec(&PackageManifest {
         format: "aven-encrypted-local-shared-state-manifest".to_string(),
@@ -322,19 +519,22 @@ fn encrypt_package(
         candidate_id: candidate_id.to_string(),
         prefix_count: u64::try_from(capture.snapshot.tables.changes.len())?,
         attachment_metadata_count: u64::try_from(capture.snapshot.tables.task_attachments.len())?,
-        attachment_bytes_included: false,
+        attachment_bytes_included: !images.is_empty(),
         state: manifest_artifact(&state)?,
+        images: manifest_images,
     })?;
     ensure!(
         manifest_plaintext.len() <= MAX_MANIFEST_PLAINTEXT_BYTES,
         "error encrypted-local-shared-package-manifest-too-large"
     );
-    let manifest_key = derive_class_key(key, context, stream_id, candidate, MANIFEST_CLASS)?;
+    let manifest_key =
+        derive_bootstrap_class_key(key, context, stream_id, candidate, MANIFEST_CLASS)?;
     let manifest = encrypt_artifact(
         &manifest_plaintext,
         context,
         stream_id,
         candidate,
+        BOOTSTRAP_FAMILY,
         MANIFEST_CLASS,
         &manifest_key,
     )?;
@@ -345,6 +545,8 @@ fn encrypt_package(
         context,
         state,
         manifest,
+        images,
+        image_mappings,
     })
 }
 
@@ -353,27 +555,10 @@ fn decrypt_package(
     key: &LocalSharedStatePackageKey,
 ) -> Result<SharedStateCapture> {
     let candidate = decode_context_id(&package.candidate_id, "candidate")?;
-    let manifest_key = derive_class_key(
-        key,
-        package.context,
-        package.stream_id,
-        candidate,
-        MANIFEST_CLASS,
-    )?;
-    let manifest_bytes = decrypt_artifact(
-        &package.manifest,
-        package.context,
-        package.stream_id,
-        candidate,
-        MANIFEST_CLASS,
-        &manifest_key,
-        MAX_MANIFEST_PLAINTEXT_BYTES,
-    )?;
-    let manifest: PackageManifest = serde_json::from_slice(&manifest_bytes)
-        .context("error encrypted-local-shared-package-manifest-malformed")?;
-    validate_manifest(package, &manifest)?;
+    let manifest = decrypt_manifest(package, key, candidate)?;
+    decrypt_manifest_images(package, key, candidate, &manifest)?;
 
-    let state_key = derive_class_key(
+    let state_key = derive_bootstrap_class_key(
         key,
         package.context,
         package.stream_id,
@@ -385,6 +570,7 @@ fn decrypt_package(
         package.context,
         package.stream_id,
         candidate,
+        BOOTSTRAP_FAMILY,
         STATE_CLASS,
         &state_key,
         MAX_STATE_PLAINTEXT_BYTES,
@@ -407,6 +593,117 @@ fn decrypt_package(
         "error encrypted-local-shared-package-manifest-domain-mismatch"
     );
     Ok(capture)
+}
+
+fn decrypt_manifest(
+    package: &EncryptedLocalSharedStatePackage,
+    key: &LocalSharedStatePackageKey,
+    candidate: [u8; 32],
+) -> Result<PackageManifest> {
+    let manifest_key = derive_bootstrap_class_key(
+        key,
+        package.context,
+        package.stream_id,
+        candidate,
+        MANIFEST_CLASS,
+    )?;
+    let manifest_bytes = decrypt_artifact(
+        &package.manifest,
+        package.context,
+        package.stream_id,
+        candidate,
+        BOOTSTRAP_FAMILY,
+        MANIFEST_CLASS,
+        &manifest_key,
+        MAX_MANIFEST_PLAINTEXT_BYTES,
+    )?;
+    let manifest: PackageManifest = serde_json::from_slice(&manifest_bytes)
+        .context("error encrypted-local-shared-package-manifest-malformed")?;
+    validate_manifest(package, &manifest)?;
+    Ok(manifest)
+}
+
+fn decrypt_manifest_images(
+    package: &EncryptedLocalSharedStatePackage,
+    key: &LocalSharedStatePackageKey,
+    _candidate: [u8; 32],
+    manifest: &PackageManifest,
+) -> Result<Vec<DecryptedLocalSharedStateImage>> {
+    ensure!(
+        manifest.images.len() == package.images.len()
+            && package.image_mappings.len() == package.images.len()
+            && package.images.len() <= MAX_PACKAGE_IMAGE_COUNT,
+        "error encrypted-local-shared-package-image-count-mismatch"
+    );
+    let mut total = 0_usize;
+    let mut output = Vec::with_capacity(package.images.len());
+    for ((descriptor, encrypted), mapping) in manifest
+        .images
+        .iter()
+        .zip(&package.images)
+        .zip(&package.image_mappings)
+    {
+        let object_id = decode_context_id(&descriptor.object_id, "image-object")?;
+        ensure!(
+            object_id == encrypted.object_id
+                && mapping.object_id == object_id
+                && mapping.source_sha256 == descriptor.source_sha256
+                && mapping.classification == descriptor.classification
+                && descriptor.classification != "unavailable"
+                && matches!(
+                    descriptor.classification.as_str(),
+                    "current_selected" | "extra_selected"
+                )
+                && descriptor.artifact.total_plaintext_bytes
+                    == encrypted.artifact.total_plaintext_bytes
+                && descriptor.artifact.chunk_count
+                    == u32::try_from(encrypted.artifact.chunks.len())?
+                && descriptor.artifact.aggregate_commitment
+                    == hex::encode(encrypted.artifact.aggregate_commitment),
+            "error encrypted-local-shared-package-image-descriptor-mismatch"
+        );
+        let expected = manifest_artifact(&encrypted.artifact)?;
+        ensure!(
+            descriptor.artifact.chunks.len() == expected.chunks.len()
+                && descriptor
+                    .artifact
+                    .chunks
+                    .iter()
+                    .zip(&expected.chunks)
+                    .all(|(left, right)| left.record_length == right.record_length
+                        && left.record_commitment == right.record_commitment),
+            "error encrypted-local-shared-package-image-descriptor-mismatch"
+        );
+        let image_key = derive_image_key(key, package.context, object_id)?;
+        let bytes = decrypt_artifact(
+            &encrypted.artifact,
+            package.context,
+            package.stream_id,
+            object_id,
+            IMAGE_FAMILY,
+            IMAGE_CLASS,
+            &image_key,
+            MAX_IMAGE_PLAINTEXT_BYTES,
+        )?;
+        ensure!(
+            crate::attachments::storage::sha256_hex(&bytes) == descriptor.source_sha256,
+            "error encrypted-local-shared-package-image-hash-mismatch"
+        );
+        total = total
+            .checked_add(bytes.len())
+            .context("image total overflow")?;
+        ensure!(
+            total <= MAX_PACKAGE_IMAGE_PLAINTEXT_BYTES,
+            "error encrypted-local-shared-package-images-too-large"
+        );
+        output.push(DecryptedLocalSharedStateImage {
+            source_sha256: descriptor.source_sha256.clone(),
+            classification: descriptor.classification.clone(),
+            object_id,
+            bytes: Zeroizing::new(bytes),
+        });
+    }
+    Ok(output)
 }
 
 fn validate_package_identity(
@@ -436,7 +733,7 @@ fn validate_manifest(
             && manifest.stream_id == hex::encode(package.stream_id)
             && manifest.generation_id == hex::encode(package.context.generation_id)
             && manifest.candidate_id == package.candidate_id
-            && !manifest.attachment_bytes_included,
+            && manifest.attachment_bytes_included == !package.images.is_empty(),
         "error encrypted-local-shared-package-manifest-context-mismatch"
     );
     let expected = manifest_artifact(&package.state)?;
@@ -475,7 +772,7 @@ fn manifest_artifact(artifact: &EncryptedArtifact) -> Result<ManifestArtifact> {
     })
 }
 
-fn derive_class_key(
+fn derive_bootstrap_class_key(
     key: &LocalSharedStatePackageKey,
     context: LocalSharedStatePackageContext,
     stream_id: [u8; 32],
@@ -499,6 +796,22 @@ fn derive_class_key(
     Ok(Zeroizing::new(output))
 }
 
+fn derive_image_key(
+    key: &LocalSharedStatePackageKey,
+    context: LocalSharedStatePackageContext,
+    object_id: [u8; 32],
+) -> Result<Zeroizing<[u8; 32]>> {
+    let hkdf = Hkdf::<Sha256>::new(Some(b"aven-e2ee/v1/generation"), key.expose().as_slice());
+    let info = cce(
+        b"aven-e2ee/v1/key/image-object",
+        &[&context.vault_id, &context.generation_id, &object_id],
+    )?;
+    let mut output = [0_u8; 32];
+    hkdf.expand(&info, &mut output)
+        .map_err(|_| anyhow::anyhow!("error encrypted-local-shared-package-key-derivation"))?;
+    Ok(Zeroizing::new(output))
+}
+
 fn cce(label: &[u8], fields: &[&[u8]]) -> Result<Vec<u8>> {
     let mut output = Vec::new();
     push_bytes(&mut output, label)?;
@@ -508,11 +821,13 @@ fn cce(label: &[u8], fields: &[&[u8]]) -> Result<Vec<u8>> {
     Ok(output)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn encrypt_artifact(
     plaintext: &[u8],
     context: LocalSharedStatePackageContext,
     stream_id: [u8; 32],
-    candidate: [u8; 32],
+    artifact_id: [u8; 32],
+    family: u8,
     class: u8,
     key: &[u8; 32],
 ) -> Result<EncryptedArtifact> {
@@ -537,7 +852,8 @@ fn encrypt_artifact(
         let header = chunk_header(
             context,
             stream_id,
-            candidate,
+            artifact_id,
+            family,
             class,
             u32::try_from(index)?,
             chunk_count_u32,
@@ -571,11 +887,13 @@ fn encrypt_artifact(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn decrypt_artifact(
     artifact: &EncryptedArtifact,
     context: LocalSharedStatePackageContext,
     stream_id: [u8; 32],
-    candidate: [u8; 32],
+    artifact_id: [u8; 32],
+    family: u8,
     class: u8,
     key: &[u8; 32],
     maximum_plaintext_bytes: usize,
@@ -604,7 +922,8 @@ fn decrypt_artifact(
             header,
             context,
             stream_id,
-            candidate,
+            artifact_id,
+            family,
             class,
             u32::try_from(index)?,
             chunk_count,
@@ -654,7 +973,8 @@ fn expected_chunk_plaintext_len(index: usize, count: usize, total: usize) -> Res
 fn chunk_header(
     context: LocalSharedStatePackageContext,
     stream_id: [u8; 32],
-    candidate: [u8; 32],
+    artifact_id: [u8; 32],
+    family: u8,
     class: u8,
     index: u32,
     count: u32,
@@ -669,8 +989,8 @@ fn chunk_header(
     push_bytes(&mut header, &context.vault_id)?;
     push_bytes(&mut header, &stream_id)?;
     push_bytes(&mut header, &context.generation_id)?;
-    push_bytes(&mut header, &candidate)?;
-    header.push(2);
+    push_bytes(&mut header, &artifact_id)?;
+    header.push(family);
     header.push(class);
     header.extend_from_slice(&index.to_be_bytes());
     header.extend_from_slice(&count.to_be_bytes());
@@ -685,7 +1005,8 @@ fn validate_chunk_header(
     header: &[u8],
     context: LocalSharedStatePackageContext,
     stream_id: [u8; 32],
-    candidate: [u8; 32],
+    artifact_id: [u8; 32],
+    family: u8,
     class: u8,
     index: u32,
     count: u32,
@@ -702,7 +1023,15 @@ fn validate_chunk_header(
     );
     let nonce: [u8; 24] = header[nonce_offset + 4..].try_into()?;
     let expected = chunk_header(
-        context, stream_id, candidate, class, index, count, total, nonce,
+        context,
+        stream_id,
+        artifact_id,
+        family,
+        class,
+        index,
+        count,
+        total,
+        nonce,
     )?;
     ensure!(
         header == expected,
@@ -759,6 +1088,91 @@ fn aggregate_commitment(chunks: &[EncryptedChunk]) -> [u8; 32] {
     digest.finalize().into()
 }
 
+async fn load_selected_image_plaintexts(
+    blob_dir: &Path,
+    selected: Vec<(String, String)>,
+    snapshot: &AvenExport,
+) -> Result<Vec<SelectedImagePlaintext>> {
+    ensure!(
+        selected.len() <= MAX_PACKAGE_IMAGE_COUNT,
+        "error encrypted-local-shared-package-too-many-images"
+    );
+    let mut total = 0_usize;
+    let mut output = Vec::with_capacity(selected.len());
+    for (source_sha256, classification) in selected {
+        ensure!(
+            matches!(
+                classification.as_str(),
+                "current_selected" | "extra_selected"
+            ),
+            "error encrypted-local-shared-package-image-classification"
+        );
+        let inventory = snapshot
+            .tables
+            .blob_inventory
+            .iter()
+            .find(|row| row.sha256 == source_sha256)
+            .context("error encrypted-local-shared-package-image-inventory-missing")?;
+        let path = crate::attachments::storage::object_path(blob_dir, &source_sha256)?;
+        let bytes = crate::attachments::blocking::run(move || {
+            Ok::<_, anyhow::Error>(Zeroizing::new(std::fs::read(path)?))
+        })
+        .await
+        .context("error encrypted-local-shared-package-selected-image-missing")?;
+        ensure!(
+            !bytes.is_empty()
+                && bytes.len() <= MAX_IMAGE_PLAINTEXT_BYTES
+                && i64::try_from(bytes.len())? == inventory.byte_size,
+            "error encrypted-local-shared-package-selected-image-size-mismatch"
+        );
+        ensure!(
+            crate::attachments::storage::sha256_hex(&bytes) == source_sha256,
+            "error encrypted-local-shared-package-selected-image-hash-mismatch"
+        );
+        let media_type = inventory.media_type.clone();
+        let decode_bytes = bytes.to_vec();
+        let facts = crate::attachments::blocking::run(move || {
+            crate::attachments::decode::validate_image_blocking(decode_bytes, Some(&media_type))
+        })
+        .await
+        .context("error encrypted-local-shared-package-selected-image-invalid")?
+        .facts;
+        for attachment in snapshot
+            .tables
+            .task_attachments
+            .iter()
+            .filter(|attachment| attachment.sha256 == source_sha256)
+        {
+            ensure!(
+                attachment.media_type == inventory.media_type
+                    && attachment.byte_size == inventory.byte_size
+                    && attachment.width == Some(facts.width)
+                    && attachment.height == Some(facts.height),
+                "error encrypted-local-shared-package-selected-image-metadata-mismatch"
+            );
+        }
+        total = total
+            .checked_add(bytes.len())
+            .context("image total overflow")?;
+        ensure!(
+            total <= MAX_PACKAGE_IMAGE_PLAINTEXT_BYTES,
+            "error encrypted-local-shared-package-images-too-large"
+        );
+        output.push(SelectedImagePlaintext {
+            source_sha256,
+            classification,
+            bytes,
+        });
+    }
+    Ok(output)
+}
+
+fn random_id() -> Result<[u8; 32]> {
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes).context("error encrypted-local-shared-package-rng")?;
+    Ok(bytes)
+}
+
 fn decode_context_id(value: &str, name: &str) -> Result<[u8; 32]> {
     let decoded = hex::decode(value)
         .with_context(|| format!("error encrypted-local-shared-package-{name}-id-invalid"))?;
@@ -806,6 +1220,47 @@ async fn persist_package(
             )
             .bind(&package.candidate_id)
             .bind(i64::from(class))
+            .bind(i64::try_from(index)?)
+            .bind(i64::try_from(chunk.record.len())?)
+            .bind(chunk.record_commitment.as_slice())
+            .bind(&chunk.record)
+            .execute(&mut *conn)
+            .await?;
+        }
+    }
+    ensure!(
+        package.image_mappings.len() == package.images.len(),
+        "error encrypted-local-shared-package-image-count-mismatch"
+    );
+    for (mapping, image) in package.image_mappings.iter().zip(&package.images) {
+        ensure!(
+            mapping.object_id == image.object_id,
+            "error encrypted-local-shared-package-image-descriptor-mismatch"
+        );
+        sqlx::query(
+            "INSERT INTO local_shared_capture_package_images(
+                 candidate_id, source_sha256, classification, object_id,
+                 total_plaintext_bytes, chunk_count, aggregate_commitment
+             ) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&package.candidate_id)
+        .bind(&mapping.source_sha256)
+        .bind(&mapping.classification)
+        .bind(image.object_id.as_slice())
+        .bind(i64::try_from(image.artifact.total_plaintext_bytes)?)
+        .bind(i64::try_from(image.artifact.chunks.len())?)
+        .bind(image.artifact.aggregate_commitment.as_slice())
+        .execute(&mut *conn)
+        .await?;
+        for (index, chunk) in image.artifact.chunks.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO local_shared_capture_package_image_chunks(
+                     candidate_id, object_id, chunk_index, record_length,
+                     record_commitment, record
+                 ) VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&package.candidate_id)
+            .bind(image.object_id.as_slice())
             .bind(i64::try_from(index)?)
             .bind(i64::try_from(chunk.record.len())?)
             .bind(chunk.record_commitment.as_slice())
@@ -902,13 +1357,98 @@ async fn load_package(
         chunks.len() == state.chunks.len() + manifest.chunks.len(),
         "error encrypted-local-shared-package-chunk-class"
     );
+    type ImageRow = (String, String, Vec<u8>, i64, i64, Vec<u8>);
+    let image_rows: Vec<ImageRow> = sqlx::query_as(
+        "SELECT source_sha256, classification, object_id,
+                total_plaintext_bytes, chunk_count, aggregate_commitment
+         FROM local_shared_capture_package_images
+         WHERE candidate_id = ? ORDER BY source_sha256",
+    )
+    .bind(candidate_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    ensure!(
+        image_rows.len() <= MAX_PACKAGE_IMAGE_COUNT,
+        "error encrypted-local-shared-package-too-many-images"
+    );
+    let mut images = Vec::with_capacity(image_rows.len());
+    let mut image_mappings = Vec::with_capacity(image_rows.len());
+    let mut image_total = 0_usize;
+    for (source_sha256, classification, object_id, total, count, aggregate) in image_rows {
+        let object_id = vec_to_array(object_id, "image object id")?;
+        let image_chunks: Vec<(i64, i64, Vec<u8>, Vec<u8>)> = sqlx::query_as(
+            "SELECT chunk_index, record_length, record_commitment, record
+             FROM local_shared_capture_package_image_chunks
+             WHERE candidate_id = ? AND object_id = ? ORDER BY chunk_index",
+        )
+        .bind(candidate_id)
+        .bind(object_id.as_slice())
+        .fetch_all(&mut *conn)
+        .await?;
+        let artifact = load_image_artifact(image_chunks, total, count, aggregate)?;
+        image_total = image_total
+            .checked_add(usize::try_from(artifact.total_plaintext_bytes)?)
+            .context("image total overflow")?;
+        ensure!(
+            image_total <= MAX_PACKAGE_IMAGE_PLAINTEXT_BYTES,
+            "error encrypted-local-shared-package-images-too-large"
+        );
+        image_mappings.push(PrivateImageMapping {
+            source_sha256,
+            classification,
+            object_id,
+        });
+        images.push(EncryptedLocalSharedStateImage {
+            object_id,
+            artifact,
+        });
+    }
     Ok(Some(EncryptedLocalSharedStatePackage {
         candidate_id: candidate_id.to_string(),
         stream_id: decode_context_id(&stream_id, "stream")?,
         context,
         state,
         manifest,
+        images,
+        image_mappings,
     }))
+}
+
+fn load_image_artifact(
+    rows: Vec<(i64, i64, Vec<u8>, Vec<u8>)>,
+    total: i64,
+    count: i64,
+    aggregate: Vec<u8>,
+) -> Result<EncryptedArtifact> {
+    ensure!(
+        total > 0
+            && usize::try_from(total)? <= MAX_IMAGE_PLAINTEXT_BYTES
+            && count > 0
+            && usize::try_from(count)? <= MAX_IMAGE_CHUNKS
+            && rows.len() == usize::try_from(count)?,
+        "error encrypted-local-shared-package-image-bounds"
+    );
+    let mut chunks = Vec::with_capacity(rows.len());
+    for (expected, (index, record_length, commitment, record)) in rows.into_iter().enumerate() {
+        ensure!(
+            index == i64::try_from(expected)? && record_length == i64::try_from(record.len())?,
+            "error encrypted-local-shared-package-image-chunk-order"
+        );
+        chunks.push(EncryptedChunk {
+            record_commitment: vec_to_array(commitment, "image record commitment")?,
+            record,
+        });
+    }
+    let artifact = EncryptedArtifact {
+        total_plaintext_bytes: u64::try_from(total)?,
+        aggregate_commitment: vec_to_array(aggregate, "image aggregate commitment")?,
+        chunks,
+    };
+    ensure!(
+        aggregate_commitment(&artifact.chunks) == artifact.aggregate_commitment,
+        "error encrypted-local-shared-package-image-aggregate-mismatch"
+    );
+    Ok(artifact)
 }
 
 fn load_artifact(

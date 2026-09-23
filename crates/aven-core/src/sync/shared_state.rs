@@ -12,7 +12,9 @@ use anyhow::{Context, Result, ensure};
 mod package;
 
 pub use package::{
+    DecryptedLocalSharedStateImage, EncryptedLocalSharedStateImage,
     EncryptedLocalSharedStatePackage, LocalSharedStatePackageContext, LocalSharedStatePackageKey,
+    decrypt_local_shared_state_package_images,
 };
 
 /// A consistent, installation-ready copy of shared domain state and retained history.

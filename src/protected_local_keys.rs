@@ -199,6 +199,7 @@ impl ProtectedLocalKeyStore {
     pub async fn package_local_capture(
         &self,
         database: &Database,
+        blob_dir: &Path,
     ) -> Result<EncryptedLocalSharedStatePackage, anyhow::Error> {
         self.validate_database(database)?;
         let protected = if database
@@ -211,6 +212,7 @@ impl ProtectedLocalKeyStore {
         };
         database
             .package_local_shared_state_never_dispatched(
+                blob_dir,
                 protected.context(),
                 protected.package_key(),
             )
@@ -601,7 +603,10 @@ mod tests {
         let database = captured_database(temp.path()).await;
         let key_root = temp.path().join("authority");
         let store = isolated_store(database.path(), &key_root);
-        let first = store.package_local_capture(&database).await.unwrap();
+        let first = store
+            .package_local_capture(&database, temp.path())
+            .await
+            .unwrap();
         drop(store);
         drop(database);
 
@@ -610,7 +615,10 @@ mod tests {
             .unwrap();
         let reopened = isolated_store(database.path(), &key_root);
         fs::remove_file(reopened.marker_path()).unwrap();
-        let retry = reopened.package_local_capture(&database).await.unwrap();
+        let retry = reopened
+            .package_local_capture(&database, temp.path())
+            .await
+            .unwrap();
         assert_eq!(first, retry);
         assert!(reopened.marker_path().exists());
         let key_path = match &reopened.backend {
@@ -679,7 +687,10 @@ mod tests {
         let database = captured_database(temp.path()).await;
         let key_root = temp.path().join("authority");
         let store = isolated_store(database.path(), &key_root);
-        store.package_local_capture(&database).await.unwrap();
+        store
+            .package_local_capture(&database, temp.path())
+            .await
+            .unwrap();
         let key_path = match &store.backend {
             Backend::File(backend) => backend.path.clone(),
             _ => unreachable!(),
@@ -687,7 +698,10 @@ mod tests {
         fs::remove_file(&key_path).unwrap();
         fs::remove_file(store.marker_path()).unwrap();
 
-        let error = store.package_local_capture(&database).await.unwrap_err();
+        let error = store
+            .package_local_capture(&database, temp.path())
+            .await
+            .unwrap_err();
         assert_eq!(
             error
                 .downcast_ref::<ProtectedLocalKeyStoreError>()
@@ -710,7 +724,10 @@ mod tests {
         let key_root = first_root.path().join("authority");
         let store = isolated_store(first.path(), &key_root);
 
-        let error = store.package_local_capture(&second).await.unwrap_err();
+        let error = store
+            .package_local_capture(&second, second_root.path())
+            .await
+            .unwrap_err();
         assert_eq!(
             error
                 .downcast_ref::<ProtectedLocalKeyStoreError>()
