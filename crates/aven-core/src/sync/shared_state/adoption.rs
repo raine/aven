@@ -110,7 +110,7 @@ pub(crate) async fn ensure_unbound(conn: &mut SqliteConnection) -> Result<()> {
 
 pub(super) async fn ensure_no_intent(conn: &mut SqliteConnection) -> Result<()> {
     let exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM local_seed_publication_intent)")
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM local_seed_publication_intent) OR EXISTS(SELECT 1 FROM local_shared_capture_journal WHERE publication_owned = 1)")
             .fetch_one(conn)
             .await?;
     ensure!(
@@ -359,6 +359,7 @@ impl Database {
             }
             return Ok(intent);
         }
+        ensure_no_intent(&mut tx).await?;
         let capture = load_persisted_local_capture(&mut tx)
             .await?
             .context("error seed-capture-missing")?;
@@ -386,6 +387,12 @@ impl Database {
         };
         let bytes = serde_json::to_vec(&data)?;
         sqlx::query("INSERT INTO local_seed_publication_intent(singleton, candidate_id, intent, state) VALUES (1, ?, ?, 'preparing')").bind(&data.candidate).bind(&bytes).execute(&mut *tx).await?;
+        sqlx::query(
+            "UPDATE local_shared_capture_journal SET publication_owned = 1 WHERE candidate_id = ?",
+        )
+        .bind(&data.candidate)
+        .execute(&mut *tx)
+        .await?;
         #[cfg(test)]
         wait_intent_boundary(&data.candidate).await;
         tx.commit().await?;

@@ -191,3 +191,50 @@ async fn intent_sql_failure_preserves_capture_and_allows_local_cancel() {
             .unwrap()
     );
 }
+
+#[tokio::test]
+async fn lost_intent_row_does_not_restore_local_cancellation_authority() {
+    let (_root, database, source, seed, key, candidate) = fixture().await;
+    database
+        .prepare_seed_publication_intent(&source, &seed, &key)
+        .await
+        .unwrap();
+    let mut conn = database.acquire_writer().await.unwrap();
+    sqlx::query("DELETE FROM local_seed_publication_intent")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    drop(conn);
+    assert!(
+        database
+            .cancel_local_shared_state_never_dispatched(&candidate)
+            .await
+            .is_err()
+    );
+    assert!(
+        database
+            .prepare_seed_publication_intent(&source, &seed, &key)
+            .await
+            .is_err()
+    );
+    assert!(
+        database
+            .resume_local_shared_state_never_dispatched()
+            .await
+            .is_err()
+    );
+    let mut conn = database.acquire_writer().await.unwrap();
+    assert!(
+        sqlx::query("DELETE FROM local_shared_capture_journal")
+            .execute(&mut *conn)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM local_shared_capture_journal")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap(),
+        1
+    );
+}

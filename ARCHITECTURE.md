@@ -177,7 +177,8 @@ No CLI or network dispatcher invokes these experimental setup boundaries.
 
 `shared_state/adoption.rs` commits exact signed intent in SQLite before the host
 persists it outside the task database. Preparing intent already prohibits local
-cancellation, including core callers without a host lock. Protected readback and
+cancellation, including core callers without a host lock. A capture-owned bit
+and deletion trigger preserve that refusal if its intent row is lost. Protected readback and
 source/generation CAS seal the same bytes. Partial setup resumes the same intent;
 missing established authority never authorizes cancellation or regeneration.
 The original seed key encoding is unchanged.
