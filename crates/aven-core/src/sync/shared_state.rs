@@ -9,6 +9,12 @@ use crate::data_safety::{self, tables, validation};
 use crate::db::{self, Database};
 use anyhow::{Context, Result, ensure};
 
+mod package;
+
+pub use package::{
+    EncryptedLocalSharedStatePackage, LocalSharedStatePackageContext, LocalSharedStatePackageKey,
+};
+
 /// A consistent, installation-ready copy of shared domain state and retained history.
 ///
 /// This value deliberately has no serialized wire representation. Encryption and
@@ -108,8 +114,8 @@ impl Database {
         let tables = data_safety::scan_export_tables(&mut tx).await?;
         let image_classes = classify_and_validate_images(&tables, blob_dir).await?;
         let capture = SharedStateCapture::from_tables(schema_version, tables)?;
-        let candidate_id = crate::ids::new_id();
-        let stream_id = crate::ids::new_id();
+        let candidate_id = random_cryptographic_id()?;
+        let stream_id = random_cryptographic_id()?;
         let created_at = crate::ids::now();
         let local_seq_floor = capture
             .snapshot
@@ -774,6 +780,12 @@ async fn classify_and_validate_images(
         ));
     }
     Ok(result)
+}
+
+fn random_cryptographic_id() -> Result<String> {
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes).context("error local-shared-capture-rng")?;
+    Ok(hex::encode(bytes))
 }
 
 fn unavailable_image_has_validated_history(

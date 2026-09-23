@@ -16,5 +16,6 @@ pub use session::{
     SyncSessionSummary, classify_pairing_connection_validation_response,
 };
 pub use shared_state::{
+    EncryptedLocalSharedStatePackage, LocalSharedStatePackageContext, LocalSharedStatePackageKey,
     NeverDispatchedLocalSharedCapture, SharedStateCapture, SharedStateInstallReport,
 };
