@@ -262,18 +262,27 @@ impl Client {
     pub async fn round(&self, store: &ProtectedLocalKeyStore, db: &Database) -> Result<bool> {
         let enrollment = crate::peer_enrollment_http::Client::new(&self.locator)?;
         enrollment.refresh(store, db).await?;
-        match self.round_once(store, db).await {
+        let mut pushed = false;
+        match self.round_once(store, db, &mut pushed).await {
             Err(error) if is_stale(&error) => {
                 enrollment.refresh(store, db).await?;
-                self.round_once(store, db).await
+                self.round_once(store, db, &mut pushed).await
             }
             result => result,
         }
     }
-    async fn round_once(&self, store: &ProtectedLocalKeyStore, db: &Database) -> Result<bool> {
+    async fn round_once(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        pushed: &mut bool,
+    ) -> Result<bool> {
         let inputs = store.tail_inputs(db, &self.locator).await?;
         let a = &inputs.authority;
-        self.push(a, &inputs.bearer, db, None).await?;
+        if !*pushed {
+            self.push(a, &inputs.bearer, db, None).await?;
+            *pushed = true;
+        }
         let caught_up = self.pull(a, &inputs.bearer, db).await?;
         Ok(caught_up && db.encrypted_tail_idle(a).await?)
     }

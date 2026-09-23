@@ -169,6 +169,30 @@ impl ProtectedLocalKeyStore {
     async fn identity(&self, db: &Database, guard: &InstallationGuard) -> Result<Option<Identity>> {
         let pin = db.enrollment_pin().await?;
         let Some(bytes) = self.read_owned("peer-identity", IDENTITY_LIMIT, pin.is_some())? else {
+            ensure!(
+                db.membership_checkpoint_mirror().await?.is_none()
+                    && self.journals(db).await?.is_empty(),
+                "error enrollment-protected-missing"
+            );
+            for (kind, size) in [
+                ("peer-sent", 128),
+                ("peer-response", CANDIDATE_LIMIT + 4096),
+                ("peer-verified", 2048),
+                ("peer-ready", 128),
+                ("peer-installed", 128),
+            ] {
+                ensure!(
+                    self.phase(db, kind, size).await?.is_none(),
+                    "error enrollment-protected-missing"
+                );
+            }
+            for sequence in 1..=membership::MAX_DEVICES {
+                ensure!(
+                    self.read_owned(&format!("membership-floor-{sequence}"), 512, false)?
+                        .is_none(),
+                    "error enrollment-protected-missing"
+                );
+            }
             return Ok(None);
         };
         let id: Identity = serde_json::from_slice(&bytes)
@@ -396,7 +420,8 @@ impl ProtectedLocalKeyStore {
                     .await?;
                 if let Some(bytes) = bytes {
                     ensure!(!gap, "error enrollment-candidate-missing");
-                    let saved: Candidate = serde_json::from_slice(&bytes)?;
+                    let saved: Candidate = serde_json::from_slice(&bytes)
+                        .map_err(|_| anyhow::anyhow!("error enrollment-protected-framing"))?;
                     let before = self.load_evidence(&saved.predecessor)?.verify()?;
                     let after = before.append(
                         &journal.declaration,
@@ -541,7 +566,8 @@ impl ProtectedLocalKeyStore {
             else {
                 break;
             };
-            let candidate: Candidate = serde_json::from_slice(&bytes)?;
+            let candidate: Candidate = serde_json::from_slice(&bytes)
+                .map_err(|_| anyhow::anyhow!("error enrollment-protected-framing"))?;
             let predecessor = self.load_evidence(&candidate.predecessor)?.verify()?;
             let result = predecessor.append(&journal.declaration, request, &candidate.record)?;
             ensure!(
@@ -629,7 +655,8 @@ impl ProtectedLocalKeyStore {
             else {
                 break;
             };
-            let candidate: Candidate = serde_json::from_slice(&bytes)?;
+            let candidate: Candidate = serde_json::from_slice(&bytes)
+                .map_err(|_| anyhow::anyhow!("error enrollment-protected-framing"))?;
             if candidate.record == record {
                 let sent = self
                     .phase(db, &journal.name(&format!("sent-{attempt}")), 128)
@@ -752,7 +779,8 @@ impl ProtectedLocalKeyStore {
             .phase(db, "peer-response", CANDIDATE_LIMIT + 4096)
             .await?
             .context("error enrollment-response-missing")?;
-        let mail: membership::Mailbox = serde_json::from_slice(&response)?;
+        let mail: membership::Mailbox = serde_json::from_slice(&response)
+            .map_err(|_| anyhow::anyhow!("error enrollment-protected-framing"))?;
         let peer = Joiner::from_protected_storage(&id.authority)?;
         let grant = peer.open_provisional(
             &mail.declaration,
@@ -806,7 +834,8 @@ impl ProtectedLocalKeyStore {
             .phase(db, "peer-verified", 2048)
             .await?
             .context("error enrollment-key-coverage-missing")?;
-        let record: Verified = serde_json::from_slice(&bytes)?;
+        let record: Verified = serde_json::from_slice(&bytes)
+            .map_err(|_| anyhow::anyhow!("error enrollment-protected-framing"))?;
         let peer = Joiner::from_protected_storage(&id.authority)?;
         let verified = self
             .load_evidence(&record.evidence)?

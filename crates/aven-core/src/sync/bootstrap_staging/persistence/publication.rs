@@ -1,3 +1,5 @@
+use anyhow::Context as _;
+
 use super::*;
 use crate::sync::seed_claim::{PUBLICATION_BYTES, Publication, PublicationOutcome};
 
@@ -35,31 +37,28 @@ pub(super) async fn authorize_current(
         );
         return Ok((genesis, None));
     }
-    let (sequence, commitment) =
-        head.ok_or_else(|| anyhow::anyhow!("error bootstrap-membership-unsupported"))?;
-    if sequence >= 2 {
-        let current = crate::sync::seed_claim::membership::persistence::current(conn).await?;
-        return Ok((
-            current.membership.genesis().clone(),
-            Some(PublicationOutcome {
-                publication: current.membership.publication().clone(),
-            }),
-        ));
-    }
-    ensure!(sequence == 1, "error bootstrap-membership-unsupported");
-    let (id, descriptor, record) =
-        saved.ok_or_else(|| anyhow::anyhow!("error bootstrap-membership-unsupported"))?;
-    ensure!(
-        commitment == hash(&record),
-        "error bootstrap-membership-unsupported"
-    );
-    let publication = Publication::from_record(&genesis, &descriptor, &record)?;
+    let current = crate::sync::seed_claim::membership::persistence::current(conn).await?;
+    current.membership.authenticate(
+        &crate::sync::seed_claim::peer::Authentication {
+            vault: auth.vault_id,
+            genesis: auth.genesis_commitment,
+            device: genesis.device_id(),
+            credential_version: 1,
+            head: current.membership.head(),
+            bearer: auth.bearer,
+        },
+        false,
+    )?;
+    let publication = current.membership.publication().clone();
+    let (id, _, _) = saved.context("error bootstrap-storage-invalid")?;
     ensure!(
         id == publication.binding().bootstrap_id,
         "error bootstrap-storage-invalid"
     );
-    // The fixed validator preserves the predecessor's active seed credential.
-    Ok((genesis, Some(PublicationOutcome { publication })))
+    Ok((
+        current.membership.genesis().clone(),
+        Some(PublicationOutcome { publication }),
+    ))
 }
 
 async fn complete(

@@ -3,7 +3,7 @@ use aven_core::sync::encrypted_tail::attachments::{
     self as image, Operation as Op, Reply as ImageReply, Ticket,
 };
 
-async fn add_image(f: &Fixture) -> String {
+pub(super) async fn add_image(f: &Fixture) -> String {
     add_image_with_width(f, 7).await
 }
 

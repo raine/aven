@@ -450,6 +450,7 @@ impl Database {
         );
         if let Some(saved) = saved {
             ensure!(saved == record, "error enrollment-conflict");
+            observe(&mut tx, time).await?;
         } else {
             let high = observe(&mut tx, time).await?;
             if high as u64 >= d.expiry() {

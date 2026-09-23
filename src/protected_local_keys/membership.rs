@@ -130,6 +130,10 @@ impl ProtectedLocalKeyStore {
             write_restricted_new(&path, &bytes)?;
         }
         self.load_evidence(&reference)?;
+        #[cfg(test)]
+        if std::env::var("AVEN_PEER_CRASH_KIND").as_deref() == Ok("membership-evidence") {
+            std::process::exit(79);
+        }
         Ok(reference)
     }
     pub(super) fn load_evidence(&self, reference: &EvidenceRef) -> Result<Evidence> {
@@ -185,7 +189,8 @@ impl ProtectedLocalKeyStore {
             let bytes = self
                 .read_owned(&format!("membership-floor-{sequence}"), 512, true)?
                 .context("error membership-floor-missing")?;
-            let floor: Floor = serde_json::from_slice(&bytes)?;
+            let floor: Floor = serde_json::from_slice(&bytes)
+                .map_err(|_| anyhow::anyhow!("error membership-floor-corrupt"))?;
             ensure!(floor.evidence.digest == digest, "error membership-mirror");
         }
         if let Some((m, reference)) = &latest {

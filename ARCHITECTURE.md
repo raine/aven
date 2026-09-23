@@ -666,7 +666,8 @@ mappings and initial finite catch-up watermark never become mutable membership.
 active credential and a known verified ancestor context. All content requests
 still require the current head. Hosts refresh before management/ordinary rounds
 and retry at most once for a typed stale context, never for arbitrary integrity,
-authentication or network errors. Fresh join completion pins the PSK-authenticated
+authentication or network errors. Retry retains completed metadata work and the
+same selected image rather than advancing the download selector again. Fresh join completion pins the PSK-authenticated
 outcome before retrieving full ancestry and can finish after later admissions.
 Every published component read is independently authorized; refresh preserves the
 immutable component and original install checkpoint.

@@ -96,8 +96,16 @@ async fn dispatch(
         operation,
     })
 }
+#[derive(Default)]
+struct RoundProgress {
+    pushed: bool,
+    caught_up: Option<bool>,
+    image_state: Option<ImageTransfer>,
+    selected: bool,
+    download: Option<images::Download>,
+}
 impl Client {
-    async fn image_exchange(
+    pub(super) async fn image_exchange(
         &self,
         context: &Context,
         bearer: &Secret,
@@ -133,10 +141,15 @@ impl Client {
     ) -> Result<AttachmentRound> {
         let enrollment = crate::peer_enrollment_http::Client::new(&self.locator)?;
         enrollment.refresh(store, db).await?;
-        match self.attachment_round_once(store, db, blob_dir).await {
+        let mut progress = RoundProgress::default();
+        match self
+            .attachment_round_once(store, db, blob_dir, &mut progress)
+            .await
+        {
             Err(error) if is_stale(&error) => {
                 enrollment.refresh(store, db).await?;
-                self.attachment_round_once(store, db, blob_dir).await
+                self.attachment_round_once(store, db, blob_dir, &mut progress)
+                    .await
             }
             result => result,
         }
@@ -146,44 +159,63 @@ impl Client {
         store: &ProtectedLocalKeyStore,
         db: &Database,
         blob_dir: &Path,
+        progress: &mut RoundProgress,
     ) -> Result<AttachmentRound> {
         let inputs = store.tail_inputs(db, &self.locator).await?;
         let a = &inputs.authority;
-        if let Some((id, _)) = db.encrypted_tail_frozen_record(a).await? {
-            match self
-                .exchange(
-                    &a.context,
-                    &inputs.bearer,
-                    Operation::Lookup {
-                        operation_id: id,
-                        expected: None,
-                    },
-                )
-                .await?
-            {
-                Reply::Found(accepted) => {
-                    db.observe_encrypted_tail(a, &accepted.mapping).await?;
-                    db.verify_encrypted_tail_outcome(a, &accepted).await?;
+        if !progress.pushed {
+            if let Some((id, _)) = db.encrypted_tail_frozen_record(a).await? {
+                match self
+                    .exchange(
+                        &a.context,
+                        &inputs.bearer,
+                        Operation::Lookup {
+                            operation_id: id,
+                            expected: None,
+                        },
+                    )
+                    .await?
+                {
+                    Reply::Found(accepted) => {
+                        db.observe_encrypted_tail(a, &accepted.mapping).await?;
+                        db.verify_encrypted_tail_outcome(a, &accepted).await?;
+                    }
+                    Reply::Absent => {}
+                    _ => anyhow::bail!("error encrypted-image-accepted-identity"),
                 }
-                Reply::Absent => {}
-                _ => anyhow::bail!("error encrypted-image-accepted-identity"),
             }
+            let upload = self.upload_image(a, &inputs.bearer, db, blob_dir).await;
+            progress.image_state = match upload {
+                Ok(ticket) => {
+                    self.push(a, &inputs.bearer, db, ticket).await?;
+                    None
+                }
+                Err(error) if is_stale(&error) => return Err(error),
+                Err(_) => Some(ImageTransfer::Failed),
+            };
+            progress.pushed = true;
         }
-        let upload = self.upload_image(a, &inputs.bearer, db, blob_dir).await;
-        let image_state = match upload {
-            Ok(ticket) => {
-                self.push(a, &inputs.bearer, db, ticket).await?;
-                None
+        let caught_up = match progress.caught_up {
+            Some(value) => value,
+            None => {
+                let value =
+                    self.pull(a, &inputs.bearer, db).await? && db.encrypted_tail_idle(a).await?;
+                progress.caught_up = Some(value);
+                value
             }
-            Err(error) if is_stale(&error) => return Err(error),
-            Err(_) => Some(ImageTransfer::Failed),
         };
-        let caught_up =
-            self.pull(a, &inputs.bearer, db).await? && db.encrypted_tail_idle(a).await?;
+        let image_state = progress.image_state;
         let images = if !db.encrypted_images_initial_catch_up_complete(a).await? {
             image_state.unwrap_or(ImageTransfer::Pending)
         } else {
-            match self.download_image(a, &inputs.bearer, db, blob_dir).await {
+            if !progress.selected {
+                progress.download = db.prepare_encrypted_image_download(a).await?;
+                progress.selected = true;
+            }
+            match self
+                .download_image(a, &inputs.bearer, db, blob_dir, progress.download.as_ref())
+                .await
+            {
                 Ok(ImageTransfer::Complete) if db.encrypted_image_upload_pending(a).await? => {
                     image_state.unwrap_or(ImageTransfer::Pending)
                 }
@@ -368,13 +400,14 @@ impl Client {
         bearer: &Secret,
         db: &Database,
         blob_dir: &Path,
+        selected: Option<&images::Download>,
     ) -> Result<ImageTransfer> {
-        if let Some(download) = db.prepare_encrypted_image_download(a).await?
+        if let Some(download) = selected
             && !db
                 .complete_encrypted_image_from_local(
                     a,
                     blob_dir,
-                    &download,
+                    download,
                     crate::config::AttachmentLifecycleConfig::default().policy(),
                 )
                 .await?
@@ -410,7 +443,7 @@ impl Client {
             db.install_encrypted_image(
                 a,
                 blob_dir,
-                &download,
+                download,
                 &records,
                 crate::config::AttachmentLifecycleConfig::default().policy(),
             )

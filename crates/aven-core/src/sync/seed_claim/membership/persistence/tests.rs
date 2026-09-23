@@ -370,3 +370,131 @@ async fn a_verified_competing_successor_allows_same_recipient_at_a_new_predecess
     );
     assert!(joiner.verify_enrollment(&next, d.record(), &retry).is_ok());
 }
+
+#[tokio::test]
+async fn independent_scanners_cannot_rebind_an_occupied_request() {
+    let f = Fixture::new().await;
+    let m = initial(&f);
+    let a = auth(&f, m.head(), f.seed.genesis().device_id(), f.seed.bearer());
+    let (invitation, d) = Device::seed(&f.seed).prepare_invitation(&m, 3700).unwrap();
+    let one = Joiner::generate(
+        Invitation::from_protected_storage(&invitation.protected_storage_bytes()).unwrap(),
+    )
+    .unwrap();
+    let two = Joiner::generate(
+        Invitation::from_protected_storage(&invitation.protected_storage_bytes()).unwrap(),
+    )
+    .unwrap();
+    f.db.register_membership_invitation_at(&a, d.record(), 100)
+        .await
+        .unwrap();
+    let other = Database::open(&f.dir.path().join("server.db"))
+        .await
+        .unwrap();
+    let (first, second) = tokio::join!(
+        f.db.post_membership_request_at(a.vault, d.handle(), one.request(), 100),
+        other.post_membership_request_at(a.vault, d.handle(), two.request(), 100)
+    );
+    assert_ne!(first.is_ok(), second.is_ok());
+    let accepted = if first.is_ok() { one } else { two };
+    f.db.post_membership_request_at(a.vault, d.handle(), accepted.request(), 101)
+        .await
+        .unwrap();
+    assert_eq!(
+        f.db.membership_mailbox(a.vault, d.handle())
+            .await
+            .unwrap()
+            .request
+            .as_deref(),
+        Some(accepted.request())
+    );
+    let raw = Device::seed(&f.seed)
+        .prepare_admission(&m, &d, &invitation, accepted.request(), &f.key)
+        .unwrap();
+    f.db.admit_membership_device_at(&a, d.handle(), &raw, 102)
+        .await
+        .unwrap();
+    let current =
+        f.db.membership_evidence(&a)
+            .await
+            .unwrap()
+            .verify()
+            .unwrap();
+    let fresh = auth(&f, current.head(), a.device, a.bearer);
+    assert_eq!(
+        f.db.admit_membership_device_at(&fresh, d.handle(), &raw, 4000)
+            .await
+            .unwrap(),
+        raw
+    );
+    let (_, later) = Device::seed(&f.seed)
+        .prepare_invitation(&current, 3700)
+        .unwrap();
+    assert_eq!(
+        f.db.register_membership_invitation_at(&fresh, later.record(), 100)
+            .await
+            .unwrap(),
+        RegistrationStatus::Expired
+    );
+    assert!(
+        f.db.admit_membership_device_at(&fresh, d.handle(), &raw, -1)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn occupied_invalid_request_and_signed_history_corruption_fail_closed() {
+    let f = Fixture::new().await;
+    let m = initial(&f);
+    let a = auth(&f, m.head(), f.seed.genesis().device_id(), f.seed.bearer());
+    let (invitation, d) = Device::seed(&f.seed).prepare_invitation(&m, 3700).unwrap();
+    let peer = Joiner::generate(
+        Invitation::from_protected_storage(&invitation.protected_storage_bytes()).unwrap(),
+    )
+    .unwrap();
+    let mut invalid = peer.request().to_vec();
+    *invalid.last_mut().unwrap() ^= 1;
+    f.db.register_membership_invitation_at(&a, d.record(), 100)
+        .await
+        .unwrap();
+    f.db.post_membership_request_at(a.vault, d.handle(), &invalid, 100)
+        .await
+        .unwrap();
+    assert!(
+        Device::seed(&f.seed)
+            .prepare_admission(&m, &d, &invitation, &invalid, &f.key)
+            .is_err()
+    );
+    assert!(
+        f.db.post_membership_request_at(a.vault, d.handle(), peer.request(), 100)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        f.db.membership_mailbox(a.vault, d.handle())
+            .await
+            .unwrap()
+            .request
+            .unwrap(),
+        invalid
+    );
+    let oversized = vec![0; MAX_RECORD_BYTES + 1];
+    let error =
+        f.db.admit_membership_device_at(&a, d.handle(), &oversized, 100)
+            .await
+            .err()
+            .unwrap();
+    assert!(!error.to_string().contains(&hex::encode(a.bearer.expose())));
+    // This is unsupported-store corruption, not implemented removal.
+    sqlx::query("UPDATE server_e2ee_membership_head SET commitment=zeroblob(32)")
+        .execute(&mut *f.db.acquire_writer().await.unwrap())
+        .await
+        .unwrap();
+    assert!(f.db.membership_evidence(&a).await.is_err());
+    assert!(
+        f.db.register_membership_invitation_at(&a, d.record(), 100)
+            .await
+            .is_err()
+    );
+}
