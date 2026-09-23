@@ -87,6 +87,10 @@ impl fmt::Debug for Genesis {
 }
 
 impl Genesis {
+    pub fn from_claim(bytes: &[u8]) -> Result<Self> {
+        Self::from_record(codec::claim_record(bytes)?)
+    }
+
     pub fn from_record(record: &[u8]) -> Result<Self> {
         codec::parse(record)
     }

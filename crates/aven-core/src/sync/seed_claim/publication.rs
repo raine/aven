@@ -188,6 +188,15 @@ pub struct PublicationOutcome {
 }
 
 impl PublicationOutcome {
+    /// Decodes a publication reported by an authenticated transport. The signature
+    /// proves exact client intent, not server storage or current authorization.
+    /// Expectations must come from protected local intent, never the response.
+    pub fn from_response(genesis: &Genesis, descriptor: &[u8], record: &[u8]) -> Result<Self> {
+        Ok(Self {
+            publication: Publication::from_record(genesis, descriptor, record)?,
+        })
+    }
+
     pub fn publication(&self) -> &Publication {
         &self.publication
     }

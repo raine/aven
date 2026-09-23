@@ -94,6 +94,10 @@ impl SeedPublicationIntent {
     pub fn protected_storage_bytes(&self) -> &[u8] {
         &self.bytes
     }
+    pub fn descriptor(&self) -> &[u8] {
+        &self.data.descriptor
+    }
+
     pub fn publication(&self, genesis: &Genesis) -> Result<Publication> {
         Publication::from_record(genesis, &self.data.descriptor, &self.data.publication)
     }
@@ -251,6 +255,58 @@ async fn validate_history(
 }
 
 impl Database {
+    /// Loads exact upload bytes only for a sealed, protected publication intent.
+    /// Adopted installations need only their retained intent and remote outcome.
+    pub async fn seed_publication_upload(
+        &self,
+        source: &SeedSourceAuthority,
+        intent: &SeedPublicationIntent,
+        seed: &SeedAuthority,
+        key: &LocalSharedStatePackageKey,
+    ) -> Result<Option<crate::sync::bootstrap_format::Package>> {
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = db::begin_immediate(&mut conn).await?;
+        source_matches(&mut tx, source).await?;
+        let (stored, state): (Vec<u8>, String) = sqlx::query_as(
+            "SELECT intent, state FROM local_seed_publication_intent WHERE singleton = 1",
+        )
+        .fetch_optional(&mut *tx)
+        .await?
+        .context("error seed-intent-missing")?;
+        ensure!(stored == intent.bytes, "error seed-intent-mismatch");
+        if state == "adopted" {
+            return Ok(None);
+        }
+        ensure!(
+            state == "sealed" && intent.data.generation == generation(&mut tx).await?,
+            "error seed-intent-not-sealed"
+        );
+        ensure!(
+            validate_history(&mut tx, &intent.data.candidate, source).await? == intent.data.history,
+            "error seed-history-commitment-mismatch"
+        );
+        let capture = load_persisted_local_capture(&mut tx)
+            .await?
+            .context("error seed-capture-missing")?;
+        let package = package::load_package(&mut tx, &intent.data.candidate)
+            .await?
+            .context("error seed-package-missing")?;
+        let upload = package.upload_package();
+        ensure!(
+            upload.descriptor == intent.data.descriptor,
+            "error seed-package-mismatch"
+        );
+        package::publication::validate_against_capture(
+            &upload,
+            &capture,
+            &package,
+            key,
+            seed.genesis().commitment(),
+        )?;
+        tx.commit().await?;
+        Ok(Some(upload))
+    }
+
     pub async fn seed_source_pin(&self) -> Result<Option<Vec<u8>>> {
         let mut conn = self.acquire_reader().await?;
         Ok(

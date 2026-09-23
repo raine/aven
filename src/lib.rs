@@ -22,6 +22,7 @@ mod recurrence_input;
 mod render;
 mod routing;
 mod schedule_input;
+pub mod seed_bootstrap_http;
 mod signals;
 mod status;
 mod sync;

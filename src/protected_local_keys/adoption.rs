@@ -1,4 +1,4 @@
-//! Host ownership for original-seed adoption. No network dispatch capability.
+//! Protected host ownership for original-seed publication and adoption.
 use super::*;
 use anyhow::Context;
 use aven_core::db::installation::InstallationGuard;
@@ -6,6 +6,33 @@ use aven_core::sync::seed_claim::{PublicationOutcome, SeedAuthority};
 use aven_core::sync::{SeedPublicationIntent, SeedSourceAuthority};
 
 impl ProtectedLocalKeyStore {
+    /// Resumes sealed ownership before exposing any publication transport input.
+    pub(crate) async fn seed_http_inputs(
+        &self,
+        database: &Database,
+    ) -> anyhow::Result<(
+        SeedAuthority,
+        SeedPublicationIntent,
+        Option<aven_core::sync::bootstrap_format::Package>,
+    )> {
+        let intent = self.prepare_seed_adoption_intent(database).await?;
+        let _installation = InstallationGuard::acquire(database.path())?;
+        self.validate_database(database)?;
+        let package = self.load_required()?;
+        let _guard = self.lock()?;
+        let seed = self.required_seed(&package)?;
+        let source = self.decode_source(
+            &self
+                .load_adoption_record("source", 104, true)?
+                .context("missing source")?,
+            &seed,
+        )?;
+        let upload = database
+            .seed_publication_upload(&source, &intent, &seed, package.package_key())
+            .await?;
+        Ok((seed, intent, upload))
+    }
+
     fn adoption_backend(&self, kind: &str) -> Backend {
         match &self.backend {
             #[cfg(target_os = "macos")]
@@ -164,7 +191,7 @@ impl ProtectedLocalKeyStore {
     }
 
     /// Fences SQLite cancellation before persisting exact protected intent.
-    /// The result has no dispatch API. An intent cannot be locally abandoned.
+    /// An intent cannot be locally abandoned.
     pub async fn prepare_seed_adoption_intent(
         &self,
         database: &Database,

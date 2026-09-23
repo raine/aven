@@ -17,7 +17,8 @@
 //! PublishBootstrap couples complete staged bytes, immutable outcome, active prefix
 //! and image ownership, allocator=N and READY in one immediate transaction. Image
 //! bytes move to ordinary lifecycle ownership; immutable catalogs are not byte pins.
-//! There are no staged files, HTTP, client adoption, tail or power-loss guarantee.
+//! Transport and client adoption live outside this module. There are no staged
+//! files, ordinary encrypted tail or power-loss guarantee.
 //! Limits bound logical retained payload, not SQLite/WAL/temp files, process memory
 //! or total disk use. Validation can materialize one bounded artifact (256 MiB)
 //! plus framing and one catalog (16 MiB); callers must separately bound concurrent
@@ -30,6 +31,7 @@ pub use crate::sync::seed_claim::{Publication, PublicationOutcome};
 mod tests;
 
 use super::seed_claim::Secret;
+use serde::{Deserialize, Serialize};
 
 /// Refusal limits for the single-vault staging storage profile.
 pub const MAX_STORAGE_BYTES: u64 = 600 * 1_048_576;
@@ -47,13 +49,13 @@ pub struct Authentication<'a> {
 
 /// Budgets include catalog slices, encrypted manifest, state and selected images.
 /// They cannot change on a declaration retry, even when staging has expired.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Budget {
     pub bytes: u64,
     pub chunks: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Component {
     DataCatalog,
     PrefixCatalog,
@@ -85,32 +87,32 @@ impl Component {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Presence {
     Missing,
     Quarantined,
     Verified,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComponentStatus {
     pub component: Component,
     pub chunks: Vec<Presence>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CatalogFailureReason {
     Invalid,
     ResourceLimit,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogFailure {
     pub component: Component,
     pub reason: CatalogFailureReason,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StagingStatus {
     pub descriptor_commitment: [u8; 32],
     pub stream_id: [u8; 32],
@@ -143,7 +145,7 @@ pub struct PutChunk<'a> {
     pub bytes: &'a [u8],
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PutOutcome {
     Quarantined,
     Verified,

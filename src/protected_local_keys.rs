@@ -575,7 +575,7 @@ impl KeychainBackend {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use aven_core::api::{CreateTask, Store};
     use aven_core::choices::{TaskPriority, TaskStatus};
@@ -609,7 +609,7 @@ mod tests {
         database
     }
 
-    pub(super) fn isolated_store(database_path: &Path, root: &Path) -> ProtectedLocalKeyStore {
+    pub(crate) fn isolated_store(database_path: &Path, root: &Path) -> ProtectedLocalKeyStore {
         let canonical = database_path.canonicalize().unwrap();
         let account = database_account(&canonical);
         ProtectedLocalKeyStore {
