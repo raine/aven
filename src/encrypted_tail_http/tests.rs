@@ -38,9 +38,52 @@ async fn serve(server: Database, address: &str) -> (String, tokio::task::JoinHan
     )
 }
 async fn fixture() -> Fixture {
+    fixture_with_shared_images(false).await
+}
+async fn fixture_with_shared_images(shared: bool) -> Fixture {
     let root = tempfile::tempdir().unwrap();
     let (seed, seed_store, authority, _) =
         crate::seed_bootstrap_http::tests::fixture(root.path()).await;
+    if shared {
+        let capture = seed
+            .resume_local_shared_state_never_dispatched()
+            .await
+            .unwrap()
+            .unwrap();
+        seed.cancel_local_shared_state_never_dispatched(capture.candidate_id())
+            .await
+            .unwrap();
+        let workspace = seed.list_workspaces().await.unwrap().remove(0);
+        let task = seed
+            .create_task(&workspace, draft("shared image parent"))
+            .await
+            .unwrap()
+            .task;
+        let bytes = files(&root.path().join("objects/sha256")).remove(0);
+        seed.add_task_attachment(
+            &workspace,
+            root.path(),
+            Default::default(),
+            &task.id,
+            aven_core::operations::AttachmentAddInput {
+                filename: Some("shared.png".into()),
+                alt_text: None,
+                declared_media_type: None,
+                bytes,
+                optimization_policy: aven_core::attachments::ImageOptimizationPolicy::Preserve,
+                dedupe_existing: false,
+            },
+        )
+        .await
+        .unwrap();
+        seed.capture_local_shared_state_never_dispatched(root.path())
+            .await
+            .unwrap();
+        seed_store
+            .package_seed_capture(&seed, root.path(), [9; 32])
+            .await
+            .unwrap();
+    }
     let server = Database::open(&root.path().join("server.sqlite"))
         .await
         .unwrap();
@@ -1444,4 +1487,380 @@ async fn successful_tail_response_is_not_cacheable() {
     .await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+}
+
+#[tokio::test]
+async fn checkpoint_overlapping_rounds_repeated_offline_edits_and_reinstall() {
+    let f = fixture().await;
+    converge(&f).await;
+    let w = f.seed.list_workspaces().await.unwrap().remove(0);
+    let left = f.seed.create_task(&w, draft("left")).await.unwrap().task;
+    let right = f.peer.create_task(&w, draft("right")).await.unwrap().task;
+    converge(&f).await;
+    for index in 0..12 {
+        for (db, id, side) in [(&f.seed, &left.id, "left"), (&f.peer, &right.id, "right")] {
+            db.update_task(
+                &w,
+                id,
+                TaskUpdate {
+                    title: Some(format!("{side}-{index}")),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        }
+    }
+    let client = Client::new(&f.origin).unwrap();
+    tokio::join!(
+        drain(&client, &f.seed_store, &f.seed),
+        drain(&client, &f.peer_store, &f.peer)
+    );
+    converge(&f).await;
+    let enrollment = crate::peer_enrollment_http::Client::new(&f.origin).unwrap();
+    enrollment
+        .install(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+        .await
+        .unwrap();
+    seed_bootstrap_http::Client::new(&f.origin)
+        .unwrap()
+        .resume(&f.seed_store, &f.seed)
+        .await
+        .unwrap();
+    for db in [&f.seed, &f.peer] {
+        assert_eq!(title(db, left.id.as_str()).await, "left-11");
+        assert_eq!(title(db, right.id.as_str()).await, "right-11");
+        assert_eq!(
+            scalar(db, "SELECT count(*) FROM conflicts WHERE resolved=0").await,
+            0
+        );
+        assert_eq!(
+            scalar(db, "SELECT count(*) FROM changes WHERE server_seq IS NULL").await,
+            0
+        );
+    }
+}
+
+#[tokio::test]
+async fn checkpoint_creation_undo_pending_frozen_and_accepted() {
+    use aven_core::operations::TaskCreationUndo;
+    let f = fixture().await;
+    converge(&f).await;
+    let w = f.seed.list_workspaces().await.unwrap().remove(0);
+    let pending = f
+        .seed
+        .create_task_with_undo(&w, draft("undo pending"), TaskCreationUndo::TuiTask)
+        .await
+        .unwrap()
+        .task;
+    f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
+    assert_eq!(
+        scalar(
+            &f.seed,
+            &format!("SELECT count(*) FROM tasks WHERE id='{}'", pending.id)
+        )
+        .await,
+        0
+    );
+    let frozen = f
+        .seed
+        .create_task_with_undo(&w, draft("undo frozen"), TaskCreationUndo::TuiTask)
+        .await
+        .unwrap()
+        .task;
+    let record = {
+        let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+        f.seed
+            .prepare_encrypted_tail(&inputs.authority)
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    let error = f.seed.apply_latest_tui_undo(&w.id).await.err().unwrap();
+    assert!(
+        error.to_string().contains("encrypted-history-owned"),
+        "{error:#}"
+    );
+    assert_eq!(title(&f.seed, frozen.id.as_str()).await, "undo frozen");
+    {
+        let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+        assert_eq!(
+            f.seed
+                .prepare_encrypted_tail(&inputs.authority)
+                .await
+                .unwrap()
+                .unwrap(),
+            record
+        );
+    }
+    converge(&f).await;
+    f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
+    converge(&f).await;
+    for db in [&f.seed, &f.peer] {
+        assert_eq!(
+            scalar(
+                db,
+                &format!("SELECT deleted FROM tasks WHERE id='{}'", frozen.id)
+            )
+            .await,
+            1
+        );
+    }
+}
+
+#[tokio::test]
+async fn checkpoint_overlapping_conflicts_and_frozen_pending_change() {
+    let f = fixture().await;
+    converge(&f).await;
+    let w = f.seed.list_workspaces().await.unwrap().remove(0);
+    let task = f
+        .seed
+        .create_task(&w, draft("contested"))
+        .await
+        .unwrap()
+        .task;
+    converge(&f).await;
+    for index in 0..4 {
+        for (db, side) in [(&f.seed, "seed"), (&f.peer, "peer")] {
+            db.update_task(
+                &w,
+                &task.id,
+                TaskUpdate {
+                    title: Some(format!("{side}-{index}")),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        }
+    }
+    let client = Client::new(&f.origin).unwrap();
+    tokio::join!(
+        drain(&client, &f.seed_store, &f.seed),
+        drain(&client, &f.peer_store, &f.peer)
+    );
+    converge(&f).await;
+    assert!(
+        !f.seed
+            .task_conflicts(&w, &task.id, Some("title"))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        !f.peer
+            .task_conflicts(&w, &task.id, Some("title"))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    f.peer
+        .resolve_conflict(&w, &task.id, "title", "resolved checkpoint")
+        .await
+        .unwrap();
+    let frozen = {
+        let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
+        f.peer
+            .prepare_encrypted_tail(&inputs.authority)
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    f.peer
+        .update_task(
+            &w,
+            &task.id,
+            TaskUpdate {
+                title: Some("later local edit".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    {
+        let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
+        assert_eq!(
+            f.peer
+                .prepare_encrypted_tail(&inputs.authority)
+                .await
+                .unwrap()
+                .unwrap(),
+            frozen
+        );
+    }
+    converge(&f).await;
+    for db in [&f.seed, &f.peer] {
+        assert_eq!(title(db, task.id.as_str()).await, "later local edit");
+        assert!(
+            db.task_conflicts(&w, &task.id, Some("title"))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+}
+
+#[tokio::test]
+async fn checkpoint_server_files_exclude_authored_content_and_client_secrets() {
+    let f = fixture().await;
+    converge(&f).await;
+    let w = f.seed.list_workspaces().await.unwrap().remove(0);
+    let marker = "checkpoint-private-content-91c3a8d7";
+    let mut task = draft(marker);
+    task.description = format!("description-{marker}");
+    f.seed.create_task(&w, task).await.unwrap();
+    converge(&f).await;
+    let mut forbidden = vec![marker.as_bytes().to_vec()];
+    for (store, db) in [(&f.seed_store, &f.seed), (&f.peer_store, &f.peer)] {
+        let inputs = store.tail_inputs(db, &f.origin).await.unwrap();
+        for secret in [
+            inputs.bearer.expose(),
+            inputs.authority.key.protected_storage_bytes(),
+        ] {
+            forbidden.push(secret.to_vec());
+            forbidden.push(hex::encode(secret).into_bytes());
+        }
+    }
+    for suffix in ["", "-wal", "-shm"] {
+        let path = f.root.path().join(format!("server.sqlite{suffix}"));
+        if let Ok(bytes) = std::fs::read(path) {
+            for secret in &forbidden {
+                assert!(!bytes.windows(secret.len()).any(|window| window == secret));
+            }
+        }
+    }
+    assert_eq!(scalar(&f.server, "SELECT count(*) FROM changes").await, 0);
+    assert_eq!(scalar(&f.server, "SELECT count(*) FROM tasks").await, 0);
+}
+
+#[tokio::test]
+async fn checkpoint_observed_mapping_and_stale_page_contradictions() {
+    let f = fixture().await;
+    converge(&f).await;
+    let w = f.seed.list_workspaces().await.unwrap().remove(0);
+    f.seed
+        .create_task(&w, draft("mapping checkpoint"))
+        .await
+        .unwrap();
+    let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+    let a = &inputs.authority;
+    let record = f.seed.prepare_encrypted_tail(a).await.unwrap().unwrap();
+    let client = Client::new(&f.origin).unwrap();
+    let Reply::Appended(mapping) = client
+        .exchange(
+            &a.context,
+            &inputs.bearer,
+            Operation::Append {
+                record: record.clone(),
+            },
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("expected real acceptance");
+    };
+    f.seed.observe_encrypted_tail(a, &mapping).await.unwrap();
+    // Fault injection changes only a received mapping, never server acceptance rows.
+    for field in 0..2 {
+        let mut bad = mapping.clone();
+        if field == 0 {
+            bad.sequence += 1;
+        } else {
+            bad.commitment[0] ^= 1;
+        }
+        assert!(f.seed.observe_encrypted_tail(a, &bad).await.is_err());
+    }
+    let after = f.seed.encrypted_tail_cursor(a).await.unwrap();
+    let Reply::Page(page) = client
+        .exchange(
+            &a.context,
+            &inputs.bearer,
+            Operation::Pull {
+                after,
+                limit: 16,
+                watermark: None,
+            },
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("expected real pull");
+    };
+    let mut bad = page.clone();
+    bad.records[0].mapping.sequence += 1;
+    bad.cursor += 1;
+    bad.watermark += 1;
+    assert!(f.seed.apply_encrypted_tail_page(a, &bad).await.is_err());
+    assert_eq!(f.seed.encrypted_tail_cursor(a).await.unwrap(), after);
+    assert_eq!(
+        f.seed.prepare_encrypted_tail(a).await.unwrap().unwrap(),
+        record
+    );
+    f.seed.apply_encrypted_tail_page(a, &page).await.unwrap();
+    assert!(f.seed.apply_encrypted_tail_page(a, &page).await.is_err());
+    assert_eq!(f.seed.encrypted_tail_cursor(a).await.unwrap(), page.cursor);
+    assert!(f.seed.prepare_encrypted_tail(a).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn checkpoint_snapshot_shared_image_survives_parent_delete_restore() {
+    let f = fixture_with_shared_images(true).await;
+    converge(&f).await;
+    let w = f.seed.list_workspaces().await.unwrap().remove(0);
+    let export = f.seed.export_data("checkpoint".into()).await.unwrap();
+    let refs = &export.tables.task_attachments;
+    assert_eq!(refs.len(), 2);
+    assert_eq!(refs[0].sha256, refs[1].sha256);
+    assert_ne!(refs[0].task_id, refs[1].task_id);
+    assert_eq!(
+        scalar(&f.server, "SELECT count(*) FROM server_e2ee_images").await,
+        1
+    );
+    assert_eq!(
+        scalar(
+            &f.server,
+            "SELECT count(*) FROM server_e2ee_image_references"
+        )
+        .await,
+        2
+    );
+    let before = files(&f.root.path().join("objects/sha256"));
+    for (db, id, deleted, unreferenced) in [
+        (&f.seed, &refs[0].task_id, true, 0),
+        (&f.peer, &refs[1].task_id, true, 1),
+        (&f.seed, &refs[0].task_id, false, 0),
+    ] {
+        db.update_task(
+            &w,
+            id,
+            TaskUpdate {
+                deleted: Some(deleted),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        converge(&f).await;
+        assert_eq!(
+            scalar(
+                &f.server,
+                "SELECT count(*) FROM server_e2ee_images WHERE unreferenced_at IS NOT NULL"
+            )
+            .await,
+            unreferenced
+        );
+    }
+    assert_eq!(files(&f.root.path().join("objects/sha256")), before);
+    assert_eq!(
+        files(&f.root.path().join("peer-blobs/objects/sha256")),
+        before
+    );
+    assert_eq!(
+        scalar(
+            &f.server,
+            "SELECT count(*) FROM server_e2ee_image_references WHERE deleted=0"
+        )
+        .await,
+        2
+    );
 }
