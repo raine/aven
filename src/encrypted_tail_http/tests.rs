@@ -41,10 +41,14 @@ async fn fixture() -> Fixture {
     fixture_with_shared_images(false).await
 }
 async fn fixture_with_shared_images(shared: bool) -> Fixture {
+    fixture_with_snapshot_content(shared, None).await
+}
+async fn fixture_with_snapshot_content(shared: bool, note_after_capture: Option<bool>) -> Fixture {
     let root = tempfile::tempdir().unwrap();
     let (seed, seed_store, authority, _) =
         crate::seed_bootstrap_http::tests::fixture(root.path()).await;
-    if shared {
+    let mut snapshot_note = None;
+    if shared || note_after_capture.is_some() {
         let capture = seed
             .resume_local_shared_state_never_dispatched()
             .await
@@ -54,33 +58,56 @@ async fn fixture_with_shared_images(shared: bool) -> Fixture {
             .await
             .unwrap();
         let workspace = seed.list_workspaces().await.unwrap().remove(0);
-        let task = seed
-            .create_task(&workspace, draft("shared image parent"))
+        if shared {
+            let task = seed
+                .create_task(&workspace, draft("shared image parent"))
+                .await
+                .unwrap()
+                .task;
+            let bytes = files(&root.path().join("objects/sha256")).remove(0);
+            seed.add_task_attachment(
+                &workspace,
+                root.path(),
+                Default::default(),
+                &task.id,
+                aven_core::operations::AttachmentAddInput {
+                    filename: Some("shared.png".into()),
+                    alt_text: None,
+                    declared_media_type: None,
+                    bytes,
+                    optimization_policy: aven_core::attachments::ImageOptimizationPolicy::Preserve,
+                    dedupe_existing: false,
+                },
+            )
             .await
-            .unwrap()
-            .task;
-        let bytes = files(&root.path().join("objects/sha256")).remove(0);
-        seed.add_task_attachment(
-            &workspace,
-            root.path(),
-            Default::default(),
-            &task.id,
-            aven_core::operations::AttachmentAddInput {
-                filename: Some("shared.png".into()),
-                alt_text: None,
-                declared_media_type: None,
-                bytes,
-                optimization_policy: aven_core::attachments::ImageOptimizationPolicy::Preserve,
-                dedupe_existing: false,
-            },
-        )
-        .await
-        .unwrap();
+            .unwrap();
+        }
+        if note_after_capture.is_some() {
+            let task = seed
+                .create_task(&workspace, draft("snapshot note owner"))
+                .await
+                .unwrap()
+                .task;
+            let note = seed
+                .add_note(&workspace, &task.id, "snapshot original".into())
+                .await
+                .unwrap();
+            seed.edit_note(&workspace, &task.id, &note.note_id, "snapshot body".into())
+                .await
+                .unwrap();
+            snapshot_note = Some((workspace, task.id, note.note_id));
+        }
         seed.capture_local_shared_state_never_dispatched(root.path())
             .await
             .unwrap();
         seed_store
             .package_seed_capture(&seed, root.path(), [9; 32])
+            .await
+            .unwrap();
+    }
+    if note_after_capture == Some(true) {
+        let (workspace, task, note) = snapshot_note.as_ref().unwrap();
+        seed.edit_note(workspace, task, note, "source after capture".into())
             .await
             .unwrap();
     }
@@ -1919,9 +1946,12 @@ async fn checkpoint_metadata_resolution_rejects_unsendable_value() {
         .seed
         .resolve_conflict(&w, &task.id, &conflicts[0].field, &oversized)
         .await;
+    let error = resolution
+        .err()
+        .expect("oversized resolution must refuse before commit");
     assert!(
-        resolution.is_err(),
-        "oversized resolution must refuse before commit"
+        error.to_string().contains("metadata-value-too-large"),
+        "{error:#}"
     );
     assert_eq!(
         f.seed
@@ -2397,4 +2427,97 @@ async fn checkpoint_idle_check_preserves_frozen_work_and_checks_authority() {
     );
     inputs.authority.sync_generation += 1;
     assert!(f.seed.encrypted_tail_idle(&inputs.authority).await.is_err());
+}
+
+async fn assert_snapshot_note_edits_converge(edit_after_capture: bool) {
+    for seed_first in [true, false] {
+        let f = fixture_with_snapshot_content(false, Some(edit_after_capture)).await;
+        let w = f.seed.list_workspaces().await.unwrap().remove(0);
+        let (task, note, created_at, add_change): (aven_core::ids::TaskId, String, String, String) = {
+            let mut conn = aven_core::test_support::acquire(&f.seed).await.unwrap();
+            sqlx::query_as("SELECT task_id, id, created_at, change_id FROM notes")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap()
+        };
+        assert_eq!(
+            note_body(&f.peer, &note).await.as_deref(),
+            Some("snapshot body")
+        );
+        let seed_body = if edit_after_capture {
+            "source after capture"
+        } else {
+            "seed offline edit"
+        };
+        if edit_after_capture {
+            assert_eq!(note_body(&f.seed, &note).await.as_deref(), Some(seed_body));
+            assert_eq!(
+                scalar(
+                    &f.seed,
+                    "SELECT count(*) FROM changes WHERE server_seq IS NULL"
+                )
+                .await,
+                1
+            );
+        } else {
+            assert_eq!(
+                note_body(&f.seed, &note).await.as_deref(),
+                Some("snapshot body")
+            );
+            f.seed
+                .edit_note(&w, &task, &note, seed_body.into())
+                .await
+                .unwrap();
+        }
+        for (db, keys) in [(&f.seed, &f.seed_store), (&f.peer, &f.peer_store)] {
+            let inputs = keys.tail_inputs(db, &f.origin).await.unwrap();
+            let mut conn = aven_core::test_support::acquire(db).await.unwrap();
+            let rank: i64 = sqlx::query_scalar(
+                "SELECT server_seq FROM changes WHERE change_id=? AND op_type='note_add'",
+            )
+            .bind(&add_change)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+            assert!(rank <= inputs.authority.prefix);
+            let baseline: (String, String) =
+                sqlx::query_as("SELECT created_at, change_id FROM notes WHERE id=?")
+                    .bind(&note)
+                    .fetch_one(&mut *conn)
+                    .await
+                    .unwrap();
+            assert_eq!(baseline, (created_at.clone(), add_change.clone()));
+        }
+        f.peer
+            .edit_note(&w, &task, &note, "peer offline edit".into())
+            .await
+            .unwrap();
+        drain_note_order(&f, seed_first).await;
+        let expected = if seed_first {
+            "peer offline edit"
+        } else {
+            seed_body
+        };
+        for db in [&f.seed, &f.peer] {
+            assert_eq!(note_body(db, &note).await.as_deref(), Some(expected));
+            let mut conn = aven_core::test_support::acquire(db).await.unwrap();
+            let baseline: (String, String) =
+                sqlx::query_as("SELECT created_at, change_id FROM notes WHERE id=?")
+                    .bind(&note)
+                    .fetch_one(&mut *conn)
+                    .await
+                    .unwrap();
+            assert_eq!(baseline, (created_at.clone(), add_change.clone()));
+        }
+    }
+}
+
+#[tokio::test]
+async fn checkpoint_snapshot_note_concurrent_edits_follow_accepted_order() {
+    assert_snapshot_note_edits_converge(false).await;
+}
+
+#[tokio::test]
+async fn checkpoint_snapshot_note_keeps_source_edit_between_capture_and_adoption() {
+    assert_snapshot_note_edits_converge(true).await;
 }
