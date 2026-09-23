@@ -11,7 +11,7 @@ use crate::db::{
 use crate::error::CoreError;
 use crate::recurrence::{
     RecurrenceProjectionState, RecurrenceSeriesId, RecurrenceSeriesState,
-    derive_occurrence_identity, projection_slot_at, slot_values,
+    derive_occurrence_identity, next_slot_after, projection_slot_at, slot_values,
 };
 use crate::refs::get_task_in_workspace;
 use crate::task_fields::TaskField;
@@ -63,7 +63,7 @@ pub(crate) async fn reconcile_recurrence_series_in_transaction(
     }
 
     let schedule = series.schedule();
-    let target = projection_slot_at(&schedule, at)?;
+    let mut target = projection_slot_at(&schedule, at)?;
     if projected
         .as_ref()
         .is_some_and(|occurrence| occurrence.slot_on >= target)
@@ -74,6 +74,22 @@ pub(crate) async fn reconcile_recurrence_series_in_transaction(
             changed: false,
             lifecycle_blocked: false,
         });
+    }
+
+    // A resolved slot cannot be materialized again. Its successor history may
+    // arrive on a later sync page, independently of the recorded outcome.
+    let latest_resolved: Option<String> = sqlx::query_scalar(
+        "SELECT MAX(slot_on) FROM recurrence_occurrences
+         WHERE workspace_id = ? AND series_id = ? AND slot_on >= ? AND outcome != ''",
+    )
+    .bind(&workspace.id)
+    .bind(series_id)
+    .bind(target.to_string())
+    .fetch_one(&mut *conn)
+    .await?;
+    if let Some(slot) = latest_resolved {
+        target = next_slot_after(&schedule.rule, schedule.start_on, slot.parse()?)
+            .context("recurrence schedule has no representable successor")?;
     }
 
     let changed_at = format_utc(at);

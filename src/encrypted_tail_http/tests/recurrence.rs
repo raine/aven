@@ -175,6 +175,39 @@ async fn concurrent_completion_preserves_deterministic_successor_identity() {
         .await
         .unwrap();
     }
+    let c = Client::new(&f.origin).unwrap();
+    let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
+    // Publish the outcome without pulling, then freeze the independently generated successor.
+    for _ in 0..2 {
+        c.push(&inputs.authority, &inputs.bearer, &f.peer, None)
+            .await
+            .unwrap();
+    }
+    let frozen = f
+        .peer
+        .prepare_encrypted_tail(&inputs.authority)
+        .await
+        .unwrap()
+        .unwrap();
+    drop(inputs);
+    let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+    while !f.seed.encrypted_tail_idle(&inputs.authority).await.unwrap() {
+        c.push(&inputs.authority, &inputs.bearer, &f.seed, None)
+            .await
+            .unwrap();
+    }
+    drop(inputs);
+    let id: String = sqlx::query_scalar("SELECT operation_id FROM local_e2ee_outbox")
+        .fetch_one(&mut *aven_core::test_support::acquire(&f.peer).await.unwrap())
+        .await
+        .unwrap();
+    let accepted: Vec<u8> =
+        sqlx::query_scalar("SELECT record FROM server_e2ee_tail WHERE operation_id=?")
+            .bind(id)
+            .fetch_one(&mut *aven_core::test_support::acquire(&f.server).await.unwrap())
+            .await
+            .unwrap();
+    assert_ne!(frozen, accepted);
     converge(&f).await;
     for db in [&f.seed, &f.peer] {
         assert_eq!(
@@ -609,5 +642,35 @@ async fn occurrence_images_survive_completion_and_follow_explicit_deletion() {
         )
         .await,
         0
+    );
+}
+
+#[tokio::test]
+async fn completion_can_arrive_one_operation_per_page() {
+    let f = fixture().await;
+    converge(&f).await;
+    let w = f.seed.list_workspaces().await.unwrap().remove(0);
+    let created = create(&f.seed).await;
+    converge(&f).await;
+    f.seed
+        .update_task(
+            &w,
+            &created.task.id,
+            TaskUpdate {
+                status: Some("done".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let c = Client::new(&f.origin).unwrap();
+    for _ in 0..4 {
+        c.round(&f.seed_store, &f.seed).await.unwrap();
+        c.pull_only_round(&f.peer_store, &f.peer).await.unwrap();
+    }
+    converge(&f).await;
+    assert_eq!(
+        scalar(&f.peer, "SELECT count(*) FROM recurrence_occurrences").await,
+        2
     );
 }
