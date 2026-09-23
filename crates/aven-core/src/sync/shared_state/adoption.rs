@@ -411,7 +411,7 @@ impl Database {
                     .await?
                     .context("error seed-package-missing")?;
                 ensure!(
-                    package.upload_package().descriptor == intent.data.descriptor,
+                    package.descriptor() == intent.data.descriptor,
                     "error seed-package-mismatch"
                 );
                 let capture = load_persisted_local_capture(&mut tx)
@@ -435,21 +435,22 @@ impl Database {
         let package = package::load_package(&mut tx, capture.candidate_id())
             .await?
             .context("error seed-package-missing")?;
+        let upload = package.upload_package();
         package::publication::validate_against_capture(
-            &package.upload_package(),
+            &upload,
             &capture,
             &package,
             key,
             seed.genesis().commitment(),
         )?;
-        let publication = seed.prepare_bootstrap_publication(&package.upload_package(), key)?;
+        let publication = seed.prepare_bootstrap_publication(&upload, key)?;
         let data = IntentData {
             version: 1,
             source: source.0.clone(),
             client,
             generation: generation(&mut tx).await?,
             candidate: capture.candidate_id().to_string(),
-            descriptor: package.upload_package().descriptor,
+            descriptor: upload.descriptor,
             publication: publication.record().to_vec(),
             history,
         };
@@ -564,7 +565,7 @@ impl Database {
             .await?
             .context("error seed-package-missing")?;
         ensure!(
-            package.upload_package().descriptor == intent.data.descriptor,
+            package.descriptor() == intent.data.descriptor,
             "error seed-package-mismatch"
         );
         package::publication::validate_against_capture(

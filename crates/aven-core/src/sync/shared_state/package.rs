@@ -109,6 +109,10 @@ impl fmt::Debug for EncryptedLocalSharedStatePackage {
 }
 
 impl EncryptedLocalSharedStatePackage {
+    pub(crate) fn descriptor(&self) -> &[u8] {
+        &self.descriptor
+    }
+
     /// Copies the exact frozen descriptor, catalogs and encrypted records.
     /// Returning these bytes does not make this local package dispatchable.
     pub fn upload_package(&self) -> publication::Package {

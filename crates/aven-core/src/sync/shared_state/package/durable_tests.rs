@@ -30,6 +30,7 @@ async fn frozen_upload_survives_edits_source_loss_and_reopen() {
         .await
         .unwrap();
     let exact = frozen.upload_package();
+    assert_eq!(frozen.descriptor(), exact.descriptor);
     assert_eq!(
         publication::validate_keyless(&exact).unwrap().image_count,
         2
