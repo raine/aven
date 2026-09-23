@@ -854,7 +854,7 @@ fn unavailable_image_has_validated_history(
     Ok(true)
 }
 
-async fn ensure_empty_target(conn: &mut sqlx::SqliteConnection) -> Result<()> {
+pub(crate) async fn ensure_empty_target(conn: &mut sqlx::SqliteConnection) -> Result<()> {
     adoption::ensure_unbound(conn).await?;
     let occupied: i64 = sqlx::query_scalar(
         "SELECT

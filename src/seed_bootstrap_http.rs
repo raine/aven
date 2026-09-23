@@ -307,8 +307,8 @@ async fn dispatch(server: &Server, secret: &Secret, e: Envelope) -> Result<Reply
 
 /// Bounded transport. Diagnostics deliberately discard Reqwest URLs and bodies.
 pub struct Client {
-    http: reqwest::Client,
-    endpoint: reqwest::Url,
+    pub(crate) http: reqwest::Client,
+    pub(crate) endpoint: reqwest::Url,
 }
 
 impl Client {
@@ -620,4 +620,4 @@ fn components(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

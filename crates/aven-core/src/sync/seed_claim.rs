@@ -9,6 +9,7 @@
 //! protected checkpoint. Exact profiles remain provisional format boundaries.
 
 mod codec;
+pub mod peer;
 mod persistence;
 mod publication;
 

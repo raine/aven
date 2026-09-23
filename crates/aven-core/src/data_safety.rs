@@ -82,7 +82,7 @@ impl Database {
         let mut tx = db::begin_immediate(&mut conn).await?;
         let schema_version = db::current_schema_version(&mut tx).await?;
         let mut tables = scan_export_tables(&mut tx).await?;
-        let bound: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM local_seed_source)")
+        let bound: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM local_seed_source) OR EXISTS(SELECT 1 FROM local_peer_enrollment)")
             .fetch_one(&mut *tx)
             .await?;
         if bound {

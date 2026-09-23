@@ -33,7 +33,7 @@ impl ProtectedLocalKeyStore {
         Ok((seed, intent, upload))
     }
 
-    fn adoption_backend(&self, kind: &str) -> Backend {
+    pub(super) fn adoption_backend(&self, kind: &str) -> Backend {
         match &self.backend {
             #[cfg(target_os = "macos")]
             Backend::Keychain(backend) => Backend::Keychain(KeychainBackend {
@@ -56,7 +56,7 @@ impl ProtectedLocalKeyStore {
             .join(format!("{}.{}-authority", self.account, kind))
     }
 
-    fn load_adoption_record(
+    pub(super) fn load_adoption_record(
         &self,
         kind: &str,
         limit: usize,
@@ -114,7 +114,10 @@ impl ProtectedLocalKeyStore {
         Ok(())
     }
 
-    fn required_seed(&self, package: &ProtectedLocalPackageKey) -> anyhow::Result<SeedAuthority> {
+    pub(super) fn required_seed(
+        &self,
+        package: &ProtectedLocalPackageKey,
+    ) -> anyhow::Result<SeedAuthority> {
         let bytes = self
             .seed_backend()
             .load_bounded(seed::SEED_BYTES)?
@@ -122,7 +125,7 @@ impl ProtectedLocalKeyStore {
         Ok(self.decode_seed(&bytes, package)?)
     }
 
-    fn decode_source(
+    pub(super) fn decode_source(
         &self,
         bytes: &[u8],
         seed: &SeedAuthority,

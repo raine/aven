@@ -6,14 +6,14 @@ use std::{
     process::{Child, Command, Stdio},
 };
 
-fn setup() -> SetupAuthority {
+pub(crate) fn setup() -> SetupAuthority {
     SetupAuthority::from_verifier(
         [9; 32],
         SetupAuthority::verifier([9; 32], &Secret::new([7; 32])),
     )
 }
 
-async fn fixture(
+pub(crate) async fn fixture(
     root: &Path,
 ) -> (
     Database,

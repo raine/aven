@@ -60,6 +60,9 @@
 mod catalog;
 mod codec;
 mod domain;
+
+/// Version of the encrypted AVBD domain, independent of plaintext sync/export.
+pub const DOMAIN_VERSION: u32 = 1;
 mod projection;
 pub(crate) mod staging;
 

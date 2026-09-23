@@ -1,7 +1,7 @@
 use super::*;
 use crate::sync::seed_claim::{PUBLICATION_BYTES, Publication, PublicationOutcome};
 
-/// Only genesis and its exact fixed publication successor can authorize requests.
+/// Only verified supported membership chains can authorize requests.
 /// A historical outcome is never itself the current membership checkpoint.
 pub(super) async fn authorize_current(
     conn: &mut SqliteConnection,
@@ -37,6 +37,15 @@ pub(super) async fn authorize_current(
     }
     let (sequence, commitment) =
         head.ok_or_else(|| anyhow::anyhow!("error bootstrap-membership-unsupported"))?;
+    if sequence == 2 {
+        let current = crate::sync::seed_claim::peer::persistence::current(conn).await?;
+        return Ok((
+            current.genesis,
+            Some(PublicationOutcome {
+                publication: current.publication,
+            }),
+        ));
+    }
     ensure!(sequence == 1, "error bootstrap-membership-unsupported");
     let (id, descriptor, record) =
         saved.ok_or_else(|| anyhow::anyhow!("error bootstrap-membership-unsupported"))?;

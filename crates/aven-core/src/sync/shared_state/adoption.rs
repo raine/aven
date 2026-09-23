@@ -104,9 +104,21 @@ impl SeedPublicationIntent {
 }
 
 pub(crate) async fn ensure_unbound(conn: &mut SqliteConnection) -> Result<()> {
-    let bound: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM local_seed_source) OR EXISTS(SELECT 1 FROM local_seed_publication_intent)").fetch_one(conn).await?;
+    let bound: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM local_seed_source) OR EXISTS(SELECT 1 FROM local_seed_publication_intent)").fetch_one(&mut *conn).await?;
+    let has_peer_table: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='local_peer_enrollment')",
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    let peer_bound = if has_peer_table {
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM local_peer_enrollment)")
+            .fetch_one(&mut *conn)
+            .await?
+    } else {
+        false
+    };
     ensure!(
-        !bound,
+        !bound && !peer_bound,
         "error e2ee-installation-fenced encrypted-tail-and-replacement-unavailable"
     );
     Ok(())

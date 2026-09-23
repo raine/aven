@@ -16,6 +16,7 @@ mod logging;
 mod notification;
 mod operations;
 mod pairing;
+pub mod peer_enrollment_http;
 mod projects;
 pub mod protected_local_keys;
 mod recurrence_input;

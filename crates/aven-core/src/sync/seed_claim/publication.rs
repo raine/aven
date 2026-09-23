@@ -86,7 +86,10 @@ impl PublicationBinding {
     }
 }
 
-fn components(genesis: &Genesis, binding: &PublicationBinding) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+pub(super) fn components(
+    genesis: &Genesis,
+    binding: &PublicationBinding,
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let original = genesis.state();
     let mut state = b"AVGS\0\x02\x01".to_vec();
     state.extend(genesis.context.vault_id);
@@ -215,4 +218,4 @@ impl PublicationOutcome {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

@@ -375,7 +375,8 @@ fn read_section<T: Serialize + for<'de> Deserialize<'de>>(
 }
 
 pub(super) fn encode(t: &local::ExportTables, mappings: &[Mapping]) -> Result<(Vec<u8>, Stats)> {
-    let mut out = b"AVBD\0\x01".to_vec();
+    let mut out = b"AVBD".to_vec();
+    out.extend_from_slice(&(super::DOMAIN_VERSION as u16).to_be_bytes());
     let mut stats = [(0, 0); SECTIONS];
     stats[0] = section(
         &mut out,
@@ -583,7 +584,8 @@ pub(super) fn decode(input: &[u8]) -> Result<(local::ExportTables, Vec<Mapping>,
     bound(number(input.len())?, STATE_LIMIT)?;
     let mut r = Reader(input);
     let mut remaining = RECORD_LIMIT;
-    valid(r.take(6)? == b"AVBD\0\x01")?;
+    valid(r.take(4)? == b"AVBD")?;
+    valid(u16::from_be_bytes(r.array()?) as u32 == super::DOMAIN_VERSION)?;
     let mut stats = [(0, 0); SECTIONS];
     let (workspaces, stat) = read_section::<WorkspaceRow>(&mut r, 1, &mut remaining)?;
     stats[0] = stat;

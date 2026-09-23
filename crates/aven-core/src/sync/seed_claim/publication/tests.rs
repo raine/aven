@@ -1,6 +1,6 @@
 use super::*;
 
-fn seed() -> SeedAuthority {
+pub(in crate::sync::seed_claim) fn seed() -> SeedAuthority {
     let fixture: serde_json::Value =
         serde_json::from_str(include_str!("../fixtures/genesis.json")).unwrap();
     let field = |name: &str| hex::decode(fixture[name].as_str().unwrap()).unwrap();
@@ -20,7 +20,7 @@ fn seed() -> SeedAuthority {
 }
 
 // Public framing fixture only. It makes no ciphertext completeness claim.
-fn descriptor(g: &Genesis) -> Vec<u8> {
+pub(in crate::sync::seed_claim) fn descriptor(g: &Genesis) -> Vec<u8> {
     let mut d = b"AVBP\0\x01\x01".to_vec();
     for id in [
         g.context.vault_id,
@@ -49,7 +49,12 @@ fn descriptor(g: &Genesis) -> Vec<u8> {
     d
 }
 
-fn signed(seed: &SeedAuthority, core: &[u8], state: &[u8], attachments: &[u8]) -> Vec<u8> {
+pub(in crate::sync::seed_claim) fn signed(
+    seed: &SeedAuthority,
+    core: &[u8],
+    state: &[u8],
+    attachments: &[u8],
+) -> Vec<u8> {
     let mut core = core.to_vec();
     core[269..301].copy_from_slice(&hash(&cce("aven-e2ee/v1/membership/state", &[state])));
     let signature = SigningKey::from_bytes(seed.signing.expose())

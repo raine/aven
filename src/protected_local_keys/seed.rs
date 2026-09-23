@@ -16,6 +16,13 @@ impl ProtectedLocalKeyStore {
         setup_id: [u8; 32],
     ) -> anyhow::Result<SeedAuthority> {
         self.validate_database(database)?;
+        anyhow::ensure!(
+            database
+                .enrollment_pin()
+                .await?
+                .is_none_or(|(_, _, role)| role == "inviter"),
+            "error enrollment-peer-cannot-become-seed"
+        );
         let pin = database.local_seed_genesis_commitment().await?;
         let package = if pin.is_some()
             || database

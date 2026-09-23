@@ -1,5 +1,7 @@
 mod adoption;
+mod peer;
 mod seed;
+pub use peer::EnrollmentReadiness;
 
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
@@ -164,7 +166,7 @@ impl ProtectedLocalKeyStore {
                 Err(error(ProtectedLocalKeyStoreErrorKind::MissingAuthority))
             }
             None => {
-                if self.seed_authority_exists()? {
+                if self.seed_authority_exists()? || self.peer_authority_exists()? {
                     return Err(error(ProtectedLocalKeyStoreErrorKind::MissingAuthority));
                 }
                 let key = generate_keyring()?;
