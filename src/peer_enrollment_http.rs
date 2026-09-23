@@ -21,7 +21,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 const PATH: &str = "/e2ee/enrollment/v1";
-const LIMIT: usize = 4 * (1_048_576 + 222) + 4096;
+const CONTROL_LIMIT: usize = 4 * peer::CONTROL_LIMIT + 4096;
+const PUBLISHED_RESPONSE_LIMIT: usize = 4 * (1_048_576 + 222) + 4096;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Context {
@@ -149,7 +150,7 @@ async fn dispatch(db: &Database, request: Request) -> Result<Reply> {
             ))
         })
         .transpose()?;
-    let bytes = to_bytes(request.into_body(), LIMIT)
+    let bytes = to_bytes(request.into_body(), CONTROL_LIMIT)
         .await
         .map_err(|_| anyhow::anyhow!("error enrollment-limit"))?;
     let op: Operation =
@@ -238,9 +239,14 @@ impl Client {
         })
     }
     async fn exchange(&self, op: Operation, secret: Option<&Secret>) -> Result<Reply> {
+        let response_limit = if matches!(&op, Operation::Published { .. }) {
+            PUBLISHED_RESPONSE_LIMIT
+        } else {
+            CONTROL_LIMIT
+        };
         let bytes =
             serde_json::to_vec(&op).map_err(|_| anyhow::anyhow!("error enrollment-http"))?;
-        ensure!(bytes.len() <= LIMIT, "error enrollment-limit");
+        ensure!(bytes.len() <= CONTROL_LIMIT, "error enrollment-limit");
         let mut request = self
             .transport
             .http
@@ -271,7 +277,9 @@ impl Client {
             "error enrollment-refused outcome-unknown"
         );
         ensure!(
-            response.content_length().is_none_or(|n| n <= LIMIT as u64),
+            response
+                .content_length()
+                .is_none_or(|n| n <= response_limit as u64),
             "error enrollment-limit"
         );
         let mut bytes = Vec::new();
@@ -280,7 +288,10 @@ impl Client {
             .await
             .map_err(|_| anyhow::anyhow!("error enrollment-network outcome-unknown"))?
         {
-            ensure!(chunk.len() <= LIMIT - bytes.len(), "error enrollment-limit");
+            ensure!(
+                chunk.len() <= response_limit - bytes.len(),
+                "error enrollment-limit"
+            );
             bytes.extend_from_slice(&chunk);
         }
         serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("error enrollment-http"))

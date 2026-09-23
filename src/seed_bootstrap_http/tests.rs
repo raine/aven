@@ -56,7 +56,21 @@ pub(crate) async fn fixture_with_domain(
         .unwrap()
         .task;
     let mut bytes = std::io::Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgba8(image::RgbaImage::new(3, 2))
+    let image = if representative {
+        // Incompressible pixels exercise multi-kilobyte encrypted HTTP responses.
+        let mut image = image::RgbaImage::new(256, 128);
+        let mut state = 1_u32;
+        for byte in image.as_mut() {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            *byte = state as u8;
+        }
+        image
+    } else {
+        image::RgbaImage::new(3, 2)
+    };
+    image::DynamicImage::ImageRgba8(image)
         .write_to(&mut bytes, image::ImageFormat::Png)
         .unwrap();
     db.add_task_attachment(

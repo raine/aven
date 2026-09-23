@@ -425,7 +425,10 @@ async fn bounded_http_redacts_refusals_and_rejects_unsafe_origins() {
         .unwrap();
     let (origin, task) = serve(db).await;
     let http = reqwest::Client::new();
-    for body in ["PRIVATE-INVALID-CONTENT".to_string(), "x".repeat(LIMIT + 1)] {
+    for body in [
+        "PRIVATE-INVALID-CONTENT".to_string(),
+        "x".repeat(CONTROL_LIMIT + 1),
+    ] {
         let response = http
             .post(format!("{origin}{PATH}"))
             .header(header::CONTENT_TYPE, "application/json")
@@ -599,3 +602,38 @@ async fn edit_after_protected_identity_before_pin_survives_refused_completion() 
 }
 
 mod install;
+
+#[tokio::test]
+async fn control_exchange_retains_small_response_cap() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client = Client::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+    let body = serde_json::to_vec(&Reply::Mailbox(Mailbox {
+        request: Some(vec![0; CONTROL_LIMIT]),
+        evidence: None,
+    }))
+    .unwrap();
+    assert!(body.len() > CONTROL_LIMIT && body.len() < PUBLISHED_RESPONSE_LIMIT);
+    let app = Router::new().route(
+        PATH,
+        post(move || {
+            let body = body.clone();
+            async move { ([(header::CONTENT_TYPE, "application/json")], body) }
+        }),
+    );
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let error = client
+        .exchange(
+            Operation::Mailbox {
+                vault: [0; 32],
+                handle: [0; 32],
+            },
+            None,
+        )
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.to_string(), "error enrollment-limit");
+    task.abort();
+}

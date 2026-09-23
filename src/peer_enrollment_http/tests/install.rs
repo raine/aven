@@ -536,3 +536,65 @@ async fn foreign_image_and_dishonest_descriptor_response_cannot_select_a_publica
     assert_eq!(error.to_string(), "error snapshot-descriptor-substitution");
     assert_eq!(count(&f.peer, "tasks").await, 0);
 }
+
+#[tokio::test]
+async fn control_request_cap_rejects_padding_while_large_published_image_installs() {
+    let f = enrolled().await;
+    let peer = f
+        .store
+        .prepare_peer(&f.peer, &f.client.locator, None)
+        .await
+        .unwrap();
+    let evidence = f
+        .server
+        .peer_mailbox(peer.vault(), peer.handle())
+        .await
+        .unwrap()
+        .evidence
+        .unwrap();
+    let grant = peer.open_provisional(&evidence).unwrap();
+    let op = Operation::Published {
+        context: Context {
+            vault: peer.vault(),
+            genesis: grant.genesis,
+            device: peer.device(),
+            credential_version: 1,
+            head: grant.head,
+        },
+        descriptor: sha2::Sha256::digest(&f.package.descriptor).into(),
+        component: Some(Component::Image(f.package.images[0].object_id)),
+        index: 0,
+    };
+    let mut body = serde_json::to_vec(&op).unwrap();
+    assert!(body.len() < CONTROL_LIMIT);
+    body.resize(CONTROL_LIMIT + 1, b' ');
+    assert!(body.len() < PUBLISHED_RESPONSE_LIMIT);
+    // Valid JSON and authority: only the request size should cause refusal.
+    assert!(serde_json::from_slice::<Operation>(&body).is_ok());
+    let response = f
+        .client
+        .transport
+        .http
+        .post(f.client.transport.endpoint.clone())
+        .header(header::CONTENT_TYPE, "application/json")
+        .bearer_auth(hex::encode(peer.bearer().expose()))
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.text().await.unwrap(), "enrollment-refused");
+
+    let reply = f.client.exchange(op, Some(peer.bearer())).await.unwrap();
+    let encoded_length = serde_json::to_vec(&reply).unwrap().len();
+    assert!(encoded_length > CONTROL_LIMIT && encoded_length < PUBLISHED_RESPONSE_LIMIT);
+    let Reply::Published(bytes) = reply else {
+        panic!("expected published image");
+    };
+    assert_eq!(bytes, f.package.images[0].records[0]);
+    f.client
+        .install(&f.store, &f.peer, &f.root.path().join("peer-blobs"))
+        .await
+        .unwrap();
+    assert_eq!(shared(&f.peer).await, shared(&f.source).await);
+}
