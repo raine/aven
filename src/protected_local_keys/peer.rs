@@ -260,7 +260,7 @@ impl ProtectedLocalKeyStore {
             genesis: seed.genesis().record().to_vec(),
             publication: publication.record().to_vec(),
             descriptor: intent.descriptor().to_vec(),
-            admissions: vec![],
+            transitions: vec![],
         };
         Ok((
             seed,
@@ -607,7 +607,7 @@ impl ProtectedLocalKeyStore {
             &d,
             &inv,
             request,
-            &inputs.key,
+            &inputs.membership.verify_initial_key(&inputs.key)?,
         )?;
         let candidate = Candidate {
             predecessor: self.save_evidence(&inputs.evidence)?,
@@ -794,7 +794,7 @@ impl ProtectedLocalKeyStore {
         // Retain only the original outcome's ancestry, never a mutable Ready value.
         let mut original = evidence.clone();
         original
-            .admissions
+            .transitions
             .truncate(verified.membership().sequence() as usize - 1);
         let record = Verified {
             evidence: self.save_evidence(&original)?,

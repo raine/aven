@@ -1,14 +1,19 @@
-//! Pure signed AddDevice chain and PSK trust handoff for one published generation.
+//! Pure signed membership transitions and recipient-verified generation coverage.
 //!
 //! Verified signatures establish client intent, not server acceptance, current
 //! authorization, protected persistence or dispatch readiness. Unsupported state
 //! transitions and enrollment versions fail closed.
 mod admission;
+mod encoding;
+mod evidence;
 mod pairing;
+pub use evidence::{Evidence, EvidenceRecord, MAX_EVIDENCE_JSON_BYTES, Mailbox};
+mod keys;
+mod rotation;
+pub use keys::VerifiedKeys;
+pub use rotation::Generation;
 pub(crate) mod persistence;
-pub use persistence::{
-    Evidence, EvidenceRecord, MAX_CANDIDATES, MAX_EVIDENCE_JSON_BYTES, MAX_INVITATIONS, Mailbox,
-};
+pub use persistence::{MAX_CANDIDATES, MAX_INVITATIONS};
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]
@@ -20,14 +25,15 @@ use super::*;
 pub use pairing::{Declaration, Device, Joiner, ProvisionalGrant, VerifiedEnrollment};
 
 pub const MAX_DEVICES: usize = 32;
-pub const MAX_RECORD_BYTES: usize = 8192;
-pub const MAX_CHAIN_BYTES: usize = 262144;
+pub const MAX_RECORD_BYTES: usize = 32768;
+pub const MAX_CHAIN_BYTES: usize = 1048576;
+pub const MAX_TRANSITIONS: usize = 128;
+pub const MAX_GENERATIONS: usize = 32;
+pub const MAX_KEY_PLAINTEXT_BYTES: usize = 4096;
 pub const DECLARATION_BYTES: usize = 280;
 pub const REQUEST_BYTES: usize = 314;
 const CORE_BYTES: usize = 461;
-const ATTACHMENT_BYTES: usize = 608;
-const GRANT_BYTES: usize = 523;
-const GRANT_PLAINTEXT_BYTES: usize = 466;
+const GRANT_PREFIX_BYTES: usize = 1 + 12 * 32 + 8;
 const DOMAIN_VERSION: u32 = crate::sync::bootstrap_format::DOMAIN_VERSION;
 
 type Hash = [u8; 32];
@@ -65,6 +71,9 @@ pub struct Membership {
     heads: Vec<Hash>,
     handles: Vec<Hash>,
     evidence_bytes: usize,
+    retired: Vec<Member>,
+    generations: Vec<Generation>,
+    pending: bool,
 }
 impl Membership {
     pub fn from_publication(
@@ -86,6 +95,13 @@ impl Membership {
                 admitted_at: 0,
             }],
             handles: vec![],
+            retired: vec![],
+            generations: vec![Generation {
+                id: genesis.context.generation_id,
+                commitment: genesis.generation_commitment,
+                starts_after: 0,
+            }],
+            pending: false,
             evidence_bytes: GENESIS_BYTES + PUBLICATION_BYTES + descriptor.len(),
         })
     }
@@ -145,6 +161,7 @@ impl Membership {
             .copied()
     }
     pub fn validate_key(&self, key: &LocalSharedStatePackageKey) -> Result<()> {
+        check(self.generations.len() == 1)?;
         check(
             generation_commitment(self.genesis.context, key.protected_storage_bytes())
                 == self.genesis.generation_commitment,
@@ -161,37 +178,75 @@ impl Membership {
     }
     fn unique(&self, recipient: &Recipient, handle: &Hash) -> Result<()> {
         check(self.members.len() < MAX_DEVICES && !self.handles.contains(handle))?;
-        check(self.members.iter().all(|m| {
+        check(self.members.iter().chain(&self.retired).all(|m| {
             m.device != recipient.device && m.sign != recipient.sign && m.hpke != recipient.hpke
         }))
     }
     /// Validate one exact successor without mutating the trusted predecessor.
     /// Expiry, current bearer authorization and atomic server CAS are separate.
     pub fn append(&self, declaration: &[u8], request: &[u8], record: &[u8]) -> Result<Self> {
-        check(record.len() <= MAX_RECORD_BYTES)?;
-        let evidence_bytes = self
+        let (core, _, _, _) = encoding::components(record)?;
+        let action = encoding::action(core)?;
+        let mut next = match action {
+            3 => {
+                let declaration = Declaration::from_record(self, declaration)?;
+                let recipient = admission::validate(self, &declaration, request, record)?;
+                let mut next = self.clone();
+                next.members.push(Member {
+                    device: recipient.device,
+                    sign: recipient.sign,
+                    hpke: recipient.hpke,
+                    verifier: recipient.verifier,
+                    admission: declaration.handle,
+                    admitted_at: self.sequence() + 1,
+                });
+                next.members.sort_by_key(|m| m.device);
+                next.handles.push(declaration.handle);
+                next
+            }
+            4 | 5 => {
+                check(declaration.is_empty() && request.is_empty())?;
+                rotation::validate(self, record)?
+            }
+            _ => anyhow::bail!("error membership-action"),
+        };
+        next.heads.push(hash(record));
+        next.evidence_bytes = self
             .evidence_bytes
             .checked_add(declaration.len())
             .and_then(|n| n.checked_add(request.len()))
             .and_then(|n| n.checked_add(record.len()))
             .context("error membership-limit")?;
-        check(evidence_bytes <= MAX_CHAIN_BYTES)?;
-        let declaration = Declaration::from_record(self, declaration)?;
-        let recipient = admission::validate(self, &declaration, request, record)?;
-        let mut next = self.clone();
-        next.members.push(Member {
-            device: recipient.device,
-            sign: recipient.sign,
-            hpke: recipient.hpke,
-            verifier: recipient.verifier,
-            admission: declaration.handle,
-            admitted_at: self.sequence() + 1,
-        });
-        next.members.sort_by_key(|m| m.device);
-        next.handles.push(declaration.handle);
-        next.heads.push(hash(record));
-        next.evidence_bytes = evidence_bytes;
+        next.capacity()?;
         Ok(next)
+    }
+    fn capacity(&self) -> Result<()> {
+        let reserve = usize::from(self.pending);
+        check(self.heads.len() - 1 + reserve <= MAX_TRANSITIONS)?;
+        check(self.generations.len() + reserve <= MAX_GENERATIONS)?;
+        check(self.evidence_bytes <= MAX_CHAIN_BYTES - reserve * MAX_RECORD_BYTES)
+    }
+    pub fn rotation_pending(&self) -> bool {
+        self.pending
+    }
+    pub fn generations(&self) -> &[Generation] {
+        &self.generations
+    }
+    pub fn current_generation(&self) -> &Generation {
+        self.generations.last().expect("genesis generation")
+    }
+    /// Signed interval eligibility, not proof of server acceptance or completeness.
+    pub fn generation_allows(&self, generation: Hash, sequence: u64) -> bool {
+        self.generations
+            .iter()
+            .position(|g| g.id == generation)
+            .is_some_and(|i| {
+                sequence > self.generations[i].starts_after
+                    && self
+                        .generations
+                        .get(i + 1)
+                        .is_none_or(|g| sequence <= g.starts_after)
+            })
     }
 }
 

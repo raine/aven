@@ -1,51 +1,22 @@
 use super::*;
 
-type Components<'a> = (&'a [u8], &'a [u8], &'a [u8], &'a [u8]);
-
-pub(super) fn components(raw: &[u8], count: usize) -> Result<Components<'_>> {
-    check((2..=MAX_DEVICES).contains(&count) && raw.len() == 1403 + 164 * count)?;
-    let mut r = Reader(raw);
-    check(r.take(1)? == [1])?;
-    let parts = (
-        r.blob(CORE_BYTES)?,
-        r.blob(253 + 164 * count)?,
-        r.blob(ATTACHMENT_BYTES)?,
-        r.blob(64)?,
-    );
-    r.end()?;
-    Ok(parts)
-}
-
 pub(super) fn state_core(
     m: &Membership,
     d: &Declaration,
     request: &[u8],
     recipient: &Recipient,
 ) -> (Vec<u8>, Vec<u8>) {
-    let mut state = b"AVGS\0\x04\x01".to_vec();
-    state.extend(m.genesis.context.vault_id);
-    state.push(1);
-    state.extend(m.publication.binding().tuple());
-    state.extend([0, 0]);
-    state.extend(((m.members.len() + 1) as u16).to_be_bytes());
-    let mut rows: Vec<Vec<u8>> = m
-        .members
-        .iter()
-        .map(|member| {
-            let mut row = Vec::new();
-            member.write(&mut row);
-            row
-        })
-        .collect();
-    rows.push(recipient.row(d.handle));
-    rows.sort();
-    for row in rows {
-        state.extend(row);
-    }
-    state.push(1);
-    state.extend(m.genesis.context.generation_id);
-    state.extend(m.genesis.generation_commitment);
-    state.extend(0_u64.to_be_bytes());
+    let mut next = m.clone();
+    next.members.push(Member {
+        device: recipient.device,
+        sign: recipient.sign,
+        hpke: recipient.hpke,
+        verifier: recipient.verifier,
+        admission: d.handle,
+        admitted_at: m.sequence() + 1,
+    });
+    next.members.sort_by_key(|member| member.device);
+    let state = encoding::state(&next);
     let mut action = b"AVAD\0\x02".to_vec();
     for field in [
         d.handle,
@@ -61,34 +32,19 @@ pub(super) fn state_core(
     action.extend(1_u32.to_be_bytes());
     action.extend(DOMAIN_VERSION.to_be_bytes());
     action.extend(recipient.pop);
-    let mut core = vec![1];
-    bytes(&mut core, &m.genesis.context.vault_id);
-    core.extend((m.sequence() + 1).to_be_bytes());
-    bytes(&mut core, &m.head());
-    core.push(1);
-    bytes(&mut core, &d.inviter);
-    core.push(3);
-    bytes(&mut core, &action);
-    bytes(
-        &mut core,
-        &hash(&cce("aven-e2ee/v1/membership/state", &[&state])),
-    );
+    let core = encoding::core(m, d.inviter, 3, &action, &state);
     (state, core)
 }
 
 pub(super) fn grant_parts<'a>(
     attachments: &'a [u8],
     recipient: &Recipient,
+    count: usize,
 ) -> Result<(&'a [u8], &'a [u8])> {
-    let mut r = Reader(attachments);
-    check(r.take(9)? == b"AVGA\0\x04\x01\x01\x02")?;
-    check(r.blob(32)? == recipient.device && r.blob(32)? == recipient.hpke)?;
-    let mut grant = Reader(r.blob(GRANT_BYTES)?);
-    r.end()?;
-    check(grant.take(1)? == [2])?;
-    let parts = (grant.blob(32)?, grant.blob(GRANT_PLAINTEXT_BYTES + 16)?);
-    grant.end()?;
-    Ok(parts)
+    let packages = encoding::read_packages(attachments, 1, 1, GRANT_PREFIX_BYTES + 2 + 72 * count)?;
+    let p = &packages[0];
+    check(p.device == recipient.device && p.public == recipient.hpke)?;
+    Ok((p.enc, p.cipher))
 }
 
 pub(super) fn validate(
@@ -98,7 +54,8 @@ pub(super) fn validate(
     raw: &[u8],
 ) -> Result<Recipient> {
     super::super::peer::request_parts(request, &d.handle)?;
-    let (core, state, attachments, signature) = components(raw, m.members.len() + 1)?;
+    let (core, state, attachments, signature) = encoding::components(raw)?;
+    check(core.len() == CORE_BYTES)?;
     let mut r = Reader(core);
     check(r.take(1)? == [1] && r.blob(32)? == m.genesis.context.vault_id)?;
     check(u64::from_be_bytes(r.array()?) == m.sequence() + 1 && r.blob(32)? == m.head())?;
@@ -130,7 +87,7 @@ pub(super) fn validate(
     recipient.verify(&m.genesis.context.vault_id, &d.handle, &d.hpke)?;
     let (expected_state, expected_core) = state_core(m, d, request, &recipient);
     check(state == expected_state && core == expected_core)?;
-    grant_parts(attachments, &recipient)?;
+    grant_parts(attachments, &recipient, m.generations.len())?;
     verify(
         &m.member(&d.inviter)?.sign,
         "aven-e2ee/v1/membership/sign",
@@ -145,10 +102,10 @@ pub(super) fn grant_plaintext(
     d: &Declaration,
     request: &[u8],
     recipient: &Recipient,
-    key: &LocalSharedStatePackageKey,
+    keys: &VerifiedKeys,
 ) -> Zeroizing<Vec<u8>> {
     let b = m.publication.binding();
-    let mut out = Zeroizing::new(vec![2]);
+    let mut out = Zeroizing::new(vec![3]);
     for field in [
         m.genesis.context.vault_id,
         d.handle,
@@ -166,10 +123,7 @@ pub(super) fn grant_plaintext(
         out.extend(field);
     }
     out.extend(b.prefix_count.to_be_bytes());
-    out.push(1);
-    out.extend(m.genesis.context.generation_id);
-    out.extend(key.protected_storage_bytes());
-    out.extend(0_u64.to_be_bytes());
+    keys.write(&mut out);
     out
 }
 

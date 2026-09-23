@@ -145,15 +145,6 @@ impl Recipient {
             pop,
         })
     }
-    pub(super) fn row(&self, handle: [u8; 32]) -> Vec<u8> {
-        let mut out = Vec::new();
-        for v in [self.device, self.sign, self.hpke, self.verifier] {
-            out.extend(v);
-        }
-        out.extend(1_u32.to_be_bytes());
-        out.extend(handle);
-        out
-    }
 }
 
 pub(super) fn seal(

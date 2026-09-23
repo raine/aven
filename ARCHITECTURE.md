@@ -617,6 +617,27 @@ authority does not access production Keychain items. Encrypted ordinary tail,
 fresh join, pairing/recovery UX, general membership and iOS remain outside this
 transport boundary.
 
+### Pure membership and generation validation
+
+`seed_claim/membership` owns one predecessor-derived validator for AddDevice,
+Revoke and Rotate. `encoding.rs` owns bounded AVGS5/AVGA5 framing;
+`rotation.rs` owns active-target removal, pending preservation, exact sorted
+recipient coverage and signed generation cutoffs; `keys.rs` yields complete
+commitment-checked `VerifiedKeys` only after recipient validation. Pairing grants
+cover every predecessor generation, while rotation packages cover exactly the
+new generation and extend existing verified coverage. Retired device/signing/HPKE
+identities remain unavailable for reuse. Only Rotate clears pending; final-device
+removal is refused. Capacity checks preserve a pending rotation's generation,
+transition and worst-case record budget.
+
+`evidence.rs` bounds and replays mixed public transition evidence, retaining
+original enrollment validation at its historical predecessor. Genesis/publication
+bytes and bootstrap identity remain unchanged. These pure APIs establish signed
+intent and key coverage, not server commit, protected storage or runtime readiness.
+The live persistence engine admits only AddDevice, and protected refresh refuses
+pending or multi-generation state. Runtime removal and rotation require coupled
+server authorization, protected key-history and ordinary outbox/image integration.
+
 ### Transactional repeatable membership
 
 `seed_claim/membership/persistence.rs` owns bounded complete signed history,
@@ -824,7 +845,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 | Change seed genesis, first claim, signed initial publication, or protected authority | `crates/aven-core/src/sync/seed_claim.rs`, its `codec.rs` and `persistence.rs`, `src/protected_local_keys/seed.rs` | protected package ownership in `src/protected_local_keys.rs`, frozen bootstrap membership context, secret exclusion and same-path replacement | `cargo test -p aven-core --lib 'sync::seed_claim::tests::'`, `cargo test --lib 'protected_local_keys::'`, `cargo test -p aven-core --lib 'sync::shared_state::package::'`; isolated Keychain tests are explicitly ignored platform checks |
 | Change authenticated bootstrap staging | `crates/aven-core/src/sync/bootstrap_staging.rs`, `bootstrap_staging/persistence.rs` | `bootstrap_staging/persistence/publication.rs` current-head authorization and atomic READY, `seed_claim/publication.rs` signed profile, `shared_state/package/publication/staging.rs` structural views, staging/publication migrations, and exact local package ownership | `cargo test -p aven-core --lib 'sync::bootstrap_staging::tests::'`, `cargo test -p aven-core --lib 'sync::seed_claim::'`, `cargo test -p aven-core --lib 'sync::shared_state::package::'`, and `cargo test --lib 'protected_local_keys::seed::tests::publication::'` |
 | Change seed bootstrap HTTP transport | `src/seed_bootstrap_http.rs`, `src/seed_bootstrap_http/tests.rs` | protected source/intent and `Database::seed_publication_upload`, core staging and publication codecs; keep plaintext router/config untouched | `cargo test --lib 'seed_bootstrap_http::tests::'`, `cargo test --lib 'protected_local_keys::adoption::tests::'`, focused core staging/seed tests, installation concurrency tests, and `cargo test --test cli_sync attachment_metadata_and_blobs_round_trip_through_real_sync_server` |
-| Change pure signed same-generation membership codecs | `crates/aven-core/src/sync/seed_claim/membership.rs`, `membership/{admission,pairing}.rs` | unchanged genesis/publication validators, shared pairing primitives in `seed_claim/peer.rs`, `seed_claim/fixtures/membership.json`; the pure API has no storage, network, expiry-clock or dispatch authority | `cargo test -p aven-core --lib 'sync::seed_claim::membership::tests::'` and unchanged seed/publication codec regressions |
+| Change pure signed membership and generation codecs | `crates/aven-core/src/sync/seed_claim/membership.rs`, `membership/{encoding,admission,pairing,rotation,keys,evidence}.rs` | unchanged genesis/publication validators, shared pairing primitives in `seed_claim/peer.rs`, `seed_claim/fixtures/{membership,rotation}.json`; the pure API has no storage, network, expiry-clock or dispatch authority | `cargo test -p aven-core --lib 'sync::seed_claim::membership::tests::'` and unchanged seed/publication codec regressions |
 | Change repeatable device enrollment and authenticated refresh | `crates/aven-core/src/sync/seed_claim/membership/persistence.rs`, `src/protected_local_keys/{peer,membership}.rs`, `src/peer_enrollment_http.rs` | current-head authorization in bootstrap publication, protected source/adoption, fresh-target and replacement fences, data-only export | `cargo test -p aven-core --lib 'sync::seed_claim::membership::'`, `cargo test --lib 'peer_enrollment_http::tests::'`, seed HTTP/protected adoption tests and plaintext loopback regression |
 | Change published snapshot reads or verified fresh-peer installation | `src/peer_enrollment_http.rs`, `src/protected_local_keys/peer.rs`, `crates/aven-core/src/sync/shared_state/peer_install.rs` | current membership resolver, `package/publication/download.rs`, shared-state allowlist, attachment storage and transaction-bound cleanup | `cargo test --lib 'peer_enrollment_http::tests::install::'`, shared-state module, protected adoption, seed HTTP and plaintext attachment tests |
 | Change internal ordinary encrypted task sync | `crates/aven-core/src/sync/encrypted_tail/`, `src/encrypted_tail_http.rs` | protected peer/adoption readiness, current chain resolver, shared parent reducer, domain apply and canonical equality, history ownership triggers | `cargo test --lib 'encrypted_tail_http::tests::'`, `cargo test -p aven-core --lib 'sync::encrypted_tail::tests::'`, parent/apply tests and bootstrap/enrollment/plaintext attachment regressions |

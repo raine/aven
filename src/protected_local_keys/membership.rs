@@ -208,6 +208,10 @@ impl ProtectedLocalKeyStore {
         key: &LocalSharedStatePackageKey,
     ) -> Result<Membership> {
         let m = evidence.verify()?;
+        ensure!(
+            !m.rotation_pending(),
+            "error membership-transition-unsupported"
+        );
         m.validate_key(key)?;
         let before = self.membership_floor(db, identity).await?;
         if let Some((before, _)) = &before {

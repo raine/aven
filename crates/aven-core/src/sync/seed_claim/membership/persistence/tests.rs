@@ -31,7 +31,13 @@ fn prepare(
     )
     .unwrap();
     let raw = device
-        .prepare_admission(m, &d, &inv, peer.request(), &f.key)
+        .prepare_admission(
+            m,
+            &d,
+            &inv,
+            peer.request(),
+            &m.verify_initial_key(&f.key).unwrap(),
+        )
         .unwrap();
     (d, peer, raw)
 }
@@ -328,7 +334,13 @@ async fn a_verified_competing_successor_allows_same_recipient_at_a_new_predecess
     )
     .unwrap();
     let lost = Device::seed(&f.seed)
-        .prepare_admission(&m, &d, &inv, joiner.request(), &f.key)
+        .prepare_admission(
+            &m,
+            &d,
+            &inv,
+            joiner.request(),
+            &m.verify_initial_key(&f.key).unwrap(),
+        )
         .unwrap();
     register(&f, &a, &d, &joiner).await;
     let (winner, other, record) = prepare(peer.authority(), &m, &f, 3700);
@@ -353,7 +365,13 @@ async fn a_verified_competing_successor_allows_same_recipient_at_a_new_predecess
     assert!(next.extends(&m));
     assert!(!next.contains_head(&hash(&lost)));
     let retry = Device::seed(&f.seed)
-        .prepare_admission(&next, &d, &inv, joiner.request(), &f.key)
+        .prepare_admission(
+            &next,
+            &d,
+            &inv,
+            joiner.request(),
+            &m.verify_initial_key(&f.key).unwrap(),
+        )
         .unwrap();
     let fresh = auth(&f, next.head(), a.device, a.bearer);
     f.db.admit_membership_device_at(&fresh, d.handle(), &retry, 100)
@@ -409,7 +427,13 @@ async fn independent_scanners_cannot_rebind_an_occupied_request() {
         Some(accepted.request())
     );
     let raw = Device::seed(&f.seed)
-        .prepare_admission(&m, &d, &invitation, accepted.request(), &f.key)
+        .prepare_admission(
+            &m,
+            &d,
+            &invitation,
+            accepted.request(),
+            &m.verify_initial_key(&f.key).unwrap(),
+        )
         .unwrap();
     f.db.admit_membership_device_at(&a, d.handle(), &raw, 102)
         .await
@@ -463,7 +487,13 @@ async fn occupied_invalid_request_and_signed_history_corruption_fail_closed() {
         .unwrap();
     assert!(
         Device::seed(&f.seed)
-            .prepare_admission(&m, &d, &invitation, &invalid, &f.key)
+            .prepare_admission(
+                &m,
+                &d,
+                &invitation,
+                &invalid,
+                &m.verify_initial_key(&f.key).unwrap()
+            )
             .is_err()
     );
     assert!(

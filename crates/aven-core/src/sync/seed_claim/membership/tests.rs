@@ -1,3 +1,5 @@
+mod rotation;
+mod rotation_packages;
 use super::super::{peer, publication};
 use super::*;
 use hpke::PskBundle;
@@ -105,13 +107,15 @@ fn reseal(
         plain,
         seed,
     );
-    let mut grant = vec![2];
-    bytes(&mut grant, &enc);
-    bytes(&mut grant, &ciphertext);
-    let mut attachments = b"AVGA\0\x04\x01\x01\x02".to_vec();
-    bytes(&mut attachments, &recipient.device);
-    bytes(&mut attachments, &recipient.hpke);
-    bytes(&mut attachments, &grant);
+    let mut attachments = encoding::packages(1);
+    encoding::package(
+        &mut attachments,
+        1,
+        &recipient.device,
+        &recipient.hpke,
+        &enc,
+        &ciphertext,
+    );
     admission::signed(signing, &core, &state, &attachments)
 }
 fn fixed_admission(
@@ -121,7 +125,13 @@ fn fixed_admission(
     signing: &Secret,
     key: &LocalSharedStatePackageKey,
 ) -> Vec<u8> {
-    let plain = admission::grant_plaintext(m, d, peer.request(), &peer.0.recipient().unwrap(), key);
+    let plain = admission::grant_plaintext(
+        m,
+        d,
+        peer.request(),
+        &peer.0.recipient().unwrap(),
+        &m.verify_initial_key(key).unwrap(),
+    );
     reseal(m, d, peer, signing, &plain, 90)
 }
 fn first(f: &Fixture) -> (Invitation, Declaration, Joiner, Vec<u8>, Membership) {
@@ -141,7 +151,7 @@ fn first(f: &Fixture) -> (Invitation, Declaration, Joiner, Vec<u8>, Membership) 
 fn exact_new_formats_from_sequence_two_and_peer_invited_third() {
     let f = fixture();
     let (_, d, peer, raw, next) = first(&f);
-    assert_eq!(raw.len(), 1731);
+    assert_eq!(raw.len(), 1729);
     assert_eq!(next.sequence(), 2);
     assert_eq!(next.device_count(), 2);
     let verified = peer
@@ -161,7 +171,7 @@ fn exact_new_formats_from_sequence_two_and_peer_invited_third() {
     let final_state = next
         .append(third_d.record(), third.request(), &third_raw)
         .unwrap();
-    assert_eq!(third_raw.len(), 1895);
+    assert_eq!(third_raw.len(), 1893);
     assert_eq!(final_state.device_count(), 3);
     assert!(final_state.extends(verified.membership()));
     third
@@ -202,7 +212,13 @@ fn independent_random_clients_and_both_existing_inviters() {
             .is_err()
     );
     let raw = Device::seed(&f.seed)
-        .prepare_admission(&f.membership, &d, &inv, peer.request(), &f.key)
+        .prepare_admission(
+            &f.membership,
+            &d,
+            &inv,
+            peer.request(),
+            &f.membership.verify_initial_key(&f.key).unwrap(),
+        )
         .unwrap();
     let next = peer
         .verify_enrollment(&f.membership, d.record(), &raw)
@@ -211,7 +227,7 @@ fn independent_random_clients_and_both_existing_inviters() {
         let (inv, d) = inviter.prepare_invitation(next.membership(), 30).unwrap();
         let third = Joiner::generate(copy_invitation(&inv)).unwrap();
         let raw = inviter
-            .prepare_admission(next.membership(), &d, &inv, third.request(), next.key())
+            .prepare_admission(next.membership(), &d, &inv, third.request(), next.keys())
             .unwrap();
         let verified = third
             .verify_enrollment(next.membership(), d.record(), &raw)
@@ -231,7 +247,13 @@ fn declaration_anchor_and_same_recipient_cas_repreparation() {
         .unwrap();
     let other = Joiner::generate(copy_invitation(&other_inv)).unwrap();
     let winning = Device::seed(&f.seed)
-        .prepare_admission(&f.membership, &other_d, &other_inv, other.request(), &f.key)
+        .prepare_admission(
+            &f.membership,
+            &other_d,
+            &other_inv,
+            other.request(),
+            &f.membership.verify_initial_key(&f.key).unwrap(),
+        )
         .unwrap();
     let next = f
         .membership
@@ -239,7 +261,13 @@ fn declaration_anchor_and_same_recipient_cas_repreparation() {
         .unwrap();
     assert!(next.append(d.record(), peer.request(), &losing).is_err());
     let replacement = Device::seed(&f.seed)
-        .prepare_admission(&next, &d, &inv, peer.request(), &f.key)
+        .prepare_admission(
+            &next,
+            &d,
+            &inv,
+            peer.request(),
+            &f.membership.verify_initial_key(&f.key).unwrap(),
+        )
         .unwrap();
     peer.verify_enrollment(&next, d.record(), &replacement)
         .unwrap();
@@ -315,7 +343,7 @@ fn strict_framing_every_mutation_and_truncation() {
 fn resigned_invalid_state_actions_packages_and_old_versions_refuse() {
     let f = fixture();
     let (_, d, peer, raw, _) = first(&f);
-    let (core, state, attachments, _) = admission::components(&raw, 2).unwrap();
+    let (core, state, attachments, _) = encoding::components(&raw).unwrap();
     // All state fields, including sorted rows, untouched predecessor authority,
     // bootstrap, generation and flags, must equal the derived result.
     for i in 0..state.len() {
@@ -343,7 +371,7 @@ fn resigned_invalid_state_actions_packages_and_old_versions_refuse() {
             "core {i}"
         );
     }
-    for i in 0..85 {
+    for i in (0..86).chain(118..122) {
         let mut attachments = attachments.to_vec();
         attachments[i] ^= 1;
         let bad = admission::signed(&f.seed.signing, core, state, &attachments);
@@ -354,17 +382,6 @@ fn resigned_invalid_state_actions_packages_and_old_versions_refuse() {
             "attachment {i}"
         );
     }
-    let mut old_grant = attachments.to_vec();
-    old_grant[85] = 1;
-    assert!(
-        f.membership
-            .append(
-                d.record(),
-                peer.request(),
-                &admission::signed(&f.seed.signing, core, state, &old_grant)
-            )
-            .is_err()
-    );
 }
 
 #[test]
@@ -372,7 +389,13 @@ fn grant_semantics_and_psk_trust_are_not_keyless_server_acceptance() {
     let f = fixture();
     let (inv, d, peer, raw, _) = first(&f);
     let recipient = peer.0.recipient().unwrap();
-    let plain = admission::grant_plaintext(&f.membership, &d, peer.request(), &recipient, &f.key);
+    let plain = admission::grant_plaintext(
+        &f.membership,
+        &d,
+        peer.request(),
+        &recipient,
+        &f.membership.verify_initial_key(&f.key).unwrap(),
+    );
     // Every field and byte of an authenticated but semantically wrong grant.
     for i in 0..plain.len() {
         let mut bad_plain = plain.clone();
@@ -403,14 +426,8 @@ fn grant_semantics_and_psk_trust_are_not_keyless_server_acceptance() {
     wrong_private.0.recipient = Secret::new([77; 32]);
     assert!(wrong_private.open_provisional(d.record(), &raw).is_err());
     assert!(
-        Device::seed(&f.seed)
-            .prepare_admission(
-                &f.membership,
-                &d,
-                &inv,
-                peer.request(),
-                &LocalSharedStatePackageKey::new([7; 32])
-            )
+        f.membership
+            .verify_initial_key(&LocalSharedStatePackageKey::new([7; 32]))
             .is_err()
     );
 }
@@ -437,7 +454,13 @@ fn duplicate_identity_keys_handles_and_resource_refusal_preserve_predecessor() {
     let (inv, d) = Device::seed(&f.seed).prepare_invitation(&m, 0).unwrap();
     let next = Joiner::generate(copy_invitation(&inv)).unwrap();
     let raw = Device::seed(&f.seed)
-        .prepare_admission(&m, &d, &inv, next.request(), &f.key)
+        .prepare_admission(
+            &m,
+            &d,
+            &inv,
+            next.request(),
+            &m.verify_initial_key(&f.key).unwrap(),
+        )
         .unwrap();
     m.evidence_bytes = MAX_CHAIN_BYTES;
     assert!(m.append(d.record(), next.request(), &raw).is_err());
@@ -448,9 +471,15 @@ fn duplicate_identity_keys_handles_and_resource_refusal_preserve_predecessor() {
         let (inv, d) = Device::seed(&f.seed).prepare_invitation(&m, 0).unwrap();
         let peer = Joiner::generate(copy_invitation(&inv)).unwrap();
         let raw = Device::seed(&f.seed)
-            .prepare_admission(&m, &d, &inv, peer.request(), &f.key)
+            .prepare_admission(
+                &m,
+                &d,
+                &inv,
+                peer.request(),
+                &f.membership.verify_initial_key(&f.key).unwrap(),
+            )
             .unwrap();
-        assert_eq!(raw.len(), 1403 + 164 * count);
+        assert_eq!(raw.len(), 1401 + 164 * count);
         m = m.append(d.record(), peer.request(), &raw).unwrap();
     }
     assert_eq!(m.device_count(), MAX_DEVICES);
@@ -488,7 +517,13 @@ fn key_ownership_and_low_order_recipient_fail_before_grant() {
     }
     assert!(
         Device::seed(&f.seed)
-            .prepare_admission(&f.membership, &d, &inv, &request, &f.key)
+            .prepare_admission(
+                &f.membership,
+                &d,
+                &inv,
+                &request,
+                &f.membership.verify_initial_key(&f.key).unwrap()
+            )
             .is_err()
     );
 }
@@ -497,7 +532,7 @@ fn key_ownership_and_low_order_recipient_fail_before_grant() {
 fn old_tags_cannot_be_resigned_into_the_new_profile() {
     let f = fixture();
     let (_, d, peer, raw, _) = first(&f);
-    let (core, state, attachments, _) = admission::components(&raw, 2).unwrap();
+    let (core, state, attachments, _) = encoding::components(&raw).unwrap();
     for kind in 0..4 {
         let mut core = core.to_vec();
         let mut state = state.to_vec();
@@ -509,7 +544,7 @@ fn old_tags_cannot_be_resigned_into_the_new_profile() {
             } // AVAD version.
             1 => state[5] = 3,
             2 => attachments[5] = 3,
-            _ => attachments[85] = 1,
+            _ => attachments[9] = 0,
         }
         core[CORE_BYTES - 32..]
             .copy_from_slice(&hash(&cce("aven-e2ee/v1/membership/state", &[&state])));

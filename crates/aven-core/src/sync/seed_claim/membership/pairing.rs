@@ -4,9 +4,9 @@ use super::*;
 /// Borrowed installation keys. Membership matching is mandatory before signing.
 /// This value does not assert protected storage, installation or server readiness.
 pub struct Device<'a> {
-    device: Hash,
-    signing: &'a Secret,
-    recipient: &'a Secret,
+    pub(super) device: Hash,
+    pub(super) signing: &'a Secret,
+    pub(super) recipient: &'a Secret,
     bearer: &'a Secret,
 }
 impl<'a> Device<'a> {
@@ -18,7 +18,7 @@ impl<'a> Device<'a> {
             bearer: &seed.bearer,
         }
     }
-    fn active<'m>(&self, membership: &'m Membership) -> Result<&'m Member> {
+    pub(super) fn active<'m>(&self, membership: &'m Membership) -> Result<&'m Member> {
         let member = membership.member(&self.device)?;
         let private = HpkePrivate::from_bytes(self.recipient.expose())
             .map_err(|_| anyhow::anyhow!("error membership-recipient"))?;
@@ -87,7 +87,7 @@ impl<'a> Device<'a> {
         declaration: &Declaration,
         invitation: &Invitation,
         request: &[u8],
-        key: &LocalSharedStatePackageKey,
+        keys: &VerifiedKeys,
     ) -> Result<Vec<u8>> {
         self.active(membership)?;
         let d = Declaration::from_record(membership, declaration.record())?;
@@ -97,10 +97,7 @@ impl<'a> Device<'a> {
                 && invitation.inviter == d.hpke
                 && invitation.handle() == d.handle,
         )?;
-        check(
-            generation_commitment(membership.genesis.context, key.protected_storage_bytes())
-                == membership.genesis.generation_commitment,
-        )?;
+        keys.validate(membership)?;
         let handle = invitation.handle();
         let (enc, cipher) = request_parts(request, &handle)?;
         let plain = open(
@@ -121,19 +118,21 @@ impl<'a> Device<'a> {
         recipient.verify(&invitation.vault, &handle, &invitation.inviter)?;
         membership.unique(&recipient, &handle)?;
         let (state, core) = admission::state_core(membership, &d, request, &recipient);
-        let plain = admission::grant_plaintext(membership, &d, request, &recipient, key);
+        let plain = admission::grant_plaintext(membership, &d, request, &recipient, keys);
         let info = cce(
             "aven-e2ee/v1/pairing/grant",
             &[&invitation.vault, &handle, &hash(request)],
         );
         let (enc, cipher) = seal(invitation, &recipient.hpke, &info, &core, &plain)?;
-        let mut grant = vec![2];
-        bytes(&mut grant, &enc);
-        bytes(&mut grant, &cipher);
-        let mut attachments = b"AVGA\0\x04\x01\x01\x02".to_vec();
-        bytes(&mut attachments, &recipient.device);
-        bytes(&mut attachments, &recipient.hpke);
-        bytes(&mut attachments, &grant);
+        let mut attachments = encoding::packages(1);
+        encoding::package(
+            &mut attachments,
+            1,
+            &recipient.device,
+            &recipient.hpke,
+            &enc,
+            &cipher,
+        );
         let raw = admission::signed(self.signing, &core, &state, &attachments);
         membership.append(d.record(), request, &raw)?;
         Ok(raw)
@@ -246,14 +245,15 @@ impl Joiner {
     /// PSK-authenticated expectations only. No membership or content authority.
     pub fn open_provisional(&self, declaration: &[u8], record: &[u8]) -> Result<ProvisionalGrant> {
         check(declaration.len() == DECLARATION_BYTES && record.len() <= MAX_RECORD_BYTES)?;
-        let count = record
-            .len()
-            .checked_sub(1403)
-            .context("error membership-invalid")?
-            / 164;
-        let (core, _, attachments, _) = admission::components(record, count)?;
+        let (core, _, attachments, _) = encoding::components(record)?;
         let recipient = self.0.recipient()?;
-        let (enc, cipher) = admission::grant_parts(attachments, &recipient)?;
+        // Public framing bounds ciphertext; trust comes only from the PSK opening.
+        let mut r = Reader(attachments);
+        check(r.take(8)? == b"AVGA\0\x05\0\x01" && r.take(2)? == [1, 1])?;
+        check(r.blob(32)? == recipient.device && r.blob(32)? == recipient.hpke)?;
+        let enc = r.blob(32)?;
+        let cipher = encoding::blob(&mut r, MAX_KEY_PLAINTEXT_BYTES + 16)?;
+        r.end()?;
         let info = cce(
             "aven-e2ee/v1/pairing/grant",
             &[&self.0.vault(), &self.0.handle(), &hash(self.request())],
@@ -266,10 +266,10 @@ impl Joiner {
             enc,
             cipher,
         )?;
-        check(plain.len() == GRANT_PLAINTEXT_BYTES)?;
+        check(plain.len() >= GRANT_PREFIX_BYTES + 2 && plain.len() <= MAX_KEY_PLAINTEXT_BYTES)?;
         let mut r = Reader(&plain);
         check(
-            r.take(1)? == [2]
+            r.take(1)? == [3]
                 && r.array::<32>()? == self.0.vault()
                 && r.array::<32>()? == self.0.handle()
                 && r.array::<32>()? == hash(declaration)
@@ -308,20 +308,14 @@ impl Joiner {
                 && member.verifier == recipient.verifier
                 && member.admission == d.handle,
         )?;
-        let secret_start = 1 + 12 * 32 + 8 + 1 + 32;
-        let key = LocalSharedStatePackageKey::new(
-            grant.plaintext[secret_start..secret_start + 32].try_into()?,
-        );
-        check(
-            generation_commitment(predecessor.genesis.context, key.protected_storage_bytes())
-                == predecessor.genesis.generation_commitment,
-        )?;
+        let mut r = Reader(&grant.plaintext[GRANT_PREFIX_BYTES..]);
+        let keys = VerifiedKeys::read(predecessor, &mut r)?;
         let expected =
-            admission::grant_plaintext(predecessor, &d, self.request(), &recipient, &key);
+            admission::grant_plaintext(predecessor, &d, self.request(), &recipient, &keys);
         check(bool::from(
             grant.plaintext.as_slice().ct_eq(expected.as_slice()),
         ))?;
-        Ok(VerifiedEnrollment { membership, key })
+        Ok(VerifiedEnrollment { membership, keys })
     }
 }
 
@@ -337,7 +331,7 @@ pub struct ProvisionalGrant {
 /// Verified historical enrollment and complete key coverage, not install readiness.
 pub struct VerifiedEnrollment {
     membership: Membership,
-    key: LocalSharedStatePackageKey,
+    keys: VerifiedKeys,
 }
 impl VerifiedEnrollment {
     pub fn genesis(&self) -> &Genesis {
@@ -352,7 +346,12 @@ impl VerifiedEnrollment {
     pub fn membership(&self) -> &Membership {
         &self.membership
     }
+    pub fn keys(&self) -> &VerifiedKeys {
+        &self.keys
+    }
     pub fn key(&self) -> &LocalSharedStatePackageKey {
-        &self.key
+        self.keys
+            .key(self.membership.genesis.context.generation_id)
+            .expect("verified bootstrap coverage")
     }
 }

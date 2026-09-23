@@ -753,7 +753,7 @@ async fn competing_host_candidates_retain_same_recipient_and_complete_after_late
         if db.path() == f.peer.path() {
             let mut evidence = inputs.evidence.clone();
             evidence
-                .admissions
+                .transitions
                 .push(aven_core::sync::seed_claim::membership::EvidenceRecord {
                     declaration: journal.declaration.clone(),
                     request: request.to_vec(),
@@ -796,7 +796,7 @@ async fn competing_host_candidates_retain_same_recipient_and_complete_after_late
                 .is_err()
         );
         let mut rollback = inputs.evidence.clone();
-        rollback.admissions.clear();
+        rollback.transitions.clear();
         assert!(
             f.peer_store
                 .adopt_refresh(&f.peer, &mut inputs, rollback)
@@ -804,7 +804,7 @@ async fn competing_host_candidates_retain_same_recipient_and_complete_after_late
                 .is_err()
         );
         let mut missing = inputs.evidence.clone();
-        missing.admissions.remove(0);
+        missing.transitions.remove(0);
         assert!(
             f.peer_store
                 .adopt_refresh(&f.peer, &mut inputs, missing)
@@ -1354,4 +1354,40 @@ async fn pull_only_retries_one_head_race_without_uploading() {
 #[tokio::test]
 async fn pull_only_stops_after_second_head_race_without_uploading() {
     pull_only_stale_race(2).await;
+}
+
+#[tokio::test]
+async fn unsupported_rotation_refresh_does_not_advance_protected_floor() {
+    let f = fixture().await;
+    let seed = f
+        .seed_store
+        .prepare_seed_claim(&f.seed, [9; 32])
+        .await
+        .unwrap();
+    let mut inputs = f
+        .seed_store
+        .active_inputs(&f.seed, &f.origin)
+        .await
+        .unwrap();
+    let head = inputs.membership.head();
+    let record = aven_core::sync::seed_claim::membership::Device::seed(&seed)
+        .prepare_revoke(&inputs.membership, &[])
+        .unwrap();
+    let mut evidence = inputs.evidence.clone();
+    evidence
+        .transitions
+        .push(aven_core::sync::seed_claim::membership::EvidenceRecord {
+            declaration: vec![],
+            request: vec![],
+            record,
+        });
+    assert!(
+        f.seed_store
+            .adopt_refresh(&f.seed, &mut inputs, evidence)
+            .await
+            .is_err()
+    );
+    assert_eq!(inputs.membership.head(), head);
+    drop(inputs);
+    assert_eq!(floor_head(&f.seed).await, head);
 }
