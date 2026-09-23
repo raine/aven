@@ -386,6 +386,64 @@ async fn selected_images_round_trip_and_retry_exact_persisted_ciphertext_after_r
 }
 
 #[tokio::test]
+async fn authentic_state_only_package_rejects_selected_image_capture_without_rewrite() {
+    let (source_dir, source, task_id) = source_with_history().await;
+    add_selected_images(source_dir.path(), &source, &task_id).await;
+    let capture = source
+        .capture_local_shared_state_never_dispatched(source_dir.path())
+        .await
+        .unwrap();
+    let key = package_key();
+    let state_only = encrypt_package(
+        capture.candidate_id(),
+        decode_context_id(capture.stream_id(), "stream").unwrap(),
+        package_context(),
+        capture.shared_state(),
+        &[],
+        &key,
+    )
+    .unwrap();
+    let mut conn = source.acquire_writer().await.unwrap();
+    let mut tx = crate::db::begin_immediate(&mut conn).await.unwrap();
+    persist_package(&mut tx, &state_only).await.unwrap();
+    tx.commit().await.unwrap();
+    let frozen: Vec<(i64, i64, Vec<u8>)> = sqlx::query_as(
+        "SELECT class, chunk_index, record
+         FROM local_shared_capture_package_chunks ORDER BY class, chunk_index",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap();
+    drop(conn);
+
+    let error = source
+        .package_local_shared_state_never_dispatched(source_dir.path(), package_context(), &key)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("image-coverage-mismatch"));
+
+    let mut conn = source.acquire_reader().await.unwrap();
+    let after: Vec<(i64, i64, Vec<u8>)> = sqlx::query_as(
+        "SELECT class, chunk_index, record
+         FROM local_shared_capture_package_chunks ORDER BY class, chunk_index",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap();
+    let counts: (i64, i64, i64) = sqlx::query_as(
+        "SELECT
+             (SELECT count(*) FROM local_shared_capture_packages),
+             (SELECT count(*) FROM local_shared_capture_package_images),
+             (SELECT count(*) FROM local_shared_capture_pins)",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+    assert_eq!(after, frozen);
+    assert_eq!(counts, (1, 0, 2));
+}
+
+#[tokio::test]
 async fn selected_source_failure_preserves_pins_and_allows_cancellation_cleanup() {
     for corrupt in [false, true] {
         let (source_dir, source, task_id) = source_with_history().await;

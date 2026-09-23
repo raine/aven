@@ -342,13 +342,7 @@ impl Database {
 
         let mut conn = self.acquire_writer().await?;
         let mut tx = db::begin_immediate(&mut conn).await?;
-        if let Some(package) = load_package(&mut tx, &candidate_id).await? {
-            tx.commit().await?;
-            validate_package_identity(&package, context, stream_id)?;
-            decrypt_package(&package, key)?;
-            return Ok(package);
-        }
-        let selected: Vec<(String, String)> = sqlx::query_as(
+        let selected_inventory: Vec<(String, String)> = sqlx::query_as(
             "SELECT sha256, classification FROM local_shared_capture_images
              WHERE candidate_id = ? AND classification != 'unavailable'
              ORDER BY sha256",
@@ -356,12 +350,22 @@ impl Database {
         .bind(&candidate_id)
         .fetch_all(&mut *tx)
         .await?;
+        if let Some(package) = load_package(&mut tx, &candidate_id).await? {
+            tx.commit().await?;
+            validate_package_identity(&package, context, stream_id)?;
+            decrypt_package(&package, key)?;
+            validate_package_image_coverage(&package, &selected_inventory)?;
+            return Ok(package);
+        }
         tx.commit().await?;
         drop(conn);
 
-        let selected =
-            load_selected_image_plaintexts(blob_dir, selected, &capture.shared_state().snapshot)
-                .await?;
+        let selected = load_selected_image_plaintexts(
+            blob_dir,
+            &selected_inventory,
+            &capture.shared_state().snapshot,
+        )
+        .await?;
         let package = encrypt_package(
             &candidate_id,
             stream_id,
@@ -386,6 +390,7 @@ impl Database {
             tx.commit().await?;
             validate_package_identity(&existing, context, stream_id)?;
             decrypt_package(&existing, key)?;
+            validate_package_image_coverage(&existing, &selected_inventory)?;
             return Ok(existing);
         }
         persist_package(&mut tx, &package).await?;
@@ -704,6 +709,31 @@ fn decrypt_manifest_images(
         });
     }
     Ok(output)
+}
+
+fn validate_package_image_coverage(
+    package: &EncryptedLocalSharedStatePackage,
+    selected_inventory: &[(String, String)],
+) -> Result<()> {
+    let stored = package
+        .image_mappings
+        .iter()
+        .map(|mapping| {
+            (
+                mapping.source_sha256.as_str(),
+                mapping.classification.as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let expected = selected_inventory
+        .iter()
+        .map(|(sha256, classification)| (sha256.as_str(), classification.as_str()))
+        .collect::<Vec<_>>();
+    ensure!(
+        stored == expected,
+        "error encrypted-local-shared-package-image-coverage-mismatch hint=cancel-never-dispatched-capture-and-recapture"
+    );
+    Ok(())
 }
 
 fn validate_package_identity(
@@ -1090,7 +1120,7 @@ fn aggregate_commitment(chunks: &[EncryptedChunk]) -> [u8; 32] {
 
 async fn load_selected_image_plaintexts(
     blob_dir: &Path,
-    selected: Vec<(String, String)>,
+    selected: &[(String, String)],
     snapshot: &AvenExport,
 ) -> Result<Vec<SelectedImagePlaintext>> {
     ensure!(
@@ -1111,9 +1141,9 @@ async fn load_selected_image_plaintexts(
             .tables
             .blob_inventory
             .iter()
-            .find(|row| row.sha256 == source_sha256)
+            .find(|row| row.sha256 == source_sha256.as_str())
             .context("error encrypted-local-shared-package-image-inventory-missing")?;
-        let path = crate::attachments::storage::object_path(blob_dir, &source_sha256)?;
+        let path = crate::attachments::storage::object_path(blob_dir, source_sha256)?;
         let bytes = crate::attachments::blocking::run(move || {
             Ok::<_, anyhow::Error>(Zeroizing::new(std::fs::read(path)?))
         })
@@ -1126,7 +1156,7 @@ async fn load_selected_image_plaintexts(
             "error encrypted-local-shared-package-selected-image-size-mismatch"
         );
         ensure!(
-            crate::attachments::storage::sha256_hex(&bytes) == source_sha256,
+            crate::attachments::storage::sha256_hex(&bytes) == source_sha256.as_str(),
             "error encrypted-local-shared-package-selected-image-hash-mismatch"
         );
         let media_type = inventory.media_type.clone();
@@ -1141,7 +1171,7 @@ async fn load_selected_image_plaintexts(
             .tables
             .task_attachments
             .iter()
-            .filter(|attachment| attachment.sha256 == source_sha256)
+            .filter(|attachment| attachment.sha256 == source_sha256.as_str())
         {
             ensure!(
                 attachment.media_type == inventory.media_type
@@ -1159,8 +1189,8 @@ async fn load_selected_image_plaintexts(
             "error encrypted-local-shared-package-images-too-large"
         );
         output.push(SelectedImagePlaintext {
-            source_sha256,
-            classification,
+            source_sha256: source_sha256.clone(),
+            classification: classification.clone(),
             bytes,
         });
     }
