@@ -812,11 +812,14 @@ async fn server_worker() {
         },
     ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let ready_tmp = root.join("ready.tmp");
     std::fs::write(
-        root.join("ready"),
+        &ready_tmp,
         format!("http://{}", listener.local_addr().unwrap()),
     )
     .unwrap();
+    // The parent treats any readable ready file as a complete origin.
+    std::fs::rename(ready_tmp, root.join("ready")).unwrap();
     axum::serve(listener, app).await.unwrap();
 }
 
