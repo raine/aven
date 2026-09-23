@@ -2571,3 +2571,4 @@ async fn checkpoint_snapshot_note_keeps_source_edit_between_capture_and_adoption
 mod relations;
 
 mod dependencies;
+mod metadata_limits;

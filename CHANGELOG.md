@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Fix: Concurrent metadata additions no longer stall task sync when their combined count or size exceeds local editing limits. All values are retained, and over-limit tasks can be reduced incrementally.
+
 - Fix: Concurrent dependency changes converge in encrypted sync while preserving cycle protection and later pending edits.
 
 - Fix: Concurrent task label changes converge in encrypted sync without overwriting later pending changes.

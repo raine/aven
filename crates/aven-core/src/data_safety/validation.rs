@@ -506,7 +506,6 @@ pub(crate) fn validate_shared_snapshot(export: &AvenExport) -> Result<()> {
         );
     }
     let mut task_metadata_keys = HashSet::new();
-    let mut task_metadata_usage: HashMap<(WorkspaceId, TaskId), (usize, usize)> = HashMap::new();
     for value in &export.tables.task_metadata {
         ensure!(
             task_ids
@@ -530,19 +529,7 @@ pub(crate) fn validate_shared_snapshot(export: &AvenExport) -> Result<()> {
             )),
             "error invalid-export-snapshot task metadata identity is duplicated"
         );
-        let usage = task_metadata_usage
-            .entry((value.workspace_id.clone(), value.task_id.clone()))
-            .or_default();
-        usage.0 += 1;
-        usage.1 += value.value.len();
     }
-    ensure!(
-        task_metadata_usage.values().all(|(count, bytes)| {
-            *count <= crate::metadata::MAX_METADATA_VALUES
-                && *bytes <= crate::metadata::MAX_METADATA_TOTAL_BYTES
-        }),
-        "error invalid-export-snapshot task metadata limits exceeded"
-    );
 
     let series_ids = export
         .tables

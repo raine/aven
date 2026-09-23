@@ -226,3 +226,60 @@ async fn selected_variants_and_removal_share_validation() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn over_limit_resolution_allows_only_non_worsening_metrics() {
+    for (remote, selection, accepted) in [
+        (Some("remote"), 0, true),
+        (Some("remote"), 1, true),
+        (None, 1, true),
+        (Some("remote"), 2, true),
+        (Some("remote"), 3, false),
+    ] {
+        let (_temp, mut conn) = crate::test_support::test_conn().await;
+        let values = (0..127)
+            .map(|i| input(&format!("key{i}"), "x".repeat(256)))
+            .collect();
+        let (w, task, field, identity) = fixture(&mut conn, values, false, remote).await;
+        // Synthetic retained values isolate resolution at count=130, bytes=33031.
+        // Real concurrent acceptance is exercised by the transport regressions.
+        for key in ["extra-a", "extra-b"] {
+            let extra = crate::metadata::resolve_or_create_metadata_field(&mut conn, &w, key)
+                .await
+                .unwrap();
+            sqlx::query(
+                "INSERT INTO task_metadata(workspace_id, task_id, field_id, value, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, 't', 't')",
+            )
+            .bind(&w.id).bind(&task).bind(&extra.id).bind("x".repeat(256))
+            .execute(&mut *conn).await.unwrap();
+        }
+        let before = snapshot(&mut conn).await;
+        let resolution = match selection {
+            0 => ConflictResolutionValue::Local,
+            1 => ConflictResolutionValue::Remote,
+            2 => ConflictResolutionValue::Explicit("short"),
+            _ => ConflictResolutionValue::Explicit("growth!!"),
+        };
+        let result =
+            resolve_metadata_conflict_value(&mut conn, &w, &task, &identity, field, resolution)
+                .await;
+        if accepted {
+            result.unwrap();
+            let (count, bytes): (i64, i64) = sqlx::query_as(
+                "SELECT count(*), sum(length(CAST(value AS BLOB))) FROM task_metadata WHERE task_id = ?",
+            ).bind(&task).fetch_one(&mut *conn).await.unwrap();
+            assert!(count > 128 && count <= 130);
+            assert!(bytes > 32768 && bytes <= 33031);
+        } else {
+            assert!(
+                result
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("metadata-values-too-large")
+            );
+            assert_eq!(snapshot(&mut conn).await, before);
+        }
+    }
+}

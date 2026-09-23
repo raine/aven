@@ -62,12 +62,6 @@ pub(super) async fn report_with_connection(conn: &mut SqliteConnection) -> Resul
     );
     checks.push(count_check(
         conn,
-        "task metadata aggregate limits",
-        "SELECT count(*) FROM (SELECT workspace_id, task_id FROM task_metadata GROUP BY workspace_id, task_id HAVING count(*) > 128 OR sum(length(CAST(value AS BLOB))) > 32768)",
-    )
-    .await?);
-    checks.push(count_check(
-        conn,
         "recurrence metadata series",
         "SELECT count(*) FROM recurrence_series_metadata m LEFT JOIN recurrence_series s ON s.workspace_id = m.workspace_id AND s.id = m.series_id WHERE s.id IS NULL",
     )

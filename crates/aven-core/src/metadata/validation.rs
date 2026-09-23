@@ -61,6 +61,31 @@ pub(super) fn validate_metadata_result_limits(
     Ok(())
 }
 
+// Task aggregates are local admission limits, not bounds on concurrent merged state.
+fn validate_task_metadata_result_limits(
+    existing: impl IntoIterator<Item = (String, String)>,
+    set: &[TaskMetadataInput],
+    remove: &[String],
+) -> Result<()> {
+    let mut values = existing.into_iter().collect::<HashMap<_, _>>();
+    let before_count = values.len();
+    let before_bytes = values.values().map(String::len).sum::<usize>();
+    for key in remove {
+        values.remove(&normalize_metadata_key(key)?);
+    }
+    for input in set {
+        values.insert(normalize_metadata_key(&input.key)?, input.value.clone());
+    }
+    if values.len() > MAX_METADATA_VALUES && values.len() > before_count {
+        bail!("error too-many-metadata-values limit={MAX_METADATA_VALUES}");
+    }
+    let total_bytes = values.values().map(String::len).sum::<usize>();
+    if total_bytes > MAX_METADATA_TOTAL_BYTES && total_bytes > before_bytes {
+        bail!("error metadata-values-too-large limit={MAX_METADATA_TOTAL_BYTES}");
+    }
+    Ok(())
+}
+
 pub(crate) async fn validate_recurrence_metadata_result(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
@@ -103,10 +128,13 @@ pub(crate) async fn validate_task_metadata_result(
     .bind(task_id)
     .fetch_all(&mut *conn)
     .await?;
-    validate_metadata_result_limits(
+    validate_task_metadata_result_limits(
         rows.into_iter()
             .map(|row| (row.get::<String, _>("key"), row.get::<String, _>("value"))),
         set,
         remove,
     )
 }
+
+#[cfg(test)]
+mod tests;

@@ -346,21 +346,6 @@ async fn apply_task_value(
     }
     if present {
         let value = str_payload(&change.payload, "value")?;
-        let (count, bytes): (i64, i64) = sqlx::query_as(
-            "SELECT COUNT(*), COALESCE(SUM(length(CAST(value AS BLOB))), 0)
-             FROM task_metadata
-             WHERE workspace_id = ? AND task_id = ? AND field_id != ?",
-        )
-        .bind(&workspace_id)
-        .bind(&task_id)
-        .bind(&field.id)
-        .fetch_one(&mut *conn)
-        .await?;
-        if count + 1 > crate::metadata::MAX_METADATA_VALUES as i64
-            || bytes + value.len() as i64 > crate::metadata::MAX_METADATA_TOTAL_BYTES as i64
-        {
-            bail!("error invalid-sync-change task-metadata-limit");
-        }
         sqlx::query(
             "INSERT INTO task_metadata(
                  workspace_id, task_id, field_id, value, created_at, updated_at
