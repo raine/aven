@@ -191,6 +191,17 @@ struct ManifestChunk {
 }
 
 impl Database {
+    /// Reports whether the durable capture already owns frozen encrypted bytes.
+    pub async fn has_local_shared_state_package_never_dispatched(&self) -> Result<bool> {
+        let mut conn = self.acquire_reader().await?;
+        let exists: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM local_shared_capture_packages LIMIT 1)",
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        Ok(exists != 0)
+    }
+
     /// Encrypts the durable never-dispatched capture or returns its frozen package.
     ///
     /// The first successful call persists every ciphertext record atomically.

@@ -26,6 +26,7 @@ pub enum ProtectedLocalKeyStoreErrorKind {
     Unavailable,
     Corrupt,
     WriteFailed,
+    WrongDatabase,
     UnsupportedPlatform,
 }
 
@@ -58,6 +59,9 @@ impl fmt::Display for ProtectedLocalKeyStoreError {
             }
             ProtectedLocalKeyStoreErrorKind::WriteFailed => {
                 "protected local key storage could not be saved"
+            }
+            ProtectedLocalKeyStoreErrorKind::WrongDatabase => {
+                "protected local key store belongs to a different database installation"
             }
             ProtectedLocalKeyStoreErrorKind::UnsupportedPlatform => {
                 "protected local key storage is unsupported on this platform"
@@ -166,21 +170,29 @@ impl ProtectedLocalKeyStore {
         }
     }
 
-    /// Loads an established authority without creating one.
+    /// Loads an established authority without generating key material.
+    ///
+    /// If key persistence completed before its nonsecret marker, this completes
+    /// the marker using the existing key identity.
     pub fn load_required(&self) -> StoreResult<ProtectedLocalPackageKey> {
         prepare_directory(&self.directory)?;
         let _guard = self.lock()?;
-        let marker = read_marker(&self.marker_path())?
-            .ok_or_else(|| error(ProtectedLocalKeyStoreErrorKind::MissingAuthority))?;
+        let marker = read_marker(&self.marker_path())?;
         let bytes = self
             .backend
             .load()?
             .ok_or_else(|| error(ProtectedLocalKeyStoreErrorKind::MissingAuthority))?;
         let key = decode_keyring(bytes)?;
-        if marker != key.context {
-            return Err(error(ProtectedLocalKeyStoreErrorKind::Corrupt));
+        match marker {
+            Some(expected) if expected != key.context => {
+                Err(error(ProtectedLocalKeyStoreErrorKind::Corrupt))
+            }
+            Some(_) => Ok(key),
+            None => {
+                write_marker(&self.marker_path(), key.context)?;
+                Ok(key)
+            }
         }
-        Ok(key)
     }
 
     /// Creates or reuses protected key material before freezing package bytes.
@@ -188,13 +200,32 @@ impl ProtectedLocalKeyStore {
         &self,
         database: &Database,
     ) -> Result<EncryptedLocalSharedStatePackage, anyhow::Error> {
-        let protected = self.load_or_create()?;
+        self.validate_database(database)?;
+        let protected = if database
+            .has_local_shared_state_package_never_dispatched()
+            .await?
+        {
+            self.load_required()?
+        } else {
+            self.load_or_create()?
+        };
         database
             .package_local_shared_state_never_dispatched(
                 protected.context(),
                 protected.package_key(),
             )
             .await
+    }
+
+    fn validate_database(&self, database: &Database) -> StoreResult<()> {
+        let canonical = database
+            .path()
+            .canonicalize()
+            .map_err(|_| error(ProtectedLocalKeyStoreErrorKind::Unavailable))?;
+        if database_account(&canonical) != self.account {
+            return Err(error(ProtectedLocalKeyStoreErrorKind::WrongDatabase));
+        }
+        Ok(())
     }
 
     fn marker_path(&self) -> PathBuf {
@@ -578,8 +609,10 @@ mod tests {
             .await
             .unwrap();
         let reopened = isolated_store(database.path(), &key_root);
+        fs::remove_file(reopened.marker_path()).unwrap();
         let retry = reopened.package_local_capture(&database).await.unwrap();
         assert_eq!(first, retry);
+        assert!(reopened.marker_path().exists());
         let key_path = match &reopened.backend {
             Backend::File(backend) => backend.path.clone(),
             _ => unreachable!(),
@@ -638,6 +671,54 @@ mod tests {
             entry.read_to_end(&mut bytes).unwrap();
             assert!(!bytes.windows(raw_key.len()).any(|window| window == raw_key));
         }
+    }
+
+    #[tokio::test]
+    async fn existing_package_never_regenerates_destroyed_authority() {
+        let temp = tempfile::tempdir().unwrap();
+        let database = captured_database(temp.path()).await;
+        let key_root = temp.path().join("authority");
+        let store = isolated_store(database.path(), &key_root);
+        store.package_local_capture(&database).await.unwrap();
+        let key_path = match &store.backend {
+            Backend::File(backend) => backend.path.clone(),
+            _ => unreachable!(),
+        };
+        fs::remove_file(&key_path).unwrap();
+        fs::remove_file(store.marker_path()).unwrap();
+
+        let error = store.package_local_capture(&database).await.unwrap_err();
+        assert_eq!(
+            error
+                .downcast_ref::<ProtectedLocalKeyStoreError>()
+                .unwrap()
+                .kind(),
+            ProtectedLocalKeyStoreErrorKind::MissingAuthority
+        );
+        assert!(!key_path.exists());
+        assert!(!store.marker_path().exists());
+    }
+
+    #[tokio::test]
+    async fn package_store_rejects_a_different_database_before_storage_effects() {
+        let first_root = tempfile::tempdir().unwrap();
+        let first = Database::open(&first_root.path().join("first.sqlite"))
+            .await
+            .unwrap();
+        let second_root = tempfile::tempdir().unwrap();
+        let second = captured_database(second_root.path()).await;
+        let key_root = first_root.path().join("authority");
+        let store = isolated_store(first.path(), &key_root);
+
+        let error = store.package_local_capture(&second).await.unwrap_err();
+        assert_eq!(
+            error
+                .downcast_ref::<ProtectedLocalKeyStoreError>()
+                .unwrap()
+                .kind(),
+            ProtectedLocalKeyStoreErrorKind::WrongDatabase
+        );
+        assert!(!key_root.exists());
     }
 
     #[test]
