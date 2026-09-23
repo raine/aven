@@ -1323,3 +1323,125 @@ async fn server_worker() {
     std::fs::write(root.join("tail-server-ready"), b"ready").unwrap();
     task.await.unwrap();
 }
+
+#[tokio::test]
+async fn stalled_http_bodies_time_out_and_release_both_admission_permits() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn read_response(stream: &mut tokio::net::TcpStream) -> String {
+        let mut bytes = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stream.read_to_end(&mut bytes),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let response = String::from_utf8(bytes).unwrap();
+        assert!(
+            response
+                .to_ascii_lowercase()
+                .contains("cache-control: no-store\r\n")
+        );
+        response
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let db = Database::open(&root.path().join("server.sqlite"))
+        .await
+        .unwrap();
+    let server = Arc::new(Server {
+        db,
+        gate: tokio::sync::Semaphore::new(2),
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new()
+        .route(PATH, post(handle))
+        .with_state(server.clone());
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    // The syntactically valid bearer has no admitted authority. Neither body
+    // supplies even a JSON byte, so admission must be bounded before authentication.
+    let headers = format!(
+        "POST {PATH} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nAuthorization: Bearer {}\r\nContent-Length: 100\r\nConnection: close\r\n\r\n",
+        "0".repeat(64)
+    );
+    let mut first = tokio::net::TcpStream::connect(address).await.unwrap();
+    let mut second = tokio::net::TcpStream::connect(address).await.unwrap();
+    first.write_all(headers.as_bytes()).await.unwrap();
+    second.write_all(headers.as_bytes()).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while server.gate.available_permits() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    let complete = headers.replace("Content-Length: 100", "Content-Length: 2") + "{}";
+    let mut busy = tokio::net::TcpStream::connect(address).await.unwrap();
+    busy.write_all(complete.as_bytes()).await.unwrap();
+    let response = read_response(&mut busy).await;
+    assert!(response.starts_with("HTTP/1.1 503"));
+    assert!(response.ends_with("encrypted_tail_busy"));
+    assert_eq!(server.gate.available_permits(), 0);
+
+    // Advance the server clock rather than waiting for a client-side timeout.
+    tokio::time::pause();
+    tokio::time::advance(REQUEST_TIMEOUT).await;
+    tokio::time::resume();
+    for stream in [&mut first, &mut second] {
+        let response = read_response(stream).await;
+        assert!(response.starts_with("HTTP/1.1 408"));
+        assert!(response.ends_with("encrypted_tail_timeout"));
+        assert!(!response.contains(&"0".repeat(64)));
+    }
+    assert_eq!(server.gate.available_permits(), 2);
+    let mut admitted = tokio::net::TcpStream::connect(address).await.unwrap();
+    admitted.write_all(complete.as_bytes()).await.unwrap();
+    let response = read_response(&mut admitted).await;
+    assert!(response.starts_with("HTTP/1.1 409"));
+    assert!(response.ends_with("encrypted_tail_refused"));
+    assert_eq!(server.gate.available_permits(), 2);
+    task.abort();
+    let _ = task.await;
+}
+
+#[tokio::test]
+async fn successful_tail_response_is_not_cacheable() {
+    let f = fixture().await;
+    let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
+    let request = Request::builder()
+        .method("POST")
+        .uri(PATH)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(
+            header::AUTHORIZATION,
+            format!("Bearer {}", hex::encode(inputs.bearer.expose())),
+        )
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&Envelope {
+                context: inputs.authority.context.clone(),
+                correlation: [0; 32],
+                operation: Operation::Pull {
+                    after: inputs.authority.prefix,
+                    limit: 1,
+                    watermark: None,
+                },
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+    let response = handle(
+        State(Arc::new(Server {
+            db: f.server.clone(),
+            gate: tokio::sync::Semaphore::new(2),
+        })),
+        request,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+}

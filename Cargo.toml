@@ -83,6 +83,7 @@ security-framework-sys = { version = "2.15", default-features = false }
 notify-rust = "4"
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 aven-core = { path = "crates/aven-core", version = "=0.1.32", features = ["test-support"] }
 oxipng.workspace = true
 zstd.workspace = true

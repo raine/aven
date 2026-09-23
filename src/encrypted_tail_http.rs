@@ -19,6 +19,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 const PATH: &str = "/e2ee/tail/v1";
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Envelope<T> {
@@ -39,25 +40,34 @@ pub fn router(db: Database) -> Router {
         }))
 }
 async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response {
-    let Ok(_permit) = server.gate.try_acquire() else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
-    match dispatch(&server.db, request).await {
-        Ok(reply) => match serde_json::to_vec(&reply) {
-            Ok(bytes) if bytes.len() <= tail::RESPONSE_LIMIT => {
-                ([(header::CONTENT_TYPE, "application/json")], bytes).into_response()
+    let mut response = match server.gate.try_acquire() {
+        Ok(_permit) => match tokio::time::timeout(REQUEST_TIMEOUT, dispatch(&server.db, request))
+            .await
+        {
+            Ok(Ok(reply)) => match serde_json::to_vec(&reply) {
+                Ok(bytes) if bytes.len() <= tail::RESPONSE_LIMIT => {
+                    ([(header::CONTENT_TYPE, "application/json")], bytes).into_response()
+                }
+                _ => (StatusCode::INTERNAL_SERVER_ERROR, "encrypted_tail_refused").into_response(),
+            },
+            Ok(Err(e)) => {
+                let category = if e.to_string() == "error encrypted-tail-prefix-identity-collision"
+                {
+                    "prefix_identity_collision"
+                } else {
+                    "encrypted_tail_refused"
+                };
+                (StatusCode::CONFLICT, category).into_response()
             }
-            _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Err(_) => (StatusCode::REQUEST_TIMEOUT, "encrypted_tail_timeout").into_response(),
         },
-        Err(e) => {
-            let category = if e.to_string() == "error encrypted-tail-prefix-identity-collision" {
-                "prefix_identity_collision"
-            } else {
-                "encrypted_tail_refused"
-            };
-            (StatusCode::CONFLICT, category).into_response()
-        }
-    }
+        Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "encrypted_tail_busy").into_response(),
+    };
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    response
 }
 async fn dispatch(db: &Database, request: Request) -> Result<Envelope<Reply>> {
     ensure!(
