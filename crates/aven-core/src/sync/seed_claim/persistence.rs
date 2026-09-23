@@ -19,6 +19,11 @@ impl Database {
         let incoming = codec::claim_record(request)?;
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
+        let genesis_only: Option<bool> =
+            sqlx::query_scalar("SELECT genesis_only FROM server_seed_claim WHERE singleton = 1")
+                .fetch_optional(&mut *tx)
+                .await?;
+        ensure!(genesis_only != Some(false), "error seed-claim-retired");
         let stored: Option<Vec<u8>> =
             sqlx::query_scalar("SELECT genesis FROM server_seed_claim WHERE singleton = 1")
                 .fetch_optional(&mut *tx)

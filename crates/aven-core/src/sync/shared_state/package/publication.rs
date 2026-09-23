@@ -59,6 +59,7 @@ mod catalog;
 mod codec;
 mod domain;
 mod projection;
+pub(crate) mod staging;
 
 use super::super::{NeverDispatchedLocalSharedCapture, SharedStateCapture};
 use super::{self as crypto, EncryptedLocalSharedStatePackage, LocalSharedStatePackageKey};

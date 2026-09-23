@@ -1,5 +1,6 @@
 mod apply;
 mod blob;
+pub mod bootstrap_staging;
 mod persistence;
 mod planner;
 pub mod protocol;

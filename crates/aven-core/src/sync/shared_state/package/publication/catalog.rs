@@ -102,25 +102,39 @@ impl Artifact {
         valid(records.len() == self.chunks.len())?;
         let mut digest = sha2::Sha256::new();
         use sha2::Digest;
-        for (index, (record, chunk)) in records.iter().zip(&self.chunks).enumerate() {
-            valid(number(record.len())? == chunk.length && crypto::sha256(record) == chunk.hash)?;
-            let (header, _) = crypto::split_record(record).map_err(|_| Error::Invalid)?;
-            let nonce = crypto::validate_chunk_header(
-                header,
-                context,
-                stream,
-                id,
-                family,
-                class,
-                u32::try_from(index).map_err(|_| Error::Invalid)?,
-                u32::try_from(records.len()).map_err(|_| Error::Invalid)?,
-                self.total,
-            )
-            .map_err(|_| Error::Invalid)?;
-            valid(nonce == chunk.nonce)?;
+        for (index, record) in records.iter().enumerate() {
+            self.verify_chunk(record, index, context, stream, id, family, class)?;
             digest.update(record);
         }
         valid(<[u8; 32]>::from(digest.finalize()) == self.aggregate)
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn verify_chunk(
+        &self,
+        record: &[u8],
+        index: usize,
+        context: LocalSharedStatePackageContext,
+        stream: [u8; 32],
+        id: [u8; 32],
+        family: u8,
+        class: u8,
+    ) -> Result<()> {
+        let chunk = self.chunks.get(index).ok_or(Error::Invalid)?;
+        valid(number(record.len())? == chunk.length && crypto::sha256(record) == chunk.hash)?;
+        let (header, _) = crypto::split_record(record).map_err(|_| Error::Invalid)?;
+        let nonce = crypto::validate_chunk_header(
+            header,
+            context,
+            stream,
+            id,
+            family,
+            class,
+            u32::try_from(index).map_err(|_| Error::Invalid)?,
+            u32::try_from(self.chunks.len()).map_err(|_| Error::Invalid)?,
+            self.total,
+        )
+        .map_err(|_| Error::Invalid)?;
+        valid(nonce == chunk.nonce)
     }
     pub fn encrypted(&self, records: &[Vec<u8>]) -> EncryptedArtifact {
         EncryptedArtifact {

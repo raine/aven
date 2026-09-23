@@ -94,6 +94,12 @@ impl Genesis {
         hash(&self.record)
     }
 
+    pub(crate) fn authorizes_bearer(&self, token: &Secret) -> bool {
+        bool::from(
+            credential_verifier(self.context.vault_id, self.device, token).ct_eq(&self.verifier),
+        )
+    }
+
     pub fn context(&self) -> LocalSharedStatePackageContext {
         self.context
     }
