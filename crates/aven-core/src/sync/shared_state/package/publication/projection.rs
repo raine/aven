@@ -5,6 +5,7 @@ use super::codec::*;
 use super::domain::Mapping;
 use super::{Error, Result};
 use crate::data_safety::export_types::ExportTables;
+use crate::sync::persistence::parent_liveness::ParentState;
 
 pub(super) fn prefix(t: &ExportTables) -> Result<Vec<(u64, String)>> {
     let mut rows = t
@@ -65,7 +66,7 @@ pub(super) fn images(t: &ExportTables, mappings: &[Mapping], mut result: Images)
     // preserves protection. Final deleted state alone cannot permit cleanup.
     let mut history = t.changes.iter().collect::<Vec<_>>();
     history.sort_by_key(|r| r.server_seq);
-    let mut states: HashMap<(String, String), (Option<String>, bool, bool)> = HashMap::new();
+    let mut states: HashMap<(String, String), ParentState> = HashMap::new();
     for change in history {
         if change.entity_type != "task"
             || !(change.op_type == "create_task"
@@ -79,24 +80,27 @@ pub(super) fn images(t: &ExportTables, mappings: &[Mapping], mut result: Images)
         let workspace = payload["workspace_id"].as_str().ok_or(Error::Invalid)?;
         let state = states
             .entry((workspace.to_owned(), change.entity_id.clone()))
-            .or_insert((None, false, false));
-        if change.op_type == "create_task" {
-            if state.0.is_none() {
-                state.0 = Some(
+            .or_default();
+        state.apply(
+            if change.op_type == "create_task" {
+                0
+            } else if change.op_type == "resolve_field" {
+                2
+            } else {
+                1
+            },
+            &change.change_id,
+            payload["value"].as_str() == Some("1"),
+            if change.op_type == "create_task" {
+                Some(
                     payload["task_field_version_seed"]
                         .as_str()
-                        .unwrap_or(&change.change_id)
-                        .to_owned(),
-                );
-            }
-        } else if state.0.is_none()
-            || (change.op_type != "resolve_field" && change.base_version != state.0)
-        {
-            state.2 = true;
-        } else {
-            state.1 = payload["value"].as_str() == Some("1");
-            state.0 = Some(change.change_id.clone());
-        }
+                        .unwrap_or(&change.change_id),
+                )
+            } else {
+                change.base_version.as_deref()
+            },
+        );
     }
     let versions = t
         .field_versions
@@ -121,11 +125,11 @@ pub(super) fn images(t: &ExportTables, mappings: &[Mapping], mut result: Images)
         let key = (task.workspace_id.as_str(), task.id.as_str());
         let version = versions.get(&key).map(|v| (*v).to_owned());
         let protected = match states.get(&identity) {
-            Some((observed, deleted, contested)) => {
-                *contested
-                    || observed.is_none()
-                    || *observed != version
-                    || *deleted != (task.deleted != 0)
+            Some(state) => {
+                state.protected
+                    || state.version.is_none()
+                    || state.version != version
+                    || state.deleted != (task.deleted != 0)
             }
             None => true,
         } || conflicts.contains(&key);

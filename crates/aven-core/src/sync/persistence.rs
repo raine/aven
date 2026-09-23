@@ -1,16 +1,16 @@
 use super::wire::{ChangeWire, PushAck, SyncRequest, SyncResponse};
 
 mod blobs;
-mod changes;
+pub(crate) mod changes;
 mod client;
-mod parent_liveness;
+pub(crate) mod parent_liveness;
 mod server;
 mod status;
-use blobs::{
+pub(in crate::sync) use blobs::{
     apply_server_blob_reference, collect_attachment_liveness_hashes,
     ensure_attachment_blobs_admitted, prepare_server_blobs,
 };
-use changes::{
+pub(in crate::sync) use changes::{
     epic_change_workspace, insert_wire_change, is_epic_change, load_assigned_change_ids,
     load_existing_change_ids, reconcile_acknowledged_epic_memberships, reconcile_epic_change,
     update_change_server_seq, update_change_server_seqs_if_missing, verify_existing_change,

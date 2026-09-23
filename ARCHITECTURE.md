@@ -39,7 +39,7 @@ Apple-side validation, not just bundled host tests.
 | Task metadata | workspace field definitions, task and recurrence-template values, field rename, metadata search and filters, sync aliases and conflicts, undo, and portable data | `crates/aven-core/src/metadata.rs`, `crates/aven-core/src/metadata/`, `crates/aven-core/src/sync/apply/metadata.rs`, `src/commands/metadata.rs`, `src/commands/tasks.rs` | Metadata fields have stable random IDs and canonical workspace-unique keys. Relations and conflict identities use field IDs so rename does not rewrite values. Recurrence template values copy into later materialized tasks. Full CLI, consumer, and TUI detail surfaces expose metadata; task summaries omit values. `src/tui/app_metadata.rs` coordinates the task field editor in `src/tui/overlay/metadata.rs` with captured task identity. Core metadata inputs can require an existing field identity and key within the write transaction. |
 | Image attachments | content-addressed object storage, image validation and optimization, attachment metadata, lifecycle policy, leases, atomic task attachment mutations, attachment read models, terminal previews, and secure viewer exports | `crates/aven-core/src/attachments/`, `crates/aven-core/src/operations/attachments.rs`, `crates/aven-core/src/operations/tasks/`, `crates/aven-core/src/task_enrichment/`, `src/attachments/` | Core owns durable attachment state and object lifecycle. Root modules own filesystem input and output, terminal preview rendering, secure temporary exports, configuration, and transport. |
 | Config and routing | config files, managed config text edits, path mappings, workspace resolution, and project inference | `src/config.rs`, `src/config/`, `src/config_edit.rs`, `src/workspaces.rs`, `src/projects.rs`, `src/routing.rs`, `src/operations/projects.rs` | CLI workspace selection and project inference share `InvocationRouting`, borrowing loaded config and caching canonical cwd and Git root on demand. Application code passes resolved routing inputs to the core. Managed entry text surgery belongs in `src/config_edit.rs`. |
-| Sync and daemon | Reqwest and Axum transport, protected local package keys, HTTP-client-independent sync sessions, shared-state capture and installation, cross-process host coordination, protocol validation and persistence, observational status reports, launchd service management, wake policy and loop | `src/protected_local_keys.rs`, `src/sync.rs`, `src/sync/`, `src/status.rs`, `src/daemon.rs`, `src/daemon/`, `crates/aven-core/src/sync/` | `src/protected_local_keys.rs` is the host boundary for the local capture package's vault, generation, and key. It scopes authority to a canonical database installation, uses a non-synchronizing login Keychain item on macOS or an owner-only state file on Linux, and persists authority before package creation. Root sync modules own Reqwest, Axum, host scheduling, and typed privacy-safe status projection. Core `SyncSession` prepares HTTP-shaped byte exchanges and owns outstanding page state, decoding, validation, acknowledgements, cursor advancement, remote apply, and conflict generation. `crates/aven-core/src/sync/shared_state.rs` captures materialized shared state plus retained history at one SQLite boundary, persists the single never-dispatched local capture with exact history and durable image ownership, and atomically installs shared state into a fresh database. `crates/aven-core/src/sync/shared_state/package.rs` owns the single durable never-dispatched upload package. Its `publication.rs` codec (exported as `sync::bootstrap_format`) encodes the domain, descriptor, three catalogs and encrypted manifest; the capture candidate ID is the bootstrap artifact ID. SQLite atomically freezes all exact bytes, image mappings and a journal-owned descriptor commitment. Reopen authenticates the frozen representation against the immutable capture without rereading live domain or image files. Missing/corrupt frozen data fails closed; local-only packages without publication components require explicit cancellation/recapture, never rewriting under the same ID. `EncryptedLocalSharedStatePackage::upload_package` returns exact components for keyless validation or context-bound client authentication. The package includes selected current and extra image bytes; validated unavailable metadata has no invented object mapping. Image objects use random identities and generation-derived keys. Private plaintext-hash mappings remain local and in encrypted domain records, not public descriptors. Core accepts protected key material and never persists it. The host accepts an explicit membership predecessor as context only, not authorization. Local package context alone is not claim authority. `sync/seed_claim.rs` owns the fixed signed genesis, HPKE self-package validation and one-vault SQLite admission; `src/protected_local_keys/seed.rs` persists installation-bound seed keys, bearer and exact genesis before use. `sync/bootstrap_staging.rs` authenticates current supported membership, stages bounded exact bytes, and atomically publishes the fixed signed genesis successor with complete catalogs, image ownership and allocator=N. Immutable outcomes are separate from current-head authority. `shared_state/adoption.rs` and `src/protected_local_keys/adoption.rs` own original-seed adoption with SQLite-first cancellation exclusion, separately protected source/intent records, history-only remapping and post-commit pin cleanup. `db/installation.rs` owns a denial-only replacement marker and short-lived path lock outside replaceable SQLite. `src/seed_bootstrap_http.rs` provides isolated seed HTTP dispatch through original-seed adoption. `seed_claim/peer.rs`, `src/protected_local_keys/peer.rs` and `src/peer_enrollment_http.rs` extend the same chain with fixed first-peer enrollment and independent protected credentials. Authorized published reads and protected fresh-peer installation reuse that authority, the exact package codecs and the shared-state transaction. There is no general membership engine, ordinary encrypted tail, or shipping E2EE setup command; protocol/security review, interoperability, production resource limits and platform/power-loss durability remain gates. Root host operations hold the file lock across a complete interactive drain or one daemon round. |
+| Sync and daemon | Reqwest and Axum transport, protected local package keys, HTTP-client-independent sync sessions, shared-state capture and installation, cross-process host coordination, protocol validation and persistence, observational status reports, launchd service management, wake policy and loop | `src/protected_local_keys.rs`, `src/sync.rs`, `src/sync/`, `src/status.rs`, `src/daemon.rs`, `src/daemon/`, `crates/aven-core/src/sync/` | `src/protected_local_keys.rs` is the host boundary for the local capture package's vault, generation, and key. It scopes authority to a canonical database installation, uses a non-synchronizing login Keychain item on macOS or an owner-only state file on Linux, and persists authority before package creation. Root sync modules own Reqwest, Axum, host scheduling, and typed privacy-safe status projection. Core `SyncSession` prepares HTTP-shaped byte exchanges and owns outstanding page state, decoding, validation, acknowledgements, cursor advancement, remote apply, and conflict generation. `crates/aven-core/src/sync/shared_state.rs` captures materialized shared state plus retained history at one SQLite boundary, persists the single never-dispatched local capture with exact history and durable image ownership, and atomically installs shared state into a fresh database. `crates/aven-core/src/sync/shared_state/package.rs` owns the single durable never-dispatched upload package. Its `publication.rs` codec (exported as `sync::bootstrap_format`) encodes the domain, descriptor, three catalogs and encrypted manifest; the capture candidate ID is the bootstrap artifact ID. SQLite atomically freezes all exact bytes, image mappings and a journal-owned descriptor commitment. Reopen authenticates the frozen representation against the immutable capture without rereading live domain or image files. Missing/corrupt frozen data fails closed; local-only packages without publication components require explicit cancellation/recapture, never rewriting under the same ID. `EncryptedLocalSharedStatePackage::upload_package` returns exact components for keyless validation or context-bound client authentication. The package includes selected current and extra image bytes; validated unavailable metadata has no invented object mapping. Image objects use random identities and generation-derived keys. Private plaintext-hash mappings remain local and in encrypted domain records, not public descriptors. Core accepts protected key material and never persists it. The host accepts an explicit membership predecessor as context only, not authorization. Local package context alone is not claim authority. `sync/seed_claim.rs` owns the fixed signed genesis, HPKE self-package validation and one-vault SQLite admission; `src/protected_local_keys/seed.rs` persists installation-bound seed keys, bearer and exact genesis before use. `sync/bootstrap_staging.rs` authenticates current supported membership, stages bounded exact bytes, and atomically publishes the fixed signed genesis successor with complete catalogs, image ownership and allocator=N. Immutable outcomes are separate from current-head authority. `shared_state/adoption.rs` and `src/protected_local_keys/adoption.rs` own original-seed adoption with SQLite-first cancellation exclusion, separately protected source/intent records, history-only remapping and post-commit pin cleanup. `db/installation.rs` owns a denial-only replacement marker and short-lived path lock outside replaceable SQLite. `src/seed_bootstrap_http.rs` provides isolated seed HTTP dispatch through original-seed adoption. `seed_claim/peer.rs`, `src/protected_local_keys/peer.rs` and `src/peer_enrollment_http.rs` extend the same chain with fixed first-peer enrollment and independent protected credentials. Authorized published reads and protected fresh-peer installation reuse that authority, the exact package codecs and the shared-state transaction. The internal ordinary-task tail lives in `sync/encrypted_tail` and `src/encrypted_tail_http.rs`. There is no general membership engine or shipping E2EE setup command; protocol/security review, interoperability, production resource limits and platform/power-loss durability remain gates. Root host operations hold the file lock across a complete interactive drain or one daemon round. |
 | TUI app | launch-intent resolution, event loop, actions, overlays, store, rendering, natural add runtime, and platform helpers | `src/tui/store/launch.rs`, `src/tui/` | `TuiStore` owns a cloned core `Database` handle. The launch resolver turns CLI targets into one view state before app construction. UI modules render view models and never access SQLx or SQLite directly. |
 | Update delivery | cached GitHub release discovery, semantic version comparison, sync compatibility preflight, install ownership classification, verified direct replacement | `src/update.rs`, `src/update/` | Releases identify their active server protocol with a `sync-protocol-N` asset and cumulative client baseline with `sync-client-baseline-N`. Releases without a baseline marker retain exact-protocol meaning. Direct updates probe configured servers only when compatibility needs checking. Background checks are fail-silent and rate-limited. CLI and TUI flows own presentation and confirmation behavior. |
 | Shared domain types | validated IDs, status and priority values, task and project records, query DTOs, sync DTOs | `crates/aven-core/src/ids.rs`, `crates/aven-core/src/choices.rs`, `crates/aven-core/src/types.rs`, `crates/aven-core/src/query/types.rs`, `crates/aven-core/src/sync/wire.rs` and `crates/aven-core/src/sync/wire/` | Domain types are independent of CLI arguments, TUI state, and config files. Application-only rendering and input parsing remain under root `src/`. |
@@ -212,7 +212,8 @@ import/restore. Readable export adds `e2ee_data_only` and excludes the old plain
 association; ordinary import refuses this marker. It prevents accidental downgrade,
 not malicious export editing. Protected source and intent are never exported.
 Standalone unbound plaintext workflows retain their ordinary data semantics.
-Encrypted-tail requests fail closed, including retries from old sessions.
+Plaintext requests fail closed on bound installations, including retries from old sessions.
+The isolated encrypted tail requires independent protected readiness and receipt checks.
 
 Focused tests: `cargo test --lib 'protected_local_keys::adoption::tests::'`,
 `cargo test -p aven-core --lib 'sync::shared_state::adoption::tests::'`, and
@@ -256,8 +257,9 @@ without contacting the server or resetting later edits/cursor progress. Lost or
 mismatched receipts are never repaired by reinstalling. A surviving protected
 completion with a missing receipt refuses. SQLite receipts and enrollment mirrors
 are not membership authority. Selected-installation replacement/backup exclusions
-and unresolved-disclosure fences remain intact. Installed does not mean encrypted
-tail-ready; no ordinary encrypted sync or shipping setup command is exposed.
+and unresolved-disclosure fences remain intact. Installation alone is not dispatch
+authority: encrypted rounds reload protected readiness and verify current server
+authorization. No shipping setup command is exposed.
 
 Focused evidence: `cargo test --lib 'peer_enrollment_http::tests::install::'`,
 shared-state codec/install/adoption tests and plaintext attachment lifecycle tests.
@@ -265,6 +267,53 @@ The loopback fixture includes synthetic retained conflicts, not encrypted confli
 generation. Subprocess exits exercise download, file staging, pre-commit and
 post-commit boundaries. These are process-restart tests, not power-loss, mobile
 resource or independent interoperability evidence.
+
+### Internal encrypted ordinary-task rounds
+
+`src/encrypted_tail_http.rs` exposes an isolated bounded POST router and one-round
+client, never the legacy shared token or a plaintext fallback. Core
+`sync/encrypted_tail/{codec,domain,server,client}.rs` owns operation framing, strict
+JSON/compatibility and canonical comparison, immutable ciphertext admission,
+frozen outbox/acceptance evidence and verified ordered apply. The protected host
+holds installation and key-store exclusion across the round, verifies both its
+own enrollment and actual seed adoption or peer installation, and supplies keys
+without persisting them in SQLite. Every server transaction uses the existing
+chain resolver with the exact expected head, stream and published descriptor.
+
+Task create/edit/delete/restore, notes, labels, metadata, dependencies, related
+links and epics reuse existing domain apply/conflict and ordering reconciliation.
+Project/label creation prerequisites are supported. The closed subset rejects
+recurrence aggregates, occurrence-task mutations, new attachment operations and
+other administrative operations. Pending work is preflighted before freezing;
+unsupported compound work blocks rather than uploading only its supported parts.
+Preflight is capped at 4096 rows/16 MiB. Those limits and the fixed two-device
+membership implementation are internal refusal boundaries, not product policy.
+
+Each new operation gets a random envelope ID/nonce, with exact ciphertext durable
+before dispatch. Unknown outcomes retry those bytes. Same-ID different ciphertext
+requires fetching and canonically verifying accepted plaintext before ranking
+local work. SQLite triggers protect frozen/verified comparison history from undo
+or cleanup. Durable accepted records retain remote provenance without replacing
+local origin. Acks never move the cursor. Verified local ranks precede incoming
+ordered apply; page effects, mappings, liveness and cursor commit together. Bad
+pages roll back, and same-ID divergence preserves pending work instead of merging
+or inventing a new ID. Membership sequence, content sequence and local_seq differ.
+
+Authenticated None/Parent projections carry only minimal parent-retention inputs.
+`persistence/parent_liveness.rs::ParentState` is shared by plaintext retention,
+bootstrap projection and encrypted admission. Captured parent state is the tail
+baseline. The keyless server reduces Parent exactly once on new acceptance,
+atomically with allocation and affected image grace timestamps. Retries do not
+repeat it; force resolution never clears sticky protection. No new reference
+lifecycle, image pruner or snapshot rewrite is present.
+
+Run `cargo test --lib 'encrypted_tail_http::tests::'` for the real seed publication,
+independent enrollment/install and bidirectional task harness. It includes exact
+retry, server reopen, client subprocess exits, conflicts, retained images, invalid
+page rollback and explicit refusal tests. Controlled same-ID fixtures exercise
+canonical verification, not deterministic recurrence convergence. That recurrence
+release gate, rotation, recovery, shipping setup, UI, iOS and the comprehensive
+integration/simplification review remain separate work.
 
 ### Bootstrap publication format and local package ownership
 
@@ -382,7 +431,8 @@ prefix and image projections, allocator=N and READY. Completeness reuses the
 publication codec, not a caller list or staging presence flags alone. The keyless
 server validates exact ciphertext framing and commitments, never domain plaintext
 or AEAD correctness. Empty prefix is valid; the durable high-water mark reserves
-1..N even without tail rows. Ordinary encrypted tail allocation is not implemented.
+1..N even without tail rows. `encrypted_tail/server.rs` allocates only above that
+mark and refuses captured prefix IDs rather than returning a duplicate success.
 
 `server_bootstrap_publication` retains exact signed intent and descriptor;
 `server_e2ee_membership_head` independently identifies current authority. Exact
@@ -469,11 +519,12 @@ and data-only exports also cover enrollment-bound databases.
 construction. The unauthenticated mailbox exposes only public/encrypted enrollment
 artifacts. Peer bearer authentication under the current head permits the published
 descriptor read needed to finish trust verification, not staging/chunk/image reads.
-There is no fresh-state installation or ordinary encrypted tail. No CLI pairing,
+Fresh-peer installation and ordinary-task rounds have separate protected readiness
+checks; enrollment alone authorizes neither. No CLI pairing,
 removal, cancellation, rotation or invitation reset is offered. Failed/expired or
 uncertain attempts retain their slot and exact authority rather than rebind/reseal.
 `ProtectedLocalKeyStore::enrollment_readiness` exposes the negative unresolved
-key-disclosure fence that future encrypted dispatch must consult in addition to
+key-disclosure fence that encrypted dispatch must consult in addition to
 current membership, installed state and key coverage. Enrolled does not mean synced.
 
 Focused tests: `cargo test -p aven-core --lib 'sync::seed_claim::peer::tests::'`
@@ -633,6 +684,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 | Change seed bootstrap HTTP transport | `src/seed_bootstrap_http.rs`, `src/seed_bootstrap_http/tests.rs` | protected source/intent and `Database::seed_publication_upload`, core staging and publication codecs; keep plaintext router/config untouched | `cargo test --lib 'seed_bootstrap_http::tests::'`, `cargo test --lib 'protected_local_keys::adoption::tests::'`, focused core staging/seed tests, installation concurrency tests, and `cargo test --test cli_sync attachment_metadata_and_blobs_round_trip_through_real_sync_server` |
 | Change fixed first-peer enrollment | `crates/aven-core/src/sync/seed_claim/peer.rs`, `peer/persistence.rs`, `src/protected_local_keys/peer.rs`, `src/peer_enrollment_http.rs` | current-head authorization in bootstrap publication, protected source/adoption, fresh-target and replacement fences, data-only export | `cargo test -p aven-core --lib 'sync::seed_claim::peer::tests::'`, `cargo test --lib 'peer_enrollment_http::tests::'`, seed HTTP/protected adoption tests and plaintext loopback regression |
 | Change published snapshot reads or verified fresh-peer installation | `src/peer_enrollment_http.rs`, `src/protected_local_keys/peer.rs`, `crates/aven-core/src/sync/shared_state/peer_install.rs` | current membership resolver, `package/publication/download.rs`, shared-state allowlist, attachment storage and transaction-bound cleanup | `cargo test --lib 'peer_enrollment_http::tests::install::'`, shared-state module, protected adoption, seed HTTP and plaintext attachment tests |
+| Change internal ordinary encrypted task sync | `crates/aven-core/src/sync/encrypted_tail/`, `src/encrypted_tail_http.rs` | protected peer/adoption readiness, current chain resolver, shared parent reducer, domain apply and canonical equality, history ownership triggers | `cargo test --lib 'encrypted_tail_http::tests::'`, `cargo test -p aven-core --lib 'sync::encrypted_tail::tests::'`, parent/apply tests and bootstrap/enrollment/plaintext attachment regressions |
 | Add or change backup, export, or import commands | `src/cli/data_safety.rs`, `src/lib.rs`, `src/commands/data_safety/mod.rs`, `crates/aven-core/src/data_safety.rs`, `crates/aven-core/src/data_safety/` | the portable schema in `crates/aven-core/src/data_safety/export_types.rs`, export-payload rules under `crates/aven-core/src/data_safety/validation/`, live checks under `crates/aven-core/src/data_safety/integrity/`, core database open and migration behavior in `crates/aven-core/src/db.rs`, recurrence identity and schedule validation in `crates/aven-core/src/recurrence/`, doctor presentation in `src/commands/doctor/` | `tests/cli_data_safety.rs`, `tests/cli_doctor.rs` |
 | Change config, workspace, or project path routing | `src/config/paths.rs`, `src/config.rs`, `src/config_edit.rs`, `src/workspaces.rs`, `src/projects.rs` | config text writes, managed-entry edits, doctor, project commands, TUI workspace and project pickers | `tests/cli_config_daemon.rs`, `tests/cli_workspaces.rs`, `tests/cli_doctor.rs` |
 | Change natural-language task intake or agent primer | `src/task_intake.rs`, `src/recurrence_input.rs`, `src/skill.md`, `src/commands/skill.rs` | config schema, `aven prime`, add-task flows, `src/tui/app_intake.rs` for TUI intake state and lifecycle, `src/tui/natural_add_runtime.rs` for TUI background worker setup | `tests/cli_task_intake.rs`, `tests/cli_skill.rs`, focused add-task tests |

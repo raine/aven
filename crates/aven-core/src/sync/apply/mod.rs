@@ -29,6 +29,13 @@ pub async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWir
         field = change.field.as_deref().unwrap_or(""),
         "applying remote change"
     );
+    apply_remote_change_quiet(conn, change).await
+}
+
+pub(crate) async fn apply_remote_change_quiet(
+    conn: &mut SqliteConnection,
+    change: &ChangeWire,
+) -> Result<()> {
     match change.op_type.as_str() {
         op_type::CREATE_WORKSPACE => workspace::create_workspace(conn, change).await?,
         op_type::SET_WORKSPACE_FIELD => workspace::set_workspace_field(conn, change).await?,

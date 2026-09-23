@@ -1,7 +1,9 @@
 mod apply;
 mod blob;
 pub mod bootstrap_staging;
+pub mod encrypted_tail;
 mod persistence;
+pub(crate) use persistence::changes::canonical_equal;
 mod planner;
 pub mod protocol;
 pub mod seed_claim;

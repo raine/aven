@@ -46,35 +46,31 @@ pub(super) async fn reconcile_parent(
     .bind(workspace)
     .fetch_all(&mut *conn)
     .await?;
-    let mut version: Option<String> = None;
-    let mut deleted = false;
-    let mut contested = false;
+    let mut state = ParentState::default();
     for row in rows {
         let id: String = row.try_get("change_id")?;
         let operation: String = row.try_get("op_type")?;
         let payload: Value = serde_json::from_str(row.try_get("payload")?)?;
-        if operation == op_type::CREATE_TASK {
-            if version.is_none() {
-                version = Some(
-                    payload["task_field_version_seed"]
-                        .as_str()
-                        .unwrap_or(&id)
-                        .to_owned(),
-                );
-            }
-            continue;
-        }
         let base: Option<String> = row.try_get("base_version")?;
-        if version.is_none() || (operation != op_type::RESOLVE_FIELD && base != version) {
-            contested = true;
-            continue;
-        }
-        deleted = payload["value"].as_str() == Some("1");
-        version = Some(id);
+        let seed = payload["task_field_version_seed"].as_str().unwrap_or(&id);
+        state.apply(
+            if operation == op_type::CREATE_TASK {
+                0
+            } else if operation == op_type::RESOLVE_FIELD {
+                2
+            } else {
+                1
+            },
+            &id,
+            payload["value"].as_str() == Some("1"),
+            if operation == op_type::CREATE_TASK {
+                Some(seed)
+            } else {
+                base.as_deref()
+            },
+        );
     }
-    // A force resolution cannot prove that other replicas have drained older writes.
-    // Retain contested parents until their attachment references are explicitly deleted.
-    let unreferenced = deleted && version.is_some() && !contested;
+    let unreferenced = state.deleted && state.version.is_some() && !state.protected;
     sqlx::query(
         "INSERT INTO server_task_tombstones(workspace_id, task_id, deleted)
          VALUES (?, ?, ?)
@@ -86,6 +82,28 @@ pub(super) async fn reconcile_parent(
     .execute(&mut *conn)
     .await?;
     Ok(())
+}
+
+/// Accepted-order conservative retention, independent of decrypted task storage.
+#[derive(Default)]
+pub(crate) struct ParentState {
+    pub version: Option<String>,
+    pub deleted: bool,
+    pub protected: bool,
+}
+impl ParentState {
+    pub fn apply(&mut self, action: u8, id: &str, deleted: bool, version: Option<&str>) {
+        if action == 0 {
+            if self.version.is_none() {
+                self.version = version.map(str::to_owned);
+            }
+        } else if self.version.is_none() || (action == 1 && version != self.version.as_deref()) {
+            self.protected = true;
+        } else {
+            self.deleted = deleted;
+            self.version = Some(id.to_owned());
+        }
+    }
 }
 
 #[cfg(test)]

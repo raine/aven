@@ -83,7 +83,7 @@ pub enum EnrollmentReadiness {
     Enrolled { head: [u8; 32] },
 }
 impl EnrollmentReadiness {
-    /// Future encrypted dispatch must consult this fence in addition to current
+    /// Encrypted dispatch must consult this fence in addition to current
     /// membership, key coverage and its own installed/ordinary-sync readiness.
     pub fn require_resolved_disclosure(&self) -> Result<()> {
         ensure!(
@@ -517,6 +517,148 @@ impl ProtectedLocalKeyStore {
         self.save_phase(db, &id, Artifact::Ready, &a.commitment())
             .await
     }
+    pub(crate) async fn tail_inputs(&self, db: &Database, locator: &str) -> Result<TailInputs> {
+        self.enrollment_readiness(db)
+            .await?
+            .require_resolved_disclosure()?;
+        let installation = InstallationGuard::acquire(db.path())?;
+        self.validate_database(db)?;
+        let lock = self.lock()?;
+        let id = self
+            .identity(db, &installation)
+            .await?
+            .context("error enrollment-missing")?;
+        ensure!(id.locator == locator, "error enrollment-context");
+        let ready = self
+            .phase(db, Artifact::Ready)
+            .await?
+            .context("error enrollment-not-ready")?;
+        let (genesis, publication, device, bearer, key) = if id.role == "peer" {
+            let bytes = self
+                .phase(db, Artifact::Verified)
+                .await?
+                .context("error enrollment-key-coverage-missing")?;
+            let record: Verified = serde_json::from_slice(&bytes)
+                .map_err(|_| anyhow::anyhow!("error enrollment-verified-corrupt"))?;
+            let peer = PeerAuthority::from_protected_storage(&id.authority)?;
+            let verified = peer.verify_enrollment(&record.evidence, &record.descriptor)?;
+            ensure!(
+                ready.as_slice() == verified.admission().commitment()
+                    && verified.key().protected_storage_bytes().as_slice() == record.key,
+                "error enrollment-verified-corrupt"
+            );
+            let installed = self
+                .phase(db, Artifact::Installed)
+                .await?
+                .context("error snapshot-not-installed")?;
+            ensure!(
+                installed.as_slice() == ready.as_slice()
+                    && db
+                        .peer_snapshot_receipt(&verified, id.incarnation, &id.client, &installation)
+                        .await?
+                        .is_some(),
+                "error snapshot-receipt-mismatch"
+            );
+            (
+                verified.genesis().clone(),
+                verified.publication().clone(),
+                peer.device(),
+                aven_core::sync::seed_claim::Secret::new(*peer.bearer().expose()),
+                LocalSharedStatePackageKey::new(*verified.key().protected_storage_bytes()),
+            )
+        } else {
+            ensure!(
+                id.role == "inviter" && db.adopted_enrollment_client().await? == id.client,
+                "error enrollment-role"
+            );
+            let package = self.load_required_locked()?;
+            let seed = self.required_seed(&package)?;
+            let intent = self.adopted_inputs(&seed)?;
+            let (saved, state) = db
+                .seed_publication_intent_bytes()
+                .await?
+                .context("error seed-intent-missing")?;
+            ensure!(
+                state == "adopted" && saved == intent.protected_storage_bytes(),
+                "error seed-intent-mismatch"
+            );
+            let source = self
+                .load_adoption_record("source", 104, true)?
+                .context("error seed-source-missing")?;
+            let source = self.decode_source(&source, &seed)?;
+            ensure!(
+                db.seed_source_pin().await?.as_deref() == Some(source.protected_storage_bytes()),
+                "error seed-source-mismatch"
+            );
+            let publication = intent.publication(seed.genesis())?;
+            let declaration =
+                Declaration::from_record(seed.genesis(), &publication, &id.declaration)?;
+            let request = self
+                .phase(db, Artifact::Bound)
+                .await?
+                .context("error enrollment-binding-missing")?;
+            let candidate = self
+                .phase(db, Artifact::Candidate)
+                .await?
+                .context("error enrollment-candidate-missing")?;
+            let admission = peer::Admission::from_record(
+                seed.genesis(),
+                &publication,
+                &declaration,
+                &request,
+                &candidate,
+            )?;
+            ensure!(
+                ready.as_slice() == admission.commitment(),
+                "error enrollment-checkpoint-mismatch"
+            );
+            (
+                seed.genesis().clone(),
+                publication,
+                seed.genesis().device_id(),
+                aven_core::sync::seed_claim::Secret::new(*seed.bearer().expose()),
+                LocalSharedStatePackageKey::new(*package.package_key().protected_storage_bytes()),
+            )
+        };
+        let b = publication.binding();
+        let association = format!(
+            "{}:{}:{}",
+            hex::encode(b.vault_id),
+            hex::encode(b.stream_id),
+            hex::encode(b.bootstrap_id)
+        );
+        ensure!(
+            db.meta("e2ee_association").await?.as_deref() == Some(association.as_str()),
+            "error encrypted-tail-association"
+        );
+        let authority = aven_core::sync::encrypted_tail::Authority {
+            context: aven_core::sync::encrypted_tail::Context {
+                vault: b.vault_id,
+                genesis: genesis.commitment(),
+                device,
+                credential_version: 1,
+                head: ready.as_slice().try_into()?,
+                stream: b.stream_id,
+                descriptor: b.descriptor_commitment,
+            },
+            generation: genesis.context().generation_id,
+            key,
+            prefix: i64::try_from(b.prefix_count)?,
+            association,
+            sync_generation: db
+                .meta("sync_generation")
+                .await?
+                .context("error encrypted-tail-generation")?
+                .parse()?,
+        };
+        Ok(TailInputs {
+            authority,
+            bearer,
+            _installation: installation,
+            _lock: lock,
+        })
+    }
+
     pub(crate) async fn install_peer_snapshot(
         &self,
         db: &Database,
@@ -581,7 +723,7 @@ impl ProtectedLocalKeyStore {
         self.save_phase(db, &id, Artifact::Installed, &head).await?;
         Ok(report)
     }
-    /// Must be checked by future tail dispatch. Enrolled is not installed or synced.
+    /// Tail dispatch must check this fence. Enrolled is not installed or synced.
     pub async fn enrollment_readiness(&self, db: &Database) -> Result<EnrollmentReadiness> {
         let guard = InstallationGuard::acquire(db.path())?;
         self.validate_database(db)?;
@@ -638,4 +780,11 @@ impl Drop for Verified {
     fn drop(&mut self) {
         self.key.zeroize();
     }
+}
+
+pub(crate) struct TailInputs {
+    pub authority: aven_core::sync::encrypted_tail::Authority,
+    pub bearer: aven_core::sync::seed_claim::Secret,
+    _installation: InstallationGuard,
+    _lock: File,
 }

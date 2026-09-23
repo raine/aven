@@ -98,16 +98,33 @@ pub(crate) async fn insert_change_with_identity(
     .fetch_optional(&mut *conn)
     .await?;
     if let Some(existing) = existing {
-        let equal = existing.try_get::<String, _>("entity_type")? == entity_type
-            && existing.try_get::<String, _>("entity_id")? == entity_id
-            && existing.try_get::<Option<String>, _>("field")?.as_deref() == field
-            && existing.try_get::<String, _>("op_type")? == op_type
-            && existing.try_get::<String, _>("payload")? == payload
-            && existing
-                .try_get::<Option<String>, _>("base_version")?
-                .as_deref()
-                == base_version
-            && existing.try_get::<String, _>("created_at")? == created_at;
+        let stored = crate::sync::wire::ChangeWire {
+            change_id: change_id.into(),
+            client_id: String::new(),
+            local_seq: 0,
+            entity_type: existing.try_get("entity_type")?,
+            entity_id: existing.try_get("entity_id")?,
+            field: existing.try_get("field")?,
+            op_type: existing.try_get("op_type")?,
+            payload: serde_json::from_str(&existing.try_get::<String, _>("payload")?)?,
+            base_version: existing.try_get("base_version")?,
+            created_at: existing.try_get("created_at")?,
+            server_seq: None,
+        };
+        let incoming = crate::sync::wire::ChangeWire {
+            change_id: change_id.into(),
+            client_id: String::new(),
+            local_seq: 0,
+            entity_type: entity_type.into(),
+            entity_id: entity_id.into(),
+            field: field.map(str::to_owned),
+            op_type: op_type.into(),
+            payload: serde_json::from_str(&payload)?,
+            base_version: base_version.map(str::to_owned),
+            created_at: created_at.into(),
+            server_seq: None,
+        };
+        let equal = crate::sync::canonical_equal(&stored, &incoming);
         if equal {
             return Ok(());
         }
@@ -139,4 +156,46 @@ pub(crate) async fn insert_change_with_identity(
     .execute(&mut *conn)
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn identified_retry_uses_typed_payload_equality() {
+        let (_temp, mut conn) = crate::test_support::test_conn().await;
+        let change = || IdentifiedChange {
+            change_id: "AAAAAAAAAAAAAAAA",
+            entity_type: "task",
+            entity_id: "BBBBBBBBBBBBBBBB",
+            field: Some("title"),
+            op_type: "set_field",
+            base_version: None,
+            created_at: "2026-09-22T00:00:00Z",
+            payload: serde_json::json!({"workspace_id":"0000000000000000","workspace_key":"default","value":"x"}),
+        };
+        insert_change_with_identity(&mut conn, change())
+            .await
+            .unwrap();
+        sqlx::query("UPDATE changes SET payload=? WHERE change_id='AAAAAAAAAAAAAAAA'")
+            .bind(r#"{ "workspace_key": "default", "workspace_id": "0000000000000000", "value": "x" }"#)
+            .execute(&mut *conn).await.unwrap();
+        insert_change_with_identity(&mut conn, change())
+            .await
+            .unwrap();
+        let mut different = change();
+        different.payload["value"] = Value::String("y".into());
+        assert!(
+            insert_change_with_identity(&mut conn, different)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM changes")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap(),
+            1
+        );
+    }
 }

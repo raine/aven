@@ -185,6 +185,10 @@ impl ProtectedLocalKeyStore {
     pub fn load_required(&self) -> StoreResult<ProtectedLocalPackageKey> {
         prepare_directory(&self.directory)?;
         let _guard = self.lock()?;
+        self.load_required_locked()
+    }
+
+    fn load_required_locked(&self) -> StoreResult<ProtectedLocalPackageKey> {
         let marker = read_marker(&self.marker_path())?;
         let bytes = self
             .backend

@@ -7,7 +7,7 @@ use sqlx::SqliteConnection;
 use crate::change_log::op_type;
 use crate::sync::wire::{AttachmentAddPayload, ChangeWire};
 
-pub(super) async fn apply_server_blob_reference(
+pub(in crate::sync) async fn apply_server_blob_reference(
     conn: &mut SqliteConnection,
     change: &ChangeWire,
     affected_attachment_hashes: &mut HashSet<String>,
@@ -99,7 +99,7 @@ pub(super) async fn apply_server_blob_reference(
     Ok(())
 }
 
-pub(super) async fn collect_attachment_liveness_hashes(
+pub(in crate::sync) async fn collect_attachment_liveness_hashes(
     conn: &mut SqliteConnection,
     change: &ChangeWire,
     affected_attachment_hashes: &mut HashSet<String>,
@@ -149,7 +149,7 @@ pub(super) async fn collect_attachment_liveness_hashes(
     Ok(())
 }
 
-pub(super) async fn prepare_server_blobs(
+pub(in crate::sync) async fn prepare_server_blobs(
     conn: &mut SqliteConnection,
     blob_dir: &Path,
     changes: &[ChangeWire],
@@ -217,7 +217,7 @@ fn validate_server_blob_inventory(
     Ok(())
 }
 
-pub(super) async fn ensure_attachment_blobs_admitted(
+pub(in crate::sync) async fn ensure_attachment_blobs_admitted(
     conn: &mut SqliteConnection,
     blob_dir: &Path,
     changes: &[ChangeWire],

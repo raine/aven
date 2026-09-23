@@ -6,20 +6,20 @@ use sqlx::{QueryBuilder, Sqlite, SqliteConnection};
 use super::super::wire::{ChangeWire, PushAck};
 use crate::change_log::op_type;
 
-pub(super) fn is_epic_change(change: &ChangeWire) -> bool {
+pub(in crate::sync) fn is_epic_change(change: &ChangeWire) -> bool {
     matches!(
         change.op_type.as_str(),
         op_type::EPIC_LINK_ADD | op_type::EPIC_LINK_REMOVE
     )
 }
 
-pub(super) fn epic_change_workspace(change: &ChangeWire) -> Result<&str> {
+pub(in crate::sync) fn epic_change_workspace(change: &ChangeWire) -> Result<&str> {
     change.payload["workspace_id"]
         .as_str()
         .context("epic change missing workspace_id")
 }
 
-pub(super) async fn reconcile_epic_change(
+pub(in crate::sync) async fn reconcile_epic_change(
     conn: &mut SqliteConnection,
     change: &ChangeWire,
 ) -> Result<()> {
@@ -34,7 +34,7 @@ pub(super) async fn reconcile_epic_change(
     Ok(())
 }
 
-pub(super) async fn reconcile_acknowledged_epic_memberships(
+pub(in crate::sync) async fn reconcile_acknowledged_epic_memberships(
     conn: &mut SqliteConnection,
     acknowledgements: &[PushAck],
 ) -> Result<()> {
@@ -60,7 +60,7 @@ pub(super) async fn reconcile_acknowledged_epic_memberships(
     Ok(())
 }
 
-pub(super) async fn load_existing_change_ids(
+pub(in crate::sync) async fn load_existing_change_ids(
     conn: &mut SqliteConnection,
     changes: &[ChangeWire],
 ) -> Result<HashSet<String>> {
@@ -82,7 +82,7 @@ pub(super) async fn load_existing_change_ids(
         .collect())
 }
 
-pub(super) async fn load_assigned_change_ids(
+pub(in crate::sync) async fn load_assigned_change_ids(
     conn: &mut SqliteConnection,
     changes: &[ChangeWire],
 ) -> Result<HashSet<String>> {
@@ -105,7 +105,7 @@ pub(super) async fn load_assigned_change_ids(
         .collect())
 }
 
-pub(super) async fn verify_existing_change(
+pub(in crate::sync) async fn verify_existing_change(
     conn: &mut SqliteConnection,
     incoming: &ChangeWire,
 ) -> Result<()> {
@@ -119,13 +119,20 @@ pub(super) async fn verify_existing_change(
     use sqlx::Row;
     let stored_payload: String = row.try_get("payload")?;
     let stored_payload: serde_json::Value = serde_json::from_str(&stored_payload)?;
-    let equal = row.try_get::<String, _>("entity_type")? == incoming.entity_type
-        && row.try_get::<String, _>("entity_id")? == incoming.entity_id
-        && row.try_get::<Option<String>, _>("field")? == incoming.field
-        && row.try_get::<String, _>("op_type")? == incoming.op_type
-        && stored_payload == incoming.payload
-        && row.try_get::<Option<String>, _>("base_version")? == incoming.base_version
-        && row.try_get::<String, _>("created_at")? == incoming.created_at;
+    let stored = ChangeWire {
+        change_id: incoming.change_id.clone(),
+        client_id: String::new(),
+        local_seq: 0,
+        entity_type: row.try_get("entity_type")?,
+        entity_id: row.try_get("entity_id")?,
+        field: row.try_get("field")?,
+        op_type: row.try_get("op_type")?,
+        payload: stored_payload,
+        base_version: row.try_get("base_version")?,
+        created_at: row.try_get("created_at")?,
+        server_seq: None,
+    };
+    let equal = canonical_equal(&stored, incoming);
     if !equal {
         bail!(
             "error sync-change-id-payload-mismatch change_id={}",
@@ -135,7 +142,7 @@ pub(super) async fn verify_existing_change(
     Ok(())
 }
 
-pub(super) async fn update_change_server_seq(
+pub(in crate::sync) async fn update_change_server_seq(
     conn: &mut SqliteConnection,
     change_id: &str,
     server_seq: Option<i64>,
@@ -152,7 +159,7 @@ pub(super) async fn update_change_server_seq(
     Ok(())
 }
 
-pub(super) async fn update_change_server_seqs_if_missing(
+pub(in crate::sync) async fn update_change_server_seqs_if_missing(
     conn: &mut SqliteConnection,
     push_acks: &[PushAck],
 ) -> Result<()> {
@@ -177,7 +184,7 @@ pub(super) async fn update_change_server_seqs_if_missing(
     Ok(())
 }
 
-pub(super) async fn insert_wire_change(
+pub(in crate::sync) async fn insert_wire_change(
     conn: &mut SqliteConnection,
     change: &ChangeWire,
 ) -> Result<()> {
@@ -201,4 +208,16 @@ pub(super) async fn insert_wire_change(
     .execute(&mut *conn)
     .await?;
     Ok(())
+}
+
+/// Canonical domain meaning excludes transport rank and originating provenance.
+pub(crate) fn canonical_equal(a: &ChangeWire, b: &ChangeWire) -> bool {
+    a.change_id == b.change_id
+        && a.entity_type == b.entity_type
+        && a.entity_id == b.entity_id
+        && a.field == b.field
+        && a.op_type == b.op_type
+        && a.payload == b.payload
+        && a.base_version == b.base_version
+        && a.created_at == b.created_at
 }

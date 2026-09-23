@@ -11,6 +11,7 @@ mod config;
 mod config_edit;
 mod daemon;
 mod due;
+pub mod encrypted_tail_http;
 mod input;
 mod logging;
 mod notification;
