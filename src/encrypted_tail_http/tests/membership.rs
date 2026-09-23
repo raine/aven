@@ -1247,3 +1247,111 @@ async fn membership_change_during_image_read_retries_the_same_selected_object() 
         ImageTransfer::Complete
     );
 }
+
+async fn pull_only_stale_race(count: usize) {
+    let mut f = fixture().await;
+    let workspace = f.peer.list_workspaces().await.unwrap().remove(0);
+    f.peer
+        .create_task(&workspace, draft("pull-only pending task"))
+        .await
+        .unwrap();
+    let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
+    let frozen = f
+        .peer
+        .prepare_encrypted_tail(&inputs.authority)
+        .await
+        .unwrap()
+        .unwrap();
+    drop(inputs);
+    let cursor = f.peer.meta("sync_cursor").await.unwrap();
+    let watermark = f.peer.meta("e2ee_initial_image_watermark").await.unwrap();
+    let pending = scalar(
+        &f.peer,
+        "SELECT count(*) FROM changes WHERE server_seq IS NULL",
+    )
+    .await;
+    let high_water = scalar(
+        &f.server,
+        "SELECT high_water FROM server_e2ee_allocator WHERE singleton=1",
+    )
+    .await;
+    let (events, mut incoming) = tokio::sync::mpsc::channel(1);
+    let fault = Arc::new(HttpFault {
+        reads: Default::default(),
+        pause_operation: "Pull",
+        lose: None,
+        remaining: count.into(),
+        pause: Some(events),
+    });
+    restart_fault_server(&mut f, fault.clone()).await;
+    let client = Client::new(&f.origin).unwrap();
+    let (result, ()) = tokio::join!(client.pull_only_round(&f.peer_store, &f.peer), async {
+        for index in 0..count {
+            let resume = incoming.recv().await.unwrap();
+            let joined = join(
+                &f,
+                &format!("pull-competitor-{index}"),
+                &f.seed,
+                &f.seed_store,
+            )
+            .await;
+            assert_eq!(
+                floor(&joined.store, &joined.db, &f.origin).await.sequence(),
+                3 + index as u64
+            );
+            resume.send(()).unwrap();
+        }
+    });
+    assert_eq!(fault.remaining.load(std::sync::atomic::Ordering::SeqCst), 0);
+    if count == 1 {
+        assert!(result.unwrap());
+    } else {
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .is::<aven_core::sync::seed_claim::membership::StaleContext>()
+        );
+    }
+    assert_eq!(f.peer.meta("sync_cursor").await.unwrap(), cursor);
+    assert_eq!(
+        f.peer.meta("e2ee_initial_image_watermark").await.unwrap(),
+        watermark
+    );
+    assert_eq!(
+        scalar(
+            &f.peer,
+            "SELECT count(*) FROM changes WHERE server_seq IS NULL"
+        )
+        .await,
+        pending
+    );
+    assert_eq!(
+        scalar(
+            &f.server,
+            "SELECT high_water FROM server_e2ee_allocator WHERE singleton=1"
+        )
+        .await,
+        high_water
+    );
+    let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
+    assert_eq!(
+        f.peer
+            .encrypted_tail_frozen_record(&inputs.authority)
+            .await
+            .unwrap()
+            .unwrap()
+            .1,
+        frozen
+    );
+}
+
+#[tokio::test]
+async fn pull_only_retries_one_head_race_without_uploading() {
+    pull_only_stale_race(1).await;
+}
+
+#[tokio::test]
+async fn pull_only_stops_after_second_head_race_without_uploading() {
+    pull_only_stale_race(2).await;
+}

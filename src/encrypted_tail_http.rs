@@ -339,6 +339,21 @@ impl Client {
         store: &ProtectedLocalKeyStore,
         db: &Database,
     ) -> Result<bool> {
+        let enrollment = crate::peer_enrollment_http::Client::new(&self.locator)?;
+        enrollment.refresh(store, db).await?;
+        match self.pull_only_round_once(store, db).await {
+            Err(error) if is_stale(&error) => {
+                enrollment.refresh(store, db).await?;
+                self.pull_only_round_once(store, db).await
+            }
+            result => result,
+        }
+    }
+    async fn pull_only_round_once(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+    ) -> Result<bool> {
         let inputs = store.tail_inputs(db, &self.locator).await?;
         self.pull(&inputs.authority, &inputs.bearer, db).await
     }

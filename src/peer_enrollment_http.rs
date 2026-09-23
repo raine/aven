@@ -1,4 +1,4 @@
-//! Isolated first-peer enrollment and published snapshot retrieval, not shipping sync.
+//! Isolated repeatable device enrollment and published snapshot retrieval.
 //! The public mailbox never exposes bootstrap chunks, images or credentials.
 use crate::{protected_local_keys::ProtectedLocalKeyStore, seed_bootstrap_http};
 use anyhow::{Result, ensure};

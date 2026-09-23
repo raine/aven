@@ -404,3 +404,134 @@ async fn missing_initial_catch_up_marker_refuses_without_reinstalling() {
     );
     assert_eq!(count(&f.peer, "local_peer_snapshot_install").await, 1);
 }
+
+#[tokio::test]
+async fn pull_only_refreshes_old_head_without_uploading_or_extending_initial_watermark() {
+    let f = enrolled().await;
+    edit_source_descriptions(&f, 0, 17).await;
+    let receipt = f.client.install(&f.store, &f.peer).await.unwrap();
+    let client = crate::encrypted_tail_http::Client::new(&f.client.locator).unwrap();
+    let workspace = f.peer.list_workspaces().await.unwrap().remove(0);
+    let task: String = sqlx::query_scalar("SELECT task_id FROM task_attachments LIMIT 1")
+        .fetch_one(&mut *aven_core::test_support::acquire(&f.peer).await.unwrap())
+        .await
+        .unwrap();
+    f.peer
+        .add_note(
+            &workspace,
+            &task.parse().unwrap(),
+            "pending frozen note".into(),
+        )
+        .await
+        .unwrap();
+    let inputs = f
+        .store
+        .tail_inputs(&f.peer, &f.client.locator)
+        .await
+        .unwrap();
+    let frozen = f
+        .peer
+        .prepare_encrypted_tail(&inputs.authority)
+        .await
+        .unwrap()
+        .unwrap();
+    drop(inputs);
+    f.peer
+        .add_note(
+            &workspace,
+            &task.parse().unwrap(),
+            "pending unfrozen note".into(),
+        )
+        .await
+        .unwrap();
+    let pending = async || -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM changes WHERE server_seq IS NULL")
+            .fetch_one(&mut *aven_core::test_support::acquire(&f.peer).await.unwrap())
+            .await
+            .unwrap()
+    };
+    let original_pending = pending().await;
+    assert!(!client.pull_only_round(&f.store, &f.peer).await.unwrap());
+    let watermark = f
+        .peer
+        .meta("e2ee_initial_image_watermark")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(watermark, (receipt.prefix_count + 17).to_string());
+    edit_source_descriptions(&f, 17, 20).await;
+
+    let seed_keys = isolated_store(f.source.path(), &f.root.path().join("keys"));
+    let third = Database::open(&f.root.path().join("third.sqlite"))
+        .await
+        .unwrap();
+    let third_keys = isolated_store(third.path(), &f.root.path().join("third-keys"));
+    let invitation = f
+        .client
+        .invite(&seed_keys, &f.source, expiry())
+        .await
+        .unwrap();
+    f.client
+        .request(&third_keys, &third, Some(invitation))
+        .await
+        .unwrap();
+    f.client.admit(&seed_keys, &f.source).await.unwrap();
+    f.client.complete(&third_keys, &third).await.unwrap();
+    f.client.install(&third_keys, &third).await.unwrap();
+    assert_eq!(
+        f.peer
+            .membership_checkpoint_mirror()
+            .await
+            .unwrap()
+            .unwrap()
+            .1,
+        2
+    );
+    let high_water = async || -> i64 {
+        sqlx::query_scalar("SELECT high_water FROM server_e2ee_allocator WHERE singleton=1")
+            .fetch_one(&mut *aven_core::test_support::acquire(&f.server).await.unwrap())
+            .await
+            .unwrap()
+    };
+    let before = high_water().await;
+
+    // Call the public pull-only entry directly, with no intervening refresh round.
+    assert!(client.pull_only_round(&f.store, &f.peer).await.unwrap());
+    assert_eq!(
+        f.peer
+            .membership_checkpoint_mirror()
+            .await
+            .unwrap()
+            .unwrap()
+            .1,
+        3
+    );
+    assert_eq!(
+        f.peer.meta("sync_cursor").await.unwrap().unwrap(),
+        watermark
+    );
+    assert_eq!(
+        f.peer
+            .meta("e2ee_initial_image_watermark")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("ready")
+    );
+    assert_eq!(pending().await, original_pending);
+    assert_eq!(high_water().await, before);
+    let inputs = f
+        .store
+        .tail_inputs(&f.peer, &f.client.locator)
+        .await
+        .unwrap();
+    assert_eq!(
+        f.peer
+            .encrypted_tail_frozen_record(&inputs.authority)
+            .await
+            .unwrap()
+            .unwrap()
+            .1,
+        frozen
+    );
+}
