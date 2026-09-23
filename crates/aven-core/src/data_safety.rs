@@ -81,7 +81,21 @@ impl Database {
         let mut conn = self.acquire_writer().await?;
         let mut tx = db::begin_immediate(&mut conn).await?;
         let schema_version = db::current_schema_version(&mut tx).await?;
-        let tables = scan_export_tables(&mut tx).await?;
+        let mut tables = scan_export_tables(&mut tx).await?;
+        let bound: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM local_seed_source)")
+            .fetch_one(&mut *tx)
+            .await?;
+        if bound {
+            tables.meta.retain(|m| {
+                m.key != "sync_server_url"
+                    && m.key != "e2ee_association"
+                    && m.key != "e2ee_data_only"
+            });
+            tables.meta.push(MetaRow {
+                key: "e2ee_data_only".into(),
+                value: "1".into(),
+            });
+        }
         let version = if !tables.shared_history_provenance.is_empty() {
             EXPORT_VERSION
         } else if tables.task_related_links.is_empty() {
@@ -107,6 +121,7 @@ impl Database {
     }
 
     pub async fn import_data(&self, export: &AvenExport) -> Result<IntegrityReport> {
+        let _installation = self.plaintext_installation_guard()?;
         let mut conn = self.acquire_writer().await?;
         validation::ensure_supported_export(&mut conn, export).await?;
         validation::validate_export_snapshot(export)?;
@@ -137,6 +152,7 @@ impl Database {
     }
 
     pub async fn create_backup_archive(&self, blob_dir: &Path, output: &Path) -> Result<()> {
+        let _installation = self.plaintext_installation_guard()?;
         let mut conn = self.acquire_writer().await?;
         crate::sync::shared_state::ensure_no_active_local_shared_capture(&mut conn).await?;
         let hashes: Vec<String> = sqlx::query_scalar(

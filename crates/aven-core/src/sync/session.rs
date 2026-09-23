@@ -324,6 +324,11 @@ impl SyncSession {
         if self.stopped {
             return Ok(None);
         }
+        self.database
+            .ensure_plaintext_sync_available(
+                self.active.as_ref().map(|page| page.page.sync_generation),
+            )
+            .await?;
         if let Some(outstanding) = &self.outstanding {
             return Ok(Some(outstanding.prepared.clone()));
         }
@@ -529,6 +534,11 @@ impl SyncSession {
         context: &SyncRequestContext,
         response: SyncHttpResponse,
     ) -> Result<SyncPageOutcome> {
+        self.database
+            .ensure_plaintext_sync_available(
+                self.active.as_ref().map(|page| page.page.sync_generation),
+            )
+            .await?;
         {
             let outstanding = self
                 .outstanding

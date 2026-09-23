@@ -9,6 +9,7 @@ use crate::data_safety::{self, tables, validation};
 use crate::db::{self, Database};
 use anyhow::{Context, Result, ensure};
 
+pub mod adoption;
 mod package;
 
 pub use package::publication as bootstrap_format;
@@ -110,6 +111,7 @@ impl Database {
     ) -> Result<NeverDispatchedLocalSharedCapture> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = db::begin_immediate(&mut conn).await?;
+        adoption::ensure_no_intent(&mut tx).await?;
         if let Some(capture) = load_persisted_local_capture(&mut tx).await? {
             tx.commit().await?;
             return Ok(capture);
@@ -117,6 +119,10 @@ impl Database {
 
         let schema_version = db::current_schema_version(&mut tx).await?;
         let tables = data_safety::scan_export_tables(&mut tx).await?;
+        let source_history = adoption::history_bytes(&tables.changes)?;
+        let mut source_provenance = tables.shared_history_provenance.clone();
+        source_provenance.sort_by(|a, b| a.change_id.cmp(&b.change_id));
+        let source_provenance = serde_json::to_string(&source_provenance)?;
         let image_classes = classify_and_validate_images(&tables, blob_dir).await?;
         let capture = SharedStateCapture::from_tables(schema_version, tables)?;
         let candidate_id = random_cryptographic_id()?;
@@ -181,6 +187,8 @@ impl Database {
         .bind(&created_at)
         .execute(&mut *tx)
         .await?;
+        sqlx::query("UPDATE local_shared_capture_journal SET source_authority = (SELECT authority FROM local_seed_source WHERE singleton = 1), source_history = ?, source_provenance = ? WHERE singleton = 1")
+            .bind(source_history).bind(source_provenance).execute(&mut *tx).await?;
         let provenance_by_id = persisted
             .snapshot
             .tables
@@ -254,6 +262,7 @@ impl Database {
     ) -> Result<Option<NeverDispatchedLocalSharedCapture>> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = db::begin_immediate(&mut conn).await?;
+        adoption::ensure_no_intent(&mut tx).await?;
         let capture = load_persisted_local_capture(&mut tx).await?;
         tx.commit().await?;
         Ok(capture)
@@ -269,6 +278,7 @@ impl Database {
     ) -> Result<bool> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = db::begin_immediate(&mut conn).await?;
+        adoption::ensure_no_intent(&mut tx).await?;
         let active: Option<String> = sqlx::query_scalar(
             "SELECT candidate_id FROM local_shared_capture_journal WHERE singleton = 1",
         )
@@ -304,6 +314,7 @@ impl Database {
         capture: &SharedStateCapture,
     ) -> Result<SharedStateInstallReport> {
         capture.validate()?;
+        let _installation = self.plaintext_installation_guard()?;
         let mut conn = self.acquire_writer().await?;
         let mut tx = db::begin_immediate(&mut conn).await?;
         ensure_empty_target(&mut tx).await?;
@@ -531,6 +542,7 @@ impl SharedStateCapture {
 pub(crate) async fn ensure_no_active_local_shared_capture(
     conn: &mut sqlx::SqliteConnection,
 ) -> Result<()> {
+    adoption::ensure_unbound(conn).await?;
     let active: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM local_shared_capture_journal WHERE singleton = 1)",
     )
@@ -843,6 +855,7 @@ fn unavailable_image_has_validated_history(
 }
 
 async fn ensure_empty_target(conn: &mut sqlx::SqliteConnection) -> Result<()> {
+    adoption::ensure_unbound(conn).await?;
     let occupied: i64 = sqlx::query_scalar(
         "SELECT
              (SELECT count(*) FROM workspaces WHERE id != '0000000000000000')

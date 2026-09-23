@@ -157,6 +157,8 @@ pub(super) async fn restore_backup_archive(
     blob_dir: &Path,
     archive: &Path,
 ) -> Result<PathBuf> {
+    let _installation = db::installation::InstallationGuard::acquire(db_path)?;
+    _installation.ensure_unbound()?;
     let staging = tempfile::tempdir().context("could not create restore staging directory")?;
     let entries = extract_archive(archive, staging.path())?;
     let manifest_path = staging.path().join(MANIFEST_ENTRY);

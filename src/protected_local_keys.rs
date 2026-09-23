@@ -1,3 +1,4 @@
+mod adoption;
 mod seed;
 
 use std::fmt;

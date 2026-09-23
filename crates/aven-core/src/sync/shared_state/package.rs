@@ -337,6 +337,7 @@ impl Database {
 
         let mut conn = self.acquire_writer().await?;
         let mut tx = db::begin_immediate(&mut conn).await?;
+        super::adoption::ensure_no_intent(&mut tx).await?;
         let selected_inventory: Vec<(String, String)> = sqlx::query_as(
             "SELECT sha256, classification FROM local_shared_capture_images
              WHERE candidate_id = ? AND classification != 'unavailable'
@@ -371,6 +372,7 @@ impl Database {
 
         let mut conn = self.acquire_writer().await?;
         let mut tx = db::begin_immediate(&mut conn).await?;
+        super::adoption::ensure_no_intent(&mut tx).await?;
         let active: Option<(String, String)> = sqlx::query_as(
             "SELECT candidate_id, state FROM local_shared_capture_journal WHERE singleton = 1",
         )
@@ -1082,7 +1084,7 @@ async fn persist_package(
     Ok(())
 }
 
-async fn load_package(
+pub(super) async fn load_package(
     conn: &mut sqlx::SqliteConnection,
     candidate_id: &str,
 ) -> Result<Option<EncryptedLocalSharedStatePackage>> {

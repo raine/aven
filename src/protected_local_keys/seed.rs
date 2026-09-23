@@ -3,7 +3,7 @@ use aven_core::sync::seed_claim::{SEED_STORAGE_BYTES, SeedAuthority};
 
 const SEED_MAGIC: &[u8; 8] = b"AVENSED1";
 const SEED_MARKER: &[u8; 8] = b"AVENSPN1";
-const SEED_BYTES: usize = 8 + 32 + SEED_STORAGE_BYTES + 32;
+pub(super) const SEED_BYTES: usize = 8 + 32 + SEED_STORAGE_BYTES + 32;
 const SEED_MARKER_BYTES: usize = 8 + 32;
 
 impl ProtectedLocalKeyStore {
@@ -45,7 +45,7 @@ impl ProtectedLocalKeyStore {
             .await
     }
 
-    fn seed_backend(&self) -> Backend {
+    pub(super) fn seed_backend(&self) -> Backend {
         match &self.backend {
             #[cfg(target_os = "macos")]
             Backend::Keychain(backend) => Backend::Keychain(KeychainBackend {
@@ -133,7 +133,7 @@ impl ProtectedLocalKeyStore {
         Ok(out)
     }
 
-    fn decode_seed(
+    pub(super) fn decode_seed(
         &self,
         bytes: &[u8],
         package: &ProtectedLocalPackageKey,

@@ -12,6 +12,22 @@ use crate::sync::wire::{
 };
 
 impl Database {
+    pub(in crate::sync) async fn ensure_plaintext_sync_available(
+        &self,
+        expected_generation: Option<i64>,
+    ) -> Result<()> {
+        let _installation = self.plaintext_installation_guard()?;
+        let mut conn = self.acquire_reader().await?;
+        super::super::shared_state::ensure_no_active_local_shared_capture(&mut conn).await?;
+        if let Some(expected) = expected_generation {
+            anyhow::ensure!(
+                sync_generation(&mut conn).await? == expected,
+                "error stale-sync-page sync-generation-changed"
+            );
+        }
+        Ok(())
+    }
+
     pub(in crate::sync) async fn pending_sync_changes_exist(&self) -> Result<bool> {
         let mut conn = self.acquire_reader().await?;
         Ok(
@@ -57,7 +73,9 @@ impl Database {
     }
 
     pub(in crate::sync) async fn prepare_sync_discovery(&self, server: &str) -> Result<String> {
+        let _installation = self.plaintext_installation_guard()?;
         let mut conn = self.acquire_writer().await?;
+        super::super::shared_state::adoption::ensure_unbound(&mut conn).await?;
         validate_sync_server(&mut conn, server).await?;
         super::super::protocol::replica_protocol(&mut conn).await?;
         get_meta(&mut conn, "client_id")
@@ -66,7 +84,9 @@ impl Database {
     }
 
     pub(in crate::sync) async fn block_sync_protocol(&self, protocol: u32) -> Result<()> {
+        let _installation = self.plaintext_installation_guard()?;
         let mut conn = self.acquire_writer().await?;
+        super::super::shared_state::adoption::ensure_unbound(&mut conn).await?;
         set_meta(&mut conn, "sync_blocked_protocol", &protocol.to_string()).await
     }
 
@@ -87,7 +107,9 @@ impl Database {
         pull_limit: u32,
         protocol: Option<u32>,
     ) -> Result<ClientSyncPage> {
+        let _installation = self.plaintext_installation_guard()?;
         let mut conn = self.acquire_writer().await?;
+        super::super::shared_state::adoption::ensure_unbound(&mut conn).await?;
         super::super::shared_state::ensure_no_active_local_shared_capture(&mut conn).await?;
         validate_sync_server(&mut conn, &server).await?;
         let behavior_protocol = super::super::protocol::replica_protocol(&mut conn).await?;
@@ -155,7 +177,9 @@ impl Database {
             &request_change_ids,
             &page.response,
         )?;
+        let _installation = self.plaintext_installation_guard()?;
         let mut conn = self.acquire_writer().await?;
+        super::super::shared_state::adoption::ensure_unbound(&mut conn).await?;
         apply_sync_response(&mut conn, page, expected_behavior).await
     }
 }

@@ -130,8 +130,10 @@ impl Database {
         blob_dir: &Path,
         contract: &BlobUploadContract,
     ) -> Result<PreparedBlobUpload> {
+        let _installation = self.plaintext_installation_guard()?;
         let (row, lease_id) = {
             let mut conn = self.acquire_writer().await?;
+            super::shared_state::adoption::ensure_unbound(&mut conn).await?;
             let row = blob_inventory_row(&mut conn, &contract.sha256)
                 .await?
                 .filter(|row| row.available)
@@ -175,7 +177,9 @@ impl Database {
     }
 
     pub(super) async fn missing_local_blob_page(&self, limit: usize) -> Result<MissingBlobPage> {
+        let _installation = self.plaintext_installation_guard()?;
         let mut conn = self.acquire_reader().await?;
+        super::shared_state::adoption::ensure_unbound(&mut conn).await?;
         missing_local_blob_page(&mut conn, limit).await
     }
 
@@ -206,7 +210,9 @@ impl Database {
         {
             bail!("error attachment-blob-remote-invalid");
         }
+        let _installation = self.plaintext_installation_guard()?;
         let mut conn = self.acquire_writer().await?;
+        super::shared_state::adoption::ensure_unbound(&mut conn).await?;
         let reservation = ensure_local_capacity(
             &mut conn,
             blob_dir,
@@ -230,7 +236,9 @@ impl Database {
         blobs: &[BlobUploadContract],
     ) -> Result<Vec<String>> {
         super::wire::validate_blob_contracts(blobs)?;
+        let _installation = self.plaintext_installation_guard()?;
         let mut conn = self.acquire_writer().await?;
+        super::shared_state::adoption::ensure_unbound(&mut conn).await?;
         let mut missing = Vec::new();
         let mut missing_hashes = HashSet::new();
         for blob in blobs {
@@ -270,7 +278,9 @@ impl Database {
         if (validated.facts.width, validated.facts.height) != (contract.width, contract.height) {
             bail!("error blob-validation-failed");
         }
+        let _installation = self.plaintext_installation_guard()?;
         let mut conn = self.acquire_writer().await?;
+        super::shared_state::adoption::ensure_unbound(&mut conn).await?;
         let reservation = reserve_upload(
             &mut conn,
             &contract.workspace_id,
@@ -294,9 +304,11 @@ impl Database {
         blob_dir: &Path,
         sha256: &str,
     ) -> Result<Option<ServerBlobDownload>> {
+        let _installation = self.plaintext_installation_guard()?;
         super::wire::validate_blob_hashes(&[sha256.to_string()])?;
         let lease = {
             let mut conn = self.acquire_writer().await?;
+            super::shared_state::adoption::ensure_unbound(&mut conn).await?;
             if !blob_available(&mut conn, blob_dir, sha256).await? {
                 return Ok(None);
             }
@@ -304,6 +316,7 @@ impl Database {
         };
         let result = tokio::fs::read(object_path(blob_dir, sha256)?).await;
         let mut conn = self.acquire_writer().await?;
+        super::shared_state::adoption::ensure_unbound(&mut conn).await?;
         release_lease(&mut conn, &lease).await?;
         Ok(Some(ServerBlobDownload {
             bytes: result.context("error blob-read-failed")?,
@@ -315,7 +328,9 @@ impl Database {
         blob_dir: &Path,
         policy: LifecyclePolicy,
     ) -> Result<PruneSummary> {
+        let _installation = self.plaintext_installation_guard()?;
         let mut conn = self.acquire_writer().await?;
+        super::shared_state::adoption::ensure_unbound(&mut conn).await?;
         prune(&mut conn, blob_dir, policy, true, &SystemClock).await
     }
 }

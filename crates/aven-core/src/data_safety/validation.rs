@@ -99,6 +99,14 @@ pub(super) fn portable_history_server(export: &AvenExport) -> Result<Option<Stri
 }
 
 pub(super) fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
+    ensure!(
+        !export
+            .tables
+            .meta
+            .iter()
+            .any(|m| m.key == "e2ee_data_only" || m.key == "e2ee_association"),
+        "error e2ee-data-only-import-unavailable"
+    );
     portable_history_server(export)?;
     validate_shared_snapshot(export)
 }

@@ -18,6 +18,7 @@ mod backup;
 mod changes;
 mod field_versions;
 mod inspection;
+pub mod installation;
 mod rows;
 
 pub use backup::{

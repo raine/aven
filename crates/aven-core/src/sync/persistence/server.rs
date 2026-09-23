@@ -47,6 +47,7 @@ impl Database {
         blob_dir: Option<&Path>,
         active_protocol: u32,
     ) -> Result<ServerSyncResult> {
+        let _installation = self.plaintext_installation_guard()?;
         let envelope =
             crate::sync::wire::validate_request_at_protocol(&page.request, active_protocol)?;
         for change in &page.request.changes {
@@ -69,6 +70,7 @@ impl Database {
         }
         let blob_prepare_ms = blob_prepare_started.elapsed().as_millis();
         let mut conn = self.acquire_writer().await?;
+        super::super::shared_state::adoption::ensure_unbound(&mut conn).await?;
         let assign_started = Instant::now();
         let (accepted_count, push_acks) =
             super::assign_server_sequences(&mut conn, page.request.changes, blob_dir).await?;
@@ -98,6 +100,7 @@ pub(super) async fn assign_server_sequences(
         return Ok((0, Vec::new()));
     }
     let mut tx = begin_immediate(conn).await?;
+    super::super::shared_state::adoption::ensure_unbound(&mut tx).await?;
     let assigned_change_ids = super::load_assigned_change_ids(&mut tx, &changes).await?;
     let unassigned_changes = changes
         .iter()

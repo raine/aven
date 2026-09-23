@@ -36,12 +36,16 @@ impl Database {
     }
 
     pub async fn begin_sync_attempt(&self, attempted_at: String) -> Result<()> {
+        let _installation = self.plaintext_installation_guard()?;
         let mut conn = self.acquire_writer().await?;
+        super::super::shared_state::adoption::ensure_unbound(&mut conn).await?;
         set_meta(&mut conn, "sync_last_attempt_at", &attempted_at).await
     }
 
     pub async fn record_sync_error(&self, error: String) -> Result<()> {
+        let _installation = self.plaintext_installation_guard()?;
         let mut conn = self.acquire_writer().await?;
+        super::super::shared_state::adoption::ensure_unbound(&mut conn).await?;
         set_meta(&mut conn, "sync_last_error", &error).await
     }
 }

@@ -3,6 +3,10 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## Unreleased
+
+- Protect installations explicitly opted into experimental encrypted sync from plaintext sync and backup replacement.
+
 ## v0.1.41 (2026-09-22)
 
 - Navigate from a task to its blocker with `g B`, choosing from a picker when it has multiple blockers. ([#27](https://github.com/raine/aven/issues/27))

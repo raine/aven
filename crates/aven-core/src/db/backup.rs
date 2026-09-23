@@ -84,6 +84,15 @@ pub async fn backup_database(source: &Path, backup: &Path) -> Result<()> {
     if !source.is_file() {
         bail!("could not open source {}", source.display());
     }
+    let installation = super::installation::InstallationGuard::acquire(source)?;
+    installation.ensure_unbound()?;
+    backup_database_unlocked(source, backup).await
+}
+
+async fn backup_database_unlocked(source: &Path, backup: &Path) -> Result<()> {
+    if !source.is_file() {
+        bail!("could not open source {}", source.display());
+    }
     if let Some(parent) = backup.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("could not create {}", parent.display()))?;
@@ -109,6 +118,8 @@ pub fn shm_path(path: &Path) -> PathBuf {
 }
 
 pub async fn restore_database_file(target: &Path, source: &Path) -> Result<PathBuf> {
+    let _installation = super::installation::InstallationGuard::acquire(target)?;
+    _installation.ensure_unbound()?;
     validate_sqlite_source(source).await?;
     ensure_file_has_no_active_local_shared_capture(source, "source").await?;
     ensure_file_has_no_active_local_shared_capture(target, "target").await?;
@@ -139,7 +150,7 @@ pub async fn restore_database_file(target: &Path, source: &Path) -> Result<PathB
 pub(crate) async fn create_restore_safety_backup(target: &Path) -> Result<PathBuf> {
     let safety = default_sqlite_backup_path(target, "before-restore")?;
     if target.exists() {
-        backup_database(target, &safety).await?;
+        backup_database_unlocked(target, &safety).await?;
     } else {
         SqliteConnection::connect_with(
             &SqliteConnectOptions::new()
@@ -217,6 +228,14 @@ async fn ensure_connection_has_no_active_local_shared_capture(
     .await?;
     if !table_exists {
         return Ok(());
+    }
+    let source_table: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = 'local_seed_source')",
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    if source_table {
+        crate::sync::shared_state::adoption::ensure_unbound(conn).await?;
     }
     let active: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM local_shared_capture_journal WHERE singleton = 1)",
