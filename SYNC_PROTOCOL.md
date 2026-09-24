@@ -150,8 +150,11 @@ due policy are the author's historical context.
 An occurrence outcome owns its task's terminal status. A completion or skip that
 races an explicit non-terminal status edit applies the terminal status and keeps
 the edit as an ordinary status conflict on every replica; such a conflict resolves
-only to the terminal status. The outcome's `task_status_change_id` must name an
-earlier status change of the same task with that terminal value. Terminal-versus-terminal races remain outcome
+only to the terminal status. When an outcome finds its task still open, it sets
+the terminal status only if its `task_status_change_id` names an existing status
+change of the same task with that terminal value. Outcomes for an already
+terminal task, and outcome conflict resolutions (whose reference may be empty),
+do not use the reference. Terminal-versus-terminal races remain outcome
 conflicts without a duplicate status conflict.
 
 ### Persisted replica behavior

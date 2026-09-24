@@ -1276,6 +1276,70 @@ async fn immediate_undo_removes_untouched_active_successor_and_restores_tip() {
     }
 }
 
+async fn task_labels(conn: &mut SqliteConnection, task_id: &TaskId) -> Vec<String> {
+    sqlx::query_scalar("SELECT label FROM task_labels WHERE task_id = ? ORDER BY label")
+        .bind(task_id)
+        .fetch_all(conn)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn immediate_undo_keeps_bound_successor_after_its_label_is_renamed_or_deleted() {
+    for rename in [true, false] {
+        let (_temp, mut conn, workspace) = setup().await;
+        sqlx::query("INSERT INTO local_seed_source VALUES (1, x'00', 'seed')")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let created = create_daily(&mut conn, &workspace).await;
+        let resolved = resolve(
+            &mut conn,
+            &workspace,
+            &created.task.id,
+            RecurrenceOutcome::Completed,
+            "2026-07-20T18:00:00Z",
+        )
+        .await;
+        let successor_id = resolved.successor.unwrap().id;
+        // Workspace label changes record label history, not successor task history.
+        if rename {
+            crate::operations::labels::rename_label_operation(
+                &mut conn, &workspace, "habit", "routine", false,
+            )
+            .await
+            .unwrap();
+        } else {
+            crate::operations::labels::delete_label_operation(
+                &mut conn, &workspace, "habit", false,
+            )
+            .await
+            .unwrap();
+        }
+        let before = task_labels(&mut conn, &successor_id).await;
+
+        let mut tx = begin_immediate(&mut conn).await.unwrap();
+        let error =
+            undo_recurrence_resolution(&mut tx, &workspace.id, &created.task.id, "todo", "done")
+                .await
+                .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("recurrence-undo-successor-touched"),
+            "rename={rename}: {error:#}"
+        );
+        tx.rollback().await.unwrap();
+        assert_eq!(task_labels(&mut conn, &successor_id).await, before);
+        let successor_exists: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks WHERE id = ?")
+            .bind(&successor_id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(successor_exists, 1);
+    }
+}
+
 #[tokio::test]
 async fn immediate_undo_keeps_successor_referenced_by_either_related_endpoint() {
     let (_temp, mut conn, workspace) = setup().await;

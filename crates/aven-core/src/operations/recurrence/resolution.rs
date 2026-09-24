@@ -17,7 +17,7 @@ use crate::task_fields::TaskField;
 use crate::types::{MutableEntityType, RecurrenceOccurrence, RecurrenceSeries};
 use crate::workspaces::Workspace;
 
-use super::projection::generated_creates;
+use super::projection::{generated_creates, generates_proposals};
 use super::{
     RecurrenceResolveOutcome, format_local_time, load_occurrence, load_occurrence_for_task,
     load_projected_occurrence, load_series, load_series_labels, load_series_metadata,
@@ -525,6 +525,22 @@ async fn ensure_successor_untouched(
     let [create] = creates.as_slice() else {
         anyhow::bail!("error recurrence-undo-successor-touched");
     };
+    // Workspace label renames and deletions change a bound successor's labels
+    // without task history, so they are compared with its generation. Local-only
+    // databases compare them with the template above.
+    if generates_proposals(conn).await? {
+        let labels: Vec<String> = sqlx::query_scalar(
+            "SELECT label FROM task_labels WHERE workspace_id = ? AND task_id = ? ORDER BY label",
+        )
+        .bind(workspace_id)
+        .bind(task_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        ensure!(
+            serde_json::to_value(&labels)? == create.payload["labels"],
+            "error recurrence-undo-successor-touched"
+        );
+    }
     let generated = [
         create.change_id.clone(),
         create.occurrence_change_id().to_owned(),
