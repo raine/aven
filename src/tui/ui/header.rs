@@ -600,16 +600,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sync_status_badge_distinguishes_errors_attention_and_disabled_sync() {
+    async fn sync_status_badge_distinguishes_local_attention_and_disabled_sync() {
         let (mut store, _dir) = test_store().await;
         store.sync_status.enabled = true;
-        store.sync_status.last_error = Some("connection refused".to_string());
-        assert_eq!(
-            sync_status_label(&store),
-            (crate::tui::theme::RED, "sync!".to_string())
-        );
+        assert_eq!(sync_status_label(&store), (FG_DIM, "local".to_string()));
 
-        store.sync_status.last_error = None;
+        store.sync_status.set_up = true;
         store.sync_status.conflicts = 2;
         assert_eq!(sync_status_label(&store), (ORANGE, "sync!".to_string()));
 
@@ -739,6 +735,7 @@ mod tests {
         let (mut store, _dir) = test_store().await;
         store.view_state.query = TaskQuery::Todo;
         store.sync_status.enabled = true;
+        store.sync_status.set_up = true;
         let width = 150;
         let backend = TestBackend::new(width, 2);
         let mut terminal = Terminal::new(backend).unwrap();

@@ -8,7 +8,7 @@
 //! setup ID and secret followed by the server origin.
 use std::fmt;
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use aven_core::sync::seed_claim::{Secret, membership::Invitation};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use zeroize::Zeroizing;
@@ -44,7 +44,9 @@ impl fmt::Debug for DeviceInvitation {
 
 /// Validates a server URL for encrypted transport and returns its origin.
 pub(in crate::sync) fn server_origin(url: &str) -> Result<String> {
-    crate::seed_bootstrap_http::Client::new(url)?;
+    crate::seed_bootstrap_http::Client::new(url).context(
+        "error sync-server-url-invalid hint=\"use an origin such as https://sync.example.com, or http:// only with a loopback address; no path, query or credentials\"",
+    )?;
     let origin = reqwest::Url::parse(url)?.origin().ascii_serialization();
     ensure!(
         origin.len() <= MAX_SERVER_BYTES,

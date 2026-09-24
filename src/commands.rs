@@ -10,7 +10,6 @@ mod doctor;
 mod labels;
 mod metadata;
 mod notes;
-mod pairing;
 mod prime;
 mod projects;
 mod recurrence;
@@ -34,14 +33,13 @@ pub(crate) use self::doctor::cmd_doctor;
 pub(crate) use self::labels::cmd_label;
 pub(crate) use self::metadata::cmd_metadata;
 pub(crate) use self::notes::{cmd_note, cmd_note_delete};
-pub(crate) use self::pairing::cmd_sync_pair;
 pub(crate) use self::prime::run as cmd_prime;
 pub(crate) use self::projects::cmd_project;
 pub(crate) use self::recurrence::{cmd_recur, recurrence_schedule};
 pub(crate) use self::relations::{cmd_dep, cmd_epic, cmd_related};
 pub(crate) use self::self_update::run as cmd_self_update;
 pub(crate) use self::skill::{install as cmd_skill_install, print as cmd_skill};
-pub(crate) use self::status::{cmd_daemon_status, cmd_sync_status};
+pub(crate) use self::status::cmd_daemon_status;
 pub(crate) use self::tasks::{
     cmd_add, cmd_delete_restore, cmd_edit, cmd_internal_natural_add, cmd_list, cmd_search, cmd_show,
 };

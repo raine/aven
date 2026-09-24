@@ -118,6 +118,10 @@ impl App {
                 needs_redraw = true;
             }
 
+            if self.poll_invite().await? {
+                needs_redraw = true;
+            }
+
             if self.poll_gist_creation().await {
                 needs_redraw = true;
             }
@@ -381,7 +385,6 @@ impl App {
                 OverlayViewContext {
                     sync_status: &self.store.sync_status,
                     syncing: self.sync.work_pending(),
-                    now: time::OffsetDateTime::now_utc(),
                     status_prefix_active: self.pending_shortcut.has_add_task_status_prefix(),
                     priority_prefix_active: self.pending_shortcut.has_add_task_priority_prefix(),
                 },
@@ -478,7 +481,6 @@ impl App {
                 OverlayViewContext {
                     sync_status: &self.store.sync_status,
                     syncing: self.sync.work_pending(),
-                    now: time::OffsetDateTime::now_utc(),
                     status_prefix_active: self.pending_shortcut.has_add_task_status_prefix(),
                     priority_prefix_active: self.pending_shortcut.has_add_task_priority_prefix(),
                 },
@@ -853,6 +855,7 @@ impl App {
             || self.preview_controller.work_pending()
             || self.attachment_controller.work_pending()
             || self.sync.work_pending()
+            || self.invite.work_pending()
             || self.gist.work_pending()
             || self.update.work_pending()
             || self.changelog.work_pending()

@@ -177,6 +177,15 @@ impl Database {
                 .await?,
         )
     }
+
+    /// True when storage holds change rows. Encrypted server storage never
+    /// does, so server launch refuses such storage as unsupported.
+    pub async fn has_change_history(&self) -> Result<bool> {
+        let mut conn = self.acquire_reader().await?;
+        Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM changes)")
+            .fetch_one(&mut *conn)
+            .await?)
+    }
 }
 
 fn parse_server_setup(value: &str) -> Result<(SetupAuthority, u64)> {

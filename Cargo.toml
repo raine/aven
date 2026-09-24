@@ -44,8 +44,7 @@ getrandom = "0.4"
 hex.workspace = true
 image.workspace = true
 iana-time-zone = "0.1"
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "gzip", "brotli", "zstd", "deflate"] }
-tower-http = { version = "0.7", features = ["compression-full", "decompression-full"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 flate2.workspace = true
 serde.workspace = true
 serde_json.workspace = true

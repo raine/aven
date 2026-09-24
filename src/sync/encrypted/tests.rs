@@ -1,6 +1,6 @@
 //! Real CLI commands in separate worker processes: two installations with
 //! independent databases, configuration and file-backed protected keys, and an
-//! `aven server --encrypted` process on loopback.
+//! `aven server` process on loopback.
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
@@ -78,7 +78,6 @@ impl Installation {
             .env("AVEN_NO_UPDATE_CHECK", "1")
             .env_remove("AVEN_DB")
             .env_remove("AVEN_DEV_DB")
-            .env_remove("AVEN_SYNC_SERVER")
             .env_remove("AVEN_SYNC_DISABLED")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -161,7 +160,7 @@ fn png(path: &Path, marker: u8) -> Vec<u8> {
 async fn start_server(operator: &Installation, data: &Path, bind: &str) -> Child {
     let data = data.display().to_string();
     let mut child = operator
-        .command(&["server", "--encrypted", "--data", &data, "--bind", bind])
+        .command(&["server", "--data", &data, "--bind", bind])
         .spawn()
         .unwrap();
     let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
@@ -297,7 +296,44 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
     a.ok(&["attachment", "add", &child, &seed_png.display().to_string()])
         .await;
 
-    // Operator storage refuses non-loopback binds and plaintext service.
+    // An unconfigured database stays local: sync explains setup, status
+    // reports it, and invitations need setup first.
+    let error = failure(&a.run(&["sync"]).await);
+    assert!(error.contains("sync-not-set-up"), "{error}");
+    assert_eq!(status(&a).await["state"], "not-set-up");
+    let text = a.ok(&["sync", "status"]).await;
+    assert!(text.contains("Sync: not set up"), "{text}");
+    let error = failure(&a.run(&["sync", "invite"]).await);
+    assert!(error.contains("sync-not-set-up"), "{error}");
+
+    // Storage must be prepared, loopback-bound, and never holds change history.
+    let error = failure(&operator.run(&["server", "--data", &data]).await);
+    assert!(error.contains("server-storage-unprepared"), "{error}");
+    assert!(!server_data.exists());
+    let with_history = Installation::new(root, "history");
+    with_history.ok(&["add", "Existing server history"]).await;
+    let history = with_history.db().display().to_string();
+    let error = failure(&operator.run(&["server", "--data", &history]).await);
+    assert!(error.contains("server-storage-unsupported"), "{error}");
+    let error = failure(
+        &operator
+            .run(&["server", "setup", "--data", &history, "--url", &url])
+            .await,
+    );
+    assert!(error.contains("server-storage-unsupported"), "{error}");
+    let error = failure(
+        &operator
+            .run(&[
+                "server",
+                "setup",
+                "--data",
+                &data,
+                "--url",
+                "https://sync.example.com/aven",
+            ])
+            .await,
+    );
+    assert!(error.contains("sync-server-url-invalid"), "{error}");
     let setup_invitation = line_with(
         &operator
             .ok(&["server", "setup", "--data", &data, "--url", &url])
@@ -306,19 +342,19 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
     );
     let error = failure(
         &operator
-            .run(&[
-                "server",
-                "--encrypted",
-                "--data",
-                &data,
-                "--bind",
-                "0.0.0.0:0",
-            ])
+            .run(&["server", "--data", &data, "--bind", "0.0.0.0:0"])
             .await,
     );
-    assert!(error.contains("encrypted-server-bind-loopback"), "{error}");
-    let error = failure(&operator.run(&["server", "--data", &data]).await);
-    assert!(error.contains("server-storage-encrypted"), "{error}");
+    assert!(error.contains("server-bind-loopback"), "{error}");
+    for retired in [
+        &["server", "--encrypted", "--data", &data][..],
+        &["server", "--unsafe-public-bind", "--data", &data][..],
+        &["sync", "--server", &url][..],
+        &["sync", "pair"][..],
+    ] {
+        let output = operator.run(retired).await;
+        assert!(!output.status.success(), "{retired:?}");
+    }
 
     // Setup requires explicit confirmation when standard input is not a terminal.
     let error = failure(
@@ -358,6 +394,7 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
             .await,
     );
     assert!(error.contains("bootstrap-refused"), "{error}");
+    assert!(error.contains("sync-setup-refused"), "{error}");
     let setup_invitation = reissued;
     let output = a
         .run_with_input(&["sync", "setup"], &setup_invitation)
@@ -368,8 +405,6 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
         "{stdout}"
     );
     assert!(stdout.contains("Images are up to date"), "{stdout}");
-    let error = failure(&a.run(&["sync", "--server", &url]).await);
-    assert!(error.contains("sync-server-fixed"), "{error}");
 
     // Joining refuses a database that already holds tasks.
     let occupied = Installation::new(root, "occupied");
@@ -516,5 +551,58 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
             "{}",
             path.display()
         );
+    }
+}
+
+mod automatic;
+mod conflicts;
+
+/// A running server with seed `a` and joined peer `b`.
+struct Pair {
+    _server: Child,
+    a: Installation,
+    b: Installation,
+}
+
+/// Sets up `a` from its current data and joins an empty `b`.
+async fn pair(root: &Path) -> Pair {
+    let operator = Installation::new(root, "operator");
+    let a = Installation::new(root, "a");
+    let b = Installation::new(root, "b");
+    let data = root.join("server.sqlite");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let url = format!("http://127.0.0.1:{port}");
+    let setup = line_with(
+        &operator
+            .ok(&[
+                "server",
+                "setup",
+                "--data",
+                &data.display().to_string(),
+                "--url",
+                &url,
+            ])
+            .await,
+        "aven-sync-setup-1:",
+    );
+    let server = start_server(&operator, &data, &format!("127.0.0.1:{port}")).await;
+    success(
+        &a.run_with_input(&["sync", "setup", "--yes"], &setup).await,
+        &["sync", "setup"],
+    );
+    let (invite, invitation, _invite_stdout) = spawn_invite(&a, None).await;
+    success(
+        &b.run_with_input(&["sync", "join"], &invitation).await,
+        &["sync", "join"],
+    );
+    assert!(invite.wait_with_output().await.unwrap().status.success());
+    Pair {
+        _server: server,
+        a,
+        b,
     }
 }

@@ -2,12 +2,12 @@ use anyhow::{Context, Result};
 use aven_core::db::Database;
 use tokio::task::JoinHandle;
 
-use crate::config::{self, AppConfig};
-use crate::sync::SyncRunSummary;
+use crate::config::AppConfig;
+use crate::sync::encrypted::{self, Outcome};
 use crate::tui::app::{App, Notification};
 
 pub(super) struct SyncController {
-    task: Option<JoinHandle<Result<SyncRunSummary>>>,
+    task: Option<JoinHandle<Result<Outcome>>>,
 }
 
 impl SyncController {
@@ -20,11 +20,10 @@ impl SyncController {
             return Ok(false);
         }
         config.ensure_sync_allowed()?;
-        config::resolve_sync_server(None, config)?;
         let database = database.clone();
         let config = config.clone();
         self.task = Some(tokio::spawn(async move {
-            crate::sync::run_sync_to_completion(&database, &config).await
+            encrypted::run_to_completion(&database, &config).await
         }));
         Ok(true)
     }
@@ -33,7 +32,7 @@ impl SyncController {
         self.task.is_some()
     }
 
-    pub(super) async fn poll(&mut self) -> Option<Result<SyncRunSummary>> {
+    pub(super) async fn poll(&mut self) -> Option<Result<Outcome>> {
         if !self.task.as_ref().is_some_and(JoinHandle::is_finished) {
             return None;
         }
@@ -47,6 +46,10 @@ impl SyncController {
 
 impl App {
     pub(super) fn begin_sync(&mut self) {
+        if !self.store.sync_status.set_up {
+            self.set_error("sync unavailable: run `aven sync setup` or `aven sync join` first");
+            return;
+        }
         match self
             .sync
             .start(&self.store.database(), self.intake.config())
@@ -71,13 +74,15 @@ impl App {
                     Some(error) => {
                         self.set_warning(format!("sync finished but refresh failed: {error:#}"));
                     }
-                    None if result.complete => self.set_success(format!(
-                        "sync complete pushed={} pulled={} cursor={} pages={}",
-                        result.pushed, result.pulled, result.cursor, result.pages
-                    )),
+                    None if result.metadata_caught_up && result.images == "complete" => {
+                        self.set_success("sync complete")
+                    }
+                    None if result.metadata_caught_up => {
+                        self.set_warning(format!("tasks synced; images {}", result.images))
+                    }
                     None => self.set_warning(format!(
-                        "sync stopped with pending work pushed={} pulled={} cursor={} pages={}",
-                        result.pushed, result.pulled, result.cursor, result.pages
+                        "sync stopped with pending work after {} rounds; images {}",
+                        result.rounds, result.images
                     )),
                 }
             }

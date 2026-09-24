@@ -138,7 +138,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::ShowDatabaseStats
             | Action::BeginUpdate
             | Action::ShowChangelog
-            | Action::PairMobile
+            | Action::AddDevice
             | Action::BeginConfigInit
             | Action::BeginAddDependency
             | Action::BeginRemoveDependency
@@ -408,22 +408,17 @@ mod tests {
     }
 
     #[test]
-    fn catalog_includes_pair_mobile_as_a_keyless_list_command() {
+    fn catalog_includes_add_device_as_a_keyless_list_command() {
         let command = COMMANDS
             .iter()
-            .find(|command| command.name == "pair-mobile")
-            .expect("pairing command");
+            .find(|command| command.name == "add-device")
+            .expect("add-device command");
 
-        assert_eq!(command.name, "pair-mobile");
-        assert_eq!(command.aliases, &["pair"]);
-        assert_eq!(command.description, "pair a mobile device with this TUI");
-        assert_eq!(command.section, "General");
-        assert_eq!(command.action, Action::PairMobile);
+        assert_eq!(command.aliases, &["pair", "pair-mobile"]);
+        assert_eq!(command.action, Action::AddDevice);
         assert_eq!(command.target_policy(), CommandTargetPolicy::None);
         assert_eq!(command.scope_policy(), CommandScopePolicy::ListOnly);
-        assert_eq!(command.bulk_support(), BulkSupport::NotTaskScoped);
         assert!(command.keys(CommandContext::Normal).is_empty());
-        assert!(command.keys(CommandContext::Detail).is_empty());
         assert!(command.is_available(CommandContext::Normal));
         assert!(!command.is_available(CommandContext::Detail));
     }

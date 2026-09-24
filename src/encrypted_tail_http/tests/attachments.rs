@@ -1039,6 +1039,7 @@ async fn cli_drain_stops_promptly_behind_missing_local_image_and_still_pulls() {
         &f.peer_store,
         &f.peer,
         &f.root.path().join("peer-blobs"),
+        crate::sync::encrypted::ROUND_LIMIT,
     )
     .await
     .unwrap();

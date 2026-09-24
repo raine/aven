@@ -20,11 +20,11 @@ pub use custom_commands::{
     CustomTuiCommandConfig, CustomTuiCommandExecution, CustomTuiCommandSuccess,
     CustomTuiCommandTarget,
 };
+pub(crate) use paths::expand_tilde_from;
 pub use paths::{
     config_dir_path, config_file_path, debug_db_path_from_env, default_db_path, expand_tilde,
-    resolve_blob_dir, resolve_db_path, resolve_sync_server,
+    resolve_blob_dir, resolve_db_path,
 };
-pub(crate) use paths::{expand_tilde_from, resolve_sync_server_from};
 pub use tui::{SidebarView, TableColumn, TaskColumnConfig, TuiConfig};
 
 const DEFAULT_WAKE_ADDR: &str = "127.0.0.1:47631";
@@ -254,9 +254,7 @@ pub struct SyncConfig {
     pub enabled: bool,
     #[serde(skip)]
     pub(crate) disable_override: bool,
-    pub server_url: Option<String>,
     pub interval_seconds: Option<u64>,
-    pub auth_token: Option<String>,
 }
 
 impl Default for SyncConfig {
@@ -264,9 +262,7 @@ impl Default for SyncConfig {
         Self {
             enabled: false,
             disable_override: false,
-            server_url: None,
             interval_seconds: Some(DEFAULT_SYNC_INTERVAL_SECONDS),
-            auth_token: None,
         }
     }
 }
@@ -352,14 +348,6 @@ impl AppConfig {
             .interval_seconds
             .unwrap_or(DEFAULT_SYNC_INTERVAL_SECONDS)
             .max(1)
-    }
-
-    pub fn sync_auth_token(&self) -> Option<&str> {
-        self.sync
-            .auth_token
-            .as_deref()
-            .map(str::trim)
-            .filter(|token| !token.is_empty())
     }
 
     pub(crate) fn sync_is_allowed(&self) -> bool {
@@ -456,8 +444,7 @@ pub fn write_default_config(path: &Path) -> Result<()> {
     if path.exists() {
         bail!("error config-exists path={}", path.display());
     }
-    let mut config = AppConfig::default();
-    config.sync.auth_token = Some(String::new());
+    let config = AppConfig::default();
     config.validate()?;
     let text = serde_yaml::to_string(&config)?;
     write_config_text(path, text)

@@ -1752,16 +1752,6 @@ mod tests {
     }
 
     #[test]
-    fn pairing_command_uses_canonical_label() {
-        let label = command_label("pair-mobile");
-        let rendered = render_command_overlay("pair-mobile", "pair-mobile".len());
-
-        assert_eq!(label, ":pair-mobile");
-        assert_eq!(unicode_width::UnicodeWidthStr::width(label.as_str()), 12);
-        assert!(rendered.contains(&label));
-    }
-
-    #[test]
     fn overlay_render_includes_command_title_and_input() {
         let rendered = render_command_overlay("ref", 3);
         assert!(rendered.contains("Command"));

@@ -414,8 +414,8 @@ mod tests {
     fn pairing_outside_click_uses_standard_modal_dismissal() {
         let presentation = std::sync::Arc::new(
             crate::pairing::PairingPresentation::new(
-                "https://sync.example.test:8443/aven".to_string(),
-                "pairing-token-fixture-0123456789".to_string(),
+                "https://sync.example.test:8443",
+                "aven://pair/v2/AgAAAB1pbnZpdGF0aW9uLWZpeHR1cmUtc2VjcmV0",
             )
             .unwrap(),
         );

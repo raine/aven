@@ -244,6 +244,7 @@ pub(crate) struct App {
     pub(super) search: crate::tui::app_search::SearchController,
     pub(super) update: crate::tui::app_update::UpdateController,
     pub(super) sync: SyncController,
+    pub(super) invite: crate::tui::app_pairing::InviteController,
     pub(super) gist: GistController,
     pub(super) changelog: crate::tui::changelog::ChangelogController,
     pub(super) next_refresh_at: Instant,
@@ -329,6 +330,7 @@ impl App {
             search: crate::tui::app_search::SearchController::new(),
             update: crate::tui::app_update::UpdateController::new(config.update.automatic_checks),
             sync: SyncController::new(),
+            invite: crate::tui::app_pairing::InviteController::new(),
             gist: GistController::new(),
             changelog: crate::tui::changelog::ChangelogController::new(),
             next_refresh_at,
@@ -611,9 +613,9 @@ impl App {
                 }
             }));
         }
-        if let Some(reason) = self.pairing_missing_config_reason() {
+        if let Some(reason) = self.pairing_unavailable_reason() {
             unavailable.push(crate::tui::overlay::CommandAvailabilityOverride {
-                action: crate::tui::event::Action::PairMobile,
+                action: crate::tui::event::Action::AddDevice,
                 reason,
             });
         }

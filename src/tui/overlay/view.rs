@@ -132,7 +132,6 @@ pub(crate) struct SyncStatusView<'a> {
     pub(crate) state: SyncStatusState,
     pub(crate) status: &'a TuiSyncStatus,
     pub(crate) syncing: bool,
-    pub(crate) now: time::OffsetDateTime,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -484,7 +483,6 @@ impl<'a> RecurrenceHistoryView<'a> {
 pub(crate) struct OverlayViewContext<'a> {
     pub(crate) sync_status: &'a TuiSyncStatus,
     pub(crate) syncing: bool,
-    pub(crate) now: time::OffsetDateTime,
     pub(crate) status_prefix_active: bool,
     pub(crate) priority_prefix_active: bool,
 }
@@ -598,7 +596,6 @@ impl<'a> OverlayView<'a> {
                 state: state.clone(),
                 status: context.sync_status,
                 syncing: context.syncing,
-                now: context.now,
             })),
             DatabaseStats { stats, scroll } => Self::DatabaseStats {
                 stats,
@@ -631,7 +628,6 @@ mod tests {
             OverlayViewContext {
                 sync_status: &sync_status,
                 syncing: false,
-                now: time::OffsetDateTime::UNIX_EPOCH,
                 status_prefix_active: false,
                 priority_prefix_active: false,
             },
@@ -672,7 +668,6 @@ mod tests {
                 OverlayViewContext {
                     sync_status: &sync_status,
                     syncing: false,
-                    now: time::OffsetDateTime::UNIX_EPOCH,
                     status_prefix_active: false,
                     priority_prefix_active: false,
                 },

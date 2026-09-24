@@ -7,8 +7,10 @@ fn sync_existing_forms_parse() {
     for args in [
         vec!["aven", "sync"],
         vec!["aven", "sync", "--json"],
-        vec!["aven", "sync", "--server", "https://sync.example.test"],
         vec!["aven", "sync", "status"],
+        vec!["aven", "sync", "setup", "--yes"],
+        vec!["aven", "sync", "invite"],
+        vec!["aven", "sync", "join"],
     ] {
         let cli = Cli::try_parse_from(args).unwrap();
         assert!(matches!(cli.command, Some(Commands::Sync(_))));
@@ -16,42 +18,20 @@ fn sync_existing_forms_parse() {
 }
 
 #[test]
-fn sync_pair_parses_with_optional_server_positions() {
-    let cli = Cli::try_parse_from(["aven", "sync", "pair"]).unwrap();
-    assert!(matches!(
-        cli.command,
-        Some(Commands::Sync(SyncArgs {
-            command: Some(SyncSubcommand::Pair(PairArgs {
-                server: None,
-                copy: false
-            })),
-            server: None,
-            json: false,
-        }))
-    ));
-
-    let cli = Cli::try_parse_from([
-        "aven",
-        "sync",
-        "--server",
-        "https://parent.example.test",
-        "pair",
-        "--server",
-        "https://pair.example.test",
-        "--copy",
-    ])
-    .unwrap();
-    match cli.command {
-        Some(Commands::Sync(SyncArgs {
-            command: Some(SyncSubcommand::Pair(pair)),
-            server: Some(parent),
-            json: false,
-        })) => {
-            assert!(pair.copy);
-            assert_eq!(pair.server.as_deref(), Some("https://pair.example.test"));
-            assert_eq!(parent, "https://parent.example.test");
-        }
-        _ => panic!("expected sync pair"),
+fn retired_sync_forms_are_rejected() {
+    for args in [
+        vec!["aven", "sync", "--server", "https://sync.example.test"],
+        vec!["aven", "sync", "pair"],
+        vec!["aven", "server", "--encrypted", "--data", "server.sqlite"],
+        vec![
+            "aven",
+            "server",
+            "--unsafe-public-bind",
+            "--data",
+            "server.sqlite",
+        ],
+    ] {
+        assert!(Cli::try_parse_from(&args).is_err(), "{args:?}");
     }
 }
 
@@ -185,7 +165,7 @@ fn complex_commands_keep_examples_and_safety_guidance() {
         (&["text", "get"][..], "when --output is omitted"),
         (&["text", "set"][..], "hash guard"),
         (&["conflict", "resolve"][..], "--use takes precedence"),
-        (&["config", "set"][..], "HTTP or HTTPS URL"),
+        (&["config", "set"][..], "positive integer"),
         (
             &["backup", "restore"][..],
             "attachment objects available on",
@@ -195,10 +175,9 @@ fn complex_commands_keep_examples_and_safety_guidance() {
         (&["prime"][..], "live project work"),
         (&["skill"][..], "without live task context"),
         (&["skill", "install"][..], "repeat for multiple"),
-        (&["sync"][..], "AVEN_SYNC_SERVER"),
-        (&["sync", "pair"][..], "phone-reachable"),
-        (&["server"][..], "Public binds also require"),
-        (&["server"][..], "local.blob_dir"),
+        (&["sync"][..], "end-to-end encrypted"),
+        (&["server"][..], "binds only"),
+        (&["server", "setup"][..], "aven server --data PATH"),
     ];
 
     for (path, expected) in expectations {

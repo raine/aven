@@ -1,5 +1,4 @@
 use super::*;
-use time::OffsetDateTime;
 
 #[test]
 fn overlay_kinds_use_shared_dialog_chrome() {
@@ -74,7 +73,6 @@ fn overlay_kinds_use_shared_dialog_chrome() {
             },
             status: borrow_value(TuiSyncStatus::default()),
             syncing: false,
-            now: OffsetDateTime::UNIX_EPOCH,
         })),
     ];
 

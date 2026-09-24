@@ -317,7 +317,6 @@ where
         .env("XDG_STATE_HOME", env.state_dir())
         .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
         .env_remove("AVEN_DB")
-        .env_remove("AVEN_SYNC_SERVER")
         .current_dir(cwd)
         .args(args)
         .output()

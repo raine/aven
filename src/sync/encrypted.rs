@@ -1,9 +1,9 @@
 //! End-to-end encrypted sync commands over the isolated encrypted transports.
 //!
-//! A database uses encrypted sync once it holds a seed genesis or enrollment
-//! pin. Its server is the locator bound into protected enrollment identity, so
-//! configuration and `--server` never redirect it, and plaintext sync keeps
-//! refusing it.
+//! A database takes part in sync once it holds a seed genesis or enrollment
+//! pin. Its server is the locator bound into protected enrollment identity;
+//! configuration never redirects it. Other databases stay local until they are
+//! set up or joined.
 use std::io::{IsTerminal, Read, Write};
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -14,7 +14,7 @@ use aven_core::sync::seed_claim::ClaimAuthentication;
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-use crate::cli::{SetupArgs, SyncArgs};
+use crate::cli::SetupArgs;
 use crate::config::{self, AppConfig};
 use crate::encrypted_tail_http::{self as tail_http, ImageTransfer, Round};
 use crate::peer_enrollment_http;
@@ -30,7 +30,7 @@ pub(super) use invitation::{SetupInvitation, server_origin};
 mod tests;
 
 /// Upper bound on bounded rounds in one interactive drain.
-const ROUND_LIMIT: usize = 1000;
+pub(crate) const ROUND_LIMIT: usize = 1000;
 /// Consecutive failed or unavailable image rounds before a drain stops. Each
 /// such round still pulls, but a failed local head cannot advance.
 const IMAGE_RETRY_ROUNDS: usize = 16;
@@ -52,9 +52,11 @@ const POLL_INTERVAL: Duration = Duration::from_secs(2);
 #[cfg(test)]
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-/// True when this database belongs to encrypted sync, including an
-/// interrupted setup or join.
-pub(crate) async fn is_encrypted(database: &Database) -> Result<bool> {
+const NOT_SET_UP: &str = "error sync-not-set-up hint=\"run `aven sync setup` with an invitation from `aven server setup`, or `aven sync join` on a new database\"";
+
+/// True when this database takes part in sync, including an interrupted
+/// setup or join.
+pub(crate) async fn is_set_up(database: &Database) -> Result<bool> {
     Ok(database.enrollment_pin().await?.is_some()
         || database.local_seed_genesis_commitment().await?.is_some())
 }
@@ -115,11 +117,11 @@ async fn print_setup_preview(database: &Database, server: &str) -> Result<()> {
         eprintln!("  Images missing on this computer: {missing} (synced as unavailable)");
     }
     if database.meta("sync_server_url").await?.is_some() {
-        eprintln!("  This database stops using its previous plaintext sync server.");
+        eprintln!("  This database stops using its previous unencrypted sync server.");
     }
     eprintln!(
         "Every other device starts from this data. Afterwards this database cannot use \
-         plaintext sync, backup restore, or import."
+         backup restore or import."
     );
     Ok(())
 }
@@ -161,7 +163,7 @@ pub(crate) async fn setup(database: &Database, config: &AppConfig, args: SetupAr
             bootstrap
                 .claim(seed.genesis(), bearer)
                 .await
-                .map_err(|_| error)?;
+                .map_err(|_| explain_setup_refusal(error))?;
         }
     }
     eprintln!("Uploading encrypted data...");
@@ -171,34 +173,72 @@ pub(crate) async fn setup(database: &Database, config: &AppConfig, args: SetupAr
         .refresh(&store, database)
         .await?;
     let client = tail_http::Client::new(&invitation.server)?;
-    let outcome = drain(&client, &store, database, &blob_dir).await?;
+    let outcome = drain(&client, &store, database, &blob_dir, ROUND_LIMIT).await?;
     println!("Sync set up with {}", invitation.server);
     print_outcome(&outcome);
     Ok(())
 }
 
-pub(crate) async fn invite(database: &Database, config: &AppConfig) -> Result<()> {
+/// A created device invitation whose inviting device waits for admission.
+pub(crate) struct PendingInvitation {
+    server: String,
+    text: Zeroizing<String>,
+    deadline: Instant,
+}
+
+impl PendingInvitation {
+    pub(crate) fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// QR presentation of the invitation text.
+    pub(crate) fn presentation(&self) -> Result<crate::pairing::PairingPresentation> {
+        crate::pairing::PairingPresentation::new(&self.server, &self.text)
+    }
+}
+
+impl std::fmt::Debug for PendingInvitation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PendingInvitation([REDACTED])")
+    }
+}
+
+/// Creates a device invitation, or resumes the pending one. Ordinary sync on
+/// this device pauses until the invitation is used or expires.
+pub(crate) async fn create_invitation(
+    database: &Database,
+    config: &AppConfig,
+) -> Result<PendingInvitation> {
     config.ensure_sync_allowed()?;
+    ensure!(is_set_up(database).await?, NOT_SET_UP);
     let store = key_store(database)?;
-    let (server, invitation) = {
-        let _guard = super::coordination::acquire(database).await?;
-        // A pending invitation is resumed rather than refused.
-        let Some((_, server)) = store.association(database).await? else {
-            bail!("error sync-setup-incomplete hint=\"rerun `aven sync setup`\"");
-        };
-        let invitation = peer_enrollment_http::Client::new(&server)?
-            .invite(&store, database, unix_now()? + invitation_seconds())
-            .await?;
-        (server, invitation)
+    let _guard = super::coordination::acquire(database).await?;
+    let Some((_, server)) = store.association(database).await? else {
+        bail!("error sync-setup-incomplete hint=\"rerun `aven sync setup`\"");
     };
-    let client = peer_enrollment_http::Client::new(&server)?;
-    let text = DeviceInvitation { server, invitation }.encode();
-    println!("{}", text.as_str());
-    std::io::stdout().flush()?;
-    eprintln!("Anyone with this invitation can access all your synced data and manage devices.");
-    eprintln!("Run `aven sync join` on the other device. Waiting for it to join...");
-    let deadline = Instant::now() + Duration::from_secs(invitation_seconds());
-    while Instant::now() < deadline {
+    let invitation = peer_enrollment_http::Client::new(&server)?
+        .invite(&store, database, unix_now()? + invitation_seconds())
+        .await?;
+    let text = DeviceInvitation {
+        server: server.clone(),
+        invitation,
+    }
+    .encode();
+    Ok(PendingInvitation {
+        server,
+        text,
+        deadline: Instant::now() + Duration::from_secs(invitation_seconds()),
+    })
+}
+
+/// Polls admission until the invited device joins or the invitation expires.
+pub(crate) async fn await_admission(
+    database: &Database,
+    invitation: &PendingInvitation,
+) -> Result<()> {
+    let store = key_store(database)?;
+    let client = peer_enrollment_http::Client::new(&invitation.server)?;
+    while Instant::now() < invitation.deadline {
         let admitted = {
             let _guard = super::coordination::acquire(database).await?;
             match client.admit(&store, database).await {
@@ -207,7 +247,6 @@ pub(crate) async fn invite(database: &Database, config: &AppConfig) -> Result<()
             }
         };
         if admitted {
-            println!("Device added");
             return Ok(());
         }
         tokio::time::sleep(POLL_INTERVAL).await;
@@ -215,6 +254,41 @@ pub(crate) async fn invite(database: &Database, config: &AppConfig) -> Result<()
     bail!(
         "error sync-invitation-unused hint=\"sync on this device stays paused until the invitation is used; after it expires, the next `aven sync` ends it, rotating keys if they may have been sent\""
     )
+}
+
+pub(crate) async fn invite(database: &Database, config: &AppConfig) -> Result<()> {
+    let invitation = create_invitation(database, config).await?;
+    println!("{}", invitation.text());
+    std::io::stdout().flush()?;
+    print_invitation_qr(&invitation);
+    eprintln!("Anyone with this invitation can access all your synced data and manage devices.");
+    eprintln!("Run `aven sync join` on the other device. Waiting for it to join...");
+    await_admission(database, &invitation).await?;
+    println!("Device added");
+    Ok(())
+}
+
+/// Shows the invitation QR on an interactive standard error; standard output
+/// keeps only the invitation text for scripts.
+fn print_invitation_qr(invitation: &PendingInvitation) {
+    let stderr_is_terminal = std::io::stderr().is_terminal();
+    if !stderr_is_terminal {
+        return;
+    }
+    let (columns, styled) = crate::pairing::output_options(
+        stderr_is_terminal,
+        std::env::var_os("NO_COLOR").is_some(),
+        || crossterm::terminal::size().ok().map(|(columns, _)| columns),
+    );
+    match invitation.presentation().and_then(|presentation| {
+        crate::pairing::render_terminal_qr(presentation.qr(), columns, styled)
+    }) {
+        Ok(qr) => {
+            eprint!("{qr}");
+            eprintln!("Scan this code on the other device, or paste the invitation.");
+        }
+        Err(error) => eprintln!("QR code unavailable: {error:#}"),
+    }
 }
 
 pub(crate) async fn join(database: &Database, config: &AppConfig) -> Result<()> {
@@ -270,10 +344,21 @@ pub(crate) async fn join(database: &Database, config: &AppConfig) -> Result<()> 
         .install(&store, database)
         .await?;
     let client = tail_http::Client::new(&server)?;
-    let outcome = drain(&client, &store, database, &blob_dir).await?;
+    let outcome = drain(&client, &store, database, &blob_dir, ROUND_LIMIT).await?;
     println!("Joined sync with {server}");
     print_outcome(&outcome);
     Ok(())
+}
+
+/// A refused claim may come from a replaced or expired setup invitation, but a
+/// refusal does not prove which; the hint names both possibilities.
+fn explain_setup_refusal(error: anyhow::Error) -> anyhow::Error {
+    if !error.to_string().starts_with("error bootstrap-refused") {
+        return error;
+    }
+    error.context(
+        "error sync-setup-refused hint=\"the server refused this setup invitation; if `aven server setup` was run again or the invitation is over an hour old, rerun setup with the newest invitation, otherwise check the server and retry\"",
+    )
 }
 
 /// The enrollment server serves one exchange at a time; pollers retry.
@@ -298,32 +383,50 @@ async fn associated_server(store: &ProtectedLocalKeyStore, database: &Database) 
     }
 }
 
-pub(crate) async fn sync(database: &Database, config: &AppConfig, args: &SyncArgs) -> Result<()> {
-    config.ensure_sync_allowed()?;
-    ensure!(
-        args.server.is_none(),
-        "error sync-server-fixed hint=\"encrypted sync uses the server chosen during setup\""
-    );
+/// Explains engine refusals that ordinary rounds report while a join or
+/// invitation is unfinished.
+fn explain_round_error(error: anyhow::Error) -> anyhow::Error {
+    match error.to_string().as_str() {
+        "error snapshot-not-installed" => {
+            error.context("error sync-join-incomplete hint=\"rerun `aven sync join`\"")
+        }
+        "error enrollment-unresolved" => error.context(
+            "error sync-invitation-pending hint=\"sync resumes when the invited device joins, or with the next sync after the unused invitation expires\"",
+        ),
+        "error withdrawal-required-unsupported" => error.context(
+            "error sync-invitation-disclosed hint=\"keys may have been sent to the invited device; sync resumes after it joins, or once the next sync after expiry rotates keys\"",
+        ),
+        _ => error,
+    }
+}
+
+/// Drains up to `round_limit` rounds with the server bound during setup or
+/// join. The caller holds the sync coordination lock.
+async fn drain_associated(
+    database: &Database,
+    config: &AppConfig,
+    round_limit: usize,
+) -> Result<Outcome> {
     let store = key_store(database)?;
     let blob_dir = config::resolve_blob_dir(database.path(), config)?;
-    let _guard = super::coordination::acquire(database).await?;
     let server = associated_server(&store, database).await?;
     let client = tail_http::Client::new(&server)?;
-    let outcome = drain(&client, &store, database, &blob_dir)
+    drain(&client, &store, database, &blob_dir, round_limit)
         .await
-        .map_err(|error| match error.to_string().as_str() {
-            "error snapshot-not-installed" => {
-                error.context("error sync-join-incomplete hint=\"rerun `aven sync join`\"")
-            }
-            "error enrollment-unresolved" => error.context(
-                "error sync-invitation-pending hint=\"sync resumes when the invited device joins, or with the next sync after the unused invitation expires\"",
-            ),
-            "error withdrawal-required-unsupported" => error.context(
-                "error sync-invitation-disclosed hint=\"keys may have been sent to the invited device; sync resumes after it joins, or once the next sync after expiry rotates keys\"",
-            ),
-            _ => error,
-        })?;
-    if args.json {
+        .map_err(explain_round_error)
+}
+
+/// Runs one interactive drain, waiting briefly for another sync to finish.
+pub(crate) async fn run_to_completion(database: &Database, config: &AppConfig) -> Result<Outcome> {
+    config.ensure_sync_allowed()?;
+    ensure!(is_set_up(database).await?, NOT_SET_UP);
+    let _guard = super::coordination::acquire(database).await?;
+    drain_associated(database, config, ROUND_LIMIT).await
+}
+
+pub(crate) async fn sync(database: &Database, config: &AppConfig, json: bool) -> Result<()> {
+    let outcome = run_to_completion(database, config).await?;
+    if json {
         print_json_pretty(&outcome)
     } else {
         print_outcome(&outcome);
@@ -331,12 +434,46 @@ pub(crate) async fn sync(database: &Database, config: &AppConfig, args: &SyncArg
     }
 }
 
-#[derive(Serialize)]
+pub(crate) enum DaemonRound {
+    Completed(Outcome),
+    /// Another process holds the sync coordination lock.
+    Deferred,
+    /// The database has not been set up or joined; it stays local.
+    NotSetUp,
+}
+
+/// One bounded daemon round that never waits for another sync.
+pub(crate) async fn daemon_round(
+    database: &Database,
+    config: &AppConfig,
+    round_limit: usize,
+) -> Result<DaemonRound> {
+    config.ensure_sync_allowed()?;
+    if !is_set_up(database).await? {
+        return Ok(DaemonRound::NotSetUp);
+    }
+    let Some(_guard) = super::coordination::try_acquire(database)? else {
+        return Ok(DaemonRound::Deferred);
+    };
+    drain_associated(database, config, round_limit)
+        .await
+        .map(DaemonRound::Completed)
+}
+
+#[derive(Debug, Serialize)]
 pub(crate) struct Outcome {
     version: u32,
     pub(crate) rounds: usize,
     pub(crate) metadata_caught_up: bool,
     pub(crate) images: &'static str,
+}
+
+impl Outcome {
+    /// True when another round would likely make progress now: images are
+    /// still transferring, or metadata remains while images are not blocked.
+    pub(crate) fn more_work_ready(&self) -> bool {
+        self.images == "pending" || (!self.metadata_caught_up && self.images == "complete")
+    }
 }
 
 fn image_label(images: ImageTransfer) -> &'static str {
@@ -349,17 +486,18 @@ fn image_label(images: ImageTransfer) -> &'static str {
 }
 
 /// Repeats bounded rounds until metadata is current and image work settles,
-/// or until the round or image retry bound stops it.
+/// or until `round_limit` or the image retry bound stops it.
 pub(crate) async fn drain(
     client: &tail_http::Client,
     store: &ProtectedLocalKeyStore,
     database: &Database,
     blob_dir: &Path,
+    round_limit: usize,
 ) -> Result<Outcome> {
     let mut last = None;
     let mut rounds = 0;
     let mut image_retries = 0;
-    while rounds < ROUND_LIMIT {
+    while rounds < round_limit {
         let round: Round = client.round(store, database, blob_dir).await?;
         rounds += 1;
         last = Some(round);
@@ -409,7 +547,6 @@ fn print_outcome(outcome: &Outcome) {
 #[derive(Serialize)]
 struct StatusReport {
     version: u32,
-    encrypted: bool,
     server: Option<String>,
     state: &'static str,
     local_changes_pending: Option<bool>,
@@ -423,13 +560,10 @@ struct StatusReport {
 /// Local observation only; contacts no server. Waits briefly for a running
 /// sync or invitation exchange, which holds the installation exclusively.
 pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
-    let store = key_store(database)?;
-    let _guard = super::coordination::acquire(database).await?;
     let mut report = StatusReport {
         version: 1,
-        encrypted: true,
         server: None,
-        state: "setup-incomplete",
+        state: "not-set-up",
         local_changes_pending: None,
         server_position: None,
         initial_download_pending: None,
@@ -437,6 +571,20 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
         image_downloads_pending: None,
         images_unavailable: None,
     };
+    if !is_set_up(database).await? {
+        if json {
+            return print_json_pretty(&report);
+        }
+        println!("Sync: not set up; this database is local only");
+        println!(
+            "Run `aven sync setup` with an invitation from `aven server setup`, or \
+             `aven sync join` on a new database."
+        );
+        return Ok(());
+    }
+    report.state = "setup-incomplete";
+    let store = key_store(database)?;
+    let _guard = super::coordination::acquire(database).await?;
     if let Some((peer, server)) = store.association(database).await? {
         report.server = Some(server.clone());
         report.state = if peer

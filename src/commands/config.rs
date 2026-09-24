@@ -1,5 +1,4 @@
 use anyhow::{Context, Result, bail};
-use url::Url;
 
 use crate::cli::{ConfigCommand, ConfigKey, ConfigSubcommand};
 use crate::config::{AppConfig, ImageOptimizationConfig, config_file_path};
@@ -39,7 +38,6 @@ impl ConfigKey {
     fn name(self) -> &'static str {
         match self {
             Self::SyncEnabled => "sync.enabled",
-            Self::SyncServerUrl => "sync.server_url",
             Self::SyncIntervalSeconds => "sync.interval_seconds",
             Self::UpdateAutomaticChecks => "update.automatic_checks",
             Self::LocalDbPath => "local.db_path",
@@ -56,7 +54,6 @@ impl ConfigKey {
     fn render(self, config: &AppConfig) -> String {
         match self {
             Self::SyncEnabled => config.sync.enabled.to_string(),
-            Self::SyncServerUrl => render_optional_string(config.sync.server_url.as_deref()),
             Self::SyncIntervalSeconds => config.sync_interval_seconds().to_string(),
             Self::UpdateAutomaticChecks => config.update.automatic_checks.to_string(),
             Self::LocalDbPath => render_optional_string(
@@ -81,18 +78,6 @@ impl ConfigKey {
                 "true" | "false" => Ok(value.to_string()),
                 _ => bail!("invalid value for {}: expected true or false", self.name()),
             },
-            Self::SyncServerUrl => {
-                if value == "null" {
-                    return Ok("null".to_string());
-                }
-                let url = Url::parse(value).with_context(|| {
-                    format!("invalid value for {}: expected an HTTP URL", self.name())
-                })?;
-                if !matches!(url.scheme(), "http" | "https") || url.host().is_none() {
-                    bail!("invalid value for {}: expected an HTTP URL", self.name());
-                }
-                yaml_string(value)
-            }
             Self::SyncIntervalSeconds => {
                 let seconds = value.parse::<u64>().with_context(|| {
                     format!(

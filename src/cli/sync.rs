@@ -13,23 +13,14 @@ Inspect both variants before resolving. Variant tokens come from `conflict show`
 --use takes precedence over explicit values. Without --use, supply exactly one
 of --value, --value-file, or --value-stdin."#;
 
-pub(super) const SERVER_HELP: &str = r#"Loopback binds may run without authentication. Private and public binds require
-sync.auth_token in the configuration file. Public binds also require
---unsafe-public-bind. Aven does not provide TLS termination."#;
+pub(super) const SERVER_HELP: &str = r#"Prepare storage with `aven server setup` first. The server binds only
+loopback addresses and does not terminate TLS; put a TLS reverse proxy in front
+of it for other devices."#;
 
-pub(super) const SYNC_HELP: &str = r#"The server URL comes from --server, AVEN_SYNC_SERVER, or sync.server_url, in
-that order. Authentication and other sync settings live in the configuration
-file. Run `aven config show` to inspect the active file and `aven doctor` to
-diagnose routing and sync configuration."#;
-
-pub(super) const PAIR_HELP: &str = r#"Pairing reads configuration and produces an invitation without opening a task
-database or contacting the sync server. The invitation requires a nonempty
-sync.auth_token and a phone-reachable HTTP or HTTPS server URL. Use --server
-when the configured URL is loopback or available only from the desktop.
-
-Use --copy on the local desktop to put the invitation on the clipboard instead
-of displaying a QR code. The invitation contains credentials; clipboard history
-and sharing services may retain it. SSH clipboard copying is not supported."#;
+pub(super) const SYNC_HELP: &str = r#"Sync is end-to-end encrypted. Start it on one device with `aven sync setup`
+and add other devices with `aven sync invite` and `aven sync join`. The server
+is the one chosen during setup or join. Set sync.enabled to let the daemon sync
+automatically."#;
 
 #[derive(Args)]
 pub(crate) struct ConflictCommand {
@@ -155,27 +146,21 @@ pub(crate) struct ServerArgs {
     /// Listen address; port 0 asks the OS to choose a free port
     #[arg(long, default_value = "127.0.0.1:0")]
     pub(crate) bind: SocketAddr,
-    /// SQLite path; blobs use local.blob_dir or a path derived from this path
+    /// SQLite path of storage prepared by `server setup`
     #[arg(long, required = true)]
     pub(crate) data: Option<PathBuf>,
-    /// Confirm an authenticated public bind without built-in TLS
-    #[arg(long)]
-    pub(crate) unsafe_public_bind: bool,
-    /// Serve end-to-end encrypted sync from storage prepared by `server setup`
-    #[arg(long, conflicts_with = "unsafe_public_bind")]
-    pub(crate) encrypted: bool,
 }
 
 #[derive(Subcommand)]
 pub(crate) enum ServerSubcommand {
-    /// Prepare encrypted server storage and print its setup invitation
+    /// Prepare server storage and print its setup invitation
     #[command(after_long_help = SERVER_SETUP_HELP)]
     Setup(ServerSetupArgs),
 }
 
 #[derive(Args)]
 pub(crate) struct ServerSetupArgs {
-    /// SQLite path of the encrypted server storage
+    /// SQLite path of the server storage
     #[arg(long)]
     pub(crate) data: PathBuf,
     /// Server URL that devices reach: HTTPS, or HTTP on a loopback address
@@ -187,17 +172,14 @@ pub(super) const SERVER_SETUP_HELP: &str = r#"The setup invitation lets one devi
 its database. It expires after one hour; until a device has claimed the
 server, running setup again replaces it. The replacement keeps the server's
 setup identity, so a device whose setup was interrupted resumes with the new
-invitation. Serve the storage with
-`aven server --encrypted --data PATH`. The encrypted server binds only loopback
-addresses; put a TLS reverse proxy in front of it for other devices."#;
+invitation. Serve the storage with `aven server --data PATH`. The server binds
+only loopback addresses; put a TLS reverse proxy in front of it for other
+devices."#;
 
 #[derive(Args)]
 pub(crate) struct SyncArgs {
     #[command(subcommand)]
     pub(crate) command: Option<SyncSubcommand>,
-    /// Override the configured sync server URL
-    #[arg(long)]
-    pub(crate) server: Option<String>,
     /// Emit the versioned sync result as JSON
     #[arg(long)]
     pub(crate) json: bool,
@@ -205,18 +187,15 @@ pub(crate) struct SyncArgs {
 
 #[derive(Subcommand)]
 pub(crate) enum SyncSubcommand {
-    /// Produce a pairing invitation for Aven iOS onboarding
-    #[command(after_long_help = PAIR_HELP)]
-    Pair(PairArgs),
-    /// Report sync configuration, health, progress, and pending work
+    /// Report local sync state and pending work
     Status(StatusArgs),
-    /// Set up encrypted sync from this database with a server setup invitation
+    /// Set up sync from this database with a server setup invitation
     #[command(after_long_help = SETUP_HELP)]
     Setup(SetupArgs),
-    /// Invite another device to encrypted sync and wait until it joins
+    /// Invite another device to sync and wait until it joins
     #[command(after_long_help = INVITE_HELP)]
     Invite,
-    /// Join encrypted sync from an empty database with a device invitation
+    /// Join sync from an empty database with a device invitation
     #[command(after_long_help = JOIN_HELP)]
     Join,
 }
@@ -224,8 +203,8 @@ pub(crate) enum SyncSubcommand {
 pub(super) const SETUP_HELP: &str = r#"Paste the invitation printed by `aven server setup`, or pipe it to standard
 input. Setup previews this database and asks for confirmation; use --yes when
 standard input is not a terminal. This database becomes the starting point of
-the synced data. Afterwards it can no longer use plaintext sync, backup
-restore, or import. Rerun the same command to resume an interrupted setup."#;
+the synced data. Afterwards it can no longer use backup restore or import. Rerun
+the same command to resume an interrupted setup."#;
 
 pub(super) const INVITE_HELP: &str = r#"The invitation is printed to standard output. Anyone with it can access all
 synced data and manage devices. Keep this command running until the other
@@ -245,16 +224,6 @@ pub(crate) struct SetupArgs {
     /// Skip the confirmation prompt
     #[arg(long)]
     pub(crate) yes: bool,
-}
-
-#[derive(Args)]
-pub(crate) struct PairArgs {
-    /// Use a phone-reachable server URL for this invitation
-    #[arg(long)]
-    pub(crate) server: Option<String>,
-    /// Copy the invitation to the local clipboard instead of displaying a QR code
-    #[arg(long)]
-    pub(crate) copy: bool,
 }
 
 #[derive(Args)]

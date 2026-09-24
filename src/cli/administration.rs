@@ -13,7 +13,6 @@ commands."#;
 
 pub(super) const CONFIG_SET_HELP: &str = r#"Accepted values:
   sync.enabled, update.automatic_checks       true | false
-  sync.server_url                             HTTP or HTTPS URL | null
   sync.interval_seconds                       positive integer
   local.db_path                               nonempty path | null
   local.image_optimization                    off | paste | on
@@ -258,8 +257,6 @@ pub(crate) struct ConfigSetArgs {
 pub(crate) enum ConfigKey {
     #[value(name = "sync.enabled")]
     SyncEnabled,
-    #[value(name = "sync.server_url")]
-    SyncServerUrl,
     #[value(name = "sync.interval_seconds")]
     SyncIntervalSeconds,
     #[value(name = "update.automatic_checks")]

@@ -1,12 +1,11 @@
 use super::*;
 
-const TEST_SERVER: &str = "https://sync.example.test:8443/aven";
-const TEST_TOKEN: &str = "pairing-token-fixture-0123456789";
+const TEST_SERVER: &str = "https://sync.example.test:8443";
+const TEST_INVITATION: &str = "aven://pair/v2/AgAAAB1pbnZpdGF0aW9uLWZpeHR1cmUtc2VjcmV0";
 
 fn presentation() -> std::sync::Arc<crate::pairing::PairingPresentation> {
     std::sync::Arc::new(
-        crate::pairing::PairingPresentation::new(TEST_SERVER.to_string(), TEST_TOKEN.to_string())
-            .unwrap(),
+        crate::pairing::PairingPresentation::new(TEST_SERVER, TEST_INVITATION).unwrap(),
     )
 }
 
@@ -63,9 +62,8 @@ fn normal_overlay_renders_shared_compact_qr_rows() {
 
 #[test]
 fn header_wraps_complete_copy_without_overlapping_qr_or_footer() {
-    let server = format!("https://{}.example.test:8443/aven", "a".repeat(63));
-    let presentation =
-        crate::pairing::PairingPresentation::new(server, TEST_TOKEN.to_string()).unwrap();
+    let server = format!("https://{}.example.test:8443", "a".repeat(63));
+    let presentation = crate::pairing::PairingPresentation::new(&server, TEST_INVITATION).unwrap();
     let layout = pairing_layout(ratatui::layout::Rect::new(0, 0, 200, 100), &presentation);
     let qr = layout.qr.expect("expected QR layout");
     let buffer = rendered_buffer(&presentation, 200, 100);
@@ -88,9 +86,8 @@ fn constrained_overlay_renders_complete_actionable_fallback_without_secrets() {
 
     let buffer = rendered_buffer(&presentation, 40, 12);
     let text = region_text(&buffer, layout.content);
-    assert!(text.contains("Run `aven sync pair` in a larger terminal."));
+    assert!(text.contains("run `aven sync invite` for a text invitation."));
     assert!(text.contains(NETWORK_REQUIREMENT));
-    assert!(!text.contains(TEST_TOKEN));
     assert!(!text.contains("aven://pair/"));
     assert!(!buffer.content.iter().any(|cell| {
         cell.fg == ratatui::style::Color::Black && cell.bg == ratatui::style::Color::White
@@ -119,8 +116,7 @@ fn overlay_presents_only_safe_pairing_data() {
     let presentation = presentation();
     let rendered = render_overlay_view_at(OverlayView::Pairing(presentation), 160, 80);
 
-    assert!(rendered.contains("Pair mobile device"));
+    assert!(rendered.contains("Add device"));
     assert!(rendered.contains("https://sync.example.test:8443"));
-    assert!(!rendered.contains(TEST_TOKEN));
     assert!(!rendered.contains("aven://pair/"));
 }

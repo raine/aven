@@ -279,8 +279,6 @@ fn search_result_item(title: &str) -> SearchResultItem {
 
 mod onboarding;
 
-mod pairing_overlay;
-
 mod text_panel_and_search;
 
 mod text_input;
@@ -293,6 +291,7 @@ mod picker_overlays;
 
 mod database_stats_overlay;
 
+mod pairing_overlay;
 mod sync_status_overlay;
 
 mod presentation_kind_rendering;

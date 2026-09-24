@@ -58,7 +58,6 @@ impl TestEnv {
             .env("AVEN_CONFIG_DIR", self.config_dir().join("aven"))
             .env_remove("AVEN_DEV_DB")
             .env_remove("AVEN_DB")
-            .env_remove("AVEN_SYNC_SERVER")
             .env_remove("AVEN_SYNC_DISABLED");
     }
 
@@ -74,28 +73,7 @@ impl TestEnv {
         std::fs::write(path, text).expect("write config");
     }
 
-    pub fn write_daemon_config(
-        &self,
-        db: &Path,
-        server: &TestServer,
-        wake_addr: &str,
-        interval: u64,
-    ) {
-        self.write_daemon_config_with_auth(db, server, wake_addr, interval, None);
-    }
-
-    pub fn write_daemon_config_with_auth(
-        &self,
-        db: &Path,
-        server: &TestServer,
-        wake_addr: &str,
-        interval: u64,
-        auth_token: Option<&str>,
-    ) {
-        let auth_line = match auth_token {
-            Some(token) => format!("  auth_token: \"{token}\"\n"),
-            None => String::new(),
-        };
+    pub fn write_daemon_config(&self, db: &Path, wake_addr: &str, interval: u64) {
         self.write_config(&format!(
             r#"
 local:
@@ -103,13 +81,11 @@ local:
 
 sync:
   enabled: true
-  server_url: "{}"
   interval_seconds: {}
-{auth_line}daemon:
+daemon:
   wake_addr: "{}"
 "#,
             db.display(),
-            server.url,
             interval,
             wake_addr
         ));
@@ -157,7 +133,6 @@ sync:
         child
             .env("AVEN_CONFIG_DIR", self.config_dir().join("aven"))
             .env_remove("AVEN_DB")
-            .env_remove("AVEN_SYNC_SERVER")
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -228,16 +203,6 @@ sync:
         assert!(
             output.status.success(),
             "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        output
-    }
-
-    pub fn sync_ok(&self, db: &Path, server_url: &str) -> Output {
-        let output = self.aven(db, ["sync", "--server", server_url]);
-        assert!(
-            output.status.success(),
-            "sync failed:\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
         output

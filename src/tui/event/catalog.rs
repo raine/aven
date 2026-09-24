@@ -347,12 +347,12 @@ pub(crate) const COMMANDS: &[BuiltInCommand] = &[
         Action::ShowChangelog,
     ),
     BuiltInCommand::implemented_with_aliases(
-        "pair-mobile",
-        &["pair"],
-        "pair a mobile device with this TUI",
+        "add-device",
+        &["pair", "pair-mobile"],
+        "invite another device to sync with a QR code",
         "General",
         &[],
-        Action::PairMobile,
+        Action::AddDevice,
     ),
     BuiltInCommand::implemented_for_epic_child(
         "undo",

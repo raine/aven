@@ -1,11 +1,15 @@
+//! QR presentation for device invitations, shared by the CLI and TUI. It
+//! renders an already encoded invitation and never retains or prints the
+//! invitation text outside the QR rows.
 use std::fmt;
 
-use aven_core::api::{PairingInvitation, PairingInvitationError};
+use anyhow::{Result, bail};
 use qrcode::{Color, QrCode};
 
-use crate::config::{self, AppConfig};
-
 pub(crate) const PAIRING_QUIET_ZONE_MODULES: usize = 4;
+
+const QR_LINE_STYLE: &str = "\x1b[30;47m";
+const STYLE_RESET: &str = "\x1b[0m";
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct PairingQr {
@@ -15,8 +19,10 @@ pub(crate) struct PairingQr {
 }
 
 impl PairingQr {
-    fn encode(payload: &[u8]) -> Result<Self, PairingError> {
-        let code = QrCode::new(payload).map_err(|_| PairingError::InvitationTooLarge)?;
+    fn encode(payload: &[u8]) -> Result<Self> {
+        let Ok(code) = QrCode::new(payload) else {
+            bail!("error pairing-qr-too-large");
+        };
         let source_width = code.width();
         let colors = code.into_colors();
         let quiet_zone = PAIRING_QUIET_ZONE_MODULES;
@@ -87,6 +93,7 @@ impl fmt::Debug for PairingQr {
     }
 }
 
+/// Display-safe server origin plus the QR of one device invitation.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct PairingPresentation {
     server_identity: String,
@@ -94,16 +101,10 @@ pub(crate) struct PairingPresentation {
 }
 
 impl PairingPresentation {
-    pub(crate) fn new(server_url: String, auth_token: String) -> Result<Self, PairingError> {
-        let invitation =
-            PairingInvitation::new(server_url, auth_token).map_err(PairingError::from)?;
-        let server_identity = invitation.server_origin().to_string();
-        let uri = invitation.encode().map_err(PairingError::from)?;
-        let qr = PairingQr::encode(uri.as_bytes())?;
-
+    pub(crate) fn new(server_origin: &str, invitation: &str) -> Result<Self> {
         Ok(Self {
-            server_identity,
-            qr,
+            server_identity: server_origin.to_string(),
+            qr: PairingQr::encode(invitation.as_bytes())?,
         })
     }
 
@@ -126,117 +127,65 @@ impl fmt::Debug for PairingPresentation {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PairingError {
-    MissingServer,
-    MissingToken,
-    InvalidServerUrl,
-    LoopbackServer,
-    InvitationTooLarge,
-    InvitationInvalid,
+/// Terminal columns to check and whether to style the rows, for real
+/// terminals only; redirected output is neither measured nor styled.
+pub(crate) fn output_options<F>(
+    is_terminal: bool,
+    no_color_present: bool,
+    terminal_size: F,
+) -> (Option<usize>, bool)
+where
+    F: FnOnce() -> Option<u16>,
+{
+    if !is_terminal {
+        return (None, false);
+    }
+    (
+        terminal_size()
+            .map(usize::from)
+            .filter(|columns| *columns > 0),
+        !no_color_present,
+    )
 }
 
-impl PairingError {
-    pub(crate) const fn reason(self) -> &'static str {
-        match self {
-            Self::MissingServer => "configure sync.server_url",
-            Self::MissingToken => "configure a nonempty sync.auth_token",
-            Self::InvalidServerUrl => {
-                "sync.server_url must be an http or https URL without credentials, query, or fragment"
-            }
-            Self::LoopbackServer => "sync.server_url must be reachable from the phone",
-            Self::InvitationTooLarge => "shorten sync.auth_token or sync.server_url",
-            Self::InvitationInvalid => "check sync.server_url and sync.auth_token",
+pub(crate) fn render_terminal_qr(
+    qr: &PairingQr,
+    terminal_columns: Option<usize>,
+    styled: bool,
+) -> Result<String> {
+    if let Some(columns) = terminal_columns
+        && columns < qr.width()
+    {
+        bail!(
+            "error pairing-terminal-too-narrow required_columns={} available_columns={} hint=\"widen the terminal\"",
+            qr.width(),
+            columns
+        );
+    }
+
+    let mut rendered = String::with_capacity(qr.rows().len() * (qr.width() + 16));
+    for row in qr.rows() {
+        if styled {
+            rendered.push_str(QR_LINE_STYLE);
         }
-    }
-}
-
-impl From<PairingInvitationError> for PairingError {
-    fn from(error: PairingInvitationError) -> Self {
-        match error {
-            PairingInvitationError::EmptyAuthToken => Self::MissingToken,
-            PairingInvitationError::InvalidServerUrl => Self::InvalidServerUrl,
-            PairingInvitationError::LoopbackServer => Self::LoopbackServer,
-            PairingInvitationError::PayloadTooLarge => Self::InvitationTooLarge,
-            PairingInvitationError::InvalidInvitation
-            | PairingInvitationError::UnsupportedVersion => Self::InvitationInvalid,
-            _ => Self::InvitationInvalid,
+        rendered.push_str(row);
+        if styled {
+            rendered.push_str(STYLE_RESET);
         }
+        rendered.push('\n');
     }
-}
-
-impl fmt::Debug for PairingError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self, formatter)
-    }
-}
-
-impl fmt::Display for PairingError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.reason())
-    }
-}
-
-impl std::error::Error for PairingError {}
-
-pub(crate) fn pairing_invitation(
-    config: &AppConfig,
-    server_override: Option<&str>,
-) -> Result<PairingInvitation, PairingError> {
-    let environment = std::env::var("AVEN_SYNC_SERVER").ok();
-    let (server, token) = pairing_inputs(config, server_override, environment.as_deref())?;
-    PairingInvitation::new(server, token).map_err(PairingError::from)
-}
-
-pub(crate) fn pairing_presentation(
-    config: &AppConfig,
-    server_override: Option<&str>,
-) -> Result<PairingPresentation, PairingError> {
-    let environment = std::env::var("AVEN_SYNC_SERVER").ok();
-    pairing_presentation_from(config, server_override, environment.as_deref())
-}
-
-pub(crate) fn pairing_presentation_from(
-    config: &AppConfig,
-    server_override: Option<&str>,
-    environment: Option<&str>,
-) -> Result<PairingPresentation, PairingError> {
-    let (server, token) = pairing_inputs(config, server_override, environment)?;
-    PairingPresentation::new(server, token)
-}
-
-pub(crate) fn pairing_input_error(
-    config: &AppConfig,
-    server_override: Option<&str>,
-    environment: Option<&str>,
-) -> Option<PairingError> {
-    pairing_inputs(config, server_override, environment).err()
-}
-
-fn pairing_inputs(
-    config: &AppConfig,
-    server_override: Option<&str>,
-    environment: Option<&str>,
-) -> Result<(String, String), PairingError> {
-    let server = config::resolve_sync_server_from(server_override, environment, config)
-        .map_err(|_| PairingError::MissingServer)?;
-    let server = server.trim();
-    if server.is_empty() {
-        return Err(PairingError::MissingServer);
-    }
-    let token = config.sync_auth_token().ok_or(PairingError::MissingToken)?;
-    Ok((server.to_string(), token.to_string()))
+    Ok(rendered)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const TEST_SERVER: &str = "https://sync.example.test:8443/aven";
-    const TEST_TOKEN: &str = "pairing-token-fixture-0123456789";
+    const TEST_SERVER: &str = "https://sync.example.test:8443";
+    const TEST_INVITATION: &str = "aven://pair/v2/AgAAAB1pbnZpdGF0aW9uLWZpeHR1cmUtc2VjcmV0";
 
     fn presentation() -> PairingPresentation {
-        PairingPresentation::new(TEST_SERVER.to_string(), TEST_TOKEN.to_string()).unwrap()
+        PairingPresentation::new(TEST_SERVER, TEST_INVITATION).unwrap()
     }
 
     #[test]
@@ -253,7 +202,6 @@ mod tests {
                 .iter()
                 .all(|row| row.chars().count() == qr.width())
         );
-
         for row in qr.rows() {
             assert!(row.chars().take(qr.quiet_zone).all(|cell| cell == ' '));
             assert!(
@@ -269,26 +217,14 @@ mod tests {
                 .take(qr.quiet_zone / 2)
                 .all(|row| row.chars().all(|cell| cell == ' '))
         );
-        assert!(
-            qr.rows()
-                .iter()
-                .rev()
-                .take(qr.quiet_zone / 2)
-                .all(|row| row.chars().all(|cell| cell == ' '))
-        );
     }
 
     #[test]
-    fn presentation_debug_omits_secrets_paths_and_qr_rows() {
-        let presentation = PairingPresentation::new(
-            format!("https://sync.example.test/{TEST_TOKEN}"),
-            TEST_TOKEN.to_string(),
-        )
-        .unwrap();
+    fn presentation_debug_omits_invitation_and_qr_rows() {
+        let presentation = presentation();
         let debug = format!("{presentation:?}");
 
-        assert!(debug.contains("https://sync.example.test"));
-        assert!(!debug.contains(TEST_TOKEN));
+        assert!(debug.contains(TEST_SERVER));
         assert!(!debug.contains("aven://pair/"));
         for row in presentation.qr().rows() {
             let visible = row.trim();
@@ -299,72 +235,41 @@ mod tests {
     }
 
     #[test]
-    fn resolver_uses_precedence_and_classifies_blank_selected_inputs() {
-        let mut config = AppConfig::default();
-        config.sync.server_url = Some(" https://configured.example.test/aven ".to_string());
-        config.sync.auth_token = Some("  token  ".to_string());
-
-        let explicit = pairing_presentation_from(
-            &config,
-            Some(" https://explicit.example.test/aven "),
-            Some("https://environment.example.test/aven"),
-        )
-        .unwrap();
-        assert_eq!(explicit.server_identity(), "https://explicit.example.test");
-
-        let environment = pairing_presentation_from(
-            &config,
-            None,
-            Some(" https://environment.example.test/aven "),
-        )
-        .unwrap();
-        assert_eq!(
-            environment.server_identity(),
-            "https://environment.example.test"
-        );
-
-        let configured = pairing_presentation_from(&config, None, None).unwrap();
-        assert_eq!(
-            configured.server_identity(),
-            "https://configured.example.test"
-        );
-
-        assert_eq!(
-            pairing_presentation_from(&config, Some("   "), None).unwrap_err(),
-            PairingError::MissingServer
-        );
-        assert_eq!(
-            pairing_presentation_from(&config, None, Some("   ")).unwrap_err(),
-            PairingError::MissingServer
-        );
-        config.sync.auth_token = Some("   ".to_string());
-        assert_eq!(
-            pairing_presentation_from(&config, None, None).unwrap_err(),
-            PairingError::MissingToken
-        );
-    }
-
-    #[test]
-    fn pairing_errors_have_static_secret_safe_diagnostics() {
-        for error in [
-            PairingError::MissingServer,
-            PairingError::MissingToken,
-            PairingError::InvalidServerUrl,
-            PairingError::LoopbackServer,
-            PairingError::InvitationTooLarge,
-            PairingError::InvitationInvalid,
-        ] {
-            for rendered in [error.to_string(), format!("{error:?}")] {
-                assert!(!rendered.contains(TEST_TOKEN));
-                assert!(!rendered.contains("aven://pair/"));
-            }
-        }
-    }
-
-    #[test]
     fn qr_capacity_has_one_actionable_error() {
-        let error =
-            PairingPresentation::new(TEST_SERVER.to_string(), "t".repeat(3000)).unwrap_err();
-        assert_eq!(error, PairingError::InvitationTooLarge);
+        let error = PairingPresentation::new(TEST_SERVER, &"t".repeat(3000)).unwrap_err();
+        assert_eq!(error.to_string(), "error pairing-qr-too-large");
+    }
+
+    #[test]
+    fn output_options_only_measure_and_style_real_terminals() {
+        let redirected = output_options(false, false, || panic!("redirected output measured tty"));
+        assert_eq!(redirected, (None, false));
+        assert_eq!(output_options(true, false, || Some(120)), (Some(120), true));
+        assert_eq!(output_options(true, true, || Some(120)), (Some(120), false));
+        assert_eq!(output_options(true, false, || None), (None, true));
+    }
+
+    #[test]
+    fn terminal_render_honors_width_and_style_modes() {
+        let presentation = presentation();
+        let qr = presentation.qr();
+        let width = qr.width();
+
+        let styled = render_terminal_qr(qr, Some(width), true).unwrap();
+        assert!(
+            styled
+                .lines()
+                .all(|line| line.starts_with(QR_LINE_STYLE) && line.ends_with(STYLE_RESET))
+        );
+        let plain = render_terminal_qr(qr, Some(width), false).unwrap();
+        assert!(!plain.contains('\u{1b}'));
+        assert_eq!(plain.lines().count(), qr.rows().len());
+
+        let message = format!(
+            "{:#}",
+            render_terminal_qr(qr, Some(width - 1), false).unwrap_err()
+        );
+        assert!(message.contains("pairing-terminal-too-narrow"));
+        assert!(!message.contains("aven://pair/"));
     }
 }

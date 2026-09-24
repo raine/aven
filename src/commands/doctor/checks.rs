@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use crate::config::{self as app_config, AppConfig};
-use crate::sync::sync_server_url_is_valid;
 use crate::workspaces::resolve_active_workspace_with_database;
 
 use super::super::data_safety::{
@@ -144,58 +143,19 @@ pub(super) async fn add_runtime_database_sections(
                 "no"
             },
         );
-        match app_config::resolve_sync_server(None, config) {
-            Ok(server) => {
-                sync_section.check(
-                    "sync.server",
-                    "server",
-                    sync_server_url_is_valid(&server),
-                    &server,
-                );
-                if let Some(database) = database
-                    && let Ok(Some(pinned)) = database.meta("sync_server_url").await
-                {
-                    let normalized = server.trim_end_matches('/');
-                    sync_section.check(
-                        "sync.server_match",
-                        "server match",
-                        pinned == normalized,
-                        format!("pinned={pinned} configured={normalized}"),
-                    );
+        if let Some(database) = database {
+            match crate::sync::encrypted::is_set_up(database).await {
+                Ok(true) => sync_section.info("sync.set_up", "set up", "yes"),
+                Ok(false) => sync_section.info(
+                    "sync.set_up",
+                    "set up",
+                    "no; run `aven sync setup` or `aven sync join`",
+                ),
+                Err(error) => {
+                    sync_section.check("sync.set_up", "set up", false, format!("{error:#}"))
                 }
             }
-            Err(_) if config.sync.enabled => sync_section.check(
-                "sync.server",
-                "server",
-                false,
-                "sync-server-required; configure sync.server_url",
-            ),
-            Err(_) => sync_section.info("sync.server", "server", "not configured"),
         }
-        match config.sync.server_url.as_deref() {
-            Some(server) => sync_section.check(
-                "sync.daemon_server",
-                "daemon server",
-                sync_server_url_is_valid(server),
-                server,
-            ),
-            None if config.sync.enabled => sync_section.check(
-                "sync.daemon_server",
-                "daemon server",
-                false,
-                "not configured",
-            ),
-            None => sync_section.info("sync.daemon_server", "daemon server", "not configured"),
-        }
-        sync_section.info(
-            "sync.auth_token",
-            "auth token",
-            if config.sync_auth_token().is_some() {
-                "configured"
-            } else {
-                "not configured"
-            },
-        );
         sync_section.info(
             "sync.interval",
             "interval",
@@ -215,7 +175,6 @@ pub(super) async fn add_runtime_database_sections(
     } else {
         for (code, label) in [
             ("sync.settings_skipped", "settings"),
-            ("sync.server_skipped", "server"),
             ("sync.daemon_wake_skipped", "daemon wake"),
         ] {
             sync_section.skipped(code, label, "strict configuration loading failed");
@@ -254,12 +213,6 @@ pub(super) async fn add_runtime_database_sections(
                 "local sequence",
                 "local_seq",
                 "missing",
-            ),
-            (
-                "database.pinned_server",
-                "pinned server",
-                "sync_server_url",
-                "none",
             ),
         ] {
             match database.meta(key).await {

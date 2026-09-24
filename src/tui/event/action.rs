@@ -159,7 +159,7 @@ pub(crate) enum Action {
     ShowDatabaseStats,
     BeginUpdate,
     ShowChangelog,
-    PairMobile,
+    AddDevice,
     BeginConfigInit,
     BeginAddDependency,
     BeginRemoveDependency,
@@ -234,7 +234,7 @@ impl Action {
                 | Self::ToggleMarkSelected
                 | Self::ToggleMarkAllInView
                 | Self::ClearMarks
-                | Self::PairMobile
+                | Self::AddDevice
         ) {
             CommandScopePolicy::ListOnly
         } else {

@@ -13,8 +13,7 @@ use tracing::{debug, info, warn};
 
 use crate::config::AppConfig;
 use crate::signals::shutdown_signal;
-use crate::sync::wire::{DAEMON_INCOMPLETE_RESCHEDULE_MS, DAEMON_SYNC_PAGE_BUDGET};
-use crate::sync::{DaemonSyncOutcome, SyncHttpClient};
+use crate::sync::encrypted::{self, DaemonRound};
 
 mod service;
 
@@ -25,6 +24,10 @@ pub use service::{
 
 const BINARY_CHECK_INTERVAL: Duration = Duration::from_secs(30);
 const DAEMON_CONTENTION_RESCHEDULE: Duration = Duration::from_secs(1);
+/// Bounded sync rounds per daemon wake.
+const DAEMON_ROUND_BUDGET: usize = 8;
+/// Delay before continuing a wake that stopped at its round budget.
+const DAEMON_INCOMPLETE_RESCHEDULE: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BinaryFingerprint {
@@ -44,12 +47,6 @@ pub struct DaemonRunArgs {
 
 pub async fn run(args: DaemonRunArgs) -> Result<()> {
     args.config.ensure_automatic_sync_enabled()?;
-    let server = args
-        .config
-        .sync
-        .server_url
-        .clone()
-        .context("error sync-server-required hint=\"set sync.server_url in config.yaml\"")?;
     let wake_addr = args.config.wake_addr()?;
     let interval_seconds = args.config.sync_interval_seconds();
     let database = Database::open(&args.db_path).await?;
@@ -58,53 +55,41 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
     })?;
     info!(
         db = %args.db_path.display(),
-        server = %server,
         wake_addr = %wake_addr,
         interval_seconds,
         "daemon starting"
     );
-    println!(
-        "daemon db={} server={} wake={}",
-        args.db_path.display(),
-        server,
-        wake_addr
-    );
+    println!("daemon db={} wake={}", args.db_path.display(), wake_addr);
 
     let blob_dir = crate::config::resolve_blob_dir(&args.db_path, &args.config)?;
     let lifecycle_policy = args.config.local.attachment_lifecycle.policy();
     let binary_fingerprint = current_binary_fingerprint()?;
-    let client = SyncHttpClient::new().context("build daemon sync HTTP client")?;
-    info!(server = %server, http_client_id = %client.id(), "daemon sync client ready");
     run_loop(
         database,
-        server,
+        &args.config,
         socket,
         interval_seconds,
-        args.config.sync_auth_token().map(str::to_string),
         blob_dir,
         lifecycle_policy,
-        client,
         binary_fingerprint,
     )
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn run_loop(
     database: Database,
-    server: String,
+    config: &AppConfig,
     socket: UdpSocket,
     interval_seconds: u64,
-    auth_token: Option<String>,
     blob_dir: PathBuf,
     lifecycle_policy: aven_core::attachments::LifecyclePolicy,
-    client: SyncHttpClient,
     binary_fingerprint: BinaryFingerprint,
 ) -> Result<()> {
     let mut wake_buf = [0_u8; 16];
     let mut backoff_seconds = 1_u64;
     let mut next_sync = Instant::now();
     let mut retry_not_before = None;
+    let mut awaiting_setup = false;
     let mut next_attachment_maintenance = Instant::now();
     let mut next_binary_check = Instant::now() + BINARY_CHECK_INTERVAL;
     loop {
@@ -141,39 +126,32 @@ async fn run_loop(
             }
             _ = sleep_until(next_sync) => {
                 retry_not_before = None;
-                match sync_once(
-                    &database,
-                    &blob_dir,
-                    lifecycle_policy,
-                    &server,
-                    auth_token.as_deref(),
-                    &client,
-                )
-                .await
-                {
-                    Ok(DaemonSyncOutcome::Completed(summary)) => {
+                match sync_once(&database, config).await {
+                    Ok(DaemonRound::Completed(outcome)) => {
                         backoff_seconds = 1;
-                        next_sync = if summary.complete {
-                            Instant::now() + Duration::from_secs(interval_seconds)
+                        awaiting_setup = false;
+                        next_sync = if outcome.more_work_ready() {
+                            Instant::now() + DAEMON_INCOMPLETE_RESCHEDULE
                         } else {
-                            Instant::now() + Duration::from_millis(DAEMON_INCOMPLETE_RESCHEDULE_MS)
+                            Instant::now() + Duration::from_secs(interval_seconds)
                         };
                     }
-                    Ok(DaemonSyncOutcome::Deferred) => {
+                    Ok(DaemonRound::NotSetUp) => {
+                        if !awaiting_setup {
+                            awaiting_setup = true;
+                            info!("daemon sync waiting for setup");
+                            println!("daemon-sync-not-set-up hint=\"run `aven sync setup` or `aven sync join`\"");
+                        }
+                        backoff_seconds = 1;
+                        next_sync = Instant::now() + Duration::from_secs(interval_seconds);
+                    }
+                    Ok(DaemonRound::Deferred) => {
                         debug!("daemon sync deferred");
                         next_sync = Instant::now() + DAEMON_CONTENTION_RESCHEDULE;
                     }
                     Err(err) => {
-                        let retry_seconds = if err
-                            .downcast_ref::<aven_core::sync::protocol::SyncCompatibilityError>()
-                            .is_some()
-                        {
-                            interval_seconds
-                        } else {
-                            let delay = backoff_seconds;
-                            backoff_seconds = (backoff_seconds * 2).min(300);
-                            delay
-                        };
+                        let retry_seconds = backoff_seconds;
+                        backoff_seconds = (backoff_seconds * 2).min(300);
                         next_sync = Instant::now() + Duration::from_secs(retry_seconds);
                         retry_not_before = Some(next_sync);
                         warn!(error = %err, retry_seconds, "daemon sync failed");
@@ -219,58 +197,24 @@ fn drain_wakes(socket: &UdpSocket, wake_buf: &mut [u8]) {
     while socket.try_recv_from(wake_buf).is_ok() {}
 }
 
-async fn sync_once(
-    database: &Database,
-    blob_dir: &Path,
-    lifecycle_policy: aven_core::attachments::LifecyclePolicy,
-    server: &str,
-    auth_token: Option<&str>,
-    client: &SyncHttpClient,
-) -> Result<DaemonSyncOutcome> {
-    let summary = match crate::sync::try_run_daemon_sync_with_page_budget(
-        database,
-        blob_dir,
-        server,
-        auth_token,
-        DAEMON_SYNC_PAGE_BUDGET,
-        client,
-        lifecycle_policy,
-    )
-    .await?
-    {
-        DaemonSyncOutcome::Completed(summary) => summary,
-        deferred @ DaemonSyncOutcome::Deferred => return Ok(deferred),
-    };
-    info!(
-        pushed = summary.pushed,
-        pulled = summary.pulled,
-        cursor = summary.cursor,
-        complete = summary.complete,
-        pages = summary.pages,
-        request_bytes = summary.request_bytes,
-        request_wire_bytes = summary.request_wire_bytes,
-        response_decoded_bytes = summary.response_decoded_bytes,
-        response_compression = summary.response_compression,
-        apply_ms = summary.apply_ms,
-        "daemon sync completed"
-    );
-    println!(
-        "daemon-synced pushed={} pulled={} blob_uploaded={} blob_uploaded_bytes={} blob_downloaded={} blob_downloaded_bytes={} blob_upload_remaining={} blob_upload_remaining_bytes={} blob_download_remaining={} blob_download_remaining_bytes={} cursor={} complete={} pages={}",
-        summary.pushed,
-        summary.pulled,
-        summary.blob_uploaded,
-        summary.blob_uploaded_bytes,
-        summary.blob_downloaded,
-        summary.blob_downloaded_bytes,
-        summary.blob_upload_remaining,
-        summary.blob_upload_remaining_bytes,
-        summary.blob_download_remaining,
-        summary.blob_download_remaining_bytes,
-        summary.cursor,
-        summary.complete,
-        summary.pages,
-    );
-    Ok(DaemonSyncOutcome::Completed(summary))
+async fn sync_once(database: &Database, config: &AppConfig) -> Result<DaemonRound> {
+    let round = encrypted::daemon_round(database, config, DAEMON_ROUND_BUDGET).await?;
+    match &round {
+        DaemonRound::Completed(outcome) => {
+            info!(
+                rounds = outcome.rounds,
+                metadata_caught_up = outcome.metadata_caught_up,
+                images = outcome.images,
+                "daemon sync completed"
+            );
+            println!(
+                "daemon-synced rounds={} metadata_caught_up={} images={}",
+                outcome.rounds, outcome.metadata_caught_up, outcome.images
+            );
+        }
+        DaemonRound::NotSetUp | DaemonRound::Deferred => {}
+    }
+    Ok(round)
 }
 
 async fn maintain_attachments(

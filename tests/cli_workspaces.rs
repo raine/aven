@@ -3,12 +3,7 @@ mod common;
 use std::path::Path;
 use std::process::Command;
 
-use common::{TestEnv, TestServer, command, contains_all, contains_none, extract_ref, fail, ok};
-
-fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) {
-    let output = ok(env.aven(db, ["sync", "--server", &server.url]));
-    contains_all(&output, &["Sync complete", "Changes", "Cursor"]);
-}
+use common::{TestEnv, command, contains_all, contains_none, extract_ref, fail, ok};
 
 #[test]
 fn explicit_unknown_workspace_preserves_structured_error_source() {
@@ -195,7 +190,6 @@ workspace:
     let alpha = ok(command()
         .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
         .env_remove("AVEN_DB")
-        .env_remove("AVEN_SYNC_SERVER")
         .current_dir(&alpha_dir)
         .args(["list"])
         .output()
@@ -322,7 +316,6 @@ where
         .env("XDG_STATE_HOME", env.state_dir())
         .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
         .env_remove("AVEN_DB")
-        .env_remove("AVEN_SYNC_SERVER")
         .current_dir(cwd)
         .args(args)
         .output()
@@ -602,77 +595,4 @@ fn renamed_default_workspace_still_opens_database() {
     ok(env.aven(&db, ["workspace", "rename", "default", "personal"]));
     let workspaces = ok(env.aven(&db, ["workspace", "list"]));
     contains_all(&workspaces, &["personal", "name=\"personal\""]);
-}
-
-#[test]
-fn sync_rejects_field_updates_for_missing_tasks() {
-    let env = TestEnv::new();
-    let server = TestServer::start(&env);
-    let client = env.db("client.sqlite");
-    ok(env.aven(&client, ["workspace", "create", "client"]));
-
-    let workspace_id = {
-        let output = std::process::Command::new("sqlite3")
-            .arg(&client)
-            .arg("SELECT id FROM workspaces WHERE key = 'client'")
-            .output()
-            .expect("read workspace id");
-        assert!(output.status.success(), "sqlite failed");
-        String::from_utf8(output.stdout)
-            .expect("utf8 workspace id")
-            .trim()
-            .to_string()
-    };
-    let server_db = env.path("server.sqlite");
-    ok(env.aven(&server_db, ["workspace", "list"]));
-    let sql = format!(
-        "INSERT OR IGNORE INTO workspaces(id, key, name, created_at, updated_at) VALUES ('{workspace_id}', 'client', 'client', 't', 't');\
-         INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field, op_type, payload, base_version, created_at, server_seq)\
-         VALUES ('REMOTECHANGE0002', 'remote', 1, 'task', '0123456789ABCDE0', 'title', 'set_field', json_object('workspace_id', '{workspace_id}', 'workspace_key', 'client', 'value', 'ghost'), NULL, 't', 1);"
-    );
-    let output = std::process::Command::new("sqlite3")
-        .arg(&server_db)
-        .arg(sql)
-        .output()
-        .expect("seed remote change");
-    assert!(output.status.success(), "sqlite failed");
-
-    let error = fail(env.aven(&client, ["sync", "--server", &server.url]));
-    contains_all(&error, &["task-not-found"]);
-}
-
-#[test]
-fn sync_converges_workspace_records_and_scoped_tasks() {
-    let env = TestEnv::new();
-    let server = TestServer::start(&env);
-    let a = env.db("client-a.sqlite");
-    let b = env.db("client-b.sqlite");
-
-    ok(env.aven(&a, ["workspace", "create", "client"]));
-    ok(env.aven(&a, ["--workspace", "client", "label", "create", "bug"]));
-    let task_ref = extract_ref(&ok(env.aven(
-        &a,
-        [
-            "--workspace",
-            "client",
-            "add",
-            "client task",
-            "--project",
-            "app",
-            "--label",
-            "bug",
-        ],
-    )));
-
-    sync(&env, &a, &server);
-    sync(&env, &b, &server);
-
-    let workspaces = ok(env.aven(&b, ["workspace", "list"]));
-    contains_all(&workspaces, &["client", "name=\"client\""]);
-
-    let client = ok(env.aven(&b, ["--workspace", "client", "list"]));
-    contains_all(&client, &[&task_ref, "client task", "labels=bug"]);
-
-    let default = ok(env.aven(&b, ["--workspace", "default", "list"]));
-    contains_none(&default, &["client task"]);
 }

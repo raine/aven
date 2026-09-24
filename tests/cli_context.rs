@@ -1,14 +1,9 @@
 mod common;
 
 use common::{
-    TestEnv, TestServer, contains_all, contains_none, extract_attachment_id, extract_ref, ok,
-    png_bytes,
+    TestEnv, contains_all, contains_none, extract_attachment_id, extract_ref, ok, png_bytes,
 };
 use serde_json::Value;
-
-fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) {
-    ok(env.aven(db, ["sync", "--server", &server.url]));
-}
 
 fn seed_context(env: &TestEnv, db: &std::path::Path) -> (String, String, String) {
     ok(env.aven(db, ["label", "create", "bug"]));
@@ -123,40 +118,4 @@ fn context_includes_attachment_metadata() {
     assert!(value["attachments"][0]["deleted_at"].is_null());
     assert!(value["attachments"][0].get("sha256").is_none());
     assert!(value["attachments"][0].get("bytes").is_none());
-}
-
-#[test]
-fn context_includes_unresolved_conflicts() {
-    let env = TestEnv::new();
-    let server = TestServer::start(&env);
-    let a = env.db("context-conflict-a.sqlite");
-    let b = env.db("context-conflict-b.sqlite");
-
-    let task_ref = extract_ref(&ok(
-        env.aven(&a, ["add", "conflict base", "--project", "app"])
-    ));
-    sync(&env, &a, &server);
-    sync(&env, &b, &server);
-
-    ok(env.aven(&a, ["edit", &task_ref, "--title", "title from a"]));
-    ok(env.aven(&b, ["edit", &task_ref, "--title", "title from b"]));
-    sync(&env, &a, &server);
-    sync(&env, &b, &server);
-    sync(&env, &a, &server);
-
-    let text = ok(env.aven(&a, ["context", &task_ref]));
-    contains_all(&text, &["conflict ", "field=title", "variant "]);
-
-    let json = ok(env.aven(&a, ["context", &task_ref, "--json"]));
-    let value: Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["has_conflicts"], true);
-    assert_eq!(value["conflicts"][0]["field"], "title");
-    assert_eq!(
-        value["conflicts"][0]["variants"].as_array().unwrap().len(),
-        2
-    );
-    assert_eq!(
-        value["conflicts"][0]["variants"][0]["value"],
-        "title from a"
-    );
 }

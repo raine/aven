@@ -133,7 +133,7 @@ async fn late_refresh_failure_preserves_view_and_cached_state() {
 async fn refresh_replacement_preserves_retained_state_without_cloning_projection() {
     let mut store = test_store().await;
     create_selected_task(&mut store, "Hydrated projection").await;
-    store.app_config.sync.server_url = Some("https://sync.example.test".to_string());
+    store.app_config.sync.interval_seconds = Some(77);
     store.set_task_columns(vec![crate::config::TaskColumnConfig {
         name: "Work".to_string(),
         statuses: vec!["todo".to_string(), "active".to_string()],
@@ -145,10 +145,7 @@ async fn refresh_replacement_preserves_retained_state_without_cloning_projection
 
     store.refresh(None).await.unwrap();
 
-    assert_eq!(
-        store.config().sync.server_url.as_deref(),
-        Some("https://sync.example.test")
-    );
+    assert_eq!(store.config().sync.interval_seconds, Some(77));
     assert_eq!(store.task_columns().len(), 1);
     assert_eq!(store.task_columns()[0].name, "Work");
     assert!(!store.columns_preview_visible);

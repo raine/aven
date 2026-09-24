@@ -7,10 +7,9 @@ use ratatui::widgets::Paragraph;
 use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use super::super::sync_status_model::{SyncHealth, sync_status_summary};
-use super::super::timestamps::{optional_local_timestamp_display, relative_timestamp_display};
 use crate::tui::config_overlay::CONFIG_STATUS_TITLE;
 use crate::tui::overlay::SyncStatusView;
-use crate::tui::store::{SyncStatusCheck, TuiSyncStatus};
+use crate::tui::store::TuiSyncStatus;
 use crate::tui::text::cell_width_ranges;
 use crate::tui::theme::{BG_ALT, FG, FG_DIM, FG_MUTED, ORANGE, RED};
 
@@ -81,19 +80,15 @@ fn sync_status_lines(view: &SyncStatusView<'_>, width: usize) -> Vec<Line<'stati
     ])];
 
     lines.push(Line::from(Span::styled(
-        recency_line(status, summary.health, view.syncing, view.now),
+        state_line(summary.health, view.syncing),
         Style::new().fg(FG_MUTED),
     )));
 
     lines.push(Line::from(""));
     lines.extend(wrapped_row(
-        "server",
-        summary.server.as_deref().unwrap_or("not configured"),
-        Style::new().fg(if summary.server.is_some() {
-            FG
-        } else {
-            FG_MUTED
-        }),
+        "automatic",
+        if status.enabled { "on" } else { "off" },
+        Style::new().fg(FG_MUTED),
         width,
     ));
     lines.extend(wrapped_row(
@@ -123,7 +118,7 @@ fn sync_status_lines(view: &SyncStatusView<'_>, width: usize) -> Vec<Line<'stati
             lines.extend(wrapped_row(
                 issue.label,
                 &issue.value,
-                Style::new().fg(if issue.error { RED } else { ORANGE }),
+                Style::new().fg(ORANGE),
                 width,
             ));
         }
@@ -138,82 +133,32 @@ fn sync_status_lines(view: &SyncStatusView<'_>, width: usize) -> Vec<Line<'stati
     lines
 }
 
-fn recency_line(
-    status: &TuiSyncStatus,
-    health: SyncHealth,
-    syncing: bool,
-    now: time::OffsetDateTime,
-) -> String {
+fn state_line(health: SyncHealth, syncing: bool) -> String {
     if syncing {
         return "Manual sync is in progress".to_string();
     }
     match health {
+        SyncHealth::NotSetUp => "Run `aven sync setup` or `aven sync join` to sync".to_string(),
         SyncHealth::RuntimeDisabled => "Sync is disabled by the runtime override".to_string(),
-        SyncHealth::LocalOnly => "Tasks are stored on this device".to_string(),
-        SyncHealth::Error if status.last_attempt.is_some() => format!(
-            "Last attempt {}",
-            relative_timestamp_display(status.last_attempt.as_deref(), now, "never")
-        ),
-        _ if status.last_success.is_some() => format!(
-            "Last synced {}",
-            relative_timestamp_display(status.last_success.as_deref(), now, "never")
-        ),
-        _ => "No successful sync recorded".to_string(),
+        _ => "Sync is end-to-end encrypted. Run `aven sync status` for server state".to_string(),
     }
 }
 
 fn detail_lines(status: &TuiSyncStatus, width: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    append_check(
-        &mut lines,
-        "configured",
-        status.configured_server.as_ref(),
-        "not configured",
-        width,
-    );
-    lines.extend(wrapped_row(
-        "database pin",
-        status.pinned_server.as_deref().unwrap_or("none"),
-        Style::new().fg(FG_MUTED),
-        width,
-    ));
-    append_check(
-        &mut lines,
-        "server match",
-        status.server_match.as_ref(),
-        "not checked",
-        width,
-    );
-    append_check(
-        &mut lines,
-        "daemon server",
-        status.daemon_server.as_ref(),
-        "not configured",
-        width,
-    );
-    lines.extend(wrapped_row(
-        "auth token",
-        if status.auth_token_configured {
-            "configured"
-        } else {
-            "not configured"
-        },
-        Style::new().fg(FG_MUTED),
-        width,
-    ));
     lines.extend(wrapped_row(
         "interval",
         &format!("{} seconds", status.interval_seconds),
         Style::new().fg(FG_MUTED),
         width,
     ));
-    append_check(
-        &mut lines,
+    let wake_style = Style::new().fg(if status.daemon_wake.ok { FG_MUTED } else { RED });
+    lines.extend(wrapped_row(
         "wake address",
-        Some(&status.daemon_wake),
-        "not checked",
+        &status.daemon_wake.value,
+        wake_style,
         width,
-    );
+    ));
     lines.extend(wrapped_row(
         "sync cursor",
         status.sync_cursor.as_deref().unwrap_or("missing"),
@@ -226,52 +171,7 @@ fn detail_lines(status: &TuiSyncStatus, width: usize) -> Vec<Line<'static>> {
         Style::new().fg(FG_MUTED),
         width,
     ));
-    lines.extend(wrapped_row(
-        "last attempt",
-        &optional_local_timestamp_display(status.last_attempt.as_deref(), "never"),
-        Style::new().fg(FG_MUTED),
-        width,
-    ));
-    lines.extend(wrapped_row(
-        "last success",
-        &optional_local_timestamp_display(status.last_success.as_deref(), "never"),
-        Style::new().fg(FG_MUTED),
-        width,
-    ));
-    lines.extend(wrapped_row(
-        "last pushed",
-        status.last_pushed.as_deref().unwrap_or("unknown"),
-        Style::new().fg(FG_MUTED),
-        width,
-    ));
-    lines.extend(wrapped_row(
-        "last pulled",
-        status.last_pulled.as_deref().unwrap_or("unknown"),
-        Style::new().fg(FG_MUTED),
-        width,
-    ));
-    lines.extend(wrapped_row(
-        "last cursor",
-        status.last_cursor.as_deref().unwrap_or("unknown"),
-        Style::new().fg(FG_MUTED),
-        width,
-    ));
     lines
-}
-
-fn append_check(
-    lines: &mut Vec<Line<'static>>,
-    label: &str,
-    check: Option<&SyncStatusCheck>,
-    fallback: &str,
-    width: usize,
-) {
-    let (value, style) = match check {
-        Some(check) if check.ok => (check.value.as_str(), Style::new().fg(FG_MUTED)),
-        Some(check) => (check.value.as_str(), Style::new().fg(RED)),
-        None => (fallback, Style::new().fg(FG_MUTED)),
-    };
-    lines.extend(wrapped_row(label, value, style, width));
 }
 
 fn wrapped_row(label: &str, value: &str, style: Style, width: usize) -> Vec<Line<'static>> {
@@ -297,14 +197,7 @@ fn hint_line(view: &SyncStatusView<'_>, scrolling: bool) -> Line<'static> {
         hints.push(("j/k", "scroll"));
     }
     if !view.syncing && summary.can_manual_sync {
-        hints.push((
-            "S",
-            if view.status.last_error_value().is_some() {
-                "retry"
-            } else {
-                "sync"
-            },
-        ));
+        hints.push(("S", "sync"));
     }
     if view.status.conflicts > 0 {
         hints.push(("c", "open"));
@@ -342,7 +235,6 @@ pub(crate) fn sync_status_scroll_cap(
         state: crate::tui::overlay::SyncStatusState { details, scroll: 0 },
         status,
         syncing: false,
-        now: time::OffsetDateTime::UNIX_EPOCH,
     };
     let line_count = sync_status_lines(&view, body_width).len();
     let height = (line_count as u16)

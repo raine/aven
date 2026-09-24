@@ -340,7 +340,6 @@ fn attachment_add_and_delete_work_when_sync_enabled() {
         r#"
 sync:
   enabled: true
-  server_url: "http://127.0.0.1:9"
 daemon:
   wake_addr: "{}"
 "#,

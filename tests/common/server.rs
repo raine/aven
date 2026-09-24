@@ -1,6 +1,5 @@
 use std::ffi::OsStr;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
 use std::process::{Child, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
@@ -18,55 +17,38 @@ pub struct TestServer {
 }
 
 impl TestServer {
-    pub fn start(env: &TestEnv) -> Self {
-        Self::start_with_data(env, "server.sqlite")
-    }
-
-    pub fn start_configured(env: &TestEnv, data: &str) -> Self {
-        Self::start_configured_with_env(env, data, std::iter::empty::<(&str, &str)>())
-    }
-
+    /// Prepares `data` with `server setup` and serves it on a free loopback
+    /// port, using the environment's configuration directory.
     pub fn start_configured_with_env<I, K, V>(env: &TestEnv, data: &str, envs: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
     {
-        Self::start_with_data_and_config(env, data, Some(env.config_dir().join("aven")), envs)
-    }
-
-    pub fn start_with_data(env: &TestEnv, data: &str) -> Self {
-        Self::start_with_data_and_config(env, data, None, std::iter::empty::<(&str, &str)>())
-    }
-
-    fn start_with_data_and_config<I, K, V>(
-        env: &TestEnv,
-        data: &str,
-        config_dir: Option<PathBuf>,
-        envs: I,
-    ) -> Self
-    where
-        I: IntoIterator<Item = (K, V)>,
-        K: AsRef<OsStr>,
-        V: AsRef<OsStr>,
-    {
+        let config_dir = env.config_dir().join("aven");
+        let data = env.path(data);
+        let bind = env.free_loopback_addr();
+        let setup = command()
+            .env("AVEN_CONFIG_DIR", &config_dir)
+            .args(["server", "setup", "--data"])
+            .arg(&data)
+            .args(["--url", &format!("http://{bind}")])
+            .output()
+            .expect("run aven server setup");
+        assert!(
+            setup.status.success(),
+            "server setup failed\n{}",
+            String::from_utf8_lossy(&setup.stderr)
+        );
         let output = Arc::new(Mutex::new(String::new()));
         let (url_tx, url_rx) = mpsc::channel();
         let mut command = command();
         env.configure_command(&mut command);
-        command.args([
-            "server",
-            "--bind",
-            "127.0.0.1:0",
-            "--data",
-            env.path(data).to_str().expect("utf8 temp path"),
-        ]);
-        if let Some(config_dir) = config_dir {
-            command
-                .env("AVEN_CONFIG_DIR", config_dir)
-                .env_remove("AVEN_DB")
-                .env_remove("AVEN_SYNC_SERVER");
-        }
+        command
+            .args(["server", "--bind", &bind, "--data"])
+            .arg(&data)
+            .env("AVEN_CONFIG_DIR", config_dir)
+            .env_remove("AVEN_DB");
         for (key, value) in envs {
             command.env(key, value);
         }

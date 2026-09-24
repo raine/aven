@@ -10,9 +10,8 @@ use crate::tui::overlay::{dialog_area, dialog_inner_area};
 use crate::tui::text::{cell_width_ranges, str_cells};
 use crate::tui::theme::{BG_ALT, FG, FG_MUTED};
 
-const SCAN_INSTRUCTION: &str = "Scan this code with Aven iOS.";
-pub(crate) const NETWORK_REQUIREMENT: &str =
-    "The phone must reach this server over your VPN/private network.";
+const SCAN_INSTRUCTION: &str = "Scan this code on the device to add.";
+pub(crate) const NETWORK_REQUIREMENT: &str = "Anyone with this code can access all synced data.";
 const DIALOG_CHROME_COLUMNS: u16 = 4;
 const DIALOG_CHROME_ROWS: u16 = 2;
 const QR_GAP_ROWS: u16 = 1;
@@ -85,7 +84,7 @@ pub(crate) fn pairing_layout(terminal: Rect, presentation: &PairingPresentation)
 
 pub(in crate::tui::ui) fn render_pairing(frame: &mut Frame, presentation: &PairingPresentation) {
     let layout = pairing_layout(frame.area(), presentation);
-    let inner = Dialog::new("Pair mobile device", layout.area.width, layout.area.height)
+    let inner = Dialog::new("Add device", layout.area.width, layout.area.height)
         .render_block_at(frame, layout.area);
     debug_assert_eq!(inner, layout.inner);
 
@@ -178,7 +177,7 @@ fn render_text(frame: &mut Frame, area: Rect, text: &str, color: Color) {
 
 fn fallback_text() -> String {
     format!(
-        "Terminal too small for QR.\n\nRun `aven sync pair` in a larger terminal.\n\n{NETWORK_REQUIREMENT}"
+        "Terminal too small for QR.\n\nEnlarge it, or run `aven sync invite` for a text invitation.\n\n{NETWORK_REQUIREMENT}"
     )
 }
 

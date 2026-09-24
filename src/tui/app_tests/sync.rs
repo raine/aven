@@ -1,44 +1,21 @@
 use super::*;
 
 #[tokio::test]
-async fn sync_now_requires_configured_server() {
+async fn sync_now_requires_setup() {
     let mut app = test_app().await;
 
     app.execute(Action::SyncNow).await.unwrap();
 
     let message = toast_message(&app).unwrap();
-    assert!(message.starts_with("sync unavailable:"));
-    assert!(message.contains("sync-server-required"));
+    assert!(message.starts_with("sync unavailable:"), "{message}");
+    assert!(message.contains("aven sync setup"), "{message}");
     assert!(!app.sync.work_pending());
 }
 
 #[tokio::test]
-async fn sync_now_completes_without_daemon() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let router = axum::Router::new().route(
-        "/sync",
-        axum::routing::post(
-            |axum::Json(request): axum::Json<serde_json::Value>| async move {
-                axum::Json(serde_json::json!({
-                    "protocol_version": aven_core::sync::wire::SYNC_PROTOCOL_VERSION,
-                    "cursor": request["after"],
-                    "has_more": false,
-                    "push_acks": [],
-                    "changes": [],
-                }))
-            },
-        ),
-    );
-    let server_task = tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
-    });
-
+async fn sync_now_runs_the_encrypted_drain_and_reports_its_failure() {
     let mut app = test_app().await;
-    let mut config = crate::config::AppConfig::default();
-    config.sync.enabled = true;
-    config.sync.server_url = Some(format!("http://{address}"));
-    app.set_config(config);
+    app.store.sync_status.set_up = true;
     app.show_config_status().unwrap();
 
     app.handle_overlay_key(key(KeyCode::Char('S')))
@@ -46,57 +23,21 @@ async fn sync_now_completes_without_daemon() {
         .unwrap();
     assert!(matches!(app.overlay, Some(OverlayState::SyncStatus(_))));
     assert!(app.sync.work_pending());
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        loop {
-            app.poll_sync().await.unwrap();
-            if !app.sync.work_pending() {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("sync task settles");
-    server_task.abort();
-
-    assert!(matches!(app.overlay, Some(OverlayState::SyncStatus(_))));
-    let view = app.view();
-    assert!(matches!(
-        view.overlay,
-        Some(OverlayView::SyncStatus(status)) if !status.syncing
-    ));
-    assert!(toast_message(&app).unwrap().starts_with("sync complete"));
-}
-
-#[tokio::test]
-async fn sync_now_reports_unavailable_server() {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-
-    let mut app = test_app().await;
-    let mut config = crate::config::AppConfig::default();
-    config.sync.server_url = Some(format!("http://127.0.0.1:{port}"));
-    app.set_config(config);
-
-    app.execute(Action::SyncNow).await.unwrap();
-    assert!(app.sync.work_pending());
     assert!(matches!(
         app.notification,
         Some(Notification::Loading { .. })
     ));
-
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        loop {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while app.sync.work_pending() {
             app.poll_sync().await.unwrap();
-            if !app.sync.work_pending() {
-                break;
-            }
             tokio::task::yield_now().await;
         }
     })
     .await
     .expect("sync task settles");
 
-    assert!(toast_message(&app).unwrap().starts_with("sync failed:"));
+    // The database was never set up, so the shared drain refuses it.
+    let message = toast_message(&app).unwrap();
+    assert!(message.starts_with("sync failed:"), "{message}");
+    assert!(message.contains("sync-not-set-up"), "{message}");
 }

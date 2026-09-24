@@ -13,7 +13,6 @@ fn config_help_lists_scalar_commands_and_non_secret_keys() {
         let help = ok(env.aven_config(["config", command, "--help"]));
         for key in [
             "sync.enabled",
-            "sync.server_url",
             "sync.interval_seconds",
             "update.automatic_checks",
             "local.db_path",
@@ -22,6 +21,7 @@ fn config_help_lists_scalar_commands_and_non_secret_keys() {
             assert!(help.contains(key), "{command} help omitted {key}");
         }
         assert!(!help.contains("auth_token"));
+        assert!(!help.contains("server_url"));
     }
 }
 
@@ -35,7 +35,6 @@ local:
   image_optimization: paste
 sync:
   enabled: true
-  server_url: "https://sync.example.com/v1"
   interval_seconds: 45
   auth_token: "top-secret-token"
 update:
@@ -45,7 +44,6 @@ update:
 
     for (key, expected) in [
         ("sync.enabled", "true"),
-        ("sync.server_url", "\"https://sync.example.com/v1\""),
         ("sync.interval_seconds", "45"),
         ("update.automatic_checks", "false"),
         ("local.db_path", "\"/tmp/aven tasks.sqlite\""),
@@ -68,7 +66,6 @@ fn config_get_reports_defaults_and_unset_optional_values() {
 
     for (key, expected) in [
         ("sync.enabled", "false"),
-        ("sync.server_url", "null"),
         ("sync.interval_seconds", "30"),
         ("update.automatic_checks", "true"),
         ("local.db_path", "null"),
@@ -104,11 +101,6 @@ project:
 
     for (key, value, expected) in [
         ("sync.enabled", "true", "true"),
-        (
-            "sync.server_url",
-            "https://sync.example.com/v1",
-            "\"https://sync.example.com/v1\"",
-        ),
         ("sync.interval_seconds", "90", "90"),
         ("update.automatic_checks", "false", "false"),
         (
@@ -131,7 +123,6 @@ project:
     assert!(text.contains("# personal configuration"));
     assert!(text.contains("    enabled: true # keep this explanation"));
     assert!(text.contains("    auth_token: \"top-secret-token\""));
-    assert!(text.contains("    server_url:"));
     assert!(text.contains("overrides: [] # unrelated setting"));
     assert!(!env.config_file().with_extension("yaml.tmp").exists());
     #[cfg(unix)]
@@ -147,10 +138,11 @@ project:
         );
     }
 
-    for key in ["sync.server_url", "local.db_path"] {
-        ok(env.aven_config(["config", "set", key, "null"]));
-        assert_eq!(ok(env.aven_config(["config", "get", key])).trim(), "null");
-    }
+    ok(env.aven_config(["config", "set", "local.db_path", "null"]));
+    assert_eq!(
+        ok(env.aven_config(["config", "get", "local.db_path"])).trim(),
+        "null"
+    );
 }
 
 #[test]
@@ -161,7 +153,6 @@ fn config_set_rejects_invalid_keys_and_values_without_changing_the_file() {
 
     let invalid = [
         ("sync.enabled", "yes"),
-        ("sync.server_url", "file:///tmp/server"),
         ("sync.interval_seconds", "0"),
         ("update.automatic_checks", "sometimes"),
         ("local.db_path", ""),
@@ -177,7 +168,17 @@ fn config_set_rejects_invalid_keys_and_values_without_changing_the_file() {
         );
     }
 
-    let error = fail(env.aven_config(["config", "get", "sync.auth_token"]));
+    for key in ["sync.auth_token", "sync.server_url"] {
+        let error = fail(env.aven_config(["config", "get", key]));
+        assert!(error.contains("invalid value"), "{error}");
+        assert!(!error.contains("top-secret-token"));
+    }
+    let error = fail(env.aven_config([
+        "config",
+        "set",
+        "sync.server_url",
+        "https://sync.example.com",
+    ]));
     assert!(error.contains("invalid value"));
     assert!(!error.contains("top-secret-token"));
 

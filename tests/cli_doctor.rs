@@ -4,9 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
-use common::{
-    TestEnv, command_with_db, contains_all, contains_none, extract_ref, meta_value, ok, png_bytes,
-};
+use common::{TestEnv, command_with_db, contains_all, contains_none, extract_ref, ok, png_bytes};
 use sqlx::ConnectOptions;
 use sqlx::sqlite::SqliteConnectOptions;
 
@@ -33,7 +31,7 @@ fn doctor_reports_default_database_health() {
             "ok client id",
             "active workspace",
             "tasks",
-            "server             not configured",
+            "set up             no",
             "daemon wake",
             "referenced",
         ],
@@ -70,7 +68,6 @@ local:
 
 sync:
   enabled: true
-  server_url: "http://127.0.0.1:3000"
   interval_seconds: 45
 
 daemon:
@@ -88,8 +85,6 @@ daemon:
             "database source    config local.db_path",
             &db.display().to_string(),
             "enabled            yes",
-            "server",
-            "http://127.0.0.1:3000",
             "45 seconds",
             &wake_addr,
         ],
@@ -100,14 +95,13 @@ daemon:
 fn doctor_distinguishes_enabled_sync_from_runtime_disable_override() {
     let env = TestEnv::new();
     let db = env.db("runtime-disabled-sync.sqlite");
-    env.write_config("sync:\n  enabled: true\n  server_url: http://127.0.0.1:3000\n");
+    env.write_config("sync:\n  enabled: true\n");
     let output = command_with_db(&db)
         .env("XDG_STATE_HOME", env.state_dir())
         .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
         .env("AVEN_SYNC_DISABLED", "1")
         .env_remove("AVEN_DEV_DB")
         .env_remove("AVEN_DB")
-        .env_remove("AVEN_SYNC_SERVER")
         .arg("doctor")
         .output()
         .expect("run doctor with sync disabled");
@@ -128,36 +122,9 @@ fn doctor_reports_disabled_sync_without_server_error() {
 
     contains_all(
         &output,
-        &["enabled            no", "server             not configured"],
+        &["enabled            no", "runtime allowed    yes"],
     );
-    assert!(!output.contains("!! server"));
-}
-
-#[test]
-fn doctor_reports_enabled_sync_without_server_as_failed_check() {
-    let env = TestEnv::new();
-    let db = env.db("enabled-sync.sqlite");
-    env.write_config(&format!(
-        r#"
-local:
-  db_path: "{}"
-
-sync:
-  enabled: true
-"#,
-        db.display()
-    ));
-
-    let output = ok(env.aven_config(["doctor"]));
-
-    contains_all(
-        &output,
-        &[
-            "enabled            yes",
-            "!! server",
-            "sync-server-required",
-        ],
-    );
+    assert!(!output.contains("!! set up"));
 }
 
 #[test]
@@ -178,139 +145,6 @@ daemon:
     let output = ok(env.aven_config(["doctor"]));
 
     contains_all(&output, &["!! daemon wake", "invalid daemon wake address"]);
-}
-
-#[test]
-fn doctor_reports_invalid_sync_server_url() {
-    let env = TestEnv::new();
-    let db = env.db("invalid-server.sqlite");
-    env.write_config(&format!(
-        r#"
-local:
-  db_path: "{}"
-
-sync:
-  enabled: true
-  server_url: "not-a-url"
-"#,
-        db.display()
-    ));
-
-    let output = ok(env.aven_config(["doctor"]));
-
-    contains_all(&output, &["!! server", "not-a-url", "!! daemon server"]);
-}
-
-#[test]
-fn doctor_rejects_sync_server_url_shapes_that_sync_cannot_use() {
-    let env = TestEnv::new();
-    let db = env.db("server-shapes.sqlite");
-    for server_url in [
-        "http://user@127.0.0.1:3000",
-        "http://127.0.0.1:3000?x=y",
-        "http://127.0.0.1:3000#frag",
-    ] {
-        env.write_config(&format!(
-            r#"
-local:
-  db_path: "{}"
-
-sync:
-  enabled: true
-  server_url: "{}"
-"#,
-            db.display(),
-            server_url
-        ));
-
-        let output = ok(env.aven_config(["doctor"]));
-
-        contains_all(&output, &["!! server", server_url]);
-    }
-}
-
-#[test]
-fn doctor_reports_daemon_server_separately_from_env_server() {
-    let env = TestEnv::new();
-    let db = env.db("env-server.sqlite");
-    env.write_config(&format!(
-        r#"
-local:
-  db_path: "{}"
-
-sync:
-  enabled: true
-"#,
-        db.display()
-    ));
-
-    let output = std::process::Command::new(common::bin())
-        .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
-        .env("AVEN_SYNC_SERVER", "http://127.0.0.1:3000")
-        .env_remove("AVEN_DEV_DB")
-        .env_remove("AVEN_DB")
-        .arg("doctor")
-        .output()
-        .expect("run aven doctor with env server");
-    let output = ok(output);
-
-    contains_all(
-        &output,
-        &[
-            "ok server",
-            "http://127.0.0.1:3000",
-            "!! daemon server",
-            "not configured",
-        ],
-    );
-}
-
-#[test]
-fn doctor_reports_pinned_server_mismatch() {
-    let env = TestEnv::new();
-    let db = env.db("pinned-server.sqlite");
-    env.write_config(&format!(
-        r#"
-local:
-  db_path: "{}"
-
-sync:
-  enabled: true
-  server_url: "http://127.0.0.1:3000"
-"#,
-        db.display()
-    ));
-    initialize_db(&env, &db);
-    assert_eq!(meta_value(&db, "sync_server_url"), None);
-
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("create tokio runtime");
-    runtime.block_on(async {
-        let mut conn = sqlx::sqlite::SqliteConnectOptions::new()
-            .filename(&db)
-            .create_if_missing(false)
-            .connect()
-            .await
-            .expect("open db");
-        sqlx::query(
-            "INSERT INTO meta(key, value) VALUES ('sync_server_url', 'http://127.0.0.1:4000')",
-        )
-        .execute(&mut conn)
-        .await
-        .expect("pin server");
-    });
-
-    let output = ok(env.aven_config(["doctor"]));
-
-    contains_all(
-        &output,
-        &[
-            "!! server match",
-            "pinned=http://127.0.0.1:4000 configured=http://127.0.0.1:3000",
-        ],
-    );
 }
 
 #[test]

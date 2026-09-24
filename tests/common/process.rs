@@ -47,26 +47,6 @@ impl TestProcess {
         }
     }
 
-    pub fn start_server<I, S>(env: &TestEnv, args: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<OsStr>,
-    {
-        let mut command = command();
-        env.configure_command(&mut command);
-        let child = command
-            .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
-            .env_remove("AVEN_DB")
-            .env_remove("AVEN_SYNC_SERVER")
-            .arg("server")
-            .args(args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn aven server");
-        Self::capture(child)
-    }
-
     pub fn start_daemon(env: &TestEnv) -> Self {
         Self::start_daemon_with_env(env, std::iter::empty::<(&str, &str)>())
     }
@@ -81,8 +61,7 @@ impl TestProcess {
         env.configure_command(&mut command);
         command
             .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
-            .env_remove("AVEN_DB")
-            .env_remove("AVEN_SYNC_SERVER");
+            .env_remove("AVEN_DB");
         for (key, value) in envs {
             command.env(key, value);
         }

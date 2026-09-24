@@ -1,19 +1,15 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
-use aven_core::db::Database;
 use serde::Serialize;
 
-use crate::config::{self, AppConfig};
+use crate::config::AppConfig;
 use crate::daemon::ServiceStatus;
-use crate::sync::sync_server_url_is_valid;
 
-/// Stable top-level condition used by CLI status reports.
+/// Stable top-level condition used by daemon status reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum StatusState {
     Unavailable,
-    Disabled,
     Unconfigured,
     Healthy,
     Degraded,
@@ -25,7 +21,6 @@ impl StatusState {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Unavailable => "unavailable",
-            Self::Disabled => "disabled",
             Self::Unconfigured => "unconfigured",
             Self::Healthy => "healthy",
             Self::Degraded => "degraded",
@@ -33,233 +28,6 @@ impl StatusState {
             Self::Failed => "failed",
         }
     }
-}
-
-/// Versioned, presentation-independent report for `aven sync status --json`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct SyncStatusReport {
-    /// Schema version for automation consumers.
-    pub(crate) version: u32,
-    pub(crate) state: StatusState,
-    pub(crate) enabled: bool,
-    pub(crate) runtime_allowed: bool,
-    pub(crate) configured: bool,
-    /// Effective server after CLI environment and configuration resolution.
-    pub(crate) effective_server: Option<String>,
-    /// Server identity pinned in this database by its first sync.
-    pub(crate) pinned_server: Option<String>,
-    pub(crate) server_matches_pin: Option<bool>,
-    pub(crate) auth_configured: bool,
-    pub(crate) pending: SyncPendingWork,
-    pub(crate) unresolved_conflicts: i64,
-    pub(crate) progress: SyncProgress,
-    pub(crate) last: SyncLastRun,
-    pub(crate) guidance: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub(crate) struct SyncPendingWork {
-    pub(crate) changes: i64,
-    pub(crate) attachment_uploads: i64,
-    pub(crate) attachment_upload_bytes: i64,
-    pub(crate) attachment_downloads: u64,
-    pub(crate) attachment_download_bytes: u64,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub(crate) struct SyncProgress {
-    pub(crate) cursor: Option<i64>,
-    pub(crate) local_sequence: Option<i64>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub(crate) struct SyncLastRun {
-    pub(crate) attempt_at: Option<String>,
-    pub(crate) success_at: Option<String>,
-    /// Privacy-safe failure category. Detailed transport and server text is withheld.
-    pub(crate) safe_error: Option<String>,
-    pub(crate) pushed: Option<i64>,
-    pub(crate) pulled: Option<i64>,
-    pub(crate) cursor: Option<i64>,
-}
-
-pub(crate) async fn build_sync_status(
-    database: &Database,
-    config: &AppConfig,
-) -> Result<SyncStatusReport> {
-    let persistence = database.sync_persistence_status().await?;
-    let missing = database.missing_sync_attachment_counts().await?;
-    let effective_server_value = config::resolve_sync_server(None, config)
-        .ok()
-        .filter(|server| sync_server_url_is_valid(server));
-    let server_matches_pin = match (
-        effective_server_value.as_deref(),
-        persistence.pinned_server.as_deref(),
-    ) {
-        (Some(effective), Some(pinned)) => {
-            Some(effective.trim_end_matches('/') == pinned.trim_end_matches('/'))
-        }
-        _ => None,
-    };
-    let effective_server = effective_server_value.as_deref().map(safe_server_identity);
-    let pinned_server = persistence
-        .pinned_server
-        .as_deref()
-        .map(safe_server_identity);
-    let configured = effective_server.is_some();
-    let safe_error = safe_sync_error(persistence.last_error.as_deref());
-    let failure_is_current = safe_error.is_some()
-        && persistence.last_attempt.is_some()
-        && persistence.last_attempt > persistence.last_success;
-    let pending = SyncPendingWork {
-        changes: persistence.pending_changes,
-        attachment_uploads: persistence.pending_attachment_uploads,
-        attachment_upload_bytes: persistence.pending_attachment_upload_bytes,
-        attachment_downloads: missing.count,
-        attachment_download_bytes: missing.bytes,
-    };
-    let input = SyncStateInput {
-        enabled: config.sync.enabled,
-        runtime_allowed: config.sync_is_allowed(),
-        configured,
-        server_mismatch: server_matches_pin == Some(false),
-        blocked_protocol: persistence.blocked_protocol,
-        conflicts: persistence.conflicts,
-        current_failure: failure_is_current,
-        pending: pending.changes > 0
-            || pending.attachment_uploads > 0
-            || pending.attachment_downloads > 0,
-        ever_succeeded: persistence.last_success.is_some(),
-    };
-    let state = classify_sync_state(input);
-    let guidance = sync_guidance(state, input);
-
-    Ok(SyncStatusReport {
-        version: 1,
-        state,
-        enabled: config.sync.enabled,
-        runtime_allowed: config.sync_is_allowed(),
-        configured,
-        effective_server,
-        pinned_server,
-        server_matches_pin,
-        auth_configured: config.sync_auth_token().is_some(),
-        pending,
-        unresolved_conflicts: persistence.conflicts,
-        progress: SyncProgress {
-            cursor: parse_counter(persistence.sync_cursor.as_deref()),
-            local_sequence: parse_counter(persistence.local_sequence.as_deref()),
-        },
-        last: SyncLastRun {
-            attempt_at: persistence.last_attempt,
-            success_at: persistence.last_success,
-            safe_error,
-            pushed: parse_counter(persistence.last_pushed.as_deref()),
-            pulled: parse_counter(persistence.last_pulled.as_deref()),
-            cursor: parse_counter(persistence.last_cursor.as_deref()),
-        },
-        guidance,
-    })
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct SyncStateInput {
-    pub(crate) enabled: bool,
-    pub(crate) runtime_allowed: bool,
-    pub(crate) configured: bool,
-    pub(crate) server_mismatch: bool,
-    pub(crate) blocked_protocol: Option<u32>,
-    pub(crate) conflicts: i64,
-    pub(crate) current_failure: bool,
-    pub(crate) pending: bool,
-    pub(crate) ever_succeeded: bool,
-}
-
-pub(crate) fn classify_sync_state(input: SyncStateInput) -> StatusState {
-    if !input.runtime_allowed || !input.enabled {
-        StatusState::Disabled
-    } else if !input.configured {
-        StatusState::Unconfigured
-    } else if input.server_mismatch || input.blocked_protocol.is_some() || input.conflicts > 0 {
-        StatusState::Blocked
-    } else if input.current_failure {
-        StatusState::Failed
-    } else if input.pending || !input.ever_succeeded {
-        StatusState::Degraded
-    } else {
-        StatusState::Healthy
-    }
-}
-
-fn parse_counter(value: Option<&str>) -> Option<i64> {
-    value?.parse().ok()
-}
-
-fn sync_guidance(state: StatusState, input: SyncStateInput) -> Vec<String> {
-    let mut guidance = Vec::new();
-    match state {
-        StatusState::Disabled => guidance.push(
-            "Enable sync with `aven config set sync.enabled true` when this device should sync."
-                .to_string(),
-        ),
-        StatusState::Unconfigured => {
-            guidance.push("Set a server with `aven config set sync.server_url <url>`.".to_string())
-        }
-        StatusState::Failed => guidance.push(
-            "Run `aven sync` for detailed diagnostics after checking the server and network."
-                .to_string(),
-        ),
-        StatusState::Degraded => {
-            guidance.push("Run `aven sync` or verify that the daemon is healthy.".to_string())
-        }
-        StatusState::Blocked if !input.server_mismatch && input.blocked_protocol.is_some() => {
-            guidance.push(
-                aven_core::sync::protocol::SyncCompatibilityError {
-                    server_protocol: input.blocked_protocol.unwrap(),
-                    client_protocol: aven_core::sync::wire::SYNC_PROTOCOL_VERSION,
-                }
-                .to_string(),
-            );
-        }
-        StatusState::Blocked if input.conflicts > 0 => {
-            guidance.push("Inspect unresolved conflicts with `aven conflict list`.".to_string())
-        }
-        StatusState::Blocked => guidance.push(
-            "Use a fresh database for a different sync server, or restore the configured server."
-                .to_string(),
-        ),
-        StatusState::Unavailable | StatusState::Healthy => {}
-    }
-    guidance
-}
-
-fn safe_server_identity(value: &str) -> String {
-    let Ok(mut url) = url::Url::parse(value.trim_end_matches('/')) else {
-        return "invalid server URL".to_string();
-    };
-    let _ = url.set_username("");
-    let _ = url.set_password(None);
-    url.set_path("");
-    url.set_query(None);
-    url.set_fragment(None);
-    url.to_string().trim_end_matches('/').to_string()
-}
-
-fn safe_sync_error(value: Option<&str>) -> Option<String> {
-    let value = value?.trim();
-    if value.is_empty() {
-        return None;
-    }
-    Some(
-        match value {
-            "invalid sync server URL"
-            | "sync request preparation failed"
-            | "sync transport failed"
-            | "sync response rejected" => value,
-            _ => "sync failed (details withheld)",
-        }
-        .to_string(),
-    )
 }
 
 /// Versioned, presentation-independent report for `aven daemon status --json`.
@@ -275,7 +43,6 @@ pub(crate) struct DaemonStatusReport {
     pub(crate) executable_matches: Option<bool>,
     pub(crate) configuration_valid: bool,
     pub(crate) sync_enabled: bool,
-    pub(crate) server_configured: bool,
     pub(crate) wake_address_valid: bool,
     pub(crate) paths: DaemonPaths,
     pub(crate) guidance: Vec<String>,
@@ -294,14 +61,8 @@ pub(crate) fn build_daemon_status(
     config: &AppConfig,
     service: ServiceStatus,
 ) -> DaemonStatusReport {
-    let server_configured = config
-        .sync
-        .server_url
-        .as_deref()
-        .is_some_and(sync_server_url_is_valid);
     let wake_address_valid = config.wake_addr().is_ok();
-    let configuration_valid =
-        config.automatic_sync_is_enabled() && server_configured && wake_address_valid;
+    let configuration_valid = config.automatic_sync_is_enabled() && wake_address_valid;
     let state = if !service.platform_supported {
         StatusState::Unavailable
     } else if !service.installed {
@@ -323,7 +84,7 @@ pub(crate) fn build_daemon_status(
     } else {
         if !configuration_valid {
             guidance.push(
-                "Enable sync, configure sync.server_url, then run `aven daemon repair`."
+                "Enable sync with `aven config set sync.enabled true`, then run `aven daemon repair`."
                     .to_string(),
             );
         }
@@ -350,7 +111,6 @@ pub(crate) fn build_daemon_status(
         executable_matches: service.program_matches_current,
         configuration_valid,
         sync_enabled: config.automatic_sync_is_enabled(),
-        server_configured,
         wake_address_valid,
         paths: DaemonPaths {
             service: nonempty_path(service.plist_path),
@@ -371,79 +131,6 @@ fn nonempty_path(path: PathBuf) -> Option<PathBuf> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn compatibility_guidance_preserves_status_precedence() {
-        let blocked = SyncStateInput {
-            enabled: true,
-            runtime_allowed: true,
-            configured: true,
-            server_mismatch: false,
-            blocked_protocol: Some(aven_core::sync::wire::SYNC_PROTOCOL_VERSION + 1),
-            conflicts: 0,
-            current_failure: true,
-            pending: true,
-            ever_succeeded: true,
-        };
-        for (input, expected_state, expected_guidance) in [
-            (blocked, StatusState::Blocked, "Update Aven on this device"),
-            (
-                SyncStateInput {
-                    conflicts: 1,
-                    ..blocked
-                },
-                StatusState::Blocked,
-                "Update Aven on this device",
-            ),
-            (
-                SyncStateInput {
-                    enabled: false,
-                    ..blocked
-                },
-                StatusState::Disabled,
-                "Enable sync",
-            ),
-            (
-                SyncStateInput {
-                    runtime_allowed: false,
-                    ..blocked
-                },
-                StatusState::Disabled,
-                "Enable sync",
-            ),
-            (
-                SyncStateInput {
-                    configured: false,
-                    ..blocked
-                },
-                StatusState::Unconfigured,
-                "Set a server",
-            ),
-            (
-                SyncStateInput {
-                    server_mismatch: true,
-                    ..blocked
-                },
-                StatusState::Blocked,
-                "Use a fresh database",
-            ),
-            (
-                SyncStateInput {
-                    server_mismatch: true,
-                    conflicts: 1,
-                    ..blocked
-                },
-                StatusState::Blocked,
-                "Inspect unresolved conflicts",
-            ),
-        ] {
-            let state = classify_sync_state(input);
-            assert_eq!(state, expected_state);
-            let guidance = sync_guidance(state, input);
-            assert_eq!(guidance.len(), 1);
-            assert!(guidance[0].contains(expected_guidance), "{guidance:?}");
-        }
-    }
-
     fn service(installed: bool) -> ServiceStatus {
         ServiceStatus {
             platform_supported: true,
@@ -462,7 +149,6 @@ mod tests {
     fn configured() -> AppConfig {
         let mut config = AppConfig::default();
         config.sync.enabled = true;
-        config.sync.server_url = Some("https://sync.example.test".to_string());
         config
     }
 
@@ -503,18 +189,6 @@ mod tests {
         assert_eq!(
             build_daemon_status(&AppConfig::default(), service(true)).state,
             StatusState::Blocked
-        );
-    }
-
-    #[test]
-    fn server_identity_and_errors_withhold_secrets() {
-        assert_eq!(
-            safe_server_identity("https://user:secret@example.test/sync?token=hidden"),
-            "https://example.test"
-        );
-        assert_eq!(
-            safe_sync_error(Some("server said task=secret token=hidden")).as_deref(),
-            Some("sync failed (details withheld)")
         );
     }
 }

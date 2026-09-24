@@ -274,12 +274,6 @@ fn status_with_runner(_runner: &impl LaunchctlRunner) -> Result<ServiceStatus> {
 #[cfg(target_os = "macos")]
 fn validate_install_config(config: &AppConfig) -> Result<()> {
     config.ensure_automatic_sync_enabled()?;
-    config
-        .sync
-        .server_url
-        .as_deref()
-        .filter(|server| !server.trim().is_empty())
-        .context("error sync-server-required hint=\"set sync.server_url in config.yaml\"")?;
     config.wake_addr()?;
     Ok(())
 }
