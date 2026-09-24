@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 
 use crate::data_safety::export_types::{
     AvenExport, EXPORT_FORMAT, EXPORT_VERSION, RELATED_LINKS_EXPORT_VERSION,
@@ -108,7 +107,6 @@ impl Database {
     /// reading current domain rows or attachment bytes again.
     pub async fn capture_local_shared_state_never_dispatched(
         &self,
-        blob_dir: &Path,
     ) -> Result<NeverDispatchedLocalSharedCapture> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = db::begin_immediate(&mut conn).await?;
@@ -124,7 +122,7 @@ impl Database {
         let mut source_provenance = tables.shared_history_provenance.clone();
         source_provenance.sort_by(|a, b| a.change_id.cmp(&b.change_id));
         let source_provenance = serde_json::to_string(&source_provenance)?;
-        let image_classes = classify_and_validate_images(&tables, blob_dir).await?;
+        let image_classes = classify_images(&tables)?;
         let capture = SharedStateCapture::from_tables(schema_version, tables)?;
         let candidate_id = random_cryptographic_id()?;
         let stream_id = random_cryptographic_id()?;
@@ -724,9 +722,10 @@ async fn validate_persisted_local_capture(
     Ok(())
 }
 
-async fn classify_and_validate_images(
+/// Classifies captured image metadata. Selected bytes are validated once, by
+/// packaging, before anything is frozen; pins protect them until then.
+fn classify_images(
     tables: &crate::data_safety::export_types::ExportTables,
-    blob_dir: &Path,
 ) -> Result<Vec<(String, &'static str)>> {
     let deleted_tasks = tables
         .tasks
@@ -765,39 +764,6 @@ async fn classify_and_validate_images(
             inventory.available == 1,
             "error local-shared-capture-image-availability-invalid"
         );
-        let path = crate::attachments::storage::object_path(blob_dir, &inventory.sha256)?;
-        let bytes =
-            crate::attachments::blocking::run(move || Ok::<_, anyhow::Error>(std::fs::read(path)?))
-                .await
-                .context("error local-shared-capture-selected-image-missing")?;
-        ensure!(
-            crate::attachments::storage::sha256_hex(&bytes) == inventory.sha256,
-            "error local-shared-capture-selected-image-hash-mismatch"
-        );
-        ensure!(
-            i64::try_from(bytes.len())? == inventory.byte_size,
-            "error local-shared-capture-selected-image-size-mismatch"
-        );
-        let media_type = inventory.media_type.clone();
-        let facts = crate::attachments::blocking::run(move || {
-            crate::attachments::decode::validate_image_blocking(bytes, Some(&media_type))
-        })
-        .await
-        .context("error local-shared-capture-selected-image-invalid")?
-        .facts;
-        for attachment in tables
-            .task_attachments
-            .iter()
-            .filter(|attachment| attachment.sha256 == inventory.sha256)
-        {
-            ensure!(
-                attachment.media_type == inventory.media_type
-                    && attachment.byte_size == inventory.byte_size
-                    && attachment.width == Some(facts.width)
-                    && attachment.height == Some(facts.height),
-                "error local-shared-capture-selected-image-metadata-mismatch"
-            );
-        }
         result.push((
             inventory.sha256.clone(),
             if current_hashes.contains(inventory.sha256.as_str()) {

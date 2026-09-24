@@ -6,7 +6,7 @@ use crate::operations::TaskUpdate;
 async fn encrypted_package_round_trips_and_retries_exact_bytes() {
     let (source_dir, source, task_id) = source_with_history().await;
     let durable = source
-        .capture_local_shared_state_never_dispatched(source_dir.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let original_snapshot = sorted_tables(durable.shared_state());
@@ -173,7 +173,7 @@ async fn selected_images_round_trip_and_retry_exact_persisted_ciphertext_after_r
     let (current, extra, extra_hash) =
         add_selected_images(source_dir.path(), &source, &task_id).await;
     source
-        .capture_local_shared_state_never_dispatched(source_dir.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let key = package_key();
@@ -285,7 +285,7 @@ async fn incomplete_image_package_rejects_selected_capture_without_rewrite() {
     let (source_dir, source, task_id) = source_with_history().await;
     add_selected_images(source_dir.path(), &source, &task_id).await;
     source
-        .capture_local_shared_state_never_dispatched(source_dir.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let key = package_key();
@@ -350,7 +350,7 @@ async fn selected_source_failure_preserves_pins_and_allows_cancellation_cleanup(
         let (source_dir, source, task_id) = source_with_history().await;
         let (_, _, extra_hash) = add_selected_images(source_dir.path(), &source, &task_id).await;
         let capture = source
-            .capture_local_shared_state_never_dispatched(source_dir.path())
+            .capture_local_shared_state_never_dispatched()
             .await
             .unwrap();
         let path =
@@ -400,12 +400,152 @@ async fn selected_source_failure_preserves_pins_and_allows_cancellation_cleanup(
     }
 }
 
+async fn freeze_and_pin_counts(database: &Database) -> (i64, i64, i64) {
+    let mut conn = database.acquire_reader().await.unwrap();
+    sqlx::query_as(
+        "SELECT
+             (SELECT count(*) FROM local_shared_capture_journal
+              WHERE frozen_descriptor_commitment IS NOT NULL),
+             (SELECT count(*) FROM local_shared_capture_packages),
+             (SELECT count(*) FROM local_shared_capture_pins)",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn capture_pins_unverified_selected_bytes_and_packaging_is_the_byte_gate() {
+    for case in ["missing-current", "corrupt-extra", "dimension-metadata"] {
+        let (dir, database, task_id) = source_with_history().await;
+        let (current, extra, extra_hash) =
+            add_selected_images(dir.path(), &database, &task_id).await;
+        let current_hash = crate::attachments::storage::sha256_hex(&current);
+        let current_path =
+            crate::attachments::storage::object_path(dir.path(), &current_hash).unwrap();
+        let extra_path = crate::attachments::storage::object_path(dir.path(), &extra_hash).unwrap();
+        let expected_error = match case {
+            "missing-current" => {
+                std::fs::remove_file(&current_path).unwrap();
+                "selected-image-missing"
+            }
+            "corrupt-extra" => {
+                let mut corrupt = extra.clone();
+                *corrupt.last_mut().unwrap() ^= 1;
+                std::fs::write(&extra_path, corrupt).unwrap();
+                "selected-image-hash-mismatch"
+            }
+            _ => {
+                let mut conn = database.acquire_writer().await.unwrap();
+                sqlx::query("UPDATE task_attachments SET width = 3 WHERE sha256 = ?")
+                    .bind(&current_hash)
+                    .execute(&mut *conn)
+                    .await
+                    .unwrap();
+                "selected-image-metadata-mismatch"
+            }
+        };
+
+        // Capture classifies metadata only; unverified selected bytes stay
+        // selected and pinned rather than being downgraded to unavailable.
+        let capture = database
+            .capture_local_shared_state_never_dispatched()
+            .await
+            .unwrap();
+        let mut conn = database.acquire_reader().await.unwrap();
+        let classes: Vec<(String, String)> = sqlx::query_as(
+            "SELECT sha256, classification FROM local_shared_capture_images ORDER BY sha256",
+        )
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+        let mut expected_classes = vec![
+            (current_hash.clone(), "current_selected".to_string()),
+            (extra_hash.clone(), "extra_selected".to_string()),
+            ("cd".repeat(32), "unavailable".to_string()),
+        ];
+        expected_classes.sort();
+        assert_eq!(classes, expected_classes, "{case}");
+        assert_eq!(freeze_and_pin_counts(&database).await, (0, 0, 2), "{case}");
+
+        for _ in 0..2 {
+            let error = database
+                .package_local_shared_state_never_dispatched(
+                    dir.path(),
+                    package_context(),
+                    &package_key(),
+                    [0x64; 32],
+                )
+                .await
+                .unwrap_err();
+            assert!(
+                error.to_string().contains(expected_error),
+                "{case}: {error:#}"
+            );
+            assert_eq!(freeze_and_pin_counts(&database).await, (0, 0, 2), "{case}");
+        }
+
+        let candidate = if case == "dimension-metadata" {
+            // Captured metadata cannot be repaired in place: cancel before any
+            // intent exists, fix the source, and recapture a new candidate.
+            assert!(
+                database
+                    .cancel_local_shared_state_never_dispatched(capture.candidate_id())
+                    .await
+                    .unwrap()
+            );
+            assert_eq!(freeze_and_pin_counts(&database).await, (0, 0, 0), "{case}");
+            let mut conn = database.acquire_writer().await.unwrap();
+            sqlx::query("UPDATE task_attachments SET width = 2 WHERE sha256 = ?")
+                .bind(&current_hash)
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+            drop(conn);
+            let recapture = database
+                .capture_local_shared_state_never_dispatched()
+                .await
+                .unwrap();
+            assert_ne!(recapture.candidate_id(), capture.candidate_id());
+            recapture.candidate_id().to_string()
+        } else {
+            // Restoring the exact source bytes resumes the same candidate.
+            std::fs::write(&current_path, &current).unwrap();
+            std::fs::write(&extra_path, &extra).unwrap();
+            capture.candidate_id().to_string()
+        };
+        let frozen = database
+            .package_local_shared_state_never_dispatched(
+                dir.path(),
+                package_context(),
+                &package_key(),
+                [0x64; 32],
+            )
+            .await
+            .unwrap();
+        assert_eq!(frozen.candidate_id(), candidate, "{case}");
+        assert_eq!(freeze_and_pin_counts(&database).await, (1, 1, 2), "{case}");
+        std::fs::remove_file(&extra_path).unwrap();
+        let retry = database
+            .package_local_shared_state_never_dispatched(
+                dir.path(),
+                package_context(),
+                &package_key(),
+                [0x64; 32],
+            )
+            .await
+            .unwrap();
+        assert!(retry == frozen, "{case}");
+    }
+}
+
 #[tokio::test]
 async fn wrong_key_and_interrupted_persistence_leave_no_install_or_partial_package() {
     let (source_dir, source, task_id) = source_with_history().await;
     add_selected_images(source_dir.path(), &source, &task_id).await;
     source
-        .capture_local_shared_state_never_dispatched(source_dir.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let mut conn = source.acquire_writer().await.unwrap();
@@ -611,7 +751,7 @@ async fn persisted_ciphertext_corruption_blocks_resume_without_repackaging() {
     let (source_dir, source, task_id) = source_with_history().await;
     add_selected_images(source_dir.path(), &source, &task_id).await;
     source
-        .capture_local_shared_state_never_dispatched(source_dir.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     source

@@ -130,7 +130,7 @@ async fn fixture_with_recurrence_snapshot(
             .execute(&mut *aven_core::test_support::acquire(&seed).await.unwrap())
             .await
             .unwrap();
-        seed.capture_local_shared_state_never_dispatched(root.path())
+        seed.capture_local_shared_state_never_dispatched()
             .await
             .unwrap();
         seed_store
@@ -222,7 +222,7 @@ async fn fixture_with_recurrence_snapshot(
                 .unwrap();
             snapshot_note = Some((workspace, task.id, note.note_id));
         }
-        seed.capture_local_shared_state_never_dispatched(root.path())
+        seed.capture_local_shared_state_never_dispatched()
             .await
             .unwrap();
         seed_store

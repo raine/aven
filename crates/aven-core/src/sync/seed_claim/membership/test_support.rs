@@ -23,7 +23,7 @@ impl Fixture {
         let key = LocalSharedStatePackageKey::new([3; 32]);
         let seed = SeedAuthority::generate(context, &key, [4; 32]).unwrap();
         source
-            .capture_local_shared_state_never_dispatched(dir.path())
+            .capture_local_shared_state_never_dispatched()
             .await
             .unwrap();
         let package = source

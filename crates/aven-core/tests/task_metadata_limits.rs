@@ -187,7 +187,7 @@ async fn plaintext_merge_conflicts_and_capture_preserve_over_limit_metadata() {
             }
             // Durable capture/resume/install of real plaintext merged state.
             let capture = a
-                .capture_local_shared_state_never_dispatched(root.path())
+                .capture_local_shared_state_never_dispatched()
                 .await
                 .unwrap();
             let target = Database::open(&root.path().join("target.sqlite"))

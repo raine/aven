@@ -80,7 +80,7 @@ async fn protected_seed_publishes_frozen_images_through_core_and_recovers_lost_r
     let protected = original.protected_storage_bytes();
     drop(original);
     client
-        .capture_local_shared_state_never_dispatched(root.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let local = store

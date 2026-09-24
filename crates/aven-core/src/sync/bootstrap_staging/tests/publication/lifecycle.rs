@@ -152,7 +152,7 @@ async fn deleted_parent_with_incomplete_history_keeps_selected_extra_protected()
         .unwrap();
     drop(conn);
     f.source
-        .capture_local_shared_state_never_dispatched(f.dir.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let local = f
@@ -225,7 +225,7 @@ async fn shared_references_charge_distinct_object_once_per_workspace() {
         .await
         .unwrap();
     f.source
-        .capture_local_shared_state_never_dispatched(f.dir.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let local = f

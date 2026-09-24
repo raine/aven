@@ -16,7 +16,7 @@ async fn specimen() -> (
         .execute(&mut *conn).await.unwrap();
     drop(conn);
     let capture = database
-        .capture_local_shared_state_never_dispatched(dir.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let local = database
@@ -406,7 +406,7 @@ async fn unavailable_reference_has_no_object_or_byte_obligation() {
     )
     .unwrap();
     let capture = db
-        .capture_local_shared_state_never_dispatched(dir.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let local = db
@@ -440,7 +440,7 @@ async fn empty_capture_and_records_spanning_transport_chunks() {
     let db = crate::db::Database::open(&dir.path().join("empty.sqlite"))
         .await
         .unwrap();
-    db.capture_local_shared_state_never_dispatched(dir.path())
+    db.capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let local = db
@@ -467,7 +467,7 @@ async fn empty_capture_and_records_spanning_transport_chunks() {
         .unwrap();
     drop(conn);
     let capture = db
-        .capture_local_shared_state_never_dispatched(dir.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let local = db

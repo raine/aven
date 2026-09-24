@@ -32,7 +32,7 @@ async fn fixture() -> (
             .unwrap();
     }
     let capture = database
-        .capture_local_shared_state_never_dispatched(root.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     database

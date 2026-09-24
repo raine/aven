@@ -240,7 +240,7 @@ async fn frozen_incompatible_package_refuses_and_explicit_recapture_preserves_ke
     db.cancel_local_shared_state_never_dispatched(frozen.candidate_id())
         .await
         .unwrap();
-    db.capture_local_shared_state_never_dispatched(root.path())
+    db.capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let package = store

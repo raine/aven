@@ -95,7 +95,7 @@ pub(crate) async fn fixture_with_domain(
     let store = isolated_store(db.path(), &root.join("keys"));
     let seed = store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
     store.prepare_seed_source(&db).await.unwrap();
-    db.capture_local_shared_state_never_dispatched(root)
+    db.capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let package = store

@@ -131,7 +131,7 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
         .unwrap();
     store.prepare_seed_source(&client).await.unwrap();
     client
-        .capture_local_shared_state_never_dispatched(root.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let local = store
@@ -721,7 +721,7 @@ async fn local_intent_fixture() -> (tempfile::TempDir, Database, ProtectedLocalK
     store.prepare_seed_claim(&database, [9; 32]).await.unwrap();
     store.prepare_seed_source(&database).await.unwrap();
     database
-        .capture_local_shared_state_never_dispatched(root.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     store
@@ -1022,7 +1022,7 @@ async fn valid_signed_other_publication_cannot_adopt_this_capture() {
         .await
         .unwrap();
     other
-        .capture_local_shared_state_never_dispatched(root.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let package = other

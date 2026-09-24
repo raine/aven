@@ -21,7 +21,7 @@ async fn frozen_upload_survives_edits_source_loss_and_reopen() {
     let (dir, database, task) = source_with_history().await;
     let (current, _, extra_hash) = add_selected_images(dir.path(), &database, &task).await;
     let capture = database
-        .capture_local_shared_state_never_dispatched(dir.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let key = package_key();
@@ -178,7 +178,7 @@ async fn prior_local_only_storage_requires_explicit_cancel_and_new_identity() {
     let (dir, database, task) = source_with_history().await;
     add_selected_images(dir.path(), &database, &task).await;
     let capture = database
-        .capture_local_shared_state_never_dispatched(dir.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let mut conn = database.acquire_writer().await.unwrap();
@@ -242,7 +242,7 @@ async fn prior_local_only_storage_requires_explicit_cancel_and_new_identity() {
         .await
         .unwrap();
     let recapture = database
-        .capture_local_shared_state_never_dispatched(dir.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     assert_ne!(recapture.candidate_id(), capture.candidate_id());
@@ -273,7 +273,7 @@ async fn corrupt_or_missing_frozen_components_never_trigger_replacement() {
         let (dir, database, task) = source_with_history().await;
         add_selected_images(dir.path(), &database, &task).await;
         database
-            .capture_local_shared_state_never_dispatched(dir.path())
+            .capture_local_shared_state_never_dispatched()
             .await
             .unwrap();
         let frozen = database
@@ -339,7 +339,7 @@ async fn process_exit_before_and_after_freeze_commit_preserves_ownership() {
         let (dir, database, task) = source_with_history().await;
         add_selected_images(dir.path(), &database, &task).await;
         let capture = database
-            .capture_local_shared_state_never_dispatched(dir.path())
+            .capture_local_shared_state_never_dispatched()
             .await
             .unwrap();
         drop(database);
@@ -454,7 +454,7 @@ async fn concurrent_preparers_return_one_frozen_representation() {
     let (dir, first, task) = source_with_history().await;
     add_selected_images(dir.path(), &first, &task).await;
     first
-        .capture_local_shared_state_never_dispatched(dir.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let second = Database::open(&dir.path().join("source.sqlite"))
@@ -494,7 +494,7 @@ async fn failed_freeze_marker_write_rolls_back_bytes_but_retains_capture_and_pin
     let (dir, database, task) = source_with_history().await;
     add_selected_images(dir.path(), &database, &task).await;
     let capture = database
-        .capture_local_shared_state_never_dispatched(dir.path())
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let mut conn = database.acquire_writer().await.unwrap();

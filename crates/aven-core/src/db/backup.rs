@@ -479,7 +479,7 @@ mod tests {
             );
         reached_rx.await.unwrap();
         database
-            .capture_local_shared_state_never_dispatched(&temp.path().join("blobs"))
+            .capture_local_shared_state_never_dispatched()
             .await
             .unwrap();
         resume_tx.send(()).unwrap();

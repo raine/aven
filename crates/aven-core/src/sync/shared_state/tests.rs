@@ -751,7 +751,6 @@ async fn imported_baseline_and_subsequent_operations_converge_after_install() {
 async fn durable_capture_reopens_original_snapshot_after_later_edits() {
     let temp = tempfile::tempdir().unwrap();
     let db_path = temp.path().join("db.sqlite");
-    let blob_dir = temp.path().join("blobs");
     let database = Database::open(&db_path).await.unwrap();
     let mut conn = database.acquire_writer().await.unwrap();
     let workspace = crate::workspaces::ensure_default_workspace(&mut conn)
@@ -769,7 +768,7 @@ async fn durable_capture_reopens_original_snapshot_after_later_edits() {
     };
 
     let capture = database
-        .capture_local_shared_state_never_dispatched(&blob_dir)
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let candidate_id = capture.candidate_id().to_string();
@@ -842,7 +841,7 @@ async fn durable_capture_reopens_original_snapshot_after_later_edits() {
 
 #[tokio::test]
 async fn failed_durable_capture_rolls_back_journal_floor_and_ownership() {
-    let (temp, database, _workspace) = fresh().await;
+    let (_temp, database, _workspace) = fresh().await;
     let hash = "ab".repeat(32);
     {
         let mut conn = database.acquire_writer().await.unwrap();
@@ -857,15 +856,31 @@ async fn failed_durable_capture_rolls_back_journal_floor_and_ownership() {
         .await
         .unwrap();
         db::set_meta(&mut conn, "local_seq", "41").await.unwrap();
+        // Fail after the journal, counter floor, generation and image
+        // classification writes, so the whole capture must roll back.
+        sqlx::query(
+            "CREATE TRIGGER fail_capture_pin BEFORE INSERT ON local_shared_capture_pins
+             BEGIN SELECT RAISE(ABORT, 'injected capture pin failure'); END",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
     }
 
     let error = database
-        .capture_local_shared_state_never_dispatched(&temp.path().join("blobs"))
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap_err();
-    assert!(error.to_string().contains("selected-image-missing"));
+    assert!(
+        format!("{error:#}").contains("injected capture pin failure"),
+        "{error:#}"
+    );
     let mut conn = database.acquire_reader().await.unwrap();
     let journals: i64 = sqlx::query_scalar("SELECT count(*) FROM local_shared_capture_journal")
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    let images: i64 = sqlx::query_scalar("SELECT count(*) FROM local_shared_capture_images")
         .fetch_one(&mut *conn)
         .await
         .unwrap();
@@ -873,7 +888,7 @@ async fn failed_durable_capture_rolls_back_journal_floor_and_ownership() {
         .fetch_one(&mut *conn)
         .await
         .unwrap();
-    assert_eq!((journals, pins), (0, 0));
+    assert_eq!((journals, images, pins), (0, 0, 0));
     assert_eq!(
         db::get_meta(&mut conn, "local_seq")
             .await
@@ -892,7 +907,7 @@ async fn failed_durable_capture_rolls_back_journal_floor_and_ownership() {
 
 #[tokio::test]
 async fn captured_history_blocks_general_and_recurrence_undo_atomically() {
-    let (temp, database, workspace) = fresh().await;
+    let (_temp, database, workspace) = fresh().await;
     let created = database
         .create_task_with_undo(
             &workspace,
@@ -902,7 +917,7 @@ async fn captured_history_blocks_general_and_recurrence_undo_atomically() {
         .await
         .unwrap();
     database
-        .capture_local_shared_state_never_dispatched(&temp.path().join("blobs"))
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let error = database
@@ -977,7 +992,7 @@ async fn captured_history_blocks_general_and_recurrence_undo_atomically() {
         .await
         .unwrap();
     database
-        .capture_local_shared_state_never_dispatched(&temp.path().join("blobs"))
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let before = database
@@ -1061,7 +1076,7 @@ async fn durable_pin_survives_cleanup_until_idempotent_local_cancellation() {
         .unwrap();
     }
     let capture = database
-        .capture_local_shared_state_never_dispatched(&blob_dir)
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let candidate_id = capture.candidate_id().to_string();
@@ -1136,7 +1151,7 @@ async fn active_local_capture_fences_sync_backup_import_and_restore() {
         .await
         .unwrap();
     let capture = database
-        .capture_local_shared_state_never_dispatched(&temp.path().join("blobs"))
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let candidate_id = capture.candidate_id().to_string();
@@ -1232,7 +1247,7 @@ async fn active_local_capture_fences_sync_backup_import_and_restore() {
 
 #[tokio::test]
 async fn remote_current_attachment_without_inventory_fails_capture() {
-    let (temp, database, workspace) = fresh().await;
+    let (_temp, database, workspace) = fresh().await;
     let task_id = task(&database, &workspace, "remote image owner").await;
     let attachment_id = crate::ids::new_id();
     let hash = "ab".repeat(32);
@@ -1247,7 +1262,7 @@ async fn remote_current_attachment_without_inventory_fails_capture() {
     .await;
 
     let error = database
-        .capture_local_shared_state_never_dispatched(&temp.path().join("blobs"))
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap_err();
     assert!(error.to_string().contains("attachment inventory missing"));
@@ -1262,7 +1277,7 @@ async fn remote_current_attachment_without_inventory_fails_capture() {
 
 #[tokio::test]
 async fn unavailable_current_image_fails_but_deleted_history_is_permitted() {
-    let (temp, database, workspace) = fresh().await;
+    let (_temp, database, workspace) = fresh().await;
     let task_id = task(&database, &workspace, "remote image owner").await;
     let attachment_id = crate::ids::new_id();
     let hash = "cd".repeat(32);
@@ -1289,7 +1304,7 @@ async fn unavailable_current_image_fails_but_deleted_history_is_permitted() {
     }
 
     let error = database
-        .capture_local_shared_state_never_dispatched(&temp.path().join("blobs"))
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap_err();
     assert!(error.to_string().contains("required-image-unavailable"));
@@ -1298,7 +1313,7 @@ async fn unavailable_current_image_fails_but_deleted_history_is_permitted() {
     apply_remote_attachment_change(&database, &workspace, &task_id, &attachment_id, &hash, true)
         .await;
     let capture = database
-        .capture_local_shared_state_never_dispatched(&temp.path().join("blobs"))
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     let mut conn = database.acquire_reader().await.unwrap();
@@ -1326,10 +1341,10 @@ async fn unavailable_current_image_fails_but_deleted_history_is_permitted() {
 
 #[tokio::test]
 async fn malformed_persisted_capture_fails_closed() {
-    let (temp, database, workspace) = fresh().await;
+    let (_temp, database, workspace) = fresh().await;
     task(&database, &workspace, "malformed").await;
     database
-        .capture_local_shared_state_never_dispatched(&temp.path().join("blobs"))
+        .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
     {

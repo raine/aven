@@ -611,7 +611,7 @@ pub(crate) mod tests {
         drop(store);
         let database = Database::open(&path).await.unwrap();
         database
-            .capture_local_shared_state_never_dispatched(root)
+            .capture_local_shared_state_never_dispatched()
             .await
             .unwrap();
         database

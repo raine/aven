@@ -103,7 +103,7 @@ impl Fixture {
         let key = LocalSharedStatePackageKey::new([53; 32]);
         let seed = SeedAuthority::generate(context, &key, [64; 32]).unwrap();
         let capture = source
-            .capture_local_shared_state_never_dispatched(dir.path())
+            .capture_local_shared_state_never_dispatched()
             .await
             .unwrap();
         let id = hex::decode(capture.candidate_id())
