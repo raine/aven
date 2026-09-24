@@ -93,13 +93,17 @@ impl Database {
         Ok(())
     }
 
-    /// Replaces the operator setup verifier of encrypted server storage. Claimed
+    /// Issues operator setup authority for `secret` on encrypted server
+    /// storage and returns its setup ID. An existing ID is kept, even after
+    /// expiry, so a device whose genesis already binds it can claim with the
+    /// reissued secret; the replaced verifier refuses earlier secrets. Claimed
     /// storage and storage holding any task history cannot take a new verifier.
     pub async fn issue_e2ee_server_setup(
         &self,
-        setup: &SetupAuthority,
+        secret: &super::Secret,
+        fresh_id: [u8; 32],
         expires_at: u64,
-    ) -> Result<()> {
+    ) -> Result<[u8; 32]> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let claimed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_seed_claim)")
@@ -110,14 +114,18 @@ impl Database {
             .fetch_one(&mut *tx)
             .await?;
         ensure!(!history, "error e2ee-server-storage-not-empty");
+        let id = match db::get_meta(&mut tx, SERVER_SETUP_KEY).await? {
+            Some(value) => parse_server_setup(&value)?.0.id,
+            None => fresh_id,
+        };
         let value = format!(
             "{}:{}:{expires_at}",
-            hex::encode(setup.id),
-            hex::encode(setup.verifier)
+            hex::encode(id),
+            hex::encode(SetupAuthority::verifier(id, secret))
         );
         db::set_meta(&mut tx, SERVER_SETUP_KEY, &value).await?;
         tx.commit().await?;
-        Ok(())
+        Ok(id)
     }
 
     /// The configured setup verifier while it is unexpired at `now` (Unix seconds).
@@ -125,21 +133,7 @@ impl Database {
         let Some(value) = self.meta(SERVER_SETUP_KEY).await? else {
             return Ok(None);
         };
-        let corrupt = || anyhow::anyhow!("error e2ee-server-setup-corrupt");
-        let mut parts = value.split(':');
-        let (Some(id), Some(verifier), Some(expires_at), None) =
-            (parts.next(), parts.next(), parts.next(), parts.next())
-        else {
-            return Err(corrupt());
-        };
-        let decode = |text: &str| -> Result<[u8; 32]> {
-            hex::decode(text)
-                .ok()
-                .and_then(|bytes| bytes.try_into().ok())
-                .ok_or_else(corrupt)
-        };
-        let expires_at: u64 = expires_at.parse().map_err(|_| corrupt())?;
-        let setup = SetupAuthority::from_verifier(decode(id)?, decode(verifier)?);
+        let (setup, expires_at) = parse_server_setup(&value)?;
         Ok((now < expires_at).then_some(setup))
     }
 
@@ -155,4 +149,25 @@ impl Database {
                 .await?,
         )
     }
+}
+
+fn parse_server_setup(value: &str) -> Result<(SetupAuthority, u64)> {
+    let corrupt = || anyhow::anyhow!("error e2ee-server-setup-corrupt");
+    let mut parts = value.split(':');
+    let (Some(id), Some(verifier), Some(expires_at), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Err(corrupt());
+    };
+    let decode = |text: &str| -> Result<[u8; 32]> {
+        hex::decode(text)
+            .ok()
+            .and_then(|bytes| bytes.try_into().ok())
+            .ok_or_else(corrupt)
+    };
+    let expires_at = expires_at.parse().map_err(|_| corrupt())?;
+    Ok((
+        SetupAuthority::from_verifier(decode(id)?, decode(verifier)?),
+        expires_at,
+    ))
 }

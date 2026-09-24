@@ -25,7 +25,7 @@ use super::wire::{
 use crate::cli::{ServerArgs, ServerSetupArgs, ServerSubcommand};
 use crate::config;
 use crate::signals::shutdown_signal;
-use aven_core::sync::seed_claim::{Secret, SetupAuthority};
+use aven_core::sync::seed_claim::Secret;
 
 #[derive(Clone)]
 struct ServerState {
@@ -176,14 +176,13 @@ const SETUP_INVITATION_SECONDS: u64 = 3600;
 async fn setup_encrypted_server(args: ServerSetupArgs) -> Result<()> {
     let server = super::encrypted::server_origin(&args.url)?;
     let database = Database::open(&args.data).await?;
-    let mut setup_id = [0; 32];
-    getrandom::fill(&mut setup_id).map_err(|_| anyhow::anyhow!("error server-setup-entropy"))?;
+    let mut fresh_id = [0; 32];
+    getrandom::fill(&mut fresh_id).map_err(|_| anyhow::anyhow!("error server-setup-entropy"))?;
     let secret = Secret::generate()?;
-    let authority =
-        SetupAuthority::from_verifier(setup_id, SetupAuthority::verifier(setup_id, &secret));
-    database
+    let setup_id = database
         .issue_e2ee_server_setup(
-            &authority,
+            &secret,
+            fresh_id,
             super::encrypted::unix_now()? + SETUP_INVITATION_SECONDS,
         )
         .await?;

@@ -10,6 +10,8 @@ use tokio::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
+use super::SetupInvitation;
+
 const WORKER: &str = "sync::encrypted::tests::cli_worker";
 
 /// Runs `aven` argument vectors from `AVEN_CLI_WORKER_ARGS` through the
@@ -337,7 +339,26 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
     assert_eq!(status(&a).await["state"], "setup-incomplete");
     let error = failure(&a.run(&["sync"]).await);
     assert!(error.contains("sync-setup-incomplete"), "{error}");
+    // Reissue keeps the setup ID the interrupted device bound, with a new secret.
+    let reissued = line_with(
+        &operator
+            .ok(&["server", "setup", "--data", &data, "--url", &url])
+            .await,
+        "aven-sync-setup-1:",
+    );
+    let (old, new) = (
+        SetupInvitation::decode(&setup_invitation).unwrap(),
+        SetupInvitation::decode(&reissued).unwrap(),
+    );
+    assert_eq!(old.setup_id, new.setup_id);
+    assert_ne!(old.secret.expose(), new.secret.expose());
     let mut server = start_server(&operator, &server_data, &bind).await;
+    let error = failure(
+        &a.run_with_input(&["sync", "setup"], &setup_invitation)
+            .await,
+    );
+    assert!(error.contains("bootstrap-refused"), "{error}");
+    let setup_invitation = reissued;
     let output = a
         .run_with_input(&["sync", "setup"], &setup_invitation)
         .await;

@@ -184,8 +184,10 @@ pub(crate) struct ServerSetupArgs {
 }
 
 pub(super) const SERVER_SETUP_HELP: &str = r#"The setup invitation lets one device claim this server and set up sync from
-its database. It expires after one hour; running setup again replaces it until
-a device has claimed the server. Serve the storage with
+its database. It expires after one hour; until a device has claimed the
+server, running setup again replaces it. The replacement keeps the server's
+setup identity, so a device whose setup was interrupted resumes with the new
+invitation. Serve the storage with
 `aven server --encrypted --data PATH`. The encrypted server binds only loopback
 addresses; put a TLS reverse proxy in front of it for other devices."#;
 

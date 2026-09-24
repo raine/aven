@@ -673,7 +673,9 @@ in the provisional `aven-sync-setup-1:` form, both carrying the validated
 server origin.
 
 `aven server setup` stores one expiring setup verifier in server `meta`,
-refusing claimed storage or storage with change history. `aven server
+refusing claimed storage or storage with change history. Reissue keeps the
+stored setup ID in the same transaction and replaces only the verifier and
+expiry, so a device genesis bound to that ID can still claim. `aven server
 --encrypted` serves only the isolated seed, enrollment and tail/image routers,
 binds loopback only, and requires prepared storage; the plaintext server
 refuses it. Encrypted opaque-image pruning and daemon scheduling are not wired.
