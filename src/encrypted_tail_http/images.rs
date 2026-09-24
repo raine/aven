@@ -5,6 +5,10 @@ use aven_core::sync::encrypted_tail::attachments::{
 use std::path::Path;
 pub(super) const PATH: &str = "/e2ee/images/v1";
 
+/// Bounds serial append work in one round while allowing a large offline backlog
+/// to clear well within the drain's round budget.
+const PUSH_LIMIT: usize = 2048;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageTransfer {
     Complete,
@@ -110,7 +114,9 @@ pub(crate) struct DrainSnapshot {
 
 #[derive(Default)]
 struct RoundProgress {
-    pushed: bool,
+    pushes: usize,
+    pending_prefix_preflighted: bool,
+    push_complete: bool,
     page_complete: Option<bool>,
     image_state: Option<ImageTransfer>,
     selected: bool,
@@ -187,6 +193,7 @@ impl Client {
                 enrollment.refresh(store, db).await?;
                 drain.tail = store.tail_snapshot(db, &self.locator).await?;
                 drain.tail.require_publishing_ready()?;
+                progress.pending_prefix_preflighted = false;
                 self.round_once(&drain.tail, db, blob_dir, &mut progress)
                     .await
             }
@@ -201,10 +208,29 @@ impl Client {
         progress: &mut RoundProgress,
     ) -> Result<Round> {
         let a = &inputs.authority;
-        if !progress.pushed {
-            progress.image_state = self.push(a, &inputs.bearer, db, blob_dir).await?;
-            progress.pushed = true;
+        while !progress.push_complete && progress.pushes < PUSH_LIMIT {
+            let step = self
+                .push_with_preflight(
+                    a,
+                    &inputs.bearer,
+                    db,
+                    blob_dir,
+                    progress.pending_prefix_preflighted,
+                )
+                .await?;
+            progress.pending_prefix_preflighted = true;
+            match step {
+                PushStep::Appended => progress.pushes += 1,
+                PushStep::Image(state) => {
+                    progress.image_state = state;
+                    progress.push_complete = true;
+                }
+                PushStep::Empty => progress.push_complete = true,
+            }
         }
+        // Reaching the cap completes only this round's push phase. The next
+        // bounded round resumes from the next ordered singleton head.
+        progress.push_complete = true;
         if progress.page_complete.is_none() {
             progress.page_complete = Some(self.pull(a, &inputs.bearer, db).await?);
         }

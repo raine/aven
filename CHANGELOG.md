@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Perf: `aven sync` uploads large offline editing backlogs in one run instead of stopping after the first 1,000 changes.
+
 - Fix: Encrypted sync clients wait and retry when the server is busy, reducing failures when several devices sync at once.
 
 - A join whose invitation expired before the inviting device added it can continue with more replacement invitations from that same device: `aven sync join --new-invitation`, or **Use a new invitation** in the TUI Sync dialog. The database keeps its device identity and earlier invitations, so an admission that already happened still completes the join. Resuming completes the join with any retained invitation. See [Sync across devices](https://aventasks.dev/sync/).
@@ -38,8 +40,6 @@ description: Release notes for aven.
 - Fix: Renaming or deleting projects and labels, restoring a deleted label, and creating or renaming workspaces no longer stop encrypted sync, so later edits keep syncing.
 
 - Fix: Encrypted enrollment busy responses consistently disable caching.
-
-- Fix: Finishing an encrypted sync round leaves later queued creations undoable until their own upload is prepared.
 
 - Fix: Concurrent note edits converge in encrypted sync without overwriting later pending edits.
 

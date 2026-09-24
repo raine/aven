@@ -1161,7 +1161,7 @@ async fn attachment_add_transfer_and_explicit_delete_use_independent_clients() {
             .await
             .unwrap();
         if round == 0 {
-            assert_eq!(result.images, ImageTransfer::Pending);
+            assert_eq!(result.images, ImageTransfer::Complete);
         }
         assert_ne!(result.images, ImageTransfer::Failed);
         if result.metadata_caught_up {
@@ -2521,7 +2521,7 @@ async fn checkpoint_note_creation_undo_respects_history_ownership() {
 }
 
 #[tokio::test]
-async fn checkpoint_round_completion_does_not_freeze_next_creation() {
+async fn checkpoint_round_completion_pushes_every_queued_creation() {
     let f = fixture().await;
     converge(&f).await;
     let w = f.seed.list_workspaces().await.unwrap().remove(0);
@@ -2529,19 +2529,17 @@ async fn checkpoint_round_completion_does_not_freeze_next_creation() {
         .create_task(&w, draft("first queued creation"))
         .await
         .unwrap();
-    let second = f
-        .seed
+    f.seed
         .create_task_with_undo(
             &w,
             draft("second queued creation"),
             aven_core::operations::TaskCreationUndo::TuiTask,
         )
         .await
-        .unwrap()
-        .task;
+        .unwrap();
     let client = Client::new(&f.origin).unwrap();
     assert!(
-        !client
+        client
             .round(&f.seed_store, &f.seed, f.root.path())
             .await
             .unwrap()
@@ -2557,23 +2555,7 @@ async fn checkpoint_round_completion_does_not_freeze_next_creation() {
             "SELECT count(*) FROM changes WHERE server_seq IS NULL"
         )
         .await,
-        1
-    );
-    f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
-    assert_eq!(
-        scalar(
-            &f.seed,
-            &format!("SELECT count(*) FROM tasks WHERE id='{}'", second.id)
-        )
-        .await,
         0
-    );
-    assert!(
-        client
-            .round(&f.seed_store, &f.seed, f.root.path())
-            .await
-            .unwrap()
-            .metadata_caught_up
     );
 }
 

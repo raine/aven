@@ -148,6 +148,13 @@ pub struct Client {
     transport: seed_bootstrap_http::Client,
     locator: String,
 }
+
+enum PushStep {
+    Appended,
+    Image(Option<ImageTransfer>),
+    Empty,
+}
+
 impl Client {
     pub fn new(origin: &str) -> Result<Self> {
         let mut transport = seed_bootstrap_http::Client::new(origin)?;
@@ -327,34 +334,51 @@ impl Client {
         }
         Ok(!a.rotation_pending())
     }
-    /// Dispatches at most the one ordered head. An unavailable local image source
-    /// or failed image transfer leaves that head pending and is reported instead
-    /// of appending its Ref.
+    #[cfg(test)]
     async fn push(
         &self,
         a: &tail::Authority,
         bearer: &Secret,
         db: &Database,
         blob_dir: &std::path::Path,
-    ) -> Result<Option<ImageTransfer>> {
+    ) -> Result<PushStep> {
+        self.push_with_preflight(a, bearer, db, blob_dir, false)
+            .await
+    }
+    /// Dispatches the next ordered head. An unavailable local image source or
+    /// failed image transfer leaves that head pending and stops this round's push
+    /// phase instead of appending its Ref.
+    async fn push_with_preflight(
+        &self,
+        a: &tail::Authority,
+        bearer: &Secret,
+        db: &Database,
+        blob_dir: &std::path::Path,
+        pending_prefix_preflighted: bool,
+    ) -> Result<PushStep> {
         if !self.reconcile_frozen(a, bearer, db, blob_dir).await? {
-            return Ok(None);
+            return Ok(PushStep::Empty);
         }
         // A missing local source leaves its head pending without blocking pulls.
-        let prepared = match db.prepare_encrypted_push(a, blob_dir).await {
+        let prepared = match if pending_prefix_preflighted {
+            db.prepare_preflighted_encrypted_push(a, blob_dir).await
+        } else {
+            db.prepare_encrypted_push(a, blob_dir).await
+        } {
             Err(error) if error.is::<tail::attachments::ImageSourceUnavailable>() => {
-                return Ok(Some(ImageTransfer::Failed));
+                return Ok(PushStep::Image(Some(ImageTransfer::Failed)));
             }
             prepared => prepared?,
         };
         let Some(tail::Push { record, upload }) = prepared else {
-            return Ok(None);
+            return Ok(PushStep::Empty);
         };
+        let is_image = upload.is_some();
         let ticket = match upload {
             Some(upload) => match self.upload_prepared_image(a, bearer, upload).await {
                 Ok(ticket) => Some(ticket),
                 Err(error) if is_stale(&error) => return Err(error),
-                Err(_) => return Ok(Some(ImageTransfer::Failed)),
+                Err(_) => return Ok(PushStep::Image(Some(ImageTransfer::Failed))),
             },
             None => None,
         };
@@ -393,7 +417,11 @@ impl Client {
             record
         };
         db.verify_encrypted_tail_outcome(a, &accepted).await?;
-        Ok(None)
+        Ok(if is_image {
+            PushStep::Image(None)
+        } else {
+            PushStep::Appended
+        })
     }
     /// Reads one authorized page without preparing uploads. True refers only to
     /// this remote watermark, never to unresolved local work or overall readiness.

@@ -279,6 +279,25 @@ impl Database {
         authority: &Authority,
         blob_dir: &std::path::Path,
     ) -> Result<Option<Push>> {
+        self.prepare_encrypted_push_inner(authority, blob_dir, true)
+            .await
+    }
+    /// Freezes the next ordered pending change after this pending prefix was
+    /// preflighted by `prepare_encrypted_push` in the same serialized push run.
+    pub async fn prepare_preflighted_encrypted_push(
+        &self,
+        authority: &Authority,
+        blob_dir: &std::path::Path,
+    ) -> Result<Option<Push>> {
+        self.prepare_encrypted_push_inner(authority, blob_dir, false)
+            .await
+    }
+    async fn prepare_encrypted_push_inner(
+        &self,
+        authority: &Authority,
+        blob_dir: &std::path::Path,
+        validate_pending_prefix: bool,
+    ) -> Result<Option<Push>> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         validate_binding_and_cursor(&mut tx, authority).await?;
@@ -319,7 +338,27 @@ impl Database {
             tx.commit().await?;
             return Ok(Some(Push { record, upload }));
         }
-        let Some(change) = preflight(&mut tx).await? else {
+        let change = if validate_pending_prefix {
+            preflight(&mut tx).await?
+        } else {
+            let id: Option<String> = sqlx::query_scalar(
+                "SELECT change_id FROM changes WHERE server_seq IS NULL
+                 ORDER BY local_seq, created_at, change_id LIMIT 1",
+            )
+            .fetch_optional(&mut *tx)
+            .await?;
+            match id {
+                Some(id) => {
+                    let change = load_change(&mut tx, &id)
+                        .await?
+                        .context("error encrypted-tail-history-lost")?;
+                    domain::validate(&change)?;
+                    Some(change)
+                }
+                None => None,
+            }
+        };
+        let Some(change) = change else {
             tx.commit().await?;
             return Ok(None);
         };

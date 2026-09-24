@@ -108,8 +108,95 @@ async fn drain_reuses_protected_tail_snapshot() {
         })
         .await;
     assert!(setup_loads > 0);
-    assert!(rounds >= 5);
+    assert_eq!(rounds, 1);
     assert_eq!(round_loads, 0);
+}
+
+#[tokio::test]
+async fn one_sync_drains_1500_offline_edits_and_peer_converges() {
+    let f = fixture().await;
+    converge(&f).await;
+    let workspace = f.seed.list_workspaces().await.unwrap().remove(0);
+    let task = f
+        .seed
+        .create_task(&workspace, draft("offline edit target"))
+        .await
+        .unwrap()
+        .task;
+    // Publish the task first so the measured backlog consists only of edits.
+    let client = Client::new(&f.origin).unwrap();
+    crate::sync::encrypted::drain(
+        &client,
+        &f.seed_store,
+        &f.seed,
+        &blobs(&f.seed),
+        crate::sync::encrypted::ROUND_LIMIT,
+    )
+    .await
+    .unwrap();
+    crate::sync::encrypted::drain(
+        &client,
+        &f.peer_store,
+        &f.peer,
+        &blobs(&f.peer),
+        crate::sync::encrypted::ROUND_LIMIT,
+    )
+    .await
+    .unwrap();
+
+    let before = scalar(&f.seed, "SELECT count(*) FROM changes").await;
+    for index in 0..1500 {
+        f.seed
+            .update_task(
+                &workspace,
+                &task.id,
+                TaskUpdate {
+                    title: Some(format!("offline edit {index}")),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        scalar(&f.seed, "SELECT count(*) FROM changes").await - before,
+        1500
+    );
+
+    let mut seed_drain = client.start_drain(&f.seed_store, &f.seed).await.unwrap();
+    let mut seed_rounds = 1;
+    let mut round = client
+        .round_in_drain(&f.seed_store, &f.seed, &blobs(&f.seed), &mut seed_drain)
+        .await
+        .unwrap();
+    assert_eq!(
+        scalar(
+            &f.seed,
+            "SELECT count(*) FROM changes WHERE server_seq IS NULL"
+        )
+        .await,
+        0,
+        "the first round must empty the 1500-edit outbox"
+    );
+    while !round.metadata_caught_up || round.images != ImageTransfer::Complete {
+        assert!(seed_rounds < crate::sync::encrypted::ROUND_LIMIT);
+        round = client
+            .round_in_drain(&f.seed_store, &f.seed, &blobs(&f.seed), &mut seed_drain)
+            .await
+            .unwrap();
+        seed_rounds += 1;
+    }
+    let peer = crate::sync::encrypted::drain(
+        &client,
+        &f.peer_store,
+        &f.peer,
+        &blobs(&f.peer),
+        crate::sync::encrypted::ROUND_LIMIT,
+    )
+    .await
+    .unwrap();
+    assert!(peer.metadata_caught_up);
+    assert_eq!(title(&f.peer, &task.id).await, "offline edit 1499");
 }
 
 #[tokio::test]

@@ -36,7 +36,9 @@ pub(crate) use invitation::{DeviceInvitation, SetupInvitation};
 #[cfg(test)]
 mod tests;
 
-/// Upper bound on bounded rounds in one interactive drain.
+/// Upper bound on bounded rounds in one interactive drain. A round may append
+/// a bounded run of ordinary records, but still pulls one page and transfers at
+/// most one image, so this primarily bounds catch-up and image work.
 pub(crate) const ROUND_LIMIT: usize = 1000;
 /// Consecutive failed or unavailable image rounds before a drain stops. Each
 /// such round still pulls, but a failed local head cannot advance.
