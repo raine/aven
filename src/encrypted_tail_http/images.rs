@@ -115,7 +115,7 @@ pub(crate) struct DrainSnapshot {
 #[derive(Default)]
 struct RoundProgress {
     pushes: usize,
-    pending_prefix_preflighted: bool,
+    preflight_local_seq: Option<i64>,
     push_complete: bool,
     page_complete: Option<bool>,
     image_state: Option<ImageTransfer>,
@@ -193,7 +193,7 @@ impl Client {
                 enrollment.refresh(store, db).await?;
                 drain.tail = store.tail_snapshot(db, &self.locator).await?;
                 drain.tail.require_publishing_ready()?;
-                progress.pending_prefix_preflighted = false;
+                progress.preflight_local_seq = None;
                 self.round_once(&drain.tail, db, blob_dir, &mut progress)
                     .await
             }
@@ -209,16 +209,16 @@ impl Client {
     ) -> Result<Round> {
         let a = &inputs.authority;
         while !progress.push_complete && progress.pushes < PUSH_LIMIT {
-            let step = self
-                .push_with_preflight(
+            let (step, preflight_local_seq) = self
+                .push_in_run(
                     a,
                     &inputs.bearer,
                     db,
                     blob_dir,
-                    progress.pending_prefix_preflighted,
+                    progress.preflight_local_seq,
                 )
                 .await?;
-            progress.pending_prefix_preflighted = true;
+            progress.preflight_local_seq = preflight_local_seq;
             match step {
                 PushStep::Appended => progress.pushes += 1,
                 PushStep::Image(state) => {

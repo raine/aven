@@ -655,6 +655,50 @@ async fn stale_round_race(count: usize) {
     );
 }
 #[tokio::test]
+async fn edit_created_during_push_loop_is_preflighted_and_pushed() {
+    let mut f = fixture().await;
+    converge(&f).await;
+    let workspace = f.seed.list_workspaces().await.unwrap().remove(0);
+    f.seed
+        .create_task(&workspace, draft("before push pause"))
+        .await
+        .unwrap();
+    let (events, mut incoming) = tokio::sync::mpsc::channel(1);
+    let fault = Arc::new(HttpFault {
+        reads: Default::default(),
+        pause_operation: "Append",
+        lose: None,
+        remaining: 1.into(),
+        pause: Some(events),
+    });
+    restart_fault_server(&mut f, fault).await;
+    let client = Client::new(&f.origin).unwrap();
+    let (round, second) =
+        tokio::join!(client.round(&f.seed_store, &f.seed, f.root.path()), async {
+            let resume = incoming.recv().await.unwrap();
+            let task = f
+                .seed
+                .create_task(&workspace, draft("created during push"))
+                .await
+                .unwrap()
+                .task;
+            resume.send(()).unwrap();
+            task
+        });
+    assert!(round.unwrap().metadata_caught_up);
+    assert_eq!(
+        scalar(
+            &f.seed,
+            "SELECT count(*) FROM changes WHERE server_seq IS NULL"
+        )
+        .await,
+        0
+    );
+    drain(&client, &f.peer_store, &f.peer).await;
+    assert_eq!(title(&f.peer, &second.id).await, "created during push");
+}
+
+#[tokio::test]
 async fn head_race_between_refresh_and_append_retries_once() {
     stale_round_race(1).await;
 }

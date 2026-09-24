@@ -41,6 +41,8 @@ description: Release notes for aven.
 
 - Fix: Encrypted enrollment busy responses consistently disable caching.
 
+- Fix: Finishing an encrypted sync round leaves later queued creations undoable until their own upload is prepared.
+
 - Fix: Concurrent note edits converge in encrypted sync without overwriting later pending edits.
 
 - Fix: Metadata conflict resolution rejects values that exceed metadata limits without changing the conflict or blocking later sync.

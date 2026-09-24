@@ -2521,7 +2521,7 @@ async fn checkpoint_note_creation_undo_respects_history_ownership() {
 }
 
 #[tokio::test]
-async fn checkpoint_round_completion_pushes_every_queued_creation() {
+async fn checkpoint_round_pushes_every_creation_and_keeps_later_undo() {
     let f = fixture().await;
     converge(&f).await;
     let w = f.seed.list_workspaces().await.unwrap().remove(0);
@@ -2529,14 +2529,16 @@ async fn checkpoint_round_completion_pushes_every_queued_creation() {
         .create_task(&w, draft("first queued creation"))
         .await
         .unwrap();
-    f.seed
+    let second = f
+        .seed
         .create_task_with_undo(
             &w,
             draft("second queued creation"),
             aven_core::operations::TaskCreationUndo::TuiTask,
         )
         .await
-        .unwrap();
+        .unwrap()
+        .task;
     let client = Client::new(&f.origin).unwrap();
     assert!(
         client
@@ -2556,6 +2558,33 @@ async fn checkpoint_round_completion_pushes_every_queued_creation() {
         )
         .await,
         0
+    );
+    f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
+    assert_eq!(
+        scalar(
+            &f.seed,
+            &format!(
+                "SELECT count(*) FROM tasks WHERE id='{}' AND deleted=1",
+                second.id
+            )
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar(
+            &f.seed,
+            "SELECT count(*) FROM changes WHERE server_seq IS NULL"
+        )
+        .await,
+        1
+    );
+    assert!(
+        client
+            .round(&f.seed_store, &f.seed, f.root.path())
+            .await
+            .unwrap()
+            .metadata_caught_up
     );
 }
 

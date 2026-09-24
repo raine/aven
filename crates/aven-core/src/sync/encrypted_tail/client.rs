@@ -279,31 +279,35 @@ impl Database {
         authority: &Authority,
         blob_dir: &std::path::Path,
     ) -> Result<Option<Push>> {
-        self.prepare_encrypted_push_inner(authority, blob_dir, true)
-            .await
+        Ok(self
+            .prepare_encrypted_push_inner(authority, blob_dir, None)
+            .await?
+            .0)
     }
-    /// Freezes the next ordered pending change after this pending prefix was
-    /// preflighted by `prepare_encrypted_push` in the same serialized push run.
-    pub async fn prepare_preflighted_encrypted_push(
+    /// Freezes the next ordered pending change in one serialized push run.
+    /// The marker avoids rescanning an unchanged prefix while forcing a full
+    /// preflight after the monotonic local change sequence advances.
+    pub async fn prepare_encrypted_push_in_run(
         &self,
         authority: &Authority,
         blob_dir: &std::path::Path,
-    ) -> Result<Option<Push>> {
-        self.prepare_encrypted_push_inner(authority, blob_dir, false)
+        preflight_local_seq: Option<i64>,
+    ) -> Result<(Option<Push>, Option<i64>)> {
+        self.prepare_encrypted_push_inner(authority, blob_dir, preflight_local_seq)
             .await
     }
     async fn prepare_encrypted_push_inner(
         &self,
         authority: &Authority,
         blob_dir: &std::path::Path,
-        validate_pending_prefix: bool,
-    ) -> Result<Option<Push>> {
+        preflight_local_seq: Option<i64>,
+    ) -> Result<(Option<Push>, Option<i64>)> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         validate_binding_and_cursor(&mut tx, authority).await?;
         if authority.rotation_pending() {
             tx.commit().await?;
-            return Ok(None);
+            return Ok((None, preflight_local_seq));
         }
         let frozen: Option<(String, i64, Vec<u8>, bool)> = sqlx::query_as(
             "SELECT association, sync_generation, record, blocked
@@ -336,9 +340,13 @@ impl Database {
                 None
             };
             tx.commit().await?;
-            return Ok(Some(Push { record, upload }));
+            return Ok((Some(Push { record, upload }), preflight_local_seq));
         }
-        let change = if validate_pending_prefix {
+        let local_seq = db::get_meta(&mut tx, "local_seq")
+            .await?
+            .context("error encrypted-tail-local-sequence")?
+            .parse::<i64>()?;
+        let change = if preflight_local_seq != Some(local_seq) {
             preflight(&mut tx).await?
         } else {
             let id: Option<String> = sqlx::query_scalar(
@@ -358,9 +366,10 @@ impl Database {
                 None => None,
             }
         };
+        let preflight_local_seq = Some(local_seq);
         let Some(change) = change else {
             tx.commit().await?;
-            return Ok(None);
+            return Ok((None, preflight_local_seq));
         };
         let (projection, upload) = if change.op_type == "attachment_add" {
             let (projection, upload) =
@@ -390,7 +399,7 @@ impl Database {
         } else {
             "frozen"
         });
-        Ok(Some(Push { record, upload }))
+        Ok((Some(Push { record, upload }), preflight_local_seq))
     }
     /// Closed-generation absence and replacement commit under one outbox/history owner.
     /// A failed transaction retains old bytes and requires a new lookup on retry.
