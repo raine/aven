@@ -860,7 +860,7 @@ file-backed protected-store results, not platform power-loss or security approva
 2. Unsynced rows have `server_seq IS NULL`; an accepted encrypted tail record assigns `server_seq`, and `sync_cursor` advances only after a validated page applies.
 3. `src/sync/coordination.rs` derives a persistent sidecar from the canonical SQLite filename. Its kernel-owned exclusive lock covers the complete root host operation and releases on guard drop or process exit. Interactive and TUI sync wait for a short bounded interval. Daemon sync attempts once and defers on contention. In-memory databases bypass filesystem coordination.
 4. Each round in `src/encrypted_tail_http.rs` refreshes membership, freezes and seals pending changes, uploads and downloads encrypted image objects, pulls encrypted tail records and applies them through `crates/aven-core/src/sync/encrypted_tail/` and the shared `sync/apply/` operations, including conflict generation and epic, label, note, dependency and recurrence reconciliation.
-5. The encrypted tail accepts only the operation types listed in `encrypted_tail/domain.rs`; other local operations stop ordinary rounds with `encrypted-tail-operation-unsupported`.
+5. `encrypted_tail/domain.rs::payload_keys` covers every `change_log::op_type` name, pinned by a test; an operation outside that vocabulary stops ordinary rounds with `encrypted-tail-operation-unsupported`.
 6. `src/daemon.rs` runs one budgeted `daemon_round` per wake. Contended rounds reschedule without failure output; an unset database waits at the sync interval.
 
 ## Data ownership
