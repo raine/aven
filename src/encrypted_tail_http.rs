@@ -19,7 +19,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 mod images;
-pub use images::{AttachmentRound, ImageTransfer};
+pub use images::{ImageTransfer, Round};
 const PATH: &str = "/e2ee/tail/v1";
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 #[derive(Serialize, Deserialize)]
@@ -257,47 +257,15 @@ impl Client {
         );
         Ok(response.operation)
     }
-    /// True means the remote watermark is caught up and local metadata is idle.
-    /// Image availability is reported separately by `attachment_round`.
-    pub async fn round(&self, store: &ProtectedLocalKeyStore, db: &Database) -> Result<bool> {
-        let enrollment = crate::peer_enrollment_http::Client::new(&self.locator)?;
-        enrollment.finish_pending_management(store, db).await?;
-        let mut pushed = false;
-        match self.round_once(store, db, &mut pushed).await {
-            Err(error) if is_stale(&error) => {
-                enrollment.refresh(store, db).await?;
-                self.round_once(store, db, &mut pushed).await
-            }
-            result => result,
-        }
-    }
-    async fn round_once(
-        &self,
-        store: &ProtectedLocalKeyStore,
-        db: &Database,
-        pushed: &mut bool,
-    ) -> Result<bool> {
-        let inputs = store.tail_inputs(db, &self.locator).await?;
-        let a = &inputs.authority;
-        if !*pushed {
-            self.push(a, &inputs.bearer, db, None).await?;
-            *pushed = true;
-        }
-        let caught_up = self.pull(a, &inputs.bearer, db).await?;
-        Ok(caught_up && db.encrypted_tail_idle(a).await?)
-    }
-    /// Lookup precedes any closed-generation replacement or image upload.
+    /// Every frozen record is resolved by Lookup before any upload or resend.
     async fn reconcile_frozen(
         &self,
         a: &tail::Authority,
         bearer: &Secret,
         db: &Database,
-        blob_dir: Option<&std::path::Path>,
-        always: bool,
+        blob_dir: &std::path::Path,
     ) -> Result<bool> {
-        if let Some((id, record)) = db.encrypted_tail_frozen_record(a).await?
-            && (always || a.rotation_pending() || a.record_is_closed(&record)?)
-        {
+        if let Some((id, record)) = db.encrypted_tail_frozen_record(a).await? {
             let response = self
                 .exchange(
                     &a.context,
@@ -324,54 +292,66 @@ impl Client {
         }
         Ok(!a.rotation_pending())
     }
+    /// Dispatches at most the one ordered head. A failed image transfer leaves
+    /// that head frozen and is reported instead of appending its Ref.
     async fn push(
         &self,
         a: &tail::Authority,
         bearer: &Secret,
         db: &Database,
-        ticket: Option<tail::attachments::Ticket>,
-    ) -> Result<()> {
-        if !self.reconcile_frozen(a, bearer, db, None, false).await? {
-            return Ok(());
+        blob_dir: &std::path::Path,
+    ) -> Result<Option<ImageTransfer>> {
+        if !self.reconcile_frozen(a, bearer, db, blob_dir).await? {
+            return Ok(None);
         }
-        if let Some(record) = db.prepare_encrypted_tail(a).await? {
-            let Reply::Appended(mapping) = self
-                .exchange(&a.context, bearer, Operation::Append { ticket, record })
+        let Some(tail::Push { record, upload }) = db.prepare_encrypted_push(a, blob_dir).await?
+        else {
+            return Ok(None);
+        };
+        let ticket = match upload {
+            Some(upload) => match self.upload_prepared_image(a, bearer, upload).await {
+                Ok(ticket) => Some(ticket),
+                Err(error) if is_stale(&error) => return Err(error),
+                Err(_) => return Ok(Some(ImageTransfer::Failed)),
+            },
+            None => None,
+        };
+        let Reply::Appended(mapping) = self
+            .exchange(&a.context, bearer, Operation::Append { ticket, record })
+            .await?
+        else {
+            anyhow::bail!("error encrypted-tail-reply")
+        };
+        #[cfg(test)]
+        if std::env::var("AVEN_TAIL_CRASH").as_deref() == Ok("after-append") {
+            std::process::exit(84);
+        }
+        let frozen = db.observe_encrypted_tail(a, &mapping).await?;
+        use sha2::{Digest, Sha256};
+        let accepted = if Sha256::digest(&frozen).as_slice() == mapping.commitment {
+            Accepted {
+                mapping,
+                record: frozen,
+            }
+        } else {
+            let Reply::Found(record) = self
+                .exchange(
+                    &a.context,
+                    bearer,
+                    Operation::Lookup {
+                        operation_id: mapping.operation_id.clone(),
+                        expected: Some(mapping.clone()),
+                    },
+                )
                 .await?
             else {
-                anyhow::bail!("error encrypted-tail-reply")
+                anyhow::bail!("error encrypted-tail-accepted-unavailable")
             };
-            #[cfg(test)]
-            if std::env::var("AVEN_TAIL_CRASH").as_deref() == Ok("after-append") {
-                std::process::exit(84);
-            }
-            let frozen = db.observe_encrypted_tail(a, &mapping).await?;
-            use sha2::{Digest, Sha256};
-            let accepted = if Sha256::digest(&frozen).as_slice() == mapping.commitment {
-                Accepted {
-                    mapping,
-                    record: frozen,
-                }
-            } else {
-                let Reply::Found(record) = self
-                    .exchange(
-                        &a.context,
-                        bearer,
-                        Operation::Lookup {
-                            operation_id: mapping.operation_id.clone(),
-                            expected: Some(mapping.clone()),
-                        },
-                    )
-                    .await?
-                else {
-                    anyhow::bail!("error encrypted-tail-accepted-unavailable")
-                };
-                ensure!(record.mapping == mapping, "error encrypted-tail-mapping");
-                record
-            };
-            db.verify_encrypted_tail_outcome(a, &accepted).await?;
-        }
-        Ok(())
+            ensure!(record.mapping == mapping, "error encrypted-tail-mapping");
+            record
+        };
+        db.verify_encrypted_tail_outcome(a, &accepted).await?;
+        Ok(None)
     }
     /// Reads one authorized page without preparing uploads. True refers only to
     /// this remote watermark, never to unresolved local work or overall readiness.

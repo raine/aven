@@ -287,9 +287,12 @@ links and epics reuse existing domain apply/conflict and ordering reconciliation
 Project/label creation prerequisites and the existing recurrence vocabulary are
 supported: series creation, template/metadata updates, projection, outcomes,
 pause intervals, state changes and stop, including domain conflict resolution.
-Other administrative operations remain outside the closed subset. Attachment mutations use authenticated Ref/Unref and a separate
-bounded image transfer entry with an explicit local blob directory. Pending work is preflighted before freezing;
-unsupported compound work blocks rather than uploading only its supported parts.
+Other administrative operations remain outside the closed subset. Attachment mutations use authenticated Ref/Unref.
+`prepare_encrypted_push` is the single ordered head owner: it returns the frozen record
+or preflights pending work and freezes the head, staging exact image ciphertext
+with the Ref in the same transaction. Both task and image records pass the canonical
+round trip before freezing. Unsupported compound work blocks rather than uploading
+only its supported parts.
 Preflight is capped at 4096 rows/16 MiB. Those limits and bounded signed membership
 are internal refusal boundaries, not product policy.
 
@@ -311,7 +314,7 @@ current generation. Historical admitted images keep their original descriptor/ke
 for reads, reuse and exact repair. Pending rotation permits history pull and
 accepted-outcome resolution but no new envelope, upload or repair mutation.
 
-The root resolves each closed frozen ID, and every frozen Ref before upload, in
+The root resolves every frozen record by Lookup before any upload or resend, in
 current context. `reconcile_encrypted_tail_absence` validates a context-bound
 absence against exact durable bytes, unchanged source ownership and all observed
 acceptance fences. Only a closed generation permits atomic same-ID re-encryption.
@@ -423,11 +426,12 @@ retains descriptors/provenance/reference tombstones. Published image catalogs ar
 not permanent image-byte pins. SQLite/WAL physical size is not logical quota.
 
 `src/encrypted_tail_http/images.rs` supplies isolated `/e2ee/images/v1` transport
-and `Client::attachment_round`. Each call handles one metadata round and at most
-one image per direction. The caller supplies the local blob directory; results
-separate metadata completion from pending, failed or unavailable images.
-`Client::round` still reports remote-watermark completion AND local metadata idle,
-not image availability. Download failure never rolls back committed metadata.
+and the single ordinary `Client::round`. Each call pushes at most one ordered head,
+applies one metadata page and downloads at most one image. The caller supplies the
+local blob directory. `metadata_caught_up` reports remote-watermark completion and
+local metadata idle; `images` separately reports pending, failed or unavailable
+images. A failed image upload leaves its Ref frozen; local preparation refusals are
+round errors. Download failure never rolls back committed metadata.
 Fresh peer installation starts a local initial-image catch-up marker as pending.
 The first validated tail page atomically captures its finite watermark with page
 effects. Subsequent bounded rounds request that same watermark until reached,

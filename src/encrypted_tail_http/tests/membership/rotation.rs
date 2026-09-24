@@ -75,11 +75,11 @@ async fn image_rounds(f: &Fixture, third: &Joined) {
     let client = Client::new(&f.origin).unwrap();
     for _ in 0..8 {
         client
-            .attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+            .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
             .await
             .unwrap();
         client
-            .attachment_round(&third.store, &third.db, &third.blobs)
+            .round(&third.store, &third.db, &third.blobs)
             .await
             .unwrap();
     }
@@ -95,10 +95,11 @@ async fn installed_survivors_sync_unfrozen_unaccepted_and_lost_ack_tasks_across_
             let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
             let record = f
                 .peer
-                .prepare_encrypted_tail(&inputs.authority)
+                .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
                 .await
                 .unwrap()
-                .unwrap();
+                .unwrap()
+                .record;
             drop(inputs);
             Some(record)
         } else {
@@ -116,7 +117,7 @@ async fn installed_survivors_sync_unfrozen_unaccepted_and_lost_ack_tasks_across_
             assert!(
                 Client::new(&f.origin)
                     .unwrap()
-                    .round(&f.peer_store, &f.peer)
+                    .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
                     .await
                     .is_err()
             );
@@ -152,7 +153,12 @@ async fn installed_survivors_sync_unfrozen_unaccepted_and_lost_ack_tasks_across_
                     .is_err()
             );
         }
-        assert!(client.round(&f.seed_store, &f.seed).await.is_err());
+        assert!(
+            client
+                .round(&f.seed_store, &f.seed, f.root.path())
+                .await
+                .is_err()
+        );
         drain(&client, &f.peer_store, &f.peer).await;
         drain(&client, &third.store, &third.db).await;
         assert_eq!(
@@ -210,7 +216,7 @@ async fn lost_put_complete_and_ref_replies_cut_over_without_rewriting_accepted_i
         restart_fault_server(&mut f, fault.clone()).await;
         let client = Client::new(&f.origin).unwrap();
         let result = client
-            .attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+            .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
             .await;
         if stage == "Append" {
             assert!(result.is_err());
@@ -275,9 +281,11 @@ async fn frozen_rounds_pull_history_and_resolve_accepted_refs_without_image_muta
         let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
         let upload = f
             .peer
-            .prepare_encrypted_image(&inputs.authority, &f.root.path().join("peer-blobs"))
+            .prepare_encrypted_push(&inputs.authority, &f.root.path().join("peer-blobs"))
             .await
             .unwrap()
+            .unwrap()
+            .upload
             .unwrap();
         let original = frozen(&f.peer).await;
         if accepted {
@@ -397,14 +405,10 @@ async fn supersession_worker() {
     let db = Database::open(&root.join("peer.sqlite")).await.unwrap();
     let store = isolated_store(db.path(), &root.join("peer-keys"));
     let client = Client::new(&origin).unwrap();
-    if std::env::var("AVEN_SUPER_IMAGE").as_deref() == Ok("1") {
-        client
-            .attachment_round(&store, &db, &root.join("peer-blobs"))
-            .await
-            .unwrap();
-    } else {
-        client.round(&store, &db).await.unwrap();
-    }
+    client
+        .round(&store, &db, &root.join("peer-blobs"))
+        .await
+        .unwrap();
     panic!("supersession crash not reached");
 }
 
@@ -419,17 +423,10 @@ async fn process_restart_before_and_after_task_and_image_supersession_preserves_
             pending_task(&f, "survives atomic re-envelope").await;
         }
         let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
-        if image {
-            f.peer
-                .prepare_encrypted_image(&inputs.authority, &f.root.path().join("peer-blobs"))
-                .await
-                .unwrap();
-        } else {
-            f.peer
-                .prepare_encrypted_tail(&inputs.authority)
-                .await
-                .unwrap();
-        }
+        f.peer
+            .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
+            .await
+            .unwrap();
         drop(inputs);
         let old = frozen(&f.peer).await;
         let owner: (String, String, i64) = sqlx::query_as(
@@ -463,7 +460,6 @@ async fn process_restart_before_and_after_task_and_image_supersession_preserves_
                 ])
                 .env("AVEN_SUPER_ROOT", f.root.path())
                 .env("AVEN_SUPER_ORIGIN", &f.origin)
-                .env("AVEN_SUPER_IMAGE", if image { "1" } else { "0" })
                 .env("AVEN_TAIL_CRASH", boundary)
                 .output()
                 .await
@@ -541,10 +537,11 @@ async fn signed_intervals_fence_fast_ack_pages_and_absence_with_observed_accepta
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
     let old = f
         .peer
-        .prepare_encrypted_tail(&inputs.authority)
+        .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .record;
     let (id, _) = f
         .peer
         .encrypted_tail_frozen_record(&inputs.authority)
@@ -563,7 +560,7 @@ async fn signed_intervals_fence_fast_ack_pages_and_absence_with_observed_accepta
     );
     assert!(
         f.peer
-            .reconcile_encrypted_tail_absence(&inputs.authority, &stale_absence, None)
+            .reconcile_encrypted_tail_absence(&inputs.authority, &stale_absence, &blobs(&f.peer))
             .await
             .unwrap()
     );
@@ -580,7 +577,7 @@ async fn signed_intervals_fence_fast_ack_pages_and_absence_with_observed_accepta
     let a = &inputs.authority;
     assert!(
         f.peer
-            .reconcile_encrypted_tail_absence(a, &stale_absence, None)
+            .reconcile_encrypted_tail_absence(a, &stale_absence, &blobs(&f.peer))
             .await
             .is_err()
     );
@@ -633,7 +630,7 @@ async fn signed_intervals_fence_fast_ack_pages_and_absence_with_observed_accepta
     let absence = a.confirm_absent(&old, &Reply::Absent).unwrap();
     assert!(
         f.peer
-            .reconcile_encrypted_tail_absence(a, &absence, None)
+            .reconcile_encrypted_tail_absence(a, &absence, &blobs(&f.peer))
             .await
             .is_err()
     );
@@ -642,7 +639,7 @@ async fn signed_intervals_fence_fast_ack_pages_and_absence_with_observed_accepta
     assert!(
         Client::new(&f.origin)
             .unwrap()
-            .round(&f.peer_store, &f.peer)
+            .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
             .await
             .is_err()
     );
@@ -655,7 +652,7 @@ async fn rotation_during_historical_image_read_keeps_the_selected_download() {
     attachments::add_image(&f).await;
     let client = Client::new(&f.origin).unwrap();
     client
-        .attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+        .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
     let third = join(&f, "third", &f.seed, &f.seed_store).await;
@@ -673,15 +670,12 @@ async fn rotation_during_historical_image_read_keeps_the_selected_download() {
         pause: Some(send),
     });
     restart_fault_server(&mut f, fault.clone()).await;
-    let (result, ()) = tokio::join!(
-        client.attachment_round(&third.store, &third.db, &third.blobs),
-        async {
-            let resume = events.recv().await.unwrap();
-            server_rotate(&f, &driver, &[]).await;
-            server_rotate(&f, &driver, &[]).await;
-            resume.send(()).unwrap();
-        }
-    );
+    let (result, ()) = tokio::join!(client.round(&third.store, &third.db, &third.blobs), async {
+        let resume = events.recv().await.unwrap();
+        server_rotate(&f, &driver, &[]).await;
+        server_rotate(&f, &driver, &[]).await;
+        resume.send(()).unwrap();
+    });
     result.unwrap();
     let reads = fault.reads.lock().unwrap().clone();
     assert_eq!(reads.len(), 2);
@@ -692,7 +686,7 @@ async fn rotation_during_historical_image_read_keeps_the_selected_download() {
     );
     assert_eq!(
         client
-            .attachment_round(&third.store, &third.db, &third.blobs)
+            .round(&third.store, &third.db, &third.blobs)
             .await
             .unwrap()
             .images,

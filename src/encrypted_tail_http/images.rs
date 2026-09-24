@@ -13,7 +13,7 @@ pub enum ImageTransfer {
     Unavailable,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AttachmentRound {
+pub struct Round {
     pub metadata_caught_up: bool,
     pub images: ImageTransfer,
 }
@@ -131,53 +131,37 @@ impl Client {
         )
         .await
     }
-    /// One metadata round and at most one image per direction. The caller owns
-    /// the local blob root; committed metadata is independent of download success.
-    pub async fn attachment_round(
+    /// Resolves at most one ordered local head, applies one metadata page and
+    /// downloads at most one image. The caller owns the local blob root;
+    /// committed metadata is independent of image transfer success.
+    pub async fn round(
         &self,
         store: &ProtectedLocalKeyStore,
         db: &Database,
         blob_dir: &Path,
-    ) -> Result<AttachmentRound> {
+    ) -> Result<Round> {
         let enrollment = crate::peer_enrollment_http::Client::new(&self.locator)?;
         enrollment.finish_pending_management(store, db).await?;
         let mut progress = RoundProgress::default();
-        match self
-            .attachment_round_once(store, db, blob_dir, &mut progress)
-            .await
-        {
+        match self.round_once(store, db, blob_dir, &mut progress).await {
             Err(error) if is_stale(&error) => {
                 enrollment.refresh(store, db).await?;
-                self.attachment_round_once(store, db, blob_dir, &mut progress)
-                    .await
+                self.round_once(store, db, blob_dir, &mut progress).await
             }
             result => result,
         }
     }
-    async fn attachment_round_once(
+    async fn round_once(
         &self,
         store: &ProtectedLocalKeyStore,
         db: &Database,
         blob_dir: &Path,
         progress: &mut RoundProgress,
-    ) -> Result<AttachmentRound> {
+    ) -> Result<Round> {
         let inputs = store.tail_inputs(db, &self.locator).await?;
         let a = &inputs.authority;
         if !progress.pushed {
-            if self
-                .reconcile_frozen(a, &inputs.bearer, db, Some(blob_dir), true)
-                .await?
-            {
-                let upload = self.upload_image(a, &inputs.bearer, db, blob_dir).await;
-                progress.image_state = match upload {
-                    Ok(ticket) => {
-                        self.push(a, &inputs.bearer, db, ticket).await?;
-                        None
-                    }
-                    Err(error) if is_stale(&error) => return Err(error),
-                    Err(_) => Some(ImageTransfer::Failed),
-                };
-            }
+            progress.image_state = self.push(a, &inputs.bearer, db, blob_dir).await?;
             progress.pushed = true;
         }
         let caught_up = match progress.caught_up {
@@ -209,26 +193,12 @@ impl Client {
                 Err(_) => ImageTransfer::Failed,
             }
         };
-        Ok(AttachmentRound {
+        Ok(Round {
             metadata_caught_up: caught_up,
             images,
         })
     }
-    async fn upload_image(
-        &self,
-        a: &tail::Authority,
-        bearer: &Secret,
-        db: &Database,
-        blob_dir: &Path,
-    ) -> Result<Option<Ticket>> {
-        let Some(upload) = db.prepare_encrypted_image(a, blob_dir).await? else {
-            return Ok(None);
-        };
-        self.upload_prepared_image(a, bearer, upload)
-            .await
-            .map(Some)
-    }
-    async fn upload_prepared_image(
+    pub(super) async fn upload_prepared_image(
         &self,
         a: &tail::Authority,
         bearer: &Secret,

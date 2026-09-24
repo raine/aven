@@ -6,7 +6,7 @@ async fn push_only(c: &Client, store: &ProtectedLocalKeyStore, db: &Database, or
         if db.encrypted_tail_idle(&inputs.authority).await.unwrap() {
             return;
         }
-        c.push(&inputs.authority, &inputs.bearer, db, None)
+        c.push(&inputs.authority, &inputs.bearer, db, &blobs(db))
             .await
             .unwrap();
     }
@@ -290,9 +290,14 @@ async fn historical_replay(interleaved: bool) {
     assert!(pending.len() > 3);
     for (index, expected_id) in pending.iter().enumerate() {
         if interleaved {
-            c.push(&seed_inputs.authority, &seed_inputs.bearer, &f.seed, None)
-                .await
-                .unwrap();
+            c.push(
+                &seed_inputs.authority,
+                &seed_inputs.bearer,
+                &f.seed,
+                &blobs(&f.seed),
+            )
+            .await
+            .unwrap();
         }
         let before = f
             .peer

@@ -187,20 +187,21 @@ async fn concurrent_completion_preserves_deterministic_successor_identity() {
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
     // Publish the outcome without pulling, then freeze the independently generated successor.
     for _ in 0..2 {
-        c.push(&inputs.authority, &inputs.bearer, &f.peer, None)
+        c.push(&inputs.authority, &inputs.bearer, &f.peer, &blobs(&f.peer))
             .await
             .unwrap();
     }
     let frozen = f
         .peer
-        .prepare_encrypted_tail(&inputs.authority)
+        .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .record;
     drop(inputs);
     let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
     while !f.seed.encrypted_tail_idle(&inputs.authority).await.unwrap() {
-        c.push(&inputs.authority, &inputs.bearer, &f.seed, None)
+        c.push(&inputs.authority, &inputs.bearer, &f.seed, &blobs(&f.seed))
             .await
             .unwrap();
     }
@@ -361,7 +362,10 @@ async fn different_templates_do_not_acknowledge_unequal_deterministic_successors
     let c = Client::new(&f.origin).unwrap();
     drain(&c, &f.seed_store, &f.seed).await;
     let cursor = f.peer.meta("sync_cursor").await.unwrap();
-    let err = c.round(&f.peer_store, &f.peer).await.unwrap_err();
+    let err = c
+        .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+        .await
+        .unwrap_err();
     assert!(err.to_string().contains("same-id-divergence"), "{err:#}");
     assert_eq!(f.peer.meta("sync_cursor").await.unwrap(), cursor);
     assert!(
@@ -383,10 +387,11 @@ async fn lost_ack_reopen_reuses_frozen_recurrence_bytes() {
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
     let record = f
         .peer
-        .prepare_encrypted_tail(&inputs.authority)
+        .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .record;
     let Reply::Appended(mapping) = c
         .exchange(
             &inputs.authority.context,
@@ -410,9 +415,10 @@ async fn lost_ack_reopen_reuses_frozen_recurrence_bytes() {
         .unwrap();
     assert_eq!(
         reopened
-            .prepare_encrypted_tail(&inputs.authority)
+            .prepare_encrypted_push(&inputs.authority, &blobs(&reopened))
             .await
-            .unwrap(),
+            .unwrap()
+            .map(|push| push.record),
         Some(record.clone())
     );
     let Reply::Appended(retry) = c
@@ -497,7 +503,7 @@ async fn malformed_recurrence_suffix_blocks_the_entire_pending_prefix() {
     assert!(
         Client::new(&f.origin)
             .unwrap()
-            .round(&f.seed_store, &f.seed)
+            .round(&f.seed_store, &f.seed, f.root.path())
             .await
             .is_err()
     );
@@ -597,10 +603,10 @@ async fn occurrence_images_survive_completion_and_follow_explicit_deletion() {
         .await
         .unwrap();
     let c = Client::new(&f.origin).unwrap();
-    c.attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+    c.round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
-    c.attachment_round(&f.seed_store, &f.seed, f.root.path())
+    c.round(&f.seed_store, &f.seed, f.root.path())
         .await
         .unwrap();
     f.peer
@@ -673,7 +679,9 @@ async fn completion_can_arrive_one_operation_per_page() {
         .unwrap();
     let c = Client::new(&f.origin).unwrap();
     for _ in 0..4 {
-        c.round(&f.seed_store, &f.seed).await.unwrap();
+        c.round(&f.seed_store, &f.seed, f.root.path())
+            .await
+            .unwrap();
         c.pull_only_round(&f.peer_store, &f.peer).await.unwrap();
     }
     converge(&f).await;

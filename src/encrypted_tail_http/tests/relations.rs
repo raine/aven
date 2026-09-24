@@ -124,10 +124,11 @@ async fn labels_preserve_undo_and_later_intent_through_acceptance_reopen_and_pag
     let record = {
         let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
         f.seed
-            .prepare_encrypted_tail(&inputs.authority)
+            .prepare_encrypted_push(&inputs.authority, &blobs(&f.seed))
             .await
             .unwrap()
             .unwrap()
+            .record
     };
     f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
     assert_labels(&f.seed, &w, &task, true).await;
@@ -135,7 +136,12 @@ async fn labels_preserve_undo_and_later_intent_through_acceptance_reopen_and_pag
         let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
         let a = &inputs.authority;
         assert_eq!(
-            f.seed.prepare_encrypted_tail(a).await.unwrap().unwrap(),
+            f.seed
+                .prepare_encrypted_push(a, &blobs(&f.seed))
+                .await
+                .unwrap()
+                .unwrap()
+                .record,
             record
         );
         let mut outcomes = Vec::new();

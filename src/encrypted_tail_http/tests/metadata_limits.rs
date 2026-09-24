@@ -11,7 +11,11 @@ fn input(key: impl Into<String>, value: impl Into<String>) -> TaskMetadataInput 
 
 async fn drain_metadata(c: &Client, store: &ProtectedLocalKeyStore, db: &Database) {
     for _ in 0..512 {
-        if c.round(store, db).await.unwrap() {
+        if c.round(store, db, &blobs(db))
+            .await
+            .unwrap()
+            .metadata_caught_up
+        {
             return;
         }
     }
@@ -85,7 +89,12 @@ async fn concurrent_additions(bytes: bool, peer_first: bool) {
     }
     for (index, (db, store)) in devices.into_iter().enumerate() {
         for _ in 0..3 {
-            assert!(c.round(store, db).await.unwrap());
+            assert!(
+                c.round(store, db, &blobs(db))
+                    .await
+                    .unwrap()
+                    .metadata_caught_up
+            );
             assert_eq!(merged, db.task_metadata(&w.id, &task.id).await.unwrap());
         }
         assert!(
@@ -187,7 +196,12 @@ async fn concurrent_additions(bytes: bool, peer_first: bool) {
     );
     for (db, store) in devices {
         assert_eq!(title(db, task.id.as_str()).await, "sync continues");
-        assert!(c.round(store, db).await.unwrap());
+        assert!(
+            c.round(store, db, &blobs(db))
+                .await
+                .unwrap()
+                .metadata_caught_up
+        );
         assert_eq!(
             scalar(db, "SELECT count(*) FROM changes WHERE server_seq IS NULL").await,
             0

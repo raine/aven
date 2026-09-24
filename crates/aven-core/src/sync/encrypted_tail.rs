@@ -61,6 +61,11 @@ pub struct AbsentOperation {
     context: Context,
     record: Vec<u8>,
 }
+/// Exact frozen bytes for one dispatch. Image heads include their staged upload.
+pub struct Push {
+    pub record: Vec<u8>,
+    pub upload: Option<attachments::Upload>,
+}
 impl Authority {
     pub fn generation(&self) -> [u8; 32] {
         self.membership.current_generation().id

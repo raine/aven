@@ -107,11 +107,19 @@ async fn incomplete_ref_ticket_ownership_expiry_and_exact_retry() {
     let a = &inputs.authority;
     let upload = f
         .peer
-        .prepare_encrypted_image(a, &f.root.path().join("peer-blobs"))
+        .prepare_encrypted_push(a, &f.root.path().join("peer-blobs"))
         .await
         .unwrap()
+        .unwrap()
+        .upload
         .unwrap();
-    let record = f.peer.prepare_encrypted_tail(a).await.unwrap().unwrap();
+    let record = f
+        .peer
+        .prepare_encrypted_push(a, &blobs(&f.peer))
+        .await
+        .unwrap()
+        .unwrap()
+        .record;
     let ticket = declare(&f, a, &inputs.bearer, &upload).await;
     assert!(
         f.server
@@ -262,14 +270,14 @@ async fn pruning_retains_mapping_and_exact_targeted_repair() {
     let reference = add_image(&f).await;
     let c = Client::new(&f.origin).unwrap();
     assert!(
-        c.attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+        c.round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
             .await
             .unwrap()
             .metadata_caught_up
     );
     let w = f.peer.list_workspaces().await.unwrap().remove(0);
     f.peer.delete_task_attachment(&w, &reference).await.unwrap();
-    c.attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+    c.round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
     let (object,descriptor,old_bytes):(Vec<u8>,Vec<u8>,Vec<u8>)=sqlx::query_as("SELECT i.object,i.descriptor,c.bytes FROM server_e2ee_images i JOIN server_e2ee_image_chunks c ON c.object=i.object WHERE i.bootstrap IS NULL").fetch_one(&mut *aven_core::test_support::acquire(&f.server).await.unwrap()).await.unwrap();
@@ -341,12 +349,12 @@ async fn metadata_commits_when_remote_image_is_unavailable() {
     converge(&f).await;
     add_image(&f).await;
     let c = Client::new(&f.origin).unwrap();
-    c.attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+    c.round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
     exec(&f.server,"DELETE FROM server_e2ee_image_chunks WHERE object IN (SELECT object FROM server_e2ee_images WHERE bootstrap IS NULL)").await;
     let result = c
-        .attachment_round(&f.seed_store, &f.seed, f.root.path())
+        .round(&f.seed_store, &f.seed, f.root.path())
         .await
         .unwrap();
     assert!(result.metadata_caught_up);
@@ -374,7 +382,7 @@ async fn missing_initialization_refuses_without_erasing_domain() {
     assert!(
         Client::new(&f.origin)
             .unwrap()
-            .attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+            .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
             .await
             .is_err()
     );
@@ -393,11 +401,19 @@ async fn lost_ref_ack_after_unref_and_prune_needs_no_upload_source() {
         let a = &inputs.authority;
         let upload = f
             .peer
-            .prepare_encrypted_image(a, &f.root.path().join("peer-blobs"))
+            .prepare_encrypted_push(a, &f.root.path().join("peer-blobs"))
             .await
             .unwrap()
+            .unwrap()
+            .upload
             .unwrap();
-        frozen = f.peer.prepare_encrypted_tail(a).await.unwrap().unwrap();
+        frozen = f
+            .peer
+            .prepare_encrypted_push(a, &blobs(&f.peer))
+            .await
+            .unwrap()
+            .unwrap()
+            .record;
         let ticket = declare(&f, a, &inputs.bearer, &upload).await;
         f.server
             .encrypted_image_exchange(&a.context, &inputs.bearer, put(&upload, &ticket), policy())
@@ -452,7 +468,7 @@ async fn lost_ref_ack_after_unref_and_prune_needs_no_upload_source() {
         .unwrap();
     std::fs::remove_file(f.root.path().join("peer-blobs/objects/sha256").join(sha)).unwrap();
     let result = c
-        .attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+        .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
     assert!(result.metadata_caught_up);
@@ -481,9 +497,11 @@ async fn reservation_promises_shared_accounting_and_put_rollback() {
     let a = &inputs.authority;
     let upload = f
         .peer
-        .prepare_encrypted_image(a, &f.root.path().join("peer-blobs"))
+        .prepare_encrypted_push(a, &f.root.path().join("peer-blobs"))
         .await
         .unwrap()
+        .unwrap()
+        .upload
         .unwrap();
     let ticket = declare(&f, a, &inputs.bearer, &upload).await;
     let other = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
@@ -540,7 +558,13 @@ async fn reservation_promises_shared_accounting_and_put_rollback() {
             .unwrap(),
         ImageReply::Pruned(0)
     ));
-    let record = f.peer.prepare_encrypted_tail(a).await.unwrap().unwrap();
+    let record = f
+        .peer
+        .prepare_encrypted_push(a, &blobs(&f.peer))
+        .await
+        .unwrap()
+        .unwrap()
+        .record;
     f.server
         .encrypted_tail_exchange(
             &a.context,
@@ -570,7 +594,6 @@ async fn image_process_exit_retries_exact_preparation_put_and_admission() {
             .env("AVEN_TAIL_ROOT", f.root.path())
             .env("AVEN_TAIL_ORIGIN", &f.origin)
             .env("AVEN_TAIL_CRASH", stage)
-            .env("AVEN_TAIL_IMAGES", "1")
             .output()
             .await
             .unwrap();
@@ -588,7 +611,7 @@ async fn image_process_exit_retries_exact_preparation_put_and_admission() {
         let store = isolated_store(db.path(), &f.root.path().join("peer-keys"));
         let client = Client::new(&f.origin).unwrap();
         let resumed = client
-            .attachment_round(&store, &db, &f.root.path().join("peer-blobs"))
+            .round(&store, &db, &f.root.path().join("peer-blobs"))
             .await
             .unwrap();
         assert!(resumed.metadata_caught_up);
@@ -631,7 +654,7 @@ async fn ref_hint_disagreement_is_sticky_and_explicit_unref_releases() {
     let client = Client::new(&f.origin).unwrap();
     for _ in 0..3 {
         client
-            .attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+            .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
             .await
             .unwrap();
     }
@@ -662,7 +685,7 @@ async fn ref_hint_disagreement_is_sticky_and_explicit_unref_releases() {
     }
     f.peer.delete_task_attachment(&w, &reference).await.unwrap();
     client
-        .attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+        .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
@@ -720,12 +743,12 @@ async fn explicitly_unmapped_bootstrap_reference_is_initialized_and_deletable() 
         .unwrap();
     let c = Client::new(&f.origin).unwrap();
     let result = c
-        .attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+        .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
     assert_eq!(result.images, ImageTransfer::Complete);
     f.peer.delete_task_attachment(&w, &reference).await.unwrap();
-    c.attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+    c.round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
     assert_eq!(
@@ -750,16 +773,85 @@ async fn explicitly_unmapped_bootstrap_reference_is_initialized_and_deletable() 
 }
 
 #[tokio::test]
+async fn pending_image_head_and_later_task_edit_converge_through_one_round_entry() {
+    let f = fixture().await;
+    converge(&f).await;
+    let reference = add_image(&f).await;
+    let (task, sha): (String, String) =
+        sqlx::query_as("SELECT task_id,sha256 FROM task_attachments WHERE attachment_id=?")
+            .bind(&reference)
+            .fetch_one(&mut *aven_core::test_support::acquire(&f.peer).await.unwrap())
+            .await
+            .unwrap();
+    let w = f.peer.list_workspaces().await.unwrap().remove(0);
+    f.peer
+        .update_task(
+            &w,
+            &task.parse().unwrap(),
+            TaskUpdate {
+                title: Some("edited behind pending image".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let pending: Vec<String> = sqlx::query_scalar(
+        "SELECT op_type FROM changes WHERE server_seq IS NULL
+         ORDER BY local_seq, created_at, change_id",
+    )
+    .fetch_all(&mut *aven_core::test_support::acquire(&f.peer).await.unwrap())
+    .await
+    .unwrap();
+    assert_eq!(pending, ["attachment_add", "set_field"]);
+    let c = Client::new(&f.origin).unwrap();
+    let mut rounds = 0;
+    while !c
+        .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+        .await
+        .unwrap()
+        .metadata_caught_up
+    {
+        rounds += 1;
+        assert!(rounds < 4, "pending head budget");
+    }
+    assert_eq!(
+        scalar(
+            &f.peer,
+            "SELECT count(*) FROM changes WHERE server_seq IS NULL"
+        )
+        .await,
+        0
+    );
+    let mut rounds = 0;
+    loop {
+        let round = c
+            .round(&f.seed_store, &f.seed, f.root.path())
+            .await
+            .unwrap();
+        if round.metadata_caught_up && round.images == ImageTransfer::Complete {
+            break;
+        }
+        rounds += 1;
+        assert!(rounds < 4, "receiver budget");
+    }
+    assert_eq!(title(&f.seed, &task).await, "edited behind pending image");
+    assert_eq!(
+        std::fs::read(f.root.path().join("objects/sha256").join(&sha)).unwrap(),
+        std::fs::read(f.root.path().join("peer-blobs/objects/sha256").join(&sha)).unwrap()
+    );
+}
+
+#[tokio::test]
 async fn shared_refs_count_once_and_last_unref_starts_grace() {
     let f = fixture().await;
     converge(&f).await;
     let c = Client::new(&f.origin).unwrap();
     let first = add_image(&f).await;
-    c.attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+    c.round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
     let second = add_image(&f).await;
-    c.attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+    c.round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
     assert_eq!(
@@ -772,12 +864,12 @@ async fn shared_refs_count_once_and_last_unref_starts_grace() {
     );
     let w = f.peer.list_workspaces().await.unwrap().remove(0);
     f.peer.delete_task_attachment(&w, &first).await.unwrap();
-    c.attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+    c.round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
     assert_eq!(scalar(&f.server,"SELECT count(*) FROM server_e2ee_images WHERE bootstrap IS NULL AND unreferenced_at IS NULL").await,1);
     f.peer.delete_task_attachment(&w, &second).await.unwrap();
-    c.attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+    c.round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
     assert_eq!(scalar(&f.server,"SELECT count(*) FROM server_e2ee_images WHERE bootstrap IS NULL AND unreferenced_at IS NOT NULL").await,1);
@@ -800,7 +892,7 @@ async fn failed_first_image_does_not_starve_later_downloads(corrupt: bool) {
     for width in [7, 8] {
         add_image_with_width(&f, width).await;
         let result = client
-            .attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+            .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
             .await
             .unwrap();
         assert!(result.metadata_caught_up);
@@ -828,7 +920,7 @@ async fn failed_first_image_does_not_starve_later_downloads(corrupt: bool) {
         let receiver = Database::open(f.seed.path()).await.unwrap();
         let result = Client::new(&f.origin)
             .unwrap()
-            .attachment_round(&f.seed_store, &receiver, f.root.path())
+            .round(&f.seed_store, &receiver, f.root.path())
             .await
             .unwrap();
         assert!(result.metadata_caught_up);

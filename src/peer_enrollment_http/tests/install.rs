@@ -288,7 +288,7 @@ async fn independent_http_install_preserves_shared_domain_history_images_and_lat
     assert_eq!(available, 0);
     let transfer = crate::encrypted_tail_http::Client::new(&f.client.locator)
         .unwrap()
-        .attachment_round(&f.store, &f.peer, &blobs)
+        .round(&f.store, &f.peer, &blobs)
         .await
         .unwrap();
     assert_eq!(
@@ -433,7 +433,7 @@ async fn published_http_requires_exact_current_context_and_never_restores_missin
     assert_eq!(count(&f.peer, "local_peer_snapshot_install").await, 1);
     let transfer = crate::encrypted_tail_http::Client::new(&f.client.locator)
         .unwrap()
-        .attachment_round(&f.store, &f.peer, &f.root.path().join("peer-blobs"))
+        .round(&f.store, &f.peer, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
     assert!(transfer.metadata_caught_up);
@@ -723,7 +723,7 @@ async fn foreign_image_fails_transfer_and_dishonest_descriptor_refuses_install()
     assert!(count(&f.peer, "tasks").await > 0);
     let transfer = crate::encrypted_tail_http::Client::new(&f.client.locator)
         .unwrap()
-        .attachment_round(&f.store, &f.peer, &blobs)
+        .round(&f.store, &f.peer, &blobs)
         .await
         .unwrap();
     assert_eq!(

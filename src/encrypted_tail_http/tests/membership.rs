@@ -156,7 +156,7 @@ async fn exercise_equal_peers(peer_invites: bool) {
             (&f.peer, &f.peer_store, f.root.path().join("peer-blobs")),
             (&third.db, &third.store, third.blobs.clone()),
         ] {
-            client.attachment_round(keys, db, &blobs).await.unwrap();
+            client.round(keys, db, &blobs).await.unwrap();
         }
     }
     for db in [&f.seed, &f.peer, &third.db] {
@@ -171,11 +171,7 @@ async fn exercise_equal_peers(peer_invites: bool) {
         (&third.db, &third.store, third.blobs.clone()),
     ] {
         assert_eq!(
-            client
-                .attachment_round(keys, db, &blobs)
-                .await
-                .unwrap()
-                .images,
+            client.round(keys, db, &blobs).await.unwrap().images,
             ImageTransfer::Complete
         );
     }
@@ -201,7 +197,12 @@ async fn exercise_equal_peers(peer_invites: bool) {
         .invite(&third.store, &third.db, expiry())
         .await
         .unwrap();
-    assert!(client.round(&third.store, &third.db).await.is_err());
+    assert!(
+        client
+            .round(&third.store, &third.db, &third.blobs)
+            .await
+            .is_err()
+    );
     assert_eq!(
         third.store.enrollment_readiness(&third.db).await.unwrap(),
         crate::protected_local_keys::EnrollmentReadiness::Pending
@@ -240,10 +241,11 @@ async fn old_head_lost_append_and_original_enrollment_retry_preserve_exact_work(
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
     let record = f
         .peer
-        .prepare_encrypted_tail(&inputs.authority)
+        .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .record;
     let (id, _) = f
         .peer
         .encrypted_tail_frozen_record(&inputs.authority)
@@ -286,10 +288,11 @@ async fn old_head_lost_append_and_original_enrollment_retry_preserve_exact_work(
     assert_eq!(inputs.authority.context.head, floor_head(&f.peer).await);
     assert_eq!(
         f.peer
-            .prepare_encrypted_tail(&inputs.authority)
+            .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
             .await
             .unwrap()
-            .unwrap(),
+            .unwrap()
+            .record,
         record
     );
     assert!(
@@ -437,16 +440,19 @@ async fn lost_image_response(stage: &'static str) {
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
     let upload = f
         .peer
-        .prepare_encrypted_image(&inputs.authority, &f.root.path().join("peer-blobs"))
+        .prepare_encrypted_push(&inputs.authority, &f.root.path().join("peer-blobs"))
         .await
         .unwrap()
+        .unwrap()
+        .upload
         .unwrap();
     let record = f
         .peer
-        .prepare_encrypted_tail(&inputs.authority)
+        .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .record;
     let (id, _) = f
         .peer
         .encrypted_tail_frozen_record(&inputs.authority)
@@ -534,10 +540,11 @@ async fn lost_image_response(stage: &'static str) {
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
     assert_eq!(
         f.peer
-            .prepare_encrypted_tail(&inputs.authority)
+            .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
             .await
             .unwrap()
-            .unwrap(),
+            .unwrap()
+            .record,
         record
     );
     if stage != "Append" {
@@ -554,15 +561,15 @@ async fn lost_image_response(stage: &'static str) {
     drop(inputs);
     for _ in 0..8 {
         client
-            .attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+            .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
             .await
             .unwrap();
         client
-            .attachment_round(&third.store, &third.db, &third.blobs)
+            .round(&third.store, &third.db, &third.blobs)
             .await
             .unwrap();
         client
-            .attachment_round(&f.seed_store, &f.seed, &f.root.path().join("blobs"))
+            .round(&f.seed_store, &f.seed, &f.root.path().join("blobs"))
             .await
             .unwrap();
     }
@@ -602,7 +609,7 @@ async fn lost_image_response(stage: &'static str) {
     drop(inputs);
     assert_eq!(
         client
-            .attachment_round(&third.store, &third.db, &third.blobs)
+            .round(&third.store, &third.db, &third.blobs)
             .await
             .unwrap()
             .images,
@@ -629,10 +636,11 @@ async fn stale_round_race(count: usize) {
     let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
     let original = f
         .seed
-        .prepare_encrypted_tail(&inputs.authority)
+        .prepare_encrypted_push(&inputs.authority, &blobs(&f.seed))
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .record;
     drop(inputs);
     let (events, mut incoming) = tokio::sync::mpsc::channel(1);
     let fault = Arc::new(HttpFault {
@@ -644,7 +652,7 @@ async fn stale_round_race(count: usize) {
     });
     restart_fault_server(&mut f, fault.clone()).await;
     let client = Client::new(&f.origin).unwrap();
-    let (result, ()) = tokio::join!(client.round(&f.seed_store, &f.seed), async {
+    let (result, ()) = tokio::join!(client.round(&f.seed_store, &f.seed, f.root.path()), async {
         for index in 0..count {
             let resume = incoming.recv().await.unwrap();
             let joined = join(&f, &format!("competitor-{index}"), &f.peer, &f.peer_store).await;
@@ -668,10 +676,11 @@ async fn stale_round_race(count: usize) {
         let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
         assert_eq!(
             f.seed
-                .prepare_encrypted_tail(&inputs.authority)
+                .prepare_encrypted_push(&inputs.authority, &blobs(&f.seed))
                 .await
                 .unwrap()
-                .unwrap(),
+                .unwrap()
+                .record,
             original
         );
         drop(inputs);
@@ -767,7 +776,7 @@ async fn competing_host_candidates_retain_same_recipient_and_complete_after_late
     assert!(
         Client::new(&f.origin)
             .unwrap()
-            .round(&f.peer_store, &f.peer)
+            .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
             .await
             .is_err()
     );
@@ -873,10 +882,11 @@ async fn protected_ahead_sqlite_failure_recovers_forward_and_missing_evidence_re
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
     let frozen = f
         .peer
-        .prepare_encrypted_tail(&inputs.authority)
+        .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .record;
     drop(inputs);
     let _third = join(&f, "third", &f.seed, &f.seed_store).await;
     execute_local(&f.peer,"CREATE TRIGGER mirror_fault BEFORE UPDATE ON local_membership_checkpoint WHEN NEW.sequence=3 BEGIN SELECT RAISE(ABORT,'test checkpoint fault'); END").await;
@@ -908,10 +918,11 @@ async fn protected_ahead_sqlite_failure_recovers_forward_and_missing_evidence_re
     let inputs = keys.tail_inputs(&reopened, &f.origin).await.unwrap();
     assert_eq!(
         reopened
-            .prepare_encrypted_tail(&inputs.authority)
+            .prepare_encrypted_push(&inputs.authority, &blobs(&reopened))
             .await
             .unwrap()
-            .unwrap(),
+            .unwrap()
+            .record,
         frozen
     );
     drop(inputs);
@@ -1150,10 +1161,7 @@ async fn metadata_download_refresh_preserves_pruned_mapping_and_finite_tail_wate
     );
     let blobs = f.root.path().join("third-blobs");
     assert_eq!(
-        tail.attachment_round(&keys, &third, &blobs)
-            .await
-            .unwrap()
-            .images,
+        tail.round(&keys, &third, &blobs).await.unwrap().images,
         ImageTransfer::Pending
     );
     let watermark = third
@@ -1176,7 +1184,7 @@ async fn metadata_download_refresh_preserves_pruned_mapping_and_finite_tail_wate
             .unwrap(),
         watermark
     );
-    let result = tail.attachment_round(&keys, &third, &blobs).await.unwrap();
+    let result = tail.round(&keys, &third, &blobs).await.unwrap();
     assert_eq!(result.images, ImageTransfer::Complete);
     assert_eq!(third.meta("sync_cursor").await.unwrap().unwrap(), watermark);
     assert_eq!(
@@ -1205,7 +1213,7 @@ async fn membership_change_during_image_read_retries_the_same_selected_object() 
     attachments::add_image(&f).await;
     let client = Client::new(&f.origin).unwrap();
     client
-        .attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+        .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
     let third = join(&f, "third", &f.seed, &f.seed_store).await;
@@ -1218,18 +1226,15 @@ async fn membership_change_during_image_read_retries_the_same_selected_object() 
         pause: Some(send),
     });
     restart_fault_server(&mut f, fault.clone()).await;
-    let (result, ()) = tokio::join!(
-        client.attachment_round(&third.store, &third.db, &third.blobs),
-        async {
-            let resume = events.recv().await.unwrap();
-            let fourth = join(&f, "fourth", &f.peer, &f.peer_store).await;
-            assert_eq!(
-                floor(&fourth.store, &fourth.db, &f.origin).await.sequence(),
-                4
-            );
-            resume.send(()).unwrap();
-        }
-    );
+    let (result, ()) = tokio::join!(client.round(&third.store, &third.db, &third.blobs), async {
+        let resume = events.recv().await.unwrap();
+        let fourth = join(&f, "fourth", &f.peer, &f.peer_store).await;
+        assert_eq!(
+            floor(&fourth.store, &fourth.db, &f.origin).await.sequence(),
+            4
+        );
+        resume.send(()).unwrap();
+    });
     result.unwrap();
     let reads = fault.reads.lock().unwrap().clone();
     assert_eq!(reads.len(), 2);
@@ -1240,7 +1245,7 @@ async fn membership_change_during_image_read_retries_the_same_selected_object() 
     );
     assert_eq!(
         client
-            .attachment_round(&third.store, &third.db, &third.blobs)
+            .round(&third.store, &third.db, &third.blobs)
             .await
             .unwrap()
             .images,
@@ -1258,10 +1263,11 @@ async fn pull_only_stale_race(count: usize) {
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
     let frozen = f
         .peer
-        .prepare_encrypted_tail(&inputs.authority)
+        .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .record;
     drop(inputs);
     let cursor = f.peer.meta("sync_cursor").await.unwrap();
     let watermark = f.peer.meta("e2ee_initial_image_watermark").await.unwrap();
@@ -1393,7 +1399,7 @@ async fn pending_refresh_advances_protected_floor_but_ordinary_dispatch_stays_bl
     assert!(tail.authority.rotation_pending());
     assert!(
         f.seed
-            .prepare_encrypted_tail(&tail.authority)
+            .prepare_encrypted_push(&tail.authority, &blobs(&f.seed))
             .await
             .unwrap()
             .is_none()

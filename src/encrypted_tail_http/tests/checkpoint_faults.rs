@@ -187,10 +187,11 @@ async fn accepted_task(f: &Fixture, title: &str) -> (String, String, Vec<u8>) {
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
     let record = f
         .peer
-        .prepare_encrypted_tail(&inputs.authority)
+        .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .record;
     let Reply::Appended(_) = Client::new(&f.origin)
         .unwrap()
         .exchange(
@@ -226,16 +227,19 @@ async fn accepted_image(f: &Fixture, accept_ref: bool) -> (String, Vec<u8>, Vec<
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
     let upload = f
         .peer
-        .prepare_encrypted_image(&inputs.authority, &f.root.path().join("peer-blobs"))
+        .prepare_encrypted_push(&inputs.authority, &f.root.path().join("peer-blobs"))
         .await
         .unwrap()
+        .unwrap()
+        .upload
         .unwrap();
     let record = f
         .peer
-        .prepare_encrypted_tail(&inputs.authority)
+        .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .record;
     let client = Client::new(&f.origin).unwrap();
     let aven_core::sync::encrypted_tail::attachments::Reply::Status(status) = client
         .image_exchange(
@@ -334,10 +338,11 @@ async fn run_task_checkpoint(accepted: bool) {
         let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
         let record = f
             .peer
-            .prepare_encrypted_tail(&inputs.authority)
+            .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
             .await
             .unwrap()
-            .unwrap();
+            .unwrap()
+            .record;
         (id, task.id.to_string(), record)
     };
     let driver_id = device(&removed.store, &removed.db, &f.origin).await;
@@ -395,11 +400,11 @@ async fn accepted_image_ref_survives_two_rotations_and_reopen_without_corruption
     let client = Client::new(&f.origin).unwrap();
     for _ in 0..8 {
         client
-            .attachment_round(&store, &reopened, &f.root.path().join("peer-blobs"))
+            .round(&store, &reopened, &f.root.path().join("peer-blobs"))
             .await
             .unwrap();
         client
-            .attachment_round(&driver.store, &driver.db, &driver.blobs)
+            .round(&driver.store, &driver.db, &driver.blobs)
             .await
             .unwrap();
     }
@@ -465,11 +470,11 @@ async fn frozen_unaccepted_image_ref_is_replaced_after_two_rotations() {
     let client = Client::new(&f.origin).unwrap();
     for _ in 0..8 {
         client
-            .attachment_round(&store, &reopened, &f.root.path().join("peer-blobs"))
+            .round(&store, &reopened, &f.root.path().join("peer-blobs"))
             .await
             .unwrap();
         client
-            .attachment_round(&driver.store, &driver.db, &driver.blobs)
+            .round(&driver.store, &driver.db, &driver.blobs)
             .await
             .unwrap();
     }
@@ -552,14 +557,14 @@ async fn lost_append_put_complete_and_manage_replies_resume_in_new_process() {
         } else if image {
             let result = Client::new(&f.origin)
                 .unwrap()
-                .attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+                .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
                 .await;
             assert!(result.is_err() || result.unwrap().images == ImageTransfer::Failed);
         } else {
             assert!(
                 Client::new(&f.origin)
                     .unwrap()
-                    .round(&f.peer_store, &f.peer)
+                    .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
                     .await
                     .is_err()
             );
@@ -575,7 +580,6 @@ async fn lost_append_put_complete_and_manage_replies_resume_in_new_process() {
             ])
             .env("AVEN_CHECKPOINT_ROOT", f.root.path())
             .env("AVEN_CHECKPOINT_ORIGIN", &f.origin)
-            .env("AVEN_CHECKPOINT_IMAGE", if image { "1" } else { "0" })
             .output()
             .await
             .unwrap();
@@ -598,7 +602,7 @@ async fn lost_append_put_complete_and_manage_replies_resume_in_new_process() {
             assert!(
                 Client::new(&f.origin)
                     .unwrap()
-                    .round(&third.store, &third.db)
+                    .round(&third.store, &third.db, &third.blobs)
                     .await
                     .is_err()
             );
@@ -633,12 +637,12 @@ async fn lost_append_put_complete_and_manage_replies_resume_in_new_process() {
             for _ in 0..8 {
                 Client::new(&f.origin)
                     .unwrap()
-                    .attachment_round(&store, &reopened, &f.root.path().join("peer-blobs"))
+                    .round(&store, &reopened, &f.root.path().join("peer-blobs"))
                     .await
                     .unwrap();
                 Client::new(&f.origin)
                     .unwrap()
-                    .attachment_round(&third.store, &third.db, &third.blobs)
+                    .round(&third.store, &third.db, &third.blobs)
                     .await
                     .unwrap();
             }
@@ -693,14 +697,10 @@ async fn recovery_worker() {
     let db = Database::open(&root.join("peer.sqlite")).await.unwrap();
     let store = isolated_store(db.path(), &root.join("peer-keys"));
     let client = Client::new(&origin).unwrap();
-    if std::env::var("AVEN_CHECKPOINT_IMAGE").as_deref() == Ok("1") {
-        client
-            .attachment_round(&store, &db, &root.join("peer-blobs"))
-            .await
-            .unwrap();
-    } else {
-        client.round(&store, &db).await.unwrap();
-    }
+    client
+        .round(&store, &db, &root.join("peer-blobs"))
+        .await
+        .unwrap();
     std::process::exit(84);
 }
 
@@ -954,7 +954,7 @@ async fn pruned_bootstrap_image_does_not_block_fresh_post_rotation_metadata() {
         .unwrap();
     let client = Client::new(&f.origin).unwrap();
     client
-        .attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+        .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
@@ -991,7 +991,7 @@ async fn pruned_bootstrap_image_does_not_block_fresh_post_rotation_metadata() {
         1
     );
     let result = client
-        .attachment_round(&fresh.store, &fresh.db, &fresh.blobs)
+        .round(&fresh.store, &fresh.db, &fresh.blobs)
         .await
         .unwrap();
     assert!(result.metadata_caught_up);

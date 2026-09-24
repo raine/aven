@@ -21,10 +21,11 @@ async fn fresh_install_after_legitimate_bootstrap_image_prune_keeps_metadata_and
             .unwrap();
         let record = f
             .source
-            .prepare_encrypted_tail(&inputs.authority)
+            .prepare_encrypted_push(&inputs.authority, f.root.path())
             .await
             .unwrap()
-            .unwrap();
+            .unwrap()
+            .record;
         let tail::Reply::Appended(mapping) = f
             .server
             .encrypted_tail_exchange(
@@ -77,7 +78,7 @@ async fn fresh_install_after_legitimate_bootstrap_image_prune_keeps_metadata_and
     assert!(count(&f.peer, "tasks").await > 0);
     let transfer = crate::encrypted_tail_http::Client::new(&f.client.locator)
         .unwrap()
-        .attachment_round(&f.store, &f.peer, &f.root.path().join("peer-blobs"))
+        .round(&f.store, &f.peer, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
     assert!(transfer.metadata_caught_up);
@@ -115,9 +116,10 @@ async fn publish_source(f: &Fixture) {
     for _ in 0..64 {
         let Some(record) = f
             .source
-            .prepare_encrypted_tail(&inputs.authority)
+            .prepare_encrypted_push(&inputs.authority, f.root.path())
             .await
             .unwrap()
+            .map(|push| push.record)
         else {
             return;
         };
@@ -179,7 +181,7 @@ async fn initial_tail_worker() {
     let store = isolated_store(peer.path(), &root.join("peer-keys"));
     crate::encrypted_tail_http::Client::new(&origin)
         .unwrap()
-        .attachment_round(&store, &peer, &root.join("peer-blobs"))
+        .round(&store, &peer, &root.join("peer-blobs"))
         .await
         .unwrap();
     panic!("expected process exit");
@@ -274,10 +276,7 @@ async fn initial_image_demand_has_a_fixed_restart_safe_watermark(delete: bool) {
     edit_source_descriptions(&f, 17, 37).await;
     let peer = Database::open(f.peer.path()).await.unwrap();
     let client = crate::encrypted_tail_http::Client::new(&f.client.locator).unwrap();
-    let transfer = client
-        .attachment_round(&f.store, &peer, &blobs)
-        .await
-        .unwrap();
+    let transfer = client.round(&f.store, &peer, &blobs).await.unwrap();
     assert!(transfer.metadata_caught_up);
     assert_eq!(transfer.images, ImageTransfer::Complete);
     assert_eq!(
@@ -331,10 +330,7 @@ async fn live_bootstrap_mapping_survives_missing_bytes_and_later_exact_repair() 
     let client = crate::encrypted_tail_http::Client::new(&f.client.locator).unwrap();
     let before = shared(&f.peer).await;
     for _ in 0..2 {
-        let transfer = client
-            .attachment_round(&f.store, &f.peer, &blobs)
-            .await
-            .unwrap();
+        let transfer = client.round(&f.store, &f.peer, &blobs).await.unwrap();
         assert!(transfer.metadata_caught_up);
         assert_eq!(transfer.images, ImageTransfer::Unavailable);
         assert_eq!(shared(&f.peer).await, before);
@@ -358,11 +354,7 @@ async fn live_bootstrap_mapping_survives_missing_bytes_and_later_exact_repair() 
     let peer = Database::open(f.peer.path()).await.unwrap();
     assert_eq!(f.client.install(&f.store, &peer).await.unwrap(), report);
     assert_eq!(
-        client
-            .attachment_round(&f.store, &peer, &blobs)
-            .await
-            .unwrap()
-            .images,
+        client.round(&f.store, &peer, &blobs).await.unwrap().images,
         ImageTransfer::Complete
     );
     let after: (String, String, Vec<u8>) =
@@ -431,10 +423,11 @@ async fn pull_only_refreshes_old_head_without_uploading_or_extending_initial_wat
         .unwrap();
     let frozen = f
         .peer
-        .prepare_encrypted_tail(&inputs.authority)
+        .prepare_encrypted_push(&inputs.authority, &f.root.path().join("peer-blobs"))
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .record;
     drop(inputs);
     f.peer
         .add_note(

@@ -137,7 +137,7 @@ async fn join_peer(root: &tempfile::TempDir, origin: &str, name: &str, inviter: 
     ));
     // Protected enrollment is ready before the immutable snapshot is installed.
     let client = Client::new(origin).unwrap();
-    assert!(client.round(&keys, &db).await.is_err());
+    assert!(client.round(&keys, &db, &blobs).await.is_err());
     enrollment.install(&keys, &db).await.unwrap();
     let node = Node {
         db,
@@ -161,9 +161,9 @@ async fn db_idle(origin: &str, node: &Node) -> bool {
 async fn sync_metadata(origin: &str, node: &Node) {
     let client = Client::new(origin).unwrap();
     for _ in 0..80 {
-        match client.round(&node.store, &node.db).await {
-            Ok(true) => return,
-            Ok(false) => {}
+        match client.round(&node.store, &node.db, &node.blobs).await {
+            Ok(round) if round.metadata_caught_up => return,
+            Ok(_) => {}
             Err(error) => panic!("metadata round {}: {error:#}", node.db.path().display()),
         }
     }
@@ -174,7 +174,7 @@ async fn sync_images(origin: &str, node: &Node) {
     let client = Client::new(origin).unwrap();
     for _ in 0..100 {
         let result = client
-            .attachment_round(&node.store, &node.db, &node.blobs)
+            .round(&node.store, &node.db, &node.blobs)
             .await
             .unwrap();
         if result.metadata_caught_up
@@ -725,9 +725,10 @@ async fn report_quiescent_rounds(origin: &str, nodes: &[&Node], server: &Databas
             assert!(
                 Client::new(origin)
                     .unwrap()
-                    .round(&node.store, &node.db)
+                    .round(&node.store, &node.db, &node.blobs)
                     .await
                     .unwrap()
+                    .metadata_caught_up
             );
         }
     }
@@ -801,12 +802,8 @@ async fn run_client_worker(origin: &str, db: &Path, keys: &Path, blobs: &Path) {
     let store = isolated_store(database.path(), keys);
     let client = Client::new(origin).unwrap();
     for _ in 0..100 {
-        let metadata = client.round(&store, &database).await.unwrap();
-        let images = client
-            .attachment_round(&store, &database, blobs)
-            .await
-            .unwrap();
-        if metadata && images.metadata_caught_up && images.images == ImageTransfer::Complete {
+        let round = client.round(&store, &database, blobs).await.unwrap();
+        if round.metadata_caught_up && round.images == ImageTransfer::Complete {
             return;
         }
     }
@@ -989,7 +986,7 @@ async fn normal_whole_engine_e2ee_journey() {
     assert!(
         Client::new(&journey.origin)
             .unwrap()
-            .round(&c.store, &c.db)
+            .round(&c.store, &c.db, &c.blobs)
             .await
             .is_err()
     );
@@ -1060,7 +1057,7 @@ async fn normal_whole_engine_e2ee_journey() {
     assert!(
         Client::new(&journey.origin)
             .unwrap()
-            .round(&d_store, &d_db)
+            .round(&d_store, &d_db, &d_blobs)
             .await
             .is_err()
     );

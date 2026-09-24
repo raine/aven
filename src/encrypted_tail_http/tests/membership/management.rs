@@ -23,7 +23,12 @@ async fn one_action_removes_seed_and_survivors_sync_tasks_and_images() {
     assert!(!m.rotation_pending());
     assert!(!m.has_device(seed));
     let client = Client::new(&f.origin).unwrap();
-    assert!(client.round(&f.seed_store, &f.seed).await.is_err());
+    assert!(
+        client
+            .round(&f.seed_store, &f.seed, f.root.path())
+            .await
+            .is_err()
+    );
     // Original installed peers survive the removal of their inviter.
     enrollment.install(&third.store, &third.db).await.unwrap();
     attachments::add_image(&f).await;
@@ -36,11 +41,11 @@ async fn one_action_removes_seed_and_survivors_sync_tasks_and_images() {
         .task;
     for _ in 0..8 {
         client
-            .attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+            .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
             .await
             .unwrap();
         client
-            .attachment_round(&third.store, &third.db, &third.blobs)
+            .round(&third.store, &third.db, &third.blobs)
             .await
             .unwrap();
     }
@@ -58,7 +63,7 @@ async fn one_action_removes_seed_and_survivors_sync_tasks_and_images() {
     );
     assert_eq!(
         client
-            .attachment_round(&third.store, &third.db, &third.blobs)
+            .round(&third.store, &third.db, &third.blobs)
             .await
             .unwrap()
             .images,
@@ -118,7 +123,7 @@ async fn one_action_removes_seed_and_survivors_sync_tasks_and_images() {
     }
     for _ in 0..8 {
         client
-            .attachment_round(&fresh.store, &fresh.db, &fresh.blobs)
+            .round(&fresh.store, &fresh.db, &fresh.blobs)
             .await
             .unwrap();
     }
@@ -136,7 +141,7 @@ async fn one_action_removes_seed_and_survivors_sync_tasks_and_images() {
     );
     assert_eq!(
         client
-            .attachment_round(&fresh.store, &fresh.db, &fresh.blobs)
+            .round(&fresh.store, &fresh.db, &fresh.blobs)
             .await
             .unwrap()
             .images,
@@ -260,7 +265,7 @@ async fn lost_revoke_and_rotate_replies_reopen_and_resolve_before_replacement() 
         let store = isolated_store(db.path(), &f.root.path().join("peer-keys"));
         Client::new(&f.origin)
             .unwrap()
-            .round(&store, &db)
+            .round(&store, &db, &f.root.path().join("peer-blobs"))
             .await
             .unwrap();
         let m = floor(&store, &db, &f.origin).await;
@@ -292,7 +297,12 @@ async fn self_removal_leaves_pending_pull_only_is_read_only_and_last_device_refu
         RemovalStatus::SelfRevoked
     );
     let client = Client::new(&f.origin).unwrap();
-    assert!(client.round(&f.peer_store, &f.peer).await.is_err());
+    assert!(
+        client
+            .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+            .await
+            .is_err()
+    );
     client
         .pull_only_round(&f.seed_store, &f.seed)
         .await
@@ -302,7 +312,10 @@ async fn self_removal_leaves_pending_pull_only_is_read_only_and_last_device_refu
             .await
             .rotation_pending()
     );
-    client.round(&f.seed_store, &f.seed).await.unwrap();
+    client
+        .round(&f.seed_store, &f.seed, f.root.path())
+        .await
+        .unwrap();
     let before = floor(&f.seed_store, &f.seed, &f.origin).await;
     assert!(!before.rotation_pending());
     let seed = device(&f.seed_store, &f.seed, &f.origin).await;
@@ -334,10 +347,14 @@ async fn competing_survivor_finishes_losing_candidate_through_one_stale_retry() 
     let (send, mut receive) = tokio::sync::mpsc::channel(1);
     let fault = install_fault(&mut f, 1, false, Some(send)).await;
     let client = Client::new(&f.origin).unwrap();
-    let first = client.round(&f.peer_store, &f.peer);
+    let peer_blobs = f.root.path().join("peer-blobs");
+    let first = client.round(&f.peer_store, &f.peer, &peer_blobs);
     let second = async {
         let release = receive.recv().await.unwrap();
-        client.round(&f.seed_store, &f.seed).await.unwrap();
+        client
+            .round(&f.seed_store, &f.seed, f.root.path())
+            .await
+            .unwrap();
         release.send(()).unwrap();
     };
     let (result, _) = tokio::join!(first, second);
@@ -365,7 +382,8 @@ async fn admission_wins_rotate_slot_replacement_uses_fresh_material_and_coverage
     let (send, mut receive) = tokio::sync::mpsc::channel(1);
     let fault = install_fault(&mut f, 1, false, Some(send)).await;
     let client = Client::new(&f.origin).unwrap();
-    let first = client.round(&f.peer_store, &f.peer);
+    let peer_blobs = f.root.path().join("peer-blobs");
+    let first = client.round(&f.peer_store, &f.peer, &peer_blobs);
     let second = async {
         let release = receive.recv().await.unwrap();
         let fourth = join(&f, "fourth", &f.seed, &f.seed_store).await;
@@ -374,7 +392,10 @@ async fn admission_wins_rotate_slot_replacement_uses_fresh_material_and_coverage
     };
     let (result, fourth) = tokio::join!(first, second);
     result.unwrap();
-    client.round(&fourth.store, &fourth.db).await.unwrap();
+    client
+        .round(&fourth.store, &fourth.db, &fourth.blobs)
+        .await
+        .unwrap();
     let m = floor(&f.peer_store, &f.peer, &f.origin).await;
     assert_eq!(m.sequence(), 6);
     assert_eq!(
@@ -432,7 +453,7 @@ async fn safe_management_does_not_clear_unresolved_disclosure_fence() {
     assert!(
         Client::new(&f.origin)
             .unwrap()
-            .round(&f.peer_store, &f.peer)
+            .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
             .await
             .is_err()
     );
@@ -469,7 +490,7 @@ async fn lost_self_removal_reply_is_not_signed_local_revocation_evidence() {
     );
     Client::new(&f.origin)
         .unwrap()
-        .round(&f.seed_store, &f.seed)
+        .round(&f.seed_store, &f.seed, f.root.path())
         .await
         .unwrap();
     assert!(
@@ -488,7 +509,7 @@ async fn management_worker() {
     let store = isolated_store(db.path(), &root.join("peer-keys"));
     Client::new(&origin)
         .unwrap()
-        .round(&store, &db)
+        .round(&store, &db, &root.join("peer-blobs"))
         .await
         .unwrap();
     panic!("management crash not reached");
@@ -538,7 +559,7 @@ async fn protected_phase_crashes_resume_exact_material_and_candidate_without_sql
     let store = isolated_store(db.path(), &f.root.path().join("peer-keys"));
     Client::new(&f.origin)
         .unwrap()
-        .round(&store, &db)
+        .round(&store, &db, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
     assert_eq!(
@@ -572,7 +593,7 @@ async fn protected_phase_crashes_resume_exact_material_and_candidate_without_sql
     assert!(
         Client::new(&f.origin)
             .unwrap()
-            .round(&store, &db)
+            .round(&store, &db, &f.root.path().join("peer-blobs"))
             .await
             .is_err()
     );
@@ -591,7 +612,8 @@ async fn second_stale_race_stops_and_next_round_resolves_before_fresh_candidate(
     let (send, mut receive) = tokio::sync::mpsc::channel(1);
     let fault = install_fault(&mut f, 0, false, Some(send)).await;
     let client = Client::new(&f.origin).unwrap();
-    let first = client.round(&f.peer_store, &f.peer);
+    let peer_blobs = f.root.path().join("peer-blobs");
+    let first = client.round(&f.peer_store, &f.peer, &peer_blobs);
     let second = async {
         for name in ["fourth", "fifth"] {
             let release = receive.recv().await.unwrap();
@@ -615,7 +637,10 @@ async fn second_stale_race_stops_and_next_round_resolves_before_fresh_candidate(
     install_fault(&mut f, usize::MAX, false, None).await;
     let db = Database::open(f.peer.path()).await.unwrap();
     let store = isolated_store(db.path(), &f.root.path().join("peer-keys"));
-    client.round(&store, &db).await.unwrap();
+    client
+        .round(&store, &db, &f.root.path().join("peer-blobs"))
+        .await
+        .unwrap();
     assert_eq!(
         std::fs::read(owned(&f, "management-0-candidate-1")).unwrap(),
         retained
@@ -645,7 +670,7 @@ async fn unknown_undelivered_candidate_retries_exact_bytes_after_reopen() {
         let store = isolated_store(db.path(), &f.root.path().join("peer-keys"));
         Client::new(&f.origin)
             .unwrap()
-            .round(&store, &db)
+            .round(&store, &db, &f.root.path().join("peer-blobs"))
             .await
             .unwrap();
         {
@@ -683,7 +708,10 @@ async fn completed_removal_stays_complete_across_later_freeze_and_new_intent() {
             .await
             .rotation_pending()
     );
-    client.round(&f.peer_store, &f.peer).await.unwrap();
+    client
+        .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+        .await
+        .unwrap();
     assert_eq!(floor(&f.peer_store, &f.peer, &f.origin).await.sequence(), 7);
     assert_eq!(
         std::fs::read(owned(&f, "management-0-ready")).unwrap(),

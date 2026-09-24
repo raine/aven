@@ -151,10 +151,11 @@ async fn three_installations_offline_two_rotations_and_fresh_historical_bootstra
     let tail = third.store.tail_inputs(&third.db, &origin).await.unwrap();
     let frozen = third
         .db
-        .prepare_encrypted_tail(&tail.authority)
+        .prepare_encrypted_push(&tail.authority, &root.path().join("third-blobs"))
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .record;
     drop(tail);
     let cursor = third.db.meta("sync_cursor").await.unwrap();
     let identity = third.db.meta("client_id").await.unwrap();

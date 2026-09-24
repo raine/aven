@@ -142,37 +142,6 @@ pub(crate) async fn accept(
     Ok(())
 }
 
-pub(in crate::sync::encrypted_tail) async fn projection(
-    conn: &mut SqliteConnection,
-    change: &ChangeWire,
-) -> Result<Projection> {
-    if change.op_type != "attachment_add" {
-        return super::super::domain::validate(change);
-    }
-    let descriptor: Vec<u8> = sqlx::query_scalar(
-        "SELECT descriptor FROM local_e2ee_image_preparation WHERE operation_id=?",
-    )
-    .bind(&change.change_id)
-    .fetch_optional(&mut *conn)
-    .await?
-    .context("error encrypted-image-preparation-required")?;
-    let (deleted,version):(bool,Option<String>)=sqlx::query_as("SELECT t.deleted,(SELECT version FROM field_versions f WHERE f.workspace_id=t.workspace_id AND f.entity_type='task' AND f.entity_id=t.id AND f.field='deleted') FROM tasks t WHERE t.workspace_id=? AND t.id=?").bind(change.payload["workspace_id"].as_str()).bind(&change.entity_id).fetch_one(conn).await?;
-    Ok(Projection::Ref {
-        workspace: change.payload["workspace_id"]
-            .as_str()
-            .context("error encrypted-image-workspace")?
-            .into(),
-        task: change.entity_id.clone(),
-        reference: change.payload["attachment_id"]
-            .as_str()
-            .context("error encrypted-image-reference")?
-            .into(),
-        descriptor,
-        deleted,
-        version,
-    })
-}
-
 /// Exact image bytes for one bounded upload. No plaintext hash leaves core.
 pub struct Upload {
     pub workspace: String,
@@ -181,158 +150,133 @@ pub struct Upload {
     pub commitment: [u8; 32],
     pub records: Vec<Vec<u8>>,
 }
-impl Database {
-    pub async fn prepare_encrypted_image(
-        &self,
-        a: &Authority,
-        blob_dir: &Path,
-    ) -> Result<Option<Upload>> {
-        let mut conn = self.acquire_writer().await?;
-        let mut tx = begin_immediate(&mut conn).await?;
-        super::super::client::validate_binding_and_cursor(&mut tx, a).await?;
-        if a.rotation_pending() {
-            tx.commit().await?;
-            return Ok(None);
-        }
-        let frozen: Option<Vec<u8>> =
-            sqlx::query_scalar("SELECT record FROM local_e2ee_outbox WHERE singleton=1")
-                .fetch_optional(&mut *tx)
-                .await?;
-        if let Some(record) = &frozen {
-            ensure!(
-                !a.record_is_closed(record)?,
-                "error encrypted-tail-outcome-required"
-            );
-            let c = codec::open(a, record)?;
-            if c.op_type != "attachment_add" {
-                tx.commit().await?;
-                return Ok(None);
-            }
-        }
-        let ids: Vec<String> = if let Some(record) = &frozen {
-            vec![codec::open(a, record)?.change_id]
-        } else {
-            sqlx::query_scalar("SELECT change_id FROM changes WHERE server_seq IS NULL ORDER BY local_seq,created_at,change_id LIMIT 4097").fetch_all(&mut *tx).await?
-        };
-        ensure!(ids.len() <= 4096, "error encrypted-tail-preflight-limit");
-        let mut total = 0;
-        let mut first = None;
-        for id in ids {
-            let c = super::super::client::load_change(&mut tx, &id)
-                .await?
-                .context("error encrypted-tail-history-lost")?;
-            total += serde_json::to_vec(&c)?.len();
-            ensure!(
-                total <= 16 * 1048576,
-                "error encrypted-tail-preflight-limit"
-            );
-            super::super::domain::validate(&c)?;
-            if first.is_none() {
-                first = Some(c);
-            }
-        }
-        let Some(c) = first.filter(|c| c.op_type == "attachment_add") else {
-            tx.commit().await?;
-            return Ok(None);
-        };
-        let sha = c.payload["sha256"]
-            .as_str()
-            .context("error encrypted-image-source")?;
-        let existing: Option<(Vec<u8>, String)> = sqlx::query_as(
-            "SELECT descriptor,sha256 FROM local_e2ee_image_preparation WHERE operation_id=?",
-        )
-        .bind(&c.change_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let (d, records) = if let Some((bytes, saved_sha)) = existing {
-            valid(saved_sha == sha)?;
-            let d = Descriptor::decode(&bytes)?;
-            let records:Vec<Vec<u8>>=sqlx::query_scalar("SELECT bytes FROM local_e2ee_image_staging WHERE operation_id=? ORDER BY chunk_index").bind(&c.change_id).fetch_all(&mut *tx).await?;
-            let stored_indices:Vec<i64>=sqlx::query_scalar("SELECT chunk_index FROM local_e2ee_image_staging WHERE operation_id=? ORDER BY chunk_index").bind(&c.change_id).fetch_all(&mut *tx).await?;
-            for (index, record) in stored_indices.into_iter().zip(&records) {
-                d.verify_chunk(usize::try_from(index)?, record)?;
-            }
-            if records.len() == d.artifact.chunks.len() {
-                d.verify(&records)?;
-                (d, records)
-            } else {
-                let source = read_source(
-                    blob_dir,
-                    sha,
-                    c.payload["byte_size"]
-                        .as_u64()
-                        .context("error encrypted-image-size")?,
-                )
-                .await?;
-                let records = d.reconstruct(a, &source, sha)?;
-                (d, records)
-            }
-        } else {
-            let source = read_source(
-                blob_dir,
-                sha,
-                c.payload["byte_size"]
-                    .as_u64()
-                    .context("error encrypted-image-size")?,
-            )
-            .await?;
-            let image = crate::attachments::decode::validate_image(
-                source,
-                Some(
-                    c.payload["media_type"]
-                        .as_str()
-                        .context("error encrypted-image-media")?
-                        .into(),
-                ),
-            )
-            .await?;
-            valid(
-                c.payload["width"].as_i64() == Some(image.facts.width)
-                    && c.payload["height"].as_i64() == Some(image.facts.height),
-            )?;
-            let reusable:Option<Vec<u8>>=sqlx::query_scalar("SELECT o.descriptor FROM local_e2ee_image_objects o JOIN local_e2ee_image_references r ON r.object=o.object WHERE o.sha256=? AND r.workspace=? ORDER BY o.object LIMIT 1").bind(sha).bind(c.payload["workspace_id"].as_str()).fetch_optional(&mut *tx).await?;
-            let (d, records) = if let Some(bytes) = reusable {
-                let d = Descriptor::decode(&bytes)?;
-                let records = d.reconstruct(a, &image.bytes, sha)?;
-                (d, records)
-            } else {
-                Descriptor::seal(a, &image.bytes)?
-            };
-            sqlx::query("INSERT INTO local_e2ee_image_preparation(singleton,operation_id,descriptor,sha256) VALUES(1,?,?,?)").bind(&c.change_id).bind(d.encode()?).bind(sha).execute(&mut *tx).await?;
-            (d, records)
-        };
-        for (i, record) in records.iter().enumerate() {
-            sqlx::query("INSERT OR IGNORE INTO local_e2ee_image_staging(operation_id,chunk_index,bytes) VALUES(?,?,?)").bind(&c.change_id).bind(i as i64).bind(record).execute(&mut *tx).await?;
-        }
-        if frozen.is_none() {
-            let p = projection(&mut tx, &c).await?;
-            let record = codec::seal_projection(a, &c, &p)?;
-            codec::open(a, &record)?;
-            sqlx::query("INSERT INTO local_e2ee_outbox(singleton,operation_id,association,sync_generation,record) VALUES(1,?,?,?,?)").bind(&c.change_id).bind(&a.association).bind(a.sync_generation).bind(record).execute(&mut *tx).await?;
-        }
-        let bytes = d.encode()?;
-        if let Some(record) = &frozen {
-            let Projection::Ref { descriptor, .. } = codec::parse(record)?.projection else {
-                anyhow::bail!("error encrypted-image-preparation")
-            };
-            valid(descriptor == bytes)?;
-        }
-        let upload = Upload {
-            workspace: c.payload["workspace_id"]
+impl Upload {
+    fn new(change: &ChangeWire, d: &Descriptor, records: Vec<Vec<u8>>) -> Result<Self> {
+        let descriptor = d.encode()?;
+        Ok(Self {
+            workspace: change.payload["workspace_id"]
                 .as_str()
                 .context("error encrypted-image-workspace")?
                 .into(),
-            commitment: hash(&bytes),
-            descriptor: bytes,
+            commitment: hash(&descriptor),
+            descriptor,
             object: d.object,
             records,
-        };
-        tx.commit().await?;
-        #[cfg(any(test, feature = "test-support"))]
-        super::super::crash_at("image-frozen");
-        Ok(Some(upload))
+        })
     }
 }
+
+/// Pins the source and stages exact ciphertext for a new image head.
+pub(in crate::sync::encrypted_tail) async fn stage(
+    conn: &mut SqliteConnection,
+    a: &Authority,
+    c: &ChangeWire,
+    blob_dir: &Path,
+) -> Result<(Projection, Upload)> {
+    let sha = c.payload["sha256"]
+        .as_str()
+        .context("error encrypted-image-source")?;
+    let source = read_source(
+        blob_dir,
+        sha,
+        c.payload["byte_size"]
+            .as_u64()
+            .context("error encrypted-image-size")?,
+    )
+    .await?;
+    let image = crate::attachments::decode::validate_image(
+        source,
+        Some(
+            c.payload["media_type"]
+                .as_str()
+                .context("error encrypted-image-media")?
+                .into(),
+        ),
+    )
+    .await?;
+    valid(
+        c.payload["width"].as_i64() == Some(image.facts.width)
+            && c.payload["height"].as_i64() == Some(image.facts.height),
+    )?;
+    let reusable:Option<Vec<u8>>=sqlx::query_scalar("SELECT o.descriptor FROM local_e2ee_image_objects o JOIN local_e2ee_image_references r ON r.object=o.object WHERE o.sha256=? AND r.workspace=? ORDER BY o.object LIMIT 1").bind(sha).bind(c.payload["workspace_id"].as_str()).fetch_optional(&mut *conn).await?;
+    let (d, records) = if let Some(bytes) = reusable {
+        let d = Descriptor::decode(&bytes)?;
+        let records = d.reconstruct(a, &image.bytes, sha)?;
+        (d, records)
+    } else {
+        Descriptor::seal(a, &image.bytes)?
+    };
+    let descriptor = d.encode()?;
+    sqlx::query("INSERT INTO local_e2ee_image_preparation(singleton,operation_id,descriptor,sha256) VALUES(1,?,?,?)").bind(&c.change_id).bind(&descriptor).bind(sha).execute(&mut *conn).await?;
+    for (i, record) in records.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO local_e2ee_image_staging(operation_id,chunk_index,bytes) VALUES(?,?,?)",
+        )
+        .bind(&c.change_id)
+        .bind(i as i64)
+        .bind(record)
+        .execute(&mut *conn)
+        .await?;
+    }
+    let (deleted,version):(bool,Option<String>)=sqlx::query_as("SELECT t.deleted,(SELECT version FROM field_versions f WHERE f.workspace_id=t.workspace_id AND f.entity_type='task' AND f.entity_id=t.id AND f.field='deleted') FROM tasks t WHERE t.workspace_id=? AND t.id=?").bind(c.payload["workspace_id"].as_str()).bind(&c.entity_id).fetch_one(&mut *conn).await?;
+    let projection = Projection::Ref {
+        workspace: c.payload["workspace_id"]
+            .as_str()
+            .context("error encrypted-image-workspace")?
+            .into(),
+        task: c.entity_id.clone(),
+        reference: c.payload["attachment_id"]
+            .as_str()
+            .context("error encrypted-image-reference")?
+            .into(),
+        descriptor,
+        deleted,
+        version,
+    };
+    Ok((projection, Upload::new(c, &d, records)?))
+}
+
+/// Verifies the frozen Ref's staged ciphertext, rebuilding missing chunks only
+/// from the saved recipe and the pinned source.
+pub(in crate::sync::encrypted_tail) async fn frozen_upload(
+    conn: &mut SqliteConnection,
+    a: &Authority,
+    c: &ChangeWire,
+    record: &[u8],
+    blob_dir: &Path,
+) -> Result<Upload> {
+    let (bytes, saved_sha): (Vec<u8>, String) = sqlx::query_as(
+        "SELECT descriptor,sha256 FROM local_e2ee_image_preparation WHERE operation_id=?",
+    )
+    .bind(&c.change_id)
+    .fetch_optional(&mut *conn)
+    .await?
+    .context("error encrypted-image-preparation-required")?;
+    let Projection::Ref { descriptor, .. } = codec::parse(record)?.projection else {
+        anyhow::bail!("error encrypted-image-preparation")
+    };
+    valid(descriptor == bytes && c.payload["sha256"].as_str() == Some(&saved_sha))?;
+    let d = Descriptor::decode(&bytes)?;
+    let rows: Vec<(i64, Vec<u8>)> = sqlx::query_as("SELECT chunk_index,bytes FROM local_e2ee_image_staging WHERE operation_id=? ORDER BY chunk_index")
+        .bind(&c.change_id).fetch_all(&mut *conn).await?;
+    for (index, chunk) in &rows {
+        d.verify_chunk(usize::try_from(*index)?, chunk)?;
+    }
+    let records = if rows.len() == d.artifact.chunks.len() {
+        let records: Vec<Vec<u8>> = rows.into_iter().map(|(_, b)| b).collect();
+        d.verify(&records)?;
+        records
+    } else {
+        let source = read_source(blob_dir, &saved_sha, d.artifact.total).await?;
+        let records = d.reconstruct(a, &source, &saved_sha)?;
+        for (i, record) in records.iter().enumerate() {
+            sqlx::query("INSERT OR IGNORE INTO local_e2ee_image_staging(operation_id,chunk_index,bytes) VALUES(?,?,?)").bind(&c.change_id).bind(i as i64).bind(record).execute(&mut *conn).await?;
+        }
+        records
+    };
+    Upload::new(c, &d, records)
+}
+
 pub(in crate::sync::encrypted_tail) async fn supersede(
     conn: &mut SqliteConnection,
     a: &Authority,

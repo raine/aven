@@ -72,6 +72,37 @@ pub(super) async fn load_change(
     .transpose()
 }
 
+/// Validates the bounded ordered pending prefix and returns its head.
+async fn preflight(conn: &mut SqliteConnection) -> Result<Option<ChangeWire>> {
+    let pending_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT change_id FROM changes WHERE server_seq IS NULL
+         ORDER BY local_seq, created_at, change_id LIMIT 4097",
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    ensure!(
+        pending_ids.len() <= 4096,
+        "error encrypted-tail-preflight-limit"
+    );
+    let mut preflight_bytes = 0;
+    let mut head = None;
+    for id in pending_ids {
+        let change = load_change(&mut *conn, &id)
+            .await?
+            .context("error encrypted-tail-history-lost")?;
+        preflight_bytes += serde_json::to_vec(&change)?.len();
+        ensure!(
+            preflight_bytes <= 16 * 1048576,
+            "error encrypted-tail-preflight-limit"
+        );
+        domain::validate(&change)?;
+        if head.is_none() {
+            head = Some(change)
+        }
+    }
+    Ok(head)
+}
+
 fn without_server_sequence(change: &ChangeWire) -> ChangeWire {
     let mut change = change.clone();
     change.server_seq = None;
@@ -221,10 +252,20 @@ impl Database {
         tx.commit().await?;
         Ok(!pending)
     }
-    pub async fn prepare_encrypted_tail(&self, authority: &Authority) -> Result<Option<Vec<u8>>> {
+    /// Returns the frozen head, or freezes the next ordered pending change.
+    /// Image heads also return exact staged ciphertext for upload.
+    pub async fn prepare_encrypted_push(
+        &self,
+        authority: &Authority,
+        blob_dir: &std::path::Path,
+    ) -> Result<Option<Push>> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         validate_binding_and_cursor(&mut tx, authority).await?;
+        if authority.rotation_pending() {
+            tx.commit().await?;
+            return Ok(None);
+        }
         let frozen: Option<(String, i64, Vec<u8>, bool)> = sqlx::query_as(
             "SELECT association, sync_generation, record, blocked
              FROM local_e2ee_outbox WHERE singleton = 1",
@@ -234,6 +275,10 @@ impl Database {
         if let Some((association, generation, record, blocked)) = frozen {
             valid(association == authority.association && generation == authority.sync_generation)?;
             ensure!(!blocked, "error encrypted-tail-integrity-blocked");
+            ensure!(
+                !authority.record_is_closed(&record)?,
+                "error encrypted-tail-outcome-required"
+            );
             let change = codec::open(authority, &record)?;
             require_canonical_equality(
                 &change,
@@ -241,63 +286,52 @@ impl Database {
                     .await?
                     .context("error encrypted-tail-history-lost")?,
             )?;
+            let upload = if change.op_type == "attachment_add" {
+                Some(
+                    super::attachments::client::frozen_upload(
+                        &mut tx, authority, &change, &record, blob_dir,
+                    )
+                    .await?,
+                )
+            } else {
+                None
+            };
             tx.commit().await?;
-            return Ok(Some(record));
+            return Ok(Some(Push { record, upload }));
         }
-        if authority.rotation_pending() {
+        let Some(change) = preflight(&mut tx).await? else {
             tx.commit().await?;
             return Ok(None);
-        }
-        let pending_ids: Vec<String> = sqlx::query_scalar(
-            "SELECT change_id FROM changes WHERE server_seq IS NULL
-             ORDER BY local_seq, created_at, change_id LIMIT 4097",
-        )
-        .fetch_all(&mut *tx)
-        .await?;
-        ensure!(
-            pending_ids.len() <= 4096,
-            "error encrypted-tail-preflight-limit"
-        );
-        let mut preflight_bytes = 0;
-        let mut first_pending = None;
-        for id in pending_ids {
-            let change = load_change(&mut tx, &id)
-                .await?
-                .context("error encrypted-tail-history-lost")?;
-            preflight_bytes += serde_json::to_vec(&change)?.len();
-            ensure!(
-                preflight_bytes <= 16 * 1048576,
-                "error encrypted-tail-preflight-limit"
-            );
-            domain::validate(&change)?;
-            if first_pending.is_none() {
-                first_pending = Some(change)
-            }
-        }
-        let record = if let Some(change) = first_pending {
-            let projection = super::attachments::client::projection(&mut tx, &change).await?;
-            let record = codec::seal_projection(authority, &change, &projection)?;
-            // Check the full decoder contract before committing dispatch authority.
-            require_canonical_equality(&change, &codec::open(authority, &record)?)?;
-            sqlx::query(
-                "INSERT INTO local_e2ee_outbox(
-                     singleton, operation_id, association, sync_generation, record
-                 ) VALUES (1, ?, ?, ?, ?)",
-            )
-            .bind(change.change_id)
-            .bind(&authority.association)
-            .bind(authority.sync_generation)
-            .bind(&record)
-            .execute(&mut *tx)
-            .await?;
-            Some(record)
-        } else {
-            None
         };
+        let (projection, upload) = if change.op_type == "attachment_add" {
+            let (projection, upload) =
+                super::attachments::client::stage(&mut tx, authority, &change, blob_dir).await?;
+            (projection, Some(upload))
+        } else {
+            (domain::validate(&change)?, None)
+        };
+        let record = codec::seal_projection(authority, &change, &projection)?;
+        // Check the full decoder contract before committing dispatch authority.
+        require_canonical_equality(&change, &codec::open(authority, &record)?)?;
+        sqlx::query(
+            "INSERT INTO local_e2ee_outbox(
+                 singleton, operation_id, association, sync_generation, record
+             ) VALUES (1, ?, ?, ?, ?)",
+        )
+        .bind(&change.change_id)
+        .bind(&authority.association)
+        .bind(authority.sync_generation)
+        .bind(&record)
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         #[cfg(any(test, feature = "test-support"))]
-        super::crash_at("frozen");
-        Ok(record)
+        super::crash_at(if upload.is_some() {
+            "image-frozen"
+        } else {
+            "frozen"
+        });
+        Ok(Some(Push { record, upload }))
     }
     /// Closed-generation absence and replacement commit under one outbox/history owner.
     /// A failed transaction retains old bytes and requires a new lookup on retry.
@@ -305,7 +339,7 @@ impl Database {
         &self,
         authority: &Authority,
         absence: &AbsentOperation,
-        blob_dir: Option<&std::path::Path>,
+        blob_dir: &std::path::Path,
     ) -> Result<bool> {
         valid(absence.context == authority.context)?;
         let mut conn = self.acquire_writer().await?;
@@ -341,10 +375,6 @@ impl Database {
         }
         let mut projection = codec::parse(&record)?.projection;
         if change.op_type == "attachment_add" {
-            let Some(blob_dir) = blob_dir else {
-                tx.commit().await?;
-                return Ok(false);
-            };
             projection = super::attachments::client::supersede(
                 &mut tx, authority, &change, projection, blob_dir,
             )
