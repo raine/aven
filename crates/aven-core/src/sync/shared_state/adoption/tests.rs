@@ -55,6 +55,22 @@ async fn fixture() -> (
 }
 
 #[tokio::test]
+async fn history_validation_does_not_read_exported_domain_tables() {
+    let (_root, database, source, seed, key, _candidate) = fixture().await;
+    let mut conn = database.acquire_writer().await.unwrap();
+    sqlx::query("ALTER TABLE projects RENAME TO projects_not_read_by_history_validation")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    drop(conn);
+
+    database
+        .prepare_seed_publication_intent(&source, &seed, &key)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn committed_intent_blocks_actual_cancellation_across_pools() {
     let (_root, database, source, seed, key, candidate) = fixture().await;
     let other = Database::open(database.path()).await.unwrap();

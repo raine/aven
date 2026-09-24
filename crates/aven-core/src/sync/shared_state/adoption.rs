@@ -177,6 +177,28 @@ pub(super) fn history_bytes(
     Ok(serde_json::to_string(&values)?)
 }
 
+async fn load_history_tables(
+    conn: &mut SqliteConnection,
+) -> Result<(
+    Vec<crate::data_safety::ChangeRow>,
+    Vec<crate::data_safety::SharedHistoryProvenanceRow>,
+)> {
+    let changes = sqlx::query_as(
+        "SELECT change_id, client_id, local_seq, entity_type, entity_id, field,
+                op_type, payload, base_version, created_at, server_seq
+         FROM changes",
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let provenance = sqlx::query_as(
+        "SELECT change_id, source_server_seq, source_pending_rank
+         FROM shared_history_provenance",
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok((changes, provenance))
+}
+
 async fn validate_history(
     conn: &mut SqliteConnection,
     candidate: &str,
@@ -210,7 +232,7 @@ async fn validate_history(
         without_rank(&expected) == without_rank(&frozen),
         "error seed-captured-history-map-mismatch"
     );
-    let tables = crate::data_safety::scan_export_tables(conn).await?;
+    let (changes, provenance) = load_history_tables(conn).await?;
     let stored_provenance: String = sqlx::query_scalar(
         "SELECT source_provenance FROM local_shared_capture_journal WHERE candidate_id = ?",
     )
@@ -223,8 +245,7 @@ async fn validate_history(
         .iter()
         .filter_map(|v| v["change_id"].as_str())
         .collect::<std::collections::HashSet<_>>();
-    let mut current_provenance = tables
-        .shared_history_provenance
+    let mut current_provenance = provenance
         .iter()
         .filter(|p| captured_ids.contains(p.change_id.as_str()))
         .cloned()
@@ -234,7 +255,7 @@ async fn validate_history(
         current_provenance == expected_provenance,
         "error seed-source-provenance-changed"
     );
-    let current: Vec<serde_json::Value> = serde_json::from_str(&history_bytes(&tables.changes)?)?;
+    let current: Vec<serde_json::Value> = serde_json::from_str(&history_bytes(&changes)?)?;
     let current = current
         .into_iter()
         .map(|v| (v["change_id"].as_str().unwrap_or_default().to_string(), v))
