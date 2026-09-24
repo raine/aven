@@ -138,6 +138,13 @@ async fn observe(conn: &mut SqliteConnection, time: i64) -> Result<i64> {
         .bind(high).execute(&mut *conn).await?;
     Ok(high)
 }
+/// Serialized outcome of cancelling a registered invitation. `Admitted` is a
+/// hint only; callers resolve admission from the verified membership chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum CancelStatus {
+    Admitted,
+    Cancelled,
+}
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManagementPreparation {
@@ -382,6 +389,51 @@ impl Database {
             admission,
         })
     }
+    /// Terminally fences a registered, unadmitted invitation of the caller so
+    /// no new admission can commit. Serialized with admission; idempotent.
+    /// Unknown handles allocate nothing.
+    pub async fn cancel_membership_invitation(
+        &self,
+        auth: &Authentication<'_>,
+        handle: Hash,
+    ) -> Result<CancelStatus> {
+        self.cancel_membership_invitation_at(auth, handle, now()?)
+            .await
+    }
+    pub(super) async fn cancel_membership_invitation_at(
+        &self,
+        auth: &Authentication<'_>,
+        handle: Hash,
+        time: i64,
+    ) -> Result<CancelStatus> {
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        let c = current(&mut tx).await?;
+        c.membership.authenticate(auth, false)?;
+        let (declaration, inviter, admitted): (Vec<u8>, Vec<u8>, bool) = sqlx::query_as("SELECT declaration,inviter,admitted_sequence IS NOT NULL FROM server_membership_invitations WHERE handle=?")
+            .bind(handle.as_slice())
+            .fetch_optional(&mut *tx)
+            .await?
+            .context("error enrollment-unavailable")?;
+        // The immutable stored row binds the exact declaration and its inviter.
+        ensure!(
+            inviter == auth.device
+                && Declaration::from_record(&c.membership, &declaration)?.handle == handle,
+            "error enrollment-unauthorized"
+        );
+        let status = if admitted {
+            CancelStatus::Admitted
+        } else {
+            observe(&mut tx, time).await?;
+            sqlx::query("UPDATE server_membership_invitations SET expired=1 WHERE handle=?")
+                .bind(handle.as_slice())
+                .execute(&mut *tx)
+                .await?;
+            CancelStatus::Cancelled
+        };
+        tx.commit().await?;
+        Ok(status)
+    }
     pub async fn admit_membership_device(
         &self,
         auth: &Authentication<'_>,
@@ -403,7 +455,8 @@ impl Database {
         let mut tx = begin_immediate(&mut conn).await?;
         let c = current(&mut tx).await?;
         c.membership.authenticate(auth, false)?;
-        let (declaration, request, saved): (Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>) = sqlx::query_as("SELECT i.declaration,i.request,a.record FROM server_membership_invitations i LEFT JOIN server_membership_transitions a ON a.handle=i.handle WHERE i.handle=?")
+        type Row = (Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>, bool);
+        let (declaration, request, saved, fenced): Row = sqlx::query_as("SELECT i.declaration,i.request,a.record,i.expired FROM server_membership_invitations i LEFT JOIN server_membership_transitions a ON a.handle=i.handle WHERE i.handle=?")
             .bind(handle.as_slice()).fetch_optional(&mut *tx).await?.context("error enrollment-unavailable")?;
         if let Some(saved) = saved {
             ensure!(saved == record, "error enrollment-conflict");
@@ -415,7 +468,8 @@ impl Database {
                 "error enrollment-unauthorized"
             );
             let high = observe(&mut tx, time).await?;
-            if high as u64 >= d.expiry() {
+            // Cancelled and clock-expired rows stay terminal for new admission.
+            if fenced || high as u64 >= d.expiry() {
                 tx.commit().await?;
                 anyhow::bail!("error enrollment-expired");
             }

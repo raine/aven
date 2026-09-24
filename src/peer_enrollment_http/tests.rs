@@ -1003,13 +1003,14 @@ async fn management_loopback_authenticates_removed_seed_before_stale_hint() {
 
 mod rotation;
 
-/// Leaves time to register and request before the server's strict expiry.
+/// Leaves time to register, request and prepare a grant before the server's
+/// strict real-clock expiry, even under a parallel test load.
 fn soon() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs()
-        + 6
+        + 20
 }
 
 async fn past(expiry: u64) {
@@ -1113,5 +1114,218 @@ async fn expired_unsent_invitation_retires_but_sent_candidate_stays_blocked() {
         store.outbound_invitation(&db).await.unwrap(),
         Some(EnrollmentReadiness::UnresolvedDisclosure)
     );
+    task.abort();
+}
+
+/// Prepares and marks sent one grant for `joiner`'s request without delivering it.
+async fn sent_candidate(
+    client: &Client,
+    store: &ProtectedLocalKeyStore,
+    db: &Database,
+    origin: &str,
+) -> ([u8; 32], Vec<u8>) {
+    let inputs = store.active_inputs(db, origin).await.unwrap();
+    let journal = store
+        .prepare_invitation(db, &inputs, None, None)
+        .await
+        .unwrap();
+    let Reply::Mailbox(mail) = client
+        .exchange(
+            Operation::Mailbox {
+                vault: inputs.membership.genesis().context().vault_id,
+                handle: journal.handle,
+            },
+            None,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("mailbox reply")
+    };
+    let record = store
+        .prepare_admission(db, &inputs, &journal, mail.request.as_ref().unwrap())
+        .await
+        .unwrap();
+    (journal.handle, record)
+}
+
+async fn generations(store: &ProtectedLocalKeyStore, db: &Database, origin: &str) -> usize {
+    store
+        .active_inputs(db, origin)
+        .await
+        .unwrap()
+        .membership
+        .generations()
+        .len()
+}
+
+#[tokio::test]
+async fn expired_sent_invitation_withdraws_by_rotation_unless_admission_won() {
+    let root = tempfile::tempdir().unwrap();
+    let (db, store, server, origin, task) = adopted(root.path()).await;
+    let client = Client::new(&origin).unwrap();
+    let peer = |name: &str| {
+        let root = root.path().to_path_buf();
+        let name = name.to_string();
+        async move {
+            let db = Database::open(&root.join(format!("{name}.sqlite")))
+                .await
+                .unwrap();
+            let keys = isolated_store(db.path(), &root.join(format!("{name}-keys")));
+            (db, keys)
+        }
+    };
+    // An installed survivor must receive the replacement generation.
+    let (survivor_db, survivor_keys) = peer("survivor").await;
+    let invitation = client.invite(&store, &db, expiry()).await.unwrap();
+    client
+        .request(&survivor_keys, &survivor_db, Some(invitation))
+        .await
+        .unwrap();
+    assert!(client.admit(&store, &db).await.unwrap());
+    assert!(client.complete(&survivor_keys, &survivor_db).await.unwrap());
+    client.install(&survivor_keys, &survivor_db).await.unwrap();
+    let initial = generations(&store, &db, &origin).await;
+
+    // A grant marked sent but never admitted.
+    let expires = soon();
+    let invitation = client.invite(&store, &db, expires).await.unwrap();
+    let (joiner_db, joiner_keys) = peer("joiner").await;
+    client
+        .request(&joiner_keys, &joiner_db, Some(invitation))
+        .await
+        .unwrap();
+    let (handle, record) = sent_candidate(&client, &store, &db, &origin).await;
+    past(expires).await;
+
+    // Faults before the final phase: the fence is written, the server commits
+    // the cancellation but the reply is lost, and the freeze and rotation
+    // commit before the process stops.
+    {
+        let inputs = store.active_inputs(&db, &origin).await.unwrap();
+        let journal = store
+            .prepare_invitation(&db, &inputs, None, Some(handle))
+            .await
+            .unwrap();
+        store
+            .mark_withdrawing(&db, &inputs, &journal)
+            .await
+            .unwrap();
+        let error = store
+            .prepare_admission(&db, &inputs, &journal, b"any")
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "error enrollment-invitation-withdrawing");
+        assert_eq!(
+            server
+                .cancel_membership_invitation(
+                    &Context::active(&inputs).auth(inputs.bearer()),
+                    handle
+                )
+                .await
+                .unwrap(),
+            aven_core::sync::seed_claim::membership::CancelStatus::Cancelled
+        );
+        store
+            .management_intent(&db, &inputs, None, Some(handle))
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    client
+        .manage(&store, &db, None, Some(handle))
+        .await
+        .unwrap();
+    assert_eq!(generations(&store, &db, &origin).await, initial + 1);
+    assert_eq!(
+        store.outbound_invitation(&db).await.unwrap(),
+        Some(EnrollmentReadiness::UnresolvedDisclosure)
+    );
+
+    // Recovery reuses the committed rotation as proof instead of rotating again.
+    for _ in 0..2 {
+        client.finish_pending_management(&store, &db).await.unwrap();
+        assert_eq!(generations(&store, &db, &origin).await, initial + 1);
+        assert_eq!(store.outbound_invitation(&db).await.unwrap(), None);
+    }
+    drop(store.tail_inputs(&db, &origin).await.unwrap());
+    assert!(!client.complete(&joiner_keys, &joiner_db).await.unwrap());
+    {
+        let inputs = store.active_inputs(&db, &origin).await.unwrap();
+        assert!(
+            server
+                .admit_membership_device(
+                    &Context::active(&inputs).auth(inputs.bearer()),
+                    handle,
+                    &record
+                )
+                .await
+                .is_err()
+        );
+    }
+    client.refresh(&survivor_keys, &survivor_db).await.unwrap();
+    assert_eq!(
+        generations(&survivor_keys, &survivor_db, &origin).await,
+        initial + 1
+    );
+    drop(
+        survivor_keys
+            .tail_inputs(&survivor_db, &origin)
+            .await
+            .unwrap(),
+    );
+
+    // The automatic path fences, cancels over HTTP, freezes and rotates.
+    let expires = soon();
+    let invitation = client.invite(&store, &db, expires).await.unwrap();
+    let (other_db, other_keys) = peer("other").await;
+    client
+        .request(&other_keys, &other_db, Some(invitation))
+        .await
+        .unwrap();
+    let (handle, record) = sent_candidate(&client, &store, &db, &origin).await;
+    past(expires).await;
+    client.finish_pending_management(&store, &db).await.unwrap();
+    assert_eq!(generations(&store, &db, &origin).await, initial + 2);
+    assert_eq!(store.outbound_invitation(&db).await.unwrap(), None);
+    {
+        let inputs = store.active_inputs(&db, &origin).await.unwrap();
+        let error = server
+            .admit_membership_device(
+                &Context::active(&inputs).auth(inputs.bearer()),
+                handle,
+                &record,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "error enrollment-expired");
+    }
+    assert!(!client.complete(&other_keys, &other_db).await.unwrap());
+
+    // Admission that won before withdrawal resolves ready without rotating.
+    let expires = soon();
+    let invitation = client.invite(&store, &db, expires).await.unwrap();
+    let (late_db, late_keys) = peer("late").await;
+    client
+        .request(&late_keys, &late_db, Some(invitation))
+        .await
+        .unwrap();
+    let (handle, record) = sent_candidate(&client, &store, &db, &origin).await;
+    {
+        let inputs = store.active_inputs(&db, &origin).await.unwrap();
+        server
+            .admit_membership_device(
+                &Context::active(&inputs).auth(inputs.bearer()),
+                handle,
+                &record,
+            )
+            .await
+            .unwrap();
+    }
+    past(expires).await;
+    client.finish_pending_management(&store, &db).await.unwrap();
+    assert_eq!(generations(&store, &db, &origin).await, initial + 2);
+    assert_eq!(store.outbound_invitation(&db).await.unwrap(), None);
+    assert!(client.complete(&late_keys, &late_db).await.unwrap());
     task.abort();
 }

@@ -231,8 +231,9 @@ pub(super) const INVITE_HELP: &str = r#"The invitation is printed to standard ou
 synced data and manage devices. Keep this command running until the other
 device joins; it stops when the invitation expires after ten minutes. Sync on
 this device pauses until the invitation is used. An unused invitation stops
-pausing sync once it expires, unless keys were already sent to the other device;
-then sync resumes only after that device joins."#;
+pausing sync once it expires. If keys were already sent to the other device, the
+next sync after expiry rotates keys first; the other device can still read
+anything it received before."#;
 
 pub(super) const JOIN_HELP: &str = r#"Paste the invitation printed by `aven sync invite`, or pipe it to standard
 input, while the inviting device waits. The database must be empty. Joining

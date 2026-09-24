@@ -497,6 +497,14 @@ impl ProtectedLocalKeyStore {
             .await?
             .is_some())
     }
+    /// Retired before disclosure, or withdrawn after a proven rotation.
+    async fn closed(&self, db: &Database, journal: &Outbound) -> Result<bool> {
+        Ok(self.retired(db, journal).await?
+            || self
+                .phase(db, &journal.name("withdrawn"), 128)
+                .await?
+                .is_some())
+    }
     async fn may_have_sent(&self, db: &Database, journal: &Outbound) -> Result<bool> {
         for attempt in 0..membership::MAX_CANDIDATES {
             if self
@@ -512,7 +520,7 @@ impl ProtectedLocalKeyStore {
     async fn outbound_readiness(&self, db: &Database) -> Result<Option<EnrollmentReadiness>> {
         for journal in self.journals(db).await? {
             if self.phase(db, &journal.name("ready"), 128).await?.is_some()
-                || self.retired(db, &journal).await?
+                || self.closed(db, &journal).await?
             {
                 continue;
             }
@@ -549,7 +557,7 @@ impl ProtectedLocalKeyStore {
         }
         for journal in &journals {
             if self.phase(db, &journal.name("ready"), 128).await?.is_none()
-                && !self.retired(db, journal).await?
+                && !self.closed(db, journal).await?
             {
                 // Exact registration retry retains the immutable invitation.
                 ensure!(
@@ -618,6 +626,14 @@ impl ProtectedLocalKeyStore {
         ensure!(
             !self.retired(db, journal).await?,
             "error enrollment-invitation-retired"
+        );
+        // Withdrawal never sends another candidate or resends an old one.
+        ensure!(
+            self.phase(db, &journal.name("withdrawing"), 128)
+                .await?
+                .is_none()
+                && !self.closed(db, journal).await?,
+            "error enrollment-invitation-withdrawing"
         );
         // Binding precedes even tentative grant preparation, and never rebinds.
         self.save_phase(db, &inputs.id, &journal.name("bound"), 2048, request)
@@ -699,6 +715,138 @@ impl ProtectedLocalKeyStore {
         )
         .await?;
         Ok(record)
+    }
+    /// The unresolved journal whose grant may have been sent, once its
+    /// declared expiry has passed. Expiry only starts withdrawal work.
+    pub(crate) async fn expired_disclosure(
+        &self,
+        db: &Database,
+        inputs: &ActiveInputs,
+    ) -> Result<Option<Outbound>> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        for journal in self.journals(db).await? {
+            if self.phase(db, &journal.name("ready"), 128).await?.is_none()
+                && !self.closed(db, &journal).await?
+                && self.may_have_sent(db, &journal).await?
+                && now
+                    >= Declaration::from_record(&inputs.membership, &journal.declaration)?.expiry()
+            {
+                return Ok(Some(journal));
+            }
+        }
+        Ok(None)
+    }
+    /// Fences local candidate creation and resends before remote cancellation.
+    pub(crate) async fn mark_withdrawing(
+        &self,
+        db: &Database,
+        inputs: &ActiveInputs,
+        journal: &Outbound,
+    ) -> Result<()> {
+        self.save_phase(
+            db,
+            &inputs.id,
+            &journal.name("withdrawing"),
+            128,
+            &journal.handle,
+        )
+        .await
+    }
+    /// Resolves a possibly disclosed journal from verified membership only.
+    /// A candidate at its signed slot is an admission and finishes `ready`.
+    /// `withdrawn` requires every stored candidate to have lost its slot, no
+    /// candidate recipient ever becoming a member, and a later non-pending
+    /// generation absent from every candidate predecessor.
+    pub(crate) async fn reconcile_disclosure(
+        &self,
+        db: &Database,
+        inputs: &ActiveInputs,
+        journal: &Outbound,
+    ) -> Result<Disclosure> {
+        let bound = self
+            .phase(db, &journal.name("bound"), 2048)
+            .await?
+            .context("error enrollment-binding-missing")?;
+        let mut candidates = Vec::new();
+        for attempt in 0..membership::MAX_CANDIDATES {
+            let Some(bytes) = self
+                .phase(
+                    db,
+                    &journal.name(&format!("candidate-{attempt}")),
+                    CANDIDATE_LIMIT,
+                )
+                .await?
+            else {
+                break;
+            };
+            let saved: Candidate = serde_json::from_slice(&bytes)
+                .map_err(|_| anyhow::anyhow!("error enrollment-protected-framing"))?;
+            let before = self.load_evidence(&saved.predecessor)?.verify()?;
+            ensure!(
+                inputs.membership.extends(&before),
+                "error enrollment-candidate-fork"
+            );
+            let after = before.append(&journal.declaration, &bound, &saved.record)?;
+            match inputs.membership.head_at(after.sequence()) {
+                Some(head) if head == after.head() => {
+                    self.finish_inviter(db, inputs, journal, &saved.record)
+                        .await?;
+                    return Ok(Disclosure::Admitted);
+                }
+                Some(_) => {}
+                None => return Ok(Disclosure::Unresolved),
+            }
+            let recipient = after
+                .devices()
+                .find(|device| !before.has_device(*device))
+                .context("error enrollment-candidate-recipient")?;
+            candidates.push((before, after.sequence(), recipient));
+        }
+        let disclosed = candidates
+            .iter()
+            .flat_map(|(before, _, _)| before.generations().iter().map(|g| g.id))
+            .collect::<std::collections::HashSet<_>>();
+        let last_slot = candidates.iter().map(|(_, slot, _)| *slot).max();
+        let mut state = candidates
+            .iter()
+            .map(|(before, _, _)| before)
+            .min_by_key(|before| before.sequence())
+            .context("error enrollment-candidate-missing")?
+            .clone();
+        let mut qualifying = None;
+        for t in inputs
+            .evidence
+            .transitions
+            .iter()
+            .skip(state.sequence() as usize - 1)
+        {
+            state = state.append(&t.declaration, &t.request, &t.record)?;
+            ensure!(
+                candidates
+                    .iter()
+                    .all(|(_, _, recipient)| !state.has_device(*recipient)),
+                "error withdrawal-recipient-member"
+            );
+            if qualifying.is_none()
+                && Some(state.sequence()) > last_slot
+                && !state.rotation_pending()
+                && !disclosed.contains(&state.current_generation().id)
+            {
+                qualifying = Some(state.head());
+            }
+        }
+        ensure!(
+            state.head() == inputs.membership.head(),
+            "error enrollment-checkpoint-mismatch"
+        );
+        let Some(head) = qualifying else {
+            return Ok(Disclosure::Unresolved);
+        };
+        self.save_phase(db, &inputs.id, &journal.name("withdrawn"), 128, &head)
+            .await?;
+        Ok(Disclosure::Withdrawn)
     }
     pub(crate) async fn finish_inviter(
         &self,
@@ -1101,6 +1249,12 @@ impl Outbound {
     fn name(&self, phase: &str) -> String {
         format!("invite-{}-{phase}", hex::encode(self.handle))
     }
+}
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Disclosure {
+    Admitted,
+    Withdrawn,
+    Unresolved,
 }
 pub(crate) struct TailInputs {
     pub authority: aven_core::sync::encrypted_tail::Authority,

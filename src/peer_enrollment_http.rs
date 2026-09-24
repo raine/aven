@@ -87,6 +87,10 @@ enum Operation {
         context: Context,
         record: Vec<u8>,
     },
+    Cancel {
+        context: Context,
+        handle: [u8; 32],
+    },
     Published {
         context: Context,
         descriptor: [u8; 32],
@@ -104,6 +108,7 @@ enum Reply {
     Membership(Evidence),
     PreparedManagement(membership::ManagementPreparation),
     Managed(Vec<u8>),
+    Cancelled(membership::CancelStatus),
     Published(Vec<u8>),
 }
 struct Server {
@@ -215,6 +220,17 @@ async fn dispatch(db: &Database, request: Request) -> Result<Reply> {
                         .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?,
                 ),
                 &record,
+            )
+            .await?,
+        ),
+        Operation::Cancel { context, handle } => Reply::Cancelled(
+            db.cancel_membership_invitation(
+                &context.auth(
+                    credential
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?,
+                ),
+                handle,
             )
             .await?,
         ),

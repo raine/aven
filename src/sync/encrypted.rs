@@ -319,7 +319,7 @@ pub(crate) async fn sync(database: &Database, config: &AppConfig, args: &SyncArg
                 "error sync-invitation-pending hint=\"sync resumes when the invited device joins or the unused invitation expires\"",
             ),
             "error withdrawal-required-unsupported" => error.context(
-                "error sync-invitation-disclosed hint=\"keys may have been sent to the invited device; sync resumes only after it joins\"",
+                "error sync-invitation-disclosed hint=\"keys may have been sent to the invited device; sync resumes after it joins, or after the invitation expires and keys rotate\"",
             ),
             _ => error,
         })?;
@@ -483,8 +483,9 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
             "State: paused until the invited device joins or the unused invitation expires."
         ),
         "invitation-disclosed" => println!(
-            "State: paused until the invited device joins. Keys may have been sent to it, \
-             and expiry does not withdraw them."
+            "State: paused until the invited device joins. Keys may have been sent to it. \
+             After the invitation expires, `aven sync` ends it by rotating keys; data the \
+             device may already hold stays readable to it."
         ),
         _ => println!("State: ready"),
     }

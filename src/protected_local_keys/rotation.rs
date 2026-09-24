@@ -16,6 +16,10 @@ const MATERIAL_BYTES: usize = 256;
 pub(crate) struct Intent {
     index: usize,
     target: Option<Hash>,
+    /// Outbound invitation handle whose possibly sent grant this freeze and
+    /// rotation withdraw. Removal intents carry `target` instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    withdraw: Option<Hash>,
     original: EvidenceRef,
 }
 impl Intent {
@@ -24,6 +28,14 @@ impl Intent {
     }
     pub fn target(&self) -> Option<Hash> {
         self.target
+    }
+    /// Removal revokes its target; withdrawal freezes without one.
+    fn revoke_targets(&self) -> Result<Vec<Hash>> {
+        match (self.target, self.withdraw) {
+            (Some(target), None) => Ok(vec![target]),
+            (None, Some(_)) => Ok(vec![]),
+            _ => anyhow::bail!("error management-target"),
+        }
     }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,10 +63,13 @@ impl ProtectedLocalKeyStore {
             inputs.membership.extends(&original),
             "error management-fork"
         );
-        if let Some(target) = intent.target {
-            ensure!(original.has_device(target), "error management-target");
-        } else {
-            ensure!(original.rotation_pending(), "error management-intent");
+        match (intent.target, intent.withdraw) {
+            (Some(target), None) => {
+                ensure!(original.has_device(target), "error management-target")
+            }
+            (None, None) => ensure!(original.rotation_pending(), "error management-intent"),
+            (None, Some(_)) => {}
+            (Some(_), Some(_)) => anyhow::bail!("error management-intent"),
         }
         let mut removed_generation = intent
             .target
@@ -81,7 +96,9 @@ impl ProtectedLocalKeyStore {
             }
             before = next;
         }
-        Ok(Some(if removed_generation.is_none() {
+        // Withdrawal freezes unless membership is already pending.
+        let freeze = intent.withdraw.is_some() && !inputs.membership.rotation_pending();
+        Ok(Some(if removed_generation.is_none() || freeze {
             Action::Revoke
         } else {
             Action::Rotate
@@ -153,10 +170,10 @@ impl ProtectedLocalKeyStore {
                 let after = before.append(&[], &[], record)?;
                 if plan.action == Action::Revoke {
                     ensure!(
-                        inputs.authority().prepare_revoke(
-                            &before,
-                            &[intent.target.context("error management-target")?]
-                        )? == record.as_slice(),
+                        inputs
+                            .authority()
+                            .prepare_revoke(&before, &intent.revoke_targets()?)?
+                            == record.as_slice(),
                         "error management-target-mismatch"
                     );
                 }
@@ -193,11 +210,14 @@ impl ProtectedLocalKeyStore {
         }
         Ok(plans)
     }
+    /// `target` requests removal, `withdraw` an invitation withdrawal, and
+    /// neither resumes unfinished work or finishes a pending rotation.
     pub(crate) async fn management_intent(
         &self,
         db: &Database,
         inputs: &ActiveInputs,
         target: Option<Hash>,
+        withdraw: Option<Hash>,
     ) -> Result<Option<Intent>> {
         let mut next = 0;
         let mut gap = false;
@@ -237,7 +257,9 @@ impl ProtectedLocalKeyStore {
                     )
                     .await?;
                 }
-                if target.is_some() && target == intent.target {
+                if (target.is_some() && target == intent.target)
+                    || (withdraw.is_some() && withdraw == intent.withdraw)
+                {
                     completed_target = true;
                 }
             } else {
@@ -249,12 +271,13 @@ impl ProtectedLocalKeyStore {
         }
         if let Some(intent) = unfinished {
             ensure!(
-                target.is_none() || target == intent.target,
+                (target.is_none() && withdraw.is_none())
+                    || (target == intent.target && withdraw == intent.withdraw),
                 "error management-unfinished"
             );
             return Ok(Some(intent));
         }
-        if target.is_none() && !inputs.membership.rotation_pending() {
+        if target.is_none() && withdraw.is_none() && !inputs.membership.rotation_pending() {
             return Ok(None);
         }
         ensure!(next < MAX_TRANSITIONS, "error management-limit");
@@ -266,6 +289,7 @@ impl ProtectedLocalKeyStore {
         let intent = Intent {
             index: next,
             target,
+            withdraw,
             original: self.save_evidence(&inputs.evidence)?,
         };
         self.save_management_phase(
@@ -339,10 +363,9 @@ impl ProtectedLocalKeyStore {
             saved
         } else {
             let record = match action {
-                Action::Revoke => inputs.authority().prepare_revoke(
-                    &inputs.membership,
-                    &[intent.target.context("error management-target")?],
-                )?,
+                Action::Revoke => inputs
+                    .authority()
+                    .prepare_revoke(&inputs.membership, &intent.revoke_targets()?)?,
                 Action::Rotate => {
                     ensure!(plan.cutoff == high, "error management-cutoff");
                     let name = intent.name(&format!("material-{index}"));

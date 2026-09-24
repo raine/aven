@@ -13,7 +13,7 @@ mod rotation;
 pub use keys::VerifiedKeys;
 pub use rotation::{Generation, RotationMaterial};
 pub(crate) mod persistence;
-pub use persistence::{MAX_CANDIDATES, MAX_INVITATIONS, ManagementPreparation};
+pub use persistence::{CancelStatus, MAX_CANDIDATES, MAX_INVITATIONS, ManagementPreparation};
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]
@@ -113,6 +113,9 @@ impl Membership {
     }
     pub fn has_device(&self, device: Hash) -> bool {
         self.members.iter().any(|member| member.device == device)
+    }
+    pub fn devices(&self) -> impl Iterator<Item = Hash> + '_ {
+        self.members.iter().map(|member| member.device)
     }
     pub fn device_count(&self) -> usize {
         self.members.len()

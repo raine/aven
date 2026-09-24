@@ -666,8 +666,16 @@ pauses ordinary rounds, and rerunning invite resumes it. `active_inputs`, under
 the store lock that also covers admission preparation and dispatch, retires an
 expired invitation with no `sent-*` marker through a protected `retired` phase;
 admission refuses retired handles and invite then creates a new invitation.
-Once a grant may have been sent, expiry never retires it: withdrawal needs the
-Revoke/Rotate path, which is not wired for unadmitted recipients. `invitation.rs` encodes device
+Once a grant may have been sent, expiry never retires it. After expiry,
+`finish_pending_management` reconciles the journal from verified membership:
+a candidate at its signed slot finishes `ready`. Otherwise it writes
+`withdrawing` (no further candidate or resend), sends the authenticated server
+`Cancel`, which fences new admission of that registered handle, and runs a
+withdraw-bound management intent: a targetless Revoke freeze, then the existing
+Rotate. `withdrawn` requires every stored candidate to have lost its slot, no
+candidate recipient ever becoming a member, and a later non-pending generation
+absent from every candidate predecessor; an existing qualifying rotation is
+reused. Historical keys the grant carried stay disclosed. `invitation.rs` encodes device
 invitations as the pairing spec's `aven://pair/v2/` URI and setup invitations
 in the provisional `aven-sync-setup-1:` form, both carrying the validated
 server origin.

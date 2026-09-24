@@ -530,3 +530,85 @@ async fn occupied_invalid_request_and_signed_history_corruption_fail_closed() {
 }
 
 mod rotation;
+#[tokio::test]
+async fn cancellation_serializes_with_admission_and_only_the_inviter_may_cancel() {
+    let f = Fixture::new().await;
+    let m = initial(&f);
+    let seed = f.seed.genesis().device_id();
+    let a = auth(&f, m.head(), seed, f.seed.bearer());
+    let (d, peer, raw) = prepare(Device::seed(&f.seed), &m, &f, 3700);
+    register(&f, &a, &d, &peer).await;
+    let error =
+        f.db.cancel_membership_invitation_at(&a, [7; 32], 101)
+            .await
+            .unwrap_err();
+    assert_eq!(error.to_string(), "error enrollment-unavailable");
+
+    // Admission first: cancellation reports it and changes nothing.
+    f.db.admit_membership_device_at(&a, d.handle(), &raw, 101)
+        .await
+        .unwrap();
+    let second =
+        f.db.membership_evidence(&a)
+            .await
+            .unwrap()
+            .verify()
+            .unwrap();
+    let a2 = auth(&f, second.head(), seed, f.seed.bearer());
+    assert_eq!(
+        f.db.cancel_membership_invitation_at(&a2, d.handle(), 102)
+            .await
+            .unwrap(),
+        CancelStatus::Admitted
+    );
+    assert_eq!(
+        f.db.admit_membership_device_at(&a2, d.handle(), &raw, 103)
+            .await
+            .unwrap(),
+        raw
+    );
+
+    // Cancellation first: only the current inviter may fence, admission is
+    // refused before expiry, retries repeat, and registration cannot reopen.
+    let (d2, joiner, raw2) = prepare(Device::seed(&f.seed), &second, &f, 3700);
+    register(&f, &a2, &d2, &joiner).await;
+    let peer_auth = auth(&f, second.head(), peer.device(), peer.bearer());
+    let error =
+        f.db.cancel_membership_invitation_at(&peer_auth, d2.handle(), 104)
+            .await
+            .unwrap_err();
+    assert_eq!(error.to_string(), "error enrollment-unauthorized");
+    assert!(
+        f.db.cancel_membership_invitation_at(&a, d2.handle(), 104)
+            .await
+            .is_err()
+    );
+    for time in [104, 105] {
+        assert_eq!(
+            f.db.cancel_membership_invitation_at(&a2, d2.handle(), time)
+                .await
+                .unwrap(),
+            CancelStatus::Cancelled
+        );
+    }
+    let error =
+        f.db.admit_membership_device_at(&a2, d2.handle(), &raw2, 106)
+            .await
+            .unwrap_err();
+    assert_eq!(error.to_string(), "error enrollment-expired");
+    assert_eq!(
+        f.db.register_membership_invitation_at(&a2, d2.record(), 107)
+            .await
+            .unwrap(),
+        RegistrationStatus::Expired
+    );
+    assert_eq!(
+        f.db.membership_evidence(&a2)
+            .await
+            .unwrap()
+            .verify()
+            .unwrap()
+            .head(),
+        second.head()
+    );
+}

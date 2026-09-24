@@ -1,6 +1,11 @@
-//! Removal and one bounded automatic finish, using the protected candidate owner.
+//! Removal, withdrawal of an expired possibly disclosed invitation, and one
+//! bounded automatic finish, using the protected candidate owner.
 use super::*;
-use crate::protected_local_keys::{peer::ActiveInputs, rotation::Action};
+use crate::protected_local_keys::{
+    peer::{ActiveInputs, Disclosure},
+    rotation::Action,
+};
+use aven_core::sync::seed_claim::membership::CancelStatus;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RemovalStatus {
@@ -19,15 +24,15 @@ impl Client {
         db: &Database,
         target: [u8; 32],
     ) -> Result<RemovalStatus> {
-        Box::pin(self.manage(store, db, Some(target))).await
+        Box::pin(self.manage(store, db, Some(target), None)).await
     }
     pub(crate) async fn finish_pending_management(
         &self,
         store: &ProtectedLocalKeyStore,
         db: &Database,
     ) -> Result<()> {
-        Box::pin(self.manage(store, db, None)).await?;
-        Ok(())
+        Box::pin(self.manage(store, db, None, None)).await?;
+        Box::pin(self.withdraw_expired_disclosure(store, db)).await
     }
     async fn management_preparation(
         &self,
@@ -55,15 +60,89 @@ impl Client {
         store.adopt_refresh(db, inputs, prepared.evidence).await?;
         Ok(prepared.high_water)
     }
-    async fn manage(
+    /// Ends an expired invitation whose grant may have been sent. Admission
+    /// and withdrawal are decided only from verified membership: an admitted
+    /// candidate finishes `ready`; otherwise the local fence and server
+    /// cancellation precede a targetless freeze and rotation, and `withdrawn`
+    /// needs the chain proof. Expiry never proves withdrawal by itself.
+    async fn withdraw_expired_disclosure(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+    ) -> Result<()> {
+        let handle = {
+            let mut inputs = store.active_inputs(db, &self.locator).await?;
+            let Some(journal) = store.expired_disclosure(db, &inputs).await? else {
+                return Ok(());
+            };
+            self.refresh_inputs(store, db, &mut inputs).await?;
+            if store.reconcile_disclosure(db, &inputs, &journal).await? != Disclosure::Unresolved {
+                return Ok(());
+            }
+            store.mark_withdrawing(db, &inputs, &journal).await?;
+            let status = self.cancel(store, db, &mut inputs, journal.handle).await?;
+            self.refresh_inputs(store, db, &mut inputs).await?;
+            if store.reconcile_disclosure(db, &inputs, &journal).await? != Disclosure::Unresolved {
+                return Ok(());
+            }
+            ensure!(
+                status == CancelStatus::Cancelled,
+                "error withdrawal-admission-unverified"
+            );
+            store
+                .management_intent(db, &inputs, None, Some(journal.handle))
+                .await?;
+            journal.handle
+        };
+        Box::pin(self.manage(store, db, None, Some(handle))).await?;
+        let mut inputs = store.active_inputs(db, &self.locator).await?;
+        self.refresh_inputs(store, db, &mut inputs).await?;
+        if let Some(journal) = store.expired_disclosure(db, &inputs).await? {
+            store.reconcile_disclosure(db, &inputs, &journal).await?;
+        }
+        Ok(())
+    }
+    async fn cancel(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        inputs: &mut ActiveInputs,
+        handle: [u8; 32],
+    ) -> Result<CancelStatus> {
+        for attempt in 0..2 {
+            match self
+                .exchange(
+                    Operation::Cancel {
+                        context: Context::active(inputs),
+                        handle,
+                    },
+                    Some(inputs.bearer()),
+                )
+                .await
+            {
+                Ok(Reply::Cancelled(status)) => return Ok(status),
+                Err(error) if is_stale(&error) && attempt == 0 => {
+                    self.refresh_inputs(store, db, inputs).await?
+                }
+                Err(error) => return Err(error),
+                _ => anyhow::bail!("error enrollment-response"),
+            }
+        }
+        unreachable!()
+    }
+    pub(super) async fn manage(
         &self,
         store: &ProtectedLocalKeyStore,
         db: &Database,
         target: Option<[u8; 32]>,
+        withdraw: Option<[u8; 32]>,
     ) -> Result<RemovalStatus> {
         let mut inputs = store.active_inputs(db, &self.locator).await?;
         self.refresh_inputs(store, db, &mut inputs).await?;
-        let Some(intent) = store.management_intent(db, &inputs, target).await? else {
+        let Some(intent) = store
+            .management_intent(db, &inputs, target, withdraw)
+            .await?
+        else {
             return Ok(RemovalStatus::Complete);
         };
         let mut stale_retry = false;
@@ -84,7 +163,9 @@ impl Client {
                 .management_dispatch(db, &inputs, &intent, high)
                 .await?
             else {
-                store.management_intent(db, &inputs, target).await?;
+                store
+                    .management_intent(db, &inputs, target, withdraw)
+                    .await?;
                 return Ok(RemovalStatus::Complete);
             };
             if dispatch.action == Action::Rotate {
@@ -122,7 +203,7 @@ impl Client {
                     }
                     self.refresh_inputs(store, db, &mut inputs).await?;
                     if store
-                        .management_intent(db, &inputs, target)
+                        .management_intent(db, &inputs, target, withdraw)
                         .await?
                         .is_none()
                     {
