@@ -321,7 +321,8 @@ The in-app command catalog is the authoritative shortcut reference:
 - `:` searches command names and descriptions. `:sync` opens the **Sync**
   dialog; `:config-status` remains an alias. From a task-list surface, choose
   `:add-device` to invite another device to sync. The **Add device** overlay
-  shows the invitation as a QR code and closes with Escape or an outside click;
+  shows the invitation as a QR code, copies its text when you press `c`, and
+  closes with Escape or an outside click;
   the TUI keeps waiting for the device until it joins or the invitation expires.
   Closing the Sync dialog likewise hides progress without stopping setup,
   joining, or device removal; quitting the TUI interrupts them, and they can

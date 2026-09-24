@@ -86,9 +86,10 @@ aven sync invite
 The command prints an `aven://pair/v2/` invitation and, in an interactive
 terminal, also shows it as a QR code. In the TUI, choose **Add device** in the
 Sync dialog, or `:add-device`, to show the QR code; the TUI keeps waiting for the
-device after you close the overlay. The TUI shows only the QR code. To paste the
-invitation on another computer, run `aven sync invite` on the inviting device,
-which prints the invitation that is already waiting.
+device after you close the overlay. To paste the invitation on another
+computer, press `c` in the overlay to copy it; the TUI never copies it
+otherwise. Treat the copied invitation like a password and clear the clipboard
+after pasting.
 
 On the new device, use an empty database and paste the invitation:
 

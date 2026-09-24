@@ -5,7 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
-- The TUI has a **Sync** dialog for setting up sync, joining existing sync on an empty database, resuming an interrupted setup or join, adding a device, and listing or removing other devices. Open it with `:sync`, `C s`, or a click on the header sync indicator; `S` still syncs immediately, and `:config-status` remains an alias. Work continues after the dialog closes. See [Sync across devices](https://aventasks.dev/sync/).
+- The TUI has a **Sync** dialog for setting up sync, joining existing sync on an empty database, resuming an interrupted setup or join, adding a device (press `c` to copy the invitation for another computer), and listing or removing other devices. Open it with `:sync`, `C s`, or a click on the header sync indicator; `S` still syncs immediately, and `:config-status` remains an alias. Work continues after the dialog closes. See [Sync across devices](https://aventasks.dev/sync/).
 
 - `aven sync device list` shows the devices in sync and marks the current one, and `aven sync device remove` removes another device and rotates keys for future changes. Both support `--json`, and an interrupted removal resumes when rerun. A removed device keeps the tasks and images it already downloaded. See [Sync across devices](https://aventasks.dev/sync/).
 
