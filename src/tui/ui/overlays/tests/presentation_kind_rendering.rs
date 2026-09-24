@@ -69,6 +69,7 @@ fn overlay_kinds_use_shared_dialog_chrome() {
         OverlayView::Sync(Box::new(SyncDialogView {
             state: borrow_value(SyncDialogState::default()),
             status: borrow_value(TuiSyncStatus::default()),
+            activity: borrow_value(Default::default()),
             syncing: false,
         })),
     ];

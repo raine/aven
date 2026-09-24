@@ -21,6 +21,10 @@ impl App {
             ));
             return Ok(());
         }
+        if action.creates_local_data() && self.local_edits_paused_by_join() {
+            self.set_info("joining sync: local changes wait until synced tasks are downloaded");
+            return Ok(());
+        }
         if self.handle_recurring_series_task_action(&action).await? {
             return Ok(());
         }

@@ -1,5 +1,6 @@
 use ratatui::style::Color;
 
+use crate::sync::encrypted::LocalPhase;
 use crate::tui::store::TuiSyncStatus;
 use crate::tui::theme::{FG_DIM, GREEN, ORANGE};
 
@@ -8,6 +9,8 @@ pub(super) enum SyncHealth {
     Attention,
     RuntimeDisabled,
     NotSetUp,
+    /// Setup or joining started here and has not finished.
+    Unfinished,
     Pending(i64),
     Idle,
 }
@@ -31,6 +34,7 @@ impl SyncStatusSummary {
             SyncHealth::Attention => "Sync needs attention",
             SyncHealth::RuntimeDisabled => "Sync disabled",
             SyncHealth::NotSetUp => "Local only",
+            SyncHealth::Unfinished => "Sync is not ready yet",
             SyncHealth::Pending(_) => "Changes waiting",
             SyncHealth::Idle => "No changes waiting",
         }
@@ -38,7 +42,7 @@ impl SyncStatusSummary {
 
     pub(super) fn color(&self) -> Color {
         match self.health {
-            SyncHealth::Attention | SyncHealth::Pending(_) => ORANGE,
+            SyncHealth::Attention | SyncHealth::Unfinished | SyncHealth::Pending(_) => ORANGE,
             SyncHealth::Idle => GREEN,
             SyncHealth::RuntimeDisabled | SyncHealth::NotSetUp => FG_DIM,
         }
@@ -46,7 +50,7 @@ impl SyncStatusSummary {
 
     pub(super) fn badge(&self) -> (Color, String) {
         match self.health {
-            SyncHealth::Attention => (ORANGE, "sync!".to_string()),
+            SyncHealth::Attention | SyncHealth::Unfinished => (ORANGE, "sync!".to_string()),
             SyncHealth::RuntimeDisabled => (FG_DIM, "sync off".to_string()),
             SyncHealth::NotSetUp => (FG_DIM, "local".to_string()),
             SyncHealth::Pending(count) => (ORANGE, format!("sync {count}")),
@@ -67,6 +71,8 @@ pub(super) fn sync_status_summary(status: &TuiSyncStatus) -> SyncStatusSummary {
         SyncHealth::NotSetUp
     } else if !status.runtime_allowed {
         SyncHealth::RuntimeDisabled
+    } else if status.phase != LocalPhase::SetUp {
+        SyncHealth::Unfinished
     } else if status.conflicts > 0 || !issues.is_empty() {
         SyncHealth::Attention
     } else if status.pending_changes > 0 {
@@ -77,7 +83,7 @@ pub(super) fn sync_status_summary(status: &TuiSyncStatus) -> SyncStatusSummary {
     SyncStatusSummary {
         health,
         issues,
-        can_manual_sync: status.set_up && status.runtime_allowed,
+        can_manual_sync: status.phase == LocalPhase::SetUp && status.runtime_allowed,
     }
 }
 
@@ -89,7 +95,18 @@ mod tests {
     fn set_up() -> TuiSyncStatus {
         TuiSyncStatus {
             set_up: true,
+            phase: LocalPhase::SetUp,
             ..TuiSyncStatus::default()
+        }
+    }
+
+    #[test]
+    fn unfinished_setup_or_joining_is_not_reported_as_idle() {
+        for phase in [LocalPhase::SetupIncomplete, LocalPhase::JoinIncomplete] {
+            let summary = sync_status_summary(&TuiSyncStatus { phase, ..set_up() });
+            assert_eq!(summary.health, SyncHealth::Unfinished);
+            assert_eq!(summary.badge(), (ORANGE, "sync!".to_string()));
+            assert!(!summary.can_manual_sync);
         }
     }
 

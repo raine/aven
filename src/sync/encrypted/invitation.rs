@@ -157,6 +157,25 @@ fn decode(prefix: &str, text: &str, secret_len: usize) -> Option<(Zeroizing<Vec<
     (origin == server).then(|| (Zeroizing::new(bytes[..secret_len].to_vec()), origin))
 }
 
+/// Encoded setup and device invitations for `server`, for tests outside
+/// this module.
+#[cfg(test)]
+pub(crate) fn sample_invitations(server: &str) -> (Zeroizing<String>, Zeroizing<String>) {
+    let setup = SetupInvitation {
+        server: server.into(),
+        setup_id: [3; 32],
+        secret: Secret::new([4; 32]),
+    };
+    let mut storage = vec![5; 32];
+    storage.extend([6; 32]);
+    storage.extend([7; 32]);
+    let device = DeviceInvitation {
+        server: server.into(),
+        invitation: Invitation::from_protected_storage(&storage).expect("sample invitation"),
+    };
+    (setup.encode(), device.encode())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

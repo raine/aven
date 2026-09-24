@@ -3,7 +3,7 @@ use aven_core::db::Database;
 use tokio::task::JoinHandle;
 
 use crate::config::AppConfig;
-use crate::sync::encrypted::{self, Outcome};
+use crate::sync::encrypted::{self, LocalPhase, Outcome};
 use crate::tui::app::{App, Notification};
 
 pub(super) struct SyncController {
@@ -47,8 +47,23 @@ impl SyncController {
 impl App {
     pub(super) fn begin_sync(&mut self) {
         if !self.store.sync_status.set_up {
-            self.set_error("sync unavailable: run `aven sync setup` or `aven sync join` first");
+            self.set_error("sync unavailable: set up or join sync from :sync first");
             return;
+        }
+        if self.sync_ops.work_pending() {
+            self.set_info("sync is busy; open :sync to follow its progress");
+            return;
+        }
+        match self.store.sync_status.phase {
+            LocalPhase::SetupIncomplete => {
+                self.set_warning("setup is unfinished; resume it from :sync");
+                return;
+            }
+            LocalPhase::JoinIncomplete => {
+                self.set_warning("joining is unfinished; resume it from :sync");
+                return;
+            }
+            LocalPhase::NotSetUp | LocalPhase::SetUp => {}
         }
         match self
             .sync

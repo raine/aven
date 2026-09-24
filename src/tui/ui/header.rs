@@ -548,6 +548,9 @@ fn header_status(store: &TuiStore) -> Paragraph<'static> {
 }
 
 fn sync_status_label(store: &TuiStore) -> (Color, String) {
+    if store.sync_busy {
+        return (ACCENT, "syncing".to_string());
+    }
     if !store.sync_status.enabled
         && !store.sync_status.runtime_allowed
         && store.database_path().file_name() == Some(std::ffi::OsStr::new("demo.sqlite"))
@@ -606,8 +609,13 @@ mod tests {
         assert_eq!(sync_status_label(&store), (FG_DIM, "local".to_string()));
 
         store.sync_status.set_up = true;
+        store.sync_status.phase = crate::sync::encrypted::LocalPhase::SetUp;
         store.sync_status.conflicts = 2;
         assert_eq!(sync_status_label(&store), (ORANGE, "sync!".to_string()));
+
+        store.sync_busy = true;
+        assert_eq!(sync_status_label(&store), (ACCENT, "syncing".to_string()));
+        store.sync_busy = false;
 
         store.sync_status.conflicts = 0;
         store.sync_status.runtime_allowed = false;
@@ -736,6 +744,7 @@ mod tests {
         store.view_state.query = TaskQuery::Todo;
         store.sync_status.enabled = true;
         store.sync_status.set_up = true;
+        store.sync_status.phase = crate::sync::encrypted::LocalPhase::SetUp;
         let width = 150;
         let backend = TestBackend::new(width, 2);
         let mut terminal = Terminal::new(backend).unwrap();

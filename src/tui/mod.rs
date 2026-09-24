@@ -57,6 +57,8 @@ mod preview_controller;
 mod shortcut_buffer;
 mod store;
 mod sync_controller;
+mod sync_errors;
+mod sync_operations;
 mod task_selection;
 mod terminal_command;
 #[cfg(test)]

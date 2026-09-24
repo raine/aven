@@ -1,17 +1,28 @@
+use std::time::Instant;
+
 use ratatui::Frame;
 use ratatui::layout::{Rect, Size};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
+use unicode_width::UnicodeWidthStr;
 
 use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use super::super::sync_status_model::{SyncHealth, sync_status_summary};
-use crate::sync::encrypted::LocalPhase;
-use crate::tui::overlay::{SyncDialogView, dialog_area, sync_actions};
+
+use crate::sync::encrypted::{LocalPhase, SetupPreview, Stage};
+use crate::tui::overlay::{
+    InvitationKind, SecretText, SyncAction, SyncDialogView, SyncPage, dialog_area, sync_actions,
+};
 use crate::tui::store::TuiSyncStatus;
+use crate::tui::sync_operations::{
+    DrainSummary, OperationKind, OperationResult, RunningOperation, SyncActivity,
+};
 use crate::tui::text::cell_width_ranges;
-use crate::tui::theme::{BG_ALT, FG, FG_DIM, FG_MUTED, ORANGE, RED, SELECTED};
+use crate::tui::theme::{
+    ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, GREEN, INVERSE_FG, ORANGE, RED, SELECTED,
+};
 
 pub(crate) const SYNC_TITLE: &str = "Sync";
 const LABEL_WIDTH: usize = 16;
@@ -27,8 +38,15 @@ pub(crate) enum SyncDialogHit {
 
 struct Body {
     lines: Vec<Line<'static>>,
-    /// Body line of each action, in action order.
-    action_lines: Vec<usize>,
+    /// Body line and cell range of each action, in action order.
+    actions: Vec<ActionArea>,
+}
+
+#[derive(Clone, Copy)]
+struct ActionArea {
+    line: usize,
+    start: u16,
+    end: u16,
 }
 
 struct Layout {
@@ -51,7 +69,7 @@ impl Layout {
         let visible_rows = height.saturating_sub(4) as usize;
         let mut start = clamp_scroll_start(view.state.scroll, body.lines.len(), visible_rows);
         // Keep the focused action visible on short terminals.
-        if let Some(&line) = body.action_lines.get(view.state.selected) {
+        if let Some(&ActionArea { line, .. }) = body.actions.get(view.state.selected) {
             if line < start {
                 start = line;
             } else if visible_rows > 0 && line >= start + visible_rows {
@@ -142,11 +160,12 @@ pub(crate) fn sync_dialog_hit(
         return SyncDialogHit::Inside;
     }
     let line = layout.start + usize::from(row - layout.body_area.y);
+    let column = column - layout.body_area.x;
     layout
         .body
-        .action_lines
+        .actions
         .iter()
-        .position(|&action_line| action_line == line)
+        .position(|area| area.line == line && (area.start..area.end).contains(&column))
         .map_or(SyncDialogHit::Inside, SyncDialogHit::Action)
 }
 
@@ -161,20 +180,89 @@ pub(crate) fn sync_dialog_scroll_cap(view: &SyncDialogView<'_>, terminal: Size) 
 }
 
 fn body(view: &SyncDialogView<'_>, width: usize) -> Body {
+    let mut body = Body {
+        lines: Vec::new(),
+        actions: Vec::new(),
+    };
+    match &view.state.page {
+        SyncPage::Home => home_lines(&mut body, view, width),
+        SyncPage::Invitation { kind, input, error } => {
+            invitation_lines(&mut body, view.status, *kind, input, *error, width)
+        }
+        SyncPage::ConfirmSetup {
+            server, preview, ..
+        } => confirm_setup_lines(&mut body, server, preview, width),
+        SyncPage::ConfirmJoin { server, .. } => confirm_join_lines(&mut body, server, width),
+    }
+    let actions = sync_actions(view.state, view.status, view.activity);
+    if view.state.page.has_buttons() {
+        body.lines.push(Line::from(""));
+        push_buttons(&mut body, &actions, view.state.selected, width);
+    } else if !actions.is_empty() {
+        body.lines.push(Line::from(""));
+        for (index, action) in actions.iter().enumerate() {
+            body.actions.push(ActionArea {
+                line: body.lines.len(),
+                start: 0,
+                end: width as u16,
+            });
+            body.lines
+                .push(action_line(action.label(), index == view.state.selected));
+        }
+    }
+    if view.state.page == SyncPage::Home && view.state.details {
+        body.lines.push(Line::from(""));
+        body.lines.push(super::shared::section_line("details"));
+        body.lines.extend(detail_lines(view.status, width));
+        if let Some(OperationResult::Failed(failure)) = &view.activity.last {
+            body.lines.extend(wrapped_row(
+                "last error",
+                &failure.details,
+                Style::new().fg(FG_MUTED),
+                width,
+            ));
+        }
+    }
+    body
+}
+
+fn home_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
     let status = view.status;
+    let lines = &mut body.lines;
+    if status.phase == LocalPhase::NotSetUp && view.activity.running.is_none() {
+        lines.push(Line::from(Span::styled(
+            "Local only",
+            Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+        )));
+        lines.extend(paragraph(
+            "Keep your tasks in sync across devices. Set up sync from this computer's \
+             tasks, or join sync that another device already uses.",
+            Style::new().fg(FG_MUTED),
+            width,
+        ));
+        push_last_result(lines, view.activity, width);
+        return;
+    }
     let summary = sync_status_summary(status);
     let color = summary.color();
-    let mut lines = vec![Line::from(vec![
+    lines.push(Line::from(vec![
         Span::styled("● ", Style::new().fg(color)),
         Span::styled(
             summary.headline(),
             Style::new().fg(color).add_modifier(Modifier::BOLD),
         ),
-    ])];
+    ]));
     lines.push(Line::from(Span::styled(
         state_line(status, summary.health, view.syncing),
         Style::new().fg(FG_MUTED),
     )));
+
+    if let Some(running) = &view.activity.running {
+        lines.push(Line::from(""));
+        progress_lines(lines, running, width);
+        return;
+    }
+    push_last_result(lines, view.activity, width);
 
     lines.push(Line::from(""));
     lines.extend(wrapped_row(
@@ -195,7 +283,6 @@ fn body(view: &SyncDialogView<'_>, width: usize) -> Body {
         attention_style(status.conflicts > 0),
         width,
     ));
-
     if !summary.issues.is_empty() {
         lines.push(Line::from(""));
         for issue in &summary.issues {
@@ -207,27 +294,391 @@ fn body(view: &SyncDialogView<'_>, width: usize) -> Body {
             ));
         }
     }
+}
 
-    let actions = sync_actions(view.state, status);
-    let mut action_lines = Vec::with_capacity(actions.len());
-    if !actions.is_empty() {
-        lines.push(Line::from(""));
-        for (index, action) in actions.iter().enumerate() {
-            action_lines.push(lines.len());
-            lines.push(action_line(action.label(), index == view.state.selected));
+/// Stages a running operation passes through, in order, with their active
+/// and completed wording.
+fn steps(kind: OperationKind) -> &'static [(Stage, &'static str, &'static str)] {
+    match kind {
+        OperationKind::Setup => &[
+            (
+                Stage::PreparingData,
+                "Preparing your data",
+                "Prepared your data",
+            ),
+            (
+                Stage::UploadingData,
+                "Uploading encrypted data",
+                "Uploaded encrypted data",
+            ),
+            (Stage::FinishingSetup, "Finishing setup", "Finished setup"),
+        ],
+        OperationKind::Join => &[
+            (
+                Stage::WaitingForInviter,
+                "Waiting for the other device",
+                "The other device added this one",
+            ),
+            (
+                Stage::DownloadingTasks,
+                "Downloading tasks",
+                "Downloaded tasks",
+            ),
+            (
+                Stage::CatchingUp,
+                "Catching up with recent changes",
+                "Caught up with recent changes",
+            ),
+            (
+                Stage::DownloadingImages,
+                "Downloading images",
+                "Downloaded images",
+            ),
+        ],
+    }
+}
+
+fn progress_lines(lines: &mut Vec<Line<'static>>, running: &RunningOperation, width: usize) {
+    lines.push(Line::from(Span::styled(
+        match running.kind {
+            OperationKind::Setup => "Setting up sync",
+            OperationKind::Join => "Joining sync",
+        },
+        Style::new().fg(FG).add_modifier(Modifier::BOLD),
+    )));
+    let steps = steps(running.kind);
+    let current = running
+        .stage
+        .and_then(|stage| steps.iter().position(|(step, ..)| *step == stage))
+        .unwrap_or(0);
+    for (index, (_, active, done)) in steps.iter().enumerate() {
+        let line = if index < current {
+            Line::from(vec![
+                Span::styled("✓ ", Style::new().fg(GREEN)),
+                Span::styled(*done, Style::new().fg(FG_MUTED)),
+            ])
+        } else if index == current {
+            Line::from(vec![
+                Span::styled(
+                    format!("{} ", spinner(running.started_at)),
+                    Style::new().fg(ACCENT),
+                ),
+                Span::styled(*active, Style::new().fg(FG)),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled("· ", Style::new().fg(FG_DIM)),
+                Span::styled(*active, Style::new().fg(FG_DIM)),
+            ])
+        };
+        lines.push(line);
+    }
+    lines.push(Line::from(""));
+    let note = match (running.kind, running.stage) {
+        (OperationKind::Join, Some(Stage::CatchingUp | Stage::DownloadingImages)) => {
+            "Tasks are available. You can close this dialog and keep working while the \
+             rest downloads."
+        }
+        (OperationKind::Join, _) => {
+            "You can close this dialog. Editing waits until tasks are downloaded. Keep Add \
+             device open on the other device."
+        }
+        (OperationKind::Setup, _) => "You can close this dialog and keep working.",
+    };
+    lines.extend(paragraph(note, Style::new().fg(FG_MUTED), width));
+}
+
+fn spinner(started_at: Instant) -> &'static str {
+    let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    frames[(started_at.elapsed().as_millis() as usize / 120) % frames.len()]
+}
+
+fn push_last_result(lines: &mut Vec<Line<'static>>, activity: &SyncActivity, width: usize) {
+    let Some(result) = &activity.last else {
+        return;
+    };
+    lines.push(Line::from(""));
+    match result {
+        OperationResult::SetUp { server, drain } | OperationResult::Joined { server, drain } => {
+            let headline = match result {
+                OperationResult::SetUp { .. } => format!("Sync is set up with {server}"),
+                _ => format!("Joined sync with {server}"),
+            };
+            lines.extend(paragraph_with_mark("✓", GREEN, &headline, width));
+            lines.extend(paragraph(
+                drain_text(drain),
+                Style::new().fg(FG_MUTED),
+                width,
+            ));
+        }
+        OperationResult::Failed(failure) => {
+            lines.extend(paragraph_with_mark(
+                "!",
+                ORANGE,
+                match failure.kind {
+                    OperationKind::Setup => "Setup didn't finish",
+                    OperationKind::Join => "Joining didn't finish",
+                },
+                width,
+            ));
+            lines.extend(paragraph(&failure.message, Style::new().fg(FG), width));
+            lines.extend(paragraph(
+                "Press d for technical details.",
+                Style::new().fg(FG_DIM),
+                width,
+            ));
         }
     }
+}
 
-    if view.state.details {
-        lines.push(Line::from(""));
-        lines.push(super::shared::section_line("details"));
-        lines.extend(detail_lines(status, width));
+/// Distinguishes task synchronization from image availability.
+fn drain_text(drain: &DrainSummary) -> &'static str {
+    if !drain.tasks_current {
+        return "Some changes are still waiting. Sync now continues.";
     }
+    match drain.images {
+        "complete" => "Tasks and images are in sync.",
+        "pending" => "Tasks are in sync. Images are still transferring; Sync now continues.",
+        "unavailable" => "Tasks are in sync. Some images are unavailable on the server.",
+        _ => "Tasks are in sync. Some image transfers failed; Sync now retries them.",
+    }
+}
 
-    Body {
-        lines,
-        action_lines,
+fn invitation_lines(
+    body: &mut Body,
+    status: &TuiSyncStatus,
+    kind: InvitationKind,
+    input: &SecretText,
+    error: Option<&'static str>,
+    width: usize,
+) {
+    let lines = &mut body.lines;
+    let (heading, guidance) = match kind {
+        InvitationKind::Setup if status.phase == LocalPhase::SetupIncomplete => (
+            "Resume setup",
+            "Setup started earlier and didn't finish. Paste the same setup invitation to \
+             continue it; nothing is captured again.",
+        ),
+        InvitationKind::Setup => (
+            "Set up sync",
+            "Paste the setup invitation printed by `aven server setup` on your server.",
+        ),
+        InvitationKind::Join => (
+            "Join existing sync",
+            "On a device that already syncs, choose Add device, then paste its invitation \
+             here.",
+        ),
+    };
+    lines.push(Line::from(Span::styled(
+        heading,
+        Style::new().fg(FG).add_modifier(Modifier::BOLD),
+    )));
+    lines.extend(paragraph(guidance, Style::new().fg(FG_MUTED), width));
+    lines.push(Line::from(""));
+    let field = if input.chars() == 0 {
+        Span::styled("paste the invitation", Style::new().fg(FG_DIM))
+    } else {
+        Span::styled(
+            format!("{} characters pasted", input.chars()),
+            Style::new().fg(FG),
+        )
+    };
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("{:<LABEL_WIDTH$}", "invitation"),
+            Style::new().fg(FG_DIM),
+        ),
+        field,
+    ]));
+    if let Some(error) = error {
+        lines.extend(paragraph(error, Style::new().fg(RED), width));
     }
+    lines.push(Line::from(""));
+    lines.extend(paragraph(
+        "The invitation is secret. It isn't shown or saved.",
+        Style::new().fg(FG_DIM),
+        width,
+    ));
+}
+
+fn confirm_setup_lines(body: &mut Body, server: &str, preview: &SetupPreview, width: usize) {
+    let lines = &mut body.lines;
+    lines.push(Line::from(Span::styled(
+        "Set up sync",
+        Style::new().fg(FG).add_modifier(Modifier::BOLD),
+    )));
+    lines.extend(wrapped_row("server", server, Style::new().fg(FG), width));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Use this computer's data:",
+        Style::new().fg(FG),
+    )));
+    lines.push(Line::from(Span::styled(
+        format!("  {}", plural(preview.workspaces as u64, "workspace")),
+        Style::new().fg(FG_MUTED),
+    )));
+    lines.push(Line::from(Span::styled(
+        format!("  {}", plural(preview.tasks.max(0) as u64, "task")),
+        Style::new().fg(FG_MUTED),
+    )));
+    if preview.missing_images > 0 {
+        lines.extend(paragraph(
+            &format!(
+                "  {} missing on this computer; other devices will see {} as \
+                 unavailable.",
+                plural(preview.missing_images, "image"),
+                if preview.missing_images == 1 {
+                    "it"
+                } else {
+                    "them"
+                }
+            ),
+            Style::new().fg(ORANGE),
+            width,
+        ));
+    }
+    lines.push(Line::from(""));
+    lines.extend(paragraph(
+        "Other devices will receive this data when they join. After setup, this \
+         database can no longer use backup restore or import.",
+        Style::new().fg(FG_MUTED),
+        width,
+    ));
+    if preview.leaves_unencrypted_server {
+        lines.extend(paragraph(
+            "This database stops using its previous unencrypted sync server.",
+            Style::new().fg(FG_MUTED),
+            width,
+        ));
+    }
+}
+
+fn confirm_join_lines(body: &mut Body, server: &str, width: usize) {
+    let lines = &mut body.lines;
+    lines.push(Line::from(Span::styled(
+        "Join existing sync",
+        Style::new().fg(FG).add_modifier(Modifier::BOLD),
+    )));
+    lines.extend(wrapped_row("server", server, Style::new().fg(FG), width));
+    lines.push(Line::from(""));
+    lines.extend(paragraph(
+        "This computer will download the synced tasks, then their images. Keep Add \
+         device open on the other device until joining finishes.",
+        Style::new().fg(FG_MUTED),
+        width,
+    ));
+}
+
+fn plural(count: u64, noun: &str) -> String {
+    if count == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{count} {noun}s")
+    }
+}
+
+fn push_buttons(body: &mut Body, actions: &[SyncAction], selected: usize, width: usize) {
+    let labels = actions
+        .iter()
+        .map(|action| format!(" {} ", action.label()))
+        .collect::<Vec<_>>();
+    let total = labels.iter().map(|label| label.width() as u16).sum::<u16>()
+        + labels.len().saturating_sub(1) as u16;
+    let mut column = (width as u16).saturating_sub(total);
+    let line = body.lines.len();
+    let mut spans = vec![Span::raw(" ".repeat(column as usize))];
+    for (index, label) in labels.into_iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(" "));
+            column += 1;
+        }
+        let end = column + label.width() as u16;
+        body.actions.push(ActionArea {
+            line,
+            start: column,
+            end,
+        });
+        spans.push(button_span(
+            label,
+            index == selected,
+            index + 1 == actions.len(),
+        ));
+        column = end;
+    }
+    body.lines.push(Line::from(spans));
+}
+
+fn button_span(label: String, focused: bool, primary: bool) -> Span<'static> {
+    let fill = if focused { ACCENT } else { BG_PANEL };
+    let foreground = if focused {
+        INVERSE_FG
+    } else if primary {
+        ACCENT
+    } else {
+        FG_MUTED
+    };
+    let mut style = Style::new().fg(foreground).bg(fill);
+    if focused {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    Span::styled(label, style)
+}
+
+fn paragraph(text: &str, style: Style, width: usize) -> Vec<Line<'static>> {
+    wrap_words(text, width.max(1))
+        .into_iter()
+        .map(|line| Line::from(Span::styled(line, style)))
+        .collect()
+}
+
+/// Wraps at spaces, splitting only words wider than the line.
+fn wrap_words(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let needed = if current.is_empty() {
+            word.width()
+        } else {
+            current.width() + 1 + word.width()
+        };
+        if needed > width && !current.is_empty() {
+            lines.push(std::mem::take(&mut current));
+        }
+        if word.width() > width {
+            for (start, end) in cell_width_ranges(word, width) {
+                if !current.is_empty() {
+                    lines.push(std::mem::take(&mut current));
+                }
+                current.push_str(&word[start..end]);
+            }
+            continue;
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+    if !current.is_empty() || lines.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+fn paragraph_with_mark(mark: &str, color: Color, text: &str, width: usize) -> Vec<Line<'static>> {
+    let mut lines = paragraph(
+        text,
+        Style::new().fg(FG).add_modifier(Modifier::BOLD),
+        width.saturating_sub(2),
+    );
+    for (index, line) in lines.iter_mut().enumerate() {
+        let prefix = if index == 0 {
+            Span::styled(format!("{mark} "), Style::new().fg(color))
+        } else {
+            Span::raw("  ")
+        };
+        line.spans.insert(0, prefix);
+    }
+    lines
 }
 
 fn action_line(label: &'static str, focused: bool) -> Line<'static> {
@@ -248,9 +699,9 @@ fn state_line(status: &TuiSyncStatus, health: SyncHealth, syncing: bool) -> &'st
     }
     match (health, status.phase) {
         (SyncHealth::RuntimeDisabled, _) => "Sync is disabled by the runtime override",
-        (_, LocalPhase::NotSetUp) => "Run `aven sync setup` or `aven sync join` to sync",
-        (_, LocalPhase::SetupIncomplete) => "Setup is unfinished",
-        (_, LocalPhase::JoinIncomplete) => "Joining is unfinished",
+        (_, LocalPhase::NotSetUp) => "This database is local only",
+        (_, LocalPhase::SetupIncomplete) => "Setup started here and didn't finish",
+        (_, LocalPhase::JoinIncomplete) => "Joining started here and didn't finish",
         (_, LocalPhase::SetUp) => "Sync is end-to-end encrypted",
     }
 }
@@ -303,27 +754,41 @@ fn wrapped_row(label: &str, value: &str, style: Style, width: usize) -> Vec<Line
 
 fn hint_line(view: &SyncDialogView<'_>, scrolling: bool) -> Line<'static> {
     let mut hints = Vec::new();
-    let actions = sync_actions(view.state, view.status);
-    if actions.len() > 1 {
-        hints.push(("↑↓", "select"));
-    } else if scrolling {
-        hints.push(("j/k", "scroll"));
+    let actions = sync_actions(view.state, view.status, view.activity);
+    match view.state.page {
+        SyncPage::Home => {
+            if actions.len() > 1 {
+                hints.push(("↑↓", "select"));
+            } else if scrolling {
+                hints.push(("j/k", "scroll"));
+            }
+            if !actions.is_empty() {
+                hints.push(("Enter", "choose"));
+            }
+            if view.status.conflicts > 0 {
+                hints.push(("c", "conflicts"));
+            }
+            hints.push((
+                "d",
+                if view.state.details {
+                    "summary"
+                } else {
+                    "details"
+                },
+            ));
+            hints.push(("Esc", "close"));
+        }
+        SyncPage::Invitation { .. } => {
+            hints.push(("Enter", "continue"));
+            hints.push(("Ctrl-U", "clear"));
+            hints.push(("Esc", "back"));
+        }
+        SyncPage::ConfirmSetup { .. } | SyncPage::ConfirmJoin { .. } => {
+            hints.push(("←→", "select"));
+            hints.push(("Enter", "choose"));
+            hints.push(("Esc", "back"));
+        }
     }
-    if !actions.is_empty() {
-        hints.push(("Enter", "choose"));
-    }
-    if view.status.conflicts > 0 {
-        hints.push(("c", "conflicts"));
-    }
-    hints.push((
-        "d",
-        if view.state.details {
-            "summary"
-        } else {
-            "details"
-        },
-    ));
-    hints.push(("Esc", "close"));
     dialog_hint_line(&hints)
 }
 
@@ -335,6 +800,17 @@ fn scroll_title(start: usize, total: usize, visible: usize) -> String {
 
 fn dialog_width(frame_width: u16) -> u16 {
     frame_width.saturating_sub(4).clamp(1, MAX_DIALOG_WIDTH)
+}
+
+#[cfg(test)]
+#[test]
+fn words_wrap_at_spaces_and_split_only_long_words() {
+    assert_eq!(
+        wrap_words("backup restore or import", 10),
+        ["backup", "restore or", "import"]
+    );
+    assert_eq!(wrap_words("abcdefghij", 4), ["abcd", "efgh", "ij"]);
+    assert_eq!(wrap_words("", 4), [""]);
 }
 
 #[cfg(test)]

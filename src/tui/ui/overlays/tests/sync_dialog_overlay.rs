@@ -1,5 +1,9 @@
 use super::*;
-use crate::sync::encrypted::LocalPhase;
+use crate::sync::encrypted::{LocalPhase, SetupPreview, Stage};
+use crate::tui::overlay::{InvitationKind, SecretText, SyncPage};
+use crate::tui::sync_operations::{
+    DrainSummary, OperationFailure, OperationKind, OperationResult, RunningOperation, SyncActivity,
+};
 
 #[test]
 fn idle_sync_renders_compact_summary_and_actions() {
@@ -63,6 +67,7 @@ fn unset_up_and_runtime_disabled_states_have_distinct_copy() {
 
     assert!(local.contains("Local only"));
     assert!(!local.contains("Sync now"));
+    assert!(local.contains("Set up sync"));
     assert!(disabled.contains("Sync disabled"));
 }
 
@@ -158,11 +163,270 @@ fn sync_overlay(status: TuiSyncStatus, details: bool) -> OverlayView<'static> {
 }
 
 fn sync_view(state: &SyncDialogState, status: TuiSyncStatus) -> SyncDialogView<'_> {
+    activity_view(state, status, SyncActivity::default())
+}
+
+fn activity_view(
+    state: &SyncDialogState,
+    status: TuiSyncStatus,
+    activity: SyncActivity,
+) -> SyncDialogView<'_> {
     SyncDialogView {
         state,
         status: borrow_value(status),
+        activity: borrow_value(activity),
         syncing: false,
     }
+}
+
+/// Dialog rows joined by spaces, so wrapped phrases stay searchable.
+fn dialog_text(view: SyncDialogView<'_>) -> String {
+    let backend = TestBackend::new(100, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| render_non_help_overlay_content(frame, &OverlayView::Sync(Box::new(view))))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    (0..40)
+        .filter_map(|row| {
+            let line = buffer_row(buffer, row);
+            let start = line.find('│')? + '│'.len_utf8();
+            let end = line.rfind('│')?;
+            (start < end).then(|| line[start..end].trim().to_string())
+        })
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn render_page(page: SyncPage, status: TuiSyncStatus, activity: SyncActivity) -> String {
+    let state = borrow_value(SyncDialogState::page(page));
+    dialog_text(activity_view(state, status, activity))
+}
+
+fn local_status() -> TuiSyncStatus {
+    TuiSyncStatus::default()
+}
+
+fn running(kind: OperationKind, stage: Option<Stage>) -> SyncActivity {
+    SyncActivity {
+        running: Some(RunningOperation {
+            kind,
+            stage,
+            started_at: std::time::Instant::now(),
+        }),
+        last: None,
+    }
+}
+
+#[test]
+fn local_databases_offer_setup_and_joining() {
+    let rendered = render_page(SyncPage::Home, local_status(), SyncActivity::default());
+
+    assert!(rendered.contains("Local only"));
+    assert!(rendered.contains("Keep your tasks in sync across devices"));
+    assert!(rendered.contains("› Set up sync"));
+    assert!(rendered.contains("Join existing sync"));
+    assert!(!rendered.contains("aven sync setup"));
+}
+
+#[test]
+fn interrupted_work_offers_resume_instead_of_a_fresh_attempt() {
+    for (phase, action) in [
+        (LocalPhase::SetupIncomplete, "Resume setup"),
+        (LocalPhase::JoinIncomplete, "Resume joining"),
+    ] {
+        let status = TuiSyncStatus {
+            set_up: true,
+            phase,
+            ..TuiSyncStatus::default()
+        };
+        let rendered = render_page(SyncPage::Home, status, SyncActivity::default());
+        assert!(rendered.contains(action), "{rendered}");
+        assert!(!rendered.contains("Set up sync"), "{rendered}");
+        assert!(!rendered.contains("No changes waiting"), "{rendered}");
+    }
+}
+
+#[test]
+fn invitation_form_never_renders_the_secret() {
+    let mut input = SecretText::default();
+    input.insert("aven-sync-setup-1:SECRETSECRET");
+    let rendered = render_page(
+        SyncPage::Invitation {
+            kind: InvitationKind::Setup,
+            input,
+            error: Some("This isn't a setup invitation."),
+        },
+        local_status(),
+        SyncActivity::default(),
+    );
+
+    assert!(!rendered.contains("SECRET"));
+    assert!(!rendered.contains("aven-sync-setup-1"));
+    assert!(rendered.contains("30 characters pasted"));
+    assert!(rendered.contains("This isn't a setup invitation."));
+    assert!(rendered.contains("isn't shown or saved"));
+    assert!(rendered.contains(" Continue "));
+}
+
+#[test]
+fn setup_confirmation_discloses_data_server_and_restrictions() {
+    let rendered = render_page(
+        SyncPage::ConfirmSetup {
+            server: "https://sync.example.com".to_string(),
+            preview: SetupPreview {
+                workspaces: 3,
+                tasks: 142,
+                missing_images: 2,
+                leaves_unencrypted_server: true,
+            },
+            invitation: SecretText::default(),
+        },
+        local_status(),
+        SyncActivity::default(),
+    );
+
+    assert!(rendered.contains("https://sync.example.com"));
+    assert!(rendered.contains("3 workspaces"));
+    assert!(rendered.contains("142 tasks"));
+    assert!(rendered.contains("2 images missing on this computer"));
+    assert!(rendered.contains("backup restore or import"));
+    assert!(rendered.contains("previous unencrypted sync server"));
+    assert!(rendered.contains(" Back "));
+    assert!(rendered.contains(" Set up sync "));
+}
+
+#[test]
+fn setup_progress_marks_reached_stages_without_counts() {
+    let status = TuiSyncStatus {
+        set_up: true,
+        phase: LocalPhase::SetupIncomplete,
+        ..TuiSyncStatus::default()
+    };
+    let rendered = render_page(
+        SyncPage::Home,
+        status,
+        running(OperationKind::Setup, Some(Stage::UploadingData)),
+    );
+
+    assert!(rendered.contains("Setting up sync"));
+    assert!(rendered.contains("✓ Prepared your data"));
+    assert!(rendered.contains("Uploading encrypted data"));
+    assert!(rendered.contains("· Finishing setup"));
+    assert!(rendered.contains("close this dialog and keep working"));
+    assert!(!rendered.contains('%'));
+    assert!(!rendered.contains("Resume setup"));
+}
+
+#[test]
+fn join_progress_distinguishes_tasks_from_images() {
+    let waiting = render_page(
+        SyncPage::Home,
+        local_status(),
+        running(OperationKind::Join, Some(Stage::WaitingForInviter)),
+    );
+    assert!(waiting.contains("Waiting for the other device"));
+    assert!(waiting.contains("Editing waits until tasks are downloaded"));
+
+    let images = render_page(
+        SyncPage::Home,
+        TuiSyncStatus {
+            set_up: true,
+            phase: LocalPhase::SetUp,
+            ..TuiSyncStatus::default()
+        },
+        running(OperationKind::Join, Some(Stage::DownloadingImages)),
+    );
+    assert!(images.contains("✓ Downloaded tasks"));
+    assert!(images.contains("Downloading images"));
+    assert!(images.contains("Tasks are available"));
+}
+
+#[test]
+fn results_distinguish_images_from_tasks() {
+    let rendered = render_page(
+        SyncPage::Home,
+        sync_status(),
+        SyncActivity {
+            running: None,
+            last: Some(OperationResult::Joined {
+                server: "https://sync.example.com".to_string(),
+                drain: DrainSummary {
+                    tasks_current: true,
+                    images: "unavailable",
+                },
+            }),
+        },
+    );
+
+    assert!(rendered.contains("Joined sync with https://sync.example.com"));
+    assert!(rendered.contains("Some images are unavailable on the server"));
+}
+
+#[test]
+fn failures_show_plain_messages_and_technical_details_on_request() {
+    let failure = OperationFailure {
+        kind: OperationKind::Setup,
+        message: "Couldn't reach the sync server.".to_string(),
+        details: "error bootstrap-network outcome-unknown".to_string(),
+    };
+    let activity = SyncActivity {
+        running: None,
+        last: Some(OperationResult::Failed(failure)),
+    };
+    let status = TuiSyncStatus {
+        set_up: true,
+        phase: LocalPhase::SetupIncomplete,
+        ..TuiSyncStatus::default()
+    };
+    let summary = render_page(SyncPage::Home, status.clone(), activity.clone());
+    assert!(summary.contains("Setup didn't finish"));
+    assert!(summary.contains("Couldn't reach the sync server."));
+    assert!(!summary.contains("bootstrap-network"));
+    assert!(summary.contains("Resume setup"));
+
+    let state = borrow_value(SyncDialogState {
+        details: true,
+        ..SyncDialogState::default()
+    });
+    let details = dialog_text(activity_view(state, status, activity));
+    assert!(details.contains("bootstrap-network"));
+}
+
+#[test]
+fn confirmation_buttons_are_clickable() {
+    let state = SyncDialogState::page(SyncPage::ConfirmJoin {
+        server: "https://sync.example.com".to_string(),
+        invitation: SecretText::default(),
+    });
+    let view = sync_view(&state, local_status());
+    let backend = TestBackend::new(80, 30);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| {
+            render_non_help_overlay_content(
+                frame,
+                &OverlayView::Sync(Box::new(sync_view(&state, local_status()))),
+            )
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let (row, line) = (0..30)
+        .map(|row| (row, buffer_row(buffer, row)))
+        .rfind(|(_, line)| line.contains(" Back "))
+        .expect("button row");
+    let join = line[..line.find(" Join ").unwrap()].chars().count() as u16 + 1;
+    let back = line[..line.find(" Back ").unwrap()].chars().count() as u16 + 1;
+
+    assert_eq!(
+        sync_dialog_hit(&view, (80, 30).into(), join, row),
+        SyncDialogHit::Action(1)
+    );
+    assert_eq!(
+        sync_dialog_hit(&view, (80, 30).into(), back, row),
+        SyncDialogHit::Action(0)
+    );
 }
 
 fn sync_status() -> TuiSyncStatus {

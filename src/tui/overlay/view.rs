@@ -131,6 +131,7 @@ pub(crate) enum OverlayView<'a> {
 pub(crate) struct SyncDialogView<'a> {
     pub(crate) state: &'a super::sync_dialog::SyncDialogState,
     pub(crate) status: &'a TuiSyncStatus,
+    pub(crate) activity: &'a crate::tui::sync_operations::SyncActivity,
     pub(crate) syncing: bool,
 }
 
@@ -482,6 +483,7 @@ impl<'a> RecurrenceHistoryView<'a> {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct OverlayViewContext<'a> {
     pub(crate) sync_status: &'a TuiSyncStatus,
+    pub(crate) sync_activity: &'a crate::tui::sync_operations::SyncActivity,
     pub(crate) syncing: bool,
     pub(crate) status_prefix_active: bool,
     pub(crate) priority_prefix_active: bool,
@@ -595,6 +597,7 @@ impl<'a> OverlayView<'a> {
             Sync(state) => Self::Sync(Box::new(SyncDialogView {
                 state,
                 status: context.sync_status,
+                activity: context.sync_activity,
                 syncing: context.syncing,
             })),
             DatabaseStats { stats, scroll } => Self::DatabaseStats {
@@ -623,10 +626,12 @@ mod tests {
             false,
         ));
         let sync_status = TuiSyncStatus::default();
+        let sync_activity = crate::tui::sync_operations::SyncActivity::default();
         let picker = OverlayView::project(
             &state,
             OverlayViewContext {
                 sync_status: &sync_status,
+                sync_activity: &sync_activity,
                 syncing: false,
                 status_prefix_active: false,
                 priority_prefix_active: false,
@@ -663,10 +668,12 @@ mod tests {
                 mode: PickerMode::Filter,
             });
             let sync_status = TuiSyncStatus::default();
+            let sync_activity = crate::tui::sync_operations::SyncActivity::default();
             let picker = OverlayView::project(
                 &state,
                 OverlayViewContext {
                     sync_status: &sync_status,
+                    sync_activity: &sync_activity,
                     syncing: false,
                     status_prefix_active: false,
                     priority_prefix_active: false,

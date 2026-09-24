@@ -8,7 +8,7 @@ async fn sync_now_requires_setup() {
 
     let message = toast_message(&app).unwrap();
     assert!(message.starts_with("sync unavailable:"), "{message}");
-    assert!(message.contains("aven sync setup"), "{message}");
+    assert!(message.contains(":sync"), "{message}");
     assert!(!app.sync.work_pending());
 }
 
@@ -87,4 +87,185 @@ async fn sync_dialog_add_device_hands_off_to_the_invitation_flow() {
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
     assert!(app.invite.work_pending());
+}
+
+fn sync_page(app: &App) -> &crate::tui::overlay::SyncPage {
+    let Some(OverlayState::Sync(state)) = &app.overlay else {
+        panic!("expected sync dialog, got {:?}", app.overlay);
+    };
+    &state.page
+}
+
+async fn paste(app: &mut App, text: &str) {
+    app.dispatch_paste(text).await.unwrap();
+}
+
+async fn settle_operation(app: &mut App) {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while app.sync_ops.work_pending() {
+            app.poll_sync_operations().await.unwrap();
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("sync operation settles");
+}
+
+fn last_failure(app: &App) -> &crate::tui::sync_operations::OperationFailure {
+    match &app.sync_ops.activity.last {
+        Some(crate::tui::sync_operations::OperationResult::Failed(failure)) => failure,
+        other => panic!("expected a failure, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn joining_refuses_a_nonempty_database_without_changing_it() {
+    let mut app = test_app().await;
+    let database = app.store.database();
+    database.create_workspace("Work").await.unwrap();
+    let before = database.sync_persistence_status().await.unwrap();
+    app.show_sync_dialog();
+
+    app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert_eq!(*sync_page(&app), crate::tui::overlay::SyncPage::Home);
+    assert!(!app.sync_ops.work_pending());
+    assert_eq!(
+        last_failure(&app).message,
+        crate::tui::sync_errors::JOIN_REQUIRES_EMPTY
+    );
+    assert!(database.enrollment_pin().await.unwrap().is_none());
+    assert_eq!(
+        crate::sync::encrypted::local_phase(&database)
+            .await
+            .unwrap(),
+        crate::sync::encrypted::LocalPhase::NotSetUp
+    );
+    let after = database.sync_persistence_status().await.unwrap();
+    assert_eq!(after.pending_changes, before.pending_changes);
+}
+
+#[tokio::test]
+async fn joining_validates_confirms_and_keeps_running_after_the_dialog_closes() {
+    let mut app = test_app().await;
+    let (setup, device) = crate::sync::encrypted::sample_invitations("https://sync.example.com");
+    app.show_sync_dialog();
+    app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert!(matches!(
+        sync_page(&app),
+        crate::tui::overlay::SyncPage::Invitation { .. }
+    ));
+
+    paste(&mut app, &setup).await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    let crate::tui::overlay::SyncPage::Invitation { error, .. } = sync_page(&app) else {
+        panic!("expected the invitation form");
+    };
+    assert!(error.is_some_and(|error| error.contains("choose Set up sync")));
+
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+        .await
+        .unwrap();
+    paste(&mut app, &device).await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    let crate::tui::overlay::SyncPage::ConfirmJoin { server, .. } = sync_page(&app) else {
+        panic!("expected join confirmation");
+    };
+    assert_eq!(server, "https://sync.example.com");
+    assert!(!app.sync_ops.work_pending());
+
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert_eq!(*sync_page(&app), crate::tui::overlay::SyncPage::Home);
+    assert!(app.sync_ops.work_pending());
+
+    // Closing hides progress; it does not cancel joining.
+    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+    assert!(app.overlay.is_none());
+    assert!(app.sync_ops.work_pending());
+
+    // Local edits wait until joined tasks are installed.
+    app.execute(Action::BeginAddTask).await.unwrap();
+    assert!(app.overlay.is_none());
+    assert!(toast_message(&app).is_some_and(|message| message.starts_with("joining sync")));
+    app.execute(Action::SyncNow).await.unwrap();
+    assert!(!app.sync.work_pending());
+
+    settle_operation(&mut app).await;
+    let failure = last_failure(&app);
+    assert_eq!(
+        failure.kind,
+        crate::tui::sync_operations::OperationKind::Join
+    );
+    assert!(!failure.details.contains(device.as_str()));
+    assert!(toast_message(&app).is_some_and(|message| message.contains("open :sync")));
+}
+
+#[tokio::test]
+async fn setup_previews_this_database_and_starts_only_after_confirmation() {
+    let mut app = test_app().await;
+    app.store.database().create_workspace("Work").await.unwrap();
+    let (setup, device) = crate::sync::encrypted::sample_invitations("https://sync.example.com");
+    app.show_sync_dialog();
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    paste(&mut app, &device).await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    let crate::tui::overlay::SyncPage::Invitation { error, .. } = sync_page(&app) else {
+        panic!("expected the invitation form");
+    };
+    assert!(error.is_some_and(|error| error.contains("choose Join existing sync")));
+
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+        .await
+        .unwrap();
+    paste(&mut app, &setup).await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    let crate::tui::overlay::SyncPage::ConfirmSetup {
+        server, preview, ..
+    } = sync_page(&app)
+    else {
+        panic!("expected setup confirmation");
+    };
+    assert_eq!(server, "https://sync.example.com");
+    assert_eq!(preview.workspaces, 2);
+
+    // Focus starts on Back, which abandons the unsubmitted form.
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert_eq!(*sync_page(&app), crate::tui::overlay::SyncPage::Home);
+    assert!(!app.sync_ops.work_pending());
+
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    paste(&mut app, &setup).await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Right)).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert!(app.sync_ops.work_pending());
+    assert_eq!(*sync_page(&app), crate::tui::overlay::SyncPage::Home);
+
+    settle_operation(&mut app).await;
+    assert_eq!(
+        last_failure(&app).kind,
+        crate::tui::sync_operations::OperationKind::Setup
+    );
+    assert!(matches!(app.overlay, Some(OverlayState::Sync(_))));
+}
+
+#[tokio::test]
+async fn interrupted_joining_pauses_local_edits_and_offers_resume() {
+    let mut app = test_app().await;
+    app.store.sync_status.set_up = true;
+    app.store.sync_status.phase = crate::sync::encrypted::LocalPhase::JoinIncomplete;
+
+    app.execute(Action::BeginAddTask).await.unwrap();
+    assert!(app.overlay.is_none());
+    assert!(toast_message(&app).is_some_and(|message| message.starts_with("joining sync")));
+
+    app.show_sync_dialog();
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    // Resuming reuses the stored request; no invitation form appears.
+    assert_eq!(*sync_page(&app), crate::tui::overlay::SyncPage::Home);
+    assert!(app.sync_ops.work_pending());
+    settle_operation(&mut app).await;
 }

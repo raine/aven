@@ -25,8 +25,10 @@ use crate::seed_bootstrap_http;
 mod devices;
 pub(crate) use devices::{list as list_devices, remove as remove_device};
 mod invitation;
-use invitation::DeviceInvitation;
-pub(super) use invitation::{SetupInvitation, server_origin};
+#[cfg(test)]
+pub(crate) use invitation::sample_invitations;
+pub(super) use invitation::server_origin;
+pub(crate) use invitation::{DeviceInvitation, SetupInvitation};
 
 #[cfg(test)]
 mod tests;
@@ -386,6 +388,23 @@ fn print_invitation_qr(invitation: &PendingInvitation) {
             eprintln!("Scan this code on the other device, or paste the invitation.");
         }
         Err(error) => eprintln!("QR code unavailable: {error:#}"),
+    }
+}
+
+/// Refuses joining unless this database is fresh or already joining. The
+/// fresh check reads without changing the database.
+pub(crate) async fn ensure_join_available(database: &Database, config: &AppConfig) -> Result<()> {
+    config.ensure_sync_allowed()?;
+    match local_phase(database).await? {
+        LocalPhase::JoinIncomplete => Ok(()),
+        LocalPhase::NotSetUp => {
+            database
+                .peer_target_preflight()
+                .await
+                .context(JOIN_REQUIRES_EMPTY)?;
+            Ok(())
+        }
+        LocalPhase::SetupIncomplete | LocalPhase::SetUp => bail!(ALREADY_SET_UP),
     }
 }
 

@@ -12,6 +12,14 @@ use crate::tui::overlay::{MultilineIntent, OverlayState};
 
 impl App {
     pub(super) async fn dispatch_paste(&mut self, text: &str) -> Result<()> {
+        // Invitation text is secret; it must not reach any other paste target.
+        if let Some(OverlayState::Sync(state)) = self
+            .overlay
+            .take_if(|overlay| matches!(overlay, OverlayState::Sync(_)))
+        {
+            self.handle_sync_dialog_paste(state, text);
+            return Ok(());
+        }
         if self.paste_detail_image_from_text(text).await? {
             return Ok(());
         }

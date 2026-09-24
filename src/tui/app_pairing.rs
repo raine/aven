@@ -52,6 +52,10 @@ impl App {
             self.set_info("invitation is being created");
             return;
         }
+        if self.sync_ops.work_pending() {
+            self.set_info("sync is busy; open :sync to follow its progress");
+            return;
+        }
         let database = self.store.database();
         let config = self.intake.config().clone();
         self.invite.create = Some(tokio::spawn(async move {

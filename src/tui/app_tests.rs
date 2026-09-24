@@ -447,6 +447,7 @@ fn picker_row_click(app: &App, visible_row: u16, size: ratatui::layout::Size) ->
         overlay,
         OverlayViewContext {
             sync_status: &app.store.sync_status,
+            sync_activity: &app.sync_ops.activity,
             syncing: app.sync.work_pending(),
             status_prefix_active: false,
             priority_prefix_active: false,

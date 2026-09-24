@@ -85,6 +85,8 @@ pub(crate) struct TuiStore {
     derived: DerivedTaskProjections,
     pub(crate) columns_preview_visible: bool,
     pub(crate) db_stats: TuiDatabaseStats,
+    /// A manual sync or a Sync dialog operation is running.
+    pub(crate) sync_busy: bool,
     refresh_health: RefreshHealth,
     #[cfg(test)]
     fail_next_refresh: Option<RefreshFailureStage>,
@@ -142,6 +144,7 @@ struct RefreshRetainedState {
     task_columns: Vec<crate::config::TaskColumnConfig>,
     columns_preview_visible: bool,
     db_stats: TuiDatabaseStats,
+    sync_busy: bool,
     refresh_health: RefreshHealth,
     #[cfg(test)]
     test_database_dir: Option<std::sync::Arc<tempfile::TempDir>>,
@@ -237,6 +240,7 @@ impl From<&TuiStore> for RefreshRetainedState {
             task_columns: store.task_columns.clone(),
             columns_preview_visible: store.columns_preview_visible,
             db_stats: store.db_stats.clone(),
+            sync_busy: store.sync_busy,
             refresh_health: store.refresh_health,
             #[cfg(test)]
             test_database_dir: store._test_database_dir.clone(),
@@ -254,6 +258,7 @@ impl RefreshRetainedState {
             derived: DerivedTaskProjections::default(),
             columns_preview_visible: self.columns_preview_visible,
             db_stats: self.db_stats,
+            sync_busy: self.sync_busy,
             refresh_health: self.refresh_health,
             #[cfg(test)]
             fail_next_refresh: None,
@@ -312,6 +317,7 @@ impl TuiStore {
             derived: DerivedTaskProjections::default(),
             columns_preview_visible: true,
             db_stats: TuiDatabaseStats::default(),
+            sync_busy: false,
             refresh_health: RefreshHealth::Healthy,
             #[cfg(test)]
             fail_next_refresh: None,
