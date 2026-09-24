@@ -20,6 +20,8 @@ impl Drop for Fixture {
         self.task.abort();
     }
 }
+/// Requests served by `serve` in this process, read by the ignored benchmark.
+static HTTP_REQUESTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 async fn serve(server: Database, address: &str) -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind(address).await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
@@ -29,7 +31,13 @@ async fn serve(server: Database, address: &str) -> (String, tokio::task::JoinHan
         Default::default(),
     )
     .merge(crate::peer_enrollment_http::router(server.clone()))
-    .merge(router(server));
+    .merge(router(server))
+    .layer(axum::middleware::from_fn(
+        |request: Request, next: axum::middleware::Next| async move {
+            HTTP_REQUESTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            next.run(request).await
+        },
+    ));
     (
         origin,
         tokio::spawn(async move {
@@ -2625,6 +2633,7 @@ mod attachments;
 
 mod recurrence;
 
+mod bench;
 mod checkpoint_faults;
 mod checkpoint_journey;
 mod membership;

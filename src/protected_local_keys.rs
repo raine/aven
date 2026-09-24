@@ -496,6 +496,8 @@ impl Backend {
     }
 
     fn load_bounded(&self, expected_len: usize) -> StoreResult<Option<Zeroizing<Vec<u8>>>> {
+        #[cfg(test)]
+        tests::BACKEND_LOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         match self {
             #[cfg(target_os = "macos")]
             Self::Keychain(backend) => {
@@ -598,6 +600,10 @@ impl KeychainBackend {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// Protected backend loads in this process: each is one Keychain lookup on macOS.
+    pub(crate) static BACKEND_LOADS: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(0);
     use aven_core::api::{CreateTask, Store};
     use aven_core::choices::{TaskPriority, TaskStatus};
 
