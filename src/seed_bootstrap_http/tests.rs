@@ -460,7 +460,7 @@ async fn loopback_rejects_bad_authority_context_bytes_and_epochs_without_mutatio
             b.bootstrap_id,
             b.descriptor_commitment,
             initial.epoch,
-            staging::Reclaim::Quarantine,
+            staging::Reclaim::Fence,
         )
         .await
         .unwrap();

@@ -96,7 +96,7 @@ enum Reply {
     Missing,
     Canceled,
     Staging(staging::StagingStatus),
-    Put(staging::PutOutcome),
+    Stored,
     Published(Vec<u8>),
 }
 
@@ -268,7 +268,7 @@ async fn dispatch(server: &Server, secret: &Secret, e: Envelope) -> Result<Reply
             component,
             index,
             bytes,
-        } => Reply::Put(
+        } => {
             db.put_bootstrap_chunk(
                 &auth,
                 staging::PutChunk {
@@ -280,8 +280,9 @@ async fn dispatch(server: &Server, secret: &Secret, e: Envelope) -> Result<Reply
                     bytes: &bytes,
                 },
             )
-            .await?,
-        ),
+            .await?;
+            Reply::Stored
+        }
         Operation::Publish {
             bootstrap,
             commitment,
@@ -528,7 +529,7 @@ impl Client {
                     "error bootstrap-status-mismatch"
                 );
                 // Exact duplicate PUT is intentional: server status is not a
-                // reason to regenerate ciphertext or omit catalog validation.
+                // reason to regenerate ciphertext or skip server-side checks.
                 for (component, chunks) in components {
                     for (index, bytes) in chunks.into_iter().enumerate() {
                         let reply = self
@@ -546,13 +547,7 @@ impl Client {
                             )
                             .await?;
                         ensure!(
-                            matches!(
-                                reply,
-                                Reply::Put(
-                                    staging::PutOutcome::Quarantined
-                                        | staging::PutOutcome::Verified
-                                )
-                            ),
+                            matches!(reply, Reply::Stored),
                             "error bootstrap-upload-refused"
                         );
                     }

@@ -17,16 +17,7 @@ const CATALOGS: [Component; 3] = [
     Component::ImageCatalog,
 ];
 
-type CandidateRow = (
-    Option<Vec<u8>>,
-    bool,
-    i64,
-    i64,
-    i64,
-    i64,
-    Option<i64>,
-    Option<i64>,
-);
+type CandidateRow = (Option<Vec<u8>>, bool, i64, i64, i64, i64);
 
 struct Candidate {
     descriptor: Option<Vec<u8>>,
@@ -34,7 +25,6 @@ struct Candidate {
     epoch: i64,
     expires: i64,
     budget: Budget,
-    failure: Option<CatalogFailure>,
 }
 
 impl Candidate {
@@ -85,38 +75,24 @@ async fn authorize(conn: &mut SqliteConnection, auth: &Authentication<'_>) -> Re
 
 async fn candidate(conn: &mut SqliteConnection, id: &[u8; 32]) -> Result<Option<Candidate>> {
     let row: Option<CandidateRow> = sqlx::query_as(
-        "SELECT descriptor, canceled, epoch, expires_at, byte_budget, chunk_budget, catalog_failure, failure_reason
+        "SELECT descriptor, canceled, epoch, expires_at, byte_budget, chunk_budget
          FROM server_bootstrap_candidates WHERE bootstrap = ?",
     )
     .bind(id.as_slice())
     .fetch_optional(&mut *conn)
     .await?;
-    row.map(
-        |(descriptor, canceled, epoch, expires, bytes, chunks, failure, reason)| {
-            Ok(Candidate {
-                descriptor,
-                canceled,
-                epoch,
-                expires,
-                budget: Budget {
-                    bytes: u64::try_from(bytes)?,
-                    chunks: u64::try_from(chunks)?,
-                },
-                failure: match (failure, reason) {
-                    (Some(class @ 0..=2), Some(reason @ 0..=1)) => Some(CatalogFailure {
-                        component: CATALOGS[class as usize],
-                        reason: if reason == 0 {
-                            CatalogFailureReason::Invalid
-                        } else {
-                            CatalogFailureReason::ResourceLimit
-                        },
-                    }),
-                    (None, None) => None,
-                    _ => anyhow::bail!("error bootstrap-storage-invalid"),
-                },
-            })
-        },
-    )
+    row.map(|(descriptor, canceled, epoch, expires, bytes, chunks)| {
+        Ok(Candidate {
+            descriptor,
+            canceled,
+            epoch,
+            expires,
+            budget: Budget {
+                bytes: u64::try_from(bytes)?,
+                chunks: u64::try_from(chunks)?,
+            },
+        })
+    })
     .transpose()
 }
 
@@ -171,22 +147,25 @@ async fn records(
     ).bind(id.as_slice()).bind(component.key()).fetch_all(&mut *conn).await?)
 }
 
+/// Rechecks stored catalog slices. A complete catalog must verify as a whole;
+/// only then do the records it describes become expected components.
 async fn layout(conn: &mut SqliteConnection, id: &[u8; 32], d: &DeclarationView) -> Result<Layout> {
     let mut components = Vec::new();
     let mut artifacts = d.artifacts(None);
     for (class, component) in CATALOGS.into_iter().enumerate() {
         let lengths = d.catalog_lengths(class)?;
-        let verified: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM server_bootstrap_chunks WHERE bootstrap = ? AND component = ? AND verified = 1",
-        ).bind(id.as_slice()).bind(component.key()).fetch_one(&mut *conn).await?;
-        if verified != 0 {
-            ensure!(
-                usize::try_from(verified)? == lengths.len(),
-                "error bootstrap-storage-invalid"
-            );
-            let bytes = records(conn, id, component).await?.concat();
-            let catalog = d.catalog(class, &bytes)?;
-            artifacts.extend(d.artifacts(Some(&catalog)));
+        let rows: Vec<(i64, Vec<u8>)> = sqlx::query_as(
+            "SELECT chunk_index, bytes FROM server_bootstrap_chunks WHERE bootstrap = ? AND component = ? ORDER BY chunk_index",
+        ).bind(id.as_slice()).bind(component.key()).fetch_all(&mut *conn).await?;
+        for (index, bytes) in &rows {
+            d.verify_slice(class, usize::try_from(*index)?, bytes)?;
+        }
+        if rows.len() == lengths.len() {
+            let bytes = rows
+                .into_iter()
+                .flat_map(|(_, bytes)| bytes)
+                .collect::<Vec<_>>();
+            artifacts.extend(d.artifacts(Some(&d.catalog(class, &bytes)?)));
         }
         components.push((component, lengths));
     }
@@ -209,19 +188,19 @@ async fn status(conn: &mut SqliteConnection, id: &[u8; 32]) -> Result<Status> {
     layout.check_budget(c.budget)?;
     let mut components = Vec::new();
     for (component, lengths) in layout.components {
-        let rows: Vec<(i64, bool)> = sqlx::query_as(
-            "SELECT chunk_index, verified FROM server_bootstrap_chunks WHERE bootstrap = ? AND component = ? ORDER BY chunk_index",
-        ).bind(id.as_slice()).bind(component.key()).fetch_all(&mut *conn).await?;
+        let rows: Vec<i64> = sqlx::query_scalar(
+            "SELECT chunk_index FROM server_bootstrap_chunks WHERE bootstrap = ? AND component = ?",
+        )
+        .bind(id.as_slice())
+        .bind(component.key())
+        .fetch_all(&mut *conn)
+        .await?;
         let mut chunks = vec![Presence::Missing; lengths.len()];
-        for (index, verified) in rows {
-            let slot = chunks
+        for index in rows {
+            *chunks
                 .get_mut(usize::try_from(index)?)
-                .ok_or_else(|| anyhow::anyhow!("error bootstrap-storage-invalid"))?;
-            *slot = if verified {
-                Presence::Verified
-            } else {
-                Presence::Quarantined
-            };
+                .ok_or_else(|| anyhow::anyhow!("error bootstrap-storage-invalid"))? =
+                Presence::Verified;
         }
         components.push(ComponentStatus { component, chunks });
     }
@@ -231,7 +210,6 @@ async fn status(conn: &mut SqliteConnection, id: &[u8; 32]) -> Result<Status> {
         epoch: u64::try_from(c.epoch)?,
         expires_at: c.expires,
         budget: c.budget,
-        catalog_failure: c.failure,
         components,
     }))
 }
@@ -246,11 +224,12 @@ async fn advance(
         .epoch
         .checked_add(1)
         .ok_or_else(|| anyhow::anyhow!("error bootstrap-epoch-exhausted"))?;
-    sqlx::query("DELETE FROM server_bootstrap_chunks WHERE bootstrap = ? AND (? OR verified = 0)")
-        .bind(id.as_slice())
-        .bind(reclaim == Reclaim::All)
-        .execute(&mut *conn)
-        .await?;
+    if reclaim == Reclaim::All {
+        sqlx::query("DELETE FROM server_bootstrap_chunks WHERE bootstrap = ?")
+            .bind(id.as_slice())
+            .execute(&mut *conn)
+            .await?;
+    }
     sqlx::query(
         "UPDATE server_bootstrap_candidates SET epoch = ?, expires_at = 0 WHERE bootstrap = ?",
     )
@@ -270,7 +249,10 @@ impl Database {
         descriptor: &[u8],
         budget: Budget,
     ) -> Result<StagingStatus> {
-        ensure!(descriptor.len() <= 1024, "error bootstrap-descriptor-limit");
+        ensure!(
+            descriptor.len() <= crate::sync::bootstrap_format::MAX_DESCRIPTOR_BYTES,
+            "error bootstrap-descriptor-limit"
+        );
         ensure!(
             budget.bytes > 0
                 && budget.bytes <= MAX_STORAGE_BYTES
@@ -379,7 +361,7 @@ impl Database {
                 .bind(bootstrap_id.as_slice())
                 .execute(&mut *tx)
                 .await?;
-            sqlx::query("UPDATE server_bootstrap_candidates SET canceled = 1, descriptor = NULL, expires_at = 0, byte_budget = 0, chunk_budget = 0, catalog_failure = NULL, failure_reason = NULL WHERE bootstrap = ?")
+            sqlx::query("UPDATE server_bootstrap_candidates SET canceled = 1, descriptor = NULL, expires_at = 0, byte_budget = 0, chunk_budget = 0 WHERE bootstrap = ?")
                 .bind(bootstrap_id.as_slice()).execute(&mut *tx).await?;
         }
         tx.commit().await?;
@@ -406,11 +388,13 @@ impl Database {
         Ok(())
     }
 
+    /// Stores one slot only after checking it against the frozen descriptor.
+    /// Rejected bytes leave storage unchanged; exact retries succeed.
     pub async fn put_bootstrap_chunk(
         &self,
         auth: &Authentication<'_>,
         request: PutChunk<'_>,
-    ) -> Result<PutOutcome> {
+    ) -> Result<()> {
         ensure!(
             request.bytes.len() <= MAX_REQUEST_BYTES,
             "error bootstrap-request-limit"
@@ -436,26 +420,22 @@ impl Database {
             lengths.get(index) == Some(&(request.bytes.len() as u64)),
             "error bootstrap-chunk-shape"
         );
-        let existing: Option<(Vec<u8>, bool)> = sqlx::query_as("SELECT bytes, verified FROM server_bootstrap_chunks WHERE bootstrap = ? AND component = ? AND chunk_index = ?")
+        let existing: Option<Vec<u8>> = sqlx::query_scalar("SELECT bytes FROM server_bootstrap_chunks WHERE bootstrap = ? AND component = ? AND chunk_index = ?")
             .bind(id.as_slice()).bind(request.component.key()).bind(i64::try_from(index)?)
             .fetch_optional(&mut *tx).await?;
-        if let Some((bytes, verified)) = existing {
+        if let Some(bytes) = existing {
             ensure!(bytes == request.bytes, "error bootstrap-chunk-conflict");
             tx.commit().await?;
-            return Ok(if verified {
-                PutOutcome::Verified
-            } else {
-                PutOutcome::Quarantined
-            });
+            return Ok(());
         }
-        let catalog = request.component.catalog();
-        if catalog.is_none() {
-            layout
-                .artifacts
-                .iter()
-                .find(|a| a.component == request.component)
-                .ok_or_else(|| anyhow::anyhow!("error bootstrap-catalog-required"))?
-                .verify_chunk(index, request.bytes)?;
+        let artifact = layout
+            .artifacts
+            .iter()
+            .find(|a| a.component == request.component);
+        match (request.component.catalog(), artifact) {
+            (Some(class), _) => d.verify_slice(class, index, request.bytes)?,
+            (None, Some(artifact)) => artifact.verify_chunk(index, request.bytes)?,
+            (None, None) => anyhow::bail!("error bootstrap-catalog-required"),
         }
         let (bytes, chunks): (i64, i64) = sqlx::query_as("SELECT coalesce(sum(length(bytes)), 0), count(*) FROM server_bootstrap_chunks WHERE bootstrap = ?")
             .bind(id.as_slice()).fetch_one(&mut *tx).await?;
@@ -468,9 +448,9 @@ impl Database {
                     .is_some_and(|n| n <= c.budget.chunks),
             "error bootstrap-budget"
         );
-        sqlx::query("INSERT INTO server_bootstrap_chunks(bootstrap, component, chunk_index, verified, bytes) VALUES (?, ?, ?, ?, ?)")
+        sqlx::query("INSERT INTO server_bootstrap_chunks(bootstrap, component, chunk_index, bytes) VALUES (?, ?, ?, ?)")
             .bind(id.as_slice()).bind(request.component.key()).bind(i64::try_from(index)?)
-            .bind(catalog.is_none()).bind(request.bytes).execute(&mut *tx).await?;
+            .bind(request.bytes).execute(&mut *tx).await?;
         let stored: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM server_bootstrap_chunks WHERE bootstrap = ? AND component = ?",
         )
@@ -478,51 +458,19 @@ impl Database {
         .bind(request.component.key())
         .fetch_one(&mut *tx)
         .await?;
-        let mut outcome = if catalog.is_some() {
-            PutOutcome::Quarantined
-        } else {
-            PutOutcome::Verified
-        };
         if usize::try_from(stored)? == lengths.len() {
-            let records = records(&mut tx, id, request.component).await?;
-            if let Some(class) = catalog {
-                let validation = d.catalog(class, &records.concat()).and_then(|catalog| {
-                    let mut projected = layout.components.clone();
-                    projected.extend(
-                        d.artifacts(Some(&catalog))
-                            .iter()
-                            .map(|a| (a.component, a.lengths())),
-                    );
-                    Layout {
-                        components: projected,
-                        artifacts: Vec::new(),
-                    }
-                    .check_budget(c.budget)
-                    .map_err(|_| crate::sync::bootstrap_format::Error::ResourceLimit)
-                });
-                if let Err(error) = validation {
-                    advance(&mut tx, id, &c, Reclaim::Quarantine).await?;
-                    sqlx::query("UPDATE server_bootstrap_candidates SET catalog_failure = ?, failure_reason = ? WHERE bootstrap = ?")
-                        .bind(class as i64).bind(i64::from(error == crate::sync::bootstrap_format::Error::ResourceLimit)).bind(id.as_slice()).execute(&mut *tx).await?;
-                    outcome = PutOutcome::CatalogRejected;
-                } else {
-                    sqlx::query("UPDATE server_bootstrap_chunks SET verified = 1 WHERE bootstrap = ? AND component = ?")
-                        .bind(id.as_slice()).bind(request.component.key()).execute(&mut *tx).await?;
-                    sqlx::query("UPDATE server_bootstrap_candidates SET catalog_failure = NULL, failure_reason = NULL WHERE bootstrap = ? AND catalog_failure = ?")
-                        .bind(id.as_slice()).bind(class as i64).execute(&mut *tx).await?;
-                    outcome = PutOutcome::Verified;
+            // Completion errors roll back this insert with the transaction.
+            match artifact {
+                Some(artifact) => {
+                    artifact.verify(&records(&mut tx, id, request.component).await?)?
                 }
-            } else {
-                layout
-                    .artifacts
-                    .iter()
-                    .find(|a| a.component == request.component)
-                    .unwrap()
-                    .verify(&records)?;
+                None => self::layout(&mut tx, id, &d)
+                    .await?
+                    .check_budget(c.budget)?,
             }
         }
         tx.commit().await?;
-        Ok(outcome)
+        Ok(())
     }
 }
 
@@ -555,7 +503,7 @@ async fn ensure_staging(
     if c.expires <= now {
         // Reclaimed candidates already have their next fence; expiry needs one.
         if c.expires != 0 {
-            advance(conn, id, &c, Reclaim::Quarantine).await?;
+            advance(conn, id, &c, Reclaim::Fence).await?;
         }
         let expires = now
             .checked_add(STAGING_TTL_SECONDS)

@@ -81,7 +81,7 @@ fn publication_bytes<'de, D: serde::Deserializer<'de>>(
 fn descriptor_bytes<'de, D: serde::Deserializer<'de>>(
     d: D,
 ) -> std::result::Result<Vec<u8>, D::Error> {
-    bounded::<D, u8, 1024>(d)
+    bounded::<D, u8, { crate::sync::bootstrap_format::MAX_DESCRIPTOR_BYTES }>(d)
 }
 fn records<'de, D: serde::Deserializer<'de>>(
     d: D,

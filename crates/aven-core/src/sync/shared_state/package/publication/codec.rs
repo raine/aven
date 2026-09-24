@@ -7,6 +7,12 @@ pub(super) const RECORD_LIMIT: u64 = 1_000_000;
 pub(super) const IMAGE_LIMIT: u64 = 25 * CHUNK;
 pub(super) const IMAGE_COUNT: u64 = 1024;
 pub(super) const ID_LIMIT: u64 = 256;
+const MAX_SLICES: usize = (CATALOG_LIMIT / CHUNK) as usize;
+const MAX_DECLARATION: usize = 1 + 8 + 8 + 32 + 32 * MAX_SLICES;
+// The manifest is at most one chunk: total, aggregate, count, then one entry.
+const MAX_MANIFEST: usize = 8 + 32 + 8 + (8 + 8 + 32 + 24);
+/// Header, five IDs, prefix count, three declarations and the manifest recipe.
+pub const MAX_DESCRIPTOR_BYTES: usize = 7 + 5 * 32 + 8 + 3 * MAX_DECLARATION + MAX_MANIFEST;
 
 pub(super) fn valid(ok: bool) -> Result<()> {
     if ok { Ok(()) } else { Err(Error::Invalid) }

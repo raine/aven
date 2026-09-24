@@ -1,11 +1,104 @@
 use super::*;
 
+async fn stored_chunks(f: &Fixture) -> Vec<(Vec<u8>, i64, Vec<u8>)> {
+    let mut conn = f.server.acquire_reader().await.unwrap();
+    sqlx::query_as(
+        "SELECT component, chunk_index, bytes FROM server_bootstrap_chunks
+         ORDER BY component, chunk_index",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap()
+}
+
 #[tokio::test]
-async fn incomplete_reordered_and_corrupt_catalogs_use_quarantine_and_recover_exact_bytes() {
+async fn catalog_slices_are_checked_in_their_slot_before_storage() {
     let f = Fixture::build(true).await;
     let s = f.declare().await;
     let slices = f.package.catalogs[1].chunks(1_048_576).collect::<Vec<_>>();
     assert_eq!(slices.len(), 2);
+    // Network arrival order is irrelevant when indexes and exact bytes agree.
+    for _ in 0..2 {
+        f.server
+            .put_bootstrap_chunk(
+                &f.auth(),
+                f.request(s.epoch, Component::PrefixCatalog, 1, slices[1]),
+            )
+            .await
+            .unwrap();
+    }
+    let partial = f.status().await;
+    assert_eq!(
+        presence(&partial, Component::PrefixCatalog),
+        [Presence::Missing, Presence::Verified]
+    );
+    let stored = stored_chunks(&f).await;
+    let mut flipped = slices[0].to_vec();
+    flipped[0] ^= 1;
+    let mut conflicting = slices[1].to_vec();
+    conflicting[0] ^= 1;
+    for (component, index, bytes) in [
+        (Component::PrefixCatalog, 0, &flipped[..]),
+        (Component::PrefixCatalog, 0, &slices[0][1..]),
+        (Component::PrefixCatalog, 0, slices[1]),
+        (Component::PrefixCatalog, 1, &conflicting[..]),
+        (Component::PrefixCatalog, 2, slices[1]),
+        (Component::ImageCatalog, 0, slices[0]),
+        (Component::DataCatalog, 0, slices[0]),
+    ] {
+        assert!(
+            f.server
+                .put_bootstrap_chunk(&f.auth(), f.request(s.epoch, component, index, bytes))
+                .await
+                .is_err(),
+            "{component:?}/{index}"
+        );
+        assert_eq!(stored_chunks(&f).await, stored);
+        assert_eq!(f.status().await, partial);
+    }
+    f.server
+        .put_bootstrap_chunk(
+            &f.auth(),
+            f.request(s.epoch, Component::PrefixCatalog, 0, slices[0]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        presence(&f.status().await, Component::PrefixCatalog),
+        [Presence::Verified, Presence::Verified]
+    );
+    f.upload(s.epoch).await;
+    f.upload(s.epoch).await;
+}
+
+#[tokio::test]
+async fn hash_valid_malformed_catalogs_never_complete_or_admit_images() {
+    // Broken dense rank: every slice hash matches, the catalog does not decode.
+    let mut f = Fixture::new().await;
+    f.package.catalogs[1][23..31].copy_from_slice(&2_u64.to_be_bytes());
+    bootstrap_format::recommit_catalog(&mut f.package, 1);
+    let s = f.declare().await;
+    for _ in 0..2 {
+        assert!(
+            f.server
+                .put_bootstrap_chunk(
+                    &f.auth(),
+                    f.request(s.epoch, Component::PrefixCatalog, 0, &f.package.catalogs[1])
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(f.status().await, s);
+    }
+
+    // Reference to an absent parent in an otherwise hash-valid image catalog.
+    let mut f = Fixture::new().await;
+    let mut images = bootstrap_format::catalog::Images::decode(&f.package.catalogs[2]).unwrap();
+    assert!(!images.references.is_empty());
+    images.parents.clear();
+    f.package.catalogs[2] = images.encode().unwrap();
+    bootstrap_format::recommit_catalog(&mut f.package, 2);
+    let s = f.declare().await;
     f.server
         .put_bootstrap_chunk(
             &f.auth(),
@@ -13,122 +106,7 @@ async fn incomplete_reordered_and_corrupt_catalogs_use_quarantine_and_recover_ex
         )
         .await
         .unwrap();
-    f.server
-        .put_bootstrap_chunk(
-            &f.auth(),
-            f.request(s.epoch, Component::State, 0, &f.package.state[0]),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        f.server
-            .put_bootstrap_chunk(
-                &f.auth(),
-                f.request(s.epoch, Component::PrefixCatalog, 1, slices[1])
-            )
-            .await
-            .unwrap(),
-        PutOutcome::Quarantined
-    );
-    assert_eq!(
-        presence(&f.status().await, Component::PrefixCatalog),
-        [Presence::Missing, Presence::Quarantined]
-    );
-    assert_eq!(
-        f.server
-            .put_bootstrap_chunk(
-                &f.auth(),
-                f.request(s.epoch, Component::PrefixCatalog, 1, slices[1])
-            )
-            .await
-            .unwrap(),
-        PutOutcome::Quarantined
-    );
-    let mut bad = slices[1].to_vec();
-    bad[0] ^= 1;
-    assert!(
-        f.server
-            .put_bootstrap_chunk(
-                &f.auth(),
-                f.request(s.epoch, Component::PrefixCatalog, 1, &bad)
-            )
-            .await
-            .is_err()
-    );
-    let mut corrupt_image_catalog = f.package.catalogs[2].clone();
-    corrupt_image_catalog[0] ^= 1;
-    assert_eq!(
-        f.server
-            .put_bootstrap_chunk(
-                &f.auth(),
-                f.request(s.epoch, Component::ImageCatalog, 0, &corrupt_image_catalog)
-            )
-            .await
-            .unwrap(),
-        PutOutcome::CatalogRejected
-    );
-    let fenced = f.status().await;
-    assert_eq!(
-        presence(&fenced, Component::PrefixCatalog),
-        [Presence::Missing, Presence::Missing]
-    );
-    assert_eq!(presence(&fenced, Component::State)[0], Presence::Verified);
-    let s = f
-        .server
-        .ensure_bootstrap_staging(&f.auth(), f.id, f.commitment())
-        .await
-        .unwrap();
-    assert_eq!(
-        f.server
-            .put_bootstrap_chunk(
-                &f.auth(),
-                f.request(s.epoch, Component::PrefixCatalog, 1, slices[1])
-            )
-            .await
-            .unwrap(),
-        PutOutcome::Quarantined
-    );
-    // Network arrival order is irrelevant when indexes and exact bytes agree.
-    assert_eq!(
-        f.server
-            .put_bootstrap_chunk(
-                &f.auth(),
-                f.request(s.epoch, Component::PrefixCatalog, 0, slices[0])
-            )
-            .await
-            .unwrap(),
-        PutOutcome::Verified
-    );
-    assert_eq!(
-        presence(&f.status().await, Component::PrefixCatalog),
-        [Presence::Verified, Presence::Verified]
-    );
-    let mut bad = f.package.catalogs[2].clone();
-    bad[0] ^= 1;
-    assert_eq!(
-        f.server
-            .put_bootstrap_chunk(
-                &f.auth(),
-                f.request(s.epoch, Component::ImageCatalog, 0, &bad)
-            )
-            .await
-            .unwrap(),
-        PutOutcome::CatalogRejected
-    );
-    let rejected = f.status().await;
-    assert_eq!(
-        rejected.catalog_failure,
-        Some(CatalogFailure {
-            component: Component::ImageCatalog,
-            reason: CatalogFailureReason::Invalid
-        })
-    );
-    assert!(rejected.epoch > s.epoch);
-    assert_eq!(presence(&rejected, Component::State)[0], Presence::Verified);
-    assert_eq!(
-        presence(&rejected, Component::ImageCatalog),
-        [Presence::Missing]
-    );
+    let before = f.status().await;
     assert!(
         f.server
             .put_bootstrap_chunk(
@@ -138,104 +116,60 @@ async fn incomplete_reordered_and_corrupt_catalogs_use_quarantine_and_recover_ex
             .await
             .is_err()
     );
-    let resumed = f
-        .server
-        .ensure_bootstrap_staging(&f.auth(), f.id, f.commitment())
-        .await
-        .unwrap();
-    f.upload(resumed.epoch).await;
-    assert_eq!(f.status().await.catalog_failure, None);
-
-    // Reclaimed bytes can return, but a slice relabeled with another index cannot.
-    f.server
-        .reclaim_bootstrap_staging(&f.auth(), f.id, f.commitment(), resumed.epoch, Reclaim::All)
-        .await
-        .unwrap();
-    let resumed = f
-        .server
-        .ensure_bootstrap_staging(&f.auth(), f.id, f.commitment())
-        .await
-        .unwrap();
+    assert_eq!(f.status().await, before);
+    let image = &f.package.images[0];
     assert!(
         f.server
             .put_bootstrap_chunk(
                 &f.auth(),
-                f.request(resumed.epoch, Component::PrefixCatalog, 0, slices[1])
+                f.request(
+                    s.epoch,
+                    Component::Image(image.object_id),
+                    0,
+                    &image.records[0]
+                )
             )
             .await
             .is_err()
     );
-    let mut wrong_order = slices[0].to_vec();
-    wrong_order.reverse();
-    assert_eq!(
-        f.server
-            .put_bootstrap_chunk(
-                &f.auth(),
-                f.request(resumed.epoch, Component::PrefixCatalog, 0, &wrong_order)
-            )
-            .await
-            .unwrap(),
-        PutOutcome::Quarantined
-    );
-    assert_eq!(
-        f.server
-            .put_bootstrap_chunk(
-                &f.auth(),
-                f.request(resumed.epoch, Component::PrefixCatalog, 1, slices[1])
-            )
-            .await
-            .unwrap(),
-        PutOutcome::CatalogRejected
-    );
-}
-
-#[tokio::test]
-async fn committed_but_structurally_invalid_catalog_and_corrupt_data_fail_closed() {
-    let mut f = Fixture::new().await;
-    // Bind a real catalog with a broken rank to the descriptor. Hash equality
-    // alone must not turn malformed prefix coverage into verified presence.
-    f.package.catalogs[1][23..31].copy_from_slice(&2_u64.to_be_bytes());
-    let digest: [u8; 32] = Sha256::digest(&f.package.catalogs[1]).into();
-    let hash_offset = 175 + 57 + 25;
-    f.package.descriptor[hash_offset..hash_offset + 32].copy_from_slice(&digest);
-    let s = f.declare().await;
-    assert_eq!(
-        f.server
-            .put_bootstrap_chunk(
-                &f.auth(),
-                f.request(s.epoch, Component::PrefixCatalog, 0, &f.package.catalogs[1])
-            )
-            .await
-            .unwrap(),
-        PutOutcome::CatalogRejected
-    );
-
-    let f = Fixture::new().await;
-    let s = f.declare().await;
-    f.server
-        .put_bootstrap_chunk(
-            &f.auth(),
-            f.request(s.epoch, Component::DataCatalog, 0, &f.package.catalogs[0]),
-        )
-        .await
-        .unwrap();
-    let mut bad = f.package.state[0].clone();
-    let end = bad.len() - 1;
-    bad[end] ^= 1;
+    // Even bytes written behind the PUT check never become a valid layout.
+    let mut conn = f.server.acquire_writer().await.unwrap();
+    sqlx::query("INSERT INTO server_bootstrap_chunks(bootstrap, component, chunk_index, bytes) VALUES (?, ?, 0, ?)")
+        .bind(f.id.as_slice()).bind(Component::ImageCatalog.key()).bind(&f.package.catalogs[2])
+        .execute(&mut *conn).await.unwrap();
+    drop(conn);
     assert!(
         f.server
-            .put_bootstrap_chunk(&f.auth(), f.request(s.epoch, Component::State, 0, &bad))
+            .bootstrap_staging_status(&f.auth(), f.id)
             .await
             .is_err()
     );
+    assert!(
+        f.server
+            .put_bootstrap_chunk(
+                &f.auth(),
+                f.request(
+                    s.epoch,
+                    Component::Image(image.object_id),
+                    0,
+                    &image.records[0]
+                )
+            )
+            .await
+            .is_err()
+    );
+    // Cancellation remains available for an unusable candidate.
     assert_eq!(
-        presence(&f.status().await, Component::State),
-        [Presence::Missing]
+        f.server
+            .cancel_bootstrap_staging(&f.auth(), f.id)
+            .await
+            .unwrap(),
+        Status::Canceled
     );
 }
 
 #[tokio::test]
-async fn storage_failures_roll_back_declaration_upload_verification_and_cancellation() {
+async fn storage_failures_roll_back_declaration_upload_and_cancellation() {
     let f = Fixture::new().await;
     let mut conn = f.server.acquire_writer().await.unwrap();
     sqlx::query("CREATE TRIGGER fail_declare BEFORE INSERT ON server_bootstrap_candidates BEGIN SELECT RAISE(ABORT, 'injected'); END")
@@ -259,25 +193,9 @@ async fn storage_failures_roll_back_declaration_upload_verification_and_cancella
         .execute(&mut *conn)
         .await
         .unwrap();
-    sqlx::query("CREATE TRIGGER fail_verify BEFORE UPDATE OF verified ON server_bootstrap_chunks BEGIN SELECT RAISE(ABORT, 'injected'); END")
-        .execute(&mut *conn).await.unwrap();
     drop(conn);
     let s = f.declare().await;
-    assert!(
-        f.server
-            .put_bootstrap_chunk(
-                &f.auth(),
-                f.request(s.epoch, Component::DataCatalog, 0, &f.package.catalogs[0])
-            )
-            .await
-            .is_err()
-    );
-    assert_eq!(f.status().await, s);
     let mut conn = f.server.acquire_writer().await.unwrap();
-    sqlx::query("DROP TRIGGER fail_verify")
-        .execute(&mut *conn)
-        .await
-        .unwrap();
     sqlx::query("CREATE TRIGGER fail_put BEFORE INSERT ON server_bootstrap_chunks BEGIN SELECT RAISE(ABORT, 'injected'); END")
         .execute(&mut *conn).await.unwrap();
     drop(conn);
@@ -343,7 +261,7 @@ async fn declaration_request_storage_and_terminal_metadata_are_bounded() {
                 .is_err()
         );
     }
-    let too_large = vec![0; 1025];
+    let too_large = vec![0; bootstrap_format::MAX_DESCRIPTOR_BYTES + 1];
     assert!(
         f.server
             .declare_bootstrap_staging(&f.auth(), &too_large, f.budget())
@@ -388,15 +306,19 @@ async fn declaration_request_storage_and_terminal_metadata_are_bounded() {
         )
         .await
         .unwrap();
-    assert_eq!(
+    // The image recipes it would admit exceed the declared budget.
+    assert!(
         f.server
             .put_bootstrap_chunk(
                 &f.auth(),
                 f.request(s.epoch, Component::ImageCatalog, 0, &f.package.catalogs[2])
             )
             .await
-            .unwrap(),
-        PutOutcome::CatalogRejected
+            .is_err()
+    );
+    assert_eq!(
+        presence(&f.status().await, Component::ImageCatalog),
+        [Presence::Missing]
     );
     f.server
         .cancel_bootstrap_staging(&f.auth(), f.id)
@@ -465,8 +387,7 @@ async fn keyless_staging_does_not_establish_arbitrary_domain_validity() {
     let original = f.package.clone();
     let byte = &mut f.package.catalogs[1][39];
     *byte = if *byte == b'0' { b'1' } else { b'0' };
-    let digest: [u8; 32] = Sha256::digest(&f.package.catalogs[1]).into();
-    f.package.descriptor[257..289].copy_from_slice(&digest);
+    bootstrap_format::recommit_catalog(&mut f.package, 1);
     let s = f.declare().await;
     f.upload(s.epoch).await;
     bootstrap_format::validate_keyless(&f.package).unwrap();
@@ -546,20 +467,17 @@ async fn ensure_revalidates_retained_bytes_before_renewing_reservations() {
 #[tokio::test]
 async fn artifact_aggregate_failure_rolls_back_the_final_chunk() {
     let mut f = Fixture::new().await;
+    // Corrupt the state recipe's aggregate inside a recommitted data catalog.
     f.package.catalogs[0][32] ^= 1;
-    let digest: [u8; 32] = Sha256::digest(&f.package.catalogs[0]).into();
-    f.package.descriptor[200..232].copy_from_slice(&digest);
+    bootstrap_format::recommit_catalog(&mut f.package, 0);
     let s = f.declare().await;
-    assert_eq!(
-        f.server
-            .put_bootstrap_chunk(
-                &f.auth(),
-                f.request(s.epoch, Component::DataCatalog, 0, &f.package.catalogs[0])
-            )
-            .await
-            .unwrap(),
-        PutOutcome::Verified
-    );
+    f.server
+        .put_bootstrap_chunk(
+            &f.auth(),
+            f.request(s.epoch, Component::DataCatalog, 0, &f.package.catalogs[0]),
+        )
+        .await
+        .unwrap();
     assert!(
         f.server
             .put_bootstrap_chunk(

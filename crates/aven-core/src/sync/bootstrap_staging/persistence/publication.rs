@@ -69,10 +69,9 @@ async fn complete(
 ) -> Result<()> {
     // Missing describing catalogs must not reduce the required artifact set.
     for (class, component) in CATALOGS.into_iter().enumerate() {
-        let lengths = d.catalog_lengths(class)?;
-        let rows = complete_records(conn, id, component, &lengths).await?;
-        d.catalog(class, &rows.concat())?;
+        complete_records(conn, id, component, &d.catalog_lengths(class)?).await?;
     }
+    // Every catalog is complete, so the layout verifies each as a whole.
     let layout = layout(conn, id, d).await?;
     layout.check_budget(budget)?;
     let expected: usize = layout
@@ -102,16 +101,14 @@ async fn complete_records(
     component: Component,
     lengths: &[u64],
 ) -> Result<Vec<Vec<u8>>> {
-    let rows: Vec<(i64, bool, Vec<u8>)> = sqlx::query_as(
-        "SELECT chunk_index, verified, bytes FROM server_bootstrap_chunks WHERE bootstrap = ? AND component = ? ORDER BY chunk_index",
+    let rows: Vec<(i64, Vec<u8>)> = sqlx::query_as(
+        "SELECT chunk_index, bytes FROM server_bootstrap_chunks WHERE bootstrap = ? AND component = ? ORDER BY chunk_index",
     ).bind(id.as_slice()).bind(component.key()).fetch_all(&mut *conn).await?;
     ensure!(rows.len() == lengths.len(), "error bootstrap-incomplete");
     let mut result = Vec::with_capacity(rows.len());
-    for (expected, (index, verified, bytes)) in rows.into_iter().enumerate() {
+    for (expected, (index, bytes)) in rows.into_iter().enumerate() {
         ensure!(
-            usize::try_from(index)? == expected
-                && verified
-                && bytes.len() as u64 == lengths[expected],
+            usize::try_from(index)? == expected && bytes.len() as u64 == lengths[expected],
             "error bootstrap-incomplete"
         );
         result.push(bytes);

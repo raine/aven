@@ -157,6 +157,8 @@ pub(super) struct Declaration {
     pub count: u64,
     pub length: u64,
     pub hash: [u8; 32],
+    // One SHA-256 per transfer slice; the slice count follows from the length.
+    pub slices: Vec<[u8; 32]>,
 }
 impl Declaration {
     pub fn new(bytes: &[u8], class: u8) -> Result<Self> {
@@ -164,26 +166,47 @@ impl Declaration {
             count: number(read_stream(bytes, class)?.len())?,
             length: number(bytes.len())?,
             hash: crypto::sha256(bytes),
+            slices: bytes.chunks(size(CHUNK)?).map(crypto::sha256).collect(),
         })
     }
     pub fn write(&self, out: &mut Vec<u8>) {
         u64_bytes(out, self.count);
         u64_bytes(out, self.length);
-        u64_bytes(out, count(self.length));
         out.extend_from_slice(&self.hash);
+        for slice in &self.slices {
+            out.extend_from_slice(slice);
+        }
     }
     pub fn read(r: &mut Reader<'_>) -> Result<Self> {
         let n = r.u64()?;
         let length = r.u64()?;
         bound(n, RECORD_LIMIT)?;
         bound(length, CATALOG_LIMIT)?;
-        valid(length >= 15 && r.u64()? == count(length))?;
+        valid(length >= 15)?;
+        let hash = r.array()?;
+        let slices = (0..count(length))
+            .map(|_| r.array())
+            .collect::<Result<_>>()?;
         Ok(Self {
             count: n,
             length,
-            hash: r.array()?,
+            hash,
+            slices,
         })
     }
+    pub fn slice_lengths(&self) -> Vec<u64> {
+        (0..count(self.length))
+            .map(|i| (self.length - i * CHUNK).min(CHUNK))
+            .collect()
+    }
+    /// Checks one slice against its own slot. It says nothing about the catalog.
+    pub fn verify_slice(&self, index: usize, bytes: &[u8]) -> Result<()> {
+        valid(
+            self.slice_lengths().get(index) == Some(&number(bytes.len())?)
+                && self.slices.get(index) == Some(&crypto::sha256(bytes)),
+        )
+    }
+    /// Checks the complete catalog: slices, aggregate, length, framing and count.
     pub fn verify(&self, bytes: &[u8], class: u8) -> Result<()> {
         valid(number(bytes.len())? == self.length && crypto::sha256(bytes) == self.hash)?;
         valid(Self::new(bytes, class)? == *self)

@@ -249,22 +249,13 @@ impl Fixture {
     async fn upload(&self, epoch: u64) {
         for (component, records) in self.components() {
             for (index, bytes) in records.iter().enumerate() {
-                let result = self
-                    .server
+                self.server
                     .put_bootstrap_chunk(
                         &self.auth(),
                         self.request(epoch, component, index as u64, bytes),
                     )
                     .await
                     .unwrap();
-                if component.catalog().is_some() && index + 1 < records.len() {
-                    assert!(matches!(
-                        result,
-                        PutOutcome::Quarantined | PutOutcome::Verified
-                    ));
-                } else {
-                    assert_eq!(result, PutOutcome::Verified);
-                }
             }
         }
     }
@@ -706,7 +697,7 @@ async fn expiry_resume_and_reclamation_fence_stale_requests_but_preserve_verifie
             f.id,
             f.commitment(),
             resumed.epoch,
-            Reclaim::Quarantine,
+            Reclaim::Fence,
         )
         .await
         .unwrap();

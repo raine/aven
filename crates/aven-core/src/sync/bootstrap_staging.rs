@@ -9,9 +9,10 @@
 //! Declaration freezes the exact profile-1 descriptor and explicit total byte and
 //! chunk budgets, including all three catalogs. One candidate may be active. PUTs
 //! carry its descriptor commitment and current epoch; exact retries are idempotent.
-//! Catalog slices are quarantined until their ordered aggregate and structure
-//! verify. Data requires its verified describing catalog. Manifest descriptors
-//! are inline. Verified means public framing/commitments, never AEAD/domain validity.
+//! Every PUT is checked against its descriptor slot before it is stored, and a
+//! slice that completes a catalog is stored only if the whole catalog verifies.
+//! Data requires its complete describing catalog. Manifest descriptors are
+//! inline. Verified means public framing/commitments, never AEAD/domain validity.
 //!
 //! SQLite blobs and presence commit together under the core writer gate. Signed
 //! PublishBootstrap couples complete staged bytes, immutable outcome, active prefix
@@ -90,7 +91,6 @@ impl Component {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Presence {
     Missing,
-    Quarantined,
     Verified,
 }
 
@@ -98,18 +98,6 @@ pub enum Presence {
 pub struct ComponentStatus {
     pub component: Component,
     pub chunks: Vec<Presence>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CatalogFailureReason {
-    Invalid,
-    ResourceLimit,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CatalogFailure {
-    pub component: Component,
-    pub reason: CatalogFailureReason,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,8 +108,6 @@ pub struct StagingStatus {
     /// Unix seconds. Expiry denies PUT but does not cancel or erase verified bytes.
     pub expires_at: i64,
     pub budget: Budget,
-    /// Last failed catalog, cleared when that catalog verifies successfully.
-    pub catalog_failure: Option<CatalogFailure>,
     /// Bounded by MAX_CHUNKS. Data/image components appear only after their
     /// catalogs verify; absent describing catalogs are not empty data sets.
     pub components: Vec<ComponentStatus>,
@@ -145,19 +131,10 @@ pub struct PutChunk<'a> {
     pub bytes: &'a [u8],
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PutOutcome {
-    Quarantined,
-    Verified,
-    /// The transaction discarded quarantine and fenced outstanding writers.
-    /// Read status or ensure staging to obtain the new epoch before retrying.
-    CatalogRejected,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reclaim {
-    /// Fence outstanding PUTs and discard quarantine, preserving verified blobs.
-    Quarantine,
+    /// Fence outstanding PUTs, preserving stored bytes.
+    Fence,
     /// Actually remove all blobs. The descriptor remains frozen and resumable.
     All,
 }

@@ -28,7 +28,7 @@ async fn publication_rejects_every_missing_obligation_and_corrupt_stored_bytes()
             let mut conn = f.server.acquire_writer().await.unwrap();
             let mut bad = original.to_vec();
             bad[0] ^= 1;
-            sqlx::query("INSERT INTO server_bootstrap_chunks(bootstrap, component, chunk_index, verified, bytes) VALUES (?, ?, ?, 1, ?)")
+            sqlx::query("INSERT INTO server_bootstrap_chunks(bootstrap, component, chunk_index, bytes) VALUES (?, ?, ?, ?)")
                 .bind(f.id.as_slice()).bind(component.key()).bind(index as i64).bind(bad).execute(&mut *conn).await.unwrap();
             drop(conn);
             assert!(
@@ -37,17 +37,8 @@ async fn publication_rejects_every_missing_obligation_and_corrupt_stored_bytes()
             );
             f.unpublished().await;
             let mut conn = f.server.acquire_writer().await.unwrap();
-            sqlx::query("UPDATE server_bootstrap_chunks SET bytes = ?, verified = 0 WHERE component = ? AND chunk_index = ?")
+            sqlx::query("UPDATE server_bootstrap_chunks SET bytes = ? WHERE component = ? AND chunk_index = ?")
                 .bind(original).bind(component.key()).bind(index as i64).execute(&mut *conn).await.unwrap();
-            drop(conn);
-            assert!(
-                f.publish(&p, s.epoch).await.is_err(),
-                "quarantined {component:?}/{index}"
-            );
-            f.unpublished().await;
-            let mut conn = f.server.acquire_writer().await.unwrap();
-            sqlx::query("UPDATE server_bootstrap_chunks SET verified = 1 WHERE component = ? AND chunk_index = ?")
-                .bind(component.key()).bind(index as i64).execute(&mut *conn).await.unwrap();
         }
     }
     f.publish(&p, s.epoch).await.unwrap();

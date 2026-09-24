@@ -31,7 +31,7 @@ pub(crate) async fn current(conn: &mut SqliteConnection) -> Result<Current> {
         !only
             && g == GENESIS_BYTES as i64
             && p == PUBLICATION_BYTES as i64
-            && (0..=1024).contains(&d),
+            && (0..=crate::sync::bootstrap_format::MAX_DESCRIPTOR_BYTES as i64).contains(&d),
         "error membership-storage"
     );
     let (count, total, largest): (i64, i64, i64) = sqlx::query_as("SELECT count(*),coalesce(sum(length(record) + CASE WHEN handle IS NULL THEN 0 ELSE ? END),0),coalesce(max(length(record)),0) FROM server_membership_transitions")

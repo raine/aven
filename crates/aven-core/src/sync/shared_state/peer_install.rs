@@ -41,7 +41,7 @@ impl Database {
                     .context("error snapshot-image-unavailable")?
             }
             Some(component) => {
-                sqlx::query_scalar("SELECT bytes FROM server_bootstrap_chunks WHERE bootstrap=? AND component=? AND chunk_index=? AND verified=1")
+                sqlx::query_scalar("SELECT bytes FROM server_bootstrap_chunks WHERE bootstrap=? AND component=? AND chunk_index=?")
                     .bind(binding.bootstrap_id.as_slice()).bind(component.key())
                     .bind(i64::try_from(index)?).fetch_optional(&mut *tx).await?
                     .context("error snapshot-artifact-unavailable")?

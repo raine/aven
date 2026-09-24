@@ -156,7 +156,7 @@ async fn cancellation_and_epoch_races_serialize_across_independent_pools() {
                     f.id,
                     f.commitment(),
                     s.epoch,
-                    Reclaim::Quarantine
+                    Reclaim::Fence
                 )
             );
             match publish {

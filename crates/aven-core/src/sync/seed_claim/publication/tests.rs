@@ -21,7 +21,7 @@ pub(in crate::sync::seed_claim) fn seed() -> SeedAuthority {
 
 // Public framing fixture only. It makes no ciphertext completeness claim.
 pub(in crate::sync::seed_claim) fn descriptor(g: &Genesis) -> Vec<u8> {
-    let mut d = b"AVBP\0\x01\x01".to_vec();
+    let mut d = b"AVBP\0\x02\x01".to_vec();
     for id in [
         g.context.vault_id,
         [21; 32],
@@ -36,8 +36,8 @@ pub(in crate::sync::seed_claim) fn descriptor(g: &Genesis) -> Vec<u8> {
         d.push(class);
         d.extend(0_u64.to_be_bytes());
         d.extend(15_u64.to_be_bytes());
-        d.extend(1_u64.to_be_bytes());
         d.extend([class; 32]);
+        d.extend([class + 10; 32]);
     }
     d.extend(0_u64.to_be_bytes());
     d.extend([23; 32]);
@@ -79,7 +79,7 @@ fn fixed_successor_bytes_and_strict_semantics_preserve_genesis() {
     assert_eq!(record.len(), 805);
     assert_eq!(
         hex::encode(publication.commitment()),
-        "0f2e101fdd9c47478e55224d6c01eb5a358f48ebae29613c3a9875040dae17d3"
+        "85933477fcac2c2d271758791324a91e31d5563553714e0a810da7934934d43a"
     );
     assert_eq!(publication.binding().prefix_count, 0);
     assert!(Genesis::from_record(&record).is_err());

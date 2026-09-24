@@ -15,13 +15,16 @@
 //! UTF-8 byte strings, at most 256 bytes. Flags are exactly 0 or 1. No compression.
 //! All parsers reject trailing bytes. SHA-256 commits exact bytes, not decoded JSON.
 //!
-//! * Descriptor: `AVBP || U16(1) || U8(1 suite)`, vault, stream, generation,
+//! * Descriptor: `AVBP || U16(2) || U8(1 suite)`, vault, stream, generation,
 //!   capture bootstrap, predecessor membership commitment, U64 prefix count,
 //!   three catalog declarations in class order, then manifest artifact descriptor.
-//! * Declaration: U8 class, U64 record count, U64 byte length, U64 transfer chunk
-//!   count, SHA-256. Catalog transfer chunks are contiguous 1 MiB byte slices
-//!   (final remainder); only the aggregate is committed. Individual catalog
-//!   slices are untrusted until the entire bounded stream verifies.
+//!   At most `MAX_DESCRIPTOR_BYTES`. Other versions are refused as unsupported,
+//!   never reinterpreted.
+//! * Declaration: U8 class, U64 record count, U64 byte length, aggregate SHA-256,
+//!   then one SHA-256 per transfer slice. Slices are contiguous 1 MiB byte ranges
+//!   with a final remainder; their count follows from the length. A hash-valid
+//!   slice proves nothing about its catalog until the complete bytes match the
+//!   aggregate and decode canonically.
 //! * Catalog: `AVBC || U16(1) || U8(class) || U64(record count)`, followed by
 //!   length-prefixed records. Class 1 has one U8(1 state) + artifact descriptor;
 //!   class 2 records are U64 rank + ID, ordered densely from 1. Class 3 groups
@@ -61,6 +64,8 @@ pub(crate) mod catalog;
 pub(crate) mod codec;
 mod domain;
 
+pub use codec::MAX_DESCRIPTOR_BYTES;
+
 /// Version of the encrypted AVBD domain, independent of plaintext sync/export.
 pub const DOMAIN_VERSION: u32 = 1;
 pub mod download;
@@ -79,6 +84,7 @@ pub enum Error {
     Invalid,
     ResourceLimit,
     Authentication,
+    Unsupported,
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -86,6 +92,7 @@ impl std::fmt::Display for Error {
             Self::Invalid => "invalid bootstrap representation",
             Self::ResourceLimit => "bootstrap codec resource limit exceeded",
             Self::Authentication => "bootstrap authentication failed",
+            Self::Unsupported => "unsupported bootstrap format version",
         })
     }
 }
@@ -140,7 +147,7 @@ impl Descriptor {
         }
     }
     fn binding(&self) -> Vec<u8> {
-        let mut out = b"AVBP\0\x01\x01".to_vec();
+        let mut out = b"AVBP\0\x02\x01".to_vec();
         for id in [
             self.vault,
             self.stream,
@@ -163,9 +170,13 @@ impl Descriptor {
         Ok(out)
     }
     fn decode(bytes: &[u8]) -> Result<Self> {
-        bound(number(bytes.len())?, 1024)?;
+        bound(number(bytes.len())?, MAX_DESCRIPTOR_BYTES as u64)?;
         let mut r = Reader(bytes);
-        valid(r.take(7)? == b"AVBP\0\x01\x01")?;
+        valid(r.take(4)? == b"AVBP")?;
+        if r.take(2)? != [0, 2] {
+            return Err(Error::Unsupported);
+        }
+        valid(r.byte()? == 1)?;
         let vault = r.array()?;
         let stream = r.array()?;
         let generation = r.array()?;
@@ -589,6 +600,15 @@ pub fn validate_against_capture(
 
 #[cfg(test)]
 mod tests;
+
+/// Rewrites one catalog commitment to match edited catalog bytes, so tests can
+/// exercise hash-valid catalogs that are otherwise wrong.
+#[cfg(test)]
+pub(crate) fn recommit_catalog(package: &mut Package, index: usize) {
+    let mut d = Descriptor::decode(&package.descriptor).unwrap();
+    d.catalogs[index] = Declaration::new(&package.catalogs[index], index as u8 + 1).unwrap();
+    package.descriptor = d.encode().unwrap();
+}
 
 pub(crate) struct AttachmentIndex {
     pub context: crypto::LocalSharedStatePackageContext,

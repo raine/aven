@@ -33,12 +33,6 @@ async fn specimen() -> (
     (dir, database, capture, local, package)
 }
 
-fn recommit_catalog(package: &mut Package, index: usize) {
-    let mut d = Descriptor::decode(&package.descriptor).unwrap();
-    d.catalogs[index] = Declaration::new(&package.catalogs[index], index as u8 + 1).unwrap();
-    package.descriptor = d.encode().unwrap();
-}
-
 #[test]
 fn exact_prefix_fixture_and_round_trip() {
     let bytes = catalog::prefix_encode(&[(1, "first".into()), (2, "second".into())]).unwrap();
@@ -86,6 +80,7 @@ fn descriptor_fixture_is_exact_and_bounded() {
             count: 0,
             length: 15,
             hash: [i as u8 + 6; 32],
+            slices: vec![[i as u8 + 12; 32]],
         }),
         manifest: Artifact {
             total: 1,
@@ -114,10 +109,102 @@ fn descriptor_fixture_is_exact_and_bounded() {
         Descriptor::decode(&huge.encode().unwrap()),
         Err(Error::ResourceLimit)
     ));
+    // A slice list that disagrees with the declared length cannot be framed.
+    let mut extra = d.clone();
+    extra.catalogs[0].slices.push([0; 32]);
+    assert_eq!(
+        Descriptor::decode(&extra.encode().unwrap()).err(),
+        Some(Error::Invalid)
+    );
     assert_eq!(add(u64::MAX, 1), Err(Error::Invalid));
     assert_eq!(count(u64::MAX), 17_592_186_044_416);
     let mut r = Reader(&u64::MAX.to_be_bytes());
     assert_eq!(r.bytes(STATE_LIMIT), Err(Error::ResourceLimit));
+}
+
+#[test]
+fn other_descriptor_versions_are_refused_as_unsupported() {
+    let v1 = hex::decode(include_str!("descriptor-v1.hex").trim()).unwrap();
+    assert_eq!(Descriptor::decode(&v1).err(), Some(Error::Unsupported));
+    let current = hex::decode(include_str!("descriptor.hex").trim()).unwrap();
+    for version in [0_u16, 1, 3, u16::MAX] {
+        let mut other = current.clone();
+        other[4..6].copy_from_slice(&version.to_be_bytes());
+        assert_eq!(Descriptor::decode(&other).err(), Some(Error::Unsupported));
+    }
+}
+
+#[test]
+fn maximum_descriptor_is_exactly_the_named_bound() {
+    let declaration = |class: u8| Declaration {
+        count: RECORD_LIMIT,
+        length: CATALOG_LIMIT,
+        hash: [class; 32],
+        slices: vec![[class; 32]; 16],
+    };
+    let d = Descriptor {
+        vault: [1; 32],
+        stream: [2; 32],
+        generation: [3; 32],
+        bootstrap: [4; 32],
+        membership: [5; 32],
+        prefix: RECORD_LIMIT,
+        catalogs: [declaration(1), declaration(2), declaration(3)],
+        manifest: Artifact {
+            total: CHUNK,
+            aggregate: [9; 32],
+            chunks: vec![catalog::Chunk {
+                length: CHUNK + 222,
+                hash: [10; 32],
+                nonce: [11; 24],
+            }],
+        },
+    };
+    let bytes = d.encode().unwrap();
+    assert_eq!(bytes.len(), MAX_DESCRIPTOR_BYTES);
+    assert_eq!(MAX_DESCRIPTOR_BYTES, 1978);
+    assert!(Descriptor::decode(&bytes).unwrap() == d);
+    let mut padded = bytes;
+    padded.push(0);
+    assert_eq!(
+        Descriptor::decode(&padded).err(),
+        Some(Error::ResourceLimit)
+    );
+}
+
+#[test]
+fn catalog_slices_verify_only_in_their_own_slot() {
+    let rows = (1..=40_000)
+        .map(|rank| (rank, format!("operation-{rank:08}")))
+        .collect::<Vec<_>>();
+    let bytes = catalog::prefix_encode(&rows).unwrap();
+    let declaration = Declaration::new(&bytes, 2).unwrap();
+    let slices = bytes.chunks(CHUNK as usize).collect::<Vec<_>>();
+    assert_eq!(slices.len(), 2);
+    for (index, slice) in slices.iter().enumerate() {
+        declaration.verify_slice(index, slice).unwrap();
+        assert!(declaration.verify_slice(1 - index, slice).is_err());
+        assert!(declaration.verify_slice(index, &slice[1..]).is_err());
+        let mut flipped = slice.to_vec();
+        flipped[0] ^= 1;
+        assert!(declaration.verify_slice(index, &flipped).is_err());
+    }
+    assert!(declaration.verify_slice(2, slices[1]).is_err());
+    declaration.verify(&bytes, 2).unwrap();
+    // Matching slices do not repair a wrong aggregate or record count.
+    for lie in [
+        Declaration {
+            hash: [0; 32],
+            ..declaration.clone()
+        },
+        Declaration {
+            count: 1,
+            ..declaration.clone()
+        },
+    ] {
+        lie.verify_slice(0, slices[0]).unwrap();
+        assert!(lie.verify(&bytes, 2).is_err());
+    }
 }
 
 #[tokio::test]
@@ -268,7 +355,7 @@ async fn keyless_rejects_incomplete_mutated_reordered_and_recommitted_catalogs()
     let mut images = Images::decode(&bad.catalogs[2]).unwrap();
     images.objects.push(images.objects[0].clone());
     bad.catalogs[2] = images.encode().unwrap();
-    recommit_catalog(&mut bad, 2);
+    super::recommit_catalog(&mut bad, 2);
     assert!(validate_keyless(&bad).is_err());
     let mut bad = package.clone();
     let mut rows = read_stream(&bad.catalogs[1], 2)
@@ -278,7 +365,7 @@ async fn keyless_rejects_incomplete_mutated_reordered_and_recommitted_catalogs()
         .collect::<Vec<_>>();
     rows.reverse();
     bad.catalogs[1] = stream(2, &rows).unwrap();
-    recommit_catalog(&mut bad, 1);
+    super::recommit_catalog(&mut bad, 1);
     assert!(validate_keyless(&bad).is_err());
     // Structurally valid lies cannot be detected by a keyless server, but the
     // encrypted manifest and the source comparison must reject them.
@@ -290,7 +377,7 @@ async fn keyless_rejects_incomplete_mutated_reordered_and_recommitted_catalogs()
     .unwrap();
     rows[0].1 = "substituted".into();
     bad.catalogs[1] = catalog::prefix_encode(&rows).unwrap();
-    recommit_catalog(&mut bad, 1);
+    super::recommit_catalog(&mut bad, 1);
     validate_keyless(&bad).unwrap();
     assert!(validate_against_capture(&bad, &capture, &package_key(), [0x64; 32]).is_err());
 }
@@ -430,7 +517,7 @@ async fn unavailable_reference_has_no_object_or_byte_obligation() {
     let mut catalog = catalog;
     catalog.references[0].object = Some([88; 32]);
     bad.catalogs[2] = catalog.encode().unwrap();
-    recommit_catalog(&mut bad, 2);
+    super::recommit_catalog(&mut bad, 2);
     assert!(validate_keyless(&bad).is_err());
 }
 
@@ -575,7 +662,7 @@ async fn keyless_checks_header_context_even_with_recommitted_records() {
     }
     state.aggregate = digest.finalize().into();
     package.catalogs[0] = state_catalog(&state).unwrap();
-    recommit_catalog(&mut package, 0);
+    super::recommit_catalog(&mut package, 0);
     assert_eq!(validate_keyless(&package), Err(Error::Invalid));
 }
 
@@ -625,6 +712,7 @@ fn declared_resource_limits_refuse_before_artifact_allocation() {
         count: 0,
         length: CATALOG_LIMIT + 1,
         hash: [0; 32],
+        slices: Vec::new(),
     };
     let mut bytes = Vec::new();
     declaration.write(&mut bytes);
@@ -632,10 +720,10 @@ fn declared_resource_limits_refuse_before_artifact_allocation() {
         Declaration::read(&mut Reader(&bytes)),
         Err(Error::ResourceLimit)
     );
+    // A declaration missing its slice hash cannot be read.
     declaration.length = 15;
     bytes.clear();
     declaration.write(&mut bytes);
-    bytes[23] = 2;
     assert_eq!(Declaration::read(&mut Reader(&bytes)), Err(Error::Invalid));
 }
 

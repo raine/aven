@@ -48,10 +48,20 @@ impl DeclarationView {
     }
 
     pub(crate) fn catalog_lengths(&self, class: usize) -> Result<Vec<u64>> {
-        let d = self.0.catalogs.get(class).ok_or(Error::Invalid)?;
-        Ok((0..count(d.length))
-            .map(|i| (d.length - i * CHUNK).min(CHUNK))
-            .collect())
+        Ok(self
+            .0
+            .catalogs
+            .get(class)
+            .ok_or(Error::Invalid)?
+            .slice_lengths())
+    }
+
+    pub(crate) fn verify_slice(&self, class: usize, index: usize, bytes: &[u8]) -> Result<()> {
+        self.0
+            .catalogs
+            .get(class)
+            .ok_or(Error::Invalid)?
+            .verify_slice(index, bytes)
     }
 
     pub(crate) fn catalog(&self, class: usize, bytes: &[u8]) -> Result<CatalogView> {
