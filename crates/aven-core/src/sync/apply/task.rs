@@ -92,6 +92,93 @@ pub(super) async fn create_task(conn: &mut SqliteConnection, change: &ChangeWire
     Ok(())
 }
 
+/// Resets a generated task to the accepted generation's initial values and
+/// field-version seed. Labels only in the superseded generation are removed; the
+/// caller reapplies the replica's own later task commands over this baseline.
+pub(crate) async fn reset_generated_task(
+    conn: &mut SqliteConnection,
+    superseded: &ChangeWire,
+    accepted: &ChangeWire,
+) -> Result<()> {
+    let p = CreateTaskPayload::from_change(accepted)?;
+    let task_id = task_id(accepted)?;
+    let workspace_id = workspace_id_payload(conn, accepted).await?;
+    let project_id =
+        ensure_project_for_payload(conn, &workspace_id, &p.project_id, accepted).await?;
+    let status = TaskStatus::parse(p.status.as_deref().unwrap_or("inbox"))?;
+    let priority = TaskPriority::parse(p.priority.as_deref().unwrap_or("none"))?;
+    let is_epic = i64::from(matches!(p.is_epic.as_deref(), Some("1") | Some("true")));
+    let updated = sqlx::query(
+        "UPDATE tasks SET title = ?, description = ?, project_id = ?, status = ?, priority = ?,
+         available_at = ?, due_on = ?, is_epic = ?, deleted = 0
+         WHERE workspace_id = ? AND id = ?",
+    )
+    .bind(&p.title)
+    .bind(p.description.unwrap_or_default())
+    .bind(&project_id)
+    .bind(status.as_str())
+    .bind(priority.as_str())
+    .bind(p.available_at.unwrap_or_default())
+    .bind(p.due_on.unwrap_or_default())
+    .bind(is_epic)
+    .bind(&workspace_id)
+    .bind(&task_id)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    ensure!(
+        updated == 1,
+        "error generated-task-missing task_id={task_id}"
+    );
+    let labels = |change: &ChangeWire| -> Vec<String> {
+        change.payload["labels"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect()
+    };
+    let accepted_labels = labels(accepted);
+    for label in labels(superseded) {
+        if !accepted_labels.contains(&label) {
+            sqlx::query(
+                "DELETE FROM task_labels WHERE workspace_id = ? AND task_id = ? AND label = ?",
+            )
+            .bind(&workspace_id)
+            .bind(&task_id)
+            .bind(&label)
+            .execute(&mut *conn)
+            .await?;
+        }
+    }
+    for label in &accepted_labels {
+        create_or_update_task_label(conn, &workspace_id, &task_id, label, &accepted.created_at)
+            .await?;
+    }
+    sqlx::query("DELETE FROM task_metadata WHERE workspace_id = ? AND task_id = ?")
+        .bind(&workspace_id)
+        .bind(&task_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query(
+        "DELETE FROM field_versions
+         WHERE workspace_id = ? AND entity_type = 'task' AND entity_id = ?
+           AND field LIKE 'metadata:%'",
+    )
+    .bind(&workspace_id)
+    .bind(&task_id)
+    .execute(&mut *conn)
+    .await?;
+    let seed = str_payload(&accepted.payload, "task_field_version_seed")?;
+    super::metadata::apply_initial_task_values(conn, &workspace_id, &task_id, accepted, &seed)
+        .await?;
+    for field in TaskField::VERSIONED {
+        set_field_version(conn, &task_id, field.as_str(), &seed).await?;
+    }
+    Ok(())
+}
+
 pub async fn set_field(
     conn: &mut SqliteConnection,
     change: &ChangeWire,

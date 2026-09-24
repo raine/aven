@@ -339,9 +339,17 @@ page transaction. This can generate history needed by a later page record; only
 validated deterministic operations with canonical equality can rank that pending
 history as an echo. Retained prefix identities never become tail submissions.
 Concurrent completion shares successor identities. Concurrent generation from
-different templates can produce unequal meaning under the same deterministic ID;
-this remains an explicit integrity failure with pending evidence retained, not an
-identity-only acknowledgement or automatic conflict repair. Series lifecycle and
+different templates can produce a generated task with the same deterministic ID but
+different template defaults (title, description, project, status, priority, labels,
+metadata). The first accepted generation supplies the task baseline. A pending local
+generation that differs only in those defaults is never ranked as the accepted
+record. Its outcome verification reports supersession and leaves the head frozen
+until ordered page application replaces its history row. It then resets the task
+to the accepted defaults and reapplies local pending field and metadata commands
+and label pairs, as other replicas will. Concurrent template edits remain explicit
+series conflicts. Any other difference, including schedule, identity, projection
+records or already-ranked history, remains a same-ID integrity failure with
+pending evidence retained. Series lifecycle and
 outcome changes do not delete task rows or image references. Occurrence creation
 uses the existing Parent creation projection, and explicit task deletion uses the
 existing conservative Parent deletion projection.
@@ -393,7 +401,8 @@ independent enrollment/install and bidirectional task harness. It includes exact
 retry, server reopen, client subprocess exits, conflicts, retained images, invalid
 page rollback and explicit refusal tests. Controlled same-ID fixtures exercise
 canonical verification. `tests/recurrence.rs` also exercises actual independently
-generated deterministic successors, snapshot continuation, lifecycle and outcome
+generated deterministic successors, including different-template successors in
+both acceptance orders and a frozen dispatch, snapshot continuation, lifecycle and outcome
 conflicts, malformed compound rollback, lost acknowledgement and image retention.
 `tests/administration.rs` covers project, label and workspace administration
 across peers and a fresh installation. Rotation, recovery, shipping setup, UI, iOS and comprehensive integration review

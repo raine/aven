@@ -279,7 +279,10 @@ impl Client {
             match &response {
                 Reply::Found(accepted) => {
                     db.observe_encrypted_tail(a, &accepted.mapping).await?;
-                    db.verify_encrypted_tail_outcome(a, accepted).await?;
+                    if !db.verify_encrypted_tail_outcome(a, accepted).await? {
+                        // Pull must apply the superseding outcome before any dispatch.
+                        return Ok(false);
+                    }
                 }
                 Reply::Absent => {
                     let absence = a.confirm_absent(&record, &response)?;
