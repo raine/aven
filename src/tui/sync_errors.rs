@@ -23,14 +23,15 @@ fn codes(error: &anyhow::Error) -> impl Iterator<Item = String> + '_ {
     })
 }
 
-/// A timeout does not show whether the invitation expired, so both outcomes
-/// are explained, and this database is never called disposable.
+/// A timeout does not show whether the invitation expired, and an admission
+/// committed before expiry can still finish, so the guidance applies only to
+/// expiry before admission and never calls this database disposable.
 pub(crate) const JOIN_TIMEOUT: &str = "The other device didn't add this device in time. \
      Keep Add device open on the other device, then resume joining.";
 
-pub(crate) const JOIN_TIMEOUT_EXPIRED: &str = "If that invitation has expired, this \
-     database can't finish joining. Keep it as it is, and join from a new, empty database \
-     with a new invitation.";
+pub(crate) const JOIN_TIMEOUT_EXPIRED: &str = "If the invitation expired before the other \
+     device added this device, this join attempt can't finish. Keep this database as it is, \
+     and join from a new, empty database with a new invitation.";
 
 pub(crate) const JOIN_REQUIRES_EMPTY: &str = "This computer already has tasks or other data. \
      Joining needs an empty database, because existing local data can't be merged with \
@@ -211,8 +212,12 @@ mod tests {
                 assert!(!text.contains(word), "{text}");
             }
         }
-        assert!(JOIN_TIMEOUT_EXPIRED.starts_with("If that invitation has expired"));
-        assert!(JOIN_TIMEOUT_EXPIRED.contains("Keep it as it is"));
+        assert!(
+            JOIN_TIMEOUT_EXPIRED
+                .starts_with("If the invitation expired before the other device added this device")
+        );
+        assert!(JOIN_TIMEOUT_EXPIRED.contains("this join attempt can't finish"));
+        assert!(JOIN_TIMEOUT_EXPIRED.contains("Keep this database as it is"));
     }
 
     #[test]

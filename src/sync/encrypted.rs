@@ -411,9 +411,10 @@ pub(crate) async fn ensure_join_available(database: &Database, config: &AppConfi
     }
 }
 
-/// A timeout proves neither expiry nor non-admission, so the hint covers both
-/// outcomes and never suggests discarding this database.
-const JOIN_TIMEOUT: &str = "error sync-join-timeout hint=\"the other device did not add this device in time; keep `aven sync invite` running there and rerun `aven sync join`. If that invitation has expired, this database cannot finish joining: keep it unchanged and join from a new empty database with a new invitation\"";
+/// A timeout proves neither expiry nor non-admission, and expiry alone does
+/// not stop an admission committed before it, so the hint is conditional on
+/// expiry before admission and never suggests discarding this database.
+const JOIN_TIMEOUT: &str = "error sync-join-timeout hint=\"the other device did not add this device in time; keep `aven sync invite` running there and rerun `aven sync join`. If the invitation expired before the other device added this device, this join attempt cannot finish: keep this database unchanged and join from a new empty database with a new invitation\"";
 
 const ALREADY_SET_UP: &str =
     "error sync-already-set-up hint=\"add devices with `aven sync invite` on this database\"";

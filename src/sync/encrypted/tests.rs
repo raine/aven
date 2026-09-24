@@ -613,8 +613,9 @@ fn join_timeout_hint_covers_expiry_without_suggesting_discarding_data() {
     let hint = super::JOIN_TIMEOUT;
     assert!(hint.starts_with("error sync-join-timeout hint="));
     assert!(hint.contains("rerun `aven sync join`"));
-    assert!(hint.contains("If that invitation has expired"));
-    assert!(hint.contains("keep it unchanged"));
+    assert!(hint.contains("If the invitation expired before the other device added this device"));
+    assert!(hint.contains("this join attempt cannot finish"));
+    assert!(hint.contains("keep this database unchanged"));
     for word in ["delete", "reset", "disposable", "is empty"] {
         assert!(!hint.contains(word), "{hint}");
     }

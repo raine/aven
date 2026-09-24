@@ -604,7 +604,10 @@ fn join_timeout_guidance_stays_visible_while_resuming_in_the_session() {
     };
     let after = render_page(SyncPage::Home, incomplete.clone(), timed_out.clone());
     assert!(after.contains("didn't add this device in time"), "{after}");
-    assert!(after.contains("If that invitation has expired"), "{after}");
+    assert!(
+        after.contains("If the invitation expired before the other device added this device"),
+        "{after}"
+    );
     assert!(after.contains("Resume joining"), "{after}");
 
     let resuming = SyncActivity {
@@ -619,10 +622,13 @@ fn join_timeout_guidance_stays_visible_while_resuming_in_the_session() {
     let during = render_page(SyncPage::Home, incomplete.clone(), resuming);
     assert!(during.contains("Waiting for the other device"), "{during}");
     assert!(
-        during.contains("If that invitation has expired"),
+        during.contains("If the invitation expired before the other device added this device"),
         "{during}"
     );
 
     let fresh = render_page(SyncPage::Home, incomplete, SyncActivity::default());
-    assert!(!fresh.contains("If that invitation has expired"), "{fresh}");
+    assert!(
+        !fresh.contains("If the invitation expired before the other device added this device"),
+        "{fresh}"
+    );
 }
