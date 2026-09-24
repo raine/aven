@@ -108,15 +108,6 @@ pub struct RecurrenceProposalIds {
     pub task_field_version_seed: String,
 }
 
-/// How a generated task or projection record derives its operation identities.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RecurrenceGenerationForm {
-    /// Identities derive from the occurrence alone.
-    Occurrence,
-    /// Identities derive from the generation proposal content.
-    Proposal,
-}
-
 /// Derives proposal identities from a generated `create_task` payload. Labels must
 /// be strictly ascending and metadata strictly ascending by key with unique field
 /// IDs, so equal proposals always have equal payload bytes. The digest input is a
@@ -198,7 +189,28 @@ pub fn proposal_ids_for_task_change(task_change_id: String) -> RecurrenceProposa
 }
 
 impl RecurrenceOccurrenceIdentity {
-    fn occurrence_ids(&self) -> RecurrenceProposalIds {
+    /// Whether a generated record carries proposal-form rather than occurrence-form
+    /// identities.
+    pub fn is_proposal(&self, task_change_id: &str) -> bool {
+        task_change_id != self.task_change_id
+    }
+
+    /// Expected identities of a generated `create_task` payload in its own form.
+    pub fn generated_task_ids(
+        &self,
+        payload: &serde_json::Value,
+    ) -> anyhow::Result<RecurrenceProposalIds> {
+        match payload["task_change_id"].as_str() {
+            Some(id) if !self.is_proposal(id) => Ok(self.projection_ids(id)),
+            _ => derive_proposal_ids(payload),
+        }
+    }
+
+    /// Expected identities of a projection referencing `task_change_id`.
+    pub fn projection_ids(&self, task_change_id: &str) -> RecurrenceProposalIds {
+        if self.is_proposal(task_change_id) {
+            return proposal_ids_for_task_change(task_change_id.to_owned());
+        }
         RecurrenceProposalIds {
             task_change_id: self.task_change_id.clone(),
             occurrence_change_id: self.occurrence_change_id.clone(),
@@ -206,38 +218,6 @@ impl RecurrenceOccurrenceIdentity {
         }
     }
 
-    /// Expected identities of a generated `create_task` payload in its own form.
-    pub fn generated_task_ids(
-        &self,
-        payload: &serde_json::Value,
-    ) -> anyhow::Result<(RecurrenceGenerationForm, RecurrenceProposalIds)> {
-        if payload["task_change_id"].as_str() == Some(self.task_change_id.as_str()) {
-            Ok((RecurrenceGenerationForm::Occurrence, self.occurrence_ids()))
-        } else {
-            Ok((
-                RecurrenceGenerationForm::Proposal,
-                derive_proposal_ids(payload)?,
-            ))
-        }
-    }
-
-    /// Expected identities of a projection referencing `task_change_id`.
-    pub fn projection_ids(
-        &self,
-        task_change_id: &str,
-    ) -> (RecurrenceGenerationForm, RecurrenceProposalIds) {
-        if task_change_id == self.task_change_id {
-            (RecurrenceGenerationForm::Occurrence, self.occurrence_ids())
-        } else {
-            (
-                RecurrenceGenerationForm::Proposal,
-                proposal_ids_for_task_change(task_change_id.to_owned()),
-            )
-        }
-    }
-}
-
-impl RecurrenceOccurrenceIdentity {
     /// Identities of a stored generated `create_task` or projection record, when it
     /// is a valid generation of this occurrence in its own derivation form.
     pub fn stored_generation_ids(
@@ -247,9 +227,9 @@ impl RecurrenceOccurrenceIdentity {
         projection: bool,
     ) -> Option<RecurrenceProposalIds> {
         let ids = if projection {
-            self.projection_ids(payload["task_change_id"].as_str()?).1
+            self.projection_ids(payload["task_change_id"].as_str()?)
         } else {
-            self.generated_task_ids(payload).ok()?.1
+            self.generated_task_ids(payload).ok()?
         };
         let slot = slot_on.format("%Y-%m-%d").to_string();
         let matches = [

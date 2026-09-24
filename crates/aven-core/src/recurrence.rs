@@ -18,9 +18,8 @@ use sqlx::types::Type;
 use crate::ids::{BASE32, encode_crockford};
 
 pub use identity::{
-    RecurrenceFieldVersionSeeds, RecurrenceGenerationForm, RecurrenceOccurrenceIdentity,
-    RecurrenceOccurrenceLink, RecurrenceProposalIds, derive_occurrence_identity,
-    derive_proposal_ids,
+    RecurrenceFieldVersionSeeds, RecurrenceOccurrenceIdentity, RecurrenceOccurrenceLink,
+    RecurrenceProposalIds, derive_occurrence_identity, derive_proposal_ids,
 };
 pub use rule::{RecurrenceFrequency, RecurrenceRule, WeekdaySet};
 pub use schedule::{

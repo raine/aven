@@ -17,7 +17,7 @@ use crate::task_fields::TaskField;
 use crate::types::{MutableEntityType, RecurrenceOccurrence, RecurrenceSeries};
 use crate::workspaces::Workspace;
 
-use super::projection::{generated_creates, generates_proposals};
+use super::projection::generated_creates;
 use super::{
     RecurrenceResolveOutcome, format_local_time, load_occurrence, load_occurrence_for_task,
     load_projected_occurrence, load_series, load_series_labels, load_series_metadata,
@@ -510,23 +510,25 @@ async fn ensure_successor_untouched(
         task_id == &identity.task_id,
         "error recurrence-undo-successor-changed"
     );
-    let generated = if generates_proposals(conn).await? {
-        ensure_generation_untouched(conn, workspace_id, task_id).await?
-    } else {
-        let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
-        let labels = load_series_labels(conn, workspace_id, &series.id).await?;
-        let metadata = load_series_metadata(conn, workspace_id, &series.id).await?;
-        let slot = slot_values(&series.schedule(), occurrence.slot_on)?;
-        verify_materialized_occurrence(
-            conn, &workspace, series, &labels, &metadata, &slot, &identity, occurrence,
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("error recurrence-undo-successor-touched"))?;
-        [
-            identity.task_change_id.clone(),
-            identity.occurrence_change_id.clone(),
-        ]
+    let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
+    let labels = load_series_labels(conn, workspace_id, &series.id).await?;
+    let metadata = load_series_metadata(conn, workspace_id, &series.id).await?;
+    let slot = slot_values(&series.schedule(), occurrence.slot_on)?;
+    verify_materialized_occurrence(
+        conn, &workspace, series, &labels, &metadata, &slot, &identity, occurrence,
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("error recurrence-undo-successor-touched"))?;
+    // Only this device's own generation may be removed; another generation of the
+    // occurrence means it has already been shared.
+    let creates = generated_creates(conn, task_id).await?;
+    let [create] = creates.as_slice() else {
+        anyhow::bail!("error recurrence-undo-successor-touched");
     };
+    let generated = [
+        create.change_id.clone(),
+        create.occurrence_change_id().to_owned(),
+    ];
     ensure_change_unsynced(conn, &generated[0]).await?;
     ensure_change_unsynced(conn, &generated[1]).await?;
     let extra_changes: i64 = sqlx::query_scalar(
@@ -587,69 +589,6 @@ async fn ensure_successor_untouched(
         "error recurrence-undo-successor-touched"
     );
     Ok(generated)
-}
-
-/// A bound database's successor is untouched when this device's generation is its
-/// only one and every field still carries that generation's seed and value.
-async fn ensure_generation_untouched(
-    conn: &mut SqliteConnection,
-    workspace_id: &WorkspaceId,
-    task_id: &TaskId,
-) -> Result<[String; 2]> {
-    let creates = generated_creates(conn, task_id).await?;
-    let [create] = creates.as_slice() else {
-        anyhow::bail!("error recurrence-undo-successor-touched");
-    };
-    let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
-    let task = get_task_in_workspace(conn, &workspace, task_id).await?;
-    for field in TaskField::VERSIONED {
-        let version = entity_field_version(
-            conn,
-            workspace_id,
-            MutableEntityType::Task,
-            task_id.as_str(),
-            field.as_str(),
-        )
-        .await?;
-        ensure!(
-            version.as_deref() == Some(create.seed())
-                && field.current_value(&task) == create.default_value(field),
-            "error recurrence-undo-successor-touched"
-        );
-    }
-    let labels: Vec<String> = sqlx::query_scalar(
-        "SELECT label FROM task_labels WHERE workspace_id = ? AND task_id = ? ORDER BY label",
-    )
-    .bind(workspace_id)
-    .bind(task_id)
-    .fetch_all(&mut *conn)
-    .await?;
-    ensure!(
-        serde_json::to_value(&labels)? == create.payload["labels"],
-        "error recurrence-undo-successor-touched"
-    );
-    let metadata_versions: Vec<Option<String>> = sqlx::query_scalar(
-        "SELECT fv.version FROM task_metadata m
-         LEFT JOIN field_versions fv ON fv.workspace_id = m.workspace_id
-           AND fv.entity_type = 'task' AND fv.entity_id = m.task_id
-           AND fv.field = 'metadata:' || m.field_id
-         WHERE m.workspace_id = ? AND m.task_id = ?",
-    )
-    .bind(workspace_id)
-    .bind(task_id)
-    .fetch_all(&mut *conn)
-    .await?;
-    ensure!(
-        metadata_versions.len() == create.payload["metadata"].as_array().map_or(0, Vec::len)
-            && metadata_versions
-                .iter()
-                .all(|version| version.as_deref() == Some(create.seed())),
-        "error recurrence-undo-successor-touched"
-    );
-    Ok([
-        create.change_id.clone(),
-        create.occurrence_change_id().to_owned(),
-    ])
 }
 
 async fn remove_materialized_occurrence(

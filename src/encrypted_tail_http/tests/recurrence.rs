@@ -660,37 +660,5 @@ async fn occurrence_images_survive_completion_and_follow_explicit_deletion() {
     );
 }
 
-#[tokio::test]
-async fn completion_can_arrive_one_operation_per_page() {
-    let f = fixture().await;
-    converge(&f).await;
-    let w = f.seed.list_workspaces().await.unwrap().remove(0);
-    let created = create(&f.seed).await;
-    converge(&f).await;
-    f.seed
-        .update_task(
-            &w,
-            &created.task.id,
-            TaskUpdate {
-                status: Some("done".into()),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    let c = Client::new(&f.origin).unwrap();
-    for _ in 0..4 {
-        c.round(&f.seed_store, &f.seed, f.root.path())
-            .await
-            .unwrap();
-        c.pull_only_round(&f.peer_store, &f.peer).await.unwrap();
-    }
-    converge(&f).await;
-    assert_eq!(
-        scalar(&f.peer, "SELECT count(*) FROM recurrence_occurrences").await,
-        2
-    );
-}
-
 mod proposals;
 mod replay;

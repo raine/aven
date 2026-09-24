@@ -39,7 +39,7 @@ pub(super) fn validate_recurrence_task(change: &ChangeWire) -> Result<()> {
             bail!("error invalid-sync-change recurrence-deterministic-mismatch field={key}");
         }
     }
-    let (_, ids) = identity.generated_task_ids(&change.payload)?;
+    let ids = identity.generated_task_ids(&change.payload)?;
     require_generation_ids(&change.payload, &ids)?;
     if change.entity_id != identity.task_id.as_str()
         || change.change_id != ids.task_change_id
@@ -211,8 +211,7 @@ pub(super) fn validate_recurrence_projection(change: &ChangeWire) -> Result<()> 
             bail!("error invalid-sync-change recurrence-deterministic-mismatch field={key}");
         }
     }
-    let (_, ids) =
-        identity.projection_ids(&required_string_payload("task_change_id", &change.payload)?);
+    let ids = identity.projection_ids(&required_string_payload("task_change_id", &change.payload)?);
     require_generation_ids(&change.payload, &ids)?;
     if change.change_id != ids.occurrence_change_id
         || change.created_at != identity.occurrence_link.projected_at

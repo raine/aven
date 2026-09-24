@@ -142,14 +142,16 @@ mixtures.
 
 A task can therefore have several accepted generations. The first in accepted
 order supplies untouched defaults; explicit edits based on another generation's
-seed follow ordinary conflict rules. Projection and outcome apply compare only the
+seed follow ordinary conflict rules, and every replica identifies the accepted
+defaults in such a conflict by their field-version seed. Projection and outcome apply compare only the
 series lattice and timezone with the current series, because available time and
 due policy are the author's historical context.
 
 An occurrence outcome owns its task's terminal status. A completion or skip that
 races an explicit non-terminal status edit applies the terminal status and keeps
 the edit as an ordinary status conflict on every replica; such a conflict resolves
-only to the terminal status. Terminal-versus-terminal races remain outcome
+only to the terminal status. The outcome's `task_status_change_id` must name an
+earlier status change of the same task with that terminal value. Terminal-versus-terminal races remain outcome
 conflicts without a duplicate status conflict.
 
 ### Persisted replica behavior

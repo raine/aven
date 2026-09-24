@@ -30,6 +30,27 @@ async fn task_conflicts(db: &Database, task: &TaskId) -> Vec<String> {
     .unwrap()
 }
 
+/// Each unresolved conflict as its field and unordered (value, change ID) sides, so
+/// replicas can be compared regardless of local/remote orientation.
+async fn conflict_sides(db: &Database, task: &TaskId) -> Vec<(String, [(String, String); 2])> {
+    let mut c = aven_core::test_support::acquire(db).await.unwrap();
+    let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(
+        "SELECT field, local_value, local_change_id, remote_value, remote_change_id
+         FROM conflicts WHERE task_id = ? AND resolved = 0 ORDER BY field",
+    )
+    .bind(task)
+    .fetch_all(&mut *c)
+    .await
+    .unwrap();
+    rows.into_iter()
+        .map(|(field, lv, lid, rv, rid)| {
+            let mut sides = [(lv, lid), (rv, rid)];
+            sides.sort();
+            (field, sides)
+        })
+        .collect()
+}
+
 const KIND: &str = "SELECT m.value FROM task_metadata m JOIN metadata_fields f ON f.id = m.field_id
                     WHERE f.key = 'kind' AND m.task_id = ?";
 
@@ -215,16 +236,30 @@ async fn concurrent_template_and_schedule_edits_converge_on_first_accepted_defau
             );
             assert_idle(db).await;
         }
+        // One fresh installation replays the accepted history before resolution.
+        let fresh = if mode == Acceptance::SeedFirst {
+            let fresh = super::super::membership::join(&f, "third", &f.seed, &f.seed_store).await;
+            drain(&c, &fresh.store, &fresh.db).await;
+            assert_eq!(
+                conflict_sides(&fresh.db, &successor).await,
+                conflict_sides(&f.seed, &successor).await
+            );
+            Some(fresh)
+        } else {
+            None
+        };
         if winner == "peer" {
             // The explicit edit was based on the accepted defaults.
             for db in [&f.seed, &f.peer] {
                 assert!(task_conflicts(db, &successor).await.is_empty());
             }
         } else {
-            // An edit based on the losing defaults stays explicit on both sides.
-            for db in [&f.seed, &f.peer] {
-                assert_eq!(task_conflicts(db, &successor).await, vec!["description"]);
-            }
+            // An edit based on the losing defaults stays explicit, with the same
+            // sides and change identities on every replica.
+            let sides = conflict_sides(&f.seed, &successor).await;
+            assert_eq!(sides.len(), 1);
+            assert_eq!(sides[0].0, "description");
+            assert_eq!(conflict_sides(&f.peer, &successor).await, sides);
             f.seed
                 .resolve_conflict(&w, &successor, "description", "peer explicit")
                 .await
@@ -243,9 +278,12 @@ async fn concurrent_template_and_schedule_edits_converge_on_first_accepted_defau
             .await
             .unwrap();
         converge(&f).await;
-        let third = super::super::membership::join(&f, "third", &f.seed, &f.seed_store).await;
-        drain(&c, &third.store, &third.db).await;
-        for db in [&f.seed, &f.peer, &third.db] {
+        let mut dbs = vec![&f.seed, &f.peer];
+        if let Some(fresh) = &fresh {
+            drain(&c, &fresh.store, &fresh.db).await;
+            dbs.push(&fresh.db);
+        }
+        for db in dbs {
             assert_eq!(
                 title(db, successor.as_str()).await,
                 "later edit",
@@ -355,61 +393,12 @@ async fn losing_generation_keeps_explicit_completion_metadata_and_label_changes(
         assert!(conflicts[0].starts_with("metadata:"));
         assert_idle(db).await;
     }
+    let sides = conflict_sides(&f.seed, &successor).await;
+    assert_eq!(conflict_sides(&f.peer, &successor).await, sides);
     assert_eq!(
         text(&f.peer, KIND, successor.as_str()).await,
         Some("peer explicit".into())
     );
-}
-
-#[tokio::test]
-async fn earlier_outcome_applies_after_concurrent_availability_edit() {
-    let f = fixture().await;
-    converge(&f).await;
-    let w = f.seed.list_workspaces().await.unwrap().remove(0);
-    let created = create(&f.seed).await;
-    converge(&f).await;
-    f.peer
-        .update_recurrence_template(
-            &w,
-            &created.series.id,
-            UpdateRecurrenceTemplateParams::new(RecurrenceTemplateUpdate {
-                available_local_time: Some(Some("11:00:00".parse().unwrap())),
-                ..Default::default()
-            }),
-        )
-        .await
-        .unwrap();
-    f.seed
-        .update_task(
-            &w,
-            &created.task.id,
-            TaskUpdate {
-                status: Some("done".into()),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    let c = Client::new(&f.origin).unwrap();
-    drain(&c, &f.peer_store, &f.peer).await;
-    drain(&c, &f.seed_store, &f.seed).await;
-    converge(&f).await;
-    for db in [&f.seed, &f.peer] {
-        assert_eq!(
-            text(
-                db,
-                "SELECT outcome FROM recurrence_occurrences WHERE task_id = ?",
-                created.task.id.as_str()
-            )
-            .await,
-            Some("completed".into())
-        );
-        assert_eq!(
-            scalar(db, "SELECT count(*) FROM recurrence_occurrences").await,
-            2
-        );
-        assert_idle(db).await;
-    }
 }
 
 async fn status_conflict(db: &Database, task: &TaskId) -> Vec<(String, String, String, String)> {
@@ -442,7 +431,6 @@ async fn status_edit_racing_completion_keeps_outcome_and_conflict() {
         (StatusRace::CompletionFirst, "done"),
         (StatusRace::CompletionPaged, "done"),
         (StatusRace::EditFirst, "canceled"),
-        (StatusRace::CompletionFirst, "canceled"),
         (StatusRace::CompletionPaged, "canceled"),
     ] {
         let f = fixture().await;

@@ -106,6 +106,10 @@ pub(crate) async fn adopt_generated_defaults(
     let workspace_id = workspace_id_payload(conn, accepted).await?;
     let baseline_seed = str_payload(&baseline.payload, "task_field_version_seed")?;
     let accepted_seed = str_payload(&accepted.payload, "task_field_version_seed")?;
+    // Replicas that applied the accepted generation first know its defaults by their
+    // field version, the seed, so conflicts identify that side by the seed too.
+    let mut defaults = accepted.clone();
+    defaults.change_id = accepted_seed.clone();
     let project_id = ensure_project_for_payload(
         conn,
         &workspace_id,
@@ -148,7 +152,6 @@ pub(crate) async fn adopt_generated_defaults(
                 &workspace_id,
                 &task_id,
                 &local,
-                false,
             )
             .await?
             {
@@ -157,7 +160,7 @@ pub(crate) async fn adopt_generated_defaults(
         }
         conflict::create_conflict(
             conn,
-            accepted,
+            &defaults,
             &workspace_id,
             field.as_str(),
             &value,
@@ -165,7 +168,7 @@ pub(crate) async fn adopt_generated_defaults(
         )
         .await?;
     }
-    super::metadata::adopt_generated_values(conn, &workspace_id, &task_id, baseline, accepted)
+    super::metadata::adopt_generated_values(conn, &workspace_id, &task_id, baseline, &defaults)
         .await?;
     let labels = |change: &ChangeWire| -> Vec<String> {
         change.payload["labels"]
@@ -251,7 +254,6 @@ pub async fn set_field(
                     &workspace_id,
                     &task_id,
                     &value,
-                    false,
                 )
                 .await?
             {

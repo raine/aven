@@ -7,9 +7,9 @@ use crate::choices::{TaskPriority, TaskStatus};
 use crate::db::{entity_conflict_exists, entity_field_version, set_entity_field_version};
 use crate::ids::{ProjectId, TaskId, WorkspaceId};
 use crate::recurrence::{
-    RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceGenerationForm, RecurrenceOutcome,
-    RecurrenceRule, RecurrenceSchedule, RecurrenceSeriesId, RecurrenceSeriesState, TimeZoneId,
-    WeekdaySet, derive_occurrence_identity, is_slot,
+    RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceOutcome, RecurrenceRule,
+    RecurrenceSchedule, RecurrenceSeriesId, RecurrenceSeriesState, TimeZoneId, WeekdaySet,
+    derive_occurrence_identity, is_slot,
 };
 use crate::sync::wire::ChangeWire;
 use crate::task_fields::TaskField;
@@ -311,7 +311,8 @@ pub(super) async fn project_occurrence(
         "error recurrence-generation-conflict slot={slot_on} field=projected_at"
     );
     let task_change_id = str_payload(&change.payload, "task_change_id")?;
-    let (form, ids) = identity.projection_ids(&task_change_id);
+    let ids = identity.projection_ids(&task_change_id);
+    let proposal = identity.is_proposal(&task_change_id);
     ensure!(
         str_payload(&change.payload, "occurrence_change_id")? == ids.occurrence_change_id
             && change.change_id == ids.occurrence_change_id,
@@ -321,7 +322,7 @@ pub(super) async fn project_occurrence(
         str_payload(&change.payload, "task_field_version_seed")? == ids.task_field_version_seed,
         "error recurrence-generation-conflict slot={slot_on} field=task_field_version_seed"
     );
-    if form == RecurrenceGenerationForm::Proposal {
+    if proposal {
         verify_projected_proposal(conn, change, &ids).await?;
     }
     ensure!(
@@ -329,7 +330,7 @@ pub(super) async fn project_occurrence(
             == identity.field_version_seeds.occurrence,
         "error recurrence-generation-conflict slot={slot_on} field=occurrence_field_version_seed"
     );
-    ensure_task_identity(conn, &workspace_id, &task_id, &identity, form).await?;
+    ensure_task_identity(conn, &workspace_id, &task_id, &identity, proposal).await?;
 
     if let Some(row) = sqlx::query(
         "SELECT task_id, projection_state, outcome, resolved_at, archived_at
@@ -752,9 +753,8 @@ pub(super) async fn suppress_recurrence_status_conflict(
     workspace_id: &WorkspaceId,
     task_id: &TaskId,
     value: &str,
-    versions_match: bool,
 ) -> Result<bool> {
-    if versions_match || !matches!(value, "done" | "canceled") {
+    if !matches!(value, "done" | "canceled") {
         return Ok(false);
     }
     // Terminal-versus-terminal races are outcome conflicts, and an untouched
@@ -826,6 +826,23 @@ async fn apply_outcome_status(
         RecurrenceOutcome::Completed => "done",
         RecurrenceOutcome::Skipped => "canceled",
     };
+    // The status change precedes its outcome in the author's order, so it is
+    // already in accepted or local history.
+    let referenced: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM changes
+         WHERE change_id = ? AND entity_type = 'task' AND entity_id = ? AND field = 'status'
+           AND op_type IN ('set_field', 'resolve_field')
+           AND json_extract(payload, '$.value') = ?)",
+    )
+    .bind(&status_change_id)
+    .bind(task_id)
+    .bind(status)
+    .fetch_one(&mut *conn)
+    .await?;
+    ensure!(
+        referenced,
+        "error recurrence-outcome-status-reference task_id={task_id}"
+    );
     crate::mutation::apply_field_value_in_workspace(conn, workspace_id, task_id, "status", status)
         .await?;
     set_entity_field_version(
@@ -867,9 +884,9 @@ async fn ensure_task_identity(
     workspace_id: &WorkspaceId,
     task_id: &TaskId,
     identity: &crate::recurrence::RecurrenceOccurrenceIdentity,
-    form: RecurrenceGenerationForm,
+    proposal: bool,
 ) -> Result<()> {
-    if form == RecurrenceGenerationForm::Proposal {
+    if proposal {
         // A task can carry an earlier accepted proposal's baseline or explicit
         // edits, so only its immutable creation time identifies it.
         let created_at: String =
@@ -937,9 +954,6 @@ async fn verify_projected_proposal(
             "series_id",
             "slot_on",
             "task_id",
-            "task_change_id",
-            "occurrence_change_id",
-            "task_field_version_seed",
             "occurrence_field_version_seed",
             "frequency",
             "interval",
@@ -950,14 +964,8 @@ async fn verify_projected_proposal(
             "due_policy",
         ]
         .iter()
-        .all(|key| {
-            let expected = if *key == "series_id" {
-                Some(&Value::String(projection.entity_id.clone()))
-            } else {
-                projected.get(*key)
-            };
-            create.get(*key).is_some() && create.get(*key) == expected
-        }) && crate::recurrence::derive_proposal_ids(&create)? == *ids,
+        .all(|key| create.get(*key).is_some() && create.get(*key) == projected.get(*key))
+            && crate::recurrence::derive_proposal_ids(&create)? == *ids,
         "error recurrence-generation-conflict field=projection-create"
     );
     Ok(())
@@ -1677,5 +1685,118 @@ mod tests {
         .await
         .unwrap();
         project_occurrence(&mut conn, &projection).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn outcome_status_requires_its_referenced_status_change() {
+        let (_temp, mut conn) = crate::test_support::test_conn().await;
+        let workspace = crate::test_support::ensure_default_workspace(&mut conn)
+            .await
+            .unwrap();
+        let created = create_recurrence_series(
+            &mut conn,
+            &workspace,
+            CreateRecurrenceSeriesParams::new(RecurrenceSeriesDraft {
+                metadata: Vec::new(),
+                title: "outcome".to_string(),
+                description: String::new(),
+                project: "recurrence".to_string(),
+                priority: "none".to_string(),
+                initial_status: "todo".to_string(),
+                labels: Vec::new(),
+                schedule: RecurrenceSchedule::new(
+                    RecurrenceRule::daily(),
+                    "UTC".parse().unwrap(),
+                    NaiveDate::from_ymd_opt(2026, 7, 20).unwrap(),
+                    None,
+                    RecurrenceDuePolicy::SameDay,
+                ),
+            })
+            .at(Utc.with_ymd_and_hms(2026, 7, 20, 12, 0, 0).unwrap()),
+        )
+        .await
+        .unwrap();
+        let mut tx = begin_immediate(&mut conn).await.unwrap();
+        crate::operations::recurrence::resolve_recurrence_occurrence_in_transaction(
+            &mut tx,
+            &workspace,
+            &created.task.id,
+            RecurrenceOutcome::Completed,
+            "2026-07-20T13:00:00Z",
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        let row = sqlx::query(
+            "SELECT change_id, payload, created_at FROM changes
+             WHERE op_type = 'resolve_recurrence_occurrence'",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let outcome = ChangeWire {
+            change_id: row.get("change_id"),
+            client_id: "remote".into(),
+            local_seq: 1,
+            entity_type: "recurrence_series".into(),
+            entity_id: created.series.id.to_string(),
+            field: Some("outcome".into()),
+            op_type: "resolve_recurrence_occurrence".into(),
+            payload: serde_json::from_str(&row.get::<String, _>("payload")).unwrap(),
+            base_version: None,
+            created_at: row.get("created_at"),
+            server_seq: Some(1),
+        };
+        let status_change = outcome.payload["task_status_change_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let create: String =
+            sqlx::query_scalar("SELECT change_id FROM changes WHERE op_type = 'create_task'")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        // Rewind to an explicitly open task whose occurrence has no outcome yet.
+        sqlx::query("DELETE FROM recurrence_occurrences WHERE task_id <> ?")
+            .bind(&created.task.id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        for reference in ["AAAAAAAAAAAAAAAA", create.as_str(), status_change.as_str()] {
+            sqlx::query(
+                "UPDATE recurrence_occurrences
+                 SET outcome = '', resolved_at = '', outcome_change_id = '',
+                     projection_state = 'projected'
+                 WHERE task_id = ?",
+            )
+            .bind(&created.task.id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+            sqlx::query("UPDATE tasks SET status = 'active' WHERE id = ?")
+                .bind(&created.task.id)
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+            let mut change = outcome.clone();
+            change.payload["task_status_change_id"] = reference.into();
+            let result = apply_outcome(&mut conn, &change).await;
+            if reference == status_change {
+                result.unwrap();
+                let status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
+                    .bind(&created.task.id)
+                    .fetch_one(&mut *conn)
+                    .await
+                    .unwrap();
+                assert_eq!(status, "done");
+            } else {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("recurrence-outcome-status-reference")
+                );
+            }
+        }
     }
 }

@@ -559,16 +559,21 @@ async fn verify_generated_task(
     };
     let task = get_task_in_workspace(conn, workspace, &identity.task_id).await?;
     ensure!(task.created_at == identity.created_at, conflict("task"));
+    let mut versions = Vec::new();
+    for field in TaskField::VERSIONED {
+        let version = entity_field_version(
+            conn,
+            &workspace.id,
+            MutableEntityType::Task,
+            identity.task_id.as_str(),
+            field.as_str(),
+        )
+        .await?;
+        versions.push((field, version));
+    }
     for create in generated_creates(conn, &identity.task_id).await? {
-        for field in TaskField::VERSIONED {
-            let version = entity_field_version(
-                conn,
-                &workspace.id,
-                MutableEntityType::Task,
-                identity.task_id.as_str(),
-                field.as_str(),
-            )
-            .await?;
+        for (field, version) in &versions {
+            let field = *field;
             if version.as_deref() == Some(create.seed()) {
                 ensure!(
                     field.current_value(&task) == create.default_value(field),
