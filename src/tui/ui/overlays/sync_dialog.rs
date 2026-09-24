@@ -905,6 +905,7 @@ fn confirm_join_lines(body: &mut Body, server: &str, replace: bool, width: usize
             Style::new().fg(FG_MUTED),
             width,
         ));
+        lines.push(Line::from(""));
     }
     lines.extend(paragraph(
         "This computer will download the synced tasks, then their images. Keep Add \
