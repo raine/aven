@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use tokio::task::JoinHandle;
+use zeroize::Zeroizing;
 
 use crate::pairing::PairingPresentation;
 use crate::sync::encrypted::{self, PendingInvitation};
@@ -10,11 +11,14 @@ use crate::tui::overlay::OverlayState;
 
 /// Creates a device invitation and waits for its admission in the background.
 /// Dismissing the QR overlay keeps waiting, as `aven sync invite` does, until
-/// the device joins, the invitation expires, or the TUI exits.
+/// the device joins, the invitation expires, or the TUI exits. The invitation
+/// text is kept in memory only while admission waits, and leaves it only when
+/// the user asks to copy it.
 pub(super) struct InviteController {
     create: Option<JoinHandle<Result<PendingInvitation>>>,
     admission: Option<JoinHandle<Result<()>>>,
     presentation: Option<Arc<PairingPresentation>>,
+    text: Option<Zeroizing<String>>,
 }
 
 impl InviteController {
@@ -23,11 +27,18 @@ impl InviteController {
             create: None,
             admission: None,
             presentation: None,
+            text: None,
         }
     }
 
     pub(super) fn work_pending(&self) -> bool {
         self.create.is_some() || self.admission.is_some()
+    }
+
+    #[cfg(test)]
+    pub(super) fn show_for_test(&mut self, presentation: Arc<PairingPresentation>, text: &str) {
+        self.presentation = Some(presentation);
+        self.text = Some(Zeroizing::new(text.to_string()));
     }
 }
 
@@ -64,6 +75,21 @@ impl App {
         self.notification = Some(Notification::loading("creating invitation"));
     }
 
+    /// Copies the waiting invitation's text on explicit request, so another
+    /// computer can paste it.
+    pub(in crate::tui) fn copy_pairing_invitation(&mut self) {
+        let Some(text) = &self.invite.text else {
+            self.set_info("no invitation is waiting");
+            return;
+        };
+        match crate::tui::platform::copy_to_clipboard(text) {
+            Ok(()) => self.set_warning(
+                "invitation copied: it grants access to all synced data until used or expired",
+            ),
+            Err(error) => self.set_warning(format!("could not copy invitation: {error:#}")),
+        }
+    }
+
     pub(in crate::tui) fn pairing_unavailable_reason(&self) -> Option<&'static str> {
         (!self.store.sync_status.set_up).then_some("requires sync setup")
     }
@@ -82,6 +108,7 @@ impl App {
                     Ok(presentation) => {
                         let presentation = Arc::new(presentation);
                         self.invite.presentation = Some(presentation.clone());
+                        self.invite.text = Some(Zeroizing::new(invitation.text().to_string()));
                         self.overlay = Some(OverlayState::Pairing(presentation));
                         let database = self.store.database();
                         self.invite.admission = Some(tokio::spawn(async move {
@@ -102,6 +129,7 @@ impl App {
             return Ok(false);
         };
         self.invite.presentation = None;
+        self.invite.text = None;
         if matches!(self.overlay, Some(OverlayState::Pairing(_))) {
             self.overlay = None;
         }

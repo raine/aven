@@ -86,7 +86,7 @@ fn constrained_overlay_renders_complete_actionable_fallback_without_secrets() {
 
     let buffer = rendered_buffer(&presentation, 40, 12);
     let text = region_text(&buffer, layout.content);
-    assert!(text.contains("run `aven sync invite` for a text invitation."));
+    assert!(text.contains("press c to copy the invitation text."));
     assert!(text.contains(NETWORK_REQUIREMENT));
     assert!(!text.contains("aven://pair/"));
     assert!(!buffer.content.iter().any(|cell| {
@@ -118,5 +118,6 @@ fn overlay_presents_only_safe_pairing_data() {
 
     assert!(rendered.contains("Add device"));
     assert!(rendered.contains("https://sync.example.test:8443"));
+    assert!(rendered.contains("c copy invitation"));
     assert!(!rendered.contains("aven://pair/"));
 }

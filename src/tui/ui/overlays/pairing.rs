@@ -156,7 +156,11 @@ fn render_footer(frame: &mut Frame, area: Rect) {
         return;
     }
     frame.render_widget(
-        Paragraph::new(dialog_hint_line(&[("Esc", "close")])).style(Style::new().bg(BG_ALT)),
+        Paragraph::new(dialog_hint_line(&[
+            ("c", "copy invitation"),
+            ("Esc", "close"),
+        ]))
+        .style(Style::new().bg(BG_ALT)),
         area,
     );
 }
@@ -177,7 +181,7 @@ fn render_text(frame: &mut Frame, area: Rect, text: &str, color: Color) {
 
 fn fallback_text() -> String {
     format!(
-        "Terminal too small for QR.\n\nEnlarge it, or run `aven sync invite` for a text invitation.\n\n{NETWORK_REQUIREMENT}"
+        "Terminal too small for QR.\n\nEnlarge it, or press c to copy the invitation text.\n\n{NETWORK_REQUIREMENT}"
     )
 }
 

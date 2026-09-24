@@ -765,8 +765,8 @@ fn invitation_lines(
         ),
         InvitationKind::Join => (
             "Join existing sync",
-            "On a device that already syncs, open Add device, then paste the invitation \
-             here. `aven sync invite` on that device prints it as text.",
+            "On a device that already syncs, open Add device and press c to copy the \
+             invitation, then paste it here.",
         ),
     };
     lines.push(Line::from(Span::styled(

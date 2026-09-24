@@ -50,3 +50,45 @@ async fn add_device_reports_invitation_failures_without_an_overlay() {
     assert!(message.starts_with("invitation unavailable:"), "{message}");
     assert!(message.contains("sync-not-set-up"), "{message}");
 }
+
+#[tokio::test]
+async fn copy_invitation_writes_the_clipboard_only_when_asked() {
+    let mut app = test_app().await;
+    let (_, invitation) = crate::sync::encrypted::sample_invitations("https://sync.example.com");
+    let presentation = std::sync::Arc::new(
+        crate::pairing::PairingPresentation::new("https://sync.example.com", &invitation).unwrap(),
+    );
+    let before = crate::tui::platform::clipboard_text_for_test();
+    app.invite.show_for_test(presentation, &invitation);
+    app.show_pairing_invitation();
+    assert!(matches!(app.overlay, Some(OverlayState::Pairing(_))));
+    // Showing the QR code writes nothing to the clipboard.
+    assert_eq!(crate::tui::platform::clipboard_text_for_test(), before);
+
+    app.handle_overlay_key(key(KeyCode::Char('c')))
+        .await
+        .unwrap();
+
+    assert!(matches!(app.overlay, Some(OverlayState::Pairing(_))));
+    assert_eq!(
+        crate::tui::platform::clipboard_text_for_test().as_deref(),
+        Some(invitation.as_str())
+    );
+    let message = toast_message(&app).unwrap();
+    assert!(message.contains("grants access"), "{message}");
+    assert!(!message.contains("aven://"), "{message}");
+}
+
+#[tokio::test]
+async fn copy_invitation_without_a_waiting_invitation_copies_nothing() {
+    let mut app = test_app().await;
+    let before = crate::tui::platform::clipboard_text_for_test();
+
+    app.copy_pairing_invitation();
+
+    assert_eq!(crate::tui::platform::clipboard_text_for_test(), before);
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("no invitation is waiting")
+    );
+}

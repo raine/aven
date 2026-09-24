@@ -40,6 +40,12 @@ impl App {
                     .await
             }
             OverlayState::Changelog(state) => self.handle_changelog_key(state, key, terminal_size),
+            OverlayState::Pairing(presentation)
+                if key.code == KeyCode::Char('c') && key.modifiers.is_empty() =>
+            {
+                self.overlay = Some(OverlayState::Pairing(presentation));
+                self.copy_pairing_invitation();
+            }
             OverlayState::Sync(state) => {
                 self.handle_sync_dialog_key(state, key, terminal_size)
                     .await?
