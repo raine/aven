@@ -484,3 +484,54 @@ async fn crash_after_coverage_and_floor_before_sqlite_mirror_recovers_without_re
     );
     task.abort();
 }
+
+#[tokio::test]
+async fn signed_head_33_refresh_and_reopen_preserve_complete_coverage_and_receipt() {
+    let root = tempfile::tempdir().unwrap();
+    let (seed_db, seed_store, server, origin, task) = adopted(root.path()).await;
+    let client = Client::new(&origin).unwrap();
+    let second = join(root.path(), &client, "second", &seed_db, &seed_store, true).await;
+    let third = join(root.path(), &client, "third", &seed_db, &seed_store, true).await;
+    client.refresh(&second.store, &second.db).await.unwrap();
+    let (mut m, mut keys) = checkpoint(&second.store, &second.db, &client).await;
+    assert_eq!(m.sequence(), 3);
+    let receipt = std::fs::read(owned_file(root.path(), "third", "peer-installed")).unwrap();
+    let cursor = third.db.meta("sync_cursor").await.unwrap();
+    let domain =
+        serde_json::to_value(third.db.export_data("test".into()).await.unwrap().tables).unwrap();
+    for _ in 0..15 {
+        rotate(&server, &second.peer, &mut m, &mut keys, &[]).await;
+    }
+    assert_eq!(m.sequence(), 33);
+    assert_eq!(m.generations().len(), 16);
+    let result = client.refresh(&third.store, &third.db).await;
+    assert!(owned_file(root.path(), "third", "membership-coverage-33").exists());
+    assert!(owned_file(root.path(), "third", "membership-floor-33").exists());
+    result.unwrap();
+    assert_eq!(
+        third
+            .db
+            .membership_checkpoint_mirror()
+            .await
+            .unwrap()
+            .unwrap()
+            .1,
+        33
+    );
+    let reopened = Database::open(third.db.path()).await.unwrap();
+    let store = isolated_store(reopened.path(), &root.path().join("third-keys"));
+    let (recovered, actual) = checkpoint(&store, &reopened, &client).await;
+    assert_eq!(recovered.head(), m.head());
+    assert_keys(&m, &actual, &keys);
+    client.refresh(&store, &reopened).await.unwrap();
+    assert_eq!(reopened.meta("sync_cursor").await.unwrap(), cursor);
+    assert_eq!(
+        std::fs::read(owned_file(root.path(), "third", "peer-installed")).unwrap(),
+        receipt
+    );
+    assert_eq!(
+        serde_json::to_value(reopened.export_data("test".into()).await.unwrap().tables).unwrap(),
+        domain
+    );
+    task.abort();
+}

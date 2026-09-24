@@ -434,3 +434,79 @@ async fn pending_admission_enters_rotation_coverage_and_fresh_join_gets_all_hist
     }
     assert_eq!(e.verify().unwrap().generations().len(), 2);
 }
+
+#[tokio::test]
+async fn checkpoint_constraint_migration_preserves_mirror_and_accepts_final_head_only() {
+    use sqlx::Connection;
+    let mut conn = sqlx::SqliteConnection::connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::raw_sql(include_str!(
+        "../../../../../../migrations/20260923020433_protected_membership_checkpoint.sql"
+    ))
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO local_membership_checkpoint(singleton,identity,sequence,head,evidence) VALUES(1,?,32,?,?)")
+        .bind([11_u8; 32].as_slice()).bind([12_u8; 32].as_slice()).bind([13_u8; 32].as_slice()).execute(&mut conn).await.unwrap();
+    type Mirror = (i64, Vec<u8>, i64, Vec<u8>, Vec<u8>);
+    let before: Mirror = sqlx::query_as(
+        "SELECT singleton,identity,sequence,head,evidence FROM local_membership_checkpoint",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert!(
+        sqlx::query("UPDATE local_membership_checkpoint SET sequence=33")
+            .execute(&mut conn)
+            .await
+            .is_err()
+    );
+    let mut tx = conn.begin().await.unwrap();
+    sqlx::raw_sql(include_str!(
+        "../../../../../../migrations/20260923050120_membership_checkpoint_transition_bound.sql"
+    ))
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let after: Mirror = sqlx::query_as(
+        "SELECT singleton,identity,sequence,head,evidence FROM local_membership_checkpoint",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(before, after);
+    // These are schema boundary checks, not fabricated authenticated history.
+    for sequence in [1, 33, 129] {
+        sqlx::query("UPDATE local_membership_checkpoint SET sequence=?")
+            .bind(sequence)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+    }
+    for sequence in [0, 130] {
+        assert!(
+            sqlx::query("UPDATE local_membership_checkpoint SET sequence=?")
+                .bind(sequence)
+                .execute(&mut conn)
+                .await
+                .is_err()
+        );
+    }
+    for invalid in [
+        "UPDATE local_membership_checkpoint SET singleton=2",
+        "UPDATE local_membership_checkpoint SET identity=zeroblob(31)",
+        "UPDATE local_membership_checkpoint SET head=zeroblob(31)",
+        "UPDATE local_membership_checkpoint SET evidence=zeroblob(31)",
+    ] {
+        assert!(sqlx::query(invalid).execute(&mut conn).await.is_err());
+    }
+    let final_row: Mirror = sqlx::query_as(
+        "SELECT singleton,identity,sequence,head,evidence FROM local_membership_checkpoint",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(final_row, (before.0, before.1, 129, before.3, before.4));
+}
