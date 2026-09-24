@@ -19,6 +19,8 @@ description: Release notes for aven.
 
 - Fix: Editing a recurring task's template, available time or due policy on two offline devices and then completing the current task on both no longer stops encrypted sync. The next task uses the template values synced first, and edits made to it on either device are kept or shown as conflicts. Recurring tasks already stuck this way by earlier encrypted sync builds still stop sync and are not repaired automatically.
 
+- Fix: Changing a recurring task's status on one device while another device completes or skips it no longer stops encrypted sync. The completion or skip is kept, and the other status change is shown as a conflict on every device.
+
 - Fix: Encrypted peer installation preserves task metadata when older attachment bytes have been pruned. Image downloads follow initial metadata catch-up.
 
 - Fix: Concurrent metadata additions no longer stall task sync when their combined count or size exceeds local editing limits. All values are retained, and over-limit tasks can be reduced incrementally.

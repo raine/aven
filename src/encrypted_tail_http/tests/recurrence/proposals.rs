@@ -412,23 +412,49 @@ async fn earlier_outcome_applies_after_concurrent_availability_edit() {
     }
 }
 
-/// An explicit non-terminal status edit racing a completion from another device.
-/// Current policy has no rule for applying that completion over the explicit edit:
-/// the editing device stops with pending work retained, while the completing
-/// device keeps the completion and shows a status conflict.
+async fn status_conflict(db: &Database, task: &TaskId) -> Vec<(String, String, String, String)> {
+    let mut c = aven_core::test_support::acquire(db).await.unwrap();
+    sqlx::query_as(
+        "SELECT local_value, remote_value, local_change_id, remote_change_id FROM conflicts
+         WHERE task_id = ? AND field = 'status' AND resolved = 0",
+    )
+    .bind(task)
+    .fetch_all(&mut *c)
+    .await
+    .unwrap()
+}
+
+#[derive(Clone, Copy, Debug)]
+enum StatusRace {
+    EditFirst,
+    CompletionFirst,
+    /// Completion records reach the editing device one page at a time.
+    CompletionPaged,
+}
+
+/// An explicit non-terminal status edit racing a completion or skip from another
+/// device. The outcome owns the terminal status everywhere, and the explicit edit
+/// stays an ordinary status conflict on every replica.
 #[tokio::test]
-async fn status_edit_racing_completion_stops_the_editing_device() {
-    for seed_first in [true, false] {
+async fn status_edit_racing_completion_keeps_outcome_and_conflict() {
+    for (race, terminal) in [
+        (StatusRace::EditFirst, "done"),
+        (StatusRace::CompletionFirst, "done"),
+        (StatusRace::CompletionPaged, "done"),
+        (StatusRace::EditFirst, "canceled"),
+        (StatusRace::CompletionFirst, "canceled"),
+        (StatusRace::CompletionPaged, "canceled"),
+    ] {
         let f = fixture().await;
         converge(&f).await;
         let w = f.seed.list_workspaces().await.unwrap().remove(0);
         let created = create(&f.seed).await;
         converge(&f).await;
-        let task = created.task.id.as_str();
-        for (db, status) in [(&f.seed, "active"), (&f.peer, "done")] {
+        let task = &created.task.id;
+        for (db, status) in [(&f.seed, "active"), (&f.peer, terminal)] {
             db.update_task(
                 &w,
-                &created.task.id,
+                task,
                 TaskUpdate {
                     status: Some(status.into()),
                     ..Default::default()
@@ -437,57 +463,148 @@ async fn status_edit_racing_completion_stops_the_editing_device() {
             .await
             .unwrap();
         }
+        let status_version = "SELECT version FROM field_versions
+                              WHERE entity_type = 'task' AND entity_id = ? AND field = 'status'";
+        let edit = text(&f.seed, status_version, task.as_str()).await.unwrap();
+        let completion = text(&f.peer, status_version, task.as_str()).await.unwrap();
         let c = Client::new(&f.origin).unwrap();
-        if seed_first {
-            // The completing device receives the edit first and keeps a conflict.
-            drain(&c, &f.seed_store, &f.seed).await;
-            drain(&c, &f.peer_store, &f.peer).await;
-        } else {
-            drain(&c, &f.peer_store, &f.peer).await;
-        }
-        let cursor = f.seed.meta("sync_cursor").await.unwrap();
-        let mut errors = Vec::new();
-        for _ in 0..8 {
-            if let Err(error) = c.round(&f.seed_store, &f.seed, &blobs(&f.seed)).await {
-                errors.push(error.to_string());
+        match race {
+            StatusRace::EditFirst => {
+                drain(&c, &f.seed_store, &f.seed).await;
+                drain(&c, &f.peer_store, &f.peer).await;
+            }
+            StatusRace::CompletionFirst => {
+                drain(&c, &f.peer_store, &f.peer).await;
+                drain(&c, &f.seed_store, &f.seed).await;
+            }
+            StatusRace::CompletionPaged => {
+                for _ in 0..6 {
+                    c.round(&f.peer_store, &f.peer, &blobs(&f.peer))
+                        .await
+                        .unwrap();
+                    c.pull_only_round(&f.seed_store, &f.seed).await.unwrap();
+                }
             }
         }
-        assert_eq!(errors.len(), 8, "seed_first={seed_first}");
-        assert!(
-            errors.iter().all(|e| e == "error encrypted-tail-apply"),
-            "{errors:?}"
+        converge(&f).await;
+        let outcome = if terminal == "done" {
+            "completed"
+        } else {
+            "skipped"
+        };
+        let edit_side = (
+            "active".to_string(),
+            terminal.to_string(),
+            edit.clone(),
+            completion.clone(),
         );
-        assert_eq!(f.seed.meta("sync_cursor").await.unwrap(), cursor);
+        let completion_side = (
+            terminal.to_string(),
+            "active".to_string(),
+            completion.clone(),
+            edit.clone(),
+        );
+        for (db, expected) in [(&f.seed, &edit_side), (&f.peer, &completion_side)] {
+            assert_eq!(
+                text(db, "SELECT status FROM tasks WHERE id = ?", task.as_str()).await,
+                Some(terminal.into()),
+                "{race:?} {terminal}"
+            );
+            assert_eq!(
+                text(
+                    db,
+                    "SELECT outcome FROM recurrence_occurrences WHERE task_id = ?",
+                    task.as_str()
+                )
+                .await,
+                Some(outcome.into())
+            );
+            assert_eq!(
+                text(db, status_version, task.as_str()).await,
+                Some(completion.clone())
+            );
+            assert_eq!(&status_conflict(db, task).await, &vec![expected.clone()]);
+            assert_eq!(
+                scalar(db, "SELECT count(*) FROM recurrence_occurrences").await,
+                2
+            );
+            assert_idle(db).await;
+        }
+        let third = super::super::membership::join(&f, "third", &f.seed, &f.seed_store).await;
+        drain(&c, &third.store, &third.db).await;
         assert_eq!(
-            text(&f.seed, "SELECT status FROM tasks WHERE id = ?", task).await,
-            Some("active".into())
+            text(
+                &third.db,
+                "SELECT status FROM tasks WHERE id = ?",
+                task.as_str()
+            )
+            .await,
+            Some(terminal.into())
         );
+        // A fresh device replays accepted order, so its local side is whichever
+        // status change was accepted first.
+        let accepted_first = match race {
+            StatusRace::EditFirst => &edit_side,
+            StatusRace::CompletionFirst | StatusRace::CompletionPaged => &completion_side,
+        };
+        assert_eq!(
+            &status_conflict(&third.db, task).await,
+            &vec![accepted_first.clone()]
+        );
+
+        // A non-terminal choice would reopen a resolved occurrence.
+        let reopen = f.seed.resolve_conflict(&w, task, "status", "active").await;
+        eprintln!(
+            "{race:?} {terminal} resolve active: {:?}",
+            reopen.as_ref().err()
+        );
+        assert!(reopen.is_err());
         assert_eq!(
             text(
                 &f.seed,
-                "SELECT outcome FROM recurrence_occurrences WHERE task_id = ?",
-                task
+                "SELECT status FROM tasks WHERE id = ?",
+                task.as_str()
             )
             .await,
-            Some(String::new())
+            Some(terminal.into())
         );
-        drain(&c, &f.peer_store, &f.peer).await;
-        assert_eq!(
-            text(&f.peer, "SELECT status FROM tasks WHERE id = ?", task).await,
-            Some("done".into())
-        );
-        assert_eq!(
-            text(
-                &f.peer,
-                "SELECT outcome FROM recurrence_occurrences WHERE task_id = ?",
-                task
+        assert_eq!(status_conflict(&f.seed, task).await.len(), 1);
+
+        f.seed
+            .resolve_conflict(&w, task, "status", terminal)
+            .await
+            .unwrap();
+        let successor: TaskId =
+            sqlx::query_scalar("SELECT task_id FROM recurrence_occurrences WHERE task_id <> ?")
+                .bind(task)
+                .fetch_one(&mut *aven_core::test_support::acquire(&f.peer).await.unwrap())
+                .await
+                .unwrap();
+        f.peer
+            .update_task(
+                &w,
+                &successor,
+                TaskUpdate {
+                    title: Some("after resolution".into()),
+                    status: Some("done".into()),
+                    ..Default::default()
+                },
             )
-            .await,
-            Some("completed".into())
-        );
-        assert_eq!(
-            task_conflicts(&f.peer, &created.task.id).await,
-            vec!["status"]
-        );
+            .await
+            .unwrap();
+        converge(&f).await;
+        drain(&c, &third.store, &third.db).await;
+        for db in [&f.seed, &f.peer, &third.db] {
+            assert!(
+                status_conflict(db, task).await.is_empty(),
+                "{race:?} {terminal}"
+            );
+            assert_eq!(title(db, successor.as_str()).await, "after resolution");
+            assert_eq!(
+                scalar(db, "SELECT count(*) FROM recurrence_occurrences").await,
+                3
+            );
+            assert_idle(db).await;
+        }
     }
 }

@@ -497,7 +497,7 @@ async fn apply_outcome(conn: &mut SqliteConnection, change: &ChangeWire) -> Resu
                 "resolved",
             )
             .await?;
-            complete_generated_status(conn, change, &workspace_id, &task_id, outcome).await?;
+            apply_outcome_status(conn, change, &workspace_id, &task_id, outcome).await?;
             ensure_task_outcome(conn, &workspace_id, &task_id, outcome).await?;
             return Ok(());
         }
@@ -757,10 +757,29 @@ pub(super) async fn suppress_recurrence_status_conflict(
     if versions_match || !matches!(value, "done" | "canceled") {
         return Ok(false);
     }
+    // Terminal-versus-terminal races are outcome conflicts, and an untouched
+    // generated status has no explicit edit to preserve. The occurrence outcome owns
+    // the terminal status in both cases. An explicit non-terminal edit is an
+    // ordinary field conflict.
     Ok(sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM recurrence_occurrences WHERE workspace_id = ? AND task_id = ?)",
+        "SELECT EXISTS(SELECT 1 FROM recurrence_occurrences WHERE workspace_id = ? AND task_id = ?)
+         AND (
+             (SELECT status IN ('done', 'canceled') FROM tasks WHERE workspace_id = ? AND id = ?)
+             OR EXISTS(
+                 SELECT 1 FROM changes c JOIN field_versions v
+                   ON v.workspace_id = ? AND v.entity_type = 'task' AND v.entity_id = ?
+                  AND v.field = 'status'
+                  AND v.version = json_extract(c.payload, '$.task_field_version_seed')
+                 WHERE c.entity_type = 'task' AND c.entity_id = ? AND c.op_type = 'create_task'
+             )
+         )",
     )
     .bind(workspace_id)
+    .bind(task_id)
+    .bind(workspace_id)
+    .bind(task_id)
+    .bind(workspace_id)
+    .bind(task_id)
     .bind(task_id)
     .fetch_one(&mut *conn)
     .await?)
@@ -782,11 +801,10 @@ async fn update_outcome(
     Ok(())
 }
 
-/// Completion owns an occurrence's terminal status, so its status change is not a
-/// field conflict. When that change was based on another generation's defaults and
-/// this task's status is still an untouched generated default, the outcome carries
-/// the explicit status here.
-async fn complete_generated_status(
+/// Completion owns an occurrence's terminal status. Its status change is either
+/// suppressed as a field conflict or held as an ordinary conflict with an explicit
+/// non-terminal edit; either way the outcome applies that change's status here.
+async fn apply_outcome_status(
     conn: &mut SqliteConnection,
     change: &ChangeWire,
     workspace_id: &WorkspaceId,
@@ -794,24 +812,14 @@ async fn complete_generated_status(
     outcome: RecurrenceOutcome,
 ) -> Result<()> {
     let status_change_id = str_payload(&change.payload, "task_status_change_id")?;
-    let version = entity_field_version(
-        conn,
-        workspace_id,
-        MutableEntityType::Task,
-        task_id.as_str(),
-        "status",
+    let open: bool = sqlx::query_scalar(
+        "SELECT status NOT IN ('done', 'canceled') FROM tasks WHERE workspace_id = ? AND id = ?",
     )
-    .await?;
-    let untouched: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM changes
-         WHERE entity_type = 'task' AND entity_id = ? AND op_type = 'create_task'
-           AND json_extract(payload, '$.task_field_version_seed') = ?)",
-    )
+    .bind(workspace_id)
     .bind(task_id)
-    .bind(&version)
     .fetch_one(&mut *conn)
     .await?;
-    if status_change_id.is_empty() || !untouched {
+    if status_change_id.is_empty() || !open {
         return Ok(());
     }
     let status = match outcome {
@@ -1280,7 +1288,12 @@ mod tests {
         use crate::db::field_version;
         use crate::task_fields::TaskField;
 
-        for field in [TaskField::Title, TaskField::Description, TaskField::Status] {
+        for (field, local_value) in [
+            (TaskField::Title, "local text edit"),
+            (TaskField::Description, "local text edit"),
+            (TaskField::Status, "backlog"),
+            (TaskField::Status, "canceled"),
+        ] {
             for incoming in ["done", "canceled", "active"] {
                 let (_temp, mut conn) = crate::test_support::test_conn().await;
                 let workspace = crate::test_support::ensure_default_workspace(&mut conn)
@@ -1319,11 +1332,6 @@ mod tests {
                 let base_version = field_version(&mut conn, &task_id, field.as_str())
                     .await
                     .unwrap();
-                let local_value = if field == TaskField::Status {
-                    "backlog"
-                } else {
-                    "local text edit"
-                };
                 let mut change = ChangeWire {
                     change_id: "AAAAAAAAAAAAAAA0".to_string(),
                     client_id: "local".to_string(),
@@ -1363,7 +1371,10 @@ mod tests {
                 .fetch_optional(&mut *conn)
                 .await
                 .unwrap();
-                let suppressed = field == TaskField::Status && incoming != "active";
+                // Only terminal-versus-terminal status races are left to the outcome;
+                // an explicit non-terminal status stays an ordinary conflict.
+                let suppressed =
+                    field == TaskField::Status && local_value == "canceled" && incoming != "active";
                 let expected = (!suppressed).then(|| {
                     (
                         local_value.to_string(),

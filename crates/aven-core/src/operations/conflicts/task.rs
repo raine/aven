@@ -72,6 +72,9 @@ pub(super) async fn resolve_conflict_value(
         ConflictResolutionValue::Local => conflict.0,
         ConflictResolutionValue::Remote => conflict.1,
     };
+    if task_field == TaskField::Status {
+        ensure_recurrence_outcome_status(&mut tx, workspace, task_id, &value).await?;
+    }
     if task_field == TaskField::IsEpic
         && value == "0"
         && crate::operations::task_has_epic_children(&mut tx, &workspace.id, task_id).await?
@@ -159,4 +162,38 @@ pub(super) async fn resolve_conflict_value(
         after,
         conflict_id,
     })
+}
+
+/// A resolved recurrence occurrence owns its terminal task status, as the local
+/// recurrence mutation gate enforces, so a status conflict resolves only to it.
+async fn ensure_recurrence_outcome_status(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    task_id: &crate::ids::TaskId,
+    value: &str,
+) -> Result<()> {
+    let resolved: Option<String> = sqlx::query_scalar(
+        "SELECT t.status FROM recurrence_occurrences o
+         JOIN tasks t ON t.workspace_id = o.workspace_id AND t.id = o.task_id
+         WHERE o.workspace_id = ? AND o.task_id = ? AND o.outcome <> ''",
+    )
+    .bind(&workspace.id)
+    .bind(task_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some(status) = resolved else {
+        return Ok(());
+    };
+    if value == status {
+        return Ok(());
+    }
+    let error = if crate::choices::TaskStatus::parse(value)?.is_open() {
+        "recurrence-terminal-reopen"
+    } else {
+        "recurrence-outcome-final"
+    };
+    Err(CoreError::validation(format!(
+        "error {error} task_id={task_id} hint=\"use immediate undo\""
+    ))
+    .into())
 }

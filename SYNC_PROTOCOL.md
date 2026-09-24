@@ -146,6 +146,12 @@ seed follow ordinary conflict rules. Projection and outcome apply compare only t
 series lattice and timezone with the current series, because available time and
 due policy are the author's historical context.
 
+An occurrence outcome owns its task's terminal status. A completion or skip that
+races an explicit non-terminal status edit applies the terminal status and keeps
+the edit as an ordinary status conflict on every replica; such a conflict resolves
+only to the terminal status. Terminal-versus-terminal races remain outcome
+conflicts without a duplicate status conflict.
+
 ### Persisted replica behavior
 
 The SQLite `meta` key `sync_established_protocol` stores the established protocol
