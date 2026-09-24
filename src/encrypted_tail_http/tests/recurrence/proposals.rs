@@ -411,3 +411,83 @@ async fn earlier_outcome_applies_after_concurrent_availability_edit() {
         assert_idle(db).await;
     }
 }
+
+/// An explicit non-terminal status edit racing a completion from another device.
+/// Current policy has no rule for applying that completion over the explicit edit:
+/// the editing device stops with pending work retained, while the completing
+/// device keeps the completion and shows a status conflict.
+#[tokio::test]
+async fn status_edit_racing_completion_stops_the_editing_device() {
+    for seed_first in [true, false] {
+        let f = fixture().await;
+        converge(&f).await;
+        let w = f.seed.list_workspaces().await.unwrap().remove(0);
+        let created = create(&f.seed).await;
+        converge(&f).await;
+        let task = created.task.id.as_str();
+        for (db, status) in [(&f.seed, "active"), (&f.peer, "done")] {
+            db.update_task(
+                &w,
+                &created.task.id,
+                TaskUpdate {
+                    status: Some(status.into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let c = Client::new(&f.origin).unwrap();
+        if seed_first {
+            // The completing device receives the edit first and keeps a conflict.
+            drain(&c, &f.seed_store, &f.seed).await;
+            drain(&c, &f.peer_store, &f.peer).await;
+        } else {
+            drain(&c, &f.peer_store, &f.peer).await;
+        }
+        let cursor = f.seed.meta("sync_cursor").await.unwrap();
+        let mut errors = Vec::new();
+        for _ in 0..8 {
+            if let Err(error) = c.round(&f.seed_store, &f.seed, &blobs(&f.seed)).await {
+                errors.push(error.to_string());
+            }
+        }
+        assert_eq!(errors.len(), 8, "seed_first={seed_first}");
+        assert!(
+            errors.iter().all(|e| e == "error encrypted-tail-apply"),
+            "{errors:?}"
+        );
+        assert_eq!(f.seed.meta("sync_cursor").await.unwrap(), cursor);
+        assert_eq!(
+            text(&f.seed, "SELECT status FROM tasks WHERE id = ?", task).await,
+            Some("active".into())
+        );
+        assert_eq!(
+            text(
+                &f.seed,
+                "SELECT outcome FROM recurrence_occurrences WHERE task_id = ?",
+                task
+            )
+            .await,
+            Some(String::new())
+        );
+        drain(&c, &f.peer_store, &f.peer).await;
+        assert_eq!(
+            text(&f.peer, "SELECT status FROM tasks WHERE id = ?", task).await,
+            Some("done".into())
+        );
+        assert_eq!(
+            text(
+                &f.peer,
+                "SELECT outcome FROM recurrence_occurrences WHERE task_id = ?",
+                task
+            )
+            .await,
+            Some("completed".into())
+        );
+        assert_eq!(
+            task_conflicts(&f.peer, &created.task.id).await,
+            vec!["status"]
+        );
+    }
+}
