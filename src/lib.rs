@@ -41,8 +41,8 @@ mod test_support;
 pub use cli::Cli;
 
 use cli::{
-    BackupSubcommand, Commands, DaemonSubcommand, InternalSubcommand, SkillSubcommand,
-    SyncSubcommand,
+    BackupSubcommand, Commands, DaemonSubcommand, DeviceSubcommand, InternalSubcommand,
+    SkillSubcommand, SyncSubcommand,
 };
 use commands::{
     cmd_add, cmd_attachment, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context,
@@ -411,6 +411,14 @@ async fn dispatch_database(
             }
             Some(SyncSubcommand::Invite) => sync::encrypted::invite(&database, &config).await,
             Some(SyncSubcommand::Join) => sync::encrypted::join(&database, &config).await,
+            Some(SyncSubcommand::Device(device)) => match device.command {
+                DeviceSubcommand::List { json } => {
+                    sync::encrypted::list_devices(&database, &config, json).await
+                }
+                DeviceSubcommand::Remove { device_id, json } => {
+                    sync::encrypted::remove_device(&database, &config, &device_id, json).await
+                }
+            },
             Some(SyncSubcommand::Status(status)) => {
                 sync::encrypted::status(&database, status.json).await
             }

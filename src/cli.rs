@@ -43,8 +43,8 @@ pub(crate) use relationships::{
     DepCommand, DepSubcommand, EpicCommand, EpicSubcommand, RelatedCommand, RelatedSubcommand,
 };
 pub(crate) use sync::{
-    ConflictCommand, ConflictSubcommand, DaemonArgs, DaemonSubcommand, ServerArgs, ServerSetupArgs,
-    ServerSubcommand, SetupArgs, SyncArgs, SyncSubcommand,
+    ConflictCommand, ConflictSubcommand, DaemonArgs, DaemonSubcommand, DeviceSubcommand,
+    ServerArgs, ServerSetupArgs, ServerSubcommand, SetupArgs, SyncArgs, SyncSubcommand,
 };
 pub(crate) use tasks::{
     AddArgs, BulkUpdateArgs, ContextArgs, ListArgs, NoteArgs, NoteDeleteArgs, PrimeArgs, RefArgs,

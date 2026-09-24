@@ -22,6 +22,8 @@ use crate::protected_local_keys::{EnrollmentReadiness, ProtectedLocalKeyStore};
 use crate::render::print_json_pretty;
 use crate::seed_bootstrap_http;
 
+mod devices;
+pub(crate) use devices::{list as list_devices, remove as remove_device};
 mod invitation;
 use invitation::DeviceInvitation;
 pub(super) use invitation::{SetupInvitation, server_origin};
@@ -383,6 +385,9 @@ async fn associated_server(store: &ProtectedLocalKeyStore, database: &Database) 
     }
 }
 
+/// A refusal alone proves neither a server failure nor removal of this device.
+const REFUSED: &str = "error sync-server-refused hint=\"the server refused this request; it may have failed, or another device may have removed this device from sync, which leaves local tasks and images available here; retry later, and check `aven sync device list` on another device\"";
+
 /// Explains engine refusals that ordinary rounds report while a join or
 /// invitation is unfinished.
 fn explain_round_error(error: anyhow::Error) -> anyhow::Error {
@@ -393,6 +398,7 @@ fn explain_round_error(error: anyhow::Error) -> anyhow::Error {
         "error enrollment-unresolved" => error.context(
             "error sync-invitation-pending hint=\"sync resumes when the invited device joins, or with the next sync after the unused invitation expires\"",
         ),
+        "error enrollment-refused outcome-unknown" => error.context(REFUSED),
         "error withdrawal-required-unsupported" => error.context(
             "error sync-invitation-disclosed hint=\"keys may have been sent to the invited device; sync resumes after it joins, or once the next sync after expiry rotates keys\"",
         ),

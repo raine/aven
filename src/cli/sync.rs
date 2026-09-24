@@ -198,6 +198,41 @@ pub(crate) enum SyncSubcommand {
     /// Join sync from an empty database with a device invitation
     #[command(after_long_help = JOIN_HELP)]
     Join,
+    /// List or remove the devices that take part in sync
+    #[command(after_long_help = DEVICE_HELP)]
+    Device(DeviceCommand),
+}
+
+pub(super) const DEVICE_HELP: &str = r#"Examples:
+  aven sync device list --json
+  aven sync device remove DEVICE_ID --json
+
+Both commands contact the server. Remove a device from any other device in
+sync, using the device_id printed by `device list`. Removal stops the device
+from syncing and rotates the keys for future changes; it does not erase data
+the device already downloaded. Rerun an interrupted removal with the same
+device_id to resume it."#;
+
+#[derive(Args)]
+pub(crate) struct DeviceCommand {
+    #[command(subcommand)]
+    pub(crate) command: DeviceSubcommand,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum DeviceSubcommand {
+    /// List devices in sync, marking the current device
+    List {
+        #[arg(long, help = "Print machine-readable JSON")]
+        json: bool,
+    },
+    /// Remove another device from sync and rotate keys for future changes
+    Remove {
+        /// Device ID printed by `aven sync device list`
+        device_id: String,
+        #[arg(long, help = "Print machine-readable JSON")]
+        json: bool,
+    },
 }
 
 pub(super) const SETUP_HELP: &str = r#"Paste the invitation printed by `aven server setup`, or pipe it to standard

@@ -117,6 +117,13 @@ impl Membership {
     pub fn devices(&self) -> impl Iterator<Item = Hash> + '_ {
         self.members.iter().map(|member| member.device)
     }
+    /// Active devices with the membership sequence that admitted each; the
+    /// device that set up sync has sequence 0.
+    pub fn admissions(&self) -> impl Iterator<Item = (Hash, u64)> + '_ {
+        self.members
+            .iter()
+            .map(|member| (member.device, member.admitted_at))
+    }
     pub fn device_count(&self) -> usize {
         self.members.len()
     }
