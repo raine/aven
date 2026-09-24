@@ -110,9 +110,11 @@ create a new invitation on the same inviting device and continue with it:
 **Use a new invitation** in the TUI, or `aven sync join --new-invitation` on the
 command line. This device keeps its identity, and the earlier invitation is
 kept, so if the other device already added this one with it, joining finishes
-with that admission. A database can use up to four invitations. Once local data
-was added while joining, or all four are used, it cannot finish joining; keep it
-as it is and join from a new, empty database.
+with that admission. A database can use up to four invitations; after that it
+cannot take a fifth, but resuming still finishes if the other device added it
+with any of the four. If none of them was accepted, or local data was added
+while joining, it cannot finish joining; keep it as it is and join from a new,
+empty database.
 
 Anyone with the invitation can access all synced data and manage devices. It
 expires after ten minutes. Sync on the inviting device pauses until the

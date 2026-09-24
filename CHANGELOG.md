@@ -5,7 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
-- A join whose invitation expired before the inviting device added it can continue with a new invitation from that same device: `aven sync join --new-invitation`, or **Use a new invitation** in the TUI Sync dialog. The database keeps its device identity and earlier invitations, so an admission that already happened still completes the join. A database can use up to four invitations. See [Sync across devices](https://aventasks.dev/sync/).
+- A join whose invitation expired before the inviting device added it can continue with a new invitation from that same device: `aven sync join --new-invitation`, or **Use a new invitation** in the TUI Sync dialog. The database keeps its device identity and earlier invitations, so an admission that already happened still completes the join. A database can use up to four invitations, and resuming still completes the join with any of them. See [Sync across devices](https://aventasks.dev/sync/).
 
 - The TUI has a **Sync** dialog for setting up sync, joining existing sync on an empty database, resuming an interrupted setup or join, adding a device (press `c` to copy the invitation for another computer), and listing or removing other devices. Open it with `:sync`, `C s`, or a click on the header sync indicator; `S` still syncs immediately, and `:config-status` remains an alias. Work continues after the dialog closes. See [Sync across devices](https://aventasks.dev/sync/).
 

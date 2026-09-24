@@ -647,11 +647,7 @@ async fn cli_join_continues_with_a_new_invitation_after_expiry() {
         "{refused}"
     );
     let args = ["sync", "join", "--new-invitation"];
-    let mut joined = b.run_with_input(&args, &fresh).await;
-    if !joined.status.success() && failure(&joined).contains("error enrollment-busy") {
-        joined = b.run_with_input(&args, &fresh).await;
-    }
-    success(&joined, &args);
+    success(&b.run_with_input(&args, &fresh).await, &args);
     assert!(invite.wait_with_output().await.unwrap().status.success());
     assert!(b.ok(&["sync", "status"]).await.contains("State: ready"));
 }

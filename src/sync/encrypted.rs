@@ -10,7 +10,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail, ensure};
 use aven_core::db::Database;
-use aven_core::sync::seed_claim::ClaimAuthentication;
+use aven_core::sync::seed_claim::{ClaimAuthentication, membership::Invitation};
 use serde::Serialize;
 use zeroize::Zeroizing;
 
@@ -484,29 +484,11 @@ pub(crate) async fn run_join(
             None => (server.context("error sync-join-invitation-required")?, None),
         };
         let client = peer_enrollment_http::Client::new(&server)?;
-        let posted = match invitation {
-            Some(invitation) if replace => client.replace(&store, database, invitation).await,
-            invitation => client.request(&store, database, invitation).await,
-        };
-        progress(Stage::WaitingForInviter);
-        if let Err(error) = posted {
-            // An earlier attempt may already be admitted even when this
-            // request is refused, so check once before reporting.
-            if !matches!(client.complete(&store, database).await, Ok(true)) {
-                return Err(explain_join_refusal(error));
-            }
-        } else {
-            let deadline = Instant::now() + Duration::from_secs(invitation_seconds());
-            loop {
-                match client.complete(&store, database).await {
-                    Ok(true) => break,
-                    Err(error) if !busy(&error) => return Err(error),
-                    _ => {}
-                }
-                ensure!(Instant::now() < deadline, JOIN_TIMEOUT);
-                tokio::time::sleep(POLL_INTERVAL).await;
-            }
-        }
+        let deadline = Instant::now() + Duration::from_secs(invitation_seconds());
+        await_join(
+            &client, &store, database, invitation, replace, deadline, progress,
+        )
+        .await?;
         server
     };
     progress(Stage::DownloadingTasks);
@@ -545,7 +527,7 @@ fn explain_join_refusal(error: anyhow::Error) -> anyhow::Error {
             "error sync-join-new-invitation-unavailable hint=\"joining already got past admission, so a new invitation cannot be used; rerun `aven sync join` with an invitation this database already used\""
         }
         "error enrollment-retry-limit" => {
-            "error sync-join-new-invitation-limit hint=\"this database has used four invitations; keep it unchanged and join from a new empty database, for example `aven --db PATH sync join`\""
+            "error sync-join-new-invitation-limit hint=\"this database has used four invitations and cannot take a fifth; rerun `aven sync join` with one of them to finish if the other device accepted it, otherwise keep this database unchanged and join from a new empty database, for example `aven --db PATH sync join`\""
         }
         _ if error.to_string().starts_with("error shared-state-install") => {
             "error sync-join-target-not-empty hint=\"data was added to this database while joining, so it cannot finish joining; keep it unchanged and join from a new empty database, for example `aven --db PATH sync join`\""
@@ -553,6 +535,47 @@ fn explain_join_refusal(error: anyhow::Error) -> anyhow::Error {
         _ => return error,
     };
     error.context(hint)
+}
+
+/// Requests admission and waits until a retained attempt completes or the
+/// deadline passes. Local preparation failures are final. A busy post is
+/// retried; a refused one ends waiting only when no earlier attempt could
+/// still complete, since a refusal proves nothing about the others.
+pub(crate) async fn await_join(
+    client: &peer_enrollment_http::Client,
+    store: &ProtectedLocalKeyStore,
+    database: &Database,
+    invitation: Option<Invitation>,
+    replace: bool,
+    deadline: Instant,
+    progress: &(dyn Fn(Stage) + Sync),
+) -> Result<()> {
+    let peer = client
+        .prepare(store, database, invitation, replace)
+        .await
+        .map_err(explain_join_refusal)?;
+    let mut posted = client.post(&peer).await;
+    progress(Stage::WaitingForInviter);
+    let others = client.has_other_attempts(store, database).await?;
+    loop {
+        if posted.as_ref().is_err_and(busy) {
+            posted = client.post(&peer).await;
+        }
+        match client.complete(store, database).await {
+            Ok(true) => return Ok(()),
+            Err(error) if !busy(&error) => return Err(error),
+            _ => {}
+        }
+        let refused = posted.as_ref().is_err_and(|error| !busy(error));
+        if (refused && !others) || Instant::now() >= deadline {
+            return Err(match posted {
+                Err(error) if refused && !others => error,
+                Err(error) => error.context(JOIN_TIMEOUT),
+                Ok(()) => anyhow::anyhow!(JOIN_TIMEOUT),
+            });
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
 }
 
 /// A refused claim may come from a replaced or expired setup invitation, but a

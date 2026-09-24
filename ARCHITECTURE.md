@@ -840,9 +840,14 @@ them over attempt zero's keys, so device, signing, HPKE and bearer never change.
 The same vault and inviter HPKE key are required, and the enrollment pin and fence
 stay in place. Replacement needs no pinned response or later phase, no floor,
 journal, receipt or association, and an empty domain (`peer_retry_preflight`).
-Completion checks every attempt's mailbox. The pinned `peer-response` request
-selects the winning attempt for verification, readiness and installation. Attempts
-are never deleted, and expiry, refusal or timeout never proves non-admission.
+Every attempt load requires the original's `peer-sent` record. Completion checks
+every attempt's mailbox. A grant that does not open is final, a busy mailbox stays
+retryable, and a refusal for one attempt never ends waiting on another. The pinned
+`peer-response` request selects the winning attempt for verification, readiness and
+installation. `await_join` treats local preparation failures as final, retries a
+busy post, and after a refused post keeps polling other attempts until its
+deadline. Attempts are never deleted, and expiry, refusal or timeout never proves
+non-admission.
 
 `src/protected_local_keys/membership.rs` owns append-only protected checkpoint
 records and commitment-addressed public evidence outside replaceable SQLite.

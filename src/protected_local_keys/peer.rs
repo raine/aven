@@ -969,14 +969,6 @@ impl ProtectedLocalKeyStore {
             "error enrollment-context"
         );
         let mut attempts = self.attempts(db, &id).await?;
-        self.save_phase(
-            db,
-            &id,
-            "peer-sent",
-            128,
-            &Sha256::digest(attempts[0].request()),
-        )
-        .await?;
         let known = invitation
             .as_ref()
             .map(|i| attempts.iter().position(|peer| peer.matches_invitation(i)));
@@ -1021,10 +1013,20 @@ impl ProtectedLocalKeyStore {
             None => attempts,
         })
     }
-    /// The immutable original followed by retained replacement attempts. An
-    /// attempt written before its SQLite commitment is committed unchanged.
+    /// The immutable original followed by retained replacement attempts.
+    /// The original's `peer-sent` record, written before its first post, must
+    /// match; only a record never committed is written here. An attempt
+    /// written before its SQLite commitment is committed unchanged.
     async fn attempts(&self, db: &Database, id: &Identity) -> Result<Vec<Joiner>> {
         let original = Joiner::from_protected_storage(&id.authority)?;
+        let sent = Sha256::digest(original.request());
+        match self.phase(db, "peer-sent", 128).await? {
+            Some(saved) => ensure!(
+                saved.as_slice() == sent.as_slice(),
+                "error enrollment-sent-mismatch"
+            ),
+            None => self.save_phase(db, id, "peer-sent", 128, &sent).await?,
+        }
         let mut attempts = Vec::new();
         let mut gap = false;
         for index in 1..MAX_JOIN_ATTEMPTS {

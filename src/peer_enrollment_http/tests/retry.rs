@@ -392,3 +392,158 @@ async fn process_exit_while_replacing_and_completing_a_replacement() {
     drop(p.store.tail_inputs(&p.db, &origin).await.unwrap());
     task.abort();
 }
+
+/// The protected file for `kind` in the joining store.
+fn protected_path(keys: &Path, kind: &str) -> std::path::PathBuf {
+    std::fs::read_dir(keys)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.to_string_lossy().ends_with(&format!(".{kind}")))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn missing_or_corrupt_protected_join_records_refuse_an_admitted_grant() {
+    for (kind, damage) in [
+        ("peer-sent", "delete"),
+        ("peer-sent", "corrupt"),
+        ("peer-attempt-1", "delete"),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let (db, store, _server, origin, task) = adopted(root.path()).await;
+        let client = Client::new(&origin).unwrap();
+        let original = client.invite(&store, &db, expiry()).await.unwrap();
+        let bytes = original.protected_storage_bytes();
+        let p = peer(root.path()).await;
+        client
+            .request(&p.store, &p.db, Some(original))
+            .await
+            .unwrap();
+        assert!(
+            p.store
+                .replace_peer(&p.db, &origin, invitation(&bytes[..32], &bytes[32..64], 1))
+                .await
+                .is_ok()
+        );
+        assert!(client.admit(&store, &db).await.unwrap());
+        let path = protected_path(&p.keys, kind);
+        if damage == "delete" {
+            std::fs::remove_file(&path).unwrap();
+        } else {
+            let mut frame = std::fs::read(&path).unwrap();
+            frame[50] ^= 1;
+            std::fs::write(&path, frame).unwrap();
+        }
+        let expected = if damage == "corrupt" {
+            "error enrollment-protected-corrupt"
+        } else {
+            "error enrollment-protected-missing"
+        };
+        let error = client.complete(&p.store, &p.db).await.unwrap_err();
+        assert_eq!(error.to_string(), expected, "{kind} {damage}: complete");
+        let error = crate::sync::encrypted::await_join(
+            &client,
+            &p.store,
+            &p.db,
+            None,
+            false,
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
+            &|_| {},
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), expected, "{kind} {damage}: join");
+        assert!(
+            !protected_files(&p.keys)
+                .keys()
+                .any(|name| name.ends_with(".peer-response"))
+        );
+        task.abort();
+    }
+}
+
+/// Waits in the join caller with a short deadline, as `run_join` does.
+async fn join(client: &Client, p: &Peer, invitation: Invitation) -> anyhow::Result<()> {
+    crate::sync::encrypted::await_join(
+        client,
+        &p.store,
+        &p.db,
+        Some(invitation),
+        true,
+        std::time::Instant::now() + std::time::Duration::from_secs(20),
+        &|_| {},
+    )
+    .await
+}
+
+#[tokio::test]
+async fn refused_newest_request_keeps_waiting_for_an_earlier_admission() {
+    // An unregistered replacement: the server refuses its request and
+    // mailbox, like a replacement whose invitation it no longer serves.
+    let unregistered = |original: &Invitation| {
+        let bytes = original.protected_storage_bytes();
+        invitation(&bytes[..32], &bytes[32..64], 1)
+    };
+
+    // The earlier admission is committed, but its mailbox is busy at first.
+    let root = tempfile::tempdir().unwrap();
+    let counts = Arc::new(ExchangeCounts::default());
+    let (db, store, _server, origin, task) = adopted_with(root.path(), Some(counts.clone())).await;
+    let client = Client::new(&origin).unwrap();
+    let original = client.invite(&store, &db, expiry()).await.unwrap();
+    let handle = original.handle();
+    let replacement = unregistered(&original);
+    let p = peer(root.path()).await;
+    client
+        .request(&p.store, &p.db, Some(original))
+        .await
+        .unwrap();
+    assert!(client.admit(&store, &db).await.unwrap());
+    counts.busy_mailboxes.lock().unwrap().insert(handle, 3);
+    join(&client, &p, replacement).await.unwrap();
+    assert!(counts.mailboxes.lock().unwrap()[&handle] > 3);
+    task.abort();
+
+    // The earlier admission arrives only after the first completion check.
+    let root = tempfile::tempdir().unwrap();
+    let counts = Arc::new(ExchangeCounts::default());
+    let (db, store, _server, origin, task) = adopted_with(root.path(), Some(counts.clone())).await;
+    let client = Client::new(&origin).unwrap();
+    let original = client.invite(&store, &db, expiry()).await.unwrap();
+    let handle = original.handle();
+    let replacement = unregistered(&original);
+    let p = peer(root.path()).await;
+    client
+        .request(&p.store, &p.db, Some(original))
+        .await
+        .unwrap();
+    let admit = async {
+        while counts
+            .mailboxes
+            .lock()
+            .unwrap()
+            .get(&handle)
+            .copied()
+            .unwrap_or(0)
+            < 2
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        // The single enrollment permit may be busy with the joiner's poll.
+        loop {
+            match client.admit(&store, &db).await {
+                Ok(admitted) => break assert!(admitted),
+                Err(error) if error.to_string() == "error enrollment-busy" => {}
+                Err(error) => panic!("{error:#}"),
+            }
+        }
+    };
+    let (joined, ()) = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        tokio::join!(join(&client, &p, replacement), admit)
+    })
+    .await
+    .expect("join and admission settle");
+    joined.unwrap();
+    client.install(&p.store, &p.db).await.unwrap();
+    task.abort();
+}

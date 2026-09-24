@@ -617,7 +617,7 @@ impl Client {
         db: &Database,
         invitation: Option<Invitation>,
     ) -> Result<()> {
-        let peer = store.prepare_peer(db, &self.locator, invitation).await?;
+        let peer = self.prepare(store, db, invitation, false).await?;
         self.post(&peer).await
     }
     /// Requests admission with a replacement invitation from the same inviter
@@ -629,10 +629,34 @@ impl Client {
         db: &Database,
         invitation: Invitation,
     ) -> Result<()> {
-        let peer = store.replace_peer(db, &self.locator, invitation).await?;
+        let peer = self.prepare(store, db, Some(invitation), true).await?;
         self.post(&peer).await
     }
-    async fn post(&self, peer: &membership::Joiner) -> Result<()> {
+    /// Selects or creates the attempt to post from protected local state.
+    /// Its failures are integrity or eligibility refusals, never outcomes of
+    /// an exchange.
+    pub(crate) async fn prepare(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        invitation: Option<Invitation>,
+        replace: bool,
+    ) -> Result<membership::Joiner> {
+        match invitation {
+            Some(invitation) if replace => store.replace_peer(db, &self.locator, invitation).await,
+            invitation => store.prepare_peer(db, &self.locator, invitation).await,
+        }
+    }
+    /// Whether attempts other than the one `prepare` returned could still
+    /// complete this join.
+    pub(crate) async fn has_other_attempts(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+    ) -> Result<bool> {
+        Ok(store.peer_attempts(db, &self.locator).await?.len() > 1)
+    }
+    pub(crate) async fn post(&self, peer: &membership::Joiner) -> Result<()> {
         ensure!(
             matches!(
                 self.exchange(
@@ -709,15 +733,17 @@ impl Client {
         unreachable!()
     }
     /// Checks every retained attempt for an admission and completes the one
-    /// whose grant opens for its exact request. A refusal, missing admission
-    /// or unopenable grant for one attempt proves nothing about the others,
-    /// so only the latest attempt's error is reported, after all are checked.
-    /// Once a response is pinned, only that attempt is checked.
+    /// whose grant opens for its exact request; a grant that does not open is
+    /// an integrity failure. A refusal or unreachable mailbox for one attempt
+    /// proves nothing about the others: any busy mailbox is reported as busy,
+    /// any attempt still waiting yields `false`, and only when every mailbox
+    /// failed is the latest attempt's error reported. Once a response is
+    /// pinned, only that attempt is checked.
     pub async fn complete(&self, store: &ProtectedLocalKeyStore, db: &Database) -> Result<bool> {
         let attempts = store.peer_attempts(db, &self.locator).await?;
-        let mut latest = Ok(false);
-        for (index, peer) in attempts.iter().enumerate().rev() {
-            let pinned = match self
+        let (mut busy, mut waiting, mut failed) = (None, false, None);
+        for peer in attempts.iter().rev() {
+            match self
                 .exchange(
                     Operation::Mailbox {
                         vault: peer.vault(),
@@ -728,19 +754,25 @@ impl Client {
                 .await
             {
                 Ok(Reply::Mailbox(mail)) if mail.admission.is_some() => {
-                    store.pin_peer_response(db, &mail).await.map(Some)
+                    let grant = store.pin_peer_response(db, &mail).await?;
+                    return self.finish(store, db, peer, grant).await;
                 }
-                Ok(Reply::Mailbox(_)) => Ok(None),
-                Ok(_) => Err(anyhow::anyhow!("error enrollment-response")),
-                Err(error) => Err(error),
-            };
-            match pinned {
-                Ok(Some(grant)) => return self.finish(store, db, peer, grant).await,
-                result if index + 1 == attempts.len() => latest = result.map(|_| false),
-                _ => {}
+                Ok(Reply::Mailbox(_)) => waiting = true,
+                Ok(_) => {
+                    failed.get_or_insert(anyhow::anyhow!("error enrollment-response"));
+                }
+                Err(error) if error.to_string() == "error enrollment-busy" => busy = Some(error),
+                Err(error) => {
+                    failed.get_or_insert(error);
+                }
             }
         }
-        latest
+        match (busy, failed) {
+            (Some(error), _) => Err(error),
+            _ if waiting => Ok(false),
+            (None, Some(error)) => Err(error),
+            (None, None) => Ok(false),
+        }
     }
     async fn finish(
         &self,

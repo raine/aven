@@ -29,6 +29,10 @@ struct ExchangeCounts {
     tracked_membership: AtomicUsize,
     tracked_published: AtomicUsize,
     stale_gates: Mutex<VecDeque<Arc<StaleGate>>>,
+    /// Mailbox reads per handle.
+    mailboxes: Mutex<std::collections::HashMap<[u8; 32], usize>>,
+    /// Remaining mailbox reads per handle answered as busy.
+    busy_mailboxes: Mutex<std::collections::HashMap<[u8; 32], usize>>,
 }
 
 struct StaleGate {
@@ -94,6 +98,15 @@ async fn count_exchange(
             _ => {}
         }
     }
+    if let Some(Operation::Mailbox { handle, .. }) = &operation {
+        *counts.mailboxes.lock().unwrap().entry(*handle).or_default() += 1;
+        if let Some(remaining) = counts.busy_mailboxes.lock().unwrap().get_mut(handle)
+            && *remaining > 0
+        {
+            *remaining -= 1;
+            return (StatusCode::SERVICE_UNAVAILABLE, "enrollment-busy").into_response();
+        }
+    }
     let stale_gate = if matches!(&operation, Some(Operation::Published { .. })) {
         counts.stale_gates.lock().unwrap().pop_front()
     } else {
@@ -150,9 +163,24 @@ async fn adopted(
     String,
     tokio::task::JoinHandle<()>,
 ) {
+    adopted_with(root, None).await
+}
+async fn adopted_with(
+    root: &Path,
+    counts: Option<Arc<ExchangeCounts>>,
+) -> (
+    Database,
+    ProtectedLocalKeyStore,
+    Database,
+    String,
+    tokio::task::JoinHandle<()>,
+) {
     let (db, store, seed, _) = fixture(root).await;
     let server = Database::open(&root.join("server.sqlite")).await.unwrap();
-    let (origin, task) = serve(server.clone()).await;
+    let (origin, task) = match counts {
+        Some(counts) => serve_counted(server.clone(), counts).await,
+        None => serve(server.clone()).await,
+    };
     let transport = seed_bootstrap_http::Client::new(&origin).unwrap();
     transport
         .claim(

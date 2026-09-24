@@ -257,7 +257,8 @@ an interrupted join.
 If the invitation expired before the inviting device added this device, create a
 new invitation on that same device and pass it with --new-invitation. The
 earlier invitation is kept, so an admission that already happened still
-completes the join. A database can use at most four invitations."#;
+completes the join. A database can use at most four invitations; resuming still
+completes the join with any of them."#;
 
 #[derive(Args)]
 pub(crate) struct JoinArgs {

@@ -88,7 +88,8 @@ fn explain(kind: OperationKind, error: &anyhow::Error) -> &'static str {
     }
     if has("sync-join-new-invitation-limit") {
         return "This database has already used four invitations and can't take another. \
-                Keep it as it is, and join from a new, empty database.";
+                Resume joining to finish if the other device accepted one of them; \
+                otherwise keep it as it is, and join from a new, empty database.";
     }
     if has("sync-invitation-pending") || has("enrollment-unresolved") {
         return "Sync is paused until the invited device joins. Once the unused \
@@ -246,7 +247,7 @@ mod tests {
                 "device that created the first one",
             ),
             ("sync-join-new-invitation-unavailable", "Resume joining"),
-            ("sync-join-new-invitation-limit", "Keep it as it is"),
+            ("sync-join-new-invitation-limit", "Resume joining to finish"),
             ("sync-join-server-mismatch", "different server"),
         ] {
             let error = anyhow!("error {code} hint=\"x\"");
