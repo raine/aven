@@ -252,6 +252,12 @@ fn home_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
         push_last_result(lines, view.activity, width);
         return;
     }
+    if let Some(running) = &view.activity.running
+        && matches!(running.kind, OperationKind::Setup | OperationKind::Join)
+    {
+        progress_lines(lines, running, width);
+        return;
+    }
     let summary = sync_status_summary(status);
     let color = summary.color();
     lines.push(Line::from(vec![
@@ -344,7 +350,8 @@ fn steps(kind: OperationKind) -> &'static [(Stage, &'static str, &'static str)] 
                 "Downloaded images",
             ),
         ],
-        OperationKind::ListDevices
+        OperationKind::Sync
+        | OperationKind::ListDevices
         | OperationKind::RemoveDevice(_)
         | OperationKind::FinishRemoval => &[],
     }
@@ -354,7 +361,8 @@ fn progress_lines(lines: &mut Vec<Line<'static>>, running: &RunningOperation, wi
     let heading = match running.kind {
         OperationKind::Setup => "Setting up sync",
         OperationKind::Join => "Joining sync",
-        OperationKind::ListDevices
+        OperationKind::Sync
+        | OperationKind::ListDevices
         | OperationKind::RemoveDevice(_)
         | OperationKind::FinishRemoval => {
             lines.push(spinner_line(running));
@@ -457,8 +465,9 @@ fn push_last_result(lines: &mut Vec<Line<'static>>, activity: &SyncActivity, wid
 
 fn failure_lines(lines: &mut Vec<Line<'static>>, failure: &OperationFailure, width: usize) {
     let headline = match failure.kind {
+        OperationKind::Sync => "Sync didn't finish",
         OperationKind::Setup => "Setup didn't finish",
-        OperationKind::Join => "Joining didn't finish",
+        OperationKind::Join => "Couldn't join sync",
         OperationKind::ListDevices => "Couldn't check devices",
         OperationKind::RemoveDevice(_) => "Removal didn't finish",
         OperationKind::FinishRemoval => "Securing future changes didn't finish",
@@ -756,8 +765,8 @@ fn invitation_lines(
         ),
         InvitationKind::Join => (
             "Join existing sync",
-            "On a device that already syncs, choose Add device, then paste its invitation \
-             here.",
+            "On a device that already syncs, open Add device, then paste the invitation \
+             here. `aven sync invite` on that device prints it as text.",
         ),
     };
     lines.push(Line::from(Span::styled(
@@ -1076,6 +1085,12 @@ fn hint_line(view: &SyncDialogView<'_>, scrolling: bool) -> Line<'static> {
         }
         SyncPage::Devices => {
             hints.push(("↑↓", "select"));
+            if actions
+                .get(view.state.selected)
+                .is_some_and(|action| !matches!(action, SyncAction::Device(_)))
+            {
+                hints.push(("Enter", "choose"));
+            }
             if matches!(
                 actions.get(view.state.selected),
                 Some(SyncAction::Device(_))

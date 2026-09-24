@@ -328,6 +328,7 @@ fn join_progress_distinguishes_tasks_from_images() {
         running(OperationKind::Join, Some(Stage::WaitingForInviter)),
     );
     assert!(waiting.contains("Waiting for the other device"));
+    assert!(!waiting.contains("Local only"), "{waiting}");
     assert!(waiting.contains("Editing waits until tasks are downloaded"));
 
     let images = render_page(

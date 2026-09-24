@@ -64,6 +64,14 @@ fn explain(kind: OperationKind, error: &anyhow::Error) -> &'static str {
         return "This invitation doesn't match the join this database already started. \
                 Resume joining without a new invitation.";
     }
+    if has("sync-invitation-pending") || has("enrollment-unresolved") {
+        return "Sync is paused until the invited device joins. Once the unused \
+                invitation expires, the next sync ends it.";
+    }
+    if has("sync-invitation-disclosed") || has("withdrawal-required-unsupported") {
+        return "Sync is paused until the invited device joins. Keys may have been sent \
+                to it; after the invitation expires, the next sync rotates keys first.";
+    }
     if has("enrollment-busy") {
         return "The server is busy with another device. Try again in a moment.";
     }
@@ -93,7 +101,7 @@ fn explain(kind: OperationKind, error: &anyhow::Error) -> &'static str {
                 "The server refused the request, so setup couldn't be confirmed. Try \
                  again later, or check the server."
             }
-            OperationKind::ListDevices => {
+            OperationKind::ListDevices | OperationKind::Sync => {
                 "The server refused the request, so this device's access couldn't be \
                  confirmed. Try again later."
             }
@@ -104,6 +112,7 @@ fn explain(kind: OperationKind, error: &anyhow::Error) -> &'static str {
         };
     }
     match kind {
+        OperationKind::Sync => "Sync couldn't finish. Try again.",
         OperationKind::Setup => {
             "Setup couldn't finish. Resuming continues the same setup from where it \
              stopped."

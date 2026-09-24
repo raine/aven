@@ -18,6 +18,9 @@ use crate::sync::encrypted::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OperationKind {
+    /// A manual sync, run by the sync controller; recorded here only when it
+    /// fails, so the dialog can explain it.
+    Sync,
     Setup,
     Join,
     ListDevices,
@@ -164,11 +167,22 @@ impl SyncOperations {
         self.task.is_some()
     }
 
-    /// Shows a refusal that happened before any work started.
+    /// Shows a failure that happened outside a running operation, such as a
+    /// refusal before work started or a failed manual sync.
     pub(super) fn record_refusal(&mut self, kind: OperationKind, error: &anyhow::Error) {
         self.activity.last = Some(OperationResult::Failed(super::sync_errors::failure(
             kind, error,
         )));
+    }
+
+    /// Drops a recorded failure of `kind` once a later attempt succeeds.
+    pub(super) fn clear_failure(&mut self, kind: OperationKind) {
+        if matches!(
+            &self.activity.last,
+            Some(OperationResult::Failed(failure)) if failure.kind == kind
+        ) {
+            self.activity.last = None;
+        }
     }
 
     pub(super) fn has_setup_invitation(&self) -> bool {

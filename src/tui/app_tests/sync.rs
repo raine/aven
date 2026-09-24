@@ -36,10 +36,17 @@ async fn sync_now_runs_the_encrypted_drain_and_reports_its_failure() {
     .await
     .expect("sync task settles");
 
-    // The database was never set up, so the shared drain refuses it.
+    // The database was never set up, so the shared drain refuses it. The
+    // toast stays plain; the dialog keeps the engine error as details.
     let message = toast_message(&app).unwrap();
     assert!(message.starts_with("sync failed:"), "{message}");
-    assert!(message.contains("sync-not-set-up"), "{message}");
+    assert!(!message.contains("error "), "{message}");
+    let failure = last_failure(&app);
+    assert_eq!(
+        failure.kind,
+        crate::tui::sync_operations::OperationKind::Sync
+    );
+    assert!(failure.details.contains("sync-not-set-up"));
 }
 
 async fn run_command(app: &mut App, typed: &str) {

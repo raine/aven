@@ -84,6 +84,8 @@ impl App {
         }
         match result {
             Ok(result) => {
+                self.sync_ops
+                    .clear_failure(crate::tui::sync_operations::OperationKind::Sync);
                 let refresh_error = self.refresh().await.err();
                 match refresh_error {
                     Some(error) => {
@@ -103,11 +105,19 @@ impl App {
             }
             Err(error) => {
                 let refresh_error = self.refresh().await.err();
+                // The dialog keeps the engine error as details.
+                self.sync_ops
+                    .record_refusal(crate::tui::sync_operations::OperationKind::Sync, &error);
+                let message = crate::tui::sync_errors::failure(
+                    crate::tui::sync_operations::OperationKind::Sync,
+                    &error,
+                )
+                .message;
                 let message = match refresh_error {
                     Some(refresh_error) => {
-                        format!("sync failed: {error:#}; refresh failed: {refresh_error:#}")
+                        format!("sync failed: {message} Refresh failed: {refresh_error:#}")
                     }
-                    None => format!("sync failed: {error:#}"),
+                    None => format!("sync failed: {message} Open :sync for details."),
                 };
                 self.set_error(message);
             }

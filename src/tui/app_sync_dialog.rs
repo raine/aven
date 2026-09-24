@@ -261,6 +261,7 @@ impl App {
                 .sync_ops
                 .start_remove_device(&database, &config, device),
             OperationKind::FinishRemoval => self.sync_ops.start_finish_removal(&database, &config),
+            OperationKind::Sync => false,
         };
         if !started {
             self.set_info("another sync operation is in progress");
@@ -363,6 +364,7 @@ impl App {
             OperationResult::RemovalFinished { .. } => self.set_success("future changes secured"),
             OperationResult::Failed(failure) => {
                 let what = match failure.kind {
+                    OperationKind::Sync => "sync didn't finish",
                     OperationKind::Setup => "setup didn't finish",
                     OperationKind::Join => "joining didn't finish",
                     OperationKind::ListDevices => "couldn't check devices",
