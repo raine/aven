@@ -35,6 +35,32 @@ Restore replaces local data and requires confirmation with `--yes`. Aven creates
 a safety backup first and preserves the previous attachment directory.
 :::
 
+## Recover data used with sync
+
+A database that has set up or joined end-to-end encrypted sync refuses restore
+and import. This is intentional for this release.
+
+If one device is lost or broken, use a surviving device instead of a backup:
+run `aven sync invite` there, then run `aven sync join` on an empty database on
+the replacement device.
+
+If every syncing device is lost, restore the backup to a fresh database path:
+
+```sh
+aven --db /path/to/recovered.sqlite backup restore backup.aven-backup.tar.zst --yes
+```
+
+The restored data works locally immediately. To sync again, prepare a new
+server data path with `aven server setup`, serve that storage, and run
+`aven sync setup` against the restored database. Do not reuse the previous
+sync's server storage. Other devices must join the new sync from empty
+databases.
+
+Changes made after the backup and never synced are not carried into the new
+sync. Check any old database you can still access before discarding it. See
+[Recover from device loss](/sync/#recover-from-device-loss) for the complete
+command sequence.
+
 ## Export and import portable JSON
 
 ```sh

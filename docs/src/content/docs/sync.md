@@ -228,10 +228,42 @@ aven daemon repair --if-installed --program /path/to/aven
 
 The repair command succeeds without changes when the LaunchAgent is absent.
 
-## Back up and move data
+## Recover from device loss
 
-Backup, restore, export, and import guidance lives in
-[Back up and restore](/backups/).
+A database that has set up or joined sync refuses `aven backup restore` and
+`aven import`. This is intentional: do not replace data in a database that
+takes part in sync.
+
+If one device is lost or broken, no backup is needed. Run `aven sync invite` on
+a device that still syncs, then run `aven sync join` on an empty database on
+the replacement device. See [Add a device](#add-a-device) for the full steps.
+
+If every syncing device is lost, restore the backup to a fresh database path:
+
+```sh
+aven --db /path/to/recovered.sqlite backup restore backup.aven-backup.tar.zst --yes
+```
+
+The restored data is available locally immediately. To sync it again, prepare
+a new server data path and serve it:
+
+```sh
+aven server setup --data /path/to/new-sync-server.sqlite --url https://sync.example.com
+aven server --data /path/to/new-sync-server.sqlite --bind 127.0.0.1:3746
+```
+
+Then use the setup invitation to start a new sync from the restored database:
+
+```sh
+aven --db /path/to/recovered.sqlite sync setup
+```
+
+Do not reuse the old sync's server storage. Join every other device to the new
+sync from an empty database. Before discarding any old database you can still
+access, check it for changes made after the backup that never synced; those
+changes are not carried into the new sync.
+
+See [Back up and restore](/backups/) for backup contents and restore behavior.
 
 ## Resolve conflicts
 
