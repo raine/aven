@@ -1014,19 +1014,19 @@ impl ProtectedLocalKeyStore {
         })
     }
     /// The immutable original followed by retained replacement attempts.
-    /// The original's `peer-sent` record, written before its first post, must
-    /// match; only a record never committed is written here. An attempt
-    /// written before its SQLite commitment is committed unchanged.
+    /// The original's `peer-sent` record, written and committed before its
+    /// first post, must match; a record written before its SQLite commitment
+    /// is committed unchanged, as is any replacement attempt.
     async fn attempts(&self, db: &Database, id: &Identity) -> Result<Vec<Joiner>> {
         let original = Joiner::from_protected_storage(&id.authority)?;
         let sent = Sha256::digest(original.request());
-        match self.phase(db, "peer-sent", 128).await? {
-            Some(saved) => ensure!(
+        if let Some(saved) = self.phase(db, "peer-sent", 128).await? {
+            ensure!(
                 saved.as_slice() == sent.as_slice(),
                 "error enrollment-sent-mismatch"
-            ),
-            None => self.save_phase(db, id, "peer-sent", 128, &sent).await?,
+            );
         }
+        self.save_phase(db, id, "peer-sent", 128, &sent).await?;
         let mut attempts = Vec::new();
         let mut gap = false;
         for index in 1..MAX_JOIN_ATTEMPTS {

@@ -547,3 +547,60 @@ async fn refused_newest_request_keeps_waiting_for_an_earlier_admission() {
     client.install(&p.store, &p.db).await.unwrap();
     task.abort();
 }
+
+#[tokio::test]
+async fn sent_record_written_before_its_commitment_is_committed_before_dispatch() {
+    let root = tempfile::tempdir().unwrap();
+    let (db, store, server, origin, task) = adopted(root.path()).await;
+    let client = Client::new(&origin).unwrap();
+    let original = client.invite(&store, &db, expiry()).await.unwrap();
+    {
+        use std::io::Write;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(root.path().join("invitation.test")).unwrap();
+        file.write_all(&original.protected_storage_bytes()).unwrap();
+    }
+    let posted = || async {
+        server
+            .membership_mailbox(original.vault(), original.handle())
+            .await
+            .unwrap()
+            .request
+    };
+    // Exit after the protected peer-sent write, before its SQLite pin.
+    crash_worker(root.path(), &origin, "initial", "peer-sent").await;
+    let p = peer(root.path()).await;
+    let written = std::fs::read(protected_path(&p.keys, "peer-sent")).unwrap();
+    assert!(
+        p.db.enrollment_artifact("peer-sent")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(posted().await.is_none());
+
+    // Preparation commits the written record unchanged, without posting.
+    let peer = p.store.prepare_peer(&p.db, &origin, None).await.unwrap();
+    // The pin commits the frame's content: the original request's digest.
+    assert_eq!(
+        p.db.enrollment_artifact("peer-sent")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(sha2::Sha256::digest(sha2::Sha256::digest(peer.request())).as_slice())
+    );
+    assert_eq!(
+        std::fs::read(protected_path(&p.keys, "peer-sent")).unwrap(),
+        written
+    );
+    assert!(posted().await.is_none());
+    client.request(&p.store, &p.db, None).await.unwrap();
+    assert_eq!(posted().await.as_deref(), Some(peer.request()));
+    task.abort();
+}
