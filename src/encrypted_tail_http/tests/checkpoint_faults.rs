@@ -214,7 +214,7 @@ async fn accepted_task(f: &Fixture, title: &str) -> (String, String, Vec<u8>) {
     (id, task.id.to_string(), record)
 }
 
-async fn accepted_image(f: &Fixture) -> (String, Vec<u8>, Vec<u8>) {
+async fn accepted_image(f: &Fixture, accept_ref: bool) -> (String, Vec<u8>, Vec<u8>, [u8; 32]) {
     let reference = add_image(f).await;
     let sha: String =
         sqlx::query_scalar("SELECT sha256 FROM task_attachments WHERE attachment_id=?")
@@ -287,25 +287,27 @@ async fn accepted_image(f: &Fixture) -> (String, Vec<u8>, Vec<u8>) {
         )
         .await
         .unwrap();
-    let Reply::Appended(_) = client
-        .exchange(
-            &inputs.authority.context,
-            &inputs.bearer,
-            Operation::Append {
-                ticket: Some(ticket),
-                record: record.clone(),
-            },
-        )
-        .await
-        .unwrap()
-    else {
-        panic!("accepted image ref");
-    };
+    if accept_ref {
+        let Reply::Appended(_) = client
+            .exchange(
+                &inputs.authority.context,
+                &inputs.bearer,
+                Operation::Append {
+                    ticket: Some(ticket),
+                    record: record.clone(),
+                },
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("accepted image ref");
+        };
+    }
     assert_eq!(
         scalar(&f.peer, "SELECT count(*) FROM local_e2ee_outbox").await,
         1
     );
-    (reference, source, record)
+    (reference, source, record, upload.object)
 }
 
 async fn run_task_checkpoint(accepted: bool) {
@@ -374,7 +376,7 @@ async fn run_task_checkpoint(accepted: bool) {
 }
 
 #[tokio::test]
-async fn offline_task_states_cross_two_real_rotations_after_peer_restart() {
+async fn offline_task_states_cross_two_real_rotations_after_database_reopen() {
     run_task_checkpoint(false).await;
     run_task_checkpoint(true).await;
 }
@@ -384,7 +386,7 @@ async fn accepted_image_ref_survives_two_rotations_and_reopen_without_corruption
     let f = fixture().await;
     let driver = join(&f, "image-driver", &f.peer, &f.peer_store).await;
     let removed = join(&f, "image-removed", &f.peer, &f.peer_store).await;
-    let (reference, source, record) = accepted_image(&f).await;
+    let (reference, source, record, old_object) = accepted_image(&f, true).await;
     let driver_id = device(&removed.store, &removed.db, &f.origin).await;
     rotate_twice_while_peer_is_offline(&f, &driver, driver_id).await;
 
@@ -394,6 +396,10 @@ async fn accepted_image_ref_survives_two_rotations_and_reopen_without_corruption
     for _ in 0..8 {
         client
             .attachment_round(&store, &reopened, &f.root.path().join("peer-blobs"))
+            .await
+            .unwrap();
+        client
+            .attachment_round(&driver.store, &driver.db, &driver.blobs)
             .await
             .unwrap();
     }
@@ -419,6 +425,86 @@ async fn accepted_image_ref_survives_two_rotations_and_reopen_without_corruption
         scalar(&reopened, "SELECT count(*) FROM local_e2ee_outbox").await,
         0
     );
+    let driver_sha: String =
+        sqlx::query_scalar("SELECT sha256 FROM task_attachments WHERE attachment_id=?")
+            .bind(&reference)
+            .fetch_one(&mut *aven_core::test_support::acquire(&driver.db).await.unwrap())
+            .await
+            .unwrap();
+    assert_eq!(
+        std::fs::read(driver.blobs.join("objects/sha256").join(driver_sha)).unwrap(),
+        source
+    );
+    let (peer_object, driver_object): (Vec<u8>, Vec<u8>) = (
+        sqlx::query_scalar("SELECT object FROM local_e2ee_image_references WHERE reference=?")
+            .bind(&reference)
+            .fetch_one(&mut *aven_core::test_support::acquire(&reopened).await.unwrap())
+            .await
+            .unwrap(),
+        sqlx::query_scalar("SELECT object FROM local_e2ee_image_references WHERE reference=?")
+            .bind(&reference)
+            .fetch_one(&mut *aven_core::test_support::acquire(&driver.db).await.unwrap())
+            .await
+            .unwrap(),
+    );
+    assert_eq!(peer_object, driver_object);
+    assert_eq!(peer_object, old_object.to_vec());
+}
+
+#[tokio::test]
+async fn frozen_unaccepted_image_ref_is_replaced_after_two_rotations() {
+    let f = fixture().await;
+    let driver = join(&f, "image-frozen-driver", &f.peer, &f.peer_store).await;
+    let removed = join(&f, "image-frozen-removed", &f.peer, &f.peer_store).await;
+    let (reference, source, old_record, old_object) = accepted_image(&f, false).await;
+    let removed_id = device(&removed.store, &removed.db, &f.origin).await;
+    rotate_twice_while_peer_is_offline(&f, &driver, removed_id).await;
+
+    let reopened = Database::open(f.peer.path()).await.unwrap();
+    let store = isolated_store(reopened.path(), &f.root.path().join("peer-keys"));
+    let client = Client::new(&f.origin).unwrap();
+    for _ in 0..8 {
+        client
+            .attachment_round(&store, &reopened, &f.root.path().join("peer-blobs"))
+            .await
+            .unwrap();
+        client
+            .attachment_round(&driver.store, &driver.db, &driver.blobs)
+            .await
+            .unwrap();
+    }
+    let accepted: Vec<u8> = sqlx::query_scalar(
+        "SELECT record FROM local_e2ee_accepted WHERE operation_id=(SELECT created_by_change_id FROM task_attachments WHERE attachment_id=?)",
+    )
+    .bind(&reference)
+    .fetch_one(&mut *aven_core::test_support::acquire(&reopened).await.unwrap())
+    .await
+    .unwrap();
+    assert_ne!(accepted, old_record);
+    let object: Vec<u8> =
+        sqlx::query_scalar("SELECT object FROM local_e2ee_image_references WHERE reference=?")
+            .bind(&reference)
+            .fetch_one(&mut *aven_core::test_support::acquire(&reopened).await.unwrap())
+            .await
+            .unwrap();
+    assert_ne!(object, old_object);
+    let sha: String =
+        sqlx::query_scalar("SELECT sha256 FROM task_attachments WHERE attachment_id=?")
+            .bind(&reference)
+            .fetch_one(&mut *aven_core::test_support::acquire(&driver.db).await.unwrap())
+            .await
+            .unwrap();
+    assert_eq!(
+        std::fs::read(driver.blobs.join("objects/sha256").join(sha)).unwrap(),
+        source
+    );
+    let driver_object: Vec<u8> =
+        sqlx::query_scalar("SELECT object FROM local_e2ee_image_references WHERE reference=?")
+            .bind(&reference)
+            .fetch_one(&mut *aven_core::test_support::acquire(&driver.db).await.unwrap())
+            .await
+            .unwrap();
+    assert_eq!(driver_object, object);
 }
 
 #[tokio::test]
@@ -618,6 +704,20 @@ async fn recovery_worker() {
     std::process::exit(84);
 }
 
+fn expect_error<T>(result: anyhow::Result<T>, message: &str) -> anyhow::Error {
+    match result {
+        Ok(_) => panic!("{message}"),
+        Err(error) => error,
+    }
+}
+
+fn assert_removed(error: anyhow::Error) {
+    assert!(
+        !error.is::<aven_core::sync::seed_claim::membership::StaleContext>(),
+        "removed credentials must not receive stale context: {error:#}"
+    );
+}
+
 #[tokio::test]
 async fn removed_credentials_cannot_retry_history_or_protected_routes_and_keep_plaintext() {
     let f = fixture().await;
@@ -631,8 +731,91 @@ async fn removed_credentials_cannot_retry_history_or_protected_routes_and_keep_p
     drop(old);
     let old_inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
     let old_context = old_inputs.authority.context.clone();
+    let old_after = f
+        .seed
+        .encrypted_tail_cursor(&old_inputs.authority)
+        .await
+        .unwrap();
     let old_bearer = Secret::new(*old_inputs.bearer.expose());
     drop(old_inputs);
+    let client = Client::new(&f.origin).unwrap();
+    let lookup_id: String =
+        sqlx::query_scalar("SELECT operation_id FROM server_bootstrap_prefix LIMIT 1")
+            .fetch_one(&mut *aven_core::test_support::acquire(&f.server).await.unwrap())
+            .await
+            .unwrap();
+    let (image_workspace, object_bytes, descriptor): (String, Vec<u8>, Vec<u8>) = sqlx::query_as(
+        "SELECT r.workspace,i.object,i.descriptor FROM server_e2ee_image_references r JOIN server_e2ee_images i ON i.object=r.object WHERE i.bootstrap IS NOT NULL LIMIT 1",
+    )
+    .fetch_one(&mut *aven_core::test_support::acquire(&f.server).await.unwrap())
+    .await
+    .unwrap();
+    let object: [u8; 32] = object_bytes.try_into().unwrap();
+    let commitment: [u8; 32] = sha2::Sha256::digest(&descriptor).into();
+    assert!(
+        client
+            .exchange(
+                &old_context,
+                &old_bearer,
+                Operation::Pull {
+                    after: old_after,
+                    limit: 1,
+                    watermark: None,
+                },
+            )
+            .await
+            .is_ok()
+    );
+    assert!(
+        client
+            .exchange(
+                &old_context,
+                &old_bearer,
+                Operation::Lookup {
+                    operation_id: lookup_id.clone(),
+                    expected: None,
+                },
+            )
+            .await
+            .is_ok()
+    );
+    assert!(
+        client
+            .image_exchange(
+                &old_context,
+                &old_bearer,
+                attachments::Operation::Status {
+                    workspace: image_workspace.clone(),
+                    object,
+                    descriptor_commitment: commitment,
+                },
+            )
+            .await
+            .is_ok()
+    );
+    assert!(
+        client
+            .image_exchange(
+                &old_context,
+                &old_bearer,
+                attachments::Operation::Read {
+                    workspace: image_workspace.clone(),
+                    object,
+                    descriptor_commitment: commitment,
+                    index: 0,
+                },
+            )
+            .await
+            .is_ok()
+    );
+    assert!(
+        seed_bootstrap_http::Client::new(&f.origin)
+            .unwrap()
+            .resume(&f.seed_store, &f.seed)
+            .await
+            .is_ok()
+    );
+
     let workspace = f.seed.list_workspaces().await.unwrap().remove(0);
     let local_task = f
         .seed
@@ -644,15 +827,14 @@ async fn removed_credentials_cannot_retry_history_or_protected_routes_and_keep_p
         .remove_device(&f.peer_store, &f.peer, seed_id)
         .await
         .unwrap();
-    let client = Client::new(&f.origin).unwrap();
     for operation in [
         Operation::Pull {
-            after: 0,
+            after: old_after,
             limit: 1,
             watermark: None,
         },
         Operation::Lookup {
-            operation_id: "historical-retry".into(),
+            operation_id: lookup_id,
             expected: None,
         },
         Operation::Append {
@@ -660,21 +842,14 @@ async fn removed_credentials_cannot_retry_history_or_protected_routes_and_keep_p
             record: vec![],
         },
     ] {
-        assert!(
+        assert_removed(
             client
                 .exchange(&old_context, &old_bearer, operation)
                 .await
-                .is_err()
+                .err()
+                .expect("removed tail request unexpectedly succeeded"),
         );
     }
-    let (image_workspace, object_bytes, descriptor): (String, Vec<u8>, Vec<u8>) = sqlx::query_as(
-        "SELECT r.workspace,i.object,i.descriptor FROM server_e2ee_image_references r JOIN server_e2ee_images i ON i.object=r.object WHERE i.bootstrap IS NOT NULL LIMIT 1",
-    )
-    .fetch_one(&mut *aven_core::test_support::acquire(&f.server).await.unwrap())
-    .await
-    .unwrap();
-    let object: [u8; 32] = object_bytes.try_into().unwrap();
-    let commitment: [u8; 32] = sha2::Sha256::digest(&descriptor).into();
     for operation in [
         attachments::Operation::Status {
             workspace: image_workspace.clone(),
@@ -722,22 +897,25 @@ async fn removed_credentials_cannot_retry_history_or_protected_routes_and_keep_p
             descriptor: vec![],
         },
     ] {
-        assert!(
+        assert_removed(
             client
                 .image_exchange(&old_context, &old_bearer, operation)
                 .await
-                .is_err()
+                .err()
+                .expect("removed image request unexpectedly succeeded"),
         );
     }
-    assert!(enrollment.refresh(&f.seed_store, &f.seed).await.is_err());
-    assert!(enrollment.install(&f.seed_store, &f.seed).await.is_err());
-    assert!(
+    assert_removed(expect_error(
+        enrollment.refresh(&f.seed_store, &f.seed).await,
+        "removed membership refresh unexpectedly succeeded",
+    ));
+    assert_removed(expect_error(
         seed_bootstrap_http::Client::new(&f.origin)
             .unwrap()
             .resume(&f.seed_store, &f.seed)
-            .await
-            .is_err()
-    );
+            .await,
+        "removed bootstrap resume unexpectedly succeeded",
+    ));
     assert_eq!(
         title(&f.seed, local_task.id.as_str()).await,
         "plaintext remains after removal"
