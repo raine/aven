@@ -63,6 +63,21 @@ pub(crate) async fn is_set_up(database: &Database) -> Result<bool> {
         || database.local_seed_genesis_commitment().await?.is_some())
 }
 
+/// Setup and joining progress that a caller may present. Stages report where
+/// the engine is, not how much remains.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Stage {
+    PreparingData,
+    UploadingData,
+    FinishingSetup,
+    WaitingForInviter,
+    DownloadingTasks,
+    /// Synced tasks are installed; changes made after the snapshot are applied.
+    CatchingUp,
+    /// Tasks are current; images are still transferring.
+    DownloadingImages,
+}
+
 fn key_store(database: &Database) -> Result<ProtectedLocalKeyStore> {
     Ok(ProtectedLocalKeyStore::for_database(database.path())?)
 }
@@ -104,21 +119,47 @@ fn confirm_setup(yes: bool) -> Result<()> {
     Ok(())
 }
 
-async fn print_setup_preview(database: &Database, server: &str) -> Result<()> {
+/// What setup would publish from this database.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SetupPreview {
+    pub(crate) workspaces: usize,
+    pub(crate) tasks: i64,
+    /// Synced images whose bytes are missing here; they sync as unavailable.
+    pub(crate) missing_images: u64,
+    /// The database still names a server from earlier unencrypted sync.
+    pub(crate) leaves_unencrypted_server: bool,
+}
+
+pub(crate) async fn setup_preview(database: &Database) -> Result<SetupPreview> {
     let workspaces = database.list_workspaces().await?;
     let mut tasks = 0;
     for workspace in &workspaces {
         tasks += database.workspace_task_counts(&workspace.id).await?.visible;
     }
-    let missing = database.missing_sync_attachment_counts().await?.count;
+    Ok(SetupPreview {
+        workspaces: workspaces.len(),
+        tasks,
+        missing_images: database.missing_sync_attachment_counts().await?.count,
+        leaves_unencrypted_server: database.meta("sync_server_url").await?.is_some(),
+    })
+}
+
+async fn print_setup_preview(database: &Database, server: &str) -> Result<()> {
+    let preview = setup_preview(database).await?;
     eprintln!("Set up sync from this database");
     eprintln!("  Database: {}", database.path().display());
     eprintln!("  Server: {server}");
-    eprintln!("  Workspaces: {}, tasks: {tasks}", workspaces.len());
-    if missing > 0 {
-        eprintln!("  Images missing on this computer: {missing} (synced as unavailable)");
+    eprintln!(
+        "  Workspaces: {}, tasks: {}",
+        preview.workspaces, preview.tasks
+    );
+    if preview.missing_images > 0 {
+        eprintln!(
+            "  Images missing on this computer: {} (synced as unavailable)",
+            preview.missing_images
+        );
     }
-    if database.meta("sync_server_url").await?.is_some() {
+    if preview.leaves_unencrypted_server {
         eprintln!("  This database stops using its previous unencrypted sync server.");
     }
     eprintln!(
@@ -128,24 +169,52 @@ async fn print_setup_preview(database: &Database, server: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn setup(database: &Database, config: &AppConfig, args: SetupArgs) -> Result<()> {
+/// Refuses setup when sync is disabled or this database already takes part.
+pub(crate) async fn ensure_setup_available(database: &Database, config: &AppConfig) -> Result<()> {
     config.ensure_sync_allowed()?;
     ensure!(
         database.enrollment_pin().await?.is_none(),
         "error sync-already-set-up hint=\"run `aven sync` or `aven sync status`\""
     );
+    Ok(())
+}
+
+pub(crate) async fn setup(database: &Database, config: &AppConfig, args: SetupArgs) -> Result<()> {
+    ensure_setup_available(database, config).await?;
     let invitation = SetupInvitation::decode(&read_invitation("Setup invitation: ")?)?;
     let resuming = database.local_seed_genesis_commitment().await?.is_some();
     if !resuming {
         print_setup_preview(database, &invitation.server).await?;
         confirm_setup(args.yes)?;
     }
+    let outcome = run_setup(database, config, &invitation, &|stage| {
+        if stage == Stage::UploadingData {
+            eprintln!("Uploading encrypted data...");
+        }
+    })
+    .await?;
+    println!("Sync set up with {}", invitation.server);
+    print_outcome(&outcome);
+    Ok(())
+}
+
+/// Sets up sync from this database, or resumes the setup it started. The
+/// caller confirms a fresh setup first; a resumed one continues the original
+/// capture and never recaptures.
+pub(crate) async fn run_setup(
+    database: &Database,
+    config: &AppConfig,
+    invitation: &SetupInvitation,
+    progress: &(dyn Fn(Stage) + Sync),
+) -> Result<Outcome> {
+    ensure_setup_available(database, config).await?;
     let blob_dir = config::resolve_blob_dir(database.path(), config)?;
     let store = key_store(database)?;
     let _guard = super::coordination::acquire(database).await?;
     let bootstrap = seed_bootstrap_http::Client::new(&invitation.server)?;
     // A sealed publication intent means the claim and capture are complete.
     if database.seed_publication_intent_bytes().await?.is_none() {
+        progress(Stage::PreparingData);
         let seed = store
             .prepare_seed_claim(database, invitation.setup_id)
             .await
@@ -168,17 +237,15 @@ pub(crate) async fn setup(database: &Database, config: &AppConfig, args: SetupAr
                 .map_err(|_| explain_setup_refusal(error))?;
         }
     }
-    eprintln!("Uploading encrypted data...");
+    progress(Stage::UploadingData);
     bootstrap.resume(&store, database).await?;
+    progress(Stage::FinishingSetup);
     // Binds this installation's enrollment identity to the server.
     peer_enrollment_http::Client::new(&invitation.server)?
         .refresh(&store, database)
         .await?;
     let client = tail_http::Client::new(&invitation.server)?;
-    let outcome = drain(&client, &store, database, &blob_dir, ROUND_LIMIT).await?;
-    println!("Sync set up with {}", invitation.server);
-    print_outcome(&outcome);
-    Ok(())
+    drain(&client, &store, database, &blob_dir, ROUND_LIMIT).await
 }
 
 /// A created device invitation whose inviting device waits for admission.
@@ -293,20 +360,48 @@ fn print_invitation_qr(invitation: &PendingInvitation) {
     }
 }
 
+const ALREADY_SET_UP: &str =
+    "error sync-already-set-up hint=\"add devices with `aven sync invite` on this database\"";
+const JOIN_REQUIRES_EMPTY: &str = "error sync-join-requires-empty-database hint=\"join with a new database, for example `aven --db PATH sync join`\"";
+
 pub(crate) async fn join(database: &Database, config: &AppConfig) -> Result<()> {
+    let (server, outcome) = run_join(
+        database,
+        config,
+        || DeviceInvitation::decode(&read_invitation("Device invitation: ")?).map(Some),
+        &|stage| match stage {
+            Stage::WaitingForInviter => eprintln!("Waiting for the inviting device..."),
+            Stage::DownloadingTasks => eprintln!("Downloading synced data..."),
+            _ => {}
+        },
+    )
+    .await?;
+    println!("Joined sync with {server}");
+    print_outcome(&outcome);
+    Ok(())
+}
+
+/// Joins sync on a fresh database, or resumes the join it started, and
+/// returns the server. `invitation` is asked for only while enrollment is
+/// unfinished; `None` resumes the request this database already made.
+pub(crate) async fn run_join(
+    database: &Database,
+    config: &AppConfig,
+    invitation: impl FnOnce() -> Result<Option<DeviceInvitation>>,
+    progress: &(dyn Fn(Stage) + Sync),
+) -> Result<(String, Outcome)> {
     config.ensure_sync_allowed()?;
     let store = key_store(database)?;
     let blob_dir = config::resolve_blob_dir(database.path(), config)?;
     let _guard = super::coordination::acquire(database).await?;
     let server = match store.association(database).await? {
         Some((true, server)) => Some(server),
-        Some((false, _)) => bail!(
-            "error sync-already-set-up hint=\"add devices with `aven sync invite` on this database\""
-        ),
+        Some((false, _)) => bail!(ALREADY_SET_UP),
         None => {
-            database.peer_target_preflight().await.context(
-                "error sync-join-requires-empty-database hint=\"join with a new database, for example `aven --db PATH sync join`\"",
-            )?;
+            database
+                .peer_target_preflight()
+                .await
+                .context(JOIN_REQUIRES_EMPTY)?;
             None
         }
     };
@@ -316,16 +411,21 @@ pub(crate) async fn join(database: &Database, config: &AppConfig) -> Result<()> 
     ) {
         server.context("error sync-join-incomplete")?
     } else {
-        let invitation = DeviceInvitation::decode(&read_invitation("Device invitation: ")?)?;
+        let invitation = invitation()?;
         ensure!(
-            server.as_ref().is_none_or(|s| *s == invitation.server),
+            server
+                .as_ref()
+                .zip(invitation.as_ref())
+                .is_none_or(|(server, invitation)| *server == invitation.server),
             "error sync-join-server-mismatch hint=\"resume with the invitation that started joining\""
         );
-        let client = peer_enrollment_http::Client::new(&invitation.server)?;
-        client
-            .request(&store, database, Some(invitation.invitation))
-            .await?;
-        eprintln!("Waiting for the inviting device...");
+        let (server, invitation) = match invitation {
+            Some(invitation) => (invitation.server, Some(invitation.invitation)),
+            None => (server.context("error sync-join-invitation-required")?, None),
+        };
+        let client = peer_enrollment_http::Client::new(&server)?;
+        client.request(&store, database, invitation).await?;
+        progress(Stage::WaitingForInviter);
         let deadline = Instant::now() + Duration::from_secs(invitation_seconds());
         loop {
             match client.complete(&store, database).await {
@@ -339,17 +439,28 @@ pub(crate) async fn join(database: &Database, config: &AppConfig) -> Result<()> 
             );
             tokio::time::sleep(POLL_INTERVAL).await;
         }
-        invitation.server
+        server
     };
-    eprintln!("Downloading synced data...");
+    progress(Stage::DownloadingTasks);
     peer_enrollment_http::Client::new(&server)?
         .install(&store, database)
         .await?;
+    progress(Stage::CatchingUp);
     let client = tail_http::Client::new(&server)?;
-    let outcome = drain(&client, &store, database, &blob_dir, ROUND_LIMIT).await?;
-    println!("Joined sync with {server}");
-    print_outcome(&outcome);
-    Ok(())
+    let outcome = drain_reporting(
+        &client,
+        &store,
+        database,
+        &blob_dir,
+        ROUND_LIMIT,
+        &mut |round| {
+            if round.metadata_caught_up && round.images != ImageTransfer::Complete {
+                progress(Stage::DownloadingImages);
+            }
+        },
+    )
+    .await?;
+    Ok((server, outcome))
 }
 
 /// A refused claim may come from a replaced or expired setup invitation, but a
@@ -500,11 +611,23 @@ pub(crate) async fn drain(
     blob_dir: &Path,
     round_limit: usize,
 ) -> Result<Outcome> {
+    drain_reporting(client, store, database, blob_dir, round_limit, &mut |_| {}).await
+}
+
+async fn drain_reporting(
+    client: &tail_http::Client,
+    store: &ProtectedLocalKeyStore,
+    database: &Database,
+    blob_dir: &Path,
+    round_limit: usize,
+    on_round: &mut (dyn FnMut(&Round) + Send),
+) -> Result<Outcome> {
     let mut last = None;
     let mut rounds = 0;
     let mut image_retries = 0;
     while rounds < round_limit {
         let round: Round = client.round(store, database, blob_dir).await?;
+        on_round(&round);
         rounds += 1;
         last = Some(round);
         match round.images {

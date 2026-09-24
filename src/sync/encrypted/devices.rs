@@ -1,6 +1,6 @@
 //! Listing and removing the devices that take part in sync.
 //!
-//! Both commands refresh verified membership from the server first. Removal
+//! Both operations refresh verified membership from the server first. Removal
 //! delegates to the engine's durable removal and rotation; rerunning it
 //! resumes a retained removal instead of starting another.
 use anyhow::{Result, bail, ensure};
@@ -31,7 +31,7 @@ struct DeviceEntry {
 }
 
 #[derive(Serialize)]
-struct Removal {
+struct RemovalReport {
     version: u32,
     device_id: String,
     state: &'static str,
@@ -69,7 +69,26 @@ async fn open(database: &Database, config: &AppConfig) -> Result<Session> {
     })
 }
 
-pub(crate) async fn list(database: &Database, config: &AppConfig, json: bool) -> Result<()> {
+/// One device in verified membership.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Device {
+    pub(crate) id: [u8; 32],
+    pub(crate) current: bool,
+    /// Position of the admission in the membership chain; not a date or a
+    /// device number.
+    pub(crate) admission_sequence: u64,
+}
+
+/// Devices in sync, read from membership the server just verified.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DeviceListing {
+    pub(crate) server: String,
+    /// Keys for future changes still need rotating after a removal.
+    pub(crate) key_rotation_pending: bool,
+    pub(crate) devices: Vec<Device>,
+}
+
+pub(crate) async fn load_devices(database: &Database, config: &AppConfig) -> Result<DeviceListing> {
     let Session {
         _guard,
         store,
@@ -85,17 +104,34 @@ pub(crate) async fn list(database: &Database, config: &AppConfig, json: bool) ->
             _ => explain_revoked(error),
         })?;
     let current = inputs.device();
-    let report = DeviceList {
-        version: 1,
+    Ok(DeviceListing {
         server,
         key_rotation_pending: inputs.membership.rotation_pending(),
         devices: inputs
             .membership
             .admissions()
-            .map(|(device, sequence)| DeviceEntry {
-                device_id: hex::encode(device),
+            .map(|(device, sequence)| Device {
+                id: device,
                 current: device == current,
                 admission_sequence: sequence,
+            })
+            .collect(),
+    })
+}
+
+pub(crate) async fn list(database: &Database, config: &AppConfig, json: bool) -> Result<()> {
+    let listing = load_devices(database, config).await?;
+    let report = DeviceList {
+        version: 1,
+        server: listing.server,
+        key_rotation_pending: listing.key_rotation_pending,
+        devices: listing
+            .devices
+            .iter()
+            .map(|device| DeviceEntry {
+                device_id: hex::encode(device.id),
+                current: device.current,
+                admission_sequence: device.admission_sequence,
             })
             .collect(),
     };
@@ -164,13 +200,23 @@ async fn explain_removal_error(
     error.context(hint)
 }
 
-pub(crate) async fn remove(
+/// Result of removing another device, read back from verified membership.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Removal {
+    pub(crate) device: [u8; 32],
+    /// The device is no longer in verified membership.
+    pub(crate) access_revoked: bool,
+    /// Keys for future changes are not rotated yet.
+    pub(crate) key_rotation_pending: bool,
+}
+
+/// Removes another device, or resumes its retained removal. Refuses the
+/// current device before reaching the engine.
+pub(crate) async fn remove_other_device(
     database: &Database,
     config: &AppConfig,
-    device_id: &str,
-    json: bool,
-) -> Result<()> {
-    let target = parse_device_id(device_id)?;
+    target: [u8; 32],
+) -> Result<Removal> {
     let Session {
         _guard,
         store,
@@ -190,17 +236,37 @@ pub(crate) async fn remove(
             return Err(explain_removal_error(&store, database, &server, target, error).await);
         }
     };
+    let key_rotation_pending = match status {
+        RemovalStatus::Complete => false,
+        RemovalStatus::Pending => true,
+        RemovalStatus::SelfRevoked => bail!("error management-self-revoke"),
+    };
     let membership = store.active_inputs(database, &server).await?.membership;
-    let report = Removal {
+    Ok(Removal {
+        device: target,
+        access_revoked: !membership.has_device(target),
+        key_rotation_pending,
+    })
+}
+
+pub(crate) async fn remove(
+    database: &Database,
+    config: &AppConfig,
+    device_id: &str,
+    json: bool,
+) -> Result<()> {
+    let target = parse_device_id(device_id)?;
+    let removal = remove_other_device(database, config, target).await?;
+    let report = RemovalReport {
         version: 1,
         device_id: hex::encode(target),
-        state: match status {
-            RemovalStatus::Complete => "complete",
-            RemovalStatus::Pending => "pending",
-            RemovalStatus::SelfRevoked => bail!("error management-self-revoke"),
+        state: if removal.key_rotation_pending {
+            "pending"
+        } else {
+            "complete"
         },
-        access_revoked: !membership.has_device(target),
-        key_rotation_pending: status == RemovalStatus::Pending,
+        access_revoked: removal.access_revoked,
+        key_rotation_pending: removal.key_rotation_pending,
     };
     if json {
         return print_json_pretty(&report);

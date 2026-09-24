@@ -19,14 +19,14 @@ const DEVICE_VERSION: u8 = 2;
 const MAX_DEVICE_BYTES: usize = 4096;
 const MAX_SERVER_BYTES: usize = 2048;
 
-pub(in crate::sync) struct SetupInvitation {
-    pub(in crate::sync) server: String,
+pub(crate) struct SetupInvitation {
+    pub(crate) server: String,
     pub(in crate::sync) setup_id: [u8; 32],
     pub(in crate::sync) secret: Secret,
 }
 
-pub(in crate::sync) struct DeviceInvitation {
-    pub(in crate::sync) server: String,
+pub(crate) struct DeviceInvitation {
+    pub(crate) server: String,
     pub(in crate::sync) invitation: Invitation,
 }
 
@@ -62,7 +62,7 @@ impl SetupInvitation {
         encode(SETUP_PREFIX, &secret, &self.server)
     }
 
-    pub(in crate::sync) fn decode(text: &str) -> Result<Self> {
+    pub(crate) fn decode(text: &str) -> Result<Self> {
         let (secret, server) = decode(SETUP_PREFIX, text, 64)
             .ok_or_else(|| anyhow::anyhow!("error sync-setup-invitation-invalid"))?;
         Ok(Self {
@@ -93,7 +93,7 @@ impl DeviceInvitation {
         ))
     }
 
-    pub(in crate::sync) fn decode(text: &str) -> Result<Self> {
+    pub(crate) fn decode(text: &str) -> Result<Self> {
         Self::decode_fields(text)
             .ok_or_else(|| anyhow::anyhow!("error sync-device-invitation-invalid"))
     }
