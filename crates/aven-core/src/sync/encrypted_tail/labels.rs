@@ -25,18 +25,28 @@ pub(super) async fn reconcile(
     prefix: i64,
     change: &ChangeWire,
 ) -> Result<()> {
-    let names = match change.op_type.as_str() {
-        op_type::LABEL_ADD | op_type::LABEL_REMOVE => vec![text(change, "label")?],
+    let mut names = match change.op_type.as_str() {
+        op_type::LABEL_ADD | op_type::LABEL_REMOVE => vec![text(change, "label")?.to_owned()],
         op_type::CREATE_LABEL | op_type::LABEL_DELETE | op_type::LABEL_RESTORE => {
-            vec![text(change, "name")?]
+            vec![text(change, "name")?.to_owned()]
         }
-        op_type::SET_LABEL_NAME => vec![text(change, "name")?, text(change, "new_name")?],
+        op_type::SET_LABEL_NAME => vec![
+            text(change, "name")?.to_owned(),
+            text(change, "new_name")?.to_owned(),
+        ],
         _ => return Ok(()),
     };
     let workspace = text(change, "workspace_id")?;
-    for label in names {
-        reapply_last_removal(conn, prefix, workspace, label).await?;
-        let tasks: Vec<String> = if change.entity_type == "task" {
+    let mut i = 0;
+    while i < names.len() {
+        let label = names[i].clone();
+        // A re-applied rename moves references, so the new name's pairs need reconciling.
+        if let Some(moved) = reapply_last_removal(conn, prefix, workspace, &label).await?
+            && !names.contains(&moved)
+        {
+            names.push(moved);
+        }
+        let tasks: Vec<String> = if change.entity_type == "task" && i == 0 {
             vec![change.entity_id.clone()]
         } else {
             sqlx::query_scalar(
@@ -47,14 +57,15 @@ pub(super) async fn reconcile(
                    AND (server_seq > ? OR server_seq IS NULL)",
             )
             .bind(workspace)
-            .bind(label)
+            .bind(&label)
             .bind(prefix)
             .fetch_all(&mut *conn)
             .await?
         };
         for task in tasks {
-            reconcile_pair(conn, prefix, workspace, &task, label).await?;
+            reconcile_pair(conn, prefix, workspace, &task, &label).await?;
         }
+        i += 1;
     }
     Ok(())
 }
@@ -66,7 +77,7 @@ async fn reapply_last_removal(
     prefix: i64,
     workspace: &str,
     label: &str,
-) -> Result<()> {
+) -> Result<Option<String>> {
     let last: Option<String> = sqlx::query_scalar(last_tail_command!(
         "SELECT change_id",
         "((entity_type = 'label' AND entity_id = ?
@@ -84,19 +95,22 @@ async fn reapply_last_removal(
     .fetch_optional(&mut *conn)
     .await?;
     let Some(id) = last else {
-        return Ok(());
+        return Ok(None);
     };
     let change = super::client::load_change(conn, &id)
         .await?
         .context("error encrypted-tail-label-history")?;
-    let removal = change.op_type == op_type::LABEL_DELETE
-        || (change.op_type == op_type::SET_LABEL_NAME && change.entity_id == label);
-    if removal {
-        crate::sync::apply::apply_remote_change_quiet(conn, &change)
-            .await
-            .map_err(|_| anyhow::anyhow!("error encrypted-tail-apply"))?;
-    }
-    Ok(())
+    let moved = match change.op_type.as_str() {
+        op_type::LABEL_DELETE => None,
+        op_type::SET_LABEL_NAME if change.entity_id == label => {
+            Some(text(&change, "new_name")?.to_owned())
+        }
+        _ => return Ok(None),
+    };
+    crate::sync::apply::apply_remote_change_quiet(conn, &change)
+        .await
+        .map_err(|_| anyhow::anyhow!("error encrypted-tail-apply"))?;
+    Ok(moved)
 }
 
 /// Assigns one task-label pair from its last absolute tail command. A rename into

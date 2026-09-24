@@ -269,3 +269,25 @@ fn administration_operations_keep_strict_shapes_and_workspace_scope() {
         assert!(domain::validate(&c).is_err(), "{c:?}");
     }
 }
+#[test]
+fn every_registered_operation_name_has_encrypted_validation() {
+    // The op_type constants are the maintained vocabulary; the protocol test pins them.
+    let registered: Vec<&str> = include_str!("../../change_log.rs")
+        .lines()
+        .filter_map(|line| {
+            let (_, value) = line
+                .trim()
+                .strip_prefix("pub const ")?
+                .split_once(": &str = \"")?;
+            value.strip_suffix("\";")
+        })
+        .collect();
+    assert!(registered.len() >= 39);
+    for op in registered {
+        assert!(
+            domain::payload_keys(op).is_some(),
+            "{op} lacks encrypted validation"
+        );
+    }
+    assert!(domain::payload_keys("unregistered_operation").is_none());
+}

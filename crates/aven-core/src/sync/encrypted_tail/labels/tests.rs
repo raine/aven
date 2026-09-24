@@ -172,3 +172,33 @@ async fn label_administration_assigns_presence_and_existence_in_tail_order() {
     reconcile(&mut conn, 10, &accepted_remove).await.unwrap();
     assert_eq!(labels(&mut conn).await, ["topic"]);
 }
+
+#[tokio::test]
+async fn reapplied_rename_keeps_later_pending_commands_on_the_new_name() {
+    let (_temp, mut conn) = crate::test_support::test_conn().await;
+    // Local pending rename, then a pending removal from the renamed label.
+    let rename = administration(
+        1,
+        op_type::SET_LABEL_NAME,
+        "tag",
+        json!({"new_name": "topic", "renamed_at": "t"}),
+    );
+    let mut remove_topic = operation(2, false, None);
+    remove_topic.payload["label"] = json!("topic");
+    // A remote add of the old name that the server orders before both.
+    let remote_add = operation(3, true, Some(11));
+    for c in [&rename, &remove_topic, &remote_add] {
+        insert_wire_change(&mut conn, c).await.unwrap();
+    }
+    sqlx::query("INSERT INTO labels(workspace_id, name, created_at) VALUES ('0000000000000000', 'topic', 'c')")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    crate::sync::apply::apply_remote_change_quiet(&mut conn, &remote_add)
+        .await
+        .unwrap();
+    reconcile(&mut conn, 10, &remote_add).await.unwrap();
+    // Ordered replay: add tag, rename tag to topic, remove topic.
+    assert!(labels(&mut conn).await.is_empty());
+    assert_eq!(label_rows(&mut conn).await, ["topic"]);
+}

@@ -91,9 +91,9 @@ impl Projection {
     }
 }
 
-pub(super) fn validate(c: &ChangeWire) -> Result<Projection> {
-    valid(c.server_seq.is_none() && c.change_id.len() <= 256)?;
-    let keys: &[&str] = match c.op_type.as_str() {
+/// Payload keys accepted for each supported operation, or None when unsupported.
+pub(super) fn payload_keys(op: &str) -> Option<&'static [&'static str]> {
+    Some(match op {
         "create_task" => &[
             "title",
             "description",
@@ -237,8 +237,13 @@ pub(super) fn validate(c: &ChangeWire) -> Result<Projection> {
             "created_at",
         ],
         "attachment_delete" => &["attachment_id", "filename", "media_type", "deleted_at"],
-        _ => anyhow::bail!("error encrypted-tail-operation-unsupported"),
-    };
+        _ => return None,
+    })
+}
+
+pub(super) fn validate(c: &ChangeWire) -> Result<Projection> {
+    valid(c.server_seq.is_none() && c.change_id.len() <= 256)?;
+    let keys = payload_keys(&c.op_type).context("error encrypted-tail-operation-unsupported")?;
     crate::sync::wire::validate_local_change_shape(c)
         .and_then(|()| crate::sync::protocol::validate_change(18, c))
         .map_err(|_| anyhow::anyhow!("error encrypted-tail-domain"))?;

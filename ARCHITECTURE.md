@@ -289,8 +289,8 @@ create/rename reuse the existing administration reducers. Workspace operations a
 database-wide: the entity is the workspace, and payload workspace fields are refused.
 The existing recurrence vocabulary is supported: series creation, template/metadata
 updates, projection, outcomes, pause intervals, state changes and stop, including
-domain conflict resolution. The allowlist covers the full maintained operation
-vocabulary with per-operation payload keys. Attachment mutations use authenticated Ref/Unref.
+domain conflict resolution. `domain::payload_keys` covers every `change_log::op_type` name, pinned by a test;
+payload semantics stay with wire validation and the reducers. Attachment mutations use authenticated Ref/Unref.
 `prepare_encrypted_push` is the single ordered head owner: it returns the frozen record
 or preflights pending work and freezes the head, staging exact image ciphertext
 with the Ref in the same transaction. Both task and image records pass the canonical
@@ -360,7 +360,7 @@ retained tail command, using accepted sequence order followed by local pending
 push order. Label deletion and rename away assign absence, and restoration listing
 the task assigns presence. A rename into the label keeps the materialized presence.
 A label whose last tail command deletes or renames it re-applies that command
-through the existing reducer. Accepted-only outcomes and incoming pages, including local echoes,
+through the existing reducer, then reconciles the renamed label's pairs. Accepted-only outcomes and incoming pages, including local echoes,
 reconcile transactionally. Pairs without tail commands keep their published
 materialization, not a replay of prefix history. This uses the same retained-tail
 requirement as notes and does not change dependency cycle arbitration. A rename that
