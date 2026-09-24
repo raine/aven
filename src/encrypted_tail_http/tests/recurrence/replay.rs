@@ -33,7 +33,7 @@ async fn lifecycle_resolution_reinserts_later_page_records_with_canonical_equali
         let f = fixture().await;
         if unequal {
             // Proposal-form identities derive from content, so an unequal same-ID
-            // generation needs the occurrence form earlier bound builds produced.
+            // generation needs occurrence-form identities.
             for db in [&f.seed, &f.peer] {
                 aven_core::test_support::use_occurrence_form_generation(db)
                     .await

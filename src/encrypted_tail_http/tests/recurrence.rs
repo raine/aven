@@ -330,8 +330,8 @@ async fn outcome_and_template_conflicts_remain_explicit_and_resolve() {
     }
 }
 
-/// Earlier bound builds generated occurrence-form records, whose identities ignore
-/// template content. Unequal history of that form is refused, never rewritten.
+/// Occurrence-form identities ignore template content. Unequal history that shares
+/// those identities is refused, never rewritten.
 #[tokio::test]
 async fn occurrence_form_generations_from_different_templates_still_refuse() {
     let f = fixture().await;

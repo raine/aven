@@ -175,7 +175,8 @@ pub async fn pause_recurrence_series_at(
 }
 
 /// Meta key that makes a bound test database generate occurrence-form recurrence
-/// records, as databases bound before proposal-form generation existed did.
+/// records. Their identities ignore template content, which lets tests produce
+/// unequal generations that share an ID.
 pub const OCCURRENCE_FORM_GENERATION: &str = "test_occurrence_form_generation";
 
 pub async fn use_occurrence_form_generation(database: &Database) -> Result<()> {

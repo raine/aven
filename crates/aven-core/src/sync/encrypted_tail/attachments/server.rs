@@ -9,30 +9,17 @@ use crate::{
 use anyhow::{Context as _, Result, ensure};
 use sqlx::SqliteConnection;
 
-pub(crate) async fn initialized(conn: &mut SqliteConnection, descriptor: &[u8; 32]) -> Result<()> {
-    let found: Option<Vec<u8>> = sqlx::query_scalar(
-        "SELECT descriptor FROM server_e2ee_image_initialization WHERE singleton=1",
-    )
-    .fetch_optional(conn)
-    .await?;
-    ensure!(
-        found.as_deref() == Some(descriptor.as_slice()),
-        "error encrypted-image-reinitialization-required"
-    );
-    Ok(())
-}
 async fn load(
     conn: &mut SqliteConnection,
     object: &[u8; 32],
     commitment: &[u8; 32],
 ) -> Result<(Descriptor, i64, bool)> {
-    let (bytes, epoch, complete): (Option<Vec<u8>>, i64, bool) =
+    let (bytes, epoch, complete): (Vec<u8>, i64, bool) =
         sqlx::query_as("SELECT descriptor,epoch,complete FROM server_e2ee_images WHERE object=?")
             .bind(object.as_slice())
             .fetch_optional(conn)
             .await?
             .context("error encrypted-image-unknown")?;
-    let bytes = bytes.context("error encrypted-image-reinitialization-required")?;
     valid(hash(&bytes) == *commitment)?;
     let d = Descriptor::decode(&bytes)?;
     valid(d.object == *object)?;
@@ -197,7 +184,6 @@ impl Database {
             context.stream == binding.stream_id
                 && context.descriptor == binding.descriptor_commitment,
         )?;
-        initialized(&mut tx, &context.descriptor).await?;
         let now = chrono::Utc::now().timestamp();
         let reply = match op {
             Operation::Declare {
@@ -208,13 +194,13 @@ impl Database {
                 let d = Descriptor::decode(&descriptor)?;
                 valid(d.vault == context.vault && d.stream == context.stream)?;
                 eligible_object(&mut tx, &current.membership, &d).await?;
-                let old: Option<Option<Vec<u8>>> =
+                let old: Option<Vec<u8>> =
                     sqlx::query_scalar("SELECT descriptor FROM server_e2ee_images WHERE object=?")
                         .bind(d.object.as_slice())
                         .fetch_optional(&mut *tx)
                         .await?;
                 if let Some(old) = old {
-                    valid(old.as_deref() == Some(descriptor.as_slice()))?;
+                    valid(old == descriptor)?;
                 } else {
                     let total: i64 = sqlx::query_scalar("SELECT count(*) FROM server_e2ee_images")
                         .fetch_one(&mut *tx)
@@ -455,7 +441,6 @@ pub(in crate::sync::encrypted_tail) async fn admit(
             deleted,
             version,
         } => {
-            initialized(conn, &context.descriptor).await?;
             let d = Descriptor::decode(descriptor)?;
             eligible_object(conn, membership, &d).await?;
             let (_, _, complete) = load(conn, &d.object, &hash(descriptor)).await?;
@@ -517,7 +502,6 @@ pub(in crate::sync::encrypted_tail) async fn admit(
             task,
             reference,
         } => {
-            initialized(conn, &context.descriptor).await?;
             let changed=sqlx::query("UPDATE server_e2ee_image_references SET deleted=1 WHERE workspace=? AND reference=? AND parent=?").bind(workspace).bind(reference).bind(task).execute(&mut *conn).await?.rows_affected();
             valid(changed == 1)?;
             refresh(conn, now).await?;

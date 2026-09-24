@@ -12,10 +12,6 @@ pub(crate) struct Current {
 }
 /// Bound stored byte lengths before materializing any attacker-influenced blobs.
 pub(crate) async fn current(conn: &mut SqliteConnection) -> Result<Current> {
-    let old: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_peer_invitation) OR EXISTS(SELECT 1 FROM server_membership_admissions)")
-        .fetch_one(&mut *conn)
-        .await?;
-    ensure!(!old, "error enrollment-store-unsupported");
     let (invitations, malformed): (i64, i64) = sqlx::query_as("SELECT count(*),coalesce(sum(CASE WHEN length(declaration)!=280 OR (request IS NOT NULL AND length(request)!=314) OR length(handle)!=32 OR length(inviter)!=32 THEN 1 ELSE 0 END),0) FROM server_membership_invitations")
         .fetch_one(&mut *conn).await?;
     ensure!(

@@ -143,11 +143,6 @@ impl Database {
                     && publication.binding().descriptor_commitment == request.descriptor_commitment,
                 "error bootstrap-publication-conflict"
             );
-            crate::sync::encrypted_tail::attachments::server::initialized(
-                &mut tx,
-                &request.descriptor_commitment,
-            )
-            .await?;
             tx.commit().await?;
             return Ok(outcome);
         }
@@ -195,12 +190,6 @@ impl Database {
                 .bind(parent.workspace).bind(parent.task).bind(parent.deleted).bind(parent.protected).bind(parent.version)
                 .execute(&mut *tx).await?;
         }
-        sqlx::query(
-            "INSERT INTO server_e2ee_image_initialization(singleton,descriptor) VALUES(1,?)",
-        )
-        .bind(request.descriptor_commitment.as_slice())
-        .execute(&mut *tx)
-        .await?;
         for image in images.objects {
             let binding = d.binding();
             let image_descriptor = crate::sync::encrypted_tail::attachments::codec::Descriptor {
