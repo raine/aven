@@ -69,26 +69,32 @@ impl Drop for Verified {
     }
 }
 
+/// This installation's own enrollment. Invitations it issued never change it.
 #[derive(Debug, PartialEq, Eq)]
 pub enum EnrollmentReadiness {
     NotSelected,
     Pending,
-    UnresolvedDisclosure,
     Enrolled { head: Hash },
 }
-impl EnrollmentReadiness {
-    pub fn require_resolved_disclosure(&self) -> Result<()> {
-        ensure!(
-            !matches!(self, Self::UnresolvedDisclosure),
-            "error withdrawal-required-unsupported"
-        );
-        ensure!(
-            !matches!(self, Self::Pending),
-            "error enrollment-unresolved"
-        );
-        Ok(())
+/// An issued invitation that is neither admitted nor closed.
+#[cfg(test)]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum OutboundInvitation {
+    /// No grant was prepared for sending.
+    Pending,
+    /// A grant may have been sent.
+    Disclosed,
+}
+/// New encrypted content waits for the withdrawal rotation of an expired
+/// invitation whose grant may have been sent. Pulls and downloads continue.
+#[derive(Debug)]
+pub(crate) struct PublishingBlocked;
+impl std::fmt::Display for PublishingBlocked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("error withdrawal-rotation-required")
     }
 }
+impl std::error::Error for PublishingBlocked {}
 enum Keys {
     Seed(Box<SeedAuthority>),
     Peer(Box<Joiner>),
@@ -386,9 +392,7 @@ impl ProtectedLocalKeyStore {
         );
         keys.authority().validate(&membership)?;
         coverage.validate(&membership)?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs();
+        let now = unix_now()?;
         for journal in self.journals(db).await? {
             if let Some(ready) = self.phase(db, &journal.name("ready"), 128).await? {
                 ensure!(
@@ -531,24 +535,25 @@ impl ProtectedLocalKeyStore {
         }
         Ok(false)
     }
-    async fn outbound_readiness(&self, db: &Database) -> Result<Option<EnrollmentReadiness>> {
+    /// Unadmitted, unclosed journals whose grant may have been sent, with their
+    /// declared expiry.
+    async fn unresolved_disclosures(
+        &self,
+        db: &Database,
+        inputs: &ActiveInputs,
+    ) -> Result<Vec<(Outbound, u64)>> {
+        let mut unresolved = Vec::new();
         for journal in self.journals(db).await? {
-            if self.phase(db, &journal.name("ready"), 128).await?.is_some()
-                || self.closed(db, &journal).await?
+            if self.phase(db, &journal.name("ready"), 128).await?.is_none()
+                && !self.closed(db, &journal).await?
+                && self.may_have_sent(db, &journal).await?
             {
-                continue;
+                let expiry =
+                    Declaration::from_record(&inputs.membership, &journal.declaration)?.expiry();
+                unresolved.push((journal, expiry));
             }
-            let sent = self
-                .phase(db, &journal.name("sent-0"), 128)
-                .await?
-                .is_some();
-            return Ok(Some(if sent {
-                EnrollmentReadiness::UnresolvedDisclosure
-            } else {
-                EnrollmentReadiness::Pending
-            }));
         }
-        Ok(None)
+        Ok(unresolved)
     }
     pub(crate) async fn prepare_invitation(
         &self,
@@ -737,20 +742,13 @@ impl ProtectedLocalKeyStore {
         db: &Database,
         inputs: &ActiveInputs,
     ) -> Result<Option<Outbound>> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs();
-        for journal in self.journals(db).await? {
-            if self.phase(db, &journal.name("ready"), 128).await?.is_none()
-                && !self.closed(db, &journal).await?
-                && self.may_have_sent(db, &journal).await?
-                && now
-                    >= Declaration::from_record(&inputs.membership, &journal.declaration)?.expiry()
-            {
-                return Ok(Some(journal));
-            }
-        }
-        Ok(None)
+        let now = unix_now()?;
+        Ok(self
+            .unresolved_disclosures(db, inputs)
+            .await?
+            .into_iter()
+            .find(|(_, expiry)| now >= *expiry)
+            .map(|(journal, _)| journal))
     }
     /// Fences local candidate creation and resends before remote cancellation.
     pub(crate) async fn mark_withdrawing(
@@ -1290,9 +1288,16 @@ impl ProtectedLocalKeyStore {
             .await?
             .0)
     }
-    pub(crate) async fn tail_snapshot(&self, db: &Database, locator: &str) -> Result<TailSnapshot> {
+    /// Validated tail material for one drain. It stays current until the
+    /// enrollment marker changes or the server reports a stale context.
+    pub(crate) async fn tail_inputs(&self, db: &Database, locator: &str) -> Result<TailSnapshot> {
         let inputs = self.active_inputs(db, locator).await?;
-        let publishing_blocked = self.outbound_readiness(db).await?;
+        let withdrawal_deadline = self
+            .unresolved_disclosures(db, &inputs)
+            .await?
+            .into_iter()
+            .map(|(_, expiry)| expiry)
+            .min();
         let b = inputs.membership.publication().binding();
         let association = format!(
             "{}:{}:{}",
@@ -1327,15 +1332,10 @@ impl ProtectedLocalKeyStore {
         let snapshot = TailSnapshot {
             authority,
             bearer: Secret::new(*inputs.bearer().expose()),
-            publishing_blocked,
+            withdrawal_deadline,
             enrollment_marker: db.enrollment_artifact_marker().await?,
         };
         drop(inputs);
-        Ok(snapshot)
-    }
-    pub(crate) async fn tail_inputs(&self, db: &Database, locator: &str) -> Result<TailSnapshot> {
-        let snapshot = self.tail_snapshot(db, locator).await?;
-        snapshot.require_publishing_ready()?;
         Ok(snapshot)
     }
     /// Whether this installation joined as a peer, and the server locator its
@@ -1350,18 +1350,27 @@ impl ProtectedLocalKeyStore {
             .await?
             .map(|id| (id.role == "peer", id.locator.clone())))
     }
-    /// An unretired outbound invitation not yet admitted blocks ordinary
-    /// rounds: `Pending` before any grant was sent, otherwise
-    /// `UnresolvedDisclosure`.
+    #[cfg(test)]
     pub(crate) async fn outbound_invitation(
         &self,
         db: &Database,
-    ) -> Result<Option<EnrollmentReadiness>> {
+    ) -> Result<Option<OutboundInvitation>> {
         let _guard = InstallationGuard::acquire(db.path())?;
         self.validate_database(db)?;
         prepare_directory(&self.directory)?;
         let _lock = self.lock()?;
-        self.outbound_readiness(db).await
+        for journal in self.journals(db).await? {
+            if self.phase(db, &journal.name("ready"), 128).await?.is_none()
+                && !self.closed(db, &journal).await?
+            {
+                return Ok(Some(if self.may_have_sent(db, &journal).await? {
+                    OutboundInvitation::Disclosed
+                } else {
+                    OutboundInvitation::Pending
+                }));
+            }
+        }
+        Ok(None)
     }
     pub async fn enrollment_readiness(&self, db: &Database) -> Result<EnrollmentReadiness> {
         let guard = InstallationGuard::acquire(db.path())?;
@@ -1371,9 +1380,6 @@ impl ProtectedLocalKeyStore {
         let Some(id) = self.identity(db, &guard).await? else {
             return Ok(EnrollmentReadiness::NotSelected);
         };
-        if let Some(readiness) = self.outbound_readiness(db).await? {
-            return Ok(readiness);
-        }
         if id.role == "peer" && self.phase(db, "peer-ready", 128).await?.is_none() {
             return Ok(EnrollmentReadiness::Pending);
         }
@@ -1414,18 +1420,34 @@ pub(crate) enum Disclosure {
 pub(crate) struct TailSnapshot {
     pub authority: aven_core::sync::encrypted_tail::Authority,
     pub bearer: Secret,
-    publishing_blocked: Option<EnrollmentReadiness>,
+    /// Earliest expiry of an invitation whose grant may have been sent. From
+    /// then on, publishing waits for its withdrawal rotation.
+    withdrawal_deadline: Option<u64>,
     enrollment_marker: i64,
 }
 impl TailSnapshot {
+    /// Checked before every step that publishes new encrypted content.
     pub(crate) fn require_publishing_ready(&self) -> Result<()> {
-        if let Some(readiness) = &self.publishing_blocked {
-            readiness.require_resolved_disclosure()?;
+        if self.publishing_blocked()? {
+            return Err(PublishingBlocked.into());
         }
         Ok(())
+    }
+
+    pub(crate) fn publishing_blocked(&self) -> Result<bool> {
+        let now = unix_now()?;
+        Ok(self
+            .withdrawal_deadline
+            .is_some_and(|deadline| now >= deadline))
     }
 
     pub(crate) async fn is_current(&self, db: &Database) -> Result<bool> {
         Ok(self.enrollment_marker == db.enrollment_artifact_marker().await?)
     }
+}
+
+fn unix_now() -> Result<u64> {
+    Ok(std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs())
 }

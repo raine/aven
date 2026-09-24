@@ -412,12 +412,14 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
 
     // An abandoned invite command resumes the same invitation; B joins while
     // the second command waits for it.
-    // An abandoned invitation that expires unused stops pausing sync.
+    // Open and expired unused invitations never stop sync.
     let (mut expiring, expired_invitation, _) = spawn_invite(&a, Some("5")).await;
     let declared = Instant::now();
     expiring.kill().await.unwrap();
     expiring.wait().await.unwrap();
-    assert_eq!(status(&a).await["state"], "invitation-pending");
+    assert_eq!(status(&a).await["state"], "ready");
+    let stdout = a.ok(&["sync"]).await;
+    assert!(stdout.contains("Tasks are up to date"), "{stdout}");
     tokio::time::sleep_until(declared + Duration::from_secs(6)).await;
     let stdout = a.ok(&["sync"]).await;
     assert!(stdout.contains("Tasks are up to date"), "{stdout}");
@@ -425,10 +427,9 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
 
     let (mut abandoned, first_invitation, _) = spawn_invite(&a, None).await;
     assert_ne!(first_invitation, expired_invitation);
-    let paused = status(&a).await;
-    assert_eq!(paused["state"], "invitation-pending");
-    let error = failure(&a.run(&["sync"]).await);
-    assert!(error.contains("sync-invitation-pending"), "{error}");
+    assert_eq!(status(&a).await["state"], "ready");
+    let stdout = a.ok(&["sync"]).await;
+    assert!(stdout.contains("Tasks are up to date"), "{stdout}");
     abandoned.kill().await.unwrap();
     abandoned.wait().await.unwrap();
     // A join interrupted while waiting for admission resumes its stored request.

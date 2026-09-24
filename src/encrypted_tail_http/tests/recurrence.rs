@@ -187,9 +187,7 @@ async fn concurrent_completion_preserves_deterministic_successor_identity() {
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
     // Publish the outcome without pulling, then freeze the independently generated successor.
     for _ in 0..2 {
-        c.push(&inputs.authority, &inputs.bearer, &f.peer, &blobs(&f.peer))
-            .await
-            .unwrap();
+        c.push(&inputs, &f.peer, &blobs(&f.peer)).await.unwrap();
     }
     let frozen = head_record(&f.peer, &inputs.authority).await;
     drop(inputs);
@@ -201,9 +199,7 @@ async fn concurrent_completion_preserves_deterministic_successor_identity() {
         .unwrap()
         .idle
     {
-        c.push(&inputs.authority, &inputs.bearer, &f.seed, &blobs(&f.seed))
-            .await
-            .unwrap();
+        c.push(&inputs, &f.seed, &blobs(&f.seed)).await.unwrap();
     }
     drop(inputs);
     let id: String = sqlx::query_scalar("SELECT operation_id FROM local_e2ee_outbox")

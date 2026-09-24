@@ -308,8 +308,8 @@ impl std::fmt::Debug for PendingInvitation {
     }
 }
 
-/// Creates a device invitation, or resumes the pending one. Ordinary sync on
-/// this device pauses until the invitation is used or expires.
+/// Creates a device invitation, or resumes the pending one. Sync keeps
+/// running while it is open.
 pub(crate) async fn create_invitation(
     database: &Database,
     config: &AppConfig,
@@ -323,7 +323,13 @@ pub(crate) async fn create_invitation(
     };
     let invitation = peer_enrollment_http::Client::new(&server)?
         .invite(&store, database, unix_now()? + invitation_seconds())
-        .await?;
+        .await
+        .map_err(|error| match error.to_string().as_str() {
+            "error withdrawal-required-unsupported" => error.context(
+                "error sync-invitation-unresolved hint=\"keys may already have been sent with the previous invitation; invite again after that device joins, or after the invitation expires and the next `aven sync` changes keys\"",
+            ),
+            _ => error,
+        })?;
     let text = DeviceInvitation {
         server: server.clone(),
         invitation,
@@ -357,7 +363,7 @@ pub(crate) async fn await_admission(
         tokio::time::sleep(POLL_INTERVAL).await;
     }
     bail!(
-        "error sync-invitation-unused hint=\"sync on this device stays paused until the invitation is used; after it expires, the next `aven sync` ends it, rotating keys if they may have been sent\""
+        "error sync-invitation-unused hint=\"the invitation expired unused; if keys may have been sent with it, the next `aven sync` changes keys before uploading new changes\""
     )
 }
 
@@ -616,23 +622,21 @@ async fn associated_server(store: &ProtectedLocalKeyStore, database: &Database) 
 /// A refusal alone proves neither a server failure nor removal of this device.
 const REFUSED: &str = "error sync-server-refused hint=\"the server refused this request; it may have failed, or another device may have removed this device from sync, which leaves local tasks and images available here; retry later, and check `aven sync device list` on another device\"";
 
-/// Explains engine refusals that ordinary rounds report while a join or
-/// invitation is unfinished.
+/// Explains engine refusals that ordinary rounds report while a join is
+/// unfinished or new changes wait for a key change.
 fn explain_round_error(error: anyhow::Error) -> anyhow::Error {
     match error.to_string().as_str() {
-        "error snapshot-not-installed" => {
+        "error snapshot-not-installed" | "error enrollment-unresolved" => {
             error.context("error sync-join-incomplete hint=\"rerun `aven sync join`\"")
         }
-        "error enrollment-unresolved" => error.context(
-            "error sync-invitation-pending hint=\"sync resumes when the invited device joins, or with the next sync after the unused invitation expires\"",
-        ),
         "error enrollment-refused outcome-unknown" => error.context(REFUSED),
-        "error withdrawal-required-unsupported" => error.context(
-            "error sync-invitation-disclosed hint=\"keys may have been sent to the invited device; sync resumes after it joins, or once the next sync after expiry rotates keys\"",
-        ),
+        "error withdrawal-rotation-required" => error.context(KEY_CHANGE_REQUIRED),
         _ => error,
     }
 }
+
+/// Changes from the server were downloaded; local changes stay queued.
+const KEY_CHANGE_REQUIRED: &str = "error sync-key-change-required hint=\"an invitation expired after keys may have been sent to a device that never joined; this device downloads changes but uploads new ones only after sync changes keys; check the connection and run `aven sync` again\"";
 
 /// Drains up to `round_limit` rounds with the server bound during setup or
 /// join. The caller holds the sync coordination lock.
@@ -761,6 +765,9 @@ async fn drain_reporting(
         }
     }
     let last = last.context("error sync-no-rounds")?;
+    if last.publishing_blocked {
+        return Err(drain.publishing_blocked_error());
+    }
     Ok(Outcome {
         version: 1,
         rounds,
@@ -851,17 +858,16 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
                     report.image_uploads_pending = Some(state.upload_pending);
                     report.image_downloads_pending = state.downloads.map(|d| d.pending);
                     report.images_unavailable = state.downloads.map(|d| d.unavailable);
-                    "ready"
-                }
-                // Reading inputs first retires expired never-sent invitations.
-                Err(error) => match store.outbound_invitation(database).await? {
-                    Some(EnrollmentReadiness::UnresolvedDisclosure) => "invitation-disclosed",
-                    Some(_) => "invitation-pending",
-                    None if peer && error.to_string() == "error snapshot-not-installed" => {
-                        "join-incomplete"
+                    if inputs.publishing_blocked()? {
+                        "key-change-pending"
+                    } else {
+                        "ready"
                     }
-                    None => return Err(error),
-                },
+                }
+                Err(error) if peer && error.to_string() == "error snapshot-not-installed" => {
+                    "join-incomplete"
+                }
+                Err(error) => return Err(error),
             }
         };
     }
@@ -878,14 +884,10 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
             "State: joining incomplete. Rerun `aven sync join`; if its invitation expired, \
              pass a new one from the same device with `aven sync join --new-invitation`."
         ),
-        "invitation-pending" => println!(
-            "State: paused until the invited device joins. After the unused invitation \
-             expires, the next `aven sync` ends it."
-        ),
-        "invitation-disclosed" => println!(
-            "State: paused until the invited device joins. Keys may have been sent to it. \
-             After the invitation expires, `aven sync` ends it by rotating keys; data the \
-             device may already hold stays readable to it."
+        "key-change-pending" => println!(
+            "State: an invitation expired after keys may have been sent to a device that \
+             never joined. The next `aven sync` changes keys before uploading new changes; \
+             data that device may already hold stays readable to it."
         ),
         _ => println!("State: ready"),
     }

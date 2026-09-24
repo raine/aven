@@ -116,10 +116,13 @@ none was accepted, or local data was added while joining, it cannot finish
 joining; keep it as it is and join from a new, empty database.
 
 Anyone with the invitation can access all synced data and manage devices. It
-expires after ten minutes. Sync on the inviting device pauses until the
-invitation is used; an unused invitation stops pausing sync once it expires. If
-keys may have been sent to a device that never joined, the next sync after
-expiry rotates keys first. That device can still read anything it received.
+expires after ten minutes. Sync on the inviting device keeps running while the
+invitation is open, so a device that receives keys can read changes made in the
+meantime. If the invitation expires after keys may have been sent to a device
+that never joined, the next sync changes keys before uploading new changes.
+Until that succeeds, sync still downloads changes from other devices but keeps
+changes made here waiting, and `aven sync` reports why. That device can still
+read anything it received.
 
 ## Manage devices
 

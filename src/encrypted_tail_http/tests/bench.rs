@@ -199,29 +199,6 @@ async fn one_sync_drains_1500_offline_edits_and_peer_converges() {
     assert_eq!(title(&f.peer, &task.id).await, "offline edit 1499");
 }
 
-#[tokio::test]
-async fn drain_observes_new_outbound_invitation() {
-    let f = fixture().await;
-    converge(&f).await;
-    let client = Client::new(&f.origin).unwrap();
-    let mut drain = client.start_drain(&f.seed_store, &f.seed).await.unwrap();
-    let enrollment = crate::peer_enrollment_http::Client::new(&f.origin).unwrap();
-    let expiry = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-        + 3600;
-    enrollment
-        .invite(&f.seed_store, &f.seed, expiry)
-        .await
-        .unwrap();
-    let error = client
-        .round_in_drain(&f.seed_store, &f.seed, &blobs(&f.seed), &mut drain)
-        .await
-        .unwrap_err();
-    assert_eq!(error.to_string(), "error enrollment-unresolved");
-}
-
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "benchmark"]
 async fn bench_push_and_pull_many_changes_and_images() {

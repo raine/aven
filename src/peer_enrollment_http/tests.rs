@@ -2,7 +2,7 @@ use sha2::Digest;
 
 use super::*;
 use crate::{
-    protected_local_keys::{EnrollmentReadiness, tests::isolated_store},
+    protected_local_keys::{EnrollmentReadiness, peer::OutboundInvitation, tests::isolated_store},
     test_support::e2ee_http::{self, fixture, setup},
 };
 use aven_core::db::installation::InstallationGuard;
@@ -189,10 +189,16 @@ async fn loopback_independent_peer_exact_reopen_and_current_authorization() {
         .await
         .unwrap();
     assert!(!client.complete(&peer_store, &peer_db).await.unwrap());
-    for (keys, database) in [(&store, &db), (&peer_store, &peer_db)] {
-        let error = keys.tail_inputs(database, &origin).await.err().unwrap();
-        assert_eq!(error.to_string(), "error enrollment-unresolved");
-    }
+    // An open invitation never blocks the inviter; the joiner is not enrolled.
+    let tail = store.tail_inputs(&db, &origin).await.unwrap();
+    assert!(!tail.publishing_blocked().unwrap());
+    drop(tail);
+    let error = peer_store
+        .tail_inputs(&peer_db, &origin)
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.to_string(), "error enrollment-unresolved");
     let peer = peer_store
         .prepare_peer(&peer_db, &origin, None)
         .await
@@ -217,20 +223,18 @@ async fn loopback_independent_peer_exact_reopen_and_current_authorization() {
         .unwrap();
     drop(inputs);
     assert_eq!(
+        store.outbound_invitation(&db).await.unwrap(),
+        Some(OutboundInvitation::Disclosed)
+    );
+    assert!(matches!(
         store.enrollment_readiness(&db).await.unwrap(),
-        EnrollmentReadiness::UnresolvedDisclosure
-    );
-    assert!(
-        store
-            .enrollment_readiness(&db)
-            .await
-            .unwrap()
-            .require_resolved_disclosure()
-            .is_err()
-    );
-    let error = store.tail_inputs(&db, &origin).await.err().unwrap();
-    assert_eq!(error.to_string(), "error withdrawal-required-unsupported");
-    // A different locator cannot bypass the disclosure fence.
+        EnrollmentReadiness::Enrolled { .. }
+    ));
+    // Before expiry a possible disclosure blocks nothing.
+    let tail = store.tail_inputs(&db, &origin).await.unwrap();
+    assert!(!tail.publishing_blocked().unwrap());
+    tail.require_publishing_ready().unwrap();
+    drop(tail);
     let error = store
         .tail_inputs(&db, "https://other.invalid")
         .await
@@ -624,8 +628,8 @@ async fn process_exit_at_protected_dispatch_and_completion_boundaries() {
         crash_worker(root.path(), &origin, "inviter", kind).await;
     }
     assert_eq!(
-        store.enrollment_readiness(&db).await.unwrap(),
-        EnrollmentReadiness::UnresolvedDisclosure
+        store.outbound_invitation(&db).await.unwrap(),
+        Some(OutboundInvitation::Disclosed)
     );
     crash_worker(root.path(), &origin, "inviter", "peer-ready").await;
     assert!(client.admit(&store, &db).await.unwrap());
@@ -1038,8 +1042,10 @@ async fn expired_unsent_invitation_retires_but_sent_candidate_stays_blocked() {
         .request(&late_keys, &late_db, Some(stale))
         .await
         .unwrap();
-    let error = store.tail_inputs(&db, &origin).await.err().unwrap();
-    assert_eq!(error.to_string(), "error enrollment-unresolved");
+    assert_eq!(
+        store.outbound_invitation(&db).await.unwrap(),
+        Some(OutboundInvitation::Pending)
+    );
     past(expires).await;
     drop(store.tail_inputs(&db, &origin).await.unwrap());
     assert_eq!(store.outbound_invitation(&db).await.unwrap(), None);
@@ -1095,12 +1101,22 @@ async fn expired_unsent_invitation_retires_but_sent_candidate_stays_blocked() {
             .await
             .unwrap();
     }
+    let tail = store.tail_inputs(&db, &origin).await.unwrap();
+    assert!(!tail.publishing_blocked().unwrap());
     past(expires).await;
-    let error = store.tail_inputs(&db, &origin).await.err().unwrap();
-    assert_eq!(error.to_string(), "error withdrawal-required-unsupported");
+    // The same snapshot starts refusing publication at the declared expiry.
+    assert!(
+        tail.require_publishing_ready()
+            .unwrap_err()
+            .is::<crate::protected_local_keys::peer::PublishingBlocked>()
+    );
+    drop(tail);
+    let tail = store.tail_inputs(&db, &origin).await.unwrap();
+    assert!(tail.publishing_blocked().unwrap());
+    drop(tail);
     assert_eq!(
         store.outbound_invitation(&db).await.unwrap(),
-        Some(EnrollmentReadiness::UnresolvedDisclosure)
+        Some(OutboundInvitation::Disclosed)
     );
     task.abort();
 }
@@ -1227,12 +1243,13 @@ async fn expired_sent_invitation_withdraws_by_rotation_unless_admission_won() {
     assert_eq!(generations(&store, &db, &origin).await, initial + 1);
     assert_eq!(
         store.outbound_invitation(&db).await.unwrap(),
-        Some(EnrollmentReadiness::UnresolvedDisclosure)
+        Some(OutboundInvitation::Disclosed)
     );
 
     // Staged boundary, not a process exit: reopen the database and protected
     // store after the committed rotation but before `withdrawn`. Ordinary
-    // rounds reuse that rotation as proof, clear the pause and never rotate again.
+    // rounds reuse that rotation as proof, unblock publishing and never rotate
+    // again.
     let path = db.path().to_path_buf();
     drop(store);
     drop(db);

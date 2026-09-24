@@ -11,9 +11,7 @@ async fn push_only(c: &Client, store: &ProtectedLocalKeyStore, db: &Database, or
         {
             return;
         }
-        c.push(&inputs.authority, &inputs.bearer, db, &blobs(db))
-            .await
-            .unwrap();
+        c.push(&inputs, db, &blobs(db)).await.unwrap();
     }
     panic!("bounded fixture push budget");
 }
@@ -307,14 +305,9 @@ async fn historical_replay(interleaved: bool) {
     assert!(pending.len() > 3);
     for (index, expected_id) in pending.iter().enumerate() {
         if interleaved {
-            c.push(
-                &seed_inputs.authority,
-                &seed_inputs.bearer,
-                &f.seed,
-                &blobs(&f.seed),
-            )
-            .await
-            .unwrap();
+            c.push(&seed_inputs, &f.seed, &blobs(&f.seed))
+                .await
+                .unwrap();
         }
         let before = f
             .peer

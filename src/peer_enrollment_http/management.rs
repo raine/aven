@@ -31,8 +31,17 @@ impl Client {
         store: &ProtectedLocalKeyStore,
         db: &Database,
     ) -> Result<()> {
-        Box::pin(self.manage(store, db, None, None)).await?;
+        self.finish_pending_removal(store, db).await?;
         Box::pin(self.withdraw_expired_disclosure(store, db)).await
+    }
+    /// Continues a retained removal or rotation.
+    pub(crate) async fn finish_pending_removal(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+    ) -> Result<()> {
+        Box::pin(self.manage(store, db, None, None)).await?;
+        Ok(())
     }
     async fn management_preparation(
         &self,
@@ -65,7 +74,7 @@ impl Client {
     /// candidate finishes `ready`; otherwise the local fence and server
     /// cancellation precede a targetless freeze and rotation, and `withdrawn`
     /// needs the chain proof. Expiry never proves withdrawal by itself.
-    async fn withdraw_expired_disclosure(
+    pub(crate) async fn withdraw_expired_disclosure(
         &self,
         store: &ProtectedLocalKeyStore,
         db: &Database,

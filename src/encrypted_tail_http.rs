@@ -1,7 +1,10 @@
 //! Isolated encrypted ordinary-task transport, not shipping sync configuration.
 use crate::{
     http_admission::{self, Outcome},
-    protected_local_keys::ProtectedLocalKeyStore,
+    protected_local_keys::{
+        ProtectedLocalKeyStore,
+        peer::{PublishingBlocked, TailSnapshot},
+    },
     seed_bootstrap_http,
 };
 use anyhow::{Result, ensure};
@@ -312,24 +315,25 @@ impl Client {
     #[cfg(test)]
     async fn push(
         &self,
-        a: &tail::Authority,
-        bearer: &Secret,
+        inputs: &TailSnapshot,
         db: &Database,
         blob_dir: &std::path::Path,
     ) -> Result<PushStep> {
-        Ok(self.push_in_run(a, bearer, db, blob_dir, None).await?.0)
+        Ok(self.push_in_run(inputs, db, blob_dir, None).await?.0)
     }
     /// Dispatches the next ordered head. An unavailable local image source or
     /// failed image transfer leaves that head pending and stops this round's push
-    /// phase instead of appending its Ref.
+    /// phase instead of appending its Ref. Fails with `PublishingBlocked`
+    /// before any upload or append while a withdrawal rotation is required.
     async fn push_in_run(
         &self,
-        a: &tail::Authority,
-        bearer: &Secret,
+        inputs: &TailSnapshot,
         db: &Database,
         blob_dir: &std::path::Path,
         preflight_local_seq: Option<i64>,
     ) -> Result<(PushStep, Option<i64>)> {
+        inputs.require_publishing_ready()?;
+        let (a, bearer) = (&inputs.authority, &inputs.bearer);
         if !self.reconcile_frozen(a, bearer, db, blob_dir).await? {
             return Ok((PushStep::Empty, preflight_local_seq));
         }
@@ -351,9 +355,11 @@ impl Client {
         };
         let is_image = upload.is_some();
         let ticket = match upload {
-            Some(upload) => match self.upload_prepared_image(a, bearer, upload).await {
+            Some(upload) => match self.upload_prepared_image(inputs, upload).await {
                 Ok(ticket) => Some(ticket),
-                Err(error) if is_stale(&error) => return Err(error),
+                Err(error) if is_stale(&error) || error.is::<PublishingBlocked>() => {
+                    return Err(error);
+                }
                 Err(_) => {
                     return Ok((
                         PushStep::Image(Some(ImageTransfer::Failed)),
@@ -363,6 +369,7 @@ impl Client {
             },
             None => None,
         };
+        inputs.require_publishing_ready()?;
         let Reply::Appended(mapping) = self
             .exchange(&a.context, bearer, Operation::Append { ticket, record })
             .await?

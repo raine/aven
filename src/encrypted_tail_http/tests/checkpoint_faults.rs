@@ -970,3 +970,5 @@ async fn pruned_bootstrap_image_does_not_block_fresh_post_rotation_metadata() {
     assert!(result.metadata_caught_up);
     assert_ne!(result.images, ImageTransfer::Failed);
 }
+
+mod withdrawal;

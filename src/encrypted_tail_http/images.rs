@@ -18,8 +18,13 @@ pub enum ImageTransfer {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Round {
+    /// The server has no further page and no local change waits to upload.
+    /// While publishing is blocked, withheld local changes do not count.
     pub metadata_caught_up: bool,
     pub images: ImageTransfer,
+    /// New encrypted content waits for a withdrawal rotation; this round
+    /// uploaded nothing but still pulled and downloaded.
+    pub publishing_blocked: bool,
 }
 
 pub(super) async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response {
@@ -85,7 +90,18 @@ async fn dispatch(
     })
 }
 pub(crate) struct DrainSnapshot {
-    tail: crate::protected_local_keys::peer::TailSnapshot,
+    tail: TailSnapshot,
+    /// Why this drain's withdrawal rotation failed, if it did.
+    withdrawal: Option<anyhow::Error>,
+}
+impl DrainSnapshot {
+    /// The error reported for a drain that ended with publishing blocked.
+    pub(crate) fn publishing_blocked_error(&mut self) -> anyhow::Error {
+        match self.withdrawal.take() {
+            Some(error) => error.context(PublishingBlocked),
+            None => PublishingBlocked.into(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -93,6 +109,7 @@ struct RoundProgress {
     pushes: usize,
     preflight_local_seq: Option<i64>,
     push_complete: bool,
+    publishing_blocked: bool,
     page_complete: Option<bool>,
     image_state: Option<ImageTransfer>,
     selected: bool,
@@ -131,9 +148,14 @@ impl Client {
         db: &Database,
     ) -> Result<DrainSnapshot> {
         let enrollment = crate::peer_enrollment_http::Client::new(&self.locator)?;
-        enrollment.finish_pending_management(store, db).await?;
+        enrollment.finish_pending_removal(store, db).await?;
+        // A failed withdrawal keeps publishing blocked without stopping pulls.
+        let withdrawal = Box::pin(enrollment.withdraw_expired_disclosure(store, db))
+            .await
+            .err();
         Ok(DrainSnapshot {
-            tail: store.tail_snapshot(db, &self.locator).await?,
+            tail: store.tail_inputs(db, &self.locator).await?,
+            withdrawal,
         })
     }
     /// Resolves at most one ordered local head, applies one metadata page and
@@ -156,9 +178,8 @@ impl Client {
         drain: &mut DrainSnapshot,
     ) -> Result<Round> {
         if !drain.tail.is_current(db).await? {
-            drain.tail = store.tail_snapshot(db, &self.locator).await?;
+            drain.tail = store.tail_inputs(db, &self.locator).await?;
         }
-        drain.tail.require_publishing_ready()?;
         let mut progress = RoundProgress::default();
         match self
             .round_once(&drain.tail, db, blob_dir, &mut progress)
@@ -167,8 +188,7 @@ impl Client {
             Err(error) if is_stale(&error) => {
                 let enrollment = crate::peer_enrollment_http::Client::new(&self.locator)?;
                 enrollment.refresh(store, db).await?;
-                drain.tail = store.tail_snapshot(db, &self.locator).await?;
-                drain.tail.require_publishing_ready()?;
+                drain.tail = store.tail_inputs(db, &self.locator).await?;
                 progress.preflight_local_seq = None;
                 self.round_once(&drain.tail, db, blob_dir, &mut progress)
                     .await
@@ -178,22 +198,23 @@ impl Client {
     }
     async fn round_once(
         &self,
-        inputs: &crate::protected_local_keys::peer::TailSnapshot,
+        inputs: &TailSnapshot,
         db: &Database,
         blob_dir: &Path,
         progress: &mut RoundProgress,
     ) -> Result<Round> {
         let a = &inputs.authority;
         while !progress.push_complete && progress.pushes < PUSH_LIMIT {
-            let (step, preflight_local_seq) = self
-                .push_in_run(
-                    a,
-                    &inputs.bearer,
-                    db,
-                    blob_dir,
-                    progress.preflight_local_seq,
-                )
-                .await?;
+            let (step, preflight_local_seq) = match self
+                .push_in_run(inputs, db, blob_dir, progress.preflight_local_seq)
+                .await
+            {
+                Err(error) if error.is::<PublishingBlocked>() => {
+                    progress.publishing_blocked = true;
+                    break;
+                }
+                result => result?,
+            };
             progress.preflight_local_seq = preflight_local_seq;
             match step {
                 PushStep::Appended => progress.pushes += 1,
@@ -220,7 +241,10 @@ impl Client {
                 .download_image(a, &inputs.bearer, db, blob_dir, progress.download.as_ref())
                 .await
             {
-                Ok(true) => settled(&db.encrypted_round_state(a).await?),
+                Ok(true) => settled(
+                    &db.encrypted_round_state(a).await?,
+                    progress.publishing_blocked,
+                ),
                 Ok(false) => ImageTransfer::Unavailable,
                 Err(error) if is_stale(&error) => return Err(error),
                 Err(_) => ImageTransfer::Failed,
@@ -229,17 +253,20 @@ impl Client {
             ImageTransfer::Pending
         };
         Ok(Round {
-            metadata_caught_up: progress.page_complete == Some(true) && state.idle,
+            metadata_caught_up: progress.page_complete == Some(true)
+                && (state.idle || progress.publishing_blocked),
             // A failed push outranks later download outcomes in this round.
             images: progress.image_state.unwrap_or(images),
+            publishing_blocked: progress.publishing_blocked,
         })
     }
     pub(super) async fn upload_prepared_image(
         &self,
-        a: &tail::Authority,
-        bearer: &Secret,
+        inputs: &TailSnapshot,
         upload: images::Upload,
     ) -> Result<Ticket> {
+        let (a, bearer) = (&inputs.authority, &inputs.bearer);
+        inputs.require_publishing_ready()?;
         let ImageReply::Status(status) = self
             .image_exchange(
                 &a.context,
@@ -275,6 +302,7 @@ impl Client {
                 .ok_or_else(|| anyhow::anyhow!("error encrypted-image-ticket"))?,
         };
         for index in status.missing {
+            inputs.require_publishing_ready()?;
             let record = upload
                 .records
                 .get(index)
@@ -305,6 +333,7 @@ impl Client {
         if std::env::var("AVEN_TAIL_CRASH").as_deref() == Ok("image-put") {
             std::process::exit(84);
         }
+        inputs.require_publishing_ready()?;
         ensure!(
             matches!(
                 self.image_exchange(
@@ -362,9 +391,7 @@ impl Client {
             .await?;
         let object = upload.object;
         let commitment = upload.commitment;
-        let ticket = self
-            .upload_prepared_image(&inputs.authority, &inputs.bearer, upload)
-            .await?;
+        let ticket = self.upload_prepared_image(&inputs, upload).await?;
         ensure!(
             matches!(
                 self.image_exchange(
@@ -444,12 +471,13 @@ impl Client {
         Ok(true)
     }
 }
-/// Image availability after this round's transfer step.
-fn settled(state: &tail::RoundState) -> ImageTransfer {
+/// Image availability after this round's transfer step. Uploads withheld
+/// while publishing is blocked do not keep the drain going.
+fn settled(state: &tail::RoundState, publishing_blocked: bool) -> ImageTransfer {
     match state.downloads {
         Some(d) if d.pending => ImageTransfer::Pending,
         Some(d) if d.unavailable => ImageTransfer::Unavailable,
-        Some(_) if !state.upload_pending => ImageTransfer::Complete,
+        Some(_) if !state.upload_pending || publishing_blocked => ImageTransfer::Complete,
         _ => ImageTransfer::Pending,
     }
 }

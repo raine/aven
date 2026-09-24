@@ -869,8 +869,8 @@ aven sync invite
 
 Standard output receives the `aven://pair/v2/` invitation. An interactive
 standard error also shows it as a QR code. Anyone with the invitation can access
-all synced data and manage devices. It expires after ten minutes, and sync on
-this device pauses until it is used or expires.
+all synced data and manage devices. It expires after ten minutes. Sync on this
+device keeps running while it is open.
 
 #### `aven sync join`
 
@@ -915,10 +915,13 @@ aven sync status --json
 ```
 
 The state is `not-set-up`, `setup-incomplete`, `join-incomplete`,
-`invitation-pending`, `invitation-disclosed`, or `ready`. Ready databases also
-report the server, whether local changes wait to sync, the server position, and
-pending image uploads, downloads, and unavailable images. The versioned JSON
-report omits keys, invitations, and task content.
+`key-change-pending`, or `ready`. `key-change-pending` means an invitation
+expired after keys may have been sent to a device that never joined; the next
+`aven sync` changes keys before uploading new changes. Ready and
+`key-change-pending` databases also report the server, whether local changes
+wait to sync, the server position, and pending image uploads, downloads, and
+unavailable images. The versioned JSON report omits keys, invitations, and task
+content.
 
 ### `aven server`
 

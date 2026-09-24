@@ -189,9 +189,7 @@ async fn concurrent_template_and_schedule_edits_converge_on_first_accepted_defau
                     {
                         break;
                     }
-                    c.push(&inputs.authority, &inputs.bearer, &f.peer, &blobs(&f.peer))
-                        .await
-                        .unwrap();
+                    c.push(&inputs, &f.peer, &blobs(&f.peer)).await.unwrap();
                 }
             }
         }

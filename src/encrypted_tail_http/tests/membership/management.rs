@@ -432,7 +432,7 @@ fn owned(f: &Fixture, suffix: &str) -> std::path::PathBuf {
 }
 
 #[tokio::test]
-async fn safe_management_does_not_clear_unresolved_disclosure_fence() {
+async fn safe_management_does_not_close_open_invitation() {
     let f = fixture().await;
     let third = join(&f, "third", &f.seed, &f.seed_store).await;
     let enrollment = peer_enrollment_http::Client::new(&f.origin).unwrap();
@@ -445,19 +445,21 @@ async fn safe_management_does_not_clear_unresolved_disclosure_fence() {
         .remove_device(&third.store, &third.db, target)
         .await
         .unwrap();
-    assert!(
-        Client::new(&f.origin)
-            .unwrap()
-            .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
-            .await
-            .is_err()
-    );
+    let round = Client::new(&f.origin)
+        .unwrap()
+        .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+        .await
+        .unwrap();
+    assert!(!round.publishing_blocked);
     assert!(
         !floor(&f.peer_store, &f.peer, &f.origin)
             .await
             .rotation_pending()
     );
-    assert!(f.peer_store.tail_inputs(&f.peer, &f.origin).await.is_err());
+    assert_eq!(
+        f.peer_store.outbound_invitation(&f.peer).await.unwrap(),
+        Some(crate::protected_local_keys::peer::OutboundInvitation::Pending)
+    );
 }
 
 #[tokio::test]

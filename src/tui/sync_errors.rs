@@ -37,6 +37,11 @@ pub(crate) const JOIN_REQUIRES_EMPTY: &str = "This computer already has tasks or
      Joining needs an empty database, because existing local data can't be merged with \
      synced data yet. Nothing here was changed.";
 
+/// Downloads continue, so the message never says sync stopped.
+const KEY_CHANGE_REQUIRED: &str = "An invitation expired after keys may have \
+     been sent to a device that never joined. Changes from other devices still download; \
+     changes made here upload once sync changes keys. Check the connection and sync again.";
+
 fn explain(kind: OperationKind, error: &anyhow::Error) -> &'static str {
     let codes = codes(error).collect::<Vec<_>>();
     let has = |code: &str| codes.iter().any(|candidate| candidate == code);
@@ -91,13 +96,13 @@ fn explain(kind: OperationKind, error: &anyhow::Error) -> &'static str {
                 if the other device accepted an invitation it already used; otherwise \
                 keep it as it is, and join from a new, empty database.";
     }
-    if has("sync-invitation-pending") || has("enrollment-unresolved") {
-        return "Sync is paused until the invited device joins. Once the unused \
-                invitation expires, the next sync ends it.";
+    if has("sync-key-change-required") || has("withdrawal-rotation-required") {
+        return KEY_CHANGE_REQUIRED;
     }
-    if has("sync-invitation-disclosed") || has("withdrawal-required-unsupported") {
-        return "Sync is paused until the invited device joins. Keys may have been sent \
-                to it; after the invitation expires, the next sync rotates keys first.";
+    if has("sync-invitation-unresolved") || has("withdrawal-required-unsupported") {
+        return "The last invitation may already have sent keys to a device that hasn't \
+                joined. Add a device again once it joins, or once that invitation expires \
+                and the next sync changes keys.";
     }
     if has("enrollment-busy") {
         return "The server is busy with another device. Try again in a moment.";
@@ -253,6 +258,25 @@ mod tests {
             let error = anyhow!("error {code} hint=\"x\"");
             let message = failure(OperationKind::Join, &error).message;
             assert!(message.contains(expected), "{code}: {message}");
+        }
+    }
+
+    #[test]
+    fn expired_invitation_key_changes_do_not_claim_sync_paused() {
+        let error = anyhow!("error network-down")
+            .context("error withdrawal-rotation-required")
+            .context("error sync-key-change-required hint=\"x\"");
+        let message = failure(OperationKind::Sync, &error).message;
+        assert_eq!(message, KEY_CHANGE_REQUIRED);
+        let error = anyhow!("error withdrawal-required-unsupported")
+            .context("error sync-invitation-unresolved hint=\"x\"");
+        let message = failure(OperationKind::Sync, &error).message;
+        assert!(
+            message.contains("once that invitation expires"),
+            "{message}"
+        );
+        for message in [KEY_CHANGE_REQUIRED, message.as_str()] {
+            assert!(!message.contains("paused"), "{message}");
         }
     }
 

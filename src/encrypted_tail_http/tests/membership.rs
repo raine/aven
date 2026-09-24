@@ -192,20 +192,24 @@ async fn exercise_equal_peers(peer_invites: bool) {
         before
     );
     assert_eq!(floor(&f.peer_store, &f.peer, &f.origin).await.sequence(), 3);
-    // Being installed cannot hide an unfinished outbound invitation.
+    // An installed peer's own open invitation neither blocks its sync nor
+    // makes its enrollment look unfinished.
     enrollment
         .invite(&third.store, &third.db, expiry())
         .await
         .unwrap();
-    assert!(
-        client
-            .round(&third.store, &third.db, &third.blobs)
-            .await
-            .is_err()
-    );
-    assert_eq!(
+    let round = client
+        .round(&third.store, &third.db, &third.blobs)
+        .await
+        .unwrap();
+    assert!(!round.publishing_blocked);
+    assert!(matches!(
         third.store.enrollment_readiness(&third.db).await.unwrap(),
-        crate::protected_local_keys::EnrollmentReadiness::Pending
+        crate::protected_local_keys::EnrollmentReadiness::Enrolled { .. }
+    ));
+    assert_eq!(
+        third.store.outbound_invitation(&third.db).await.unwrap(),
+        Some(crate::protected_local_keys::peer::OutboundInvitation::Pending)
     );
 }
 #[tokio::test]
@@ -770,21 +774,21 @@ async fn competing_host_candidates_retain_same_recipient_and_complete_after_late
         }
     }
     assert_ne!(candidates[0], candidates[1]);
-    assert!(
-        Client::new(&f.origin)
-            .unwrap()
-            .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
-            .await
-            .is_err()
-    );
+    // A possible disclosure blocks nothing before its invitation expires.
+    let round = Client::new(&f.origin)
+        .unwrap()
+        .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+        .await
+        .unwrap();
+    assert!(!round.publishing_blocked);
     assert_eq!(
-        f.peer_store.enrollment_readiness(&f.peer).await.unwrap(),
-        crate::protected_local_keys::EnrollmentReadiness::UnresolvedDisclosure
+        f.peer_store.outbound_invitation(&f.peer).await.unwrap(),
+        Some(crate::protected_local_keys::peer::OutboundInvitation::Disclosed)
     );
     client.complete(&f.peer_store, &f.peer).await.unwrap();
     assert_eq!(
-        f.peer_store.enrollment_readiness(&f.peer).await.unwrap(),
-        crate::protected_local_keys::EnrollmentReadiness::UnresolvedDisclosure
+        f.peer_store.outbound_invitation(&f.peer).await.unwrap(),
+        Some(crate::protected_local_keys::peer::OutboundInvitation::Disclosed)
     );
     client.admit(&f.seed_store, &f.seed).await.unwrap();
     client.admit(&f.peer_store, &f.peer).await.unwrap();

@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Sync on the inviting device keeps running while a device invitation is open. If an invitation expires after keys may have been sent to a device that never joined, the next sync changes keys before uploading new changes; until then it still downloads changes from other devices, and `aven sync status` reports `key-change-pending`. See [Sync across devices](https://aventasks.dev/sync/).
+
 - Perf: `aven sync` uploads large offline editing backlogs in one run instead of stopping after the first 1,000 changes.
 
 - Fix: Encrypted sync clients wait and retry when the server is busy, reducing failures when several devices sync at once.
