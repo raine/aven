@@ -604,3 +604,55 @@ async fn issued_server_setup_expires_and_refuses_used_storage() {
         .unwrap_err();
     assert_eq!(error.to_string(), "error e2ee-server-storage-not-empty");
 }
+
+#[tokio::test]
+async fn persisted_setup_is_read_in_the_claim_transaction() {
+    let root = tempfile::tempdir().unwrap();
+    let seed = authority();
+    let request = seed.genesis.claim_bytes();
+    let (old, _) = operator();
+    let new = Secret::new([0x93; 32]);
+
+    // Reissue first: the claim, with no preloaded authority as the router
+    // passes it, sees only the replacement verifier.
+    let db = Database::open(&root.path().join("reissued.sqlite"))
+        .await
+        .unwrap();
+    db.issue_e2ee_server_setup(&old, array("setup"), 200)
+        .await
+        .unwrap();
+    db.issue_e2ee_server_setup(&new, [3; 32], 200)
+        .await
+        .unwrap();
+    let error = db
+        .admit_seed_claim_at(&request, None, ClaimAuthentication::SetupSecret(&old), 100)
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "error seed-claim-unauthorized");
+    assert!(
+        db.admit_seed_claim_at(&request, None, ClaimAuthentication::SetupSecret(&new), 200)
+            .await
+            .is_err()
+    );
+    db.admit_seed_claim_at(&request, None, ClaimAuthentication::SetupSecret(&new), 100)
+        .await
+        .unwrap()
+        .validate_pinned(seed.genesis())
+        .unwrap();
+
+    // Claim first: the claimed storage refuses a later reissue.
+    let db = Database::open(&root.path().join("claimed.sqlite"))
+        .await
+        .unwrap();
+    db.issue_e2ee_server_setup(&old, array("setup"), 200)
+        .await
+        .unwrap();
+    db.admit_seed_claim_at(&request, None, ClaimAuthentication::SetupSecret(&old), 100)
+        .await
+        .unwrap();
+    let error = db
+        .issue_e2ee_server_setup(&new, [3; 32], 300)
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "error e2ee-server-already-claimed");
+}

@@ -618,7 +618,8 @@ status, ensure/resume, terminal cancellation and publication always call core
 current-membership authorization with the device bearer. The client never
 cancels uncertain work automatically. No plaintext configuration or daemon path
 selects this adapter. Without an explicit setup authority, claims use the
-storage's unexpired verifier issued by `aven server setup` and kept in `meta`.
+storage's unexpired verifier issued by `aven server setup` and kept in `meta`,
+read inside the claim's writer transaction so a reissue cannot interleave.
 
 The provisional framing is POST `/e2ee/bootstrap/v1` with a bounded JSON context
 and operation envelope. Existing descriptor, catalog, chunk and signed-record
