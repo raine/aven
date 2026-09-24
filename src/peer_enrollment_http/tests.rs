@@ -6,7 +6,106 @@ use crate::{
     seed_bootstrap_http::tests::{fixture, setup},
 };
 use aven_core::db::installation::InstallationGuard;
+use axum::{
+    body::{Body, to_bytes},
+    extract::Request,
+    middleware::{self, Next},
+    response::Response,
+};
+use std::collections::VecDeque;
 use std::path::Path;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
+use tokio::sync::Notify;
+
+#[derive(Default)]
+struct ExchangeCounts {
+    total: AtomicUsize,
+    membership: AtomicUsize,
+    published: AtomicUsize,
+    tracked_device: Mutex<Option<[u8; 32]>>,
+    tracked_membership: AtomicUsize,
+    tracked_published: AtomicUsize,
+    stale_gates: Mutex<VecDeque<Arc<StaleGate>>>,
+}
+
+struct StaleGate {
+    started: Notify,
+    finished: Notify,
+}
+
+impl ExchangeCounts {
+    fn reset(&self) {
+        self.total.store(0, Ordering::Relaxed);
+        self.membership.store(0, Ordering::Relaxed);
+        self.published.store(0, Ordering::Relaxed);
+        self.tracked_membership.store(0, Ordering::Relaxed);
+        self.tracked_published.store(0, Ordering::Relaxed);
+        self.stale_gates.lock().unwrap().clear();
+    }
+
+    fn track(&self, device: [u8; 32]) {
+        *self.tracked_device.lock().unwrap() = Some(device);
+    }
+
+    fn add_stale_gate(&self) -> Arc<StaleGate> {
+        let gate = Arc::new(StaleGate {
+            started: Notify::new(),
+            finished: Notify::new(),
+        });
+        self.stale_gates.lock().unwrap().push_back(gate.clone());
+        gate
+    }
+}
+
+async fn count_exchange(
+    axum::extract::State(counts): axum::extract::State<Arc<ExchangeCounts>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let (parts, body) = request.into_parts();
+    let bytes = to_bytes(body, PUBLISHED_RESPONSE_LIMIT)
+        .await
+        .unwrap_or_default();
+    counts.total.fetch_add(1, Ordering::Relaxed);
+    let operation = serde_json::from_slice::<Operation>(&bytes).ok();
+    let device = match operation.as_ref() {
+        Some(Operation::Membership { context }) | Some(Operation::Published { context, .. }) => {
+            Some(context.device)
+        }
+        _ => None,
+    };
+    if matches!(&operation, Some(Operation::Membership { .. })) {
+        counts.membership.fetch_add(1, Ordering::Relaxed);
+    }
+    if matches!(&operation, Some(Operation::Published { .. })) {
+        counts.published.fetch_add(1, Ordering::Relaxed);
+    }
+    if device == *counts.tracked_device.lock().unwrap() {
+        match operation.as_ref() {
+            Some(Operation::Membership { .. }) => {
+                counts.tracked_membership.fetch_add(1, Ordering::Relaxed);
+            }
+            Some(Operation::Published { .. }) => {
+                counts.tracked_published.fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {}
+        }
+    }
+    let stale_gate = if matches!(&operation, Some(Operation::Published { .. })) {
+        counts.stale_gates.lock().unwrap().pop_front()
+    } else {
+        None
+    };
+    if let Some(stale_gate) = stale_gate {
+        stale_gate.started.notify_one();
+        stale_gate.finished.notified().await;
+    }
+    next.run(Request::from_parts(parts, Body::from(bytes)))
+        .await
+}
 
 async fn serve(db: Database) -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -14,6 +113,22 @@ async fn serve(db: Database) -> (String, tokio::task::JoinHandle<()>) {
     let app = seed_bootstrap_http::router(db.clone(), Some(setup()), Default::default())
         .merge(crate::encrypted_tail_http::router(db.clone()))
         .merge(router(db));
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (origin, task)
+}
+
+async fn serve_counted(
+    db: Database,
+    counts: Arc<ExchangeCounts>,
+) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let app = seed_bootstrap_http::router(db.clone(), Some(setup()), Default::default())
+        .merge(crate::encrypted_tail_http::router(db.clone()))
+        .merge(router(db))
+        .layer(middleware::from_fn_with_state(counts, count_exchange));
     let task = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });

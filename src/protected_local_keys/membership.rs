@@ -267,13 +267,7 @@ impl ProtectedLocalKeyStore {
                 ensure!(m.extends(original), "error membership-original-mismatch");
                 (m, keys)
             } else {
-                (
-                    original.clone(),
-                    VerifiedKeys::from_protected_storage(
-                        original,
-                        &original_keys.protected_storage_bytes(),
-                    )?,
-                )
+                (original.clone(), original_keys.clone())
             };
         device.validate(&before)?;
         ensure!(target.extends(&before), "error membership-floor-fork");

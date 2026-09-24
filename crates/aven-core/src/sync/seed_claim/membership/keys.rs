@@ -3,6 +3,8 @@ use super::*;
 
 /// Construction requires every generation in authenticated ancestry order.
 /// This value does not assert protected persistence, server commit or freshness.
+/// Cloning preserves the verified coverage and zeroizes each owned copy on drop.
+#[derive(Clone)]
 pub struct VerifiedKeys {
     vault: Hash,
     generations: Vec<Generation>,
@@ -81,9 +83,7 @@ impl Membership {
         Ok(VerifiedKeys {
             vault: self.genesis.context.vault_id,
             generations: self.generations.clone(),
-            keys: vec![LocalSharedStatePackageKey::new(
-                *key.protected_storage_bytes(),
-            )],
+            keys: vec![key.clone()],
         })
     }
 }

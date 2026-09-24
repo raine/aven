@@ -12,6 +12,7 @@ struct Fixture {
     client: Client,
     task: tokio::task::JoinHandle<()>,
     package: aven_core::sync::bootstrap_format::Package,
+    counts: Arc<ExchangeCounts>,
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -25,7 +26,8 @@ async fn enrolled() -> Fixture {
     let server = Database::open(&root.path().join("server.sqlite"))
         .await
         .unwrap();
-    let (origin, task) = serve(server.clone()).await;
+    let counts = Arc::new(ExchangeCounts::default());
+    let (origin, task) = serve_counted(server.clone(), counts.clone()).await;
     let seed_http = seed_bootstrap_http::Client::new(&origin).unwrap();
     seed_http
         .claim(
@@ -56,6 +58,7 @@ async fn enrolled() -> Fixture {
         client,
         task,
         package,
+        counts,
     }
 }
 async fn count(db: &Database, table: &str) -> i64 {
@@ -65,6 +68,36 @@ async fn count(db: &Database, table: &str) -> i64 {
         .await
         .unwrap()
 }
+async fn pending_peer(
+    fixture: &Fixture,
+    name: &str,
+) -> (Database, ProtectedLocalKeyStore, [u8; 32]) {
+    let seed_store = isolated_store(fixture.source.path(), &fixture.root.path().join("keys"));
+    let invitation = fixture
+        .client
+        .invite(&seed_store, &fixture.source, expiry())
+        .await
+        .unwrap();
+    let database = Database::open(&fixture.root.path().join(format!("{name}.sqlite")))
+        .await
+        .unwrap();
+    let store = isolated_store(
+        database.path(),
+        &fixture.root.path().join(format!("{name}-keys")),
+    );
+    fixture
+        .client
+        .request(&store, &database, Some(invitation))
+        .await
+        .unwrap();
+    let peer = store
+        .prepare_peer(&database, &fixture.client.locator, None)
+        .await
+        .unwrap();
+    let device = peer.device();
+    (database, store, device)
+}
+
 async fn shared(db: &Database) -> serde_json::Value {
     let mut export = db.export_data("2026-09-22T00:00:00Z".into()).await.unwrap();
     export
@@ -84,6 +117,144 @@ async fn shared(db: &Database) -> serde_json::Value {
     }
     value
 }
+#[tokio::test]
+async fn snapshot_download_refreshes_once_before_component_reads() {
+    let f = enrolled().await;
+    let peer = f
+        .store
+        .prepare_peer(&f.peer, &f.client.locator, None)
+        .await
+        .unwrap();
+    f.counts.track(peer.device());
+    f.counts.reset();
+
+    f.client.install(&f.store, &f.peer).await.unwrap();
+
+    let membership = f.counts.tracked_membership.load(Ordering::Relaxed);
+    let published = f.counts.tracked_published.load(Ordering::Relaxed);
+    assert_eq!(membership, 1);
+    assert_eq!(published, 6);
+    assert_eq!(f.counts.total.load(Ordering::Relaxed), 7);
+}
+
+#[tokio::test]
+async fn snapshot_download_refreshes_after_stale_and_keeps_one_retry_budget() {
+    let f = enrolled().await;
+    let peer = f
+        .store
+        .prepare_peer(&f.peer, &f.client.locator, None)
+        .await
+        .unwrap();
+    let (_, _, second_device) = pending_peer(&f, "second").await;
+    f.counts.track(peer.device());
+    f.counts.reset();
+    let gate = f.counts.add_stale_gate();
+    let source = f.source.clone();
+    let source_store = isolated_store(f.source.path(), &f.root.path().join("keys"));
+    let client = Client::new(&f.client.locator).unwrap();
+    let admission = tokio::spawn(async move {
+        gate.started.notified().await;
+        let result = client.admit(&source_store, &source).await;
+        gate.finished.notify_one();
+        result
+    });
+
+    f.client.install(&f.store, &f.peer).await.unwrap();
+    assert!(admission.await.unwrap().unwrap());
+    assert_ne!(second_device, peer.device());
+    assert_eq!(f.counts.tracked_membership.load(Ordering::Relaxed), 2);
+    assert_eq!(f.counts.tracked_published.load(Ordering::Relaxed), 7);
+}
+
+#[tokio::test]
+async fn snapshot_download_removal_fails_closed_without_stale_retry() {
+    let f = enrolled().await;
+    let peer = f
+        .store
+        .prepare_peer(&f.peer, &f.client.locator, None)
+        .await
+        .unwrap();
+    f.counts.track(peer.device());
+    f.counts.reset();
+    let gate = f.counts.add_stale_gate();
+    let source = f.source.clone();
+    let source_store = isolated_store(f.source.path(), &f.root.path().join("keys"));
+    let client = Client::new(&f.client.locator).unwrap();
+    let removal = tokio::spawn(async move {
+        gate.started.notified().await;
+        let result = client
+            .remove_device(&source_store, &source, peer.device())
+            .await;
+        gate.finished.notify_one();
+        result
+    });
+
+    assert!(f.client.install(&f.store, &f.peer).await.is_err());
+    assert_eq!(removal.await.unwrap().unwrap(), RemovalStatus::Complete);
+    assert_eq!(f.counts.tracked_membership.load(Ordering::Relaxed), 1);
+    assert_eq!(f.counts.tracked_published.load(Ordering::Relaxed), 1);
+    assert_eq!(count(&f.peer, "local_peer_snapshot_install").await, 0);
+}
+
+#[tokio::test]
+async fn snapshot_download_bounds_exhausted_stale_retry() {
+    let f = enrolled().await;
+    let peer = f
+        .store
+        .prepare_peer(&f.peer, &f.client.locator, None)
+        .await
+        .unwrap();
+    let _ = pending_peer(&f, "second").await;
+    f.counts.track(peer.device());
+    f.counts.reset();
+    let first_gate = f.counts.add_stale_gate();
+    let second_gate = f.counts.add_stale_gate();
+    let source_path = f.source.path().to_path_buf();
+    let keys_path = f.root.path().join("keys");
+    let origin = f.client.locator.clone();
+    let first_source = f.source.clone();
+    let first_store = isolated_store(&source_path, &keys_path);
+    let first_client = Client::new(&origin).unwrap();
+    let third_root = f.root.path().to_path_buf();
+    let first_admission = tokio::spawn(async move {
+        first_gate.started.notified().await;
+        let result = async {
+            let admitted = first_client.admit(&first_store, &first_source).await?;
+            if admitted {
+                let invitation = first_client
+                    .invite(&first_store, &first_source, expiry())
+                    .await?;
+                let third_database = Database::open(&third_root.join("third.sqlite")).await?;
+                let third_store =
+                    isolated_store(third_database.path(), &third_root.join("third-keys"));
+                first_client
+                    .request(&third_store, &third_database, Some(invitation))
+                    .await?;
+            }
+            Ok::<_, anyhow::Error>(admitted)
+        }
+        .await;
+        first_gate.finished.notify_one();
+        result
+    });
+    let second_source = f.source.clone();
+    let second_store = isolated_store(&source_path, &keys_path);
+    let second_client = Client::new(&origin).unwrap();
+    let second_admission = tokio::spawn(async move {
+        second_gate.started.notified().await;
+        let result = second_client.admit(&second_store, &second_source).await;
+        second_gate.finished.notify_one();
+        result
+    });
+
+    assert!(f.client.install(&f.store, &f.peer).await.is_err());
+    assert!(first_admission.await.unwrap().unwrap());
+    assert!(second_admission.await.unwrap().unwrap());
+    assert_eq!(f.counts.tracked_membership.load(Ordering::Relaxed), 2);
+    assert_eq!(f.counts.tracked_published.load(Ordering::Relaxed), 2);
+    assert_eq!(count(&f.peer, "local_peer_snapshot_install").await, 0);
+}
+
 #[tokio::test]
 async fn independent_http_install_preserves_shared_domain_history_images_and_later_edits() {
     let f = enrolled().await;

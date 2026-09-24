@@ -46,6 +46,12 @@ pub struct LocalSharedStatePackageContext {
 /// zeroized on drop. Callers remain responsible for protected durable storage.
 pub struct LocalSharedStatePackageKey([u8; 32]);
 
+impl Clone for LocalSharedStatePackageKey {
+    fn clone(&self) -> Self {
+        Self(self.0)
+    }
+}
+
 impl LocalSharedStatePackageKey {
     pub fn new(bytes: [u8; 32]) -> Self {
         Self(bytes)

@@ -341,10 +341,7 @@ impl ProtectedLocalKeyStore {
             (
                 Keys::Peer(Box::new(peer)),
                 self.load_evidence(&record.evidence)?,
-                VerifiedKeys::from_protected_storage(
-                    verified.membership(),
-                    &verified.keys().protected_storage_bytes(),
-                )?,
+                verified.keys().clone(),
             )
         } else {
             ensure!(
@@ -992,10 +989,7 @@ impl ProtectedLocalKeyStore {
                 descriptor: b.descriptor_commitment,
             },
             membership: inputs.membership.clone(),
-            keys: VerifiedKeys::from_protected_storage(
-                &inputs.membership,
-                &inputs.coverage.protected_storage_bytes(),
-            )?,
+            keys: inputs.coverage.clone(),
             prefix: i64::try_from(b.prefix_count)?,
             association,
             sync_generation: db

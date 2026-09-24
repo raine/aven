@@ -414,9 +414,19 @@ impl Client {
         };
         let b = verified.publication().binding();
         let mut floor = verified.membership().clone();
+        let initial_context = Context {
+            vault: peer.vault(),
+            genesis: verified.genesis().commitment(),
+            device: peer.device(),
+            credential_version: 1,
+            head: floor.head(),
+        };
+        let evidence = self.membership(&initial_context, peer.bearer()).await?;
+        floor = store
+            .adopt_download_refresh(db, identity, peer, verified, &evidence)
+            .await?;
         let mut retried = false;
         let mut read = async |component, index| -> Result<Vec<u8>> {
-            // Every new component read authenticates its own current context.
             let mut context = Context {
                 vault: peer.vault(),
                 genesis: verified.genesis().commitment(),
@@ -424,11 +434,6 @@ impl Client {
                 credential_version: 1,
                 head: floor.head(),
             };
-            let evidence = self.membership(&context, peer.bearer()).await?;
-            floor = store
-                .adopt_download_refresh(db, identity, peer, verified, &evidence)
-                .await?;
-            context.head = floor.head();
             loop {
                 match self
                     .exchange(
