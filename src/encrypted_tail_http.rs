@@ -386,8 +386,8 @@ impl Client {
         self.pull(&inputs.authority, &inputs.bearer, db).await
     }
     async fn pull(&self, a: &tail::Authority, bearer: &Secret, db: &Database) -> Result<bool> {
-        let after = db.encrypted_tail_cursor(a).await?;
-        let watermark = db.encrypted_tail_initial_watermark(a).await?;
+        let state = db.encrypted_round_state(a).await?;
+        let (after, watermark) = (state.cursor, state.initial_watermark);
         let Reply::Page(page) = self
             .exchange(
                 &a.context,

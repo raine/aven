@@ -964,6 +964,22 @@ async fn failed_first_image_does_not_starve_later_downloads(corrupt: bool) {
         "an unavailable earlier object must not starve this image"
     );
     assert!(!missing_path.exists());
+    // Observing pending demand never consumes a selection turn.
+    let selector = f.seed.meta("e2ee_image_download_after").await.unwrap();
+    let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+    for _ in 0..2 {
+        let state = f
+            .seed
+            .encrypted_round_state(&inputs.authority)
+            .await
+            .unwrap();
+        assert!(state.downloads.unwrap().pending);
+    }
+    drop(inputs);
+    assert_eq!(
+        f.seed.meta("e2ee_image_download_after").await.unwrap(),
+        selector
+    );
     let states: Vec<(String, bool)> = sqlx::query_as(
         "SELECT sha256,verified FROM local_e2ee_image_objects WHERE origin!='bootstrap' ORDER BY object",
     ).fetch_all(&mut *aven_core::test_support::acquire(&f.seed).await.unwrap()).await.unwrap();

@@ -3,7 +3,12 @@ use super::*;
 async fn push_only(c: &Client, store: &ProtectedLocalKeyStore, db: &Database, origin: &str) {
     let inputs = store.tail_inputs(db, origin).await.unwrap();
     for _ in 0..32 {
-        if db.encrypted_tail_idle(&inputs.authority).await.unwrap() {
+        if db
+            .encrypted_round_state(&inputs.authority)
+            .await
+            .unwrap()
+            .idle
+        {
             return;
         }
         c.push(&inputs.authority, &inputs.bearer, db, &blobs(db))
@@ -98,9 +103,10 @@ async fn lifecycle_resolution_reinserts_later_page_records_with_canonical_equali
         let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
         let before = f
             .peer
-            .encrypted_tail_cursor(&inputs.authority)
+            .encrypted_round_state(&inputs.authority)
             .await
-            .unwrap();
+            .unwrap()
+            .cursor;
         let Reply::Page(page) = c
             .exchange(
                 &inputs.authority.context,
@@ -146,9 +152,10 @@ async fn lifecycle_resolution_reinserts_later_page_records_with_canonical_equali
             );
             assert_eq!(
                 f.peer
-                    .encrypted_tail_cursor(&inputs.authority)
+                    .encrypted_round_state(&inputs.authority)
                     .await
-                    .unwrap(),
+                    .unwrap()
+                    .cursor,
                 before
             );
             assert_eq!(
@@ -176,9 +183,10 @@ async fn lifecycle_resolution_reinserts_later_page_records_with_canonical_equali
             result.unwrap();
             assert_eq!(
                 f.peer
-                    .encrypted_tail_cursor(&inputs.authority)
+                    .encrypted_round_state(&inputs.authority)
                     .await
-                    .unwrap(),
+                    .unwrap()
+                    .cursor,
                 page.cursor
             );
             assert_eq!(
@@ -301,9 +309,10 @@ async fn historical_replay(interleaved: bool) {
         }
         let before = f
             .peer
-            .encrypted_tail_cursor(&inputs.authority)
+            .encrypted_round_state(&inputs.authority)
             .await
-            .unwrap();
+            .unwrap()
+            .cursor;
         let Reply::Page(page) = c
             .exchange(
                 &inputs.authority.context,
@@ -339,9 +348,10 @@ async fn historical_replay(interleaved: bool) {
         received_projection |= *expected_id == projection_change;
         assert_eq!(
             f.peer
-                .encrypted_tail_cursor(&inputs.authority)
+                .encrypted_round_state(&inputs.authority)
                 .await
-                .unwrap(),
+                .unwrap()
+                .cursor,
             page.cursor
         );
         assert_eq!(
@@ -383,11 +393,18 @@ async fn historical_replay(interleaved: bool) {
     assert!(received_task && received_projection);
     assert!(
         f.seed
-            .encrypted_tail_idle(&seed_inputs.authority)
+            .encrypted_round_state(&seed_inputs.authority)
             .await
             .unwrap()
+            .idle
     );
-    assert!(f.peer.encrypted_tail_idle(&inputs.authority).await.unwrap());
+    assert!(
+        f.peer
+            .encrypted_round_state(&inputs.authority)
+            .await
+            .unwrap()
+            .idle
+    );
     assert_eq!(
         scalar(&f.peer, "SELECT count(*) FROM recurrence_occurrences").await,
         2

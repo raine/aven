@@ -66,6 +66,22 @@ pub struct Push {
     pub record: Vec<u8>,
     pub upload: Option<attachments::Upload>,
 }
+/// Local round state read in one validated transaction.
+pub struct RoundState {
+    pub cursor: i64,
+    /// Finite page target captured while initial image catch-up is pending.
+    pub initial_watermark: Option<i64>,
+    /// No frozen or unacknowledged local metadata.
+    pub idle: bool,
+    pub upload_pending: bool,
+    /// Image demand, known only after initial image catch-up.
+    pub downloads: Option<Downloads>,
+}
+#[derive(Clone, Copy)]
+pub struct Downloads {
+    pub pending: bool,
+    pub unavailable: bool,
+}
 impl Authority {
     pub fn generation(&self) -> [u8; 32] {
         self.membership.current_generation().id

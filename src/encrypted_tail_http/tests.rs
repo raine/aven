@@ -806,7 +806,7 @@ async fn current_auth_prefix_tamper_and_whole_page_rollback() {
     else {
         panic!()
     };
-    let before = f.peer.encrypted_tail_cursor(a).await.unwrap();
+    let before = f.peer.encrypted_round_state(a).await.unwrap().cursor;
     let Reply::Page(page) = c
         .exchange(
             &a.context,
@@ -826,7 +826,10 @@ async fn current_auth_prefix_tamper_and_whole_page_rollback() {
     let last = bad.records[0].record.len() - 1;
     bad.records[0].record[last] ^= 1;
     assert!(f.peer.apply_encrypted_tail_page(a, &bad).await.is_err());
-    assert_eq!(f.peer.encrypted_tail_cursor(a).await.unwrap(), before);
+    assert_eq!(
+        f.peer.encrypted_round_state(a).await.unwrap().cursor,
+        before
+    );
     assert_eq!(
         scalar(
             &f.peer,
@@ -1426,7 +1429,7 @@ async fn bounded_http_pull_keeps_watermark_and_makes_byte_limited_progress() {
     drain(&c, &f.seed_store, &f.seed).await;
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
     let a = &inputs.authority;
-    let mut after = f.peer.encrypted_tail_cursor(a).await.unwrap();
+    let mut after = f.peer.encrypted_round_state(a).await.unwrap().cursor;
     let mut watermark = None;
     let mut total = 0;
     let mut pages = 0;
@@ -1895,7 +1898,7 @@ async fn checkpoint_observed_mapping_and_stale_page_contradictions() {
         }
         assert!(f.seed.observe_encrypted_tail(a, &bad).await.is_err());
     }
-    let after = f.seed.encrypted_tail_cursor(a).await.unwrap();
+    let after = f.seed.encrypted_round_state(a).await.unwrap().cursor;
     let Reply::Page(page) = client
         .exchange(
             &a.context,
@@ -1916,11 +1919,14 @@ async fn checkpoint_observed_mapping_and_stale_page_contradictions() {
     bad.cursor += 1;
     bad.watermark += 1;
     assert!(f.seed.apply_encrypted_tail_page(a, &bad).await.is_err());
-    assert_eq!(f.seed.encrypted_tail_cursor(a).await.unwrap(), after);
+    assert_eq!(f.seed.encrypted_round_state(a).await.unwrap().cursor, after);
     assert_eq!(head_record(&f.seed, a).await, record);
     f.seed.apply_encrypted_tail_page(a, &page).await.unwrap();
     assert!(f.seed.apply_encrypted_tail_page(a, &page).await.is_err());
-    assert_eq!(f.seed.encrypted_tail_cursor(a).await.unwrap(), page.cursor);
+    assert_eq!(
+        f.seed.encrypted_round_state(a).await.unwrap().cursor,
+        page.cursor
+    );
     assert!(
         f.seed
             .prepare_encrypted_push(a, &blobs(&f.seed))
@@ -2236,12 +2242,15 @@ async fn checkpoint_note_pending_edit_survives_frozen_acceptance_and_restart() {
         else {
             panic!("lookup");
         };
-        let cursor = f.seed.encrypted_tail_cursor(a).await.unwrap();
+        let cursor = f.seed.encrypted_round_state(a).await.unwrap().cursor;
         f.seed
             .verify_encrypted_tail_outcome(a, &accepted)
             .await
             .unwrap();
-        assert_eq!(f.seed.encrypted_tail_cursor(a).await.unwrap(), cursor);
+        assert_eq!(
+            f.seed.encrypted_round_state(a).await.unwrap().cursor,
+            cursor
+        );
         assert_eq!(
             note_body(&f.seed, &note).await.as_deref(),
             Some("later pending")
@@ -2260,7 +2269,7 @@ async fn checkpoint_note_pending_edit_survives_frozen_acceptance_and_restart() {
                 &a.context,
                 &inputs.bearer,
                 Operation::Pull {
-                    after: reopened.encrypted_tail_cursor(a).await.unwrap(),
+                    after: reopened.encrypted_round_state(a).await.unwrap().cursor,
                     limit: 16,
                     watermark: None,
                 },
@@ -2484,16 +2493,33 @@ async fn checkpoint_idle_check_preserves_frozen_work_and_checks_authority() {
         .await
         .unwrap();
     let mut inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
-    assert!(!f.seed.encrypted_tail_idle(&inputs.authority).await.unwrap());
+    assert!(
+        !f.seed
+            .encrypted_round_state(&inputs.authority)
+            .await
+            .unwrap()
+            .idle
+    );
     assert_eq!(
         scalar(&f.seed, "SELECT count(*) FROM local_e2ee_outbox").await,
         0
     );
     let record = head_record(&f.seed, &inputs.authority).await;
-    assert!(!f.seed.encrypted_tail_idle(&inputs.authority).await.unwrap());
+    assert!(
+        !f.seed
+            .encrypted_round_state(&inputs.authority)
+            .await
+            .unwrap()
+            .idle
+    );
     assert_eq!(head_record(&f.seed, &inputs.authority).await, record);
     inputs.authority.sync_generation += 1;
-    assert!(f.seed.encrypted_tail_idle(&inputs.authority).await.is_err());
+    assert!(
+        f.seed
+            .encrypted_round_state(&inputs.authority)
+            .await
+            .is_err()
+    );
 }
 
 async fn assert_snapshot_note_edits_converge(edit_after_capture: bool) {

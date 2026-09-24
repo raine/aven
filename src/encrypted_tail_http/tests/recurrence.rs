@@ -194,7 +194,13 @@ async fn concurrent_completion_preserves_deterministic_successor_identity() {
     let frozen = head_record(&f.peer, &inputs.authority).await;
     drop(inputs);
     let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
-    while !f.seed.encrypted_tail_idle(&inputs.authority).await.unwrap() {
+    while !f
+        .seed
+        .encrypted_round_state(&inputs.authority)
+        .await
+        .unwrap()
+        .idle
+    {
         c.push(&inputs.authority, &inputs.bearer, &f.seed, &blobs(&f.seed))
             .await
             .unwrap();

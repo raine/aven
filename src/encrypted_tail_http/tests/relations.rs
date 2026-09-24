@@ -169,13 +169,16 @@ async fn labels_preserve_undo_and_later_intent_through_acceptance_reopen_and_pag
         else {
             panic!("lookup")
         };
-        let cursor = f.seed.encrypted_tail_cursor(a).await.unwrap();
+        let cursor = f.seed.encrypted_round_state(a).await.unwrap().cursor;
         for _ in 0..2 {
             f.seed
                 .verify_encrypted_tail_outcome(a, &accepted)
                 .await
                 .unwrap();
-            assert_eq!(f.seed.encrypted_tail_cursor(a).await.unwrap(), cursor);
+            assert_eq!(
+                f.seed.encrypted_round_state(a).await.unwrap().cursor,
+                cursor
+            );
             assert_labels(&f.seed, &w, &task, true).await;
         }
     }
@@ -192,7 +195,7 @@ async fn labels_preserve_undo_and_later_intent_through_acceptance_reopen_and_pag
         let mut watermark = None;
         let mut pages = 0;
         loop {
-            let after = reopened.encrypted_tail_cursor(a).await.unwrap();
+            let after = reopened.encrypted_round_state(a).await.unwrap().cursor;
             let Reply::Page(page) = client
                 .exchange(
                     &a.context,
@@ -216,7 +219,10 @@ async fn labels_preserve_undo_and_later_intent_through_acceptance_reopen_and_pag
                     .execute(&mut *c).await.unwrap();
                 drop(c);
                 assert!(reopened.apply_encrypted_tail_page(a, &page).await.is_err());
-                assert_eq!(reopened.encrypted_tail_cursor(a).await.unwrap(), after);
+                assert_eq!(
+                    reopened.encrypted_round_state(a).await.unwrap().cursor,
+                    after
+                );
                 assert_eq!(
                     scalar(&reopened, "SELECT count(*) FROM changes").await,
                     before

@@ -715,9 +715,10 @@ async fn removed_credentials_cannot_retry_history_or_protected_routes_and_keep_p
     let old_context = old_inputs.authority.context.clone();
     let old_after = f
         .seed
-        .encrypted_tail_cursor(&old_inputs.authority)
+        .encrypted_round_state(&old_inputs.authority)
         .await
-        .unwrap();
+        .unwrap()
+        .cursor;
     let old_bearer = Secret::new(*old_inputs.bearer.expose());
     drop(old_inputs);
     let client = Client::new(&f.origin).unwrap();

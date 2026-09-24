@@ -1,4 +1,4 @@
-use super::super::{Accepted, Authority, codec, domain::Projection, hash, valid};
+use super::super::{Accepted, Authority, Downloads, codec, domain::Projection, hash, valid};
 use super::codec::Descriptor;
 use crate::{
     db::{self, Database, begin_immediate},
@@ -358,6 +358,25 @@ async fn read_source(blob_dir: &Path, sha: &str, total: u64) -> Result<Vec<u8>> 
     .context(ImageSourceUnavailable)
 }
 
+/// Image demand after initial catch-up. Reading it never consumes a selection turn.
+pub(in crate::sync::encrypted_tail) async fn downloads(
+    conn: &mut SqliteConnection,
+) -> Result<Downloads> {
+    let (pending, unavailable): (bool, bool) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT EXISTS(SELECT 1 {DOWNLOAD_CANDIDATES}),
+                EXISTS(SELECT 1 FROM local_e2ee_image_references r
+                       JOIN task_attachments a ON a.workspace_id=r.workspace AND a.attachment_id=r.reference
+                       JOIN tasks t ON t.workspace_id=a.workspace_id AND t.id=a.task_id
+                       WHERE r.object IS NULL AND a.deleted=0 AND t.deleted=0)"
+    )))
+    .fetch_one(conn)
+    .await?;
+    Ok(Downloads {
+        pending,
+        unavailable,
+    })
+}
+
 pub struct Download {
     pub workspace: String,
     pub object: [u8; 32],
@@ -412,16 +431,6 @@ impl Database {
         }
         tx.commit().await?;
         Ok(result)
-    }
-    /// Observes pending downloads without consuming a selection turn.
-    pub async fn encrypted_image_download_pending(&self, a: &Authority) -> Result<bool> {
-        let mut conn = self.acquire_reader().await?;
-        super::super::client::validate_binding_and_cursor(&mut conn, a).await?;
-        Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT EXISTS(SELECT 1 {DOWNLOAD_CANDIDATES})"
-        )))
-        .fetch_one(&mut *conn)
-        .await?)
     }
     pub async fn install_encrypted_image(
         &self,
@@ -531,17 +540,6 @@ impl Database {
             crate::attachments::lifecycle::release_reservation(&mut conn, &reservation).await?;
         }
         result
-    }
-    pub async fn encrypted_image_upload_pending(&self, a: &Authority) -> Result<bool> {
-        let mut conn = self.acquire_reader().await?;
-        super::super::client::validate_binding_and_cursor(&mut conn, a).await?;
-        Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM changes WHERE server_seq IS NULL AND op_type='attachment_add')")
-            .fetch_one(&mut *conn).await?)
-    }
-    pub async fn encrypted_images_unavailable(&self, a: &Authority) -> Result<bool> {
-        let mut conn = self.acquire_reader().await?;
-        super::super::client::validate_binding_and_cursor(&mut conn, a).await?;
-        Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM local_e2ee_image_references r JOIN task_attachments a ON a.workspace_id=r.workspace AND a.attachment_id=r.reference JOIN tasks t ON t.workspace_id=a.workspace_id AND t.id=a.task_id WHERE r.object IS NULL AND a.deleted=0 AND t.deleted=0)").fetch_one(&mut *conn).await?)
     }
 }
 

@@ -153,9 +153,10 @@ async fn db_idle(origin: &str, node: &Node) -> bool {
         return false;
     };
     node.db
-        .encrypted_tail_idle(&inputs.authority)
+        .encrypted_round_state(&inputs.authority)
         .await
         .unwrap()
+        .idle
 }
 
 async fn sync_metadata(origin: &str, node: &Node) {

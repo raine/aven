@@ -234,23 +234,34 @@ async fn apply_new_remote_change(
 }
 
 impl Database {
-    pub async fn encrypted_tail_cursor(&self, authority: &Authority) -> Result<i64> {
-        let mut conn = self.acquire_reader().await?;
-        validate_binding_and_cursor(&mut conn, authority).await
-    }
-    /// Observes local work without validating, freezing or claiming its history.
-    pub async fn encrypted_tail_idle(&self, authority: &Authority) -> Result<bool> {
+    /// One validated read of local round state. Observation never freezes work
+    /// or advances the download selector.
+    pub async fn encrypted_round_state(&self, authority: &Authority) -> Result<RoundState> {
         let mut conn = self.acquire_reader().await?;
         let mut tx = sqlx::Connection::begin(&mut *conn).await?;
-        validate_binding_and_cursor(&mut tx, authority).await?;
-        let pending: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM local_e2ee_outbox)
-                 OR EXISTS(SELECT 1 FROM changes WHERE server_seq IS NULL)",
+        let cursor = validate_binding_and_cursor(&mut tx, authority).await?;
+        let initial = initial_image_watermark(&mut tx).await?;
+        let (idle, upload_pending): (bool, bool) = sqlx::query_as(
+            "SELECT NOT EXISTS(SELECT 1 FROM local_e2ee_outbox)
+                    AND NOT EXISTS(SELECT 1 FROM changes WHERE server_seq IS NULL),
+                    EXISTS(SELECT 1 FROM changes
+                           WHERE server_seq IS NULL AND op_type = 'attachment_add')",
         )
         .fetch_one(&mut *tx)
         .await?;
+        let downloads = if initial == "ready" {
+            Some(super::attachments::client::downloads(&mut tx).await?)
+        } else {
+            None
+        };
         tx.commit().await?;
-        Ok(!pending)
+        Ok(RoundState {
+            cursor,
+            initial_watermark: initial.parse().ok(),
+            idle,
+            upload_pending,
+            downloads,
+        })
     }
     /// Returns the frozen head, or freezes the next ordered pending change.
     /// Image heads also return exact staged ciphertext for upload.
@@ -499,25 +510,6 @@ impl Database {
         tx.commit().await?;
         Ok(())
     }
-    /// The first installed tail target remains fixed across bounded rounds/restarts.
-    pub async fn encrypted_tail_initial_watermark(
-        &self,
-        authority: &Authority,
-    ) -> Result<Option<i64>> {
-        let mut conn = self.acquire_reader().await?;
-        validate_binding_and_cursor(&mut conn, authority).await?;
-        Ok(initial_image_watermark(&mut conn).await?.parse().ok())
-    }
-
-    pub async fn encrypted_images_initial_catch_up_complete(
-        &self,
-        authority: &Authority,
-    ) -> Result<bool> {
-        let mut conn = self.acquire_reader().await?;
-        validate_binding_and_cursor(&mut conn, authority).await?;
-        Ok(initial_image_watermark(&mut conn).await? == "ready")
-    }
-
     pub async fn apply_encrypted_tail_page(
         &self,
         authority: &Authority,

@@ -100,9 +100,12 @@ async fn fresh_install_after_legitimate_bootstrap_image_prune_keeps_metadata_and
     assert!(deleted);
     assert!(
         !f.peer
-            .encrypted_image_download_pending(&inputs.authority)
+            .encrypted_round_state(&inputs.authority)
             .await
             .unwrap()
+            .downloads
+            .unwrap()
+            .pending
     );
 }
 

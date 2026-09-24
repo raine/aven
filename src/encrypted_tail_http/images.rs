@@ -99,7 +99,7 @@ async fn dispatch(
 #[derive(Default)]
 struct RoundProgress {
     pushed: bool,
-    caught_up: Option<bool>,
+    page_complete: Option<bool>,
     image_state: Option<ImageTransfer>,
     selected: bool,
     download: Option<images::Download>,
@@ -164,19 +164,11 @@ impl Client {
             progress.image_state = self.push(a, &inputs.bearer, db, blob_dir).await?;
             progress.pushed = true;
         }
-        let caught_up = match progress.caught_up {
-            Some(value) => value,
-            None => {
-                let value =
-                    self.pull(a, &inputs.bearer, db).await? && db.encrypted_tail_idle(a).await?;
-                progress.caught_up = Some(value);
-                value
-            }
-        };
-        let image_state = progress.image_state;
-        let images = if !db.encrypted_images_initial_catch_up_complete(a).await? {
-            image_state.unwrap_or(ImageTransfer::Pending)
-        } else {
+        if progress.page_complete.is_none() {
+            progress.page_complete = Some(self.pull(a, &inputs.bearer, db).await?);
+        }
+        let state = db.encrypted_round_state(a).await?;
+        let images = if state.downloads.is_some() {
             if !progress.selected {
                 progress.download = db.prepare_encrypted_image_download(a).await?;
                 progress.selected = true;
@@ -185,17 +177,18 @@ impl Client {
                 .download_image(a, &inputs.bearer, db, blob_dir, progress.download.as_ref())
                 .await
             {
-                Ok(ImageTransfer::Complete) if db.encrypted_image_upload_pending(a).await? => {
-                    image_state.unwrap_or(ImageTransfer::Pending)
-                }
-                Ok(status) => image_state.unwrap_or(status),
+                Ok(true) => settled(&db.encrypted_round_state(a).await?),
+                Ok(false) => ImageTransfer::Unavailable,
                 Err(error) if is_stale(&error) => return Err(error),
                 Err(_) => ImageTransfer::Failed,
             }
+        } else {
+            ImageTransfer::Pending
         };
         Ok(Round {
-            metadata_caught_up: caught_up,
-            images,
+            metadata_caught_up: progress.page_complete == Some(true) && state.idle,
+            // A failed push outranks later download outcomes in this round.
+            images: progress.image_state.unwrap_or(images),
         })
     }
     pub(super) async fn upload_prepared_image(
@@ -349,6 +342,7 @@ impl Client {
         );
         Ok(())
     }
+    /// False means the server no longer holds the selected object's bytes.
     async fn download_image(
         &self,
         a: &tail::Authority,
@@ -356,7 +350,7 @@ impl Client {
         db: &Database,
         blob_dir: &Path,
         selected: Option<&images::Download>,
-    ) -> Result<ImageTransfer> {
+    ) -> Result<bool> {
         if let Some(download) = selected
             && !db
                 .complete_encrypted_image_from_local(
@@ -391,7 +385,7 @@ impl Client {
                         );
                         records.push(record);
                     }
-                    ImageReply::Unavailable => return Ok(ImageTransfer::Unavailable),
+                    ImageReply::Unavailable => return Ok(false),
                     _ => anyhow::bail!("error encrypted-image-reply"),
                 }
             }
@@ -404,12 +398,15 @@ impl Client {
             )
             .await?;
         }
-        if db.encrypted_image_download_pending(a).await? {
-            Ok(ImageTransfer::Pending)
-        } else if db.encrypted_images_unavailable(a).await? {
-            Ok(ImageTransfer::Unavailable)
-        } else {
-            Ok(ImageTransfer::Complete)
-        }
+        Ok(true)
+    }
+}
+/// Image availability after this round's transfer step.
+fn settled(state: &tail::RoundState) -> ImageTransfer {
+    match state.downloads {
+        Some(d) if d.pending => ImageTransfer::Pending,
+        Some(d) if d.unavailable => ImageTransfer::Unavailable,
+        Some(_) if !state.upload_pending => ImageTransfer::Complete,
+        _ => ImageTransfer::Pending,
     }
 }

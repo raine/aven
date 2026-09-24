@@ -446,6 +446,9 @@ A local association-scoped selection cursor advances before each download attemp
 and wraps through pending objects, so failed/unavailable images cannot starve later
 ones across client or process restarts. Pending-work observations do not advance
 this cursor. It is scheduling bookkeeping, not validation or a sync watermark.
+`encrypted_round_state` is the single validated observation of cursor, finite
+watermark, local idleness and upload/download demand; demand is computed only after
+initial catch-up.
 Local downloads retain existing local capacity policy; the internal adapter uses
 its defaults. `router_with_policy` accepts operator-owned server policy, with the
 ordinary server's 30-day/10 GiB defaults, not local seven-day grace. Tickets reuse
