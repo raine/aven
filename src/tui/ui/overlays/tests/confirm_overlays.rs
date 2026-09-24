@@ -38,8 +38,6 @@ fn available_update_combines_release_notes_and_actions() {
                     archive_name: "aven-test.tar.gz".to_string(),
                     archive_url: "https://example.com/aven-test.tar.gz".to_string(),
                     checksum_url: "https://example.com/aven-test.sha256".to_string(),
-                    sync_protocol: Some(crate::sync::wire::SYNC_PROTOCOL_VERSION),
-                    sync_protocol_min: None,
                 },
                 method: crate::update::InstallMethod::Direct {
                     target: "/usr/local/bin/aven".into(),
@@ -62,39 +60,6 @@ fn available_update_combines_release_notes_and_actions() {
     assert!(rendered.contains("Earlier changes"));
     assert!(rendered.contains("Later"));
     assert!(rendered.contains("Update"));
-}
-
-#[test]
-fn compatibility_warning_recommends_updating_server_first() {
-    let rendered = render_overlay_view(OverlayView::Update(borrow_value(
-        crate::tui::overlay::UpdateOverlayState::CompatibilityWarning {
-            plan: crate::update::InstallPlan {
-                release: crate::update::Release {
-                    version: semver::Version::new(1, 2, 3),
-                    tag: "v1.2.3".to_string(),
-                    archive_name: "aven-test.tar.gz".to_string(),
-                    archive_url: "https://example.com/aven-test.tar.gz".to_string(),
-                    checksum_url: "https://example.com/aven-test.sha256".to_string(),
-                    sync_protocol: Some(19),
-                    sync_protocol_min: None,
-                },
-                method: crate::update::InstallMethod::Direct {
-                    target: "/usr/local/bin/aven".into(),
-                },
-            },
-            result: crate::update::CompatibilityResult::Incompatible {
-                target: 19,
-                server: 18,
-            },
-            server_origin: Some("https://sync.example.com".to_string()),
-            focus: crate::tui::overlay::UpdateActionFocus::Later,
-        },
-    )));
-
-    assert!(rendered.contains("This update may interrupt sync"));
-    assert!(rendered.contains("update the sync server before installing"));
-    assert!(rendered.contains("Cancel"));
-    assert!(rendered.contains("Update anyway"));
 }
 
 #[test]

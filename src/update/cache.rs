@@ -292,8 +292,6 @@ mod tests {
             archive_name: "aven-test.tar.gz".to_string(),
             archive_url: "https://github.com/raine/aven/releases/download/v99.0.0/a".to_string(),
             checksum_url: "https://github.com/raine/aven/releases/download/v99.0.0/b".to_string(),
-            sync_protocol: Some(crate::sync::wire::SYNC_PROTOCOL_VERSION),
-            sync_protocol_min: None,
         });
         assert!(matches!(
             outcome_from_cache(&cache, true).unwrap(),

@@ -220,17 +220,6 @@ fn dispatch_update_mouse(
             focus: action,
             cached,
         },
-        UpdateOverlayState::CompatibilityWarning {
-            plan,
-            result,
-            server_origin,
-            ..
-        } => UpdateOverlayState::CompatibilityWarning {
-            plan,
-            result,
-            server_origin,
-            focus: action,
-        },
         state => return OverlayMouseOutcome::Retained(OverlayState::Update(state)),
     };
     OverlayMouseOutcome::UpdateAction(state)

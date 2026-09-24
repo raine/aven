@@ -1,5 +1,4 @@
 mod cache;
-mod compatibility;
 mod eligibility;
 mod install;
 mod release;
@@ -20,10 +19,6 @@ pub(crate) use cache::cached_dismissal;
 pub(crate) use cache::{
     UpdateDismissal, background_check_due, cached_update, check_for_update, dismiss_update,
 };
-pub(crate) use compatibility::{
-    CompatibilityFailure, CompatibilityResult, ConfiguredSyncServer, assess_sync_compatibility,
-    retains_current_sync_support,
-};
 pub(crate) use eligibility::install_plan;
 pub(crate) use install::install_direct;
 
@@ -37,10 +32,6 @@ pub(crate) struct Release {
     pub(crate) archive_name: String,
     pub(crate) archive_url: String,
     pub(crate) checksum_url: String,
-    #[serde(default)]
-    pub(crate) sync_protocol: Option<u32>,
-    #[serde(default)]
-    pub(crate) sync_protocol_min: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -196,15 +196,6 @@ pub(crate) enum UpdateOverlayState {
         focus: UpdateActionFocus,
         cached: bool,
     },
-    CheckingCompatibility {
-        version: String,
-    },
-    CompatibilityWarning {
-        plan: crate::update::InstallPlan,
-        result: crate::update::CompatibilityResult,
-        server_origin: Option<String>,
-        focus: UpdateActionFocus,
-    },
     Progress {
         version: String,
         phase: crate::update::UpdatePhase,

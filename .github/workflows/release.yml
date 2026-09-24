@@ -80,14 +80,6 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
-      - name: Add sync protocol marker
-        run: |
-          protocol=$(sed -n 's/^pub const SYNC_PROTOCOL_VERSION: u32 = \([0-9][0-9]*\);$/\1/p' crates/aven-core/src/sync/wire.rs)
-          test -n "$protocol"
-          printf '%s\n' "$protocol" > "sync-protocol-$protocol"
-          baseline=$(sed -n 's/^pub const MAINTAINED_PROTOCOL_BASELINE: u32 = \([0-9][0-9]*\);$/\1/p' crates/aven-core/src/sync/protocol.rs)
-          test -n "$baseline"
-          printf '%s\n' "$baseline" > "sync-client-baseline-$baseline"
       - uses: softprops/action-gh-release@v3
         with:
           token: ${{ github.token }}
@@ -95,8 +87,6 @@ jobs:
           files: |
             *.tar.gz
             *.sha256
-            sync-protocol-*
-            sync-client-baseline-*
 
   update-tap:
     needs: release

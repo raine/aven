@@ -51,12 +51,6 @@ pub(crate) enum CodingAgentArg {
 pub(crate) struct SelfUpdateArgs {
     #[arg(long, help = "Install an available direct update")]
     pub(crate) yes: bool,
-    #[arg(
-        long,
-        requires = "yes",
-        help = "Install even when sync compatibility cannot be confirmed"
-    )]
-    pub(crate) allow_sync_incompatibility: bool,
 }
 
 #[derive(Args)]

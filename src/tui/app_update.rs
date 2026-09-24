@@ -12,10 +12,7 @@ use tokio::task::JoinHandle;
 
 use crate::tui::app::App;
 use crate::tui::overlay::{OverlayState, UpdateActionFocus, UpdateNotesState, UpdateOverlayState};
-use crate::update::{
-    self, CheckOutcome, CompatibilityResult, ConfiguredSyncServer, InstallPlan, InstallSuccess,
-    Release, UpdateProgress,
-};
+use crate::update::{self, CheckOutcome, InstallPlan, InstallSuccess, Release, UpdateProgress};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UpdateBadgeView {
@@ -35,7 +32,6 @@ pub(super) struct UpdateController {
     automatic_checks: bool,
     check: Option<JoinHandle<Result<CheckOutcome>>>,
     check_explicit: bool,
-    compatibility: Option<JoinHandle<(InstallPlan, CompatibilityResult, Option<String>)>>,
     install: Option<JoinHandle<Result<InstallSuccess>>>,
     progress: Option<watch::Receiver<UpdateProgress>>,
     cancelled: Option<Arc<AtomicBool>>,
@@ -74,7 +70,6 @@ impl UpdateController {
             automatic_checks,
             check: None,
             check_explicit: false,
-            compatibility: None,
             install: None,
             progress: None,
             cancelled: None,
@@ -106,7 +101,7 @@ impl UpdateController {
     }
 
     pub(super) fn work_pending(&self) -> bool {
-        self.check.is_some() || self.compatibility.is_some() || self.install.is_some()
+        self.check.is_some() || self.install.is_some()
     }
 
     pub(super) fn set_automatic_checks(&mut self, enabled: bool) {
@@ -243,48 +238,6 @@ impl App {
 
         if self
             .update
-            .compatibility
-            .as_ref()
-            .is_some_and(JoinHandle::is_finished)
-        {
-            let result = self
-                .update
-                .compatibility
-                .take()
-                .expect("checked above")
-                .await;
-            match result {
-                Ok((plan, result, server_origin)) if result.requires_confirmation() => {
-                    self.overlay = Some(OverlayState::Update(
-                        UpdateOverlayState::CompatibilityWarning {
-                            plan,
-                            result,
-                            server_origin,
-                            focus: UpdateActionFocus::Later,
-                        },
-                    ));
-                }
-                Ok((plan, _, _)) => {
-                    if let Err(error) = self.confirm_update(plan) {
-                        self.overlay = Some(OverlayState::Update(UpdateOverlayState::Failed {
-                            message: format!("Could not start update: {error:#}"),
-                        }));
-                    }
-                }
-                Err(error) if error.is_cancelled() => {
-                    self.overlay = Some(OverlayState::Update(UpdateOverlayState::Cancelled));
-                }
-                Err(error) => {
-                    self.overlay = Some(OverlayState::Update(UpdateOverlayState::Failed {
-                        message: format!("Compatibility check stopped: {error}"),
-                    }));
-                }
-            }
-            changed = true;
-        }
-
-        if self
-            .update
             .install
             .as_ref()
             .is_some_and(JoinHandle::is_finished)
@@ -319,31 +272,6 @@ impl App {
             changed = true;
         }
         changed
-    }
-
-    fn check_then_confirm_update(&mut self, plan: InstallPlan) -> Result<()> {
-        let server = ConfiguredSyncServer::from_config(self.store.config());
-        if server.is_none()
-            || update::retains_current_sync_support(
-                plan.release.sync_protocol,
-                plan.release.sync_protocol_min,
-            )
-        {
-            return self.confirm_update(plan);
-        }
-        let version = plan.release.version.to_string();
-        let target = plan.release.sync_protocol;
-        let server_origin = server.as_ref().map(ConfiguredSyncServer::origin);
-        self.overlay = Some(OverlayState::Update(
-            UpdateOverlayState::CheckingCompatibility { version },
-        ));
-        self.update.compatibility = Some(tokio::spawn(async move {
-            let result =
-                update::assess_sync_compatibility(target, plan.release.sync_protocol_min, server)
-                    .await;
-            (plan, result, server_origin)
-        }));
-        Ok(())
     }
 
     pub(super) fn confirm_update(&mut self, plan: InstallPlan) -> Result<()> {
@@ -416,7 +344,7 @@ impl App {
                                     focus,
                                     cached,
                                 }));
-                        } else if let Err(error) = self.check_then_confirm_update(plan) {
+                        } else if let Err(error) = self.confirm_update(plan) {
                             self.set_error(format!("could not start update: {error:#}"));
                         }
                     }
@@ -462,77 +390,12 @@ impl App {
             return;
         }
 
-        if let UpdateOverlayState::CompatibilityWarning {
-            plan,
-            result,
-            server_origin,
-            mut focus,
-        } = state
-        {
-            if terminal_size.width < crate::tui::ui::MIN_TUI_WIDTH
-                || terminal_size.height < crate::tui::ui::MIN_TUI_HEIGHT
-            {
-                self.overlay = Some(OverlayState::Update(
-                    UpdateOverlayState::CompatibilityWarning {
-                        plan,
-                        result,
-                        server_origin,
-                        focus,
-                    },
-                ));
-                return;
-            }
-            match key.code {
-                KeyCode::Esc => {
-                    self.overlay = Some(OverlayState::Update(UpdateOverlayState::Cancelled));
-                }
-                KeyCode::Tab | KeyCode::BackTab | KeyCode::Left | KeyCode::Right => {
-                    focus = match focus {
-                        UpdateActionFocus::Later => UpdateActionFocus::Primary,
-                        UpdateActionFocus::Primary => UpdateActionFocus::Later,
-                    };
-                    self.overlay = Some(OverlayState::Update(
-                        UpdateOverlayState::CompatibilityWarning {
-                            plan,
-                            result,
-                            server_origin,
-                            focus,
-                        },
-                    ));
-                }
-                KeyCode::Enter | KeyCode::Char(' ') => match focus {
-                    UpdateActionFocus::Later => {
-                        self.overlay = Some(OverlayState::Update(UpdateOverlayState::Cancelled));
-                    }
-                    UpdateActionFocus::Primary => {
-                        if let Err(error) = self.confirm_update(plan) {
-                            self.set_error(format!("could not start update: {error:#}"));
-                        }
-                    }
-                },
-                _ => {
-                    self.overlay = Some(OverlayState::Update(
-                        UpdateOverlayState::CompatibilityWarning {
-                            plan,
-                            result,
-                            server_origin,
-                            focus,
-                        },
-                    ));
-                }
-            }
-            return;
-        }
-
         match key.code {
             KeyCode::Esc => {
                 if self.update.check.is_some() {
                     if let Some(handle) = self.update.check.take() {
                         handle.abort();
                     }
-                    self.overlay = Some(OverlayState::Update(UpdateOverlayState::Cancelled));
-                } else if let Some(handle) = self.update.compatibility.take() {
-                    handle.abort();
                     self.overlay = Some(OverlayState::Update(UpdateOverlayState::Cancelled));
                 } else if self.update.install.is_some() {
                     let phase = self
@@ -586,8 +449,6 @@ mod tests {
             archive_name: "aven-test.tar.gz".to_string(),
             archive_url: "https://example.com/aven-test.tar.gz".to_string(),
             checksum_url: "https://example.com/aven-test.sha256".to_string(),
-            sync_protocol: Some(crate::sync::wire::SYNC_PROTOCOL_VERSION),
-            sync_protocol_min: None,
         }
     }
 

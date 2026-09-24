@@ -27,16 +27,6 @@ pub(in crate::tui::ui) fn render_update(frame: &mut Frame, state: &UpdateOverlay
         render_available_update(frame, content, plan, notes, *scroll, *focus);
         return;
     }
-    if let UpdateOverlayState::CompatibilityWarning {
-        result,
-        server_origin,
-        focus,
-        ..
-    } = state
-    {
-        render_compatibility_warning(frame, content, result, server_origin.as_deref(), *focus);
-        return;
-    }
 
     frame.render_widget(
         Paragraph::new(Text::from(update_lines(state)))
@@ -82,14 +72,6 @@ pub(crate) fn update_action_at(
                 " Update "
             };
             (primary, " Later ")
-        }
-        UpdateOverlayState::CompatibilityWarning { .. } => {
-            if terminal_size.width < crate::tui::ui::MIN_TUI_WIDTH
-                || terminal_size.height < crate::tui::ui::MIN_TUI_HEIGHT
-            {
-                return None;
-            }
-            (" Update anyway ", " Cancel ")
         }
         _ => return None,
     };
@@ -233,18 +215,6 @@ fn render_available_update(
             Rect::new(content.x, content.y.saturating_add(2), content.width, 1),
         );
     }
-    if plan.guidance().is_none()
-        && plan
-            .release
-            .sync_protocol
-            .is_some_and(|protocol| protocol != crate::sync::wire::SYNC_PROTOCOL_VERSION)
-    {
-        frame.render_widget(
-            Paragraph::new("Server update: older apps may stop syncing.")
-                .style(Style::new().fg(ORANGE).bg(BG_ALT)),
-            Rect::new(content.x, content.y.saturating_add(2), content.width, 1),
-        );
-    }
     frame.render_widget(
         Paragraph::new("Changelog")
             .style(Style::new().fg(FG).bg(BG_ALT).add_modifier(Modifier::BOLD)),
@@ -317,71 +287,6 @@ fn render_available_update(
     );
 }
 
-fn render_compatibility_warning(
-    frame: &mut Frame,
-    content: Rect,
-    result: &crate::update::CompatibilityResult,
-    server_origin: Option<&str>,
-    focus: UpdateActionFocus,
-) {
-    let mut lines = match result {
-        crate::update::CompatibilityResult::Incompatible { target, server } => vec![
-            status_line("!", "This update may interrupt sync", ORANGE),
-            Line::from(""),
-            Line::from(format!(
-                "This update speaks sync protocol {target}, but the server speaks protocol {server}."
-            )),
-            Line::from(
-                "After installation, this device will not sync until the server is updated.",
-            ),
-        ],
-        crate::update::CompatibilityResult::Unverified { reason, .. } => vec![
-            status_line("!", "Sync compatibility could not be verified", ORANGE),
-            Line::from(""),
-            Line::from(reason.explanation()),
-        ],
-        _ => Vec::new(),
-    };
-    if let Some(origin) = server_origin {
-        lines.push(Line::from(format!("Sync server: {origin}")));
-    }
-    lines.extend([
-        Line::from(""),
-        Line::from(Span::styled(
-            "To keep sync working, update the sync server before installing this update.",
-            Style::new().fg(ORANGE),
-        )),
-    ]);
-    let footer = Rect::new(
-        content.x,
-        content.y.saturating_add(content.height.saturating_sub(1)),
-        content.width,
-        1,
-    );
-    let body = Rect::new(
-        content.x,
-        content.y,
-        content.width,
-        content.height.saturating_sub(2),
-    );
-    frame.render_widget(
-        Paragraph::new(Text::from(lines))
-            .style(Style::new().fg(FG).bg(BG_ALT))
-            .wrap(Wrap { trim: false }),
-        body,
-    );
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            action_span(" Cancel ", focus == UpdateActionFocus::Later, false),
-            Span::raw(" "),
-            action_span(" Update anyway ", focus == UpdateActionFocus::Primary, true),
-        ]))
-        .alignment(Alignment::Right)
-        .style(Style::new().bg(BG_ALT)),
-        footer,
-    );
-}
-
 fn guidance_has_command(plan: &crate::update::InstallPlan) -> bool {
     plan.guidance().is_some_and(|lines| {
         lines
@@ -421,7 +326,6 @@ fn action_span(label: &'static str, focused: bool, primary: bool) -> Span<'stati
 fn update_title(state: &UpdateOverlayState) -> &'static str {
     match state {
         UpdateOverlayState::Available { .. } => "Software Update",
-        UpdateOverlayState::CompatibilityWarning { .. } => "Sync compatibility warning",
         UpdateOverlayState::Success { .. } => "Update installed",
         UpdateOverlayState::Failed { .. } => "Update failed",
         UpdateOverlayState::Cancelled => "Update cancelled",
@@ -437,16 +341,6 @@ fn update_lines(state: &UpdateOverlayState) -> Vec<Line<'static>> {
             Line::from(""),
             dialog_hint_line(&[("Esc", "cancel")]),
         ],
-        UpdateOverlayState::CheckingCompatibility { version } => vec![
-            status_line(
-                "●",
-                &format!("Checking sync compatibility for v{version}"),
-                ACCENT,
-            ),
-            Line::from(""),
-            dialog_hint_line(&[("Esc", "cancel")]),
-        ],
-        UpdateOverlayState::CompatibilityWarning { .. } => Vec::new(),
         UpdateOverlayState::Progress {
             version,
             phase,
