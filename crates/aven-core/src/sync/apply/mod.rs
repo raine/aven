@@ -19,6 +19,8 @@ use sqlx::SqliteConnection;
 use crate::change_log::op_type;
 use crate::sync::wire::{AttachmentAddPayload, AttachmentDeletePayload, ChangeWire};
 
+pub(crate) use task::adopt_generated_defaults;
+
 #[cfg(any(test, feature = "test-support"))]
 pub async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
     tracing::debug!(

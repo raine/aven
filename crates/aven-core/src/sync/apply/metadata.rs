@@ -526,6 +526,105 @@ pub(super) async fn apply_initial_task_values(
     Ok(())
 }
 
+/// Moves a generated task's untouched metadata from the baseline generation to an
+/// earlier accepted one. A value whose version is not the baseline's (explicitly
+/// set or removed since generation) is kept and reported as an ordinary conflict.
+pub(super) async fn adopt_generated_values(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    task_id: &TaskId,
+    baseline: &ChangeWire,
+    accepted: &ChangeWire,
+) -> Result<()> {
+    let seed = |change: &ChangeWire| str_payload(&change.payload, "task_field_version_seed");
+    let (baseline_seed, accepted_seed) = (seed(baseline)?, seed(accepted)?);
+    let mut fields: Vec<(MetadataField, Option<String>, Option<String>)> = Vec::new();
+    for (change, accepted_side) in [(baseline, false), (accepted, true)] {
+        let values: Vec<MetadataValuePayload> =
+            serde_json::from_value(change.payload["metadata"].clone())?;
+        for value in values {
+            let field = ensure_remote_field(
+                conn,
+                workspace_id,
+                &value.field_id,
+                &value.key,
+                &change.created_at,
+            )
+            .await?;
+            let index = match fields.iter().position(|(known, ..)| known.id == field.id) {
+                Some(index) => index,
+                None => {
+                    fields.push((field, None, None));
+                    fields.len() - 1
+                }
+            };
+            if accepted_side {
+                fields[index].2 = Some(value.value);
+            } else {
+                fields[index].1 = Some(value.value);
+            }
+        }
+    }
+    for (field, in_baseline, value) in fields {
+        let identity = format!("metadata:{}", field.id);
+        let current = field_version(conn, task_id, &identity).await?;
+        let untouched = match &in_baseline {
+            Some(_) => current.as_deref() == Some(baseline_seed.as_str()),
+            None => current.is_none(),
+        };
+        if !untouched {
+            create_task_conflict(
+                conn,
+                accepted,
+                workspace_id,
+                task_id,
+                &field,
+                value.as_deref(),
+                current.as_deref(),
+            )
+            .await?;
+            continue;
+        }
+        if let Some(value) = &value {
+            sqlx::query(
+                "INSERT INTO task_metadata(
+                     workspace_id, task_id, field_id, value, created_at, updated_at
+                 ) VALUES (?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(workspace_id, task_id, field_id)
+                 DO UPDATE SET value = excluded.value",
+            )
+            .bind(workspace_id)
+            .bind(task_id)
+            .bind(&field.id)
+            .bind(value)
+            .bind(&accepted.created_at)
+            .bind(&accepted.created_at)
+            .execute(&mut *conn)
+            .await?;
+            set_field_version(conn, task_id, &identity, &accepted_seed).await?;
+        } else {
+            sqlx::query(
+                "DELETE FROM task_metadata WHERE workspace_id = ? AND task_id = ? AND field_id = ?",
+            )
+            .bind(workspace_id)
+            .bind(task_id)
+            .bind(&field.id)
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query(
+                "DELETE FROM field_versions
+                 WHERE workspace_id = ? AND entity_type = 'task' AND entity_id = ? AND field = ?",
+            )
+            .bind(workspace_id)
+            .bind(task_id)
+            .bind(&identity)
+            .execute(&mut *conn)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
 pub(super) async fn ensure_remote_field(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,

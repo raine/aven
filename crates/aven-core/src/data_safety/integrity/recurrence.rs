@@ -222,32 +222,45 @@ async fn recurrence_row_checks(conn: &mut SqliteConnection) -> Result<Vec<Integr
                     if created_at.as_deref() != Some(identity.created_at.as_str()) {
                         deterministic_timestamp_mismatches += 1;
                     }
-                    let task_change_payload: Option<String> = sqlx::query_scalar(
-                        "SELECT payload FROM changes WHERE change_id = ? AND entity_type = 'task' AND entity_id = ? AND field IS NULL AND op_type = 'create_task' AND created_at = ?",
+                    // Every generation of the occurrence validates in its own form, and
+                    // at least one is linked to its projection.
+                    let creates: Vec<(String, String)> = sqlx::query_as(
+                        "SELECT change_id, payload FROM changes WHERE entity_type = 'task' AND entity_id = ? AND field IS NULL AND op_type = 'create_task' AND created_at = ? AND json_extract(payload, '$.series_id') IS NOT NULL",
                     )
-                    .bind(&identity.task_change_id)
                     .bind(task_id)
                     .bind(&identity.created_at)
-                    .fetch_optional(&mut *conn)
+                    .fetch_all(&mut *conn)
                     .await?;
-                    let occurrence_change_payload: Option<String> = sqlx::query_scalar(
-                        "SELECT payload FROM changes WHERE change_id = ? AND entity_type = 'recurrence_series' AND entity_id = ? AND field = 'projection' AND op_type = 'project_recurrence_occurrence' AND created_at = ?",
-                    )
-                    .bind(&identity.occurrence_change_id)
-                    .bind(&occurrence.series_id)
-                    .bind(&identity.occurrence_link.projected_at)
-                    .fetch_optional(&mut *conn)
-                    .await?;
-                    if task_change_payload.as_deref().is_none_or(|payload| {
-                        !deterministic_payload_matches(
-                            payload,
-                            &identity,
-                            occurrence.slot_on,
-                            false,
-                        )
-                    }) || occurrence_change_payload.as_deref().is_none_or(|payload| {
-                        !deterministic_payload_matches(payload, &identity, occurrence.slot_on, true)
-                    }) {
+                    let mut seeds = Vec::new();
+                    let mut valid = !creates.is_empty();
+                    let mut linked = false;
+                    for (change_id, payload) in &creates {
+                        match generation_ids(payload, &identity, occurrence.slot_on, false) {
+                            Some(ids) if ids.task_change_id == *change_id => {
+                                let projection: Option<String> = sqlx::query_scalar(
+                                    "SELECT payload FROM changes WHERE change_id = ? AND entity_type = 'recurrence_series' AND entity_id = ? AND field = 'projection' AND op_type = 'project_recurrence_occurrence' AND created_at = ?",
+                                )
+                                .bind(&ids.occurrence_change_id)
+                                .bind(&occurrence.series_id)
+                                .bind(&identity.occurrence_link.projected_at)
+                                .fetch_optional(&mut *conn)
+                                .await?;
+                                if let Some(projection) = projection {
+                                    valid &= generation_ids(
+                                        &projection,
+                                        &identity,
+                                        occurrence.slot_on,
+                                        true,
+                                    )
+                                    .is_some_and(|linked| linked == ids);
+                                    linked = true;
+                                }
+                                seeds.push(ids.task_field_version_seed);
+                            }
+                            _ => valid = false,
+                        }
+                    }
+                    if !valid || !linked {
                         deterministic_change_mismatches += 1;
                     }
                     for field in crate::task_fields::TaskField::VERSIONED {
@@ -260,7 +273,7 @@ async fn recurrence_row_checks(conn: &mut SqliteConnection) -> Result<Vec<Integr
                         .fetch_optional(&mut *conn)
                         .await?;
                         let valid = match version {
-                            Some(version) if version == identity.field_version_seeds.task => true,
+                            Some(version) if seeds.contains(&version) => true,
                             Some(version) => {
                                 sqlx::query_scalar::<_, i64>(
                                     "SELECT count(*) FROM changes WHERE change_id = ?",
@@ -358,39 +371,14 @@ async fn recurrence_row_checks(conn: &mut SqliteConnection) -> Result<Vec<Integr
     ])
 }
 
-fn deterministic_payload_matches(
+fn generation_ids(
     payload: &str,
     identity: &crate::recurrence::RecurrenceOccurrenceIdentity,
     slot_on: chrono::NaiveDate,
     projection: bool,
-) -> bool {
-    let Ok(payload) = serde_json::from_str::<Value>(payload) else {
-        return false;
-    };
-    let identity_fields_match = [
-        ("task_id", identity.task_id.as_str()),
-        ("series_id", identity.occurrence_link.series_id.as_str()),
-        ("task_change_id", identity.task_change_id.as_str()),
-        (
-            "occurrence_change_id",
-            identity.occurrence_change_id.as_str(),
-        ),
-        (
-            "task_field_version_seed",
-            identity.field_version_seeds.task.as_str(),
-        ),
-        (
-            "occurrence_field_version_seed",
-            identity.field_version_seeds.occurrence.as_str(),
-        ),
-    ]
-    .into_iter()
-    .all(|(key, expected)| payload.get(key).and_then(Value::as_str) == Some(expected));
-    identity_fields_match
-        && payload.get("slot_on").and_then(Value::as_str) == Some(&slot_on.to_string())
-        && (!projection
-            || payload.get("projected_at").and_then(Value::as_str)
-                == Some(identity.occurrence_link.projected_at.as_str()))
+) -> Option<crate::recurrence::RecurrenceProposalIds> {
+    let payload = serde_json::from_str::<Value>(payload).ok()?;
+    identity.stored_generation_ids(&payload, slot_on, projection)
 }
 
 fn issue_count_check(label: &'static str, count: usize) -> IntegrityCheck {

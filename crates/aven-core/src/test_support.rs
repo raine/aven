@@ -173,3 +173,12 @@ pub async fn pause_recurrence_series_at(
     )
     .await
 }
+
+/// Meta key that makes a bound test database generate occurrence-form recurrence
+/// records, as databases bound before proposal-form generation existed did.
+pub const OCCURRENCE_FORM_GENERATION: &str = "test_occurrence_form_generation";
+
+pub async fn use_occurrence_form_generation(database: &Database) -> Result<()> {
+    let mut conn = database.acquire_writer().await?;
+    crate::db::set_meta(&mut conn, OCCURRENCE_FORM_GENERATION, "1").await
+}

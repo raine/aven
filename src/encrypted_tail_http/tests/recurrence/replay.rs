@@ -31,6 +31,15 @@ fn historical_time() -> chrono::DateTime<Utc> {
 async fn lifecycle_resolution_reinserts_later_page_records_with_canonical_equality() {
     for unequal in [false, true] {
         let f = fixture().await;
+        if unequal {
+            // Proposal-form identities derive from content, so an unequal same-ID
+            // generation needs the occurrence form earlier bound builds produced.
+            for db in [&f.seed, &f.peer] {
+                aven_core::test_support::use_occurrence_form_generation(db)
+                    .await
+                    .unwrap();
+            }
+        }
         converge(&f).await;
         let c = Client::new(&f.origin).unwrap();
         let w = f.seed.list_workspaces().await.unwrap().remove(0);

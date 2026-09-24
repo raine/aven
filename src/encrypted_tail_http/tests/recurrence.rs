@@ -330,9 +330,16 @@ async fn outcome_and_template_conflicts_remain_explicit_and_resolve() {
     }
 }
 
+/// Earlier bound builds generated occurrence-form records, whose identities ignore
+/// template content. Unequal history of that form is refused, never rewritten.
 #[tokio::test]
-async fn different_templates_do_not_acknowledge_unequal_deterministic_successors() {
+async fn occurrence_form_generations_from_different_templates_still_refuse() {
     let f = fixture().await;
+    for db in [&f.seed, &f.peer] {
+        aven_core::test_support::use_occurrence_form_generation(db)
+            .await
+            .unwrap();
+    }
     converge(&f).await;
     let w = f.seed.list_workspaces().await.unwrap().remove(0);
     let created = create(&f.seed).await;
@@ -685,4 +692,5 @@ async fn completion_can_arrive_one_operation_per_page() {
     );
 }
 
+mod proposals;
 mod replay;

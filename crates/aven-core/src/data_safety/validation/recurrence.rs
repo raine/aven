@@ -74,6 +74,15 @@ pub(super) fn validate_recurrence_snapshot(
             change.change_id
         );
     }
+    let mut task_creates: HashMap<&str, Vec<&ChangeRow>> = HashMap::new();
+    for change in &export.tables.changes {
+        if change.entity_type == "task" && change.op_type == "create_task" {
+            task_creates
+                .entry(change.entity_id.as_str())
+                .or_default()
+                .push(change);
+        }
+    }
     let field_versions = export
         .tables
         .field_versions
@@ -336,20 +345,27 @@ pub(super) fn validate_recurrence_snapshot(
                 }
                 None => {}
             }
-            validate_deterministic_change(
-                change_rows.get(identity.task_change_id.as_str()).copied(),
-                &identity,
-                slot_on,
-                false,
-            )?;
-            validate_deterministic_change(
-                change_rows
-                    .get(identity.occurrence_change_id.as_str())
-                    .copied(),
-                &identity,
-                slot_on,
-                true,
-            )?;
+            // Every generation of the occurrence validates in its own form, and at
+            // least one is linked to its projection.
+            let mut seeds = Vec::new();
+            let mut linked = false;
+            for create in task_creates.get(task_id.as_str()).into_iter().flatten() {
+                let payload: Value = serde_json::from_str(&create.payload)
+                    .context("invalid recurrence deterministic change payload")?;
+                if payload.get("series_id").is_none() {
+                    continue;
+                }
+                let ids = validate_deterministic_change(Some(create), &identity, slot_on, false)?;
+                if let Some(projection) = change_rows.get(ids.occurrence_change_id.as_str()) {
+                    validate_deterministic_change(Some(projection), &identity, slot_on, true)?;
+                    linked = true;
+                }
+                seeds.push(ids.task_field_version_seed);
+            }
+            ensure!(
+                linked,
+                "error invalid-export-snapshot recurrence deterministic change is missing"
+            );
             for field in TaskField::VERSIONED {
                 let version = field_versions
                     .get(&(
@@ -361,7 +377,7 @@ pub(super) fn validate_recurrence_snapshot(
                     .context(
                         "error invalid-export-snapshot recurrence task field version is missing",
                     )?;
-                if *version == identity.field_version_seeds.task {
+                if seeds.iter().any(|seed| seed == version) {
                     continue;
                 }
                 ensure!(
@@ -503,7 +519,7 @@ fn validate_deterministic_change(
     identity: &crate::recurrence::RecurrenceOccurrenceIdentity,
     slot_on: NaiveDate,
     projection: bool,
-) -> Result<()> {
+) -> Result<crate::recurrence::RecurrenceProposalIds> {
     let change = change
         .context("error invalid-export-snapshot recurrence deterministic change is missing")?;
     let (entity_type, entity_id, field, op_type, created_at) = if projection {
@@ -533,40 +549,19 @@ fn validate_deterministic_change(
     );
     let payload: Value = serde_json::from_str(&change.payload)
         .context("invalid recurrence deterministic change payload")?;
-    for (key, expected) in [
-        ("task_id", identity.task_id.as_str()),
-        ("series_id", identity.occurrence_link.series_id.as_str()),
-        ("task_change_id", identity.task_change_id.as_str()),
-        (
-            "occurrence_change_id",
-            identity.occurrence_change_id.as_str(),
-        ),
-        (
-            "task_field_version_seed",
-            identity.field_version_seeds.task.as_str(),
-        ),
-        (
-            "occurrence_field_version_seed",
-            identity.field_version_seeds.occurrence.as_str(),
-        ),
-    ] {
-        ensure!(
-            payload.get(key).and_then(Value::as_str) == Some(expected),
-            "error invalid-export-snapshot recurrence deterministic payload field={key} mismatch"
-        );
-    }
+    let ids = identity
+        .stored_generation_ids(&payload, slot_on, projection)
+        .context("error invalid-export-snapshot recurrence deterministic payload mismatch")?;
+    let own_id = if projection {
+        &ids.occurrence_change_id
+    } else {
+        &ids.task_change_id
+    };
     ensure!(
-        payload.get("slot_on").and_then(Value::as_str) == Some(&slot_on.to_string()),
-        "error invalid-export-snapshot recurrence deterministic payload slot mismatch"
+        change.change_id == *own_id,
+        "error invalid-export-snapshot recurrence deterministic change identity mismatch"
     );
-    if projection {
-        ensure!(
-            payload.get("projected_at").and_then(Value::as_str)
-                == Some(identity.occurrence_link.projected_at.as_str()),
-            "error invalid-export-snapshot recurrence deterministic projection link mismatch"
-        );
-    }
-    Ok(())
+    Ok(ids)
 }
 
 fn optional_import_text(value: &str) -> Option<&str> {

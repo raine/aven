@@ -10,8 +10,8 @@ use crate::db::{
 };
 use crate::error::CoreError;
 use crate::recurrence::{
-    RecurrenceProjectionState, RecurrenceSeriesId, RecurrenceSeriesState,
-    derive_occurrence_identity, projection_slot_at, slot_values,
+    RecurrenceProjectionState, RecurrenceProposalIds, RecurrenceSeriesId, RecurrenceSeriesState,
+    derive_occurrence_identity, derive_proposal_ids, projection_slot_at, slot_values,
 };
 use crate::refs::get_task_in_workspace;
 use crate::task_fields::TaskField;
@@ -218,12 +218,13 @@ pub(super) async fn materialize_occurrence(
     .execute(&mut *conn)
     .await?;
 
-    let payload =
+    let mut payload =
         deterministic_task_payload(workspace, series, labels, &metadata, &slot, &identity);
+    let ids = generation_ids(conn, &identity, &mut payload).await?;
     insert_change_with_identity(
         conn,
         IdentifiedChange {
-            change_id: &identity.task_change_id,
+            change_id: &ids.task_change_id,
             entity_type: "task",
             entity_id: identity.task_id.as_str(),
             field: None,
@@ -239,12 +240,9 @@ pub(super) async fn materialize_occurrence(
         .set("slot_on", slot_on.format("%Y-%m-%d").to_string())
         .set("task_id", identity.task_id.as_str())
         .set("projected_at", &identity.occurrence_link.projected_at)
-        .set("task_change_id", &identity.task_change_id)
-        .set("occurrence_change_id", &identity.occurrence_change_id)
-        .set(
-            "task_field_version_seed",
-            &identity.field_version_seeds.task,
-        )
+        .set("task_change_id", &ids.task_change_id)
+        .set("occurrence_change_id", &ids.occurrence_change_id)
+        .set("task_field_version_seed", &ids.task_field_version_seed)
         .set(
             "occurrence_field_version_seed",
             &identity.field_version_seeds.occurrence,
@@ -263,7 +261,7 @@ pub(super) async fn materialize_occurrence(
     insert_change_with_identity(
         conn,
         IdentifiedChange {
-            change_id: &identity.occurrence_change_id,
+            change_id: &ids.occurrence_change_id,
             entity_type: "recurrence_series",
             entity_id: series.id.as_str(),
             field: Some("projection"),
@@ -281,7 +279,7 @@ pub(super) async fn materialize_occurrence(
             MutableEntityType::Task,
             identity.task_id.as_str(),
             field.as_str(),
-            &identity.field_version_seeds.task,
+            &ids.task_field_version_seed,
         )
         .await?;
     }
@@ -292,7 +290,7 @@ pub(super) async fn materialize_occurrence(
             MutableEntityType::Task,
             identity.task_id.as_str(),
             &format!("metadata:{}", value.field_id),
-            &identity.field_version_seeds.task,
+            &ids.task_field_version_seed,
         )
         .await?;
     }
@@ -319,6 +317,9 @@ pub(super) async fn verify_materialized_occurrence(
             occurrence.slot_on
         ))
     );
+    if generates_proposals(conn).await? {
+        return verify_generated_task(conn, workspace, identity, occurrence.slot_on).await;
+    }
     let task = get_task_in_workspace(conn, workspace, &identity.task_id).await?;
     ensure!(
         task.title == series.title
@@ -469,6 +470,137 @@ fn deterministic_task_payload(
         )
         .set("due_policy", series.due_policy.as_str())
         .into_value()
+}
+
+/// Databases bound to encrypted sync, by seed opt-in or peer enrollment, generate
+/// proposal-form records. Both markers are permanent.
+pub(crate) async fn generates_proposals(conn: &mut SqliteConnection) -> Result<bool> {
+    let bound: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM local_seed_source)
+             OR EXISTS(SELECT 1 FROM local_peer_enrollment)",
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    #[cfg(any(test, feature = "test-support"))]
+    let bound = bound
+        && crate::db::get_meta(conn, crate::test_support::OCCURRENCE_FORM_GENERATION)
+            .await?
+            .is_none();
+    Ok(bound)
+}
+
+/// One generated `create_task` history row of a task.
+pub(crate) struct GeneratedCreate {
+    pub(crate) change_id: String,
+    pub(crate) payload: Value,
+}
+
+impl GeneratedCreate {
+    pub(crate) fn seed(&self) -> &str {
+        self.payload["task_field_version_seed"]
+            .as_str()
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn occurrence_change_id(&self) -> &str {
+        self.payload["occurrence_change_id"]
+            .as_str()
+            .unwrap_or_default()
+    }
+
+    /// The value this generation gives a versioned task field.
+    pub(crate) fn default_value(&self, field: TaskField) -> &str {
+        match field {
+            TaskField::Project => self.payload["project_id"].as_str(),
+            TaskField::Deleted => Some("0"),
+            other => self.payload[other.as_str()].as_str(),
+        }
+        .unwrap_or_default()
+    }
+}
+
+/// A generated task's `create_task` history rows in accepted order, then pending order.
+pub(crate) async fn generated_creates(
+    conn: &mut SqliteConnection,
+    task_id: &crate::ids::TaskId,
+) -> Result<Vec<GeneratedCreate>> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT change_id, payload FROM changes
+         WHERE entity_type = 'task' AND entity_id = ? AND op_type = 'create_task'
+           AND json_extract(payload, '$.series_id') IS NOT NULL
+         ORDER BY server_seq IS NULL, server_seq, local_seq",
+    )
+    .bind(task_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    rows.into_iter()
+        .map(|(change_id, payload)| {
+            Ok(GeneratedCreate {
+                change_id,
+                payload: serde_json::from_str(&payload)?,
+            })
+        })
+        .collect()
+}
+
+/// Checks a bound database's generated task against the generation whose seed it
+/// still carries. Fields since edited explicitly, and tasks whose baseline came from
+/// an installed snapshot, have no generated value to compare. No history is written.
+async fn verify_generated_task(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    identity: &crate::recurrence::RecurrenceOccurrenceIdentity,
+    slot_on: NaiveDate,
+) -> Result<()> {
+    let conflict = |field: &str| {
+        CoreError::generation_conflict(format!(
+            "error recurrence-generation-conflict slot={slot_on} field={field}"
+        ))
+    };
+    let task = get_task_in_workspace(conn, workspace, &identity.task_id).await?;
+    ensure!(task.created_at == identity.created_at, conflict("task"));
+    for create in generated_creates(conn, &identity.task_id).await? {
+        for field in TaskField::VERSIONED {
+            let version = entity_field_version(
+                conn,
+                &workspace.id,
+                MutableEntityType::Task,
+                identity.task_id.as_str(),
+                field.as_str(),
+            )
+            .await?;
+            if version.as_deref() == Some(create.seed()) {
+                ensure!(
+                    field.current_value(&task) == create.default_value(field),
+                    conflict(field.as_str())
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Chooses this database's generation form and writes its identities into the
+/// generated task payload. Databases bound to encrypted sync generate proposal-form
+/// records; local-only databases keep occurrence-form records.
+async fn generation_ids(
+    conn: &mut SqliteConnection,
+    identity: &crate::recurrence::RecurrenceOccurrenceIdentity,
+    payload: &mut Value,
+) -> Result<RecurrenceProposalIds> {
+    let ids = if generates_proposals(conn).await? {
+        derive_proposal_ids(payload)?
+    } else {
+        RecurrenceProposalIds {
+            task_change_id: identity.task_change_id.clone(),
+            occurrence_change_id: identity.occurrence_change_id.clone(),
+            task_field_version_seed: identity.field_version_seeds.task.clone(),
+        }
+    };
+    payload["task_change_id"] = ids.task_change_id.clone().into();
+    payload["occurrence_change_id"] = ids.occurrence_change_id.clone().into();
+    payload["task_field_version_seed"] = ids.task_field_version_seed.clone().into();
+    Ok(ids)
 }
 
 pub(super) fn retryable_reconcile_error(error: &anyhow::Error) -> bool {

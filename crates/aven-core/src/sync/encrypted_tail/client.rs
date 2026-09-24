@@ -203,6 +203,15 @@ async fn load_observed_outcome(
     .await?)
 }
 
+async fn task_exists(conn: &mut SqliteConnection, task_id: &str) -> Result<bool> {
+    Ok(
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tasks WHERE id = ?)")
+            .bind(task_id)
+            .fetch_one(conn)
+            .await?,
+    )
+}
+
 async fn apply_new_remote_change(
     conn: &mut SqliteConnection,
     change: &ChangeWire,
@@ -604,7 +613,18 @@ impl Database {
                     .await?;
                 } else {
                     change.server_seq = Some(accepted.mapping.sequence);
+                    let generated = change.op_type == "create_task"
+                        && super::recurrence::is_deterministic(&change)
+                        && task_exists(&mut tx, &change.entity_id).await?;
                     apply_new_remote_change(&mut tx, &change, &mut attachment_hashes).await?;
+                    if generated {
+                        super::recurrence::adopt_earlier_generation(
+                            &mut tx,
+                            authority.prefix,
+                            &change,
+                        )
+                        .await?;
+                    }
                 }
             }
             if let Some(workspace) = super::dependencies::affected_workspace(&change)? {

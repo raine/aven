@@ -1,8 +1,8 @@
 use super::*;
 use crate::recurrence::{
-    RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceOutcome, RecurrenceRule,
-    RecurrenceSchedule, RecurrenceSeriesId, RecurrenceSeriesState, TimeZoneId, WeekdaySet,
-    derive_occurrence_identity, is_slot, next_slot_after,
+    RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceOutcome, RecurrenceProposalIds,
+    RecurrenceRule, RecurrenceSchedule, RecurrenceSeriesId, RecurrenceSeriesState, TimeZoneId,
+    WeekdaySet, derive_occurrence_identity, is_slot, next_slot_after,
 };
 use anyhow::{Context, Result, bail};
 use chrono::{NaiveDate, NaiveTime};
@@ -30,15 +30,6 @@ pub(super) fn validate_recurrence_task(change: &ChangeWire) -> Result<()> {
         ("updated_at", identity.updated_at.as_str()),
         ("available_at", slot.available_at.as_str()),
         ("due_on", slot.due_on.as_deref().unwrap_or("")),
-        ("task_change_id", identity.task_change_id.as_str()),
-        (
-            "occurrence_change_id",
-            identity.occurrence_change_id.as_str(),
-        ),
-        (
-            "task_field_version_seed",
-            identity.field_version_seeds.task.as_str(),
-        ),
         (
             "occurrence_field_version_seed",
             identity.field_version_seeds.occurrence.as_str(),
@@ -48,11 +39,30 @@ pub(super) fn validate_recurrence_task(change: &ChangeWire) -> Result<()> {
             bail!("error invalid-sync-change recurrence-deterministic-mismatch field={key}");
         }
     }
+    let (_, ids) = identity.generated_task_ids(&change.payload)?;
+    require_generation_ids(&change.payload, &ids)?;
     if change.entity_id != identity.task_id.as_str()
-        || change.change_id != identity.task_change_id
+        || change.change_id != ids.task_change_id
         || change.created_at != identity.created_at
     {
         bail!("error invalid-sync-change recurrence-deterministic-mismatch field=change_identity");
+    }
+    Ok(())
+}
+
+/// A generated record's change IDs and seed must all belong to one derivation form.
+fn require_generation_ids(payload: &Value, ids: &RecurrenceProposalIds) -> Result<()> {
+    for (key, expected) in [
+        ("task_change_id", ids.task_change_id.as_str()),
+        ("occurrence_change_id", ids.occurrence_change_id.as_str()),
+        (
+            "task_field_version_seed",
+            ids.task_field_version_seed.as_str(),
+        ),
+    ] {
+        if required_string_payload(key, payload)? != expected {
+            bail!("error invalid-sync-change recurrence-deterministic-mismatch field={key}");
+        }
     }
     Ok(())
 }
@@ -192,15 +202,6 @@ pub(super) fn validate_recurrence_projection(change: &ChangeWire) -> Result<()> 
             "projected_at",
             identity.occurrence_link.projected_at.as_str(),
         ),
-        ("task_change_id", identity.task_change_id.as_str()),
-        (
-            "occurrence_change_id",
-            identity.occurrence_change_id.as_str(),
-        ),
-        (
-            "task_field_version_seed",
-            identity.field_version_seeds.task.as_str(),
-        ),
         (
             "occurrence_field_version_seed",
             identity.field_version_seeds.occurrence.as_str(),
@@ -210,7 +211,10 @@ pub(super) fn validate_recurrence_projection(change: &ChangeWire) -> Result<()> 
             bail!("error invalid-sync-change recurrence-deterministic-mismatch field={key}");
         }
     }
-    if change.change_id != identity.occurrence_change_id
+    let (_, ids) =
+        identity.projection_ids(&required_string_payload("task_change_id", &change.payload)?);
+    require_generation_ids(&change.payload, &ids)?;
+    if change.change_id != ids.occurrence_change_id
         || change.created_at != identity.occurrence_link.projected_at
     {
         bail!("error invalid-sync-change recurrence-deterministic-mismatch field=change_id");
@@ -450,5 +454,119 @@ mod tests {
                 .to_string()
                 .contains("recurrence-deterministic-mismatch")
         );
+    }
+
+    fn generated_task(
+        title: &str,
+        description: &str,
+        labels: &[&str],
+    ) -> crate::sync::wire::ChangeWire {
+        let workspace = test_workspace();
+        let series_id: RecurrenceSeriesId = "AAAAAAAAAAAAAAAA".parse().unwrap();
+        let schedule = RecurrenceSchedule::new(
+            RecurrenceRule::daily(),
+            "UTC".parse().unwrap(),
+            "2026-07-20".parse().unwrap(),
+            None,
+            RecurrenceDuePolicy::SameDay,
+        );
+        let slot_on: NaiveDate = "2026-07-20".parse().unwrap();
+        let identity =
+            derive_occurrence_identity(&workspace.id, &series_id, &schedule, slot_on).unwrap();
+        let slot = crate::recurrence::slot_values(&schedule, slot_on).unwrap();
+        let mut payload = ChangePayload::workspace(&workspace)
+            .set("task_id", identity.task_id.as_str())
+            .set("series_id", series_id.as_str())
+            .set("slot_on", slot_on.to_string())
+            .set("title", title)
+            .set("description", description)
+            .set("project_id", "BBBBBBBBBBBBBBBB")
+            .set("status", "todo")
+            .set("priority", "none")
+            .set("available_at", &slot.available_at)
+            .set("due_on", slot.due_on.as_deref().unwrap_or(""))
+            .set("is_epic", "0")
+            .set("labels", labels)
+            .set("metadata", Vec::<String>::new())
+            .set("created_at", &identity.created_at)
+            .set("updated_at", &identity.updated_at)
+            .set(
+                "occurrence_field_version_seed",
+                &identity.field_version_seeds.occurrence,
+            )
+            .set("frequency", "daily")
+            .set("interval", 1)
+            .set("weekdays", "")
+            .set("timezone", "UTC")
+            .set("start_on", "2026-07-20")
+            .set("available_local_time", "")
+            .set("due_policy", "same_day")
+            .into_value();
+        let ids = crate::recurrence::derive_proposal_ids(&payload).unwrap();
+        payload["task_change_id"] = ids.task_change_id.clone().into();
+        payload["occurrence_change_id"] = ids.occurrence_change_id.into();
+        payload["task_field_version_seed"] = ids.task_field_version_seed.into();
+        let mut change = make_change_wire(
+            op_type::CREATE_TASK,
+            "task",
+            identity.task_id.as_str(),
+            payload,
+        );
+        change.change_id = ids.task_change_id;
+        change.created_at = identity.created_at;
+        change
+    }
+
+    #[test]
+    fn generated_task_identity_frames_content_and_rejects_mixed_forms() {
+        let proposal = generated_task("ab", "c", &["x", "y"]);
+        validate_pushed_change(&proposal).unwrap();
+        // Equal content derives equal identities; shifted adjacent strings do not.
+        assert_eq!(
+            generated_task("ab", "c", &["x", "y"]).change_id,
+            proposal.change_id
+        );
+        assert_ne!(
+            generated_task("a", "bc", &["x", "y"]).change_id,
+            proposal.change_id
+        );
+        assert_ne!(
+            generated_task("ab", "c", &["xy"]).change_id,
+            proposal.change_id
+        );
+
+        // The occurrence form stays valid; mixing forms does not.
+        let identity = derive_occurrence_identity(
+            &test_workspace().id,
+            &"AAAAAAAAAAAAAAAA".parse().unwrap(),
+            &RecurrenceSchedule::new(
+                RecurrenceRule::daily(),
+                "UTC".parse().unwrap(),
+                "2026-07-20".parse().unwrap(),
+                None,
+                RecurrenceDuePolicy::SameDay,
+            ),
+            "2026-07-20".parse().unwrap(),
+        )
+        .unwrap();
+        let mut occurrence = proposal.clone();
+        occurrence.change_id = identity.task_change_id.clone();
+        occurrence.payload["task_change_id"] = identity.task_change_id.clone().into();
+        occurrence.payload["occurrence_change_id"] = identity.occurrence_change_id.clone().into();
+        occurrence.payload["task_field_version_seed"] =
+            identity.field_version_seeds.task.clone().into();
+        validate_pushed_change(&occurrence).unwrap();
+        let mut mixed = occurrence.clone();
+        mixed.payload["task_field_version_seed"] =
+            proposal.payload["task_field_version_seed"].clone();
+        assert!(validate_pushed_change(&mixed).is_err());
+
+        // Proposal identities require normalized labels and bound content.
+        let mut unsorted = proposal.clone();
+        unsorted.payload["labels"] = serde_json::json!(["y", "x"]);
+        assert!(validate_pushed_change(&unsorted).is_err());
+        let mut edited = proposal;
+        edited.payload["title"] = "changed".into();
+        assert!(validate_pushed_change(&edited).is_err());
     }
 }

@@ -338,10 +338,18 @@ its operation-owned reconciliation at the authenticated `changed_at`, inside the
 page transaction. This can generate history needed by a later page record; only
 validated deterministic operations with canonical equality can rank that pending
 history as an echo. Retained prefix identities never become tail submissions.
-Concurrent completion shares successor identities. Concurrent generation from
-different templates can produce unequal meaning under the same deterministic ID;
-this remains an explicit integrity failure with pending evidence retained, not an
-identity-only acknowledgement or automatic conflict repair. Series lifecycle and
+Bound databases generate proposal-form recurrence records (see
+`SYNC_PROTOCOL.md`): equal generations share IDs and echo canonically, and
+generations from different templates or schedules get distinct operations for one
+stable task. `encrypted_tail/recurrence.rs::adopt_earlier_generation` applies an
+earlier accepted generation's untouched defaults over a later or pending baseline,
+using verified ranks and `authority.prefix`; prefix and installed baselines stay
+authoritative. `sync/apply/task.rs::adopt_generated_defaults` keeps explicit
+fields, metadata and completion, records ordinary conflicts for edits based on the
+losing seed, and returns changed labels for the shared tail label reconciliation.
+History, outbox and conflict rows are never replaced. Occurrence-form same-ID
+divergence from earlier builds still stops with pending evidence retained. Series
+lifecycle and
 outcome changes do not delete task rows or image references. Occurrence creation
 uses the existing Parent creation projection, and explicit task deletion uses the
 existing conservative Parent deletion projection.
@@ -394,7 +402,9 @@ retry, server reopen, client subprocess exits, conflicts, retained images, inval
 page rollback and explicit refusal tests. Controlled same-ID fixtures exercise
 canonical verification. `tests/recurrence.rs` also exercises actual independently
 generated deterministic successors, snapshot continuation, lifecycle and outcome
-conflicts, malformed compound rollback, lost acknowledgement and image retention.
+conflicts, malformed compound rollback, lost acknowledgement and image retention;
+`tests/recurrence/proposals.rs` covers concurrent template and schedule edits in both
+acceptance orders with a fresh peer, losing-baseline edits, labels and completion.
 `tests/administration.rs` covers project, label and workspace administration
 across peers and a fresh installation. Rotation, recovery, shipping setup, UI, iOS and comprehensive integration review
 remain separate work.

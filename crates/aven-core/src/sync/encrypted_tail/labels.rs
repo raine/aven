@@ -25,7 +25,7 @@ pub(super) async fn reconcile(
     prefix: i64,
     change: &ChangeWire,
 ) -> Result<()> {
-    let mut names = match change.op_type.as_str() {
+    let names = match change.op_type.as_str() {
         op_type::LABEL_ADD | op_type::LABEL_REMOVE => vec![text(change, "label")?.to_owned()],
         op_type::CREATE_LABEL | op_type::LABEL_DELETE | op_type::LABEL_RESTORE => {
             vec![text(change, "name")?.to_owned()]
@@ -37,6 +37,20 @@ pub(super) async fn reconcile(
         _ => return Ok(()),
     };
     let workspace = text(change, "workspace_id")?;
+    let task = (change.entity_type == "task").then_some((change.entity_id.as_str(), 1));
+    reconcile_names(conn, prefix, workspace, names, task).await
+}
+
+/// Reconciles the named labels. `task` limits the first `n` names to that task's
+/// pair; other names, including labels a re-applied rename moves into, reconcile
+/// every task with a retained pair command.
+pub(super) async fn reconcile_names(
+    conn: &mut SqliteConnection,
+    prefix: i64,
+    workspace: &str,
+    mut names: Vec<String>,
+    task: Option<(&str, usize)>,
+) -> Result<()> {
     let mut i = 0;
     while i < names.len() {
         let label = names[i].clone();
@@ -46,8 +60,8 @@ pub(super) async fn reconcile(
         {
             names.push(moved);
         }
-        let tasks: Vec<String> = if change.entity_type == "task" && i == 0 {
-            vec![change.entity_id.clone()]
+        let tasks: Vec<String> = if let Some((task, _)) = task.filter(|(_, n)| i < *n) {
+            vec![task.to_owned()]
         } else {
             sqlx::query_scalar(
                 "SELECT DISTINCT entity_id FROM changes

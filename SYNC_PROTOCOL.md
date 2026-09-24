@@ -120,6 +120,32 @@ identity or an explicit revision with retained historical decoding. Existing
 pending rows must keep their IDs, payloads, timestamps, order, and canonical
 meaning when uploaded through a newer request envelope.
 
+#### Recurrence generation forms
+
+Generated `create_task` and `project_recurrence_occurrence` records have two
+derivation forms under the same operation names and payload keys. Validators accept
+either form when all of a record's change IDs and seed belong to it, and reject
+mixtures.
+
+- Occurrence form: change IDs and the task field-version seed derive from
+  workspace, series and slot date only. Local-only databases produce it, as did
+  earlier encrypted-sync builds. Two such records with the same ID and unequal
+  content remain a same-ID integrity failure and are never rewritten.
+- Proposal form: databases with a seed opt-in or peer enrollment produce it. The
+  create's change ID derives from a SHA-256 digest over a JSON array of its
+  workspace, series, slot, title, description, project, initial status, priority,
+  labels (strictly ascending), metadata (`[field_id, key, value]`, strictly
+  ascending by key) and editable schedule values. The projection change ID and
+  field-version seed derive from that create ID. A projection carries no template
+  content, so apply binds it to the referenced create's coordinates, seed and
+  schedule context.
+
+A task can therefore have several accepted generations. The first in accepted
+order supplies untouched defaults; explicit edits based on another generation's
+seed follow ordinary conflict rules. Projection and outcome apply compare only the
+series lattice and timezone with the current series, because available time and
+due policy are the author's historical context.
+
 ### Persisted replica behavior
 
 The SQLite `meta` key `sync_established_protocol` stores the established protocol

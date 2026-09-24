@@ -1283,3 +1283,101 @@ async fn seal_failure_reuses_protected_intent_and_corrupt_authority_never_resets
         bytes
     );
 }
+
+#[tokio::test]
+async fn recurrence_generation_form_follows_seed_opt_in_through_capture_cancel() {
+    use aven_core::operations::{CreateRecurrenceSeriesParams, RecurrenceSeriesDraft};
+    use aven_core::recurrence::{
+        RecurrenceDuePolicy, RecurrenceRule, RecurrenceSchedule, derive_occurrence_identity,
+        derive_proposal_ids,
+    };
+    use chrono::TimeZone;
+
+    async fn generation(database: &Database, slot: &str) -> (String, serde_json::Value) {
+        let mut conn = aven_core::test_support::acquire(database).await.unwrap();
+        let (id, payload): (String, String) = sqlx::query_as(
+            "SELECT change_id, payload FROM changes
+             WHERE op_type = 'create_task' AND json_extract(payload, '$.slot_on') = ?",
+        )
+        .bind(slot)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        (id, serde_json::from_str(&payload).unwrap())
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let database = Database::open(&root.path().join("client.sqlite"))
+        .await
+        .unwrap();
+    let workspace = database.list_workspaces().await.unwrap().remove(0);
+    let at = chrono::Utc.with_ymd_and_hms(2100, 9, 21, 12, 0, 0).unwrap();
+    let schedule = RecurrenceSchedule::new(
+        RecurrenceRule::daily(),
+        "UTC".parse().unwrap(),
+        at.date_naive(),
+        None,
+        RecurrenceDuePolicy::SameDay,
+    );
+    let series = database
+        .create_recurrence_series(
+            &workspace,
+            CreateRecurrenceSeriesParams::new(RecurrenceSeriesDraft {
+                title: "daily".into(),
+                description: String::new(),
+                project: "app".into(),
+                priority: "none".into(),
+                initial_status: "todo".into(),
+                labels: vec![],
+                metadata: vec![],
+                schedule: schedule.clone(),
+            })
+            .at(at),
+        )
+        .await
+        .unwrap();
+    // Local-only generation keeps occurrence-form identities.
+    let (id, _) = generation(&database, "2100-09-21").await;
+    let identity =
+        derive_occurrence_identity(&workspace.id, &series.series.id, &schedule, at.date_naive())
+            .unwrap();
+    assert_eq!(id, identity.task_change_id);
+
+    let store = isolated_store(database.path(), &root.path().join("keys"));
+    store.prepare_seed_claim(&database, [9; 32]).await.unwrap();
+    store.prepare_seed_source(&database).await.unwrap();
+    let capture = database
+        .capture_local_shared_state_never_dispatched()
+        .await
+        .unwrap();
+    assert!(
+        database
+            .cancel_local_shared_state_never_dispatched(capture.candidate_id())
+            .await
+            .unwrap()
+    );
+    // The seed opt-in is permanent, so cancelling the capture keeps proposal form.
+    for (days, slot) in [(1, "2100-09-22"), (2, "2100-09-23")] {
+        database
+            .reconcile_recurrence_series(
+                &workspace,
+                &series.series.id,
+                at + chrono::Duration::days(days),
+            )
+            .await
+            .unwrap();
+        let (id, payload) = generation(&database, slot).await;
+        assert_eq!(id, derive_proposal_ids(&payload).unwrap().task_change_id);
+        if days == 1 {
+            database
+                .capture_local_shared_state_never_dispatched()
+                .await
+                .unwrap();
+        }
+    }
+    // The first generation's accepted-form bytes are unchanged.
+    assert_eq!(
+        generation(&database, "2100-09-21").await.0,
+        identity.task_change_id
+    );
+}
