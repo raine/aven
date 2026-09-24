@@ -266,6 +266,18 @@ fn invitation_form_never_renders_the_secret() {
     assert!(!rendered.contains("SECRET"));
     assert!(!rendered.contains("aven-sync-setup-1"));
     assert!(rendered.contains("30 characters pasted"));
+    let mut single = SecretText::default();
+    single.insert("a");
+    let one = render_page(
+        SyncPage::Invitation {
+            kind: InvitationKind::Join,
+            input: single,
+            error: None,
+        },
+        local_status(),
+        SyncActivity::default(),
+    );
+    assert!(one.contains("1 character pasted"), "{one}");
     assert!(rendered.contains("This isn't a setup invitation."));
     assert!(rendered.contains("isn't shown or saved"));
     assert!(rendered.contains(" Continue "));

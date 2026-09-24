@@ -83,9 +83,7 @@ impl App {
             return;
         };
         match crate::tui::platform::copy_to_clipboard(text) {
-            Ok(()) => self.set_warning(
-                "invitation copied: it grants access to all synced data until used or expired",
-            ),
+            Ok(()) => self.set_warning("invitation copied: it grants access to your synced data"),
             Err(error) => self.set_warning(format!("could not copy invitation: {error:#}")),
         }
     }

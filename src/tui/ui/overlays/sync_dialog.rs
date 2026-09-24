@@ -779,7 +779,7 @@ fn invitation_lines(
         Span::styled("paste the invitation", Style::new().fg(FG_DIM))
     } else {
         Span::styled(
-            format!("{} characters pasted", input.chars()),
+            format!("{} pasted", plural(input.chars() as u64, "character")),
             Style::new().fg(FG),
         )
     };
