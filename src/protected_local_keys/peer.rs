@@ -18,6 +18,11 @@ type Hash = [u8; 32];
 const IDENTITY_LIMIT: usize = 8192;
 const JOURNAL_LIMIT: usize = 4096;
 const CANDIDATE_LIMIT: usize = 4 * membership::MAX_RECORD_BYTES + 1024;
+const RESPONSE_LIMIT: usize = CANDIDATE_LIMIT + 4096;
+const ATTEMPT_LIMIT: usize = 512;
+/// Join attempts per installation: the original request and up to three
+/// replacements, each retained with its exact invitation and request.
+pub(crate) const MAX_JOIN_ATTEMPTS: usize = 4;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Identity {
@@ -194,7 +199,10 @@ impl ProtectedLocalKeyStore {
             );
             for (kind, size) in [
                 ("peer-sent", 128),
-                ("peer-response", CANDIDATE_LIMIT + 4096),
+                ("peer-attempt-1", ATTEMPT_LIMIT),
+                ("peer-attempt-2", ATTEMPT_LIMIT),
+                ("peer-attempt-3", ATTEMPT_LIMIT),
+                ("peer-response", RESPONSE_LIMIT),
                 ("peer-verified", 2048),
                 ("peer-ready", 128),
                 ("peer-installed", 128),
@@ -887,11 +895,33 @@ impl ProtectedLocalKeyStore {
         self.save_phase(db, &inputs.id, &journal.name("ready"), 128, &head)
             .await
     }
+    /// The request to post: a known invitation's exact attempt, otherwise the
+    /// latest attempt, or the one a pinned response answers.
     pub(crate) async fn prepare_peer(
         &self,
         db: &Database,
         locator: &str,
         invitation: Option<Invitation>,
+    ) -> Result<Joiner> {
+        self.select_peer(db, locator, invitation, false).await
+    }
+    /// Like `prepare_peer`, but an unknown invitation becomes a new attempt
+    /// while joining is unfinished. The installation keys, enrollment pin and
+    /// fence stay unchanged, and every earlier attempt is retained.
+    pub(crate) async fn replace_peer(
+        &self,
+        db: &Database,
+        locator: &str,
+        invitation: Invitation,
+    ) -> Result<Joiner> {
+        self.select_peer(db, locator, Some(invitation), true).await
+    }
+    async fn select_peer(
+        &self,
+        db: &Database,
+        locator: &str,
+        invitation: Option<Invitation>,
+        replace: bool,
     ) -> Result<Joiner> {
         let guard = InstallationGuard::acquire(db.path())?;
         self.validate_database(db)?;
@@ -938,16 +968,121 @@ impl ProtectedLocalKeyStore {
             id.role == "peer" && id.locator == locator,
             "error enrollment-context"
         );
-        let peer = Joiner::from_protected_storage(&id.authority)?;
+        let mut attempts = self.attempts(db, &id).await?;
+        self.save_phase(
+            db,
+            &id,
+            "peer-sent",
+            128,
+            &Sha256::digest(attempts[0].request()),
+        )
+        .await?;
+        let known = invitation
+            .as_ref()
+            .map(|i| attempts.iter().position(|peer| peer.matches_invitation(i)));
+        Ok(match (known, self.response(db).await?) {
+            (Some(None), _) => {
+                ensure!(replace, "error enrollment-invitation-conflict");
+                self.ensure_retry_allowed(db, &id, &guard, attempts.len())
+                    .await?;
+                let peer = attempts[0].retry(invitation.expect("unknown invitation"))?;
+                self.save_phase(
+                    db,
+                    &id,
+                    &format!("peer-attempt-{}", attempts.len()),
+                    ATTEMPT_LIMIT,
+                    &peer.attempt_bytes(),
+                )
+                .await?;
+                peer
+            }
+            (_, Some(mail)) => responding(attempts, &mail)?,
+            (Some(Some(index)), None) => attempts.swap_remove(index),
+            (None, None) => attempts.pop().expect("original attempt"),
+        })
+    }
+    /// Every retained attempt, oldest first, or only the one a pinned
+    /// response answers. Attempts are never removed.
+    pub(crate) async fn peer_attempts(&self, db: &Database, locator: &str) -> Result<Vec<Joiner>> {
+        let guard = InstallationGuard::acquire(db.path())?;
+        self.validate_database(db)?;
+        let _lock = self.lock()?;
+        let id = self
+            .identity(db, &guard)
+            .await?
+            .context("error enrollment-missing")?;
         ensure!(
-            invitation
-                .as_ref()
-                .is_none_or(|i| peer.matches_invitation(i)),
-            "error enrollment-invitation-conflict"
+            id.role == "peer" && id.locator == locator,
+            "error enrollment-context"
         );
-        self.save_phase(db, &id, "peer-sent", 128, &Sha256::digest(peer.request()))
+        let attempts = self.attempts(db, &id).await?;
+        Ok(match self.response(db).await? {
+            Some(mail) => vec![responding(attempts, &mail)?],
+            None => attempts,
+        })
+    }
+    /// The immutable original followed by retained replacement attempts. An
+    /// attempt written before its SQLite commitment is committed unchanged.
+    async fn attempts(&self, db: &Database, id: &Identity) -> Result<Vec<Joiner>> {
+        let original = Joiner::from_protected_storage(&id.authority)?;
+        let mut attempts = Vec::new();
+        let mut gap = false;
+        for index in 1..MAX_JOIN_ATTEMPTS {
+            let name = format!("peer-attempt-{index}");
+            let Some(bytes) = self.phase(db, &name, ATTEMPT_LIMIT).await? else {
+                gap = true;
+                continue;
+            };
+            ensure!(!gap, "error enrollment-attempt-missing");
+            if db.enrollment_artifact(&name).await?.is_none() {
+                self.save_phase(db, id, &name, ATTEMPT_LIMIT, &bytes)
+                    .await?;
+            }
+            attempts.push(original.attempt(&bytes)?);
+        }
+        attempts.insert(0, original);
+        Ok(attempts)
+    }
+    /// A replacement attempt only while no admission has been accepted here:
+    /// no pinned response or later phase, membership floor, outbound journal,
+    /// installation or association, and an empty domain.
+    async fn ensure_retry_allowed(
+        &self,
+        db: &Database,
+        id: &Identity,
+        guard: &InstallationGuard,
+        attempts: usize,
+    ) -> Result<()> {
+        for (kind, size) in [
+            ("peer-response", RESPONSE_LIMIT),
+            ("peer-verified", 2048),
+            ("peer-ready", 128),
+            ("peer-installed", 128),
+        ] {
+            ensure!(
+                self.phase(db, kind, size).await?.is_none(),
+                "error enrollment-retry-unavailable"
+            );
+        }
+        ensure!(
+            self.membership_floor(db, id.incarnation).await?.is_none()
+                && db.membership_checkpoint_mirror().await?.is_none()
+                && self.journals(db).await?.is_empty(),
+            "error enrollment-retry-unavailable"
+        );
+        db.peer_retry_preflight(id.incarnation, &id.client, guard)
             .await?;
-        Ok(peer)
+        ensure!(attempts < MAX_JOIN_ATTEMPTS, "error enrollment-retry-limit");
+        Ok(())
+    }
+    async fn response(&self, db: &Database) -> Result<Option<membership::Mailbox>> {
+        self.phase(db, "peer-response", RESPONSE_LIMIT)
+            .await?
+            .map(|bytes| {
+                serde_json::from_slice(&bytes)
+                    .map_err(|_| anyhow::anyhow!("error enrollment-protected-framing"))
+            })
+            .transpose()
     }
     pub(crate) async fn pin_peer_response(
         &self,
@@ -962,11 +1097,7 @@ impl ProtectedLocalKeyStore {
             .await?
             .context("error enrollment-missing")?;
         ensure!(id.role == "peer", "error enrollment-role");
-        let peer = Joiner::from_protected_storage(&id.authority)?;
-        ensure!(
-            mail.request.as_deref() == Some(peer.request()),
-            "error enrollment-request-mismatch"
-        );
+        let peer = responding(self.attempts(db, &id).await?, mail)?;
         let grant = peer.open_provisional(
             &mail.declaration,
             mail.admission
@@ -977,7 +1108,7 @@ impl ProtectedLocalKeyStore {
             db,
             &id,
             "peer-response",
-            CANDIDATE_LIMIT + 4096,
+            RESPONSE_LIMIT,
             &serde_json::to_vec(mail)?,
         )
         .await?;
@@ -992,13 +1123,11 @@ impl ProtectedLocalKeyStore {
             .await?
             .context("error enrollment-missing")?;
         ensure!(id.role == "peer", "error enrollment-role");
-        let response = self
-            .phase(db, "peer-response", CANDIDATE_LIMIT + 4096)
+        let mail = self
+            .response(db)
             .await?
             .context("error enrollment-response-missing")?;
-        let mail: membership::Mailbox = serde_json::from_slice(&response)
-            .map_err(|_| anyhow::anyhow!("error enrollment-protected-framing"))?;
-        let peer = Joiner::from_protected_storage(&id.authority)?;
+        let peer = responding(self.attempts(db, &id).await?, &mail)?;
         let grant = peer.open_provisional(
             &mail.declaration,
             mail.admission
@@ -1060,7 +1189,11 @@ impl ProtectedLocalKeyStore {
             .context("error enrollment-key-coverage-missing")?;
         let record: Verified = serde_json::from_slice(&bytes)
             .map_err(|_| anyhow::anyhow!("error enrollment-protected-framing"))?;
-        let peer = Joiner::from_protected_storage(&id.authority)?;
+        let mail = self
+            .response(db)
+            .await?
+            .context("error enrollment-response-missing")?;
+        let peer = responding(self.attempts(db, id).await?, &mail)?;
         let verified = self
             .load_evidence(&record.evidence)?
             .enrollment(&peer, record.outcome)?;
@@ -1244,6 +1377,14 @@ impl ProtectedLocalKeyStore {
         }
         Ok(EnrollmentReadiness::Enrolled { head: m.head() })
     }
+}
+/// The attempt whose exact request a mailbox response answers. Its grant
+/// binds that attempt's invitation, handle and request hash.
+fn responding(attempts: Vec<Joiner>, mail: &membership::Mailbox) -> Result<Joiner> {
+    attempts
+        .into_iter()
+        .find(|peer| mail.request.as_deref() == Some(peer.request()))
+        .context("error enrollment-request-mismatch")
 }
 impl Outbound {
     fn name(&self, phase: &str) -> String {

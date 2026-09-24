@@ -105,10 +105,14 @@ inviting device and downloads tasks, the TUI pauses adding tasks, projects,
 labels, and workspaces. Once tasks arrive they appear in the list while images
 keep downloading. **Resume joining** continues an interrupted join without the
 invitation. If the inviting device does not add this one in time, keep it waiting and
-resume. A timeout does not show whether the invitation expired. If it expired
-before the other device added this one, this join attempt cannot finish; keep
-this database as it is and join from a new, empty database with a new
-invitation.
+resume. A timeout does not show whether the invitation expired. If it expired,
+create a new invitation on the same inviting device and continue with it:
+**Use a new invitation** in the TUI, or `aven sync join --new-invitation` on the
+command line. This device keeps its identity, and the earlier invitation is
+kept, so if the other device already added this one with it, joining finishes
+with that admission. A database can use up to four invitations. Once local data
+was added while joining, or all four are used, it cannot finish joining; keep it
+as it is and join from a new, empty database.
 
 Anyone with the invitation can access all synced data and manage devices. It
 expires after ten minutes. Sync on the inviting device pauses until the

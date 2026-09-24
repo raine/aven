@@ -567,9 +567,25 @@ struct Pair {
 
 /// Sets up `a` from its current data and joins an empty `b`.
 async fn pair(root: &Path) -> Pair {
+    let (server, a) = set_up(root).await;
+    let b = Installation::new(root, "b");
+    let (invite, invitation, _invite_stdout) = spawn_invite(&a, None).await;
+    success(
+        &b.run_with_input(&["sync", "join"], &invitation).await,
+        &["sync", "join"],
+    );
+    assert!(invite.wait_with_output().await.unwrap().status.success());
+    Pair {
+        _server: server,
+        a,
+        b,
+    }
+}
+
+/// Starts a server and sets up `a` from its current data.
+async fn set_up(root: &Path) -> (Child, Installation) {
     let operator = Installation::new(root, "operator");
     let a = Installation::new(root, "a");
-    let b = Installation::new(root, "b");
     let data = root.join("server.sqlite");
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
@@ -595,17 +611,49 @@ async fn pair(root: &Path) -> Pair {
         &a.run_with_input(&["sync", "setup", "--yes"], &setup).await,
         &["sync", "setup"],
     );
-    let (invite, invitation, _invite_stdout) = spawn_invite(&a, None).await;
-    success(
-        &b.run_with_input(&["sync", "join"], &invitation).await,
-        &["sync", "join"],
+    (server, a)
+}
+
+/// The reported flow with a short declared invitation lifetime: the inviting
+/// device stops before admitting, the join times out and the invitation
+/// expires, and the same database finishes with a new invitation.
+#[tokio::test]
+async fn cli_join_continues_with_a_new_invitation_after_expiry() {
+    let root = tempfile::tempdir().unwrap();
+    let (_server, a) = set_up(root.path()).await;
+    let b = Installation::new(root.path(), "b");
+    let (mut invite, expired, _stdout) = spawn_invite(&a, Some("15")).await;
+    invite.kill().await.unwrap();
+    let mut join = b
+        .command(&["sync", "join"])
+        .env("AVEN_TEST_INVITATION_SECONDS", "15")
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = join.stdin.take().unwrap();
+    stdin.write_all(expired.as_bytes()).await.unwrap();
+    drop(stdin);
+    let timed_out = failure(&join.wait_with_output().await.unwrap());
+    assert!(timed_out.contains("error sync-join-timeout"), "{timed_out}");
+    assert!(timed_out.contains("--new-invitation"), "{timed_out}");
+
+    // The inviting device retires the unused expired invitation.
+    a.ok(&["sync"]).await;
+    let (invite, fresh, _stdout) = spawn_invite(&a, None).await;
+    let refused = failure(&b.run_with_input(&["sync", "join"], &fresh).await);
+    assert!(
+        refused.contains("error sync-join-invitation-conflict")
+            && refused.contains("--new-invitation"),
+        "{refused}"
     );
-    assert!(invite.wait_with_output().await.unwrap().status.success());
-    Pair {
-        _server: server,
-        a,
-        b,
+    let args = ["sync", "join", "--new-invitation"];
+    let mut joined = b.run_with_input(&args, &fresh).await;
+    if !joined.status.success() && failure(&joined).contains("error enrollment-busy") {
+        joined = b.run_with_input(&args, &fresh).await;
     }
+    success(&joined, &args);
+    assert!(invite.wait_with_output().await.unwrap().status.success());
+    assert!(b.ok(&["sync", "status"]).await.contains("State: ready"));
 }
 
 #[test]
@@ -613,9 +661,9 @@ fn join_timeout_hint_covers_expiry_without_suggesting_discarding_data() {
     let hint = super::JOIN_TIMEOUT;
     assert!(hint.starts_with("error sync-join-timeout hint="));
     assert!(hint.contains("rerun `aven sync join`"));
-    assert!(hint.contains("If the invitation expired before the other device added this device"));
-    assert!(hint.contains("this join attempt cannot finish"));
-    assert!(hint.contains("keep this database unchanged"));
+    assert!(hint.contains("If the invitation expired"));
+    assert!(hint.contains("`aven sync join --new-invitation`"));
+    assert!(hint.contains("an admission from the earlier invitation still completes"));
     for word in ["delete", "reset", "disposable", "is empty"] {
         assert!(!hint.contains(word), "{hint}");
     }

@@ -657,6 +657,10 @@ async fn process_worker() {
     let client = Client::new(&origin).unwrap();
     if role == "inviter" {
         client.admit(&store, &db).await.unwrap();
+    } else if role == "replace" {
+        let bytes = zeroize::Zeroizing::new(std::fs::read(root.join("replacement.test")).unwrap());
+        let invitation = Invitation::from_protected_storage(&bytes).unwrap();
+        client.replace(&store, &db, invitation).await.unwrap();
     } else if role == "initial" {
         let bytes = zeroize::Zeroizing::new(std::fs::read(root.join("invitation.test")).unwrap());
         let invitation = Invitation::from_protected_storage(&bytes).unwrap();
@@ -1001,6 +1005,7 @@ async fn management_loopback_authenticates_removed_seed_before_stale_hint() {
     task.abort();
 }
 
+mod retry;
 mod rotation;
 
 /// Leaves time to register, request and prepare a grant before the server's

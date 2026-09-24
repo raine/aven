@@ -229,6 +229,7 @@ impl SyncOperations {
         database: &Database,
         config: &AppConfig,
         invitation: Option<Zeroizing<String>>,
+        replace: bool,
     ) -> bool {
         let database = database.clone();
         let config = config.clone();
@@ -243,6 +244,7 @@ impl SyncOperations {
                         .map(|text| DeviceInvitation::decode(&text))
                         .transpose()
                 },
+                replace,
                 &progress,
             )
             .await?;

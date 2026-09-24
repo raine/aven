@@ -195,7 +195,9 @@ fn body(view: &SyncDialogView<'_>, width: usize) -> Body {
         SyncPage::ConfirmSetup {
             server, preview, ..
         } => confirm_setup_lines(&mut body, server, preview, width),
-        SyncPage::ConfirmJoin { server, .. } => confirm_join_lines(&mut body, server, width),
+        SyncPage::ConfirmJoin {
+            server, replace, ..
+        } => confirm_join_lines(&mut body, server, *replace, width),
         SyncPage::ConfirmRemove { device } => {
             confirm_remove_lines(&mut body, view.activity, device, width)
         }
@@ -787,6 +789,12 @@ fn invitation_lines(
             "Set up sync",
             "Paste the setup invitation printed by `aven server setup` on your server.",
         ),
+        InvitationKind::Join if status.phase == LocalPhase::JoinIncomplete => (
+            "Use a new invitation",
+            "On the device that created the first invitation, open Add device and press c \
+             to copy a new invitation, then paste it here. Invitations from other devices \
+             can't be used.",
+        ),
         InvitationKind::Join => (
             "Join existing sync",
             "On a device that already syncs, open Add device and press c to copy the \
@@ -877,14 +885,27 @@ fn confirm_setup_lines(body: &mut Body, server: &str, preview: &SetupPreview, wi
     }
 }
 
-fn confirm_join_lines(body: &mut Body, server: &str, width: usize) {
+fn confirm_join_lines(body: &mut Body, server: &str, replace: bool, width: usize) {
     let lines = &mut body.lines;
     lines.push(Line::from(Span::styled(
-        "Join existing sync",
+        if replace {
+            "Continue joining with a new invitation"
+        } else {
+            "Join existing sync"
+        },
         Style::new().fg(FG).add_modifier(Modifier::BOLD),
     )));
     lines.extend(wrapped_row("server", server, Style::new().fg(FG), width));
     lines.push(Line::from(""));
+    if replace {
+        lines.extend(paragraph(
+            "This device keeps its identity. The earlier invitation is kept too, so if \
+             the other device already added this device with it, joining finishes with \
+             that.",
+            Style::new().fg(FG_MUTED),
+            width,
+        ));
+    }
     lines.extend(paragraph(
         "This computer will download the synced tasks, then their images. Keep Add \
          device open on the other device until joining finishes.",

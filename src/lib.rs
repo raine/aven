@@ -410,7 +410,9 @@ async fn dispatch_database(
                 sync::encrypted::setup(&database, &config, setup).await
             }
             Some(SyncSubcommand::Invite) => sync::encrypted::invite(&database, &config).await,
-            Some(SyncSubcommand::Join) => sync::encrypted::join(&database, &config).await,
+            Some(SyncSubcommand::Join(join)) => {
+                sync::encrypted::join(&database, &config, join).await
+            }
             Some(SyncSubcommand::Device(device)) => match device.command {
                 DeviceSubcommand::List { json } => {
                     sync::encrypted::list_devices(&database, &config, json).await

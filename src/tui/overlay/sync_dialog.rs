@@ -58,6 +58,8 @@ pub(crate) enum SyncPage {
     ConfirmJoin {
         server: String,
         invitation: SecretText,
+        /// Continues an unfinished join with an invitation it hasn't used.
+        replace: bool,
     },
     Devices,
     ConfirmRemove {
@@ -134,6 +136,8 @@ pub(crate) enum SyncAction {
     Join,
     ResumeSetup,
     ResumeJoin,
+    /// Continues an unfinished join with a replacement invitation.
+    NewJoinInvitation,
     Back,
     Continue,
     ConfirmSetup,
@@ -158,6 +162,7 @@ impl SyncAction {
             Self::Join => "Join existing sync",
             Self::ResumeSetup => "Resume setup",
             Self::ResumeJoin => "Resume joining",
+            Self::NewJoinInvitation => "Use a new invitation",
             Self::Back => "Back",
             Self::Continue => "Continue",
             Self::ConfirmSetup => "Set up sync",
@@ -191,7 +196,9 @@ pub(crate) fn sync_actions(
             ],
             LocalPhase::NotSetUp => vec![SyncAction::SetUp, SyncAction::Join],
             LocalPhase::SetupIncomplete => vec![SyncAction::ResumeSetup],
-            LocalPhase::JoinIncomplete => vec![SyncAction::ResumeJoin],
+            LocalPhase::JoinIncomplete => {
+                vec![SyncAction::ResumeJoin, SyncAction::NewJoinInvitation]
+            }
         },
         SyncPage::Invitation { .. } => vec![SyncAction::Back, SyncAction::Continue],
         SyncPage::ConfirmSetup { .. } => vec![SyncAction::Back, SyncAction::ConfirmSetup],
@@ -442,7 +449,7 @@ mod tests {
         );
         assert_eq!(
             sync_actions(&state, &status(LocalPhase::JoinIncomplete), &idle),
-            [SyncAction::ResumeJoin]
+            [SyncAction::ResumeJoin, SyncAction::NewJoinInvitation]
         );
         assert_eq!(
             sync_actions(&state, &status(LocalPhase::SetUp), &idle),
@@ -594,6 +601,7 @@ mod tests {
         let join = SyncDialogState::page(SyncPage::ConfirmJoin {
             server: "https://sync.example.com".to_string(),
             invitation: SecretText::default(),
+            replace: false,
         });
         assert_eq!(join.selected, 1);
     }

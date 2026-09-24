@@ -708,7 +708,9 @@ take no terminal input: `run_setup`, `run_join`, `setup_preview`,
 `ensure_join_available`, `local_phase`, and in `devices.rs` `load_devices`,
 `remove_other_device` and `finish_removal`. Setup and join report coarse
 `Stage` values through a callback. `run_join` asks for an invitation only while
-enrollment is unfinished and resumes the stored request without one.
+enrollment is unfinished and resumes the stored request without one. Its
+`replace` flag (`sync join --new-invitation`, TUI **Use a new invitation**)
+lets an invitation the join has not used become a new attempt.
 `local_phase` reads only database facts (setup incomplete, join incomplete,
 set up) and describes state; it does not authorize anything.
 
@@ -831,6 +833,17 @@ clear this fence. Safe management may proceed through this fence but cannot
 clear it or grant ordinary dispatch readiness. Signed cancellation and recovery
 remain outside this owner.
 
+An unfinished peer join may retain up to four attempts. Attempt zero is the
+immutable `peer-identity` authority; replacements are protected `peer-attempt-N`
+phases holding only the invitation and exact request. `Joiner::attempt` rebuilds
+them over attempt zero's keys, so device, signing, HPKE and bearer never change.
+The same vault and inviter HPKE key are required, and the enrollment pin and fence
+stay in place. Replacement needs no pinned response or later phase, no floor,
+journal, receipt or association, and an empty domain (`peer_retry_preflight`).
+Completion checks every attempt's mailbox. The pinned `peer-response` request
+selects the winning attempt for verification, readiness and installation. Attempts
+are never deleted, and expiry, refusal or timeout never proves non-admission.
+
 `src/protected_local_keys/membership.rs` owns append-only protected checkpoint
 records and commitment-addressed public evidence outside replaceable SQLite.
 Each checkpoint binds verified ancestry and the digest of complete protected
@@ -866,7 +879,10 @@ three-client fixtures use independent databases, protected stores and blob roots
 real loopback HTTP and core mutations. `peer_enrollment_http::tests::rotation::`
 covers offline multi-rotation coverage, fresh historical bootstrap installation,
 immutable receipt retries, protected-before-mirror failures and missing/corrupt
-coverage. `encrypted_tail_http::tests::membership::rotation::` covers server-driven
+coverage. `peer_enrollment_http::tests::retry::` covers replacement attempts,
+earlier admissions after a replacement, refusals and subprocess exits;
+`sync::encrypted::tests::cli_join_continues_with_a_new_invitation_after_expiry`
+runs the CLI flow. `encrypted_tail_http::tests::membership::rotation::` covers server-driven
 removal with surviving root task/image rounds, cutover outcomes, signed interval
 negatives, frozen reads and atomic supersession across subprocess exits. SQL faults and subprocess exits are not
 power-loss, Keychain, mobile, interoperability or independent security evidence.

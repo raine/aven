@@ -203,6 +203,9 @@ impl Declaration {
     }
 }
 
+/// Device ID and signing, recipient and bearer secrets in protected storage.
+const ATTEMPT_KEY_BYTES: usize = 128;
+
 /// Independently generated installation keys and one immutable PSK request.
 /// Hosts must durably own this material before sending anything.
 pub struct Joiner(pub(super) PeerAuthority);
@@ -218,6 +221,37 @@ impl Joiner {
     }
     pub fn matches_invitation(&self, invitation: &Invitation) -> bool {
         self.0.matches_invitation(invitation)
+    }
+    /// Another request from these unchanged installation keys, for a
+    /// replacement invitation to the same vault from the same inviter.
+    pub fn retry(&self, invitation: Invitation) -> Result<Self> {
+        self.same_context(&invitation)?;
+        ensure!(
+            !self.matches_invitation(&invitation),
+            "error enrollment-retry-context"
+        );
+        Ok(Self(self.0.retry(invitation)?))
+    }
+    /// The invitation and exact request of this attempt, without the keys.
+    pub fn attempt_bytes(&self) -> Zeroizing<Vec<u8>> {
+        Zeroizing::new(self.protected_storage_bytes()[ATTEMPT_KEY_BYTES..].to_vec())
+    }
+    /// Rebuilds a retained attempt from `attempt_bytes` over these keys, so
+    /// every attempt shares this installation authority by construction.
+    pub fn attempt(&self, bytes: &[u8]) -> Result<Self> {
+        let mut raw = Zeroizing::new(self.protected_storage_bytes()[..ATTEMPT_KEY_BYTES].to_vec());
+        raw.extend_from_slice(bytes);
+        let attempt = Self::from_protected_storage(&raw)?;
+        self.same_context(&attempt.0.invitation)?;
+        Ok(attempt)
+    }
+    fn same_context(&self, invitation: &Invitation) -> Result<()> {
+        ensure!(
+            invitation.vault == self.0.invitation.vault
+                && invitation.inviter == self.0.invitation.inviter,
+            "error enrollment-retry-context"
+        );
+        Ok(())
     }
     pub fn vault(&self) -> Hash {
         self.0.vault()

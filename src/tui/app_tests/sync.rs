@@ -277,6 +277,34 @@ async fn interrupted_joining_pauses_local_edits_and_offers_resume() {
     settle_operation(&mut app).await;
 }
 
+#[tokio::test]
+async fn interrupted_joining_takes_a_new_invitation_after_confirmation() {
+    let mut app = test_app().await;
+    app.store.sync_status.set_up = true;
+    app.store.sync_status.phase = crate::sync::encrypted::LocalPhase::JoinIncomplete;
+    let (_, device) = crate::sync::encrypted::sample_invitations("https://sync.example.com");
+
+    app.show_sync_dialog();
+    app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert!(matches!(
+        sync_page(&app),
+        crate::tui::overlay::SyncPage::Invitation { .. }
+    ));
+    paste(&mut app, &device).await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    let crate::tui::overlay::SyncPage::ConfirmJoin { replace, .. } = sync_page(&app) else {
+        panic!("expected join confirmation");
+    };
+    assert!(*replace);
+    assert!(!app.sync_ops.work_pending());
+
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert_eq!(*sync_page(&app), crate::tui::overlay::SyncPage::Home);
+    assert!(app.sync_ops.work_pending());
+    settle_operation(&mut app).await;
+}
+
 fn listed_devices(app: &mut App) -> [u8; 32] {
     use crate::sync::encrypted::{Device, DeviceListing};
     let other = [2; 32];

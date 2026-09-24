@@ -618,6 +618,21 @@ impl Client {
         invitation: Option<Invitation>,
     ) -> Result<()> {
         let peer = store.prepare_peer(db, &self.locator, invitation).await?;
+        self.post(&peer).await
+    }
+    /// Requests admission with a replacement invitation from the same inviter
+    /// while joining is unfinished. Earlier attempts stay retained and can
+    /// still complete the join.
+    pub async fn replace(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        invitation: Invitation,
+    ) -> Result<()> {
+        let peer = store.replace_peer(db, &self.locator, invitation).await?;
+        self.post(&peer).await
+    }
+    async fn post(&self, peer: &membership::Joiner) -> Result<()> {
         ensure!(
             matches!(
                 self.exchange(
@@ -693,24 +708,47 @@ impl Client {
         }
         unreachable!()
     }
+    /// Checks every retained attempt for an admission and completes the one
+    /// whose grant opens for its exact request. A refusal, missing admission
+    /// or unopenable grant for one attempt proves nothing about the others,
+    /// so only the latest attempt's error is reported, after all are checked.
+    /// Once a response is pinned, only that attempt is checked.
     pub async fn complete(&self, store: &ProtectedLocalKeyStore, db: &Database) -> Result<bool> {
-        let peer = store.prepare_peer(db, &self.locator, None).await?;
-        let Reply::Mailbox(mail) = self
-            .exchange(
-                Operation::Mailbox {
-                    vault: peer.vault(),
-                    handle: peer.handle(),
-                },
-                None,
-            )
-            .await?
-        else {
-            anyhow::bail!("error enrollment-response");
-        };
-        if mail.admission.is_none() {
-            return Ok(false);
+        let attempts = store.peer_attempts(db, &self.locator).await?;
+        let mut latest = Ok(false);
+        for (index, peer) in attempts.iter().enumerate().rev() {
+            let pinned = match self
+                .exchange(
+                    Operation::Mailbox {
+                        vault: peer.vault(),
+                        handle: peer.handle(),
+                    },
+                    None,
+                )
+                .await
+            {
+                Ok(Reply::Mailbox(mail)) if mail.admission.is_some() => {
+                    store.pin_peer_response(db, &mail).await.map(Some)
+                }
+                Ok(Reply::Mailbox(_)) => Ok(None),
+                Ok(_) => Err(anyhow::anyhow!("error enrollment-response")),
+                Err(error) => Err(error),
+            };
+            match pinned {
+                Ok(Some(grant)) => return self.finish(store, db, peer, grant).await,
+                result if index + 1 == attempts.len() => latest = result.map(|_| false),
+                _ => {}
+            }
         }
-        let grant = store.pin_peer_response(db, &mail).await?;
+        latest
+    }
+    async fn finish(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        peer: &membership::Joiner,
+        grant: membership::ProvisionalGrant,
+    ) -> Result<bool> {
         let context = Context {
             vault: peer.vault(),
             genesis: grant.genesis,

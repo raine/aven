@@ -832,7 +832,7 @@ pub(crate) async fn ensure_empty_target(conn: &mut sqlx::SqliteConnection) -> Re
     ensure_empty_domain(conn).await
 }
 
-async fn ensure_empty_domain(conn: &mut sqlx::SqliteConnection) -> Result<()> {
+pub(crate) async fn ensure_empty_domain(conn: &mut sqlx::SqliteConnection) -> Result<()> {
     let occupied: i64 = sqlx::query_scalar(
         "SELECT
              (SELECT count(*) FROM workspaces WHERE id != '0000000000000000')

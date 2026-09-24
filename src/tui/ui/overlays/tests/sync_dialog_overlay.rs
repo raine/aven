@@ -418,6 +418,7 @@ fn confirmation_buttons_are_clickable() {
     let state = SyncDialogState::page(SyncPage::ConfirmJoin {
         server: "https://sync.example.com".to_string(),
         invitation: SecretText::default(),
+        replace: false,
     });
     let view = sync_view(&state, local_status());
     let backend = TestBackend::new(80, 30);
@@ -604,10 +605,8 @@ fn join_timeout_guidance_stays_visible_while_resuming_in_the_session() {
     };
     let after = render_page(SyncPage::Home, incomplete.clone(), timed_out.clone());
     assert!(after.contains("didn't add this device in time"), "{after}");
-    assert!(
-        after.contains("If the invitation expired before the other device added this device"),
-        "{after}"
-    );
+    assert!(after.contains("Use a new invitation"), "{after}");
+    assert!(after.contains("choose Use a new invitation"), "{after}");
     assert!(after.contains("Resume joining"), "{after}");
 
     let resuming = SyncActivity {
@@ -621,14 +620,50 @@ fn join_timeout_guidance_stays_visible_while_resuming_in_the_session() {
     };
     let during = render_page(SyncPage::Home, incomplete.clone(), resuming);
     assert!(during.contains("Waiting for the other device"), "{during}");
-    assert!(
-        during.contains("If the invitation expired before the other device added this device"),
-        "{during}"
-    );
+    assert!(during.contains("choose Use a new invitation"), "{during}");
 
     let fresh = render_page(SyncPage::Home, incomplete, SyncActivity::default());
-    assert!(
-        !fresh.contains("If the invitation expired before the other device added this device"),
-        "{fresh}"
+    assert!(!fresh.contains("choose Use a new invitation"), "{fresh}");
+}
+
+#[test]
+fn a_new_invitation_for_an_unfinished_join_explains_what_is_kept() {
+    let incomplete = TuiSyncStatus {
+        set_up: true,
+        phase: LocalPhase::JoinIncomplete,
+        ..TuiSyncStatus::default()
+    };
+    let mut input = SecretText::default();
+    input.insert("aven://pair/v2/SECRETSECRET");
+    let form = render_page(
+        SyncPage::Invitation {
+            kind: InvitationKind::Join,
+            input,
+            error: None,
+        },
+        incomplete.clone(),
+        SyncActivity::default(),
     );
+    assert!(form.contains("Use a new invitation"), "{form}");
+    assert!(
+        form.contains("device that created the first invitation"),
+        "{form}"
+    );
+    assert!(!form.contains("SECRET"), "{form}");
+
+    let confirm = render_page(
+        SyncPage::ConfirmJoin {
+            server: "https://sync.example.com".to_string(),
+            invitation: SecretText::default(),
+            replace: true,
+        },
+        incomplete,
+        SyncActivity::default(),
+    );
+    assert!(
+        confirm.contains("Continue joining with a new invitation"),
+        "{confirm}"
+    );
+    assert!(confirm.contains("keeps its identity"), "{confirm}");
+    assert!(confirm.contains("earlier invitation is kept"), "{confirm}");
 }

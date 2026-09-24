@@ -14,7 +14,7 @@ use aven_core::sync::seed_claim::ClaimAuthentication;
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-use crate::cli::SetupArgs;
+use crate::cli::{JoinArgs, SetupArgs};
 use crate::config::{self, AppConfig};
 use crate::encrypted_tail_http::{self as tail_http, ImageTransfer, Round};
 use crate::peer_enrollment_http;
@@ -413,18 +413,19 @@ pub(crate) async fn ensure_join_available(database: &Database, config: &AppConfi
 
 /// A timeout proves neither expiry nor non-admission, and expiry alone does
 /// not stop an admission committed before it, so the hint is conditional on
-/// expiry before admission and never suggests discarding this database.
-const JOIN_TIMEOUT: &str = "error sync-join-timeout hint=\"the other device did not add this device in time; keep `aven sync invite` running there and rerun `aven sync join`. If the invitation expired before the other device added this device, this join attempt cannot finish: keep this database unchanged and join from a new empty database with a new invitation\"";
+/// expiry and a replacement keeps the earlier invitation's admission usable.
+const JOIN_TIMEOUT: &str = "error sync-join-timeout hint=\"the other device did not add this device in time; keep `aven sync invite` running there and rerun `aven sync join`. If the invitation expired, run `aven sync invite` again on the same device and pass the new invitation to `aven sync join --new-invitation`; an admission from the earlier invitation still completes the join\"";
 
 const ALREADY_SET_UP: &str =
     "error sync-already-set-up hint=\"add devices with `aven sync invite` on this database\"";
 const JOIN_REQUIRES_EMPTY: &str = "error sync-join-requires-empty-database hint=\"join with a new database, for example `aven --db PATH sync join`\"";
 
-pub(crate) async fn join(database: &Database, config: &AppConfig) -> Result<()> {
+pub(crate) async fn join(database: &Database, config: &AppConfig, args: JoinArgs) -> Result<()> {
     let (server, outcome) = run_join(
         database,
         config,
         || DeviceInvitation::decode(&read_invitation("Device invitation: ")?).map(Some),
+        args.new_invitation,
         &|stage| match stage {
             Stage::WaitingForInviter => eprintln!("Waiting for the inviting device..."),
             Stage::DownloadingTasks => eprintln!("Downloading synced data..."),
@@ -439,11 +440,14 @@ pub(crate) async fn join(database: &Database, config: &AppConfig) -> Result<()> 
 
 /// Joins sync on a fresh database, or resumes the join it started, and
 /// returns the server. `invitation` is asked for only while enrollment is
-/// unfinished; `None` resumes the request this database already made.
+/// unfinished; `None` resumes the request this database already made. With
+/// `replace`, an invitation this join has not used becomes a new attempt
+/// from the same device keys; earlier attempts stay able to complete.
 pub(crate) async fn run_join(
     database: &Database,
     config: &AppConfig,
     invitation: impl FnOnce() -> Result<Option<DeviceInvitation>>,
+    replace: bool,
     progress: &(dyn Fn(Stage) + Sync),
 ) -> Result<(String, Outcome)> {
     config.ensure_sync_allowed()?;
@@ -473,24 +477,35 @@ pub(crate) async fn run_join(
                 .as_ref()
                 .zip(invitation.as_ref())
                 .is_none_or(|(server, invitation)| *server == invitation.server),
-            "error sync-join-server-mismatch hint=\"resume with the invitation that started joining\""
+            "error sync-join-server-mismatch hint=\"this database started joining with another server; use an invitation for that server\""
         );
         let (server, invitation) = match invitation {
             Some(invitation) => (invitation.server, Some(invitation.invitation)),
             None => (server.context("error sync-join-invitation-required")?, None),
         };
         let client = peer_enrollment_http::Client::new(&server)?;
-        client.request(&store, database, invitation).await?;
+        let posted = match invitation {
+            Some(invitation) if replace => client.replace(&store, database, invitation).await,
+            invitation => client.request(&store, database, invitation).await,
+        };
         progress(Stage::WaitingForInviter);
-        let deadline = Instant::now() + Duration::from_secs(invitation_seconds());
-        loop {
-            match client.complete(&store, database).await {
-                Ok(true) => break,
-                Err(error) if !busy(&error) => return Err(error),
-                _ => {}
+        if let Err(error) = posted {
+            // An earlier attempt may already be admitted even when this
+            // request is refused, so check once before reporting.
+            if !matches!(client.complete(&store, database).await, Ok(true)) {
+                return Err(explain_join_refusal(error));
             }
-            ensure!(Instant::now() < deadline, JOIN_TIMEOUT);
-            tokio::time::sleep(POLL_INTERVAL).await;
+        } else {
+            let deadline = Instant::now() + Duration::from_secs(invitation_seconds());
+            loop {
+                match client.complete(&store, database).await {
+                    Ok(true) => break,
+                    Err(error) if !busy(&error) => return Err(error),
+                    _ => {}
+                }
+                ensure!(Instant::now() < deadline, JOIN_TIMEOUT);
+                tokio::time::sleep(POLL_INTERVAL).await;
+            }
         }
         server
     };
@@ -514,6 +529,30 @@ pub(crate) async fn run_join(
     )
     .await?;
     Ok((server, outcome))
+}
+
+/// Explains why a join request could not use this invitation. Every refusal
+/// leaves the database, its device keys and earlier invitations unchanged.
+fn explain_join_refusal(error: anyhow::Error) -> anyhow::Error {
+    let hint = match error.to_string().as_str() {
+        "error enrollment-invitation-conflict" => {
+            "error sync-join-invitation-conflict hint=\"this database started joining with another invitation; rerun with that invitation to resume, or pass a new invitation from the same inviting device with `aven sync join --new-invitation`\""
+        }
+        "error enrollment-retry-context" => {
+            "error sync-join-new-invitation-mismatch hint=\"a new invitation must come from the device that created the first one; run `aven sync invite` there\""
+        }
+        "error enrollment-retry-unavailable" => {
+            "error sync-join-new-invitation-unavailable hint=\"joining already got past admission, so a new invitation cannot be used; rerun `aven sync join` with an invitation this database already used\""
+        }
+        "error enrollment-retry-limit" => {
+            "error sync-join-new-invitation-limit hint=\"this database has used four invitations; keep it unchanged and join from a new empty database, for example `aven --db PATH sync join`\""
+        }
+        _ if error.to_string().starts_with("error shared-state-install") => {
+            "error sync-join-target-not-empty hint=\"data was added to this database while joining, so it cannot finish joining; keep it unchanged and join from a new empty database, for example `aven --db PATH sync join`\""
+        }
+        _ => return error,
+    };
+    error.context(hint)
 }
 
 /// A refused claim may come from a replaced or expired setup invitation, but a
@@ -808,7 +847,10 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
     }
     match report.state {
         "setup-incomplete" => println!("State: setup incomplete. Rerun `aven sync setup`."),
-        "join-incomplete" => println!("State: joining incomplete. Rerun `aven sync join`."),
+        "join-incomplete" => println!(
+            "State: joining incomplete. Rerun `aven sync join`; if its invitation expired, \
+             pass a new one from the same device with `aven sync join --new-invitation`."
+        ),
         "invitation-pending" => println!(
             "State: paused until the invited device joins. After the unused invitation \
              expires, the next `aven sync` ends it."

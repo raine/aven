@@ -145,14 +145,20 @@ impl App {
                 self.start_sync_operation(OperationKind::Join, None);
                 home
             }
+            SyncAction::NewJoinInvitation => invitation_page(InvitationKind::Join),
             SyncAction::Continue => self.submit_invitation(state).await?,
             SyncAction::ConfirmSetup | SyncAction::ConfirmJoin => {
-                let (kind, invitation) = match state.page {
-                    SyncPage::ConfirmSetup { invitation, .. } => (OperationKind::Setup, invitation),
-                    SyncPage::ConfirmJoin { invitation, .. } => (OperationKind::Join, invitation),
+                match state.page {
+                    SyncPage::ConfirmSetup { invitation, .. } => {
+                        self.start_sync_operation(OperationKind::Setup, Some(invitation))
+                    }
+                    SyncPage::ConfirmJoin {
+                        invitation,
+                        replace,
+                        ..
+                    } => self.start_operation(OperationKind::Join, Some(invitation), replace),
                     _ => return Ok(()),
-                };
-                self.start_sync_operation(kind, Some(invitation));
+                }
                 home
             }
             SyncAction::ManageDevices => {
@@ -240,12 +246,24 @@ impl App {
                 Ok(SyncDialogState::page(SyncPage::ConfirmJoin {
                     server,
                     invitation: std::mem::take(input),
+                    replace: self.store.sync_status.phase == LocalPhase::JoinIncomplete,
                 }))
             }
         }
     }
 
     fn start_sync_operation(&mut self, kind: OperationKind, invitation: Option<SecretText>) {
+        self.start_operation(kind, invitation, false);
+    }
+
+    /// `replace` continues an unfinished join with an invitation it hasn't
+    /// used; other operations ignore it.
+    fn start_operation(
+        &mut self,
+        kind: OperationKind,
+        invitation: Option<SecretText>,
+        replace: bool,
+    ) {
         if self.sync.work_pending() {
             self.set_info("sync is running; try again when it finishes");
             return;
@@ -255,7 +273,9 @@ impl App {
         let invitation = invitation.map(SecretText::into_inner);
         let started = match kind {
             OperationKind::Setup => self.sync_ops.start_setup(&database, &config, invitation),
-            OperationKind::Join => self.sync_ops.start_join(&database, &config, invitation),
+            OperationKind::Join => self
+                .sync_ops
+                .start_join(&database, &config, invitation, replace),
             OperationKind::ListDevices => self.sync_ops.start_list_devices(&database, &config),
             OperationKind::RemoveDevice(device) => self
                 .sync_ops

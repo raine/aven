@@ -24,14 +24,14 @@ fn codes(error: &anyhow::Error) -> impl Iterator<Item = String> + '_ {
 }
 
 /// A timeout does not show whether the invitation expired, and an admission
-/// committed before expiry can still finish, so the guidance applies only to
-/// expiry before admission and never calls this database disposable.
+/// committed before expiry can still finish, so the guidance is conditional
+/// on expiry and a new invitation keeps the earlier one usable.
 pub(crate) const JOIN_TIMEOUT: &str = "The other device didn't add this device in time. \
      Keep Add device open on the other device, then resume joining.";
 
-pub(crate) const JOIN_TIMEOUT_EXPIRED: &str = "If the invitation expired before the other \
-     device added this device, this join attempt can't finish. Keep this database as it is, \
-     and join from a new, empty database with a new invitation.";
+pub(crate) const JOIN_TIMEOUT_EXPIRED: &str = "If the invitation expired, choose Use a new \
+     invitation and paste a new one from the same device. The earlier invitation still \
+     counts if the other device already added this device with it.";
 
 pub(crate) const JOIN_REQUIRES_EMPTY: &str = "This computer already has tasks or other data. \
      Joining needs an empty database, because existing local data can't be merged with \
@@ -69,9 +69,26 @@ fn explain(kind: OperationKind, error: &anyhow::Error) -> &'static str {
     if has("sync-join-timeout") {
         return JOIN_TIMEOUT;
     }
-    if has("sync-join-server-mismatch") || has("enrollment-invitation-conflict") {
+    if has("sync-join-server-mismatch") {
+        return "This invitation is for a different server than the join this database \
+                already started. Use an invitation from the device that created the first \
+                one.";
+    }
+    if has("sync-join-invitation-conflict") || has("enrollment-invitation-conflict") {
         return "This invitation doesn't match the join this database already started. \
-                Resume joining without a new invitation.";
+                Resume joining, or choose Use a new invitation.";
+    }
+    if has("sync-join-new-invitation-mismatch") {
+        return "A new invitation must come from the device that created the first one. \
+                Open Add device on that device and copy a new invitation.";
+    }
+    if has("sync-join-new-invitation-unavailable") {
+        return "The other device already added this device, so a new invitation isn't \
+                needed. Resume joining.";
+    }
+    if has("sync-join-new-invitation-limit") {
+        return "This database has already used four invitations and can't take another. \
+                Keep it as it is, and join from a new, empty database.";
     }
     if has("sync-invitation-pending") || has("enrollment-unresolved") {
         return "Sync is paused until the invited device joins. Once the unused \
@@ -212,12 +229,30 @@ mod tests {
                 assert!(!text.contains(word), "{text}");
             }
         }
-        assert!(
-            JOIN_TIMEOUT_EXPIRED
-                .starts_with("If the invitation expired before the other device added this device")
-        );
-        assert!(JOIN_TIMEOUT_EXPIRED.contains("this join attempt can't finish"));
-        assert!(JOIN_TIMEOUT_EXPIRED.contains("Keep this database as it is"));
+        assert!(JOIN_TIMEOUT_EXPIRED.starts_with("If the invitation expired"));
+        assert!(JOIN_TIMEOUT_EXPIRED.contains("Use a new invitation"));
+        assert!(JOIN_TIMEOUT_EXPIRED.contains("earlier invitation still counts"));
+    }
+
+    #[test]
+    fn refused_new_invitations_explain_what_still_works() {
+        for (code, expected) in [
+            (
+                "sync-join-invitation-conflict",
+                "choose Use a new invitation",
+            ),
+            (
+                "sync-join-new-invitation-mismatch",
+                "device that created the first one",
+            ),
+            ("sync-join-new-invitation-unavailable", "Resume joining"),
+            ("sync-join-new-invitation-limit", "Keep it as it is"),
+            ("sync-join-server-mismatch", "different server"),
+        ] {
+            let error = anyhow!("error {code} hint=\"x\"");
+            let message = failure(OperationKind::Join, &error).message;
+            assert!(message.contains(expected), "{code}: {message}");
+        }
     }
 
     #[test]

@@ -197,7 +197,7 @@ pub(crate) enum SyncSubcommand {
     Invite,
     /// Join sync from an empty database with a device invitation
     #[command(after_long_help = JOIN_HELP)]
-    Join,
+    Join(JoinArgs),
     /// List or remove the devices that take part in sync
     #[command(after_long_help = DEVICE_HELP)]
     Device(DeviceCommand),
@@ -252,7 +252,19 @@ anything it received before."#;
 pub(super) const JOIN_HELP: &str = r#"Paste the invitation printed by `aven sync invite`, or pipe it to standard
 input, while the inviting device waits. The database must be empty. Joining
 downloads the synced data and then its images. Rerun the same command to resume
-an interrupted join."#;
+an interrupted join.
+
+If the invitation expired before the inviting device added this device, create a
+new invitation on that same device and pass it with --new-invitation. The
+earlier invitation is kept, so an admission that already happened still
+completes the join. A database can use at most four invitations."#;
+
+#[derive(Args)]
+pub(crate) struct JoinArgs {
+    /// Continue an unfinished join with a new invitation from the same inviting device
+    #[arg(long)]
+    pub(crate) new_invitation: bool,
+}
 
 #[derive(Args)]
 pub(crate) struct SetupArgs {

@@ -219,27 +219,42 @@ impl PeerAuthority {
     pub fn generate(invitation: Invitation) -> Result<Self> {
         let ikm = Secret::generate()?;
         let (recipient, _) = <Kem as hpke::Kem>::derive_keypair(ikm.expose());
-        let mut peer = Self {
+        Self {
             device: *Secret::generate()?.expose(),
             signing: Secret::generate()?,
             recipient: Secret::new(recipient.to_bytes().into()),
             bearer: Secret::generate()?,
             invitation,
             request: Vec::new(),
-        };
-        let row = peer.recipient()?;
-        let handle = peer.invitation.handle();
+        }
+        .sealed()
+    }
+    /// The same installation keys with a new request sealed to `invitation`.
+    pub fn retry(&self, invitation: Invitation) -> Result<Self> {
+        Self {
+            device: self.device,
+            signing: Secret::new(*self.signing.expose()),
+            recipient: Secret::new(*self.recipient.expose()),
+            bearer: Secret::new(*self.bearer.expose()),
+            invitation,
+            request: Vec::new(),
+        }
+        .sealed()
+    }
+    fn sealed(mut self) -> Result<Self> {
+        let row = self.recipient()?;
+        let handle = self.invitation.handle();
         let info = cce(
             "aven-e2ee/v1/pairing/request",
-            &[&peer.invitation.vault, &handle],
+            &[&self.invitation.vault, &handle],
         );
         let aad = cce(
             "aven-e2ee/v1/pairing/request-aad",
-            &[&peer.invitation.vault, &handle, &peer.invitation.inviter],
+            &[&self.invitation.vault, &handle, &self.invitation.inviter],
         );
         let (enc, cipher) = seal(
-            &peer.invitation,
-            &peer.invitation.inviter,
+            &self.invitation,
+            &self.invitation.inviter,
             &info,
             &aad,
             &row.plaintext(),
@@ -248,8 +263,8 @@ impl PeerAuthority {
         bytes(&mut request, &handle);
         bytes(&mut request, &enc);
         bytes(&mut request, &cipher);
-        peer.request = request;
-        Ok(peer)
+        self.request = request;
+        Ok(self)
     }
     pub(super) fn recipient(&self) -> Result<Recipient> {
         let private = HpkePrivate::from_bytes(self.recipient.expose())

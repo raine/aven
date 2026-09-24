@@ -24,6 +24,26 @@ impl Database {
         tx.commit().await?;
         Ok(client)
     }
+    /// Rechecks that this pinned peer join is unfinished: nothing installed,
+    /// associated or set up, and the domain still empty. The enrollment pin
+    /// and installation fence stay in place.
+    pub async fn peer_retry_preflight(
+        &self,
+        identity: [u8; 32],
+        client: &str,
+        guard: &InstallationGuard,
+    ) -> Result<()> {
+        check(self.file_identity() == Some(guard.identity()))?;
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        let pinned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM local_peer_enrollment WHERE identity=? AND client_id=? AND role='peer' AND client_id=(SELECT value FROM meta WHERE key='client_id'))").bind(identity.as_slice()).bind(client).fetch_one(&mut *tx).await?;
+        ensure!(pinned, "error enrollment-pin");
+        let occupied: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM local_peer_snapshot_install) OR EXISTS(SELECT 1 FROM local_seed_source) OR EXISTS(SELECT 1 FROM local_seed_publication_intent) OR EXISTS(SELECT 1 FROM local_seed_genesis_pin) OR EXISTS(SELECT 1 FROM server_seed_claim) OR EXISTS(SELECT 1 FROM meta WHERE key IN ('sync_server_url','e2ee_association'))").fetch_one(&mut *tx).await?;
+        ensure!(!occupied, "error enrollment-retry-unavailable");
+        crate::sync::shared_state::ensure_empty_domain(&mut tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
     pub async fn enrollment_pin(&self) -> Result<Option<([u8; 32], String, String)>> {
         let mut conn = self.acquire_reader().await?;
         let row: Option<(Vec<u8>, String, String)> = sqlx::query_as(
