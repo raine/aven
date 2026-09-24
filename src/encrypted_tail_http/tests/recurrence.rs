@@ -330,216 +330,52 @@ async fn outcome_and_template_conflicts_remain_explicit_and_resolve() {
     }
 }
 
-async fn text(db: &Database, sql: &str, id: &str) -> Option<String> {
-    let mut c = aven_core::test_support::acquire(db).await.unwrap();
-    sqlx::query_scalar(sqlx::AssertSqlSafe(sql.to_owned()))
-        .bind(id)
-        .fetch_optional(&mut *c)
-        .await
-        .unwrap()
-}
-
-#[derive(Clone, Copy, Debug)]
-enum Acceptance {
-    SeedFirst,
-    PeerFirst,
-    /// The peer dispatches its own successor after the seed's was accepted.
-    PeerFrozenAfterSeed,
-}
-
 #[tokio::test]
-async fn different_templates_converge_on_the_first_accepted_successor() {
-    for mode in [
-        Acceptance::SeedFirst,
-        Acceptance::PeerFirst,
-        Acceptance::PeerFrozenAfterSeed,
-    ] {
-        let f = fixture().await;
-        converge(&f).await;
-        let w = f.seed.list_workspaces().await.unwrap().remove(0);
-        let created = create(&f.seed).await;
-        converge(&f).await;
-        for (db, side) in [(&f.seed, "seed"), (&f.peer, "peer")] {
-            db.update_recurrence_template(
-                &w,
-                &created.series.id,
-                UpdateRecurrenceTemplateParams::new(RecurrenceTemplateUpdate {
-                    title: Some(format!("{side} successor")),
-                    labels: Some(vec![format!("{side}-label")]),
-                    set_metadata: vec![TaskMetadataInput {
-                        expected_field_id: None,
-                        key: "kind".into(),
-                        value: side.into(),
-                    }],
-                    ..Default::default()
-                })
-                .with_create_missing_labels(),
-            )
-            .await
-            .unwrap();
-            db.update_task(
-                &w,
-                &created.task.id,
-                TaskUpdate {
-                    status: Some("done".into()),
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap();
-        }
-        let successor: aven_core::ids::TaskId =
-            sqlx::query_scalar("SELECT task_id FROM recurrence_occurrences WHERE task_id <> ?")
-                .bind(&created.task.id)
-                .fetch_one(&mut *aven_core::test_support::acquire(&f.peer).await.unwrap())
-                .await
-                .unwrap();
-        // Explicit edits made on the locally generated successor.
-        f.peer
-            .update_task(
-                &w,
-                &successor,
-                TaskUpdate {
-                    description: Some("peer explicit".into()),
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap();
-        let note = f
-            .peer
-            .add_note(&w, &successor, "peer note".into())
-            .await
-            .unwrap();
-        let c = Client::new(&f.origin).unwrap();
-        match mode {
-            Acceptance::SeedFirst => {
-                drain(&c, &f.seed_store, &f.seed).await;
-                drain(&c, &f.peer_store, &f.peer).await;
-            }
-            Acceptance::PeerFirst => {
-                drain(&c, &f.peer_store, &f.peer).await;
-                drain(&c, &f.seed_store, &f.seed).await;
-            }
-            Acceptance::PeerFrozenAfterSeed => {
-                drain(&c, &f.seed_store, &f.seed).await;
-                let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
-                // Dispatch without pulling until the successor's accepted outcome is observed.
-                for _ in 0..8 {
-                    c.push(&inputs.authority, &inputs.bearer, &f.peer, &blobs(&f.peer))
-                        .await
-                        .unwrap();
-                }
-                assert_eq!(
-                    scalar(
-                        &f.peer,
-                        "SELECT count(*) FROM local_e2ee_outbox
-                         WHERE observed_sequence IS NOT NULL AND blocked = 0"
-                    )
-                    .await,
-                    1
-                );
-            }
-        }
-        converge(&f).await;
-        let expected = match mode {
-            Acceptance::PeerFirst => "peer",
-            _ => "seed",
-        };
-        let kind = "SELECT m.value FROM task_metadata m JOIN metadata_fields f ON f.id = m.field_id
-                    WHERE f.key = 'kind' AND m.task_id = ?";
-        for db in [&f.seed, &f.peer] {
-            assert_eq!(
-                title(db, successor.as_str()).await,
-                format!("{expected} successor"),
-                "{mode:?}"
-            );
-            assert_eq!(
-                text(
-                    db,
-                    "SELECT description FROM tasks WHERE id = ?",
-                    successor.as_str()
-                )
-                .await,
-                Some("peer explicit".into())
-            );
-            assert_eq!(
-                text(db, kind, successor.as_str()).await,
-                Some(expected.into())
-            );
-            assert_eq!(
-                text(db, "SELECT body FROM notes WHERE id = ?", &note.note_id).await,
-                Some("peer note".into())
-            );
-            assert_eq!(
-                scalar(db, "SELECT count(*) FROM recurrence_occurrences").await,
-                2
-            );
-            // Concurrent template edits stay explicit rather than being chosen by generation.
-            assert!(
-                !db.recurrence_series_conflicts(&w, &created.series.id, Some("title"))
-                    .await
-                    .unwrap()
-                    .is_empty()
-            );
-            assert_eq!(
-                scalar(db, "SELECT count(*) FROM changes WHERE server_seq IS NULL").await,
-                0
-            );
-            assert_eq!(
-                scalar(db, "SELECT count(*) FROM local_e2ee_outbox").await,
-                0
-            );
-        }
-        // A later ordinary edit is no longer blocked.
-        f.peer
-            .update_task(
-                &w,
-                &successor,
-                TaskUpdate {
-                    title: Some("later edit".into()),
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap();
-        converge(&f).await;
-        let third = super::membership::join(&f, "third", &f.seed, &f.seed_store).await;
-        drain(&c, &third.store, &third.db).await;
-        for db in [&f.seed, &f.peer, &third.db] {
-            assert_eq!(title(db, successor.as_str()).await, "later edit");
-            assert_eq!(
-                text(
-                    db,
-                    "SELECT group_concat(label) FROM task_labels WHERE task_id = ?",
-                    successor.as_str()
-                )
-                .await,
-                Some(format!("{expected}-label"))
-            );
-            assert_eq!(
-                text(
-                    db,
-                    "SELECT description FROM tasks WHERE id = ?",
-                    successor.as_str()
-                )
-                .await,
-                Some("peer explicit".into())
-            );
-            assert_eq!(
-                text(db, kind, successor.as_str()).await,
-                Some(expected.into())
-            );
-            assert_eq!(
-                scalar(
-                    db,
-                    "SELECT count(*) FROM conflicts WHERE entity_type = 'task' AND resolved = 0"
-                )
-                .await,
-                0
-            );
-        }
+async fn different_templates_do_not_acknowledge_unequal_deterministic_successors() {
+    let f = fixture().await;
+    converge(&f).await;
+    let w = f.seed.list_workspaces().await.unwrap().remove(0);
+    let created = create(&f.seed).await;
+    converge(&f).await;
+    for (db, title) in [(&f.seed, "seed successor"), (&f.peer, "peer successor")] {
+        db.update_recurrence_template(
+            &w,
+            &created.series.id,
+            UpdateRecurrenceTemplateParams::new(RecurrenceTemplateUpdate {
+                title: Some(title.into()),
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap();
+        db.update_task(
+            &w,
+            &created.task.id,
+            TaskUpdate {
+                status: Some("done".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
     }
+    let c = Client::new(&f.origin).unwrap();
+    drain(&c, &f.seed_store, &f.seed).await;
+    let cursor = f.peer.meta("sync_cursor").await.unwrap();
+    let err = c
+        .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("same-id-divergence"), "{err:#}");
+    assert_eq!(f.peer.meta("sync_cursor").await.unwrap(), cursor);
+    assert!(
+        scalar(
+            &f.peer,
+            "SELECT count(*) FROM changes WHERE server_seq IS NULL"
+        )
+        .await
+            > 0
+    );
 }
 
 #[tokio::test]

@@ -119,20 +119,6 @@ fn require_canonical_equality(local: &ChangeWire, incoming: &ChangeWire) -> Resu
     Ok(())
 }
 
-/// Returns true when accepted content legitimately supersedes a pending local
-/// generation instead of matching it canonically.
-fn require_equal_or_superseded(local: &ChangeWire, accepted: &ChangeWire) -> Result<bool> {
-    let superseded = super::recurrence::supersedes_pending(local, accepted)
-        && !persistence::changes::canonical_equal(local, accepted);
-    if superseded {
-        domain::validate(&without_server_sequence(local))?;
-        domain::validate(&without_server_sequence(accepted))?;
-    } else {
-        require_canonical_equality(local, accepted)?;
-    }
-    Ok(superseded)
-}
-
 async fn validate_mapping(
     conn: &mut SqliteConnection,
     mapping: &Mapping,
@@ -465,13 +451,11 @@ impl Database {
         tx.commit().await?;
         Ok(record)
     }
-    /// Returns false when the accepted outcome supersedes a pending generated task.
-    /// The head then stays frozen and observed until ordered page application replaces it.
     pub async fn verify_encrypted_tail_outcome(
         &self,
         authority: &Authority,
         accepted: &Accepted,
-    ) -> Result<bool> {
+    ) -> Result<()> {
         let result = self
             .commit_encrypted_tail_outcome(authority, accepted)
             .await;
@@ -492,7 +476,7 @@ impl Database {
         &self,
         authority: &Authority,
         accepted: &Accepted,
-    ) -> Result<bool> {
+    ) -> Result<()> {
         let change = open_accepted_change(authority, accepted)?;
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
@@ -508,9 +492,7 @@ impl Database {
         let local = load_change(&mut tx, &change.change_id)
             .await?
             .context("error encrypted-tail-local-missing")?;
-        if require_equal_or_superseded(&local, &change)? {
-            return Ok(false);
-        }
+        require_canonical_equality(&local, &change)?;
         persistence::update_change_server_seq(
             &mut tx,
             &change.change_id,
@@ -526,7 +508,7 @@ impl Database {
         super::attachments::client::accept(&mut tx, accepted, &change).await?;
         record_acceptance_and_clear_outbox(&mut tx, accepted).await?;
         tx.commit().await?;
-        Ok(true)
+        Ok(())
     }
     pub async fn apply_encrypted_tail_page(
         &self,
@@ -575,15 +557,11 @@ impl Database {
         let mut dependency_workspaces = HashSet::new();
         // Validate every mapping and local comparison before any domain effects.
         let mut local_presence = Vec::with_capacity(changes.len());
-        let mut superseded = Vec::new();
         for (accepted, change) in page.records.iter().zip(&changes) {
             validate_mapping(&mut tx, &accepted.mapping, page.after).await?;
-            let mut local = load_change(&mut tx, &change.change_id).await?;
-            if let Some(pending) = &local
-                && require_equal_or_superseded(pending, change)?
-            {
-                superseded.push(pending.clone());
-                local = None;
+            let local = load_change(&mut tx, &change.change_id).await?;
+            if let Some(local) = &local {
+                require_canonical_equality(local, change)?;
             }
             let observed = load_observed_outcome(&mut tx, &change.change_id).await?;
             if let Some((Some(sequence), Some(commitment))) = observed {
@@ -614,19 +592,7 @@ impl Database {
             if !is_local {
                 // Applying lifecycle resolution can materialize deterministic history
                 // needed by a later record in this page. It is not an identity-only echo.
-                if let Some(pending) = superseded
-                    .iter()
-                    .find(|pending| pending.change_id == change.change_id)
-                {
-                    change.server_seq = Some(accepted.mapping.sequence);
-                    super::recurrence::supersede_pending(
-                        &mut tx,
-                        authority.prefix,
-                        pending,
-                        &change,
-                    )
-                    .await?;
-                } else if let Some(generated) = load_change(&mut tx, &change.change_id).await? {
+                if let Some(generated) = load_change(&mut tx, &change.change_id).await? {
                     valid(super::recurrence::is_deterministic(&change))?;
                     require_canonical_equality(&generated, &change)?;
                     valid(generated.server_seq.is_none())?;

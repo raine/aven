@@ -115,7 +115,7 @@ async fn reapply_last_removal(
 
 /// Assigns one task-label pair from its last absolute tail command. A rename into
 /// the label carries the old label's presence, which local apply order already holds.
-pub(super) async fn reconcile_pair(
+async fn reconcile_pair(
     conn: &mut SqliteConnection,
     prefix: i64,
     workspace: &str,
