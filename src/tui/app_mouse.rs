@@ -253,7 +253,10 @@ impl App {
                     self.begin_update();
                     Ok(())
                 }
-                crate::tui::ui::HeaderTarget::SyncStatus => self.show_config_status(),
+                crate::tui::ui::HeaderTarget::SyncStatus => {
+                    self.show_sync_dialog();
+                    Ok(())
+                }
             };
         }
 

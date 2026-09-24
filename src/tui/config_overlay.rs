@@ -1,17 +1,12 @@
 use anyhow::Result;
 
-use crate::tui::overlay::{ConfirmIntent, OverlayState, SyncStatusState, TextPanelState};
+use crate::tui::overlay::{ConfirmIntent, OverlayState, TextPanelState};
 use crate::tui::store::TuiStore;
 
-pub(crate) const CONFIG_STATUS_TITLE: &str = "Sync status";
 pub(crate) const CONFIG_INFO_TITLE: &str = "Configuration";
 pub(crate) const CONFIG_PATHS_TITLE: &str = "Config paths";
 pub(crate) const CONFIG_INIT_TITLE: &str = "Initialize configuration";
 pub(crate) const DATABASE_STATS_TITLE: &str = "Database stats";
-
-pub(crate) fn config_status_overlay(_store: &TuiStore) -> Result<OverlayState> {
-    Ok(OverlayState::SyncStatus(SyncStatusState::default()))
-}
 
 pub(crate) fn config_info_overlay(store: &TuiStore) -> Result<OverlayState> {
     Ok(OverlayState::TextPanel(TextPanelState::new(

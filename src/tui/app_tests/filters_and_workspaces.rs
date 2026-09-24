@@ -835,17 +835,17 @@ async fn header_metric_click_still_selects_view_directly() {
 }
 
 #[tokio::test]
-async fn header_click_opens_sync_status() {
+async fn header_click_opens_sync_dialog() {
     let mut app = test_app().await;
 
     app.dispatch_mouse(header_click(135), (140, 24).into())
         .await
         .unwrap();
 
-    let Some(OverlayState::SyncStatus(state)) = &app.overlay else {
-        panic!("expected sync status");
+    let Some(OverlayState::Sync(state)) = &app.overlay else {
+        panic!("expected sync dialog");
     };
-    assert_eq!(*state, SyncStatusState::default());
+    assert_eq!(*state, SyncDialogState::default());
 }
 
 #[tokio::test]

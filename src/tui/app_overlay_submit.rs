@@ -5,7 +5,7 @@ use crate::tui::app::App;
 use crate::tui::authoring::{ADD_TASK_TITLE_PROJECT_TITLE, AddTaskStep};
 use crate::tui::overlay::{
     AddTaskMode, AddTaskState, ConfirmIntent, MultilineIntent, OverlayState, OverlaySubmit,
-    PickerIntent, SyncStatusAction, SyncStatusState, TagComboboxIntent, TextIntent,
+    PickerIntent, TagComboboxIntent, TextIntent,
 };
 
 impl App {
@@ -39,9 +39,6 @@ impl App {
             }
             OverlaySubmit::HeaderMenu { action } => self.submit_header_menu(action).await?,
             OverlaySubmit::Order { order } => self.submit_order_menu(order).await?,
-            OverlaySubmit::SyncStatus { state, action } => {
-                self.handle_sync_status_submit(state, action).await?;
-            }
             OverlaySubmit::Text { intent, value } => {
                 self.handle_text_submit(intent, value).await?;
             }
@@ -52,28 +49,6 @@ impl App {
                 self.handle_multiline_submit(intent, value).await?;
             }
             OverlaySubmit::Confirm { intent } => self.handle_confirm_submit(intent).await?,
-        }
-        Ok(())
-    }
-
-    async fn handle_sync_status_submit(
-        &mut self,
-        state: SyncStatusState,
-        action: SyncStatusAction,
-    ) -> Result<()> {
-        match action {
-            SyncStatusAction::SyncNow => {
-                self.overlay = Some(OverlayState::SyncStatus(state));
-                self.begin_sync();
-            }
-            SyncStatusAction::ShowConflicts if self.store.sync_status.conflicts > 0 => {
-                self.clear_detail_session();
-                self.open_conflict_list().await?;
-            }
-            SyncStatusAction::ShowConflicts => {
-                self.overlay = Some(OverlayState::SyncStatus(state));
-                self.set_info("no unresolved conflicts");
-            }
         }
         Ok(())
     }

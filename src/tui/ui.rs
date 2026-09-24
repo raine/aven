@@ -38,7 +38,7 @@ pub(crate) use self::overlays::recurrence_history_entry_at;
 use self::overlays::{
     SearchRenderStatus, SearchRenderView, render_confirm, render_database_stats,
     render_multiline_input, render_onboarding, render_onboarding_raised, render_pairing,
-    render_picker, render_recurrence_history, render_search, render_sync_status,
+    render_picker, render_recurrence_history, render_search, render_sync_dialog,
     render_tag_combobox, render_text_input, render_text_panel, render_update,
 };
 use self::recent_actions::render_recent_actions;
@@ -65,9 +65,10 @@ pub(crate) use self::detail::{
     detail_scroll_cap, detail_section_scroll_target,
 };
 pub(crate) use self::overlays::{
-    AddTaskLayout, add_task_field_at, changelog_link_at, composer_help_scroll_cap,
-    database_stats_scroll_cap, pairing_layout, sync_status_scroll_cap, text_panel_scroll_cap,
-    update_action_at, update_dialog_size, update_link_at, update_notes_scroll_cap,
+    AddTaskLayout, SyncDialogHit, add_task_field_at, changelog_link_at, composer_help_scroll_cap,
+    database_stats_scroll_cap, pairing_layout, sync_dialog_hit, sync_dialog_scroll_cap,
+    text_panel_scroll_cap, update_action_at, update_dialog_size, update_link_at,
+    update_notes_scroll_cap,
 };
 pub(crate) use self::recent_actions::recent_action_at_position;
 pub(crate) use self::recurrence::recurrence_series_at_position;
@@ -803,7 +804,7 @@ fn overlay_dims_underlay(overlay: &OverlayView, inline_title_editor: bool) -> bo
         | OverlayView::Changelog { .. }
         | OverlayView::Pairing(_)
         | OverlayView::RecurrenceHistory(_)
-        | OverlayView::SyncStatus(_)
+        | OverlayView::Sync(_)
         | OverlayView::DatabaseStats { .. }
         | OverlayView::Update(_) => true,
         OverlayView::TextInput(state) => {
@@ -890,7 +891,7 @@ fn render_overlay_content(
         }
         OverlayView::Pairing(presentation) => render_pairing(frame, presentation),
         OverlayView::RecurrenceHistory(state) => render_recurrence_history(frame, state),
-        OverlayView::SyncStatus(state) => render_sync_status(frame, state),
+        OverlayView::Sync(view) => render_sync_dialog(frame, view),
         OverlayView::DatabaseStats { stats, scroll } => {
             render_database_stats(frame, stats, *scroll)
         }

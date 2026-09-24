@@ -153,7 +153,7 @@ pub(crate) enum Action {
     AcceptConflictLocal,
     AcceptConflictRemote,
     BeginManualConflictMerge,
-    ShowConfigStatus,
+    ShowSync,
     ShowConfigInfo,
     ShowConfigPaths,
     ShowDatabaseStats,

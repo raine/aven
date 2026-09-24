@@ -29,48 +29,45 @@ async fn config_info_opens_text_panel() {
 }
 
 #[tokio::test]
-async fn config_status_opens_sync_status() {
+async fn config_status_shortcut_opens_sync_dialog() {
     let mut app = test_app().await;
     app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
 
-    let Some(OverlayState::SyncStatus(state)) = &app.overlay else {
-        panic!("expected sync status");
+    let Some(OverlayState::Sync(state)) = &app.overlay else {
+        panic!("expected sync dialog");
     };
-    assert_eq!(*state, SyncStatusState::default());
+    assert_eq!(*state, SyncDialogState::default());
     let view = app.view();
-    let Some(OverlayView::SyncStatus(status)) = view.overlay else {
-        panic!("expected sync status view");
+    let Some(OverlayView::Sync(sync)) = view.overlay else {
+        panic!("expected sync dialog view");
     };
-    assert_eq!(*status.status, app.store.sync_status);
+    assert_eq!(*sync.status, app.store.sync_status);
 }
 
 #[tokio::test]
-async fn sync_status_actions_keep_the_card_when_no_navigation_occurs() {
+async fn sync_dialog_actions_keep_the_card_when_no_navigation_occurs() {
     let mut app = test_app().await;
-    app.show_config_status().unwrap();
+    app.show_sync_dialog();
 
     app.handle_overlay_key(key(KeyCode::Char('d')))
         .await
         .unwrap();
     assert!(matches!(
         app.overlay,
-        Some(OverlayState::SyncStatus(SyncStatusState {
-            details: true,
-            ..
-        }))
+        Some(OverlayState::Sync(SyncDialogState { details: true, .. }))
     ));
 
     app.handle_overlay_key(key(KeyCode::Char('S')))
         .await
         .unwrap();
-    assert!(matches!(app.overlay, Some(OverlayState::SyncStatus(_))));
+    assert!(matches!(app.overlay, Some(OverlayState::Sync(_))));
     assert!(toast_message(&app).is_some_and(|message| message.starts_with("sync unavailable:")));
 
     app.handle_overlay_key(key(KeyCode::Char('c')))
         .await
         .unwrap();
-    assert!(matches!(app.overlay, Some(OverlayState::SyncStatus(_))));
+    assert!(matches!(app.overlay, Some(OverlayState::Sync(_))));
     assert_eq!(
         toast_message(&app).as_deref(),
         Some("no unresolved conflicts")
@@ -78,10 +75,10 @@ async fn sync_status_actions_keep_the_card_when_no_navigation_occurs() {
 }
 
 #[tokio::test]
-async fn sync_status_conflict_action_opens_conflicts_view() {
+async fn sync_dialog_conflict_action_opens_conflicts_view() {
     let mut app = test_app().await;
     app.store.sync_status.conflicts = 1;
-    app.show_config_status().unwrap();
+    app.show_sync_dialog();
 
     app.handle_overlay_key(key(KeyCode::Char('c')))
         .await

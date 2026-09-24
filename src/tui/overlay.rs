@@ -6,6 +6,7 @@ mod multiline;
 mod picker;
 mod scroll;
 mod state;
+mod sync_dialog;
 mod tag_combobox;
 mod text_buffer;
 mod text_input;
@@ -33,12 +34,15 @@ pub(crate) use state::{
     OverlayOutcome, OverlayState, OverlaySubmit, OverlayTarget, PickerIntent, PickerItem,
     PickerMode, PickerState, RECURRENCE_HISTORY_PAGE_SIZE, RecurrenceHistoryAction,
     RecurrenceHistoryEntryKey, RecurrenceHistoryState, ScheduleEditorField, ScheduleEditorMode,
-    ScheduleEditorState, SearchIntent, SearchResultItem, SearchState, SyncStatusAction,
-    SyncStatusState, TagComboboxIntent, TextIntent, TextPanelState, UpdateActionFocus,
-    UpdateNotesState, UpdateOverlayState, header_menu_area,
+    ScheduleEditorState, SearchIntent, SearchResultItem, SearchState, TagComboboxIntent,
+    TextIntent, TextPanelState, UpdateActionFocus, UpdateNotesState, UpdateOverlayState,
+    header_menu_area,
 };
 #[cfg(test)]
 pub(crate) use state::{ConfirmState, TextInputState};
+pub(crate) use sync_dialog::{
+    SyncAction, SyncDialogOutcome, SyncDialogState, handle_sync_dialog_key, sync_actions,
+};
 
 pub(crate) use text_buffer::TextBuffer;
 pub(crate) use text_input::LineEdit;
@@ -47,5 +51,5 @@ pub(crate) use view::{AddTaskAttachmentsView, TagComboboxKind};
 pub(crate) use view::{
     AddTaskView, ConfirmView, HeaderMenuView, MultilineInputKind, MultilineInputView,
     OrderMenuView, OverlayView, OverlayViewContext, PickerKind, PickerView, RecurrenceHistoryView,
-    SearchKind, SyncStatusView, TagComboboxView, TextInputKind, TextInputView, TextPanelView,
+    SearchKind, SyncDialogView, TagComboboxView, TextInputKind, TextInputView, TextPanelView,
 };

@@ -63,6 +63,35 @@ pub(crate) async fn is_set_up(database: &Database) -> Result<bool> {
         || database.local_seed_genesis_commitment().await?.is_some())
 }
 
+/// Where this database stands in sync, from database facts alone. Reads no
+/// protected keys and takes no lock, so it describes rather than authorizes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LocalPhase {
+    NotSetUp,
+    /// Setup started from this database and has not bound the server yet.
+    SetupIncomplete,
+    /// Joining started and the synced data has not been installed yet.
+    JoinIncomplete,
+    SetUp,
+}
+
+pub(crate) async fn local_phase(database: &Database) -> Result<LocalPhase> {
+    Ok(match database.enrollment_pin().await? {
+        Some((_, _, role)) if role == "peer" => {
+            if database.meta("e2ee_association").await?.is_some() {
+                LocalPhase::SetUp
+            } else {
+                LocalPhase::JoinIncomplete
+            }
+        }
+        Some(_) => LocalPhase::SetUp,
+        None if database.local_seed_genesis_commitment().await?.is_some() => {
+            LocalPhase::SetupIncomplete
+        }
+        None => LocalPhase::NotSetUp,
+    })
+}
+
 /// Setup and joining progress that a caller may present. Stages report where
 /// the engine is, not how much remains.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

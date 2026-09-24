@@ -322,9 +322,20 @@ pub(crate) const COMMANDS: &[BuiltInCommand] = &[
         }],
         Action::Refresh,
     ),
-    BuiltInCommand::implemented_global_in_detail(
+    BuiltInCommand::implemented_with_aliases(
         "sync",
-        "sync with the remote server",
+        &["config-status"],
+        "open sync status, setup and devices",
+        "General",
+        &[KeySequence {
+            codes: &[KeyCode::Char('C'), KeyCode::Char('s')],
+            label: "C s",
+        }],
+        Action::ShowSync,
+    ),
+    BuiltInCommand::implemented_global_in_detail(
+        "sync-now",
+        "sync with the server now",
         "General",
         &[KeySequence {
             codes: &[KeyCode::Char('S')],
@@ -1774,16 +1785,6 @@ pub(crate) const COMMANDS: &[BuiltInCommand] = &[
         Action::BeginManualConflictMerge,
     ),
     // Config
-    BuiltInCommand::implemented(
-        "config-status",
-        "show sync and daemon status",
-        "Config",
-        &[KeySequence {
-            codes: &[KeyCode::Char('C'), KeyCode::Char('s')],
-            label: "C s",
-        }],
-        Action::ShowConfigStatus,
-    ),
     BuiltInCommand::implemented(
         "config-show",
         "show configuration",

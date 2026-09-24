@@ -561,7 +561,7 @@ async fn esc_closes_every_overlay_variant() {
             lines: vec!["line".to_string()],
             scroll: 0,
         }),
-        OverlayState::SyncStatus(Default::default()),
+        OverlayState::Sync(Default::default()),
     ];
 
     for overlay in overlays {

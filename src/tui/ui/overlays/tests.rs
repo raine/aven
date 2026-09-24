@@ -1,12 +1,12 @@
 use super::*;
 use crate::query::SyncHistoryStats;
 use crate::tui::authoring::{AddTaskStep, PendingTaskAttachmentSummary};
-use crate::tui::config_overlay::{CONFIG_STATUS_TITLE, DATABASE_STATS_TITLE};
+use crate::tui::config_overlay::DATABASE_STATS_TITLE;
 use crate::tui::overlay::{
     AddTaskAttachmentsView, AddTaskMode, AddTaskView, ConfirmView, LineEdit, MultilineInputKind,
     MultilineInputMode, MultilineInputView, OverlayState, OverlayView, PickerIntent, PickerItem,
     PickerKind, PickerMode, PickerState, PickerView, ScheduleEditorField, ScheduleEditorMode,
-    ScheduleEditorState, SearchKind, SearchResultItem, SyncStatusState, SyncStatusView,
+    ScheduleEditorState, SearchKind, SearchResultItem, SyncDialogState, SyncDialogView,
     TagComboboxIntent, TagComboboxKind, TagComboboxView, TextInputKind, TextInputView,
     TextPanelView,
 };
@@ -68,7 +68,7 @@ fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView<'_>)
         OverlayView::TextPanel(state) => render_text_panel(frame, state),
         OverlayView::Changelog { markdown, scroll } => render_changelog(frame, markdown, *scroll),
         OverlayView::Pairing(presentation) => render_pairing(frame, presentation),
-        OverlayView::SyncStatus(state) => render_sync_status(frame, state),
+        OverlayView::Sync(view) => render_sync_dialog(frame, view),
         OverlayView::DatabaseStats { stats, scroll } => {
             render_database_stats(frame, stats, *scroll)
         }
@@ -292,7 +292,7 @@ mod picker_overlays;
 mod database_stats_overlay;
 
 mod pairing_overlay;
-mod sync_status_overlay;
+mod sync_dialog_overlay;
 
 mod presentation_kind_rendering;
 

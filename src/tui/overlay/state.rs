@@ -56,18 +56,12 @@ pub(crate) enum OverlayState {
     Changelog(ChangelogState),
     Pairing(std::sync::Arc<crate::pairing::PairingPresentation>),
     RecurrenceHistory(Box<RecurrenceHistoryState>),
-    SyncStatus(SyncStatusState),
+    Sync(super::sync_dialog::SyncDialogState),
     DatabaseStats {
         stats: Box<TuiDatabaseStats>,
         scroll: u16,
     },
     Update(UpdateOverlayState),
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct SyncStatusState {
-    pub(crate) details: bool,
-    pub(crate) scroll: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -352,12 +346,6 @@ impl TextPanelState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SyncStatusAction {
-    SyncNow,
-    ShowConflicts,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlaySubmit {
     MetadataSave {
@@ -397,10 +385,6 @@ pub(crate) enum OverlaySubmit {
     },
     Order {
         order: TaskOrder,
-    },
-    SyncStatus {
-        state: SyncStatusState,
-        action: SyncStatusAction,
     },
     Confirm {
         intent: ConfirmIntent,

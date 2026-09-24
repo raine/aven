@@ -2,17 +2,10 @@ use anyhow::Result;
 
 use crate::tui::app::App;
 use crate::tui::config_overlay::{
-    config_info_overlay, config_init_overlay, config_paths_overlay, config_status_overlay,
-    database_stats_overlay,
+    config_info_overlay, config_init_overlay, config_paths_overlay, database_stats_overlay,
 };
 
 impl App {
-    pub(super) fn show_config_status(&mut self) -> Result<()> {
-        self.pending_shortcut.clear();
-        self.overlay = Some(config_status_overlay(&self.store)?);
-        Ok(())
-    }
-
     pub(super) fn show_config_info(&mut self) -> Result<()> {
         self.pending_shortcut.clear();
         self.overlay = Some(config_info_overlay(&self.store)?);

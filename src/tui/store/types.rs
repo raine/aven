@@ -667,6 +667,7 @@ pub(crate) struct TuiSyncStatus {
     pub(crate) runtime_allowed: bool,
     /// The database was set up or joined, including an unfinished attempt.
     pub(crate) set_up: bool,
+    pub(crate) phase: crate::sync::encrypted::LocalPhase,
     pub(crate) interval_seconds: u64,
     pub(crate) daemon_wake: SyncStatusCheck,
     pub(crate) pending_changes: i64,
@@ -681,6 +682,7 @@ impl Default for TuiSyncStatus {
             enabled: false,
             runtime_allowed: true,
             set_up: false,
+            phase: crate::sync::encrypted::LocalPhase::NotSetUp,
             interval_seconds: 30,
             daemon_wake: SyncStatusCheck::new(true, "not checked"),
             pending_changes: 0,

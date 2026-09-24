@@ -6,7 +6,7 @@ use super::picker::visible_picker_indices;
 use super::state::{
     AddTaskMode, HeaderMenuItem, HeaderMenuKind, HeaderMenuState, MultilineInputMode,
     MultilineIntent, OrderMenuState, OverlayState, OverlayState::*, PickerIntent, PickerItem,
-    PickerMode, SearchIntent, SearchResultItem, SyncStatusState, TagComboboxIntent, TextIntent,
+    PickerMode, SearchIntent, SearchResultItem, TagComboboxIntent, TextIntent,
 };
 use super::tag_combobox::{tag_combobox_completion, tag_combobox_matches};
 
@@ -119,7 +119,7 @@ pub(crate) enum OverlayView<'a> {
     },
     Pairing(std::sync::Arc<crate::pairing::PairingPresentation>),
     RecurrenceHistory(RecurrenceHistoryView<'a>),
-    SyncStatus(Box<SyncStatusView<'a>>),
+    Sync(Box<SyncDialogView<'a>>),
     DatabaseStats {
         stats: &'a TuiDatabaseStats,
         scroll: u16,
@@ -128,8 +128,8 @@ pub(crate) enum OverlayView<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SyncStatusView<'a> {
-    pub(crate) state: SyncStatusState,
+pub(crate) struct SyncDialogView<'a> {
+    pub(crate) state: &'a super::sync_dialog::SyncDialogState,
     pub(crate) status: &'a TuiSyncStatus,
     pub(crate) syncing: bool,
 }
@@ -592,8 +592,8 @@ impl<'a> OverlayView<'a> {
             RecurrenceHistory(state) => {
                 Self::RecurrenceHistory(RecurrenceHistoryView::from_state(state))
             }
-            SyncStatus(state) => Self::SyncStatus(Box::new(SyncStatusView {
-                state: state.clone(),
+            Sync(state) => Self::Sync(Box::new(SyncDialogView {
+                state,
                 status: context.sync_status,
                 syncing: context.syncing,
             })),

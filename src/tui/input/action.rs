@@ -185,7 +185,7 @@ impl App {
                     .await?
             }
             Action::BeginManualConflictMerge => self.begin_manual_conflict_merge().await?,
-            Action::ShowConfigStatus => self.show_config_status()?,
+            Action::ShowSync => self.show_sync_dialog(),
             Action::ShowConfigInfo => self.show_config_info()?,
             Action::ShowConfigPaths => self.show_config_paths()?,
             Action::ShowDatabaseStats => self.show_database_stats().await?,

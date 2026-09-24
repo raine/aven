@@ -132,7 +132,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::AcceptConflictLocal
             | Action::AcceptConflictRemote
             | Action::BeginManualConflictMerge
-            | Action::ShowConfigStatus
+            | Action::ShowSync
             | Action::ShowConfigInfo
             | Action::ShowConfigPaths
             | Action::ShowDatabaseStats
@@ -1002,7 +1002,8 @@ mod tests {
             "rename-project",
             "delete-project",
             "config-show",
-            "config-status",
+            "sync",
+            "sync-now",
             "config-paths",
             "database-stats",
             "config-init",
@@ -1270,7 +1271,7 @@ mod tests {
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('C'), KeyCode::Char('s')]),
-            ShortcutLookup::Found(Action::ShowConfigStatus)
+            ShortcutLookup::Found(Action::ShowSync)
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('C'), KeyCode::Char('c')]),

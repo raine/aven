@@ -66,11 +66,8 @@ fn overlay_kinds_use_shared_dialog_chrome() {
             lines: borrow_slice(vec!["field=title".to_string()]),
             scroll: 0,
         }),
-        OverlayView::SyncStatus(Box::new(SyncStatusView {
-            state: SyncStatusState {
-                details: false,
-                scroll: 0,
-            },
+        OverlayView::Sync(Box::new(SyncDialogView {
+            state: borrow_value(SyncDialogState::default()),
             status: borrow_value(TuiSyncStatus::default()),
             syncing: false,
         })),
@@ -85,7 +82,7 @@ fn overlay_kinds_use_shared_dialog_chrome() {
         "Labels",
         "Delete",
         "Conflict details",
-        CONFIG_STATUS_TITLE,
+        SYNC_TITLE,
     ]) {
         assert_overlay_uses_dialog_chrome(overlay, title);
     }

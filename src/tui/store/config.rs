@@ -34,10 +34,12 @@ impl TuiStore {
             Ok(addr) => SyncStatusCheck::new(true, addr.to_string()),
             Err(error) => SyncStatusCheck::new(false, format!("{error:#}")),
         };
+        let phase = crate::sync::encrypted::local_phase(&self.database).await?;
         Ok(TuiSyncStatus {
             enabled: config.sync.enabled,
             runtime_allowed: config.sync_is_allowed(),
-            set_up: crate::sync::encrypted::is_set_up(&self.database).await?,
+            set_up: phase != crate::sync::encrypted::LocalPhase::NotSetUp,
+            phase,
             interval_seconds: config.sync_interval_seconds(),
             daemon_wake,
             pending_changes: persistence.pending_changes,

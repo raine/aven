@@ -28,6 +28,7 @@ mod app_projects;
 mod app_recurrence;
 mod app_relationships;
 mod app_search;
+mod app_sync_dialog;
 mod app_update;
 mod app_workspaces;
 mod attachment_controller;
