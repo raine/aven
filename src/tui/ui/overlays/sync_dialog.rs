@@ -11,13 +11,15 @@ use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use super::super::sync_status_model::{SyncHealth, sync_status_summary};
 
+use crate::sync::encrypted::Removal;
 use crate::sync::encrypted::{LocalPhase, SetupPreview, Stage};
 use crate::tui::overlay::{
     InvitationKind, SecretText, SyncAction, SyncDialogView, SyncPage, dialog_area, sync_actions,
 };
 use crate::tui::store::TuiSyncStatus;
 use crate::tui::sync_operations::{
-    DrainSummary, OperationKind, OperationResult, RunningOperation, SyncActivity,
+    DrainSummary, OperationFailure, OperationKind, OperationResult, RunningOperation, SyncActivity,
+    short_device_ids,
 };
 use crate::tui::text::cell_width_ranges;
 use crate::tui::theme::{
@@ -193,6 +195,13 @@ fn body(view: &SyncDialogView<'_>, width: usize) -> Body {
             server, preview, ..
         } => confirm_setup_lines(&mut body, server, preview, width),
         SyncPage::ConfirmJoin { server, .. } => confirm_join_lines(&mut body, server, width),
+        SyncPage::ConfirmRemove { device } => {
+            confirm_remove_lines(&mut body, view.activity, device, width)
+        }
+        SyncPage::Devices => {
+            devices_lines(&mut body, view, width);
+            return body;
+        }
     }
     let actions = sync_actions(view.state, view.status, view.activity);
     if view.state.page.has_buttons() {
@@ -335,15 +344,25 @@ fn steps(kind: OperationKind) -> &'static [(Stage, &'static str, &'static str)] 
                 "Downloaded images",
             ),
         ],
+        OperationKind::ListDevices
+        | OperationKind::RemoveDevice(_)
+        | OperationKind::FinishRemoval => &[],
     }
 }
 
 fn progress_lines(lines: &mut Vec<Line<'static>>, running: &RunningOperation, width: usize) {
+    let heading = match running.kind {
+        OperationKind::Setup => "Setting up sync",
+        OperationKind::Join => "Joining sync",
+        OperationKind::ListDevices
+        | OperationKind::RemoveDevice(_)
+        | OperationKind::FinishRemoval => {
+            lines.push(spinner_line(running));
+            return;
+        }
+    };
     lines.push(Line::from(Span::styled(
-        match running.kind {
-            OperationKind::Setup => "Setting up sync",
-            OperationKind::Join => "Joining sync",
-        },
+        heading,
         Style::new().fg(FG).add_modifier(Modifier::BOLD),
     )));
     let steps = steps(running.kind);
@@ -383,9 +402,25 @@ fn progress_lines(lines: &mut Vec<Line<'static>>, running: &RunningOperation, wi
             "You can close this dialog. Editing waits until tasks are downloaded. Keep Add \
              device open on the other device."
         }
-        (OperationKind::Setup, _) => "You can close this dialog and keep working.",
+        _ => "You can close this dialog and keep working.",
     };
     lines.extend(paragraph(note, Style::new().fg(FG_MUTED), width));
+}
+
+/// Device operations report no engine stages; one truthful line covers them.
+fn spinner_line(running: &RunningOperation) -> Line<'static> {
+    let text = match running.kind {
+        OperationKind::RemoveDevice(_) => "Removing access and securing future changes",
+        OperationKind::FinishRemoval => "Securing future changes",
+        _ => "Checking devices with the server",
+    };
+    Line::from(vec![
+        Span::styled(
+            format!("{} ", spinner(running.started_at)),
+            Style::new().fg(ACCENT),
+        ),
+        Span::styled(text, Style::new().fg(FG)),
+    ])
 }
 
 fn spinner(started_at: Instant) -> &'static str {
@@ -394,7 +429,11 @@ fn spinner(started_at: Instant) -> &'static str {
 }
 
 fn push_last_result(lines: &mut Vec<Line<'static>>, activity: &SyncActivity, width: usize) {
-    let Some(result) = &activity.last else {
+    let Some(result) = activity
+        .last
+        .as_ref()
+        .filter(|_| activity.device_result().is_none())
+    else {
         return;
     };
     lines.push(Line::from(""));
@@ -411,23 +450,275 @@ fn push_last_result(lines: &mut Vec<Line<'static>>, activity: &SyncActivity, wid
                 width,
             ));
         }
-        OperationResult::Failed(failure) => {
+        OperationResult::Removed(_) | OperationResult::RemovalFinished { .. } => {}
+        OperationResult::Failed(failure) => failure_lines(lines, failure, width),
+    }
+}
+
+fn failure_lines(lines: &mut Vec<Line<'static>>, failure: &OperationFailure, width: usize) {
+    let headline = match failure.kind {
+        OperationKind::Setup => "Setup didn't finish",
+        OperationKind::Join => "Joining didn't finish",
+        OperationKind::ListDevices => "Couldn't check devices",
+        OperationKind::RemoveDevice(_) => "Removal didn't finish",
+        OperationKind::FinishRemoval => "Securing future changes didn't finish",
+    };
+    lines.extend(paragraph_with_mark("!", ORANGE, headline, width));
+    lines.extend(paragraph(&failure.message, Style::new().fg(FG), width));
+    lines.extend(paragraph(
+        "Press d for technical details.",
+        Style::new().fg(FG_DIM),
+        width,
+    ));
+}
+
+fn short_id(device: &[u8; 32]) -> String {
+    format!("{}…", &hex::encode(device)[..8])
+}
+
+fn devices_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
+    let activity = view.activity;
+    let lines = &mut body.lines;
+    lines.push(Line::from(Span::styled(
+        "Devices",
+        Style::new().fg(FG).add_modifier(Modifier::BOLD),
+    )));
+    let listing_failed = matches!(
+        activity.device_result(),
+        Some(OperationResult::Failed(failure)) if failure.kind == OperationKind::ListDevices
+    );
+    let freshness = match (&activity.devices, activity.running) {
+        (_, Some(running)) if running.kind == OperationKind::ListDevices => None,
+        (Some(snapshot), _) if listing_failed => Some(format!(
+            "Showing the list from {}; the latest check failed.",
+            elapsed(snapshot.checked_at)
+        )),
+        (Some(snapshot), _) if snapshot.after_removal => Some(format!(
+            "Updated by the removal {}.",
+            elapsed(snapshot.checked_at)
+        )),
+        (Some(snapshot), _) => Some(format!(
+            "Checked with the server {}.",
+            elapsed(snapshot.checked_at)
+        )),
+        (None, _) => None,
+    };
+    if let Some(freshness) = freshness {
+        lines.extend(paragraph(&freshness, Style::new().fg(FG_MUTED), width));
+    }
+    if let Some(running) = &activity.running {
+        lines.push(spinner_line(running));
+    }
+    match activity.device_result() {
+        Some(OperationResult::Removed(removal)) => removal_lines(lines, removal, width),
+        Some(OperationResult::RemovalFinished {
+            key_rotation_pending,
+        }) => {
+            if *key_rotation_pending {
+                lines.extend(paragraph_with_mark(
+                    "!",
+                    ORANGE,
+                    "Securing future changes is still unfinished",
+                    width,
+                ));
+                lines.extend(paragraph(
+                    "Try again later. Any remaining device also finishes it when it syncs.",
+                    Style::new().fg(FG_MUTED),
+                    width,
+                ));
+            } else {
+                lines.extend(paragraph_with_mark(
+                    "✓",
+                    GREEN,
+                    "Future changes are secured",
+                    width,
+                ));
+            }
+        }
+        Some(OperationResult::Failed(failure)) => failure_lines(lines, failure, width),
+        _ => {
+            if activity
+                .devices
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.listing.key_rotation_pending)
+            {
+                lines.extend(paragraph_with_mark(
+                    "!",
+                    ORANGE,
+                    "Securing future changes after a removal is unfinished",
+                    width,
+                ));
+            }
+        }
+    }
+
+    let actions = sync_actions(view.state, view.status, activity);
+    let devices = activity
+        .devices
+        .as_ref()
+        .map(|snapshot| snapshot.listing.devices.as_slice())
+        .unwrap_or_default();
+    let short_ids = short_device_ids(devices);
+    lines.push(Line::from(""));
+    if devices.is_empty() && activity.running.is_none() && !listing_failed {
+        lines.push(Line::from(Span::styled(
+            "No devices listed yet. Press r to check with the server.",
+            Style::new().fg(FG_DIM),
+        )));
+    }
+    let mut selected_device = None;
+    for (index, action) in actions.iter().enumerate() {
+        let focused = index == view.state.selected;
+        let row = match action {
+            SyncAction::Device(device_index) => {
+                let device = &devices[*device_index];
+                if focused {
+                    selected_device = Some(device);
+                }
+                let label = if device.current {
+                    format!("{:<24}This device", short_ids[*device_index])
+                } else {
+                    short_ids[*device_index].clone()
+                };
+                action_line_owned(label, focused)
+            }
+            action => action_line(action.label(), focused),
+        };
+        body.actions.push(ActionArea {
+            line: lines.len(),
+            start: 0,
+            end: width as u16,
+        });
+        lines.push(row);
+    }
+
+    if let Some(device) = selected_device {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Device ID",
+            Style::new().fg(FG_DIM),
+        )));
+        lines.extend(paragraph(
+            &hex::encode(device.id),
+            Style::new().fg(FG),
+            width,
+        ));
+        lines.extend(paragraph(
+            if device.current {
+                "This device can be removed only from another device in sync."
+            } else {
+                "Enter removes this device from sync."
+            },
+            Style::new().fg(FG_MUTED),
+            width,
+        ));
+    }
+    if view.state.details
+        && let Some(OperationResult::Failed(failure)) = activity.device_result()
+    {
+        lines.push(Line::from(""));
+        lines.push(super::shared::section_line("details"));
+        lines.extend(paragraph(
+            &failure.details,
+            Style::new().fg(FG_MUTED),
+            width,
+        ));
+    }
+}
+
+fn removal_lines(lines: &mut Vec<Line<'static>>, removal: &Removal, width: usize) {
+    let id = short_id(&removal.device);
+    match (removal.access_revoked, removal.key_rotation_pending) {
+        (true, false) => {
             lines.extend(paragraph_with_mark(
-                "!",
-                ORANGE,
-                match failure.kind {
-                    OperationKind::Setup => "Setup didn't finish",
-                    OperationKind::Join => "Joining didn't finish",
-                },
+                "✓",
+                GREEN,
+                &format!("Removed {id} from sync"),
                 width,
             ));
-            lines.extend(paragraph(&failure.message, Style::new().fg(FG), width));
             lines.extend(paragraph(
-                "Press d for technical details.",
-                Style::new().fg(FG_DIM),
+                "Future changes use new keys. The removed device keeps what it already \
+                 downloaded.",
+                Style::new().fg(FG_MUTED),
                 width,
             ));
         }
+        (true, true) => {
+            lines.extend(paragraph_with_mark(
+                "✓",
+                GREEN,
+                &format!("Access removed for {id}"),
+                width,
+            ));
+            lines.extend(paragraph_with_mark(
+                "!",
+                ORANGE,
+                "Securing future changes is unfinished. Finish removal continues it, and \
+                 any remaining device finishes it when it syncs.",
+                width,
+            ));
+        }
+        (false, _) => {
+            lines.extend(paragraph_with_mark(
+                "!",
+                ORANGE,
+                &format!("Removal of {id} isn't confirmed yet"),
+                width,
+            ));
+            lines.extend(paragraph(
+                "Resume removal to continue it.",
+                Style::new().fg(FG_MUTED),
+                width,
+            ));
+        }
+    }
+}
+
+fn confirm_remove_lines(body: &mut Body, activity: &SyncActivity, device: &[u8; 32], width: usize) {
+    let devices = activity
+        .devices
+        .as_ref()
+        .map(|snapshot| snapshot.listing.devices.as_slice())
+        .unwrap_or_default();
+    let label = devices
+        .iter()
+        .position(|listed| listed.id == *device)
+        .map(|index| short_device_ids(devices)[index].clone())
+        .unwrap_or_else(|| short_id(device));
+    let lines = &mut body.lines;
+    lines.push(Line::from(Span::styled(
+        format!("Remove device {label}?"),
+        Style::new().fg(FG).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+    lines.extend(paragraph(
+        "This device will lose access to future synced changes. Tasks and images it \
+         already downloaded will remain on it.",
+        Style::new().fg(FG_MUTED),
+        width,
+    ));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Device ID",
+        Style::new().fg(FG_DIM),
+    )));
+    lines.extend(paragraph(&hex::encode(device), Style::new().fg(FG), width));
+}
+
+/// Coarse age of a verified observation; never a wall-clock claim.
+fn elapsed(since: Instant) -> String {
+    match since.elapsed().as_secs() / 60 {
+        0 => "just now".to_string(),
+        1 => "1 minute ago".to_string(),
+        minutes => format!("{minutes} minutes ago"),
+    }
+}
+
+fn action_line_owned(label: String, focused: bool) -> Line<'static> {
+    if focused {
+        Line::from(Span::styled(format!("› {label}"), SELECTED))
+    } else {
+        Line::from(Span::styled(format!("  {label}"), Style::new().fg(FG)))
     }
 }
 
@@ -783,7 +1074,20 @@ fn hint_line(view: &SyncDialogView<'_>, scrolling: bool) -> Line<'static> {
             hints.push(("Ctrl-U", "clear"));
             hints.push(("Esc", "back"));
         }
-        SyncPage::ConfirmSetup { .. } | SyncPage::ConfirmJoin { .. } => {
+        SyncPage::Devices => {
+            hints.push(("↑↓", "select"));
+            if matches!(
+                actions.get(view.state.selected),
+                Some(SyncAction::Device(_))
+            ) {
+                hints.push(("y", "copy ID"));
+            }
+            hints.push(("r", "refresh"));
+            hints.push(("Esc", "back"));
+        }
+        SyncPage::ConfirmSetup { .. }
+        | SyncPage::ConfirmJoin { .. }
+        | SyncPage::ConfirmRemove { .. } => {
             hints.push(("←→", "select"));
             hints.push(("Enter", "choose"));
             hints.push(("Esc", "back"));

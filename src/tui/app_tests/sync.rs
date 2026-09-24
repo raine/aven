@@ -269,3 +269,117 @@ async fn interrupted_joining_pauses_local_edits_and_offers_resume() {
     assert!(app.sync_ops.work_pending());
     settle_operation(&mut app).await;
 }
+
+fn listed_devices(app: &mut App) -> [u8; 32] {
+    use crate::sync::encrypted::{Device, DeviceListing};
+    let other = [2; 32];
+    app.sync_ops.activity.devices = Some(crate::tui::sync_operations::DeviceSnapshot {
+        listing: DeviceListing {
+            server: "https://sync.example.com".to_string(),
+            key_rotation_pending: false,
+            devices: vec![
+                Device {
+                    id: [1; 32],
+                    current: true,
+                    admission_sequence: 0,
+                },
+                Device {
+                    id: other,
+                    current: false,
+                    admission_sequence: 2,
+                },
+            ],
+        },
+        checked_at: std::time::Instant::now(),
+        after_removal: false,
+    });
+    other
+}
+
+#[tokio::test]
+async fn manage_devices_checks_with_the_server_and_reports_failures_on_the_page() {
+    let mut app = test_app().await;
+    app.store.sync_status.set_up = true;
+    app.store.sync_status.phase = crate::sync::encrypted::LocalPhase::SetUp;
+    app.show_sync_dialog();
+    app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert_eq!(*sync_page(&app), crate::tui::overlay::SyncPage::Devices);
+    assert_eq!(
+        app.sync_ops.activity.running.map(|running| running.kind),
+        Some(crate::tui::sync_operations::OperationKind::ListDevices)
+    );
+    settle_operation(&mut app).await;
+    assert_eq!(
+        last_failure(&app).kind,
+        crate::tui::sync_operations::OperationKind::ListDevices
+    );
+    assert!(app.sync_ops.activity.devices.is_none());
+}
+
+#[tokio::test]
+async fn removing_requires_confirmation_targets_the_full_id_and_survives_closing() {
+    let mut app = test_app().await;
+    app.store.sync_status.set_up = true;
+    app.store.sync_status.phase = crate::sync::encrypted::LocalPhase::SetUp;
+    let other = listed_devices(&mut app);
+    app.overlay = Some(OverlayState::Sync(SyncDialogState::page(
+        crate::tui::overlay::SyncPage::Devices,
+    )));
+
+    // This device offers no removal.
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert_eq!(*sync_page(&app), crate::tui::overlay::SyncPage::Devices);
+    assert!(toast_message(&app).is_some_and(|message| message.contains("another device")));
+
+    app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert_eq!(
+        *sync_page(&app),
+        crate::tui::overlay::SyncPage::ConfirmRemove { device: other }
+    );
+    // Enter on the default Cancel returns to the list without removing.
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert_eq!(*sync_page(&app), crate::tui::overlay::SyncPage::Devices);
+    assert!(!app.sync_ops.work_pending());
+
+    app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Right)).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert_eq!(
+        app.sync_ops.activity.running.map(|running| running.kind),
+        Some(crate::tui::sync_operations::OperationKind::RemoveDevice(
+            other
+        ))
+    );
+
+    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+    assert!(app.overlay.is_none());
+    assert!(app.sync_ops.work_pending());
+
+    settle_operation(&mut app).await;
+    let failure = last_failure(&app);
+    assert_eq!(
+        failure.kind,
+        crate::tui::sync_operations::OperationKind::RemoveDevice(other)
+    );
+    assert!(toast_message(&app).is_some_and(|message| message.contains("device removal")));
+
+    // The failed removal resumes the same target, not a new one.
+    app.show_sync_dialog();
+    app.overlay = Some(OverlayState::Sync(SyncDialogState::page(
+        crate::tui::overlay::SyncPage::Devices,
+    )));
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert_eq!(
+        app.sync_ops.activity.running.map(|running| running.kind),
+        Some(crate::tui::sync_operations::OperationKind::RemoveDevice(
+            other
+        ))
+    );
+    settle_operation(&mut app).await;
+}

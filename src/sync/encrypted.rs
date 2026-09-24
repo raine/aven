@@ -23,7 +23,10 @@ use crate::render::print_json_pretty;
 use crate::seed_bootstrap_http;
 
 mod devices;
-pub(crate) use devices::{list as list_devices, remove as remove_device};
+pub(crate) use devices::{
+    Device, DeviceListing, Removal, finish_removal, list as list_devices, load_devices,
+    remove as remove_device, remove_other_device,
+};
 mod invitation;
 #[cfg(test)]
 pub(crate) use invitation::sample_invitations;

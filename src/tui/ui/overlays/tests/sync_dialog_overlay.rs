@@ -216,6 +216,7 @@ fn running(kind: OperationKind, stage: Option<Stage>) -> SyncActivity {
             started_at: std::time::Instant::now(),
         }),
         last: None,
+        devices: None,
     }
 }
 
@@ -357,6 +358,7 @@ fn results_distinguish_images_from_tasks() {
                     images: "unavailable",
                 },
             }),
+            devices: None,
         },
     );
 
@@ -374,6 +376,7 @@ fn failures_show_plain_messages_and_technical_details_on_request() {
     let activity = SyncActivity {
         running: None,
         last: Some(OperationResult::Failed(failure)),
+        devices: None,
     };
     let status = TuiSyncStatus {
         set_up: true,
@@ -440,4 +443,129 @@ fn sync_status() -> TuiSyncStatus {
         local_sequence: Some("45".to_string()),
         ..TuiSyncStatus::default()
     }
+}
+
+fn device_activity(rotation_pending: bool) -> SyncActivity {
+    use crate::sync::encrypted::{Device, DeviceListing};
+    let mut other = [0xa1; 32];
+    other[4] = 0xff;
+    SyncActivity {
+        devices: Some(crate::tui::sync_operations::DeviceSnapshot {
+            listing: DeviceListing {
+                server: "https://sync.example.com".to_string(),
+                key_rotation_pending: rotation_pending,
+                devices: vec![
+                    Device {
+                        id: [0xa1; 32],
+                        current: true,
+                        admission_sequence: 0,
+                    },
+                    Device {
+                        id: other,
+                        current: false,
+                        admission_sequence: 7,
+                    },
+                ],
+            },
+            checked_at: std::time::Instant::now(),
+            after_removal: false,
+        }),
+        ..SyncActivity::default()
+    }
+}
+
+#[test]
+fn device_list_marks_this_device_and_disambiguates_short_ids() {
+    let rendered = render_page(SyncPage::Devices, sync_status(), device_activity(false));
+
+    assert!(rendered.contains("Checked with the server just now."));
+    assert!(rendered.contains("› a1a1a1a1a1…"));
+    assert!(rendered.contains("This device"));
+    assert!(rendered.contains("a1a1a1a1ff…"));
+    assert!(rendered.contains(&hex::encode([0xa1; 32])[..40]));
+    assert!(rendered.contains("removed only from another device"));
+    assert!(!rendered.contains("admission"));
+    assert!(!rendered.contains("Remove device"));
+}
+
+#[test]
+fn selecting_another_device_shows_its_full_id_and_removal_hint() {
+    let state = borrow_value(SyncDialogState {
+        selected: 1,
+        ..SyncDialogState::page(SyncPage::Devices)
+    });
+    let rendered = dialog_text(activity_view(state, sync_status(), device_activity(false)));
+    let mut other = [0xa1; 32];
+    other[4] = 0xff;
+
+    assert!(rendered.contains(&hex::encode(other)[..40]));
+    assert!(rendered.contains("Enter removes this device from sync."));
+    assert!(rendered.contains("y copy ID"));
+}
+
+#[test]
+fn pending_rotation_and_stale_lists_are_labelled_honestly() {
+    let pending = render_page(SyncPage::Devices, sync_status(), device_activity(true));
+    assert!(pending.contains("Securing future changes after a removal is unfinished"));
+    assert!(pending.contains("› Finish removal"));
+
+    let mut stale = device_activity(false);
+    stale.last = Some(OperationResult::Failed(OperationFailure {
+        kind: OperationKind::ListDevices,
+        message: "Couldn't reach the sync server.".to_string(),
+        details: "error enrollment-network outcome-unknown".to_string(),
+    }));
+    let rendered = render_page(SyncPage::Devices, sync_status(), stale);
+    assert!(rendered.contains("latest check failed"));
+    assert!(!rendered.contains("Checked with the server"));
+    assert!(rendered.contains("Couldn't reach the sync server."));
+}
+
+#[test]
+fn removal_confirmation_explains_consequences_and_names_the_full_target() {
+    let mut other = [0xa1; 32];
+    other[4] = 0xff;
+    let rendered = render_page(
+        SyncPage::ConfirmRemove { device: other },
+        sync_status(),
+        device_activity(false),
+    );
+
+    assert!(rendered.contains("Remove device a1a1a1a1ff…?"));
+    assert!(rendered.contains("lose access to future synced changes"));
+    assert!(rendered.contains("already downloaded will remain on it"));
+    assert!(rendered.contains(&hex::encode(other)[..40]));
+    assert!(rendered.contains(" Cancel "));
+    assert!(rendered.contains(" Remove device "));
+}
+
+#[test]
+fn removal_results_do_not_claim_completion_before_rotation() {
+    let removal = |key_rotation_pending| SyncActivity {
+        last: Some(OperationResult::Removed(crate::sync::encrypted::Removal {
+            device: [0xb2; 32],
+            access_revoked: true,
+            key_rotation_pending,
+        })),
+        ..device_activity(key_rotation_pending)
+    };
+    let pending = render_page(SyncPage::Devices, sync_status(), removal(true));
+    assert!(pending.contains("Access removed for b2b2b2b2…"));
+    assert!(pending.contains("Securing future changes is unfinished"));
+    assert!(!pending.contains("Removed b2b2b2b2… from sync"));
+
+    let complete = render_page(SyncPage::Devices, sync_status(), removal(false));
+    assert!(complete.contains("Removed b2b2b2b2… from sync"));
+    assert!(complete.contains("Future changes use new keys"));
+
+    let running = SyncActivity {
+        running: Some(RunningOperation {
+            kind: OperationKind::RemoveDevice([0xb2; 32]),
+            stage: None,
+            started_at: std::time::Instant::now(),
+        }),
+        ..device_activity(false)
+    };
+    let rendered = render_page(SyncPage::Devices, sync_status(), running);
+    assert!(rendered.contains("Removing access and securing future changes"));
 }

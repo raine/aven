@@ -155,6 +155,34 @@ impl App {
                 self.start_sync_operation(kind, Some(invitation));
                 home
             }
+            SyncAction::ManageDevices => {
+                self.start_sync_operation(OperationKind::ListDevices, None);
+                SyncDialogState::page(SyncPage::Devices)
+            }
+            SyncAction::RefreshDevices => {
+                self.start_sync_operation(OperationKind::ListDevices, None);
+                state
+            }
+            SyncAction::Cancel => SyncDialogState::page(SyncPage::Devices),
+            SyncAction::Device(index) => self.select_device(state, index),
+            SyncAction::CopyDeviceId => {
+                self.copy_selected_device_id(&state);
+                state
+            }
+            SyncAction::ConfirmRemove => {
+                if let SyncPage::ConfirmRemove { device } = state.page {
+                    self.start_sync_operation(OperationKind::RemoveDevice(device), None);
+                }
+                SyncDialogState::page(SyncPage::Devices)
+            }
+            SyncAction::ResumeRemoval(device) => {
+                self.start_sync_operation(OperationKind::RemoveDevice(device), None);
+                state
+            }
+            SyncAction::FinishRemoval => {
+                self.start_sync_operation(OperationKind::FinishRemoval, None);
+                state
+            }
         };
         self.overlay = Some(OverlayState::Sync(next));
         Ok(())
@@ -228,9 +256,57 @@ impl App {
         let started = match kind {
             OperationKind::Setup => self.sync_ops.start_setup(&database, &config, invitation),
             OperationKind::Join => self.sync_ops.start_join(&database, &config, invitation),
+            OperationKind::ListDevices => self.sync_ops.start_list_devices(&database, &config),
+            OperationKind::RemoveDevice(device) => self
+                .sync_ops
+                .start_remove_device(&database, &config, device),
+            OperationKind::FinishRemoval => self.sync_ops.start_finish_removal(&database, &config),
         };
         if !started {
             self.set_info("another sync operation is in progress");
+        }
+    }
+
+    /// Opens removal confirmation for another device. The current device
+    /// has no removal action here.
+    fn select_device(&mut self, state: SyncDialogState, index: usize) -> SyncDialogState {
+        let Some(device) = self.listed_device(index) else {
+            return state;
+        };
+        if device.current {
+            self.set_info("remove this device from another device in sync");
+            return state;
+        }
+        if self.sync_ops.work_pending() {
+            self.set_info("wait for the current sync operation to finish");
+            return state;
+        }
+        SyncDialogState::page(SyncPage::ConfirmRemove { device: device.id })
+    }
+
+    fn listed_device(&self, index: usize) -> Option<&encrypted::Device> {
+        self.sync_ops
+            .activity
+            .devices
+            .as_ref()
+            .and_then(|snapshot| snapshot.listing.devices.get(index))
+    }
+
+    fn copy_selected_device_id(&mut self, state: &SyncDialogState) {
+        let actions = sync_actions(state, &self.store.sync_status, &self.sync_ops.activity);
+        let Some(SyncAction::Device(index)) = actions.get(state.selected).copied() else {
+            self.set_info("select a device to copy its ID");
+            return;
+        };
+        let Some(id) = self
+            .listed_device(index)
+            .map(|device| hex::encode(device.id))
+        else {
+            return;
+        };
+        match crate::tui::platform::copy_to_clipboard(&id) {
+            Ok(()) => self.set_success("copied device ID"),
+            Err(error) => self.set_warning(format!("could not copy device ID: {error:#}")),
         }
     }
 
@@ -245,9 +321,15 @@ impl App {
                 self.refresh().await?;
             }
             OperationEvent::Stage(..) => {}
-            OperationEvent::Finished(result) => {
-                let refreshed = self.refresh().await;
-                if !matches!(self.overlay, Some(OverlayState::Sync(_))) {
+            OperationEvent::Finished(kind, result) => {
+                let refreshed = if kind.manages_devices() {
+                    Ok(())
+                } else {
+                    self.refresh().await
+                };
+                if let Some(result) = result
+                    && !matches!(self.overlay, Some(OverlayState::Sync(_)))
+                {
                     self.notify_sync_operation(&result);
                 }
                 refreshed?;
@@ -271,13 +353,25 @@ impl App {
                     ));
                 }
             }
-            OperationResult::Failed(failure) => self.set_error(format!(
-                "{}: open :sync for details",
-                match failure.kind {
+            OperationResult::Removed(removal) if removal.key_rotation_pending => self.set_warning(
+                "device access removed; securing future changes is unfinished, open :sync",
+            ),
+            OperationResult::Removed(_) => self.set_success("device removed from sync"),
+            OperationResult::RemovalFinished {
+                key_rotation_pending: true,
+            } => self.set_warning("securing future changes is still unfinished; open :sync"),
+            OperationResult::RemovalFinished { .. } => self.set_success("future changes secured"),
+            OperationResult::Failed(failure) => {
+                let what = match failure.kind {
                     OperationKind::Setup => "setup didn't finish",
                     OperationKind::Join => "joining didn't finish",
-                }
-            )),
+                    OperationKind::ListDevices => "couldn't check devices",
+                    OperationKind::RemoveDevice(_) | OperationKind::FinishRemoval => {
+                        "device removal didn't finish"
+                    }
+                };
+                self.set_error(format!("{what}: open :sync for details"));
+            }
         }
     }
 

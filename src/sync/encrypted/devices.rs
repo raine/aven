@@ -249,6 +249,29 @@ pub(crate) async fn remove_other_device(
     })
 }
 
+/// Continues an unfinished removal or key rotation retained by the engine, as
+/// an ordinary sync round would. Returns whether rotation is still pending.
+pub(crate) async fn finish_removal(database: &Database, config: &AppConfig) -> Result<bool> {
+    let Session {
+        _guard,
+        store,
+        client,
+        server,
+    } = open(database, config).await?;
+    client
+        .finish_pending_management(&store, database)
+        .await
+        .map_err(|error| match error.to_string().as_str() {
+            "error enrollment-refused outcome-unknown" => error.context(REFUSED),
+            _ => explain_revoked(error),
+        })?;
+    Ok(store
+        .active_inputs(database, &server)
+        .await?
+        .membership
+        .rotation_pending())
+}
+
 pub(crate) async fn remove(
     database: &Database,
     config: &AppConfig,

@@ -71,6 +71,18 @@ fn explain(kind: OperationKind, error: &anyhow::Error) -> &'static str {
         return "Another device removed this device from sync. Tasks and images here stay \
                 available, but this device can no longer sync.";
     }
+    if has("sync-device-removal-unfinished") || has("management-unfinished") {
+        return "An earlier device removal from this device is unfinished. Finish it \
+                before removing another device.";
+    }
+    if has("sync-device-not-found") {
+        return "That device is no longer in sync. Refresh the list.";
+    }
+    if has("sync-device-current") {
+        return "This is the current device. Remove it from another device in sync.";
+    }
+    // A refusal alone proves neither a server failure nor removal of this
+    // device, so the message names only what could not be confirmed.
     if has("sync-server-refused") || has("enrollment-refused") || has("bootstrap-refused") {
         return match kind {
             OperationKind::Join => {
@@ -80,6 +92,14 @@ fn explain(kind: OperationKind, error: &anyhow::Error) -> &'static str {
             OperationKind::Setup => {
                 "The server refused the request, so setup couldn't be confirmed. Try \
                  again later, or check the server."
+            }
+            OperationKind::ListDevices => {
+                "The server refused the request, so this device's access couldn't be \
+                 confirmed. Try again later."
+            }
+            OperationKind::RemoveDevice(_) | OperationKind::FinishRemoval => {
+                "The server refused the request, so the removal couldn't be confirmed. \
+                 Resuming retries the same removal."
             }
         };
     }
@@ -91,6 +111,14 @@ fn explain(kind: OperationKind, error: &anyhow::Error) -> &'static str {
         OperationKind::Join => {
             "Joining couldn't finish. Resuming continues the same join from where it \
              stopped."
+        }
+        OperationKind::ListDevices => "Couldn't check devices with the server.",
+        OperationKind::RemoveDevice(_) => {
+            "Removal didn't finish. Resuming continues the same removal."
+        }
+        OperationKind::FinishRemoval => {
+            "Securing future changes didn't finish. Try again, or sync on any remaining \
+             device."
         }
     }
 }
@@ -130,6 +158,27 @@ mod tests {
         let message = failure(OperationKind::Setup, &error).message;
         assert!(message.contains("couldn't be confirmed"), "{message}");
         assert!(!message.contains("removed"), "{message}");
+    }
+
+    #[test]
+    fn removal_refusals_never_claim_the_device_was_removed() {
+        for kind in [
+            OperationKind::ListDevices,
+            OperationKind::RemoveDevice([1; 32]),
+            OperationKind::FinishRemoval,
+        ] {
+            let error = anyhow!("error enrollment-refused outcome-unknown")
+                .context("error sync-device-removal-incomplete hint=\"rerun the same command\"");
+            let message = failure(kind, &error).message;
+            assert!(message.contains("couldn't be confirmed"), "{message}");
+            assert!(!message.contains("removed"), "{message}");
+        }
+        let unfinished = anyhow!("error management-unfinished");
+        assert!(
+            failure(OperationKind::RemoveDevice([1; 32]), &unfinished)
+                .message
+                .contains("earlier device removal")
+        );
     }
 
     #[test]

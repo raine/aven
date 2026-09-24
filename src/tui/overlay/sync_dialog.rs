@@ -9,7 +9,7 @@ use zeroize::Zeroizing;
 
 use crate::sync::encrypted::{LocalPhase, SetupPreview};
 use crate::tui::store::TuiSyncStatus;
-use crate::tui::sync_operations::SyncActivity;
+use crate::tui::sync_operations::{OperationFailure, OperationKind, OperationResult, SyncActivity};
 
 /// Upper bound on pasted invitation text, matching the CLI's input limit.
 const INVITATION_LIMIT: usize = 8192;
@@ -59,20 +59,27 @@ pub(crate) enum SyncPage {
         server: String,
         invitation: SecretText,
     },
+    Devices,
+    ConfirmRemove {
+        device: [u8; 32],
+    },
 }
 
 impl SyncPage {
-    /// Confirmations that change what this database is start on Back.
+    /// Confirmations that change what this database is, or remove a
+    /// device, start on Back or Cancel.
     fn default_focus(&self) -> usize {
         match self {
             Self::Invitation { .. } | Self::ConfirmJoin { .. } => 1,
-            Self::Home | Self::ConfirmSetup { .. } => 0,
+            Self::Home | Self::ConfirmSetup { .. } | Self::Devices | Self::ConfirmRemove { .. } => {
+                0
+            }
         }
     }
 
     /// Pages whose actions render as a row of buttons.
     pub(crate) fn has_buttons(&self) -> bool {
-        !matches!(self, Self::Home)
+        !matches!(self, Self::Home | Self::Devices)
     }
 }
 
@@ -131,6 +138,15 @@ pub(crate) enum SyncAction {
     Continue,
     ConfirmSetup,
     ConfirmJoin,
+    ManageDevices,
+    /// A device row on the device page, by listing index.
+    Device(usize),
+    RefreshDevices,
+    CopyDeviceId,
+    Cancel,
+    ConfirmRemove,
+    ResumeRemoval([u8; 32]),
+    FinishRemoval,
 }
 
 impl SyncAction {
@@ -146,6 +162,14 @@ impl SyncAction {
             Self::Continue => "Continue",
             Self::ConfirmSetup => "Set up sync",
             Self::ConfirmJoin => "Join",
+            Self::ManageDevices => "Manage devices",
+            Self::Device(_) => "Device",
+            Self::RefreshDevices => "Refresh",
+            Self::CopyDeviceId => "Copy device ID",
+            Self::Cancel => "Cancel",
+            Self::ConfirmRemove => "Remove device",
+            Self::ResumeRemoval(_) => "Resume removal",
+            Self::FinishRemoval => "Finish removal",
         }
     }
 }
@@ -160,7 +184,11 @@ pub(crate) fn sync_actions(
     match state.page {
         SyncPage::Home if activity.running.is_some() => Vec::new(),
         SyncPage::Home => match status.phase {
-            LocalPhase::SetUp => vec![SyncAction::SyncNow, SyncAction::AddDevice],
+            LocalPhase::SetUp => vec![
+                SyncAction::SyncNow,
+                SyncAction::AddDevice,
+                SyncAction::ManageDevices,
+            ],
             LocalPhase::NotSetUp => vec![SyncAction::SetUp, SyncAction::Join],
             LocalPhase::SetupIncomplete => vec![SyncAction::ResumeSetup],
             LocalPhase::JoinIncomplete => vec![SyncAction::ResumeJoin],
@@ -168,7 +196,40 @@ pub(crate) fn sync_actions(
         SyncPage::Invitation { .. } => vec![SyncAction::Back, SyncAction::Continue],
         SyncPage::ConfirmSetup { .. } => vec![SyncAction::Back, SyncAction::ConfirmSetup],
         SyncPage::ConfirmJoin { .. } => vec![SyncAction::Back, SyncAction::ConfirmJoin],
+        SyncPage::Devices => device_actions(activity),
+        SyncPage::ConfirmRemove { .. } => vec![SyncAction::Cancel, SyncAction::ConfirmRemove],
     }
+}
+
+/// A resumable removal first, then one row per listed device. Rows stay
+/// selectable while work runs so full IDs remain readable.
+fn device_actions(activity: &SyncActivity) -> Vec<SyncAction> {
+    let mut actions = Vec::new();
+    if activity.running.is_none() {
+        let rotation_pending = activity
+            .devices
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.listing.key_rotation_pending);
+        match activity.device_result() {
+            Some(OperationResult::Failed(failure)) if failure.removal_unfinished() => {
+                actions.push(SyncAction::FinishRemoval)
+            }
+            Some(OperationResult::Failed(OperationFailure {
+                kind: OperationKind::RemoveDevice(device),
+                ..
+            })) => actions.push(SyncAction::ResumeRemoval(*device)),
+            Some(OperationResult::Failed(OperationFailure {
+                kind: OperationKind::FinishRemoval,
+                ..
+            })) => actions.push(SyncAction::FinishRemoval),
+            _ if rotation_pending => actions.push(SyncAction::FinishRemoval),
+            _ => {}
+        }
+    }
+    if let Some(snapshot) = &activity.devices {
+        actions.extend((0..snapshot.listing.devices.len()).map(SyncAction::Device));
+    }
+    actions
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -188,9 +249,39 @@ pub(crate) fn handle_sync_dialog_key(
     match state.page {
         SyncPage::Home => handle_home_key(state, key, actions, scroll_cap),
         SyncPage::Invitation { .. } => handle_invitation_key(state, key, actions),
-        SyncPage::ConfirmSetup { .. } | SyncPage::ConfirmJoin { .. } => {
-            handle_buttons_key(state, key, actions)
+        SyncPage::Devices => handle_devices_key(state, key, actions),
+        SyncPage::ConfirmSetup { .. }
+        | SyncPage::ConfirmJoin { .. }
+        | SyncPage::ConfirmRemove { .. } => handle_buttons_key(state, key, actions),
+    }
+}
+
+fn handle_devices_key(
+    mut state: SyncDialogState,
+    key: KeyEvent,
+    actions: &[SyncAction],
+) -> SyncDialogOutcome {
+    match key.code {
+        KeyCode::Esc => SyncDialogOutcome::Run(state, SyncAction::Back),
+        KeyCode::Enter => match actions.get(state.selected) {
+            Some(&action) => SyncDialogOutcome::Run(state, action),
+            None => SyncDialogOutcome::Retained(state),
+        },
+        KeyCode::Char('r') => SyncDialogOutcome::Run(state, SyncAction::RefreshDevices),
+        KeyCode::Char('y') => SyncDialogOutcome::Run(state, SyncAction::CopyDeviceId),
+        KeyCode::Char('d') => {
+            state.details = !state.details;
+            SyncDialogOutcome::Retained(state)
         }
+        KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+            move_focus(&mut state, 1, actions.len(), 0);
+            SyncDialogOutcome::Retained(state)
+        }
+        KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => {
+            move_focus(&mut state, -1, actions.len(), 0);
+            SyncDialogOutcome::Retained(state)
+        }
+        _ => SyncDialogOutcome::Retained(state),
     }
 }
 
@@ -283,7 +374,9 @@ fn handle_buttons_key(
     actions: &[SyncAction],
 ) -> SyncDialogOutcome {
     match key.code {
-        KeyCode::Esc => SyncDialogOutcome::Run(state, SyncAction::Back),
+        KeyCode::Esc => {
+            SyncDialogOutcome::Run(state, actions.first().copied().unwrap_or(SyncAction::Back))
+        }
         KeyCode::Enter => match actions.get(state.selected) {
             Some(&action) => SyncDialogOutcome::Run(state, action),
             None => SyncDialogOutcome::Retained(state),
@@ -353,7 +446,11 @@ mod tests {
         );
         assert_eq!(
             sync_actions(&state, &status(LocalPhase::SetUp), &idle),
-            [SyncAction::SyncNow, SyncAction::AddDevice]
+            [
+                SyncAction::SyncNow,
+                SyncAction::AddDevice,
+                SyncAction::ManageDevices
+            ]
         );
     }
 
@@ -501,6 +598,110 @@ mod tests {
         assert_eq!(join.selected, 1);
     }
 
+    fn listed(rotation_pending: bool) -> SyncActivity {
+        use crate::sync::encrypted::{Device, DeviceListing};
+        SyncActivity {
+            devices: Some(crate::tui::sync_operations::DeviceSnapshot {
+                listing: DeviceListing {
+                    server: "https://sync.example.com".to_string(),
+                    key_rotation_pending: rotation_pending,
+                    devices: vec![
+                        Device {
+                            id: [1; 32],
+                            current: true,
+                            admission_sequence: 0,
+                        },
+                        Device {
+                            id: [2; 32],
+                            current: false,
+                            admission_sequence: 2,
+                        },
+                    ],
+                },
+                checked_at: std::time::Instant::now(),
+                after_removal: false,
+            }),
+            ..SyncActivity::default()
+        }
+    }
+
+    #[test]
+    fn device_page_lists_rows_and_offers_to_finish_pending_rotation() {
+        let state = SyncDialogState::page(SyncPage::Devices);
+        let set_up = status(LocalPhase::SetUp);
+        assert_eq!(
+            sync_actions(&state, &set_up, &listed(false)),
+            [SyncAction::Device(0), SyncAction::Device(1)]
+        );
+        assert_eq!(
+            sync_actions(&state, &set_up, &listed(true)),
+            [
+                SyncAction::FinishRemoval,
+                SyncAction::Device(0),
+                SyncAction::Device(1)
+            ]
+        );
+
+        let mut failed = listed(false);
+        failed.last = Some(OperationResult::Failed(OperationFailure {
+            kind: OperationKind::RemoveDevice([2; 32]),
+            message: String::new(),
+            details: "error enrollment-network outcome-unknown".to_string(),
+        }));
+        assert_eq!(
+            sync_actions(&state, &set_up, &failed)[0],
+            SyncAction::ResumeRemoval([2; 32])
+        );
+        failed.last = Some(OperationResult::Failed(OperationFailure {
+            kind: OperationKind::RemoveDevice([2; 32]),
+            message: String::new(),
+            details: "error management-unfinished".to_string(),
+        }));
+        assert_eq!(
+            sync_actions(&state, &set_up, &failed)[0],
+            SyncAction::FinishRemoval
+        );
+    }
+
+    #[test]
+    fn device_page_keys_select_copy_refresh_and_go_back() {
+        let actions = [SyncAction::Device(0), SyncAction::Device(1)];
+        let state = retained(handle_sync_dialog_key(
+            SyncDialogState::page(SyncPage::Devices),
+            key(KeyCode::Down),
+            &actions,
+            0,
+        ));
+        assert_eq!(state.selected, 1);
+        for (code, action) in [
+            (KeyCode::Enter, SyncAction::Device(1)),
+            (KeyCode::Char('y'), SyncAction::CopyDeviceId),
+            (KeyCode::Char('r'), SyncAction::RefreshDevices),
+            (KeyCode::Esc, SyncAction::Back),
+        ] {
+            assert_eq!(
+                handle_sync_dialog_key(state.clone(), key(code), &actions, 0),
+                SyncDialogOutcome::Run(state.clone(), action)
+            );
+        }
+    }
+
+    #[test]
+    fn removal_confirmation_starts_on_cancel_and_escape_cancels() {
+        let state = SyncDialogState::page(SyncPage::ConfirmRemove { device: [2; 32] });
+        let actions = sync_actions(&state, &status(LocalPhase::SetUp), &listed(false));
+        assert_eq!(actions, [SyncAction::Cancel, SyncAction::ConfirmRemove]);
+        assert_eq!(state.selected, 0);
+        assert!(matches!(
+            handle_sync_dialog_key(state.clone(), key(KeyCode::Enter), &actions, 0),
+            SyncDialogOutcome::Run(_, SyncAction::Cancel)
+        ));
+        assert!(matches!(
+            handle_sync_dialog_key(state, key(KeyCode::Esc), &actions, 0),
+            SyncDialogOutcome::Run(_, SyncAction::Cancel)
+        ));
+    }
+
     #[test]
     fn running_operations_offer_no_new_actions() {
         let activity = SyncActivity {
@@ -510,6 +711,7 @@ mod tests {
                 started_at: std::time::Instant::now(),
             }),
             last: None,
+            devices: None,
         };
         assert!(
             sync_actions(
