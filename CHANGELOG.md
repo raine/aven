@@ -21,6 +21,8 @@ description: Release notes for aven.
 
 - Fix: Concurrent task label changes converge in encrypted sync without overwriting later pending changes.
 
+- Fix: Renaming or deleting projects and labels, restoring a deleted label, and creating or renaming workspaces no longer stop encrypted sync, so later edits keep syncing.
+
 - Fix: Encrypted enrollment busy responses consistently disable caching.
 
 - Fix: Finishing an encrypted sync round leaves later queued creations undoable until their own upload is prepared.

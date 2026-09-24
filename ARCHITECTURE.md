@@ -284,10 +284,13 @@ chain resolver with the exact expected head, stream and published descriptor.
 
 Task create/edit/delete/restore, notes, labels, metadata, dependencies, related
 links and epics reuse existing domain apply/conflict and ordering reconciliation.
-Project/label creation prerequisites and the existing recurrence vocabulary are
-supported: series creation, template/metadata updates, projection, outcomes,
-pause intervals, state changes and stop, including domain conflict resolution.
-Other administrative operations remain outside the closed subset. Attachment mutations use authenticated Ref/Unref.
+Project create/rename/delete, label create/rename/delete/restore and workspace
+create/rename reuse the existing administration reducers. Workspace operations are
+database-wide: the entity is the workspace, and payload workspace fields are refused.
+The existing recurrence vocabulary is supported: series creation, template/metadata
+updates, projection, outcomes, pause intervals, state changes and stop, including
+domain conflict resolution. The allowlist covers the full maintained operation
+vocabulary with per-operation payload keys. Attachment mutations use authenticated Ref/Unref.
 `prepare_encrypted_push` is the single ordered head owner: it returns the frozen record
 or preflights pending work and freezes the head, staging exact image ciphertext
 with the Ref in the same transaction. Both task and image records pass the canonical
@@ -354,10 +357,15 @@ commands is required; pruning them needs a separate confirmed-baseline contract.
 
 `encrypted_tail/labels.rs` assigns each affected task-label pair from its last
 retained tail command, using accepted sequence order followed by local pending
-push order. Accepted-only outcomes and incoming pages, including local echoes,
+push order. Label deletion and rename away assign absence, and restoration listing
+the task assigns presence. A rename into the label keeps the materialized presence.
+A label whose last tail command deletes or renames it re-applies that command
+through the existing reducer. Accepted-only outcomes and incoming pages, including local echoes,
 reconcile transactionally. Pairs without tail commands keep their published
 materialization, not a replay of prefix history. This uses the same retained-tail
-requirement as notes and does not change dependency cycle arbitration.
+requirement as notes and does not change dependency cycle arbitration. A rename that
+races a remote per-task change to the old label keeps apply-order presence for the
+new label, as plaintext sync does.
 
 `encrypted_tail/dependencies.rs` rebuilds each affected workspace graph from a
 local association-lifetime materialized baseline plus retained dependency tail
@@ -387,7 +395,8 @@ page rollback and explicit refusal tests. Controlled same-ID fixtures exercise
 canonical verification. `tests/recurrence.rs` also exercises actual independently
 generated deterministic successors, snapshot continuation, lifecycle and outcome
 conflicts, malformed compound rollback, lost acknowledgement and image retention.
-Rotation, recovery, shipping setup, UI, iOS and comprehensive integration review
+`tests/administration.rs` covers project, label and workspace administration
+across peers and a fresh installation. Rotation, recovery, shipping setup, UI, iOS and comprehensive integration review
 remain separate work.
 
 ### Internal encrypted attachment transfer

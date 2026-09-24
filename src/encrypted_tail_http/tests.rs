@@ -2615,6 +2615,7 @@ async fn checkpoint_snapshot_note_keeps_source_edit_between_capture_and_adoption
     assert_snapshot_note_edits_converge(true).await;
 }
 
+mod administration;
 mod relations;
 
 mod dependencies;

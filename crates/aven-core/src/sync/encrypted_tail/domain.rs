@@ -211,7 +211,20 @@ pub(super) fn validate(c: &ChangeWire) -> Result<Projection> {
             &["field_id", "key", "value", "conflict_resolution"]
         }
         "create_project" => &["key", "name", "prefix", "created_at"],
+        "set_project_metadata" => &["key", "name", "prefix", "updated_at"],
+        "project_delete" => &["deleted_at"],
         "create_label" => &["name", "created_at"],
+        "set_label_name" => &["name", "new_name", "renamed_at"],
+        "label_delete" => &["name", "deleted_at"],
+        "label_restore" => &[
+            "name",
+            "created_at",
+            "task_ids",
+            "series_ids",
+            "restored_at",
+        ],
+        "create_workspace" => &["key", "name", "created_at"],
+        "set_workspace_field" => &["value"],
         "attachment_add" => &[
             "attachment_id",
             "sha256",
@@ -259,10 +272,37 @@ pub(super) fn validate(c: &ChangeWire) -> Result<Projection> {
     if let Some(flag) = p.get("conflict_resolution") {
         valid(flag.is_boolean())?;
     }
-    let workspace = p
-        .get("workspace_id")
-        .and_then(Value::as_str)
-        .context("error encrypted-tail-workspace")?;
+    let workspace_op = matches!(
+        c.op_type.as_str(),
+        "create_workspace" | "set_workspace_field"
+    );
+    if workspace_op
+        || matches!(
+            c.op_type.as_str(),
+            "set_project_metadata"
+                | "project_delete"
+                | "set_label_name"
+                | "label_delete"
+                | "label_restore"
+        )
+    {
+        // These reducers ignore the columns, so accepting them would be ambiguous.
+        valid(
+            c.base_version.is_none() && c.field.is_none() == (c.op_type != "set_workspace_field"),
+        )?;
+    }
+    if c.op_type == "set_label_name" {
+        valid(p.get("new_name") != p.get("name"))?;
+    }
+    // Workspace operations are database-wide and identify the workspace as their entity.
+    let workspace = if workspace_op {
+        valid(!p.contains_key("workspace_id") && !p.contains_key("workspace_key"))?;
+        c.entity_id.as_str()
+    } else {
+        p.get("workspace_id")
+            .and_then(Value::as_str)
+            .context("error encrypted-tail-workspace")?
+    };
     workspace
         .parse::<crate::ids::WorkspaceId>()
         .map_err(|_| anyhow::anyhow!("error encrypted-tail-workspace"))?;

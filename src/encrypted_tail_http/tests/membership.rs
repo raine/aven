@@ -2,9 +2,9 @@ use super::*;
 use crate::peer_enrollment_http;
 use aven_core::sync::seed_claim::membership::Membership;
 
-struct Joined {
-    db: Database,
-    store: ProtectedLocalKeyStore,
+pub(super) struct Joined {
+    pub(super) db: Database,
+    pub(super) store: ProtectedLocalKeyStore,
     blobs: std::path::PathBuf,
 }
 fn expiry() -> u64 {
@@ -14,7 +14,7 @@ fn expiry() -> u64 {
         .as_secs()
         + 3600
 }
-async fn join(
+pub(super) async fn join(
     f: &Fixture,
     name: &str,
     inviter: &Database,

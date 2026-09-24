@@ -96,3 +96,79 @@ async fn latest_pending_then_accepted_command_assigns_only_its_own_label() {
     reconcile(&mut conn, 10, &add).await.unwrap();
     assert_eq!(labels(&mut conn).await, ["tag"]);
 }
+
+fn administration(index: i64, op: &str, name: &str, extra: serde_json::Value) -> ChangeWire {
+    let mut c = operation(index, false, None);
+    c.op_type = op.into();
+    c.entity_type = "label".into();
+    c.entity_id = name.into();
+    c.field = None;
+    c.payload =
+        json!({"workspace_id": "0000000000000000", "workspace_key": "default", "name": name});
+    c.payload
+        .as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    c
+}
+
+async fn label_rows(conn: &mut SqliteConnection) -> Vec<String> {
+    sqlx::query_scalar("SELECT name FROM labels ORDER BY name")
+        .fetch_all(conn)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn label_administration_assigns_presence_and_existence_in_tail_order() {
+    let (_temp, mut conn) = crate::test_support::test_conn().await;
+    // A remote add applied after a pending delete recreated both rows.
+    let add = operation(1, true, Some(11));
+    let delete = administration(2, op_type::LABEL_DELETE, "tag", json!({"deleted_at": "t"}));
+    for c in [&add, &delete] {
+        insert_wire_change(&mut conn, c).await.unwrap();
+    }
+    crate::sync::apply::apply_remote_change_quiet(&mut conn, &add)
+        .await
+        .unwrap();
+    assert_eq!(labels(&mut conn).await, ["tag"]);
+    reconcile(&mut conn, 10, &add).await.unwrap();
+    assert!(labels(&mut conn).await.is_empty());
+    assert!(label_rows(&mut conn).await.is_empty());
+    // Restoration lists the task, so it assigns presence and the label row.
+    let restore = administration(
+        3,
+        op_type::LABEL_RESTORE,
+        "tag",
+        json!({"created_at": "c", "task_ids": ["BBBBBBBBBBBBBBBB"], "series_ids": [], "restored_at": "t"}),
+    );
+    insert_wire_change(&mut conn, &restore).await.unwrap();
+    reconcile(&mut conn, 10, &add).await.unwrap();
+    assert_eq!(labels(&mut conn).await, ["tag"]);
+    assert_eq!(label_rows(&mut conn).await, ["tag"]);
+    // A rename away removes the pair; a rename into leaves the moved presence.
+    let away = administration(
+        4,
+        op_type::SET_LABEL_NAME,
+        "tag",
+        json!({"new_name": "topic", "renamed_at": "t"}),
+    );
+    insert_wire_change(&mut conn, &away).await.unwrap();
+    crate::sync::apply::apply_remote_change_quiet(&mut conn, &away)
+        .await
+        .unwrap();
+    crate::sync::apply::apply_remote_change_quiet(&mut conn, &add)
+        .await
+        .unwrap();
+    assert_eq!(labels(&mut conn).await, ["tag", "topic"]);
+    reconcile(&mut conn, 10, &away).await.unwrap();
+    assert_eq!(labels(&mut conn).await, ["topic"]);
+    assert_eq!(label_rows(&mut conn).await, ["topic"]);
+    let mut accepted_remove = operation(5, false, Some(12));
+    accepted_remove.payload["label"] = json!("topic");
+    insert_wire_change(&mut conn, &accepted_remove)
+        .await
+        .unwrap();
+    reconcile(&mut conn, 10, &accepted_remove).await.unwrap();
+    assert_eq!(labels(&mut conn).await, ["topic"]);
+}
