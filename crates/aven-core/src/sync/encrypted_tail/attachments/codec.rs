@@ -65,23 +65,23 @@ impl Descriptor {
             .verify(records, self.context(), self.stream, self.object, 1, 0)?;
         Ok(())
     }
-    fn authority(&self, a: &Authority) -> Result<()> {
-        valid(
-            self.vault == a.context.vault
-                && self.stream == a.context.stream
-                && self.generation == a.generation,
-        )
+    pub(super) fn authority(&self, a: &Authority) -> Result<()> {
+        a.validate()?;
+        a.key(self.generation)?;
+        valid(self.vault == a.context.vault && self.stream == a.context.stream)
     }
     pub fn seal(a: &Authority, bytes: &[u8]) -> Result<(Self, Vec<Vec<u8>>)> {
+        a.validate()?;
+        ensure!(!a.rotation_pending(), "error membership-rotation-pending");
         valid(!bytes.is_empty() && bytes.len() <= IMAGE_BYTES)?;
         let mut object = [0; 32];
         getrandom::fill(&mut object)
             .map_err(|_| anyhow::anyhow!("error encrypted-image-entropy"))?;
         let context = LocalSharedStatePackageContext {
             vault_id: a.context.vault,
-            generation_id: a.generation,
+            generation_id: a.generation(),
         };
-        let key = crypto::derive_image_key(&a.key, context, object)?;
+        let key = crypto::derive_image_key(a.key(a.generation())?, context, object)?;
         let encrypted =
             crypto::encrypt_artifact(bytes, context, a.context.stream, object, 1, 0, &key)?;
         let descriptor = Self {
@@ -107,7 +107,7 @@ impl Descriptor {
                 && hex::encode(hash(source)) == expected_hash,
             "error encrypted-image-source-changed"
         );
-        let key = crypto::derive_image_key(&a.key, self.context(), self.object)?;
+        let key = crypto::derive_image_key(a.key(self.generation)?, self.context(), self.object)?;
         let cipher = XChaCha20Poly1305::new_from_slice(key.as_ref()).expect("fixed key");
         let mut records = Vec::new();
         for (index, chunk) in self.artifact.chunks.iter().enumerate() {
@@ -146,7 +146,7 @@ impl Descriptor {
     pub fn open(&self, a: &Authority, records: &[Vec<u8>]) -> Result<Zeroizing<Vec<u8>>> {
         self.authority(a)?;
         self.verify(records)?;
-        let key = crypto::derive_image_key(&a.key, self.context(), self.object)?;
+        let key = crypto::derive_image_key(a.key(self.generation)?, self.context(), self.object)?;
         Ok(Zeroizing::new(crypto::decrypt_artifact(
             &self.artifact.encrypted(records),
             self.context(),

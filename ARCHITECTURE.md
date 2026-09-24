@@ -290,8 +290,8 @@ pause intervals, state changes and stop, including domain conflict resolution.
 Other administrative operations remain outside the closed subset. Attachment mutations use authenticated Ref/Unref and a separate
 bounded image transfer entry with an explicit local blob directory. Pending work is preflighted before freezing;
 unsupported compound work blocks rather than uploading only its supported parts.
-Preflight is capped at 4096 rows/16 MiB. Those limits and bounded same-generation membership are internal refusal
-boundaries, not product policy.
+Preflight is capped at 4096 rows/16 MiB. Those limits and bounded signed membership
+are internal refusal boundaries, not product policy.
 
 Each new operation gets a random envelope ID/nonce, with exact ciphertext durable
 before dispatch. Unknown outcomes retry those bytes. Same-ID different ciphertext
@@ -302,6 +302,25 @@ local origin. Acks never move the cursor. Verified local ranks precede incoming
 ordered apply; page effects, mappings, liveness and cursor commit together. Bad
 pages roll back, and same-ID divergence preserves pending work instead of merging
 or inventing a new ID. Membership sequence, content sequence and local_seq differ.
+
+`encrypted_tail::Authority` carries authenticated membership and complete verified
+key coverage. Decryption selects the record/object generation; every accepted
+operation additionally checks its sequence against the signed generation interval,
+including exact-commitment acknowledgements. Fresh envelopes and objects use the
+current generation. Historical admitted images keep their original descriptor/key
+for reads, reuse and exact repair. Pending rotation permits history pull and
+accepted-outcome resolution but no new envelope, upload or repair mutation.
+
+The root resolves each closed frozen ID, and every frozen Ref before upload, in
+current context. `reconcile_encrypted_tail_absence` validates a context-bound
+absence against exact durable bytes, unchanged source ownership and all observed
+acceptance fences. Only a closed generation permits atomic same-ID re-encryption.
+The outbox row continuously protects history; attachment preparation/staging and
+its source pin are replaced in that transaction. No scheduling witness or second
+queue is needed: before commit, retry requires lookup again; after commit, the
+replacement is the sole owned representation. `sync_generation` does not change.
+Pull-only rounds never prepare or supersede work. One typed stale retry retains
+round progress, the selected download and the finite initial watermark.
 
 `encrypted_tail/recurrence.rs` identifies deterministic materialization operations.
 Encrypted page apply reuses the recurrence aggregate operations without generating
@@ -635,9 +654,10 @@ original enrollment validation at its historical predecessor. Genesis/publicatio
 bytes and bootstrap identity remain unchanged. These pure APIs establish signed
 intent and key coverage, not server commit, protected storage or runtime readiness.
 The server journal admits AddDevice, Revoke and Rotate. Protected refresh retains
-complete historical key coverage across these transitions. Ordinary host dispatch
-still refuses pending or multi-generation state until outbox/image cutover is
-integrated; key coverage and server acceptance are not content readiness.
+complete historical key coverage across these transitions. Ordinary host rounds
+use that coverage and reconcile frozen work across cutoffs. They never dispatch
+management or finish a pending rotation automatically; shipping removal/setup UI
+and automatic management remain separate integration gates.
 
 ### Transactional repeatable membership
 
@@ -723,7 +743,9 @@ three-client fixtures use independent databases, protected stores and blob roots
 real loopback HTTP and core mutations. `peer_enrollment_http::tests::rotation::`
 covers offline multi-rotation coverage, fresh historical bootstrap installation,
 immutable receipt retries, protected-before-mirror failures and missing/corrupt
-coverage. SQL faults and subprocess exits are not
+coverage. `encrypted_tail_http::tests::membership::rotation::` covers server-driven
+removal with surviving root task/image rounds, cutover outcomes, signed interval
+negatives, frozen reads and atomic supersession across subprocess exits. SQL faults and subprocess exits are not
 power-loss, Keychain, mobile, interoperability or independent security evidence.
 
 ### Sync flow

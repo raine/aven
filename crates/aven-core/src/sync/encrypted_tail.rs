@@ -50,11 +50,55 @@ impl Context {
 /// Protected host inputs. The host retains installation and authority exclusion.
 pub struct Authority {
     pub context: Context,
-    pub generation: [u8; 32],
-    pub key: LocalSharedStatePackageKey,
+    pub membership: super::seed_claim::membership::Membership,
+    pub keys: super::seed_claim::membership::VerifiedKeys,
     pub prefix: i64,
     pub association: String,
     pub sync_generation: i64,
+}
+/// Context-bound lookup absence. Only atomic replacement consumes this observation.
+pub struct AbsentOperation {
+    context: Context,
+    record: Vec<u8>,
+}
+impl Authority {
+    pub fn generation(&self) -> [u8; 32] {
+        self.membership.current_generation().id
+    }
+    pub fn rotation_pending(&self) -> bool {
+        self.membership.rotation_pending()
+    }
+    pub fn key(&self, generation: [u8; 32]) -> Result<&LocalSharedStatePackageKey> {
+        self.keys.key(generation)
+    }
+    pub fn record_is_closed(&self, record: &[u8]) -> Result<bool> {
+        let e = codec::parse(record)?;
+        self.key(e.generation)?;
+        valid(e.vault == self.context.vault && e.stream == self.context.stream)?;
+        Ok(e.generation != self.generation())
+    }
+    /// Caller binds the lookup response to this authority and the parsed operation ID.
+    pub fn confirm_absent(&self, record: &[u8], response: &Reply) -> Result<AbsentOperation> {
+        self.validate()?;
+        valid(matches!(response, Reply::Absent))?;
+        codec::open(self, record)?;
+        Ok(AbsentOperation {
+            context: self.context.clone(),
+            record: record.to_vec(),
+        })
+    }
+    fn validate(&self) -> Result<()> {
+        self.keys.validate(&self.membership)?;
+        let b = self.membership.publication().binding();
+        valid(
+            self.context.vault == b.vault_id
+                && self.context.genesis == self.membership.genesis().commitment()
+                && self.context.head == self.membership.head()
+                && self.context.stream == b.stream_id
+                && self.context.descriptor == b.descriptor_commitment
+                && self.prefix == i64::try_from(b.prefix_count)?,
+        )
+    }
 }
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

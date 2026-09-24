@@ -575,3 +575,9 @@ fn protected_generation_coverage_revalidates_exact_complete_commitments() {
     assert!(VerifiedKeys::from_protected_storage(&f.membership, &extra).is_err());
     assert!(VerifiedKeys::from_protected_storage(&f.membership, &vec![0; 2345]).is_err());
 }
+
+pub(crate) fn content_authority() -> (Membership, VerifiedKeys) {
+    let f = fixture();
+    let keys = f.membership.verify_initial_key(&f.key).unwrap();
+    (f.membership, keys)
+}

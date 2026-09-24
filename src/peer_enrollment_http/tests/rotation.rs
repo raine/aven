@@ -204,16 +204,9 @@ async fn three_installations_offline_two_rotations_and_fresh_historical_bootstra
             bytes
         );
     }
-    assert!(
-        third
-            .store
-            .tail_inputs(&third.db, &origin)
-            .await
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("transition-unsupported")
-    );
+    let tail = third.store.tail_inputs(&third.db, &origin).await.unwrap();
+    assert_eq!(tail.authority.generation(), m.current_generation().id);
+    drop(tail);
     let seed_floor = seed_db.membership_checkpoint_mirror().await.unwrap();
     assert!(client.refresh(&seed_store, &seed_db).await.is_err());
     assert_eq!(

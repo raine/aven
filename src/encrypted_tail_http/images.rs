@@ -164,35 +164,20 @@ impl Client {
         let inputs = store.tail_inputs(db, &self.locator).await?;
         let a = &inputs.authority;
         if !progress.pushed {
-            if let Some((id, _)) = db.encrypted_tail_frozen_record(a).await? {
-                match self
-                    .exchange(
-                        &a.context,
-                        &inputs.bearer,
-                        Operation::Lookup {
-                            operation_id: id,
-                            expected: None,
-                        },
-                    )
-                    .await?
-                {
-                    Reply::Found(accepted) => {
-                        db.observe_encrypted_tail(a, &accepted.mapping).await?;
-                        db.verify_encrypted_tail_outcome(a, &accepted).await?;
+            if self
+                .reconcile_frozen(a, &inputs.bearer, db, Some(blob_dir), true)
+                .await?
+            {
+                let upload = self.upload_image(a, &inputs.bearer, db, blob_dir).await;
+                progress.image_state = match upload {
+                    Ok(ticket) => {
+                        self.push(a, &inputs.bearer, db, ticket).await?;
+                        None
                     }
-                    Reply::Absent => {}
-                    _ => anyhow::bail!("error encrypted-image-accepted-identity"),
-                }
+                    Err(error) if is_stale(&error) => return Err(error),
+                    Err(_) => Some(ImageTransfer::Failed),
+                };
             }
-            let upload = self.upload_image(a, &inputs.bearer, db, blob_dir).await;
-            progress.image_state = match upload {
-                Ok(ticket) => {
-                    self.push(a, &inputs.bearer, db, ticket).await?;
-                    None
-                }
-                Err(error) if is_stale(&error) => return Err(error),
-                Err(_) => Some(ImageTransfer::Failed),
-            };
             progress.pushed = true;
         }
         let caught_up = match progress.caught_up {

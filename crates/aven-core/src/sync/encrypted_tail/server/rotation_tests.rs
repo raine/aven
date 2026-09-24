@@ -37,8 +37,15 @@ impl Peers {
                 stream: m.publication().binding().stream_id,
                 descriptor: m.publication().binding().descriptor_commitment,
             },
-            generation: m.current_generation().id,
-            key: LocalSharedStatePackageKey::new(*self.f.key.protected_storage_bytes()),
+            membership: m.clone(),
+            keys: Membership::from_publication(
+                self.f.seed.genesis(),
+                &self.f.package.descriptor,
+                self.f.publication.record(),
+            )
+            .unwrap()
+            .verify_initial_key(&self.f.key)
+            .unwrap(),
             prefix: m.publication().binding().prefix_count as i64,
             association: "test".into(),
             sync_generation: 1,
@@ -333,12 +340,7 @@ async fn three_peers_frozen_outcomes_and_historical_images_survive_rotation() {
         .receive_rotation(&pending, &rotation, &keys)
         .unwrap();
     let mut active = p.authority(&m, p.peer.device());
-    active.key = LocalSharedStatePackageKey::new(
-        *keys
-            .key(active.generation)
-            .unwrap()
-            .protected_storage_bytes(),
-    );
+    active.keys = keys;
     append(&p.f.db, &active, p.peer.bearer(), &accepted, None)
         .await
         .unwrap();
@@ -417,12 +419,7 @@ async fn three_peers_frozen_outcomes_and_historical_images_survive_rotation() {
         )
         .unwrap();
     let mut third = p.authority(&m, p.third.device());
-    third.key = LocalSharedStatePackageKey::new(
-        *third_keys
-            .key(third.generation)
-            .unwrap()
-            .protected_storage_bytes(),
-    );
+    third.keys = third_keys;
     let Reply::Page(page) =
         p.f.db
             .encrypted_tail_exchange(

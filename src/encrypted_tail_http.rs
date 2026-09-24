@@ -286,6 +286,44 @@ impl Client {
         let caught_up = self.pull(a, &inputs.bearer, db).await?;
         Ok(caught_up && db.encrypted_tail_idle(a).await?)
     }
+    /// Lookup precedes any closed-generation replacement or image upload.
+    async fn reconcile_frozen(
+        &self,
+        a: &tail::Authority,
+        bearer: &Secret,
+        db: &Database,
+        blob_dir: Option<&std::path::Path>,
+        always: bool,
+    ) -> Result<bool> {
+        if let Some((id, record)) = db.encrypted_tail_frozen_record(a).await?
+            && (always || a.rotation_pending() || a.record_is_closed(&record)?)
+        {
+            let response = self
+                .exchange(
+                    &a.context,
+                    bearer,
+                    Operation::Lookup {
+                        operation_id: id,
+                        expected: None,
+                    },
+                )
+                .await?;
+            match &response {
+                Reply::Found(accepted) => {
+                    db.observe_encrypted_tail(a, &accepted.mapping).await?;
+                    db.verify_encrypted_tail_outcome(a, accepted).await?;
+                }
+                Reply::Absent => {
+                    let absence = a.confirm_absent(&record, &response)?;
+                    return db
+                        .reconcile_encrypted_tail_absence(a, &absence, blob_dir)
+                        .await;
+                }
+                _ => anyhow::bail!("error encrypted-tail-accepted-identity"),
+            }
+        }
+        Ok(!a.rotation_pending())
+    }
     async fn push(
         &self,
         a: &tail::Authority,
@@ -293,6 +331,9 @@ impl Client {
         db: &Database,
         ticket: Option<tail::attachments::Ticket>,
     ) -> Result<()> {
+        if !self.reconcile_frozen(a, bearer, db, None, false).await? {
+            return Ok(());
+        }
         if let Some(record) = db.prepare_encrypted_tail(a).await? {
             let Reply::Appended(mapping) = self
                 .exchange(&a.context, bearer, Operation::Append { ticket, record })

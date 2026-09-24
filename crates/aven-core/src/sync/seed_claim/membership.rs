@@ -17,7 +17,7 @@ pub use persistence::{MAX_CANDIDATES, MAX_INVITATIONS, ManagementPreparation};
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub use super::peer::Invitation;
 use super::peer::{Recipient, verify};

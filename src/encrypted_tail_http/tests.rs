@@ -1861,7 +1861,11 @@ async fn checkpoint_server_files_exclude_authored_content_and_client_secrets() {
         let inputs = store.tail_inputs(db, &f.origin).await.unwrap();
         for secret in [
             inputs.bearer.expose(),
-            inputs.authority.key.protected_storage_bytes(),
+            inputs
+                .authority
+                .key(inputs.authority.generation())
+                .unwrap()
+                .protected_storage_bytes(),
         ] {
             forbidden.push(secret.to_vec());
             forbidden.push(hex::encode(secret).into_bytes());

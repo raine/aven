@@ -1389,13 +1389,15 @@ async fn pending_refresh_advances_protected_floor_but_ordinary_dispatch_stays_bl
     let next = inputs.membership.head();
     drop(inputs);
     assert_eq!(floor_head(&f.seed).await, next);
+    let tail = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+    assert!(tail.authority.rotation_pending());
     assert!(
-        f.seed_store
-            .tail_inputs(&f.seed, &f.origin)
+        f.seed
+            .prepare_encrypted_tail(&tail.authority)
             .await
-            .err()
             .unwrap()
-            .to_string()
-            .contains("transition-unsupported")
+            .is_none()
     );
 }
+
+mod rotation;

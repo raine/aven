@@ -956,10 +956,6 @@ impl ProtectedLocalKeyStore {
         if let Some(readiness) = self.outbound_readiness(db).await? {
             readiness.require_resolved_disclosure()?;
         }
-        ensure!(
-            !inputs.membership.rotation_pending() && inputs.membership.generations().len() == 1,
-            "error membership-transition-unsupported"
-        );
         let b = inputs.membership.publication().binding();
         let association = format!(
             "{}:{}:{}",
@@ -981,13 +977,11 @@ impl ProtectedLocalKeyStore {
                 stream: b.stream_id,
                 descriptor: b.descriptor_commitment,
             },
-            generation: inputs.membership.genesis().context().generation_id,
-            key: LocalSharedStatePackageKey::new(
-                *inputs
-                    .coverage
-                    .key(inputs.membership.genesis().context().generation_id)?
-                    .protected_storage_bytes(),
-            ),
+            membership: inputs.membership.clone(),
+            keys: VerifiedKeys::from_protected_storage(
+                &inputs.membership,
+                &inputs.coverage.protected_storage_bytes(),
+            )?,
             prefix: i64::try_from(b.prefix_count)?,
             association,
             sync_generation: db

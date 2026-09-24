@@ -3,23 +3,26 @@ use super::*;
 use crate::sync::wire::ChangeWire;
 use serde_json::json;
 pub(super) fn authority() -> Authority {
+    let (membership, keys) = crate::sync::seed_claim::membership::tests::content_authority();
+    let b = membership.publication().binding();
     Authority {
         context: Context {
-            vault: [1; 32],
-            genesis: [2; 32],
+            vault: b.vault_id,
+            genesis: membership.genesis().commitment(),
             device: [3; 32],
             credential_version: 1,
-            head: [4; 32],
-            stream: [5; 32],
-            descriptor: [6; 32],
+            head: membership.head(),
+            stream: b.stream_id,
+            descriptor: b.descriptor_commitment,
         },
-        generation: [7; 32],
-        key: LocalSharedStatePackageKey::new([8; 32]),
-        prefix: 0,
+        prefix: b.prefix_count as i64,
+        membership,
+        keys,
         association: "test".into(),
         sync_generation: 1,
     }
 }
+
 pub(super) fn change() -> ChangeWire {
     ChangeWire {
         change_id: "AAAAAAAAAAAAAAAA".into(),

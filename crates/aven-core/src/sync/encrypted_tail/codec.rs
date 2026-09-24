@@ -68,19 +68,19 @@ pub(super) fn parse(record: &[u8]) -> Result<Envelope<'_>> {
         nonce,
     })
 }
-fn key(a: &Authority) -> Zeroizing<[u8; 32]> {
+fn key(a: &Authority, generation: [u8; 32]) -> Result<Zeroizing<[u8; 32]>> {
     let kdf = hkdf::Hkdf::<Sha256>::new(
         Some(b"aven-e2ee/v1/generation"),
-        a.key.protected_storage_bytes(),
+        a.key(generation)?.protected_storage_bytes(),
     );
     let mut info = Vec::new();
     bytes(&mut info, b"aven-e2ee/v1/key/operation");
     bytes(&mut info, &a.context.vault);
-    bytes(&mut info, &a.generation);
+    bytes(&mut info, &generation);
     let mut result = Zeroizing::new([0; 32]);
     kdf.expand(&info, result.as_mut())
         .expect("fixed HKDF length");
-    result
+    Ok(result)
 }
 #[cfg(test)]
 pub(super) fn seal(a: &Authority, change: &ChangeWire) -> Result<Vec<u8>> {
@@ -92,6 +92,8 @@ pub(super) fn seal_projection(
     change: &ChangeWire,
     projection: &Projection,
 ) -> Result<Vec<u8>> {
+    a.validate()?;
+    ensure!(!a.rotation_pending(), "error membership-rotation-pending");
     domain::validate_projection(change, projection)?;
     let plain = Zeroizing::new(serde_json::to_vec(change)?);
     valid(plain.len() <= 131072)?;
@@ -101,7 +103,7 @@ pub(super) fn seal_projection(
     for value in [
         &a.context.vault[..],
         &a.context.stream,
-        &a.generation,
+        &a.generation(),
         &random[..32],
         change.change_id.as_bytes(),
     ] {
@@ -110,7 +112,7 @@ pub(super) fn seal_projection(
     header.extend(18u32.to_be_bytes());
     bytes(&mut header, &projection.encode());
     bytes(&mut header, &random[32..]);
-    let k = key(a);
+    let k = key(a, a.generation())?;
     let cipher = XChaCha20Poly1305::new_from_slice(k.as_ref()).expect("fixed key");
     let body = cipher
         .encrypt(
@@ -128,11 +130,10 @@ pub(super) fn seal_projection(
     Ok(record)
 }
 pub(super) fn open(a: &Authority, record: &[u8]) -> Result<ChangeWire> {
+    a.validate()?;
     let e = parse(record)?;
-    valid(
-        e.vault == a.context.vault && e.stream == a.context.stream && e.generation == a.generation,
-    )?;
-    let k = key(a);
+    valid(e.vault == a.context.vault && e.stream == a.context.stream)?;
+    let k = key(a, e.generation)?;
     let cipher = XChaCha20Poly1305::new_from_slice(k.as_ref()).expect("fixed key");
     let plain = Zeroizing::new(
         cipher
@@ -150,7 +151,18 @@ pub(super) fn open(a: &Authority, record: &[u8]) -> Result<ChangeWire> {
     domain::validate_projection(&change, &e.projection)?;
     if let Projection::Ref { descriptor, .. } = &e.projection {
         let d = super::attachments::codec::Descriptor::decode(descriptor)?;
-        valid(d.vault == e.vault && d.stream == e.stream && d.generation == a.generation)?;
+        valid(d.vault == e.vault && d.stream == e.stream)?;
+        a.key(d.generation)?;
+        let generations = a.membership.generations();
+        let object_generation = generations
+            .iter()
+            .position(|g| g.id == d.generation)
+            .context("error encrypted-image-generation")?;
+        let envelope_generation = generations
+            .iter()
+            .position(|g| g.id == e.generation)
+            .context("error encrypted-tail-generation")?;
+        valid(object_generation <= envelope_generation)?;
     }
     Ok(change)
 }
@@ -246,7 +258,7 @@ mod tests {
         let projection_start = 192 + 16 - 28;
         assert_eq!(header[projection_start], 1);
         header[projection_start + 1] = 2;
-        let k = key(&a);
+        let k = key(&a, a.generation()).unwrap();
         let cipher = XChaCha20Poly1305::new_from_slice(k.as_ref()).unwrap();
         let plain = serde_json::to_vec(&c).unwrap();
         let body = cipher

@@ -20,6 +20,7 @@ pub(super) async fn validate_binding_and_cursor(
     conn: &mut SqliteConnection,
     authority: &Authority,
 ) -> Result<i64> {
+    authority.validate()?;
     valid(crate::sync::protocol::replica_protocol(conn).await? <= 18)?;
     valid(
         db::get_meta(conn, "e2ee_association").await?.as_deref()
@@ -147,6 +148,12 @@ fn open_accepted_change(authority: &Authority, accepted: &Accepted) -> Result<Ch
         accepted.mapping.sequence > authority.prefix
             && hash(&accepted.record) == accepted.mapping.commitment,
     )?;
+    let e = codec::parse(&accepted.record)?;
+    valid(
+        authority
+            .membership
+            .generation_allows(e.generation, u64::try_from(accepted.mapping.sequence)?),
+    )?;
     let change = codec::open(authority, &accepted.record)?;
     valid(change.change_id == accepted.mapping.operation_id)?;
     Ok(change)
@@ -237,6 +244,10 @@ impl Database {
             tx.commit().await?;
             return Ok(Some(record));
         }
+        if authority.rotation_pending() {
+            tx.commit().await?;
+            return Ok(None);
+        }
         let pending_ids: Vec<String> = sqlx::query_scalar(
             "SELECT change_id FROM changes WHERE server_seq IS NULL
              ORDER BY local_seq, created_at, change_id LIMIT 4097",
@@ -288,6 +299,69 @@ impl Database {
         super::crash_at("frozen");
         Ok(record)
     }
+    /// Closed-generation absence and replacement commit under one outbox/history owner.
+    /// A failed transaction retains old bytes and requires a new lookup on retry.
+    pub async fn reconcile_encrypted_tail_absence(
+        &self,
+        authority: &Authority,
+        absence: &AbsentOperation,
+        blob_dir: Option<&std::path::Path>,
+    ) -> Result<bool> {
+        valid(absence.context == authority.context)?;
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        validate_binding_and_cursor(&mut tx, authority).await?;
+        let (record, association, generation, observed, blocked): (Vec<u8>, String, i64, bool, bool) = sqlx::query_as("SELECT record,association,sync_generation,observed_sequence IS NOT NULL OR observed_commitment IS NOT NULL,blocked FROM local_e2ee_outbox WHERE singleton=1").fetch_one(&mut *tx).await?;
+        valid(
+            record == absence.record
+                && association == authority.association
+                && generation == authority.sync_generation
+                && !observed
+                && !blocked,
+        )?;
+        let change = codec::open(authority, &record)?;
+        let local = load_change(&mut tx, &change.change_id)
+            .await?
+            .context("error encrypted-tail-history-lost")?;
+        require_canonical_equality(&local, &change)?;
+        let accepted: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM local_e2ee_accepted WHERE operation_id=?)",
+        )
+        .bind(&change.change_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        valid(local.server_seq.is_none() && !accepted)?;
+        if authority.rotation_pending() {
+            tx.commit().await?;
+            return Ok(false);
+        }
+        if !authority.record_is_closed(&record)? {
+            tx.commit().await?;
+            return Ok(true);
+        }
+        let mut projection = codec::parse(&record)?.projection;
+        if change.op_type == "attachment_add" {
+            let Some(blob_dir) = blob_dir else {
+                tx.commit().await?;
+                return Ok(false);
+            };
+            projection = super::attachments::client::supersede(
+                &mut tx, authority, &change, projection, blob_dir,
+            )
+            .await?;
+        }
+        let replacement = codec::seal_projection(authority, &change, &projection)?;
+        require_canonical_equality(&change, &codec::open(authority, &replacement)?)?;
+        let n = sqlx::query("UPDATE local_e2ee_outbox SET record=? WHERE singleton=1 AND record=? AND observed_sequence IS NULL AND observed_commitment IS NULL AND blocked=0")
+            .bind(&replacement).bind(&record).execute(&mut *tx).await?.rows_affected();
+        valid(n == 1)?;
+        #[cfg(any(test, feature = "test-support"))]
+        super::crash_at("before-supersede-commit");
+        tx.commit().await?;
+        #[cfg(any(test, feature = "test-support"))]
+        super::crash_at("after-supersede-commit");
+        Ok(true)
+    }
     /// Retain an observed immutable outcome before fetching a different representation.
     pub async fn observe_encrypted_tail(
         &self,
@@ -317,6 +391,14 @@ impl Database {
                     .as_ref()
                     .is_none_or(|h| h.as_slice() == mapping.commitment),
         )?;
+        if hash(&record) == mapping.commitment {
+            let envelope = codec::parse(&record)?;
+            valid(
+                authority
+                    .membership
+                    .generation_allows(envelope.generation, u64::try_from(mapping.sequence)?),
+            )?;
+        }
         sqlx::query(
             "UPDATE local_e2ee_outbox SET observed_sequence = ?, observed_commitment = ?
              WHERE singleton = 1",
