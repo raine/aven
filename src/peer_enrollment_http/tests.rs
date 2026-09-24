@@ -1242,13 +1242,20 @@ async fn expired_sent_invitation_withdraws_by_rotation_unless_admission_won() {
         Some(EnrollmentReadiness::UnresolvedDisclosure)
     );
 
-    // Recovery reuses the committed rotation as proof instead of rotating again.
+    // Staged boundary, not a process exit: reopen the database and protected
+    // store after the committed rotation but before `withdrawn`. Ordinary
+    // rounds reuse that rotation as proof, clear the pause and never rotate again.
+    let path = db.path().to_path_buf();
+    drop(store);
+    drop(db);
+    let db = Database::open(&path).await.unwrap();
+    let store = isolated_store(db.path(), &root.path().join("keys"));
+    let rounds = crate::encrypted_tail_http::Client::new(&origin).unwrap();
     for _ in 0..2 {
-        client.finish_pending_management(&store, &db).await.unwrap();
+        rounds.round(&store, &db, root.path()).await.unwrap();
         assert_eq!(generations(&store, &db, &origin).await, initial + 1);
         assert_eq!(store.outbound_invitation(&db).await.unwrap(), None);
     }
-    drop(store.tail_inputs(&db, &origin).await.unwrap());
     assert!(!client.complete(&joiner_keys, &joiner_db).await.unwrap());
     {
         let inputs = store.active_inputs(&db, &origin).await.unwrap();
@@ -1263,16 +1270,17 @@ async fn expired_sent_invitation_withdraws_by_rotation_unless_admission_won() {
                 .is_err()
         );
     }
-    client.refresh(&survivor_keys, &survivor_db).await.unwrap();
+    rounds
+        .round(
+            &survivor_keys,
+            &survivor_db,
+            &root.path().join("survivor-blobs"),
+        )
+        .await
+        .unwrap();
     assert_eq!(
         generations(&survivor_keys, &survivor_db, &origin).await,
         initial + 1
-    );
-    drop(
-        survivor_keys
-            .tail_inputs(&survivor_db, &origin)
-            .await
-            .unwrap(),
     );
 
     // The automatic path fences, cancels over HTTP, freezes and rotates.

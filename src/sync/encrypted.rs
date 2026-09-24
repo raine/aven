@@ -213,7 +213,7 @@ pub(crate) async fn invite(database: &Database, config: &AppConfig) -> Result<()
         tokio::time::sleep(POLL_INTERVAL).await;
     }
     bail!(
-        "error sync-invitation-unused hint=\"sync on this device resumes when the invitation is used or has expired unused\""
+        "error sync-invitation-unused hint=\"sync on this device stays paused until the invitation is used; after it expires, the next `aven sync` ends it, rotating keys if they may have been sent\""
     )
 }
 
@@ -316,10 +316,10 @@ pub(crate) async fn sync(database: &Database, config: &AppConfig, args: &SyncArg
                 error.context("error sync-join-incomplete hint=\"rerun `aven sync join`\"")
             }
             "error enrollment-unresolved" => error.context(
-                "error sync-invitation-pending hint=\"sync resumes when the invited device joins or the unused invitation expires\"",
+                "error sync-invitation-pending hint=\"sync resumes when the invited device joins, or with the next sync after the unused invitation expires\"",
             ),
             "error withdrawal-required-unsupported" => error.context(
-                "error sync-invitation-disclosed hint=\"keys may have been sent to the invited device; sync resumes after it joins, or after the invitation expires and keys rotate\"",
+                "error sync-invitation-disclosed hint=\"keys may have been sent to the invited device; sync resumes after it joins, or once the next sync after expiry rotates keys\"",
             ),
             _ => error,
         })?;
@@ -480,7 +480,8 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
         "setup-incomplete" => println!("State: setup incomplete. Rerun `aven sync setup`."),
         "join-incomplete" => println!("State: joining incomplete. Rerun `aven sync join`."),
         "invitation-pending" => println!(
-            "State: paused until the invited device joins or the unused invitation expires."
+            "State: paused until the invited device joins. After the unused invitation \
+             expires, the next `aven sync` ends it."
         ),
         "invitation-disclosed" => println!(
             "State: paused until the invited device joins. Keys may have been sent to it. \
