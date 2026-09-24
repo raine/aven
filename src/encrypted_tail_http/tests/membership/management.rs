@@ -231,18 +231,13 @@ async fn install_fault(
         pause,
         records: Default::default(),
     });
-    let listener = tokio::net::TcpListener::bind(f.origin.strip_prefix("http://").unwrap())
-        .await
-        .unwrap();
     let app = peer_enrollment_http::router(f.server.clone())
         .merge(router(f.server.clone()))
         .layer(axum::middleware::from_fn_with_state(
             fault.clone(),
             management_fault,
         ));
-    f.task = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    (_, f.task) = e2ee_http::serve(app, f.origin.strip_prefix("http://").unwrap()).await;
     fault
 }
 
@@ -528,19 +523,15 @@ async fn protected_phase_crashes_resume_exact_material_and_candidate_without_sql
     let mut retained_candidate = None;
     for phase in ["intent", "plan-0", "material-0", "candidate-0", "sent-0"] {
         let boundary = format!("management-0-{phase}");
-        let output = tokio::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "encrypted_tail_http::tests::membership::management::management_worker",
-                "--ignored",
-                "--nocapture",
-            ])
-            .env("AVEN_MANAGEMENT_ROOT", f.root.path())
-            .env("AVEN_MANAGEMENT_ORIGIN", &f.origin)
-            .env("AVEN_PEER_CRASH_KIND", &boundary)
-            .output()
-            .await
-            .unwrap();
+        let output = e2ee_http::worker(
+            "encrypted_tail_http::tests::membership::management::management_worker",
+        )
+        .env("AVEN_MANAGEMENT_ROOT", f.root.path())
+        .env("AVEN_MANAGEMENT_ORIGIN", &f.origin)
+        .env("AVEN_PEER_CRASH_KIND", &boundary)
+        .output()
+        .await
+        .unwrap();
         assert_eq!(
             output.status.code(),
             Some(79),

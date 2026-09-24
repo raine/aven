@@ -1,9 +1,10 @@
 use super::*;
-use crate::protected_local_keys::tests::isolated_store;
+use crate::{protected_local_keys::tests::isolated_store, test_support::e2ee_http};
 use aven_core::{
     choices::TaskSource,
     operations::{TaskDraft, TaskUpdate},
 };
+use axum::body::to_bytes;
 use std::path::{Path, PathBuf};
 struct Fixture {
     root: tempfile::TempDir,
@@ -23,8 +24,6 @@ impl Drop for Fixture {
 /// Requests served by `serve` in this process, read by the ignored benchmark.
 static HTTP_REQUESTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 async fn serve(server: Database, address: &str) -> (String, tokio::task::JoinHandle<()>) {
-    let listener = tokio::net::TcpListener::bind(address).await.unwrap();
-    let origin = format!("http://{}", listener.local_addr().unwrap());
     let tail = Router::new()
         .route(PATH, post(handle))
         .route(images::PATH, post(images::handle))
@@ -33,25 +32,13 @@ async fn serve(server: Database, address: &str) -> (String, tokio::task::JoinHan
             gate: tokio::sync::Semaphore::new(1),
             image_policy: crate::config::AttachmentLifecycleConfig::default().server_policy(),
         }));
-    let app = seed_bootstrap_http::router(
-        server.clone(),
-        Some(crate::seed_bootstrap_http::tests::setup()),
-        Default::default(),
-    )
-    .merge(crate::peer_enrollment_http::router(server))
-    .merge(tail)
-    .layer(axum::middleware::from_fn(
+    let app = e2ee_http::router_with_tail(server, tail).layer(axum::middleware::from_fn(
         |request: Request, next: axum::middleware::Next| async move {
             HTTP_REQUESTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             next.run(request).await
         },
     ));
-    (
-        origin,
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        }),
-    )
+    e2ee_http::serve(app, address).await
 }
 async fn fixture() -> Fixture {
     fixture_with_shared_images(false).await
@@ -107,8 +94,7 @@ async fn fixture_with_recurrence_snapshot(
     recurrence: bool,
 ) -> Fixture {
     let root = tempfile::tempdir().unwrap();
-    let (seed, seed_store, authority, _) =
-        crate::seed_bootstrap_http::tests::fixture(root.path()).await;
+    let (seed, seed_store, authority, _) = e2ee_http::fixture(root.path()).await;
     if unavailable {
         let capture = seed
             .resume_local_shared_state_never_dispatched()
@@ -269,15 +255,7 @@ async fn fixture_with_recurrence_snapshot(
         .await
         .unwrap();
     let (origin, task) = serve(server.clone(), "127.0.0.1:0").await;
-    let bootstrap = seed_bootstrap_http::Client::new(&origin).unwrap();
-    bootstrap
-        .claim(
-            authority.genesis(),
-            aven_core::sync::seed_claim::ClaimAuthentication::SetupSecret(&Secret::new([7; 32])),
-        )
-        .await
-        .unwrap();
-    bootstrap.resume(&seed_store, &seed).await.unwrap();
+    e2ee_http::adopt(&origin, &seed, &seed_store, &authority).await;
     let peer = Database::open(&root.path().join("peer.sqlite"))
         .await
         .unwrap();
@@ -922,13 +900,7 @@ async fn process_exit_before_dispatch_after_acceptance_and_during_page_commit() 
         let c = Client::new(&f.origin).unwrap();
         drain(&c, &f.seed_store, &f.seed).await;
         let before = f.peer.meta("sync_cursor").await.unwrap();
-        let output = tokio::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "encrypted_tail_http::tests::process_worker",
-                "--ignored",
-                "--nocapture",
-            ])
+        let output = e2ee_http::worker("encrypted_tail_http::tests::process_worker")
             .env("AVEN_TAIL_ROOT", f.root.path())
             .env("AVEN_TAIL_ORIGIN", &f.origin)
             .env("AVEN_TAIL_CRASH", stage)
@@ -1495,13 +1467,7 @@ async fn bounded_http_pull_keeps_watermark_and_makes_byte_limited_progress() {
 async fn spawn_server(f: &Fixture) -> tokio::process::Child {
     let ready = f.root.path().join("tail-server-ready");
     let _ = std::fs::remove_file(&ready);
-    let child = tokio::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "encrypted_tail_http::tests::server_worker",
-            "--ignored",
-            "--nocapture",
-        ])
+    let child = e2ee_http::worker("encrypted_tail_http::tests::server_worker")
         .env("AVEN_TAIL_ROOT", f.root.path())
         .env("AVEN_TAIL_ORIGIN", &f.origin)
         .stdout(std::process::Stdio::null())

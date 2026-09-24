@@ -23,19 +23,17 @@ pub struct Round {
 }
 
 pub(super) async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response {
-    let mut response = match http_admission::dispatch(
+    let response = match http_admission::dispatch(
         &server.gate,
         REQUEST_TIMEOUT,
         dispatch(&server.db, request, server.image_policy),
     )
     .await
     {
-        Outcome::Dispatched(Ok(reply)) => match serde_json::to_vec(&reply) {
-            Ok(bytes) if bytes.len() <= images::HTTP_LIMIT => {
-                ([(header::CONTENT_TYPE, "application/json")], bytes).into_response()
-            }
-            _ => (StatusCode::INTERNAL_SERVER_ERROR, "encrypted_image_refused").into_response(),
-        },
+        Outcome::Dispatched(Ok(reply)) => http_admission::json(&reply, images::HTTP_LIMIT)
+            .unwrap_or_else(|| {
+                (StatusCode::INTERNAL_SERVER_ERROR, "encrypted_image_refused").into_response()
+            }),
         Outcome::Dispatched(Err(error)) if is_stale(&error) => {
             (StatusCode::CONFLICT, "membership-stale").into_response()
         }
@@ -52,11 +50,7 @@ pub(super) async fn handle(State(server): State<Arc<Server>>, request: Request) 
             response
         }
     };
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        axum::http::HeaderValue::from_static("no-store"),
-    );
-    response
+    http_admission::no_store(response)
 }
 async fn dispatch(
     db: &Database,
@@ -64,35 +58,17 @@ async fn dispatch(
     policy: aven_core::attachments::LifecyclePolicy,
 ) -> Result<Envelope<ImageReply>> {
     ensure!(
-        request
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .and_then(|h| h.to_str().ok())
-            == Some("application/json")
-            && !request.headers().contains_key(header::CONTENT_ENCODING),
+        http_admission::is_json(request.headers()),
         "error encrypted-image-http"
     );
-    let auth = request
+    let bearer = request
         .headers()
         .get(header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
+        .and_then(http_admission::bearer)
         .ok_or_else(|| anyhow::anyhow!("error encrypted-image-credential"))?;
-    ensure!(
-        auth.len() == 64
-            && auth
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
-        "error encrypted-image-credential"
-    );
-    let bearer = Secret::new(
-        hex::decode(auth)?
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("error encrypted-image-credential"))?,
-    );
-    let bytes = to_bytes(request.into_body(), images::HTTP_LIMIT)
+    let bytes = http_admission::body(request, images::HTTP_LIMIT)
         .await
-        .map_err(|_| anyhow::anyhow!("error encrypted-image-limit"))?;
+        .ok_or_else(|| anyhow::anyhow!("error encrypted-image-limit"))?;
     let input: Envelope<ImageOperation> = serde_json::from_slice(&bytes)
         .map_err(|_| anyhow::anyhow!("error encrypted-image-http"))?;
     ensure!(

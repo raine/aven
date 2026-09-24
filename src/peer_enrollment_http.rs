@@ -17,7 +17,6 @@ use aven_core::{
 };
 use axum::{
     Router,
-    body::to_bytes,
     extract::{Request, State},
     http::{StatusCode, header},
     response::{IntoResponse, Response},
@@ -131,27 +130,23 @@ pub fn router(db: Database) -> Router {
         }))
 }
 async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response {
-    let mut response = match http_admission::dispatch(
+    let response = match http_admission::dispatch(
         &server.gate,
         REQUEST_TIMEOUT,
         dispatch(&server.db, request),
     )
     .await
     {
-        Outcome::Dispatched(Ok(reply)) => match serde_json::to_vec(&reply) {
-            Ok(bytes)
-                if bytes.len()
-                    <= match &reply {
-                        Reply::Membership(_) => membership::MAX_EVIDENCE_JSON_BYTES,
-                        Reply::PreparedManagement(_) => membership::MAX_EVIDENCE_JSON_BYTES + 128,
-                        Reply::Published(_) => PUBLISHED_RESPONSE_LIMIT,
-                        _ => CONTROL_LIMIT,
-                    } =>
-            {
-                ([(header::CONTENT_TYPE, "application/json")], bytes).into_response()
-            }
-            _ => (StatusCode::BAD_REQUEST, "enrollment-refused").into_response(),
-        },
+        Outcome::Dispatched(Ok(reply)) => {
+            let limit = match &reply {
+                Reply::Membership(_) => membership::MAX_EVIDENCE_JSON_BYTES,
+                Reply::PreparedManagement(_) => membership::MAX_EVIDENCE_JSON_BYTES + 128,
+                Reply::Published(_) => PUBLISHED_RESPONSE_LIMIT,
+                _ => CONTROL_LIMIT,
+            };
+            http_admission::json(&reply, limit)
+                .unwrap_or_else(|| (StatusCode::BAD_REQUEST, "enrollment-refused").into_response())
+        }
         Outcome::Dispatched(Err(error)) if is_stale(&error) => {
             (StatusCode::CONFLICT, "membership-stale").into_response()
         }
@@ -167,49 +162,23 @@ async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response
             response
         }
     };
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        axum::http::HeaderValue::from_static("no-store"),
-    );
-    response
+    http_admission::no_store(response)
 }
 async fn dispatch(db: &Database, request: Request) -> Result<Reply> {
     ensure!(
-        request
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .and_then(|h| h.to_str().ok())
-            == Some("application/json")
-            && !request.headers().contains_key(header::CONTENT_ENCODING),
+        http_admission::is_json(request.headers()),
         "error enrollment-http"
     );
     let credential = request
         .headers()
         .get(header::AUTHORIZATION)
         .map(|h| {
-            let text = h
-                .to_str()
-                .map_err(|_| anyhow::anyhow!("error enrollment-credential"))?;
-            let hex = text
-                .strip_prefix("Bearer ")
-                .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?;
-            ensure!(
-                hex.len() == 64
-                    && hex
-                        .bytes()
-                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
-                "error enrollment-credential"
-            );
-            Ok::<_, anyhow::Error>(Secret::new(
-                hex::decode(hex)?
-                    .try_into()
-                    .map_err(|_| anyhow::anyhow!("error enrollment-credential"))?,
-            ))
+            http_admission::bearer(h).ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))
         })
         .transpose()?;
-    let bytes = to_bytes(request.into_body(), CONTROL_LIMIT)
+    let bytes = http_admission::body(request, CONTROL_LIMIT)
         .await
-        .map_err(|_| anyhow::anyhow!("error enrollment-limit"))?;
+        .ok_or_else(|| anyhow::anyhow!("error enrollment-limit"))?;
     let op: Operation =
         serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("error enrollment-http"))?;
     Ok(match op {

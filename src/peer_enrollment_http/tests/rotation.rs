@@ -429,13 +429,7 @@ async fn crash_after_coverage_and_floor_before_sqlite_mirror_recovers_without_re
         "membership-evidence",
         "membership-floor-7",
     ] {
-        let output = tokio::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "peer_enrollment_http::tests::rotation::coverage_worker",
-                "--ignored",
-                "--nocapture",
-            ])
+        let output = e2ee_http::worker("peer_enrollment_http::tests::rotation::coverage_worker")
             .env("AVEN_ROTATION_ROOT", root.path())
             .env("AVEN_ROTATION_ORIGIN", &origin)
             .env("AVEN_PEER_CRASH_KIND", boundary)

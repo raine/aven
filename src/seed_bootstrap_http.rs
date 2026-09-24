@@ -26,7 +26,6 @@ use aven_core::{
 };
 use axum::{
     Router,
-    body::to_bytes,
     extract::{Request, State},
     http::{StatusCode, header},
     response::{IntoResponse, Response},
@@ -174,30 +173,16 @@ async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response
 
 async fn handle_bounded(server: &Server, request: Request) -> Response {
     let headers = request.headers();
-    if headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        != Some("application/json")
-        || headers.contains_key(header::CONTENT_ENCODING)
-    {
+    if !http_admission::is_json(headers) {
         return refusal(StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
-    let secret = headers
+    let Some(secret) = headers
         .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
-        .filter(|s| {
-            s.len() == 64
-                && s.bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        })
-        .and_then(|s| hex::decode(s).ok())
-        .and_then(|v| <[u8; 32]>::try_from(v).ok())
-        .map(Secret::new);
-    let Some(secret) = secret else {
+        .and_then(http_admission::bearer)
+    else {
         return refusal(StatusCode::UNAUTHORIZED);
     };
-    let Ok(bytes) = to_bytes(request.into_body(), REQUEST_LIMIT).await else {
+    let Some(bytes) = http_admission::body(request, REQUEST_LIMIT).await else {
         return refusal(StatusCode::PAYLOAD_TOO_LARGE);
     };
     let Ok(envelope) = serde_json::from_slice::<Envelope>(&bytes) else {
@@ -207,17 +192,9 @@ async fn handle_bounded(server: &Server, request: Request) -> Response {
         Ok(reply) => reply,
         Err(_) => return refusal(StatusCode::CONFLICT),
     };
-    match serde_json::to_vec(&reply) {
-        Ok(bytes) if bytes.len() <= RESPONSE_LIMIT => (
-            [
-                (header::CONTENT_TYPE, "application/json"),
-                (header::CACHE_CONTROL, "no-store"),
-            ],
-            bytes,
-        )
-            .into_response(),
-        _ => refusal(StatusCode::INTERNAL_SERVER_ERROR),
-    }
+    http_admission::json(&reply, RESPONSE_LIMIT)
+        .map(http_admission::no_store)
+        .unwrap_or_else(|| refusal(StatusCode::INTERNAL_SERVER_ERROR))
 }
 
 async fn dispatch(server: &Server, secret: &Secret, e: Envelope) -> Result<Reply> {

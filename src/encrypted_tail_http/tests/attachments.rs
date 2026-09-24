@@ -566,13 +566,7 @@ async fn image_process_exit_retries_exact_preparation_put_and_admission() {
         let f = fixture().await;
         converge(&f).await;
         add_image(&f).await;
-        let result = tokio::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "encrypted_tail_http::tests::process_worker",
-                "--ignored",
-                "--nocapture",
-            ])
+        let result = e2ee_http::worker("encrypted_tail_http::tests::process_worker")
             .env("AVEN_TAIL_ROOT", f.root.path())
             .env("AVEN_TAIL_ORIGIN", &f.origin)
             .env("AVEN_TAIL_CRASH", stage)

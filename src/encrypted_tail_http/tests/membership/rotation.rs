@@ -445,19 +445,15 @@ async fn process_restart_before_and_after_task_and_image_supersession_preserves_
         server_rotate(&f, &third, &[]).await;
         server_rotate(&f, &third, &[]).await;
         for boundary in ["before-supersede-commit", "after-supersede-commit"] {
-            let output = tokio::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "encrypted_tail_http::tests::membership::rotation::supersession_worker",
-                    "--ignored",
-                    "--nocapture",
-                ])
-                .env("AVEN_SUPER_ROOT", f.root.path())
-                .env("AVEN_SUPER_ORIGIN", &f.origin)
-                .env("AVEN_TAIL_CRASH", boundary)
-                .output()
-                .await
-                .unwrap();
+            let output = e2ee_http::worker(
+                "encrypted_tail_http::tests::membership::rotation::supersession_worker",
+            )
+            .env("AVEN_SUPER_ROOT", f.root.path())
+            .env("AVEN_SUPER_ORIGIN", &f.origin)
+            .env("AVEN_TAIL_CRASH", boundary)
+            .output()
+            .await
+            .unwrap();
             assert_eq!(
                 output.status.code(),
                 Some(84),

@@ -1,3 +1,5 @@
+pub(crate) mod e2ee_http;
+
 use std::path::Path;
 
 use crate::ids::{BASE32, TaskId};

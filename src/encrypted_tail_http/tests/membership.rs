@@ -407,15 +407,10 @@ async fn fault_request(
 async fn restart_fault_server(f: &mut Fixture, fault: Arc<HttpFault>) {
     f.task.abort();
     let _ = (&mut f.task).await;
-    let listener = tokio::net::TcpListener::bind(f.origin.strip_prefix("http://").unwrap())
-        .await
-        .unwrap();
     let app = peer_enrollment_http::router(f.server.clone())
         .merge(router(f.server.clone()))
         .layer(axum::middleware::from_fn_with_state(fault, fault_request));
-    f.task = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    (_, f.task) = e2ee_http::serve(app, f.origin.strip_prefix("http://").unwrap()).await;
 }
 async fn lost_image_response(stage: &'static str) {
     use aven_core::sync::encrypted_tail::attachments::{
@@ -1021,13 +1016,7 @@ async fn process_exit_before_floor_and_after_readback_recovers_without_reinstall
     let _third = join(&f, "third", &f.seed, &f.seed_store).await;
     let cursor = f.peer.meta("sync_cursor").await.unwrap();
     for boundary in ["membership-evidence", "membership-floor-3"] {
-        let output = tokio::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "encrypted_tail_http::tests::membership::floor_worker",
-                "--ignored",
-                "--nocapture",
-            ])
+        let output = e2ee_http::worker("encrypted_tail_http::tests::membership::floor_worker")
             .env("AVEN_MEMBERSHIP_ROOT", f.root.path())
             .env("AVEN_MEMBERSHIP_ORIGIN", &f.origin)
             .env("AVEN_PEER_CRASH_KIND", boundary)

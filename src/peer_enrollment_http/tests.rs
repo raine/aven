@@ -3,7 +3,7 @@ use sha2::Digest;
 use super::*;
 use crate::{
     protected_local_keys::{EnrollmentReadiness, tests::isolated_store},
-    seed_bootstrap_http::tests::{fixture, setup},
+    test_support::e2ee_http::{self, fixture, setup},
 };
 use aven_core::db::installation::InstallationGuard;
 use axum::{
@@ -125,32 +125,12 @@ async fn count_exchange(
         .await
 }
 
-async fn serve(db: Database) -> (String, tokio::task::JoinHandle<()>) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let origin = format!("http://{}", listener.local_addr().unwrap());
-    let app = seed_bootstrap_http::router(db.clone(), Some(setup()), Default::default())
-        .merge(crate::encrypted_tail_http::router(db.clone()))
-        .merge(router(db));
-    let task = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (origin, task)
-}
-
 async fn serve_counted(
     db: Database,
     counts: Arc<ExchangeCounts>,
 ) -> (String, tokio::task::JoinHandle<()>) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let origin = format!("http://{}", listener.local_addr().unwrap());
-    let app = seed_bootstrap_http::router(db.clone(), Some(setup()), Default::default())
-        .merge(crate::encrypted_tail_http::router(db.clone()))
-        .merge(router(db))
-        .layer(middleware::from_fn_with_state(counts, count_exchange));
-    let task = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (origin, task)
+    let app = e2ee_http::router(db).layer(middleware::from_fn_with_state(counts, count_exchange));
+    e2ee_http::serve(app, "127.0.0.1:0").await
 }
 fn expiry() -> u64 {
     std::time::SystemTime::now()
@@ -184,17 +164,9 @@ async fn adopted_with(
     let server = Database::open(&root.join("server.sqlite")).await.unwrap();
     let (origin, task) = match counts {
         Some(counts) => serve_counted(server.clone(), counts).await,
-        None => serve(server.clone()).await,
+        None => e2ee_http::serve(e2ee_http::router(server.clone()), "127.0.0.1:0").await,
     };
-    let transport = seed_bootstrap_http::Client::new(&origin).unwrap();
-    transport
-        .claim(
-            seed.genesis(),
-            aven_core::sync::seed_claim::ClaimAuthentication::SetupSecret(&Secret::new([7; 32])),
-        )
-        .await
-        .unwrap();
-    transport.resume(&store, &db).await.unwrap();
+    e2ee_http::adopt(&origin, &db, &store, &seed).await;
     (db, store, server, origin, task)
 }
 
@@ -596,7 +568,7 @@ async fn bounded_http_redacts_refusals_and_rejects_unsafe_origins() {
     let db = Database::open(&root.path().join("server.sqlite"))
         .await
         .unwrap();
-    let (origin, task) = serve(db).await;
+    let (origin, task) = e2ee_http::serve(e2ee_http::router(db), "127.0.0.1:0").await;
     let http = reqwest::Client::new();
     for body in [
         "PRIVATE-INVALID-CONTENT".to_string(),
@@ -618,13 +590,7 @@ async fn bounded_http_redacts_refusals_and_rejects_unsafe_origins() {
 }
 
 async fn crash_worker(root: &Path, origin: &str, role: &str, kind: &str) {
-    let output = tokio::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "peer_enrollment_http::tests::process_worker",
-            "--ignored",
-            "--nocapture",
-        ])
+    let output = e2ee_http::worker("peer_enrollment_http::tests::process_worker")
         .env("AVEN_PEER_ROOT", root)
         .env("AVEN_PEER_ORIGIN", origin)
         .env("AVEN_PEER_ROLE", role)

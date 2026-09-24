@@ -22,21 +22,13 @@ impl Drop for Fixture {
 async fn enrolled() -> Fixture {
     let root = tempfile::tempdir().unwrap();
     let (source, seed_store, seed, package) =
-        crate::seed_bootstrap_http::tests::fixture_with_domain(root.path(), true).await;
+        e2ee_http::fixture_with_domain(root.path(), true).await;
     let server = Database::open(&root.path().join("server.sqlite"))
         .await
         .unwrap();
     let counts = Arc::new(ExchangeCounts::default());
     let (origin, task) = serve_counted(server.clone(), counts.clone()).await;
-    let seed_http = seed_bootstrap_http::Client::new(&origin).unwrap();
-    seed_http
-        .claim(
-            seed.genesis(),
-            aven_core::sync::seed_claim::ClaimAuthentication::SetupSecret(&Secret::new([7; 32])),
-        )
-        .await
-        .unwrap();
-    seed_http.resume(&seed_store, &source).await.unwrap();
+    e2ee_http::adopt(&origin, &source, &seed_store, &seed).await;
     let peer = Database::open(&root.path().join("peer.sqlite"))
         .await
         .unwrap();
@@ -591,13 +583,7 @@ async fn process_restart_download_metadata_and_atomic_commit_boundaries() {
     let f = enrolled().await;
     let identity = f.peer.meta("client_id").await.unwrap();
     for stage in ["download", "metadata", "before-commit", "after-commit"] {
-        let output = tokio::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "peer_enrollment_http::tests::install::process_worker",
-                "--ignored",
-                "--nocapture",
-            ])
+        let output = e2ee_http::worker("peer_enrollment_http::tests::install::process_worker")
             .env("AVEN_SNAPSHOT_ROOT", f.root.path())
             .env("AVEN_SNAPSHOT_ORIGIN", &f.client.locator)
             .env("AVEN_SNAPSHOT_CRASH", stage)

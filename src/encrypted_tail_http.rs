@@ -14,7 +14,6 @@ use aven_core::{
 };
 use axum::{
     Router,
-    body::to_bytes,
     extract::{Request, State},
     http::{StatusCode, header},
     response::{IntoResponse, Response},
@@ -59,19 +58,17 @@ pub fn router_with_policy(
         }))
 }
 async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response {
-    let mut response = match http_admission::dispatch(
+    let response = match http_admission::dispatch(
         &server.gate,
         REQUEST_TIMEOUT,
         dispatch(&server.db, request),
     )
     .await
     {
-        Outcome::Dispatched(Ok(reply)) => match serde_json::to_vec(&reply) {
-            Ok(bytes) if bytes.len() <= tail::RESPONSE_LIMIT => {
-                ([(header::CONTENT_TYPE, "application/json")], bytes).into_response()
-            }
-            _ => (StatusCode::INTERNAL_SERVER_ERROR, "encrypted_tail_refused").into_response(),
-        },
+        Outcome::Dispatched(Ok(reply)) => http_admission::json(&reply, tail::RESPONSE_LIMIT)
+            .unwrap_or_else(|| {
+                (StatusCode::INTERNAL_SERVER_ERROR, "encrypted_tail_refused").into_response()
+            }),
         Outcome::Dispatched(Err(e)) => {
             let category = if is_stale(&e) {
                 "membership-stale"
@@ -92,43 +89,21 @@ async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response
             response
         }
     };
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        axum::http::HeaderValue::from_static("no-store"),
-    );
-    response
+    http_admission::no_store(response)
 }
 async fn dispatch(db: &Database, request: Request) -> Result<Envelope<Reply>> {
     ensure!(
-        request
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .and_then(|h| h.to_str().ok())
-            == Some("application/json")
-            && !request.headers().contains_key(header::CONTENT_ENCODING),
+        http_admission::is_json(request.headers()),
         "error encrypted-tail-http"
     );
-    let auth = request
+    let secret = request
         .headers()
         .get(header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
+        .and_then(http_admission::bearer)
         .ok_or_else(|| anyhow::anyhow!("error encrypted-tail-credential"))?;
-    ensure!(
-        auth.len() == 64
-            && auth
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
-        "error encrypted-tail-credential"
-    );
-    let secret = Secret::new(
-        hex::decode(auth)?
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("error encrypted-tail-credential"))?,
-    );
-    let bytes = to_bytes(request.into_body(), tail::APPEND_LIMIT)
+    let bytes = http_admission::body(request, tail::APPEND_LIMIT)
         .await
-        .map_err(|_| anyhow::anyhow!("error encrypted-tail-limit"))?;
+        .ok_or_else(|| anyhow::anyhow!("error encrypted-tail-limit"))?;
     let input: Envelope<Operation> =
         serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("error encrypted-tail-http"))?;
     ensure!(

@@ -87,15 +87,10 @@ async fn restart_server_with_policy(
 ) {
     f.task.abort();
     let _ = (&mut f.task).await;
-    let listener = tokio::net::TcpListener::bind(f.origin.strip_prefix("http://").unwrap())
-        .await
-        .unwrap();
     let app = peer_enrollment_http::router(f.server.clone())
         .merge(router_with_policy(f.server.clone(), image_policy))
         .layer(axum::middleware::from_fn_with_state(fault, fault_request));
-    f.task = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    (_, f.task) = e2ee_http::serve(app, f.origin.strip_prefix("http://").unwrap()).await;
 }
 
 struct HttpFault {
@@ -553,18 +548,13 @@ async fn lost_append_put_complete_and_manage_replies_resume_in_new_process() {
         }
         assert_eq!(fault.remaining.load(Ordering::SeqCst), 0);
         restart_server(&mut f, fault.clone()).await;
-        let output = tokio::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "encrypted_tail_http::tests::checkpoint_faults::recovery_worker",
-                "--ignored",
-                "--nocapture",
-            ])
-            .env("AVEN_CHECKPOINT_ROOT", f.root.path())
-            .env("AVEN_CHECKPOINT_ORIGIN", &f.origin)
-            .output()
-            .await
-            .unwrap();
+        let output =
+            e2ee_http::worker("encrypted_tail_http::tests::checkpoint_faults::recovery_worker")
+                .env("AVEN_CHECKPOINT_ROOT", f.root.path())
+                .env("AVEN_CHECKPOINT_ORIGIN", &f.origin)
+                .output()
+                .await
+                .unwrap();
         assert_eq!(
             output.status.code(),
             Some(84),

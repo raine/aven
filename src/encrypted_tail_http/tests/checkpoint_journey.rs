@@ -57,39 +57,15 @@ fn expiry() -> u64 {
         + 3500
 }
 
-async fn serve(server: Database, address: &str) -> (String, tokio::task::JoinHandle<()>) {
-    let listener = tokio::net::TcpListener::bind(address).await.unwrap();
-    let origin = format!("http://{}", listener.local_addr().unwrap());
-    let app = crate::seed_bootstrap_http::router(
-        server.clone(),
-        Some(crate::seed_bootstrap_http::tests::setup()),
-        Default::default(),
-    )
-    .merge(crate::peer_enrollment_http::router(server.clone()))
-    .merge(crate::encrypted_tail_http::router(server));
-    let task = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (origin, task)
-}
-
 async fn setup() -> Journey {
     let root = tempfile::tempdir().unwrap();
-    let (a_db, a_store, authority, _) =
-        crate::seed_bootstrap_http::tests::fixture_with_domain(root.path(), true).await;
+    let (a_db, a_store, authority, _) = e2ee_http::fixture_with_domain(root.path(), true).await;
     let server = Database::open(&root.path().join("journey-server.sqlite"))
         .await
         .unwrap();
-    let (origin, server_task) = serve(server.clone(), "127.0.0.1:0").await;
-    let bootstrap = crate::seed_bootstrap_http::Client::new(&origin).unwrap();
-    bootstrap
-        .claim(
-            authority.genesis(),
-            aven_core::sync::seed_claim::ClaimAuthentication::SetupSecret(&Secret::new([7; 32])),
-        )
-        .await
-        .unwrap();
-    bootstrap.resume(&a_store, &a_db).await.unwrap();
+    let (origin, server_task) =
+        e2ee_http::serve(e2ee_http::router(server.clone()), "127.0.0.1:0").await;
+    e2ee_http::adopt(&origin, &a_db, &a_store, &authority).await;
     let a = Node {
         db: a_db,
         store: a_store,
@@ -791,7 +767,7 @@ async fn restart_server(journey: &mut Journey) {
     journey.server_task.abort();
     let _ = (&mut journey.server_task).await;
     let server = Database::open(journey.server.path()).await.unwrap();
-    let (origin, server_task) = serve(server.clone(), &address).await;
+    let (origin, server_task) = e2ee_http::serve(e2ee_http::router(server.clone()), &address).await;
     assert_eq!(origin, journey.origin);
     journey.server_task = server_task;
     let old = std::mem::replace(&mut journey.server, server);
@@ -1081,13 +1057,7 @@ async fn normal_whole_engine_e2ee_journey() {
         .path()
         .join("checkpoint-journey-client-worker.log");
     let output = std::fs::File::create(log).unwrap();
-    let status = tokio::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--ignored",
-            "--exact",
-            "encrypted_tail_http::tests::checkpoint_journey::client_worker",
-            "--nocapture",
-        ])
+    let status = e2ee_http::worker("encrypted_tail_http::tests::checkpoint_journey::client_worker")
         .env("E2EE_JOURNEY_ORIGIN", &journey.origin)
         .env("E2EE_JOURNEY_DB", &d_db_path)
         .env("E2EE_JOURNEY_KEYS", &d_keys_path)
