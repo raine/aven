@@ -31,7 +31,8 @@ mod tests;
 
 /// Upper bound on bounded rounds in one interactive drain.
 const ROUND_LIMIT: usize = 1000;
-/// Consecutive failed or unavailable image rounds after metadata is current.
+/// Consecutive failed or unavailable image rounds before a drain stops. Each
+/// such round still pulls, but a failed local head cannot advance.
 const IMAGE_RETRY_ROUNDS: usize = 16;
 const INVITATION_SECONDS: u64 = 600;
 const INPUT_LIMIT: u64 = 8192;
@@ -305,11 +306,11 @@ pub(crate) async fn sync(database: &Database, config: &AppConfig, args: &SyncArg
 }
 
 #[derive(Serialize)]
-struct Outcome {
+pub(crate) struct Outcome {
     version: u32,
-    rounds: usize,
-    metadata_caught_up: bool,
-    images: &'static str,
+    pub(crate) rounds: usize,
+    pub(crate) metadata_caught_up: bool,
+    pub(crate) images: &'static str,
 }
 
 fn image_label(images: ImageTransfer) -> &'static str {
@@ -323,7 +324,7 @@ fn image_label(images: ImageTransfer) -> &'static str {
 
 /// Repeats bounded rounds until metadata is current and image work settles,
 /// or until the round or image retry bound stops it.
-async fn drain(
+pub(crate) async fn drain(
     client: &tail_http::Client,
     store: &ProtectedLocalKeyStore,
     database: &Database,
@@ -336,13 +337,9 @@ async fn drain(
         let round: Round = client.round(store, database, blob_dir).await?;
         rounds += 1;
         last = Some(round);
-        if !round.metadata_caught_up {
-            image_retries = 0;
-            continue;
-        }
         match round.images {
-            ImageTransfer::Complete => break,
-            ImageTransfer::Pending => image_retries = 0,
+            ImageTransfer::Complete if round.metadata_caught_up => break,
+            ImageTransfer::Complete | ImageTransfer::Pending => image_retries = 0,
             ImageTransfer::Failed | ImageTransfer::Unavailable => {
                 image_retries += 1;
                 if image_retries >= IMAGE_RETRY_ROUNDS {
@@ -366,6 +363,12 @@ fn print_outcome(outcome: &Outcome) {
             "Sync incomplete: stopped after {} rounds. Run `aven sync` again.",
             outcome.rounds
         );
+        if outcome.images == "failed" {
+            println!(
+                "An image transfer failed, or an image added here is missing from this \
+                 computer. Changes after it wait until it uploads."
+            );
+        }
         return;
     }
     println!("Tasks are up to date");

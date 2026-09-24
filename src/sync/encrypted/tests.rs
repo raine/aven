@@ -193,6 +193,12 @@ async fn spawn_invite(
     }
 }
 
+async fn enrollment_identity(node: &Installation) -> (Vec<u8>, String) {
+    let database = aven_core::db::Database::open(&node.db()).await.unwrap();
+    let (identity, client, _) = database.enrollment_pin().await.unwrap().unwrap();
+    (identity.to_vec(), client)
+}
+
 async fn titles(node: &Installation) -> Vec<String> {
     let json: serde_json::Value =
         serde_json::from_str(&node.ok(&["list", "--all", "--json"]).await).unwrap();
@@ -351,6 +357,25 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
     assert!(error.contains("sync-invitation-pending"), "{error}");
     abandoned.kill().await.unwrap();
     abandoned.wait().await.unwrap();
+    // A join interrupted while waiting for admission resumes its stored request.
+    let mut interrupted = b
+        .command(&["sync", "join"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = interrupted.stdin.take().unwrap();
+    stdin.write_all(first_invitation.as_bytes()).await.unwrap();
+    drop(stdin);
+    let mut stderr = BufReader::new(interrupted.stderr.take().unwrap()).lines();
+    while let Some(line) = stderr.next_line().await.unwrap() {
+        if line.contains("Waiting for the inviting device") {
+            break;
+        }
+    }
+    interrupted.kill().await.unwrap();
+    interrupted.wait().await.unwrap();
+    assert_eq!(status(&b).await["state"], "join-incomplete");
+    let requested_identity = enrollment_identity(&b).await;
     let (invite, device_invitation, mut invite_stdout) = spawn_invite(&a).await;
     assert_eq!(device_invitation, first_invitation);
     let error = failure(
@@ -366,6 +391,7 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
         .run_with_input(&["sync", "join"], &device_invitation)
         .await;
     let stdout = success(&joined, &["sync", "join"]);
+    assert_eq!(enrollment_identity(&b).await, requested_identity);
     assert!(
         stdout.contains(&format!("Joined sync with {url}")),
         "{stdout}"

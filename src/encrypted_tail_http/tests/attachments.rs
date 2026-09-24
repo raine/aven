@@ -998,3 +998,63 @@ async fn failed_first_image_does_not_starve_later_downloads(corrupt: bool) {
         .unwrap()
     );
 }
+
+#[tokio::test]
+async fn cli_drain_stops_promptly_behind_missing_local_image_and_still_pulls() {
+    let f = fixture().await;
+    converge(&f).await;
+    let reference = add_image(&f).await;
+    let (task, sha): (String, String) =
+        sqlx::query_as("SELECT task_id,sha256 FROM task_attachments WHERE attachment_id=?")
+            .bind(&reference)
+            .fetch_one(&mut *aven_core::test_support::acquire(&f.peer).await.unwrap())
+            .await
+            .unwrap();
+    let w = f.peer.list_workspaces().await.unwrap().remove(0);
+    f.peer
+        .update_task(
+            &w,
+            &task.parse().unwrap(),
+            TaskUpdate {
+                title: Some("edited behind missing image".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    std::fs::remove_file(f.root.path().join("peer-blobs/objects/sha256").join(&sha)).unwrap();
+    let c = Client::new(&f.origin).unwrap();
+    let remote = f
+        .seed
+        .create_task(
+            &f.seed.list_workspaces().await.unwrap().remove(0),
+            draft("remote behind missing image"),
+        )
+        .await
+        .unwrap()
+        .task;
+    drain(&c, &f.seed_store, &f.seed).await;
+    let outcome = crate::sync::encrypted::drain(
+        &c,
+        &f.peer_store,
+        &f.peer,
+        &f.root.path().join("peer-blobs"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.rounds, 16);
+    assert!(!outcome.metadata_caught_up);
+    assert_eq!(outcome.images, "failed");
+    assert_eq!(
+        title(&f.peer, remote.id.as_str()).await,
+        "remote behind missing image"
+    );
+    assert_eq!(
+        scalar(
+            &f.peer,
+            "SELECT count(*) FROM changes WHERE server_seq IS NULL"
+        )
+        .await,
+        2
+    );
+}
