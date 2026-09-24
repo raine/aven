@@ -15,7 +15,7 @@ use aven_core::{
 };
 use chrono::Utc;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     process::Stdio,
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -46,6 +46,7 @@ struct TailState {
     a_task: TaskId,
     b_task: TaskId,
     c_task: TaskId,
+    epic_task: TaskId,
 }
 
 fn expiry() -> u64 {
@@ -277,6 +278,17 @@ async fn task_value(db: &Database, id: &TaskId, column: &str) -> String {
     scalar_string(db, &format!("SELECT {column} FROM tasks WHERE id='{}'", id)).await
 }
 
+async fn metadata_value(db: &Database, task: &TaskId, key: &str) -> String {
+    scalar_string(
+        db,
+        &format!(
+            "SELECT tm.value FROM task_metadata tm JOIN metadata_fields mf ON mf.id=tm.field_id AND mf.workspace_id=tm.workspace_id WHERE tm.task_id='{}' AND mf.key='{key}'",
+            task
+        ),
+    )
+    .await
+}
+
 async fn attachment_hashes(db: &Database) -> Vec<String> {
     let mut conn = aven_core::test_support::acquire(db).await.unwrap();
     sqlx::query_scalar("SELECT sha256 FROM task_attachments WHERE deleted=0 ORDER BY sha256")
@@ -286,11 +298,15 @@ async fn attachment_hashes(db: &Database) -> Vec<String> {
 }
 
 async fn assert_images(node: &Node, expected: &BTreeMap<String, Vec<u8>>) {
-    for hash in attachment_hashes(&node.db).await {
-        if let Some(bytes) = expected.get(&hash) {
-            let path = aven_core::attachments::object_path(&node.blobs, &hash).unwrap();
-            assert_eq!(std::fs::read(path).unwrap(), *bytes);
-        }
+    let actual = attachment_hashes(&node.db).await;
+    let expected_hashes = expected.keys().cloned().collect::<BTreeSet<_>>();
+    assert_eq!(
+        actual.iter().cloned().collect::<BTreeSet<_>>(),
+        expected_hashes
+    );
+    for (hash, bytes) in expected {
+        let path = aven_core::attachments::object_path(&node.blobs, hash).unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), *bytes);
     }
 }
 
@@ -524,16 +540,31 @@ async fn create_tail_state(h: &Journey, c: &Node) -> (TailState, BTreeMap<String
     sync_all(&h.origin, &[&h.a, &h.b, c]).await;
     for node in [&h.a, &h.b, c] {
         sync_images(&h.origin, node).await;
-        assert_images(node, &expected).await;
     }
     (
         TailState {
             a_task,
             b_task,
             c_task,
+            epic_task: epic.id,
         },
         expected,
     )
+}
+
+async fn related_link(db: &Database, left: &TaskId, right: &TaskId) -> i64 {
+    let (a, b) = if left.as_str() < right.as_str() {
+        (left.as_str(), right.as_str())
+    } else {
+        (right.as_str(), left.as_str())
+    };
+    scalar_i64(
+        db,
+        &format!(
+            "SELECT count(*) FROM task_related_links WHERE task_a_id='{a}' AND task_b_id='{b}' AND linked=1"
+        ),
+    )
+    .await
 }
 
 async fn assert_shared_state(nodes: &[&Node], state: &TailState) {
@@ -584,53 +615,58 @@ async fn assert_shared_state(nodes: &[&Node], state: &TailState) {
             1
         );
         assert_eq!(
-            scalar_i64(
-                &node.db,
-                &format!(
-                    "SELECT count(*) FROM task_metadata tm JOIN metadata_fields mf ON mf.id=tm.field_id AND mf.workspace_id=tm.workspace_id WHERE tm.task_id='{}' AND mf.key='owner'",
-                    state.a_task
-                ),
-            )
-            .await,
-            1,
-            "metadata on {}",
-            node.db.path().display()
+            metadata_value(&node.db, &state.a_task, "owner").await,
+            "b-for-a"
+        );
+        assert_eq!(
+            metadata_value(&node.db, &state.b_task, "owner").await,
+            "c-for-b"
+        );
+        assert_eq!(
+            metadata_value(&node.db, &state.c_task, "owner").await,
+            "a-for-c"
         );
         assert_eq!(
             scalar_i64(
                 &node.db,
                 &format!(
-                    "SELECT count(*) FROM task_metadata tm JOIN metadata_fields mf ON mf.id=tm.field_id AND mf.workspace_id=tm.workspace_id WHERE tm.task_id='{}' AND mf.key='owner'",
-                    state.b_task
-                ),
-            )
-            .await,
-            1
-        );
-        assert_eq!(
-            scalar_i64(
-                &node.db,
-                &format!(
-                    "SELECT count(*) FROM task_metadata tm JOIN metadata_fields mf ON mf.id=tm.field_id AND mf.workspace_id=tm.workspace_id WHERE tm.task_id='{}' AND mf.key='owner'",
-                    state.c_task
+                    "SELECT count(*) FROM task_dependencies WHERE task_id='{}' AND depends_on_task_id='{}'",
+                    state.a_task, state.b_task
                 ),
             )
             .await,
             1
         );
         assert_eq!(
-            scalar_i64(&node.db, "SELECT count(*) FROM task_dependencies").await,
-            2
+            scalar_i64(
+                &node.db,
+                &format!(
+                    "SELECT count(*) FROM task_dependencies WHERE task_id='{}' AND depends_on_task_id='{}'",
+                    state.c_task, state.a_task
+                ),
+            )
+            .await,
+            1
+        );
+        assert_eq!(
+            related_link(&node.db, &state.a_task, &state.c_task).await,
+            1
+        );
+        assert_eq!(
+            related_link(&node.db, &state.b_task, &state.c_task).await,
+            1
         );
         assert_eq!(
             scalar_i64(
                 &node.db,
-                "SELECT count(*) FROM task_related_links WHERE linked=1",
+                &format!(
+                    "SELECT count(*) FROM task_epic_links WHERE epic_task_id='{}' AND child_task_id='{}'",
+                    state.epic_task, state.c_task
+                ),
             )
             .await,
-            3
+            1
         );
-        assert!(scalar_i64(&node.db, "SELECT count(*) FROM task_epic_links").await >= 2);
         assert!(scalar_i64(&node.db, "SELECT count(*) FROM recurrence_series").await >= 4);
         assert_eq!(
             scalar_i64(
@@ -695,6 +731,7 @@ async fn report_quiescent_rounds(origin: &str, nodes: &[&Node], server: &Databas
             );
         }
     }
+    let elapsed = started.elapsed();
     let inputs = nodes[0]
         .store
         .active_inputs(&nodes[0].db, origin)
@@ -708,7 +745,7 @@ async fn report_quiescent_rounds(origin: &str, nodes: &[&Node], server: &Databas
         scalar_i64(server, "SELECT count(*) FROM server_membership_transitions").await;
     eprintln!(
         "checkpoint journey timing: rounds=9 elapsed_ms={} prefix={} membership_sequence={} devices={} tail_records={} membership_transitions={}",
-        started.elapsed().as_millis(),
+        elapsed.as_millis(),
         prefix,
         membership_sequence,
         device_count,
@@ -870,10 +907,19 @@ async fn normal_whole_engine_e2ee_journey() {
         .await
         .unwrap();
     sync_all(&journey.origin, &[&journey.a, &journey.b]).await;
-    assert_eq!(
-        task_value(&journey.b.db, &conflict_task.id, "title").await,
-        "conflict-resolved"
-    );
+    for node in [&journey.a, &journey.b] {
+        assert_eq!(
+            task_value(&node.db, &conflict_task.id, "title").await,
+            "conflict-resolved"
+        );
+        assert!(
+            node.db
+                .task_conflicts(&w, &conflict_task.id, Some("title"))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
 
     journey
         .a
@@ -1071,22 +1117,24 @@ async fn normal_whole_engine_e2ee_journey() {
         blobs: d_blobs_path,
     };
     assert_shared_state(&[&journey.a, &journey.b, &d], &state).await;
-    assert_eq!(
-        task_value(&journey.a.db, &state.a_task, "title").await,
-        "offline-a-before-removal"
-    );
-    assert_eq!(
-        task_value(&journey.b.db, &state.b_task, "title").await,
-        "offline-b-before-removal"
-    );
-    assert!(
-        scalar_i64(
-            &journey.a.db,
-            "SELECT count(*) FROM tasks WHERE title IN ('post-rotation-a', 'post-rotation-b')"
-        )
-        .await
-            >= 2
-    );
+    for node in [&journey.a, &journey.b, &d] {
+        assert_eq!(
+            task_value(&node.db, &state.a_task, "title").await,
+            "offline-a-before-removal"
+        );
+        assert_eq!(
+            task_value(&node.db, &state.b_task, "title").await,
+            "offline-b-before-removal"
+        );
+        assert_eq!(
+            task_value(&node.db, &post_a.id, "title").await,
+            "post-rotation-a"
+        );
+        assert_eq!(
+            task_value(&node.db, &post_b.id, "title").await,
+            "post-rotation-b"
+        );
+    }
     assert_images(&d, &expected).await;
     assert!(matches!(
         d.store.enrollment_readiness(&d.db).await.unwrap(),
