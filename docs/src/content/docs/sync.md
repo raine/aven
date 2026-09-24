@@ -87,6 +87,33 @@ invitation is used; an unused invitation stops pausing sync once it expires. If
 keys may have been sent to a device that never joined, the next sync after
 expiry rotates keys first. That device can still read anything it received.
 
+## Manage devices
+
+List the devices that take part in sync:
+
+```sh
+aven sync device list
+aven sync device list --json
+```
+
+The list comes from the server's current membership. It shows each device's
+`device_id`, which device is the current one, and whether key rotation is
+still pending after a removal.
+
+Remove another device with its `device_id`:
+
+```sh
+aven sync device remove DEVICE_ID
+aven sync device remove DEVICE_ID --json
+```
+
+Removal stops the device from syncing and rotates the keys for future
+changes. The result is `complete`, or `pending` while key rotation is
+unfinished; rerunning the command, or syncing any remaining device, finishes
+it. If the command is interrupted, rerun it with the same `device_id` to
+resume. Removal does not erase anything on the removed device: it keeps the
+tasks and images it already downloaded. A device cannot remove itself.
+
 ## Sync a client
 
 ```sh

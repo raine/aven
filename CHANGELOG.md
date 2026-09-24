@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- `aven sync device list` shows the devices in sync and marks the current one, and `aven sync device remove` removes another device and rotates keys for future changes. Both support `--json`, and an interrupted removal resumes when rerun. A removed device keeps the tasks and images it already downloaded. See [Sync across devices](https://aventasks.dev/sync/).
+
 - Sync is now always end-to-end encrypted, and the unencrypted sync mode is removed. `aven server` serves only encrypted sync and refuses storage from the previous unencrypted server, so set up a new server path and run `aven sync setup` from one device. `aven sync pair`, `aven sync --server`, `aven update --allow-sync-incompatibility`, and the `sync.server_url` and `sync.auth_token` settings are gone. The daemon and the TUI sync action use encrypted sync, and `aven sync invite` and the TUI `:add-device` command show the device invitation as a QR code. See [Sync across devices](https://aventasks.dev/sync/).
 
 - Encrypted sync can be set up from the command line: `aven server setup` and `aven server` prepare and serve a server, `aven sync setup` starts syncing from an existing database, and `aven sync invite` with `aven sync join` adds an empty database on another device. `aven sync` and `aven sync status` then report task and image progress separately.

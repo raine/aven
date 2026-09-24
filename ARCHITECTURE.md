@@ -660,7 +660,7 @@ transport boundary.
 
 End-to-end encrypted sync is the only sync mode. `src/sync/encrypted.rs` wires
 the existing host APIs to `aven sync setup`, `sync invite`, `sync join`,
-`aven sync` and `sync status`. A seed genesis pin or enrollment pin makes a
+`aven sync`, `sync status` and `sync device`. A seed genesis pin or enrollment pin makes a
 database set up (`is_set_up`); any other database stays local, `aven sync` and
 `invite` fail with `sync-not-set-up`, and status reports `not-set-up` without
 reading protected keys. The server is the locator bound into protected
@@ -692,6 +692,15 @@ reused. Historical keys the grant carried stay disclosed. `invitation.rs` encode
 invitations as the pairing spec's `aven://pair/v2/` URI and setup invitations
 in the provisional `aven-sync-setup-1:` form, both carrying the validated
 server origin.
+
+`src/sync/encrypted/devices.rs` implements `aven sync device list` and
+`remove` under the coordination lock. List refreshes verified membership
+through `refresh_inputs` and reads `Membership::admissions`. Remove refuses
+the current device before calling `remove_device`. It reports the engine's
+`RemovalStatus` together with access revocation read from the refreshed local
+floor, and maps unnamed engine refusals to CLI error codes. A lost reply and a
+refused credential produce the same client error, so hints never claim a
+server refusal proves removal. Leaving from the current device is not wired.
 
 `aven server setup` stores one expiring setup verifier in server `meta`,
 refusing claimed storage or storage with change history. Reissue keeps the

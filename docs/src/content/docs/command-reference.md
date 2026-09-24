@@ -884,6 +884,27 @@ Paste the invitation, or pipe it to standard input, while the inviting device
 waits. Joining downloads the synced data and then its images. Rerun the command
 to resume an interrupted join.
 
+#### `aven sync device`
+
+List devices in sync, or remove another device.
+
+```sh
+aven sync device list [--json]
+aven sync device remove <device-id> [--json]
+```
+
+Both commands contact the server. `list` prints each device's 64-character
+`device_id`, whether it is the current device, and its `admission_sequence`,
+which is `0` for the device that set up sync. It also reports whether key
+rotation is pending. `remove` revokes the device and rotates keys for future
+changes, then reports `state` as `complete` or `pending` with
+`access_revoked` and `key_rotation_pending`. An interrupted removal fails with
+`sync-device-removal-incomplete`; rerun it with the same `device_id` to resume.
+Refusals include `sync-device-id-invalid`, `sync-device-not-found`, and
+`sync-device-current`; a device cannot remove itself. Removal does not erase
+data the removed device already downloaded. JSON output is versioned and omits
+keys, credentials, and invitations.
+
 #### `aven sync status`
 
 Inspect local sync state without contacting the server or starting a sync.
