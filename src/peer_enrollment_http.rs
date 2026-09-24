@@ -1,7 +1,11 @@
 //! Isolated repeatable device enrollment and published snapshot retrieval.
 //! The public mailbox never exposes bootstrap chunks, images or credentials.
 mod management;
-use crate::{protected_local_keys::ProtectedLocalKeyStore, seed_bootstrap_http};
+use crate::{
+    http_admission::{self, Outcome},
+    protected_local_keys::ProtectedLocalKeyStore,
+    seed_bootstrap_http,
+};
 use anyhow::{Result, ensure};
 use aven_core::{
     db::Database,
@@ -24,6 +28,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 const PATH: &str = "/e2ee/enrollment/v1";
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const BUSY_RETRIES: usize = 3;
 const CONTROL_LIMIT: usize = 4 * membership::MAX_RECORD_BYTES + 4096;
 const PUBLISHED_RESPONSE_LIMIT: usize = 4 * (1_048_576 + 222) + 4096;
 #[derive(Clone, Serialize, Deserialize)]
@@ -125,36 +131,41 @@ pub fn router(db: Database) -> Router {
         }))
 }
 async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response {
-    let mut response = if let Ok(_permit) = server.gate.try_acquire() {
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            dispatch(&server.db, request),
-        )
-        .await
-        {
-            Ok(Ok(reply)) => match serde_json::to_vec(&reply) {
-                Ok(bytes)
-                    if bytes.len()
-                        <= match &reply {
-                            Reply::Membership(_) => membership::MAX_EVIDENCE_JSON_BYTES,
-                            Reply::PreparedManagement(_) => {
-                                membership::MAX_EVIDENCE_JSON_BYTES + 128
-                            }
-                            Reply::Published(_) => PUBLISHED_RESPONSE_LIMIT,
-                            _ => CONTROL_LIMIT,
-                        } =>
-                {
-                    ([(header::CONTENT_TYPE, "application/json")], bytes).into_response()
-                }
-                _ => (StatusCode::BAD_REQUEST, "enrollment-refused").into_response(),
-            },
-            Ok(Err(error)) if is_stale(&error) => {
-                (StatusCode::CONFLICT, "membership-stale").into_response()
+    let mut response = match http_admission::dispatch(
+        &server.gate,
+        REQUEST_TIMEOUT,
+        dispatch(&server.db, request),
+    )
+    .await
+    {
+        Outcome::Dispatched(Ok(reply)) => match serde_json::to_vec(&reply) {
+            Ok(bytes)
+                if bytes.len()
+                    <= match &reply {
+                        Reply::Membership(_) => membership::MAX_EVIDENCE_JSON_BYTES,
+                        Reply::PreparedManagement(_) => membership::MAX_EVIDENCE_JSON_BYTES + 128,
+                        Reply::Published(_) => PUBLISHED_RESPONSE_LIMIT,
+                        _ => CONTROL_LIMIT,
+                    } =>
+            {
+                ([(header::CONTENT_TYPE, "application/json")], bytes).into_response()
             }
             _ => (StatusCode::BAD_REQUEST, "enrollment-refused").into_response(),
+        },
+        Outcome::Dispatched(Err(error)) if is_stale(&error) => {
+            (StatusCode::CONFLICT, "membership-stale").into_response()
         }
-    } else {
-        (StatusCode::SERVICE_UNAVAILABLE, "enrollment-busy").into_response()
+        Outcome::Dispatched(Err(_)) => {
+            (StatusCode::BAD_REQUEST, "enrollment-refused").into_response()
+        }
+        Outcome::DispatchTimeout => {
+            (StatusCode::REQUEST_TIMEOUT, "enrollment-timeout").into_response()
+        }
+        Outcome::PermitTimeout => {
+            let mut response = (StatusCode::SERVICE_UNAVAILABLE, "enrollment-busy").into_response();
+            http_admission::mark_busy(&mut response);
+            response
+        }
     };
     response.headers_mut().insert(
         header::CACHE_CONTROL,
@@ -349,32 +360,51 @@ impl Client {
             value.set_sensitive(true);
             request = request.header(header::AUTHORIZATION, value);
         }
-        let mut response = request
-            .send()
-            .await
-            .map_err(|_| anyhow::anyhow!("error enrollment-network outcome-unknown"))?;
-        if response.status() != StatusCode::OK {
+        let mut attempt = 0;
+        let mut response = loop {
+            let mut response = request
+                .try_clone()
+                .ok_or_else(|| anyhow::anyhow!("error enrollment-http"))?
+                .send()
+                .await
+                .map_err(|_| anyhow::anyhow!("error enrollment-network outcome-unknown"))?;
+            if response.status() == StatusCode::OK {
+                break response;
+            }
             let status = response.status();
-            let mut bytes = Vec::new();
+            let retry_after = response
+                .headers()
+                .get(header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok());
+            let mut response_bytes = Vec::new();
             while let Some(chunk) = response
                 .chunk()
                 .await
                 .map_err(|_| anyhow::anyhow!("error enrollment-network outcome-unknown"))?
             {
                 ensure!(
-                    chunk.len() <= 256 - bytes.len(),
+                    chunk.len() <= 256 - response_bytes.len(),
                     "error enrollment-refused outcome-unknown"
                 );
-                bytes.extend_from_slice(&chunk);
+                response_bytes.extend_from_slice(&chunk);
             }
-            if status == StatusCode::CONFLICT && bytes == b"membership-stale" {
+            let busy = status == StatusCode::SERVICE_UNAVAILABLE
+                && response_bytes == b"enrollment-busy"
+                && retry_after.is_some();
+            if busy && attempt < BUSY_RETRIES {
+                tokio::time::sleep(busy_retry_delay(attempt, retry_after.unwrap())).await;
+                attempt += 1;
+                continue;
+            }
+            if status == StatusCode::CONFLICT && response_bytes == b"membership-stale" {
                 anyhow::bail!(membership::StaleContext);
             }
-            if status == StatusCode::SERVICE_UNAVAILABLE && bytes == b"enrollment-busy" {
+            if busy {
                 anyhow::bail!("error enrollment-busy");
             }
             anyhow::bail!("error enrollment-refused outcome-unknown");
-        }
+        };
         ensure!(
             response.status() == StatusCode::OK
                 && response
@@ -793,6 +823,15 @@ impl Client {
         Ok(true)
     }
 }
+fn busy_retry_delay(attempt: usize, retry_after: u64) -> std::time::Duration {
+    let base_ms = 50_u64 << attempt.min(5);
+    let mut random = [0_u8; 2];
+    let _ = getrandom::fill(&mut random);
+    let jitter_ms = u16::from_le_bytes(random) as u64 % (base_ms / 2 + 1);
+    std::time::Duration::from_millis(base_ms + jitter_ms)
+        .max(std::time::Duration::from_secs(retry_after.min(2)))
+}
+
 fn is_stale(error: &anyhow::Error) -> bool {
     error.is::<membership::StaleContext>()
 }

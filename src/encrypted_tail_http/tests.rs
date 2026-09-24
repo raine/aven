@@ -25,13 +25,21 @@ static HTTP_REQUESTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 async fn serve(server: Database, address: &str) -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind(address).await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
+    let tail = Router::new()
+        .route(PATH, post(handle))
+        .route(images::PATH, post(images::handle))
+        .with_state(Arc::new(Server {
+            db: server.clone(),
+            gate: tokio::sync::Semaphore::new(1),
+            image_policy: crate::config::AttachmentLifecycleConfig::default().server_policy(),
+        }));
     let app = seed_bootstrap_http::router(
         server.clone(),
         Some(crate::seed_bootstrap_http::tests::setup()),
         Default::default(),
     )
-    .merge(crate::peer_enrollment_http::router(server.clone()))
-    .merge(router(server))
+    .merge(crate::peer_enrollment_http::router(server))
+    .merge(tail)
     .layer(axum::middleware::from_fn(
         |request: Request, next: axum::middleware::Next| async move {
             HTTP_REQUESTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1579,13 +1587,7 @@ async fn stalled_http_bodies_time_out_and_release_both_admission_permits() {
     .unwrap();
 
     let complete = headers.replace("Content-Length: 100", "Content-Length: 2") + "{}";
-    let mut busy = tokio::net::TcpStream::connect(address).await.unwrap();
-    busy.write_all(complete.as_bytes()).await.unwrap();
-    let response = read_response(&mut busy).await;
-    assert!(response.starts_with("HTTP/1.1 503"));
-    assert!(response.ends_with("encrypted_tail_busy"));
-    assert_eq!(server.gate.available_permits(), 0);
-
+    // A third request now waits for admission instead of being refused immediately.
     // Advance the server clock rather than waiting for a client-side timeout.
     tokio::time::pause();
     tokio::time::advance(REQUEST_TIMEOUT).await;
@@ -1643,6 +1645,90 @@ async fn successful_tail_response_is_not_cacheable() {
     .await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+}
+
+#[tokio::test]
+async fn client_retries_busy_but_not_dispatch_timeout() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let state = attempts.clone();
+    let app = Router::new().route(
+        PATH,
+        post(move || {
+            let state = state.clone();
+            async move {
+                if state.fetch_add(1, Ordering::SeqCst) == 0 {
+                    (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        [(header::RETRY_AFTER, "0")],
+                        "encrypted_tail_busy",
+                    )
+                        .into_response()
+                } else {
+                    (StatusCode::REQUEST_TIMEOUT, "encrypted_tail_timeout").into_response()
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let client = Client::new(&origin).unwrap();
+    let result = client
+        .exchange(
+            &Context {
+                vault: [0; 32],
+                genesis: [0; 32],
+                device: [0; 32],
+                credential_version: 1,
+                head: [0; 32],
+                stream: [0; 32],
+                descriptor: [0; 32],
+            },
+            &Secret::new([0; 32]),
+            Operation::Pull {
+                after: 0,
+                limit: 1,
+                watermark: None,
+            },
+        )
+        .await;
+    let Err(error) = result else {
+        panic!("dispatch timeout was accepted")
+    };
+    assert_eq!(
+        error.to_string(),
+        "error encrypted-tail-refused outcome-unknown"
+    );
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    task.abort();
+}
+
+#[tokio::test]
+async fn concurrent_clients_exceeding_tail_permits_complete_drains() {
+    let f = fixture().await;
+    converge(&f).await;
+    let workspace = f.seed.list_workspaces().await.unwrap().remove(0);
+    f.seed
+        .create_task(&workspace, draft("seed concurrent edit"))
+        .await
+        .unwrap();
+    f.peer
+        .create_task(&workspace, draft("peer concurrent edit"))
+        .await
+        .unwrap();
+    let client = Client::new(&f.origin).unwrap();
+    tokio::join!(
+        drain(&client, &f.seed_store, &f.seed),
+        drain(&client, &f.peer_store, &f.peer)
+    );
+    for db in [&f.seed, &f.peer] {
+        assert_eq!(
+            scalar(db, "SELECT count(*) FROM changes WHERE server_seq IS NULL").await,
+            0
+        );
+    }
 }
 
 #[tokio::test]

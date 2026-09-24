@@ -1,5 +1,9 @@
 //! Isolated encrypted ordinary-task transport, not shipping sync configuration.
-use crate::{protected_local_keys::ProtectedLocalKeyStore, seed_bootstrap_http};
+use crate::{
+    http_admission::{self, Outcome},
+    protected_local_keys::ProtectedLocalKeyStore,
+    seed_bootstrap_http,
+};
 use anyhow::{Result, ensure};
 use aven_core::{
     db::Database,
@@ -22,6 +26,7 @@ mod images;
 pub use images::{ImageTransfer, Round};
 const PATH: &str = "/e2ee/tail/v1";
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const BUSY_RETRIES: usize = 3;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Envelope<T> {
@@ -54,29 +59,38 @@ pub fn router_with_policy(
         }))
 }
 async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response {
-    let mut response = match server.gate.try_acquire() {
-        Ok(_permit) => match tokio::time::timeout(REQUEST_TIMEOUT, dispatch(&server.db, request))
-            .await
-        {
-            Ok(Ok(reply)) => match serde_json::to_vec(&reply) {
-                Ok(bytes) if bytes.len() <= tail::RESPONSE_LIMIT => {
-                    ([(header::CONTENT_TYPE, "application/json")], bytes).into_response()
-                }
-                _ => (StatusCode::INTERNAL_SERVER_ERROR, "encrypted_tail_refused").into_response(),
-            },
-            Ok(Err(e)) => {
-                let category = if is_stale(&e) {
-                    "membership-stale"
-                } else if e.to_string() == "error encrypted-tail-prefix-identity-collision" {
-                    "prefix_identity_collision"
-                } else {
-                    "encrypted_tail_refused"
-                };
-                (StatusCode::CONFLICT, category).into_response()
+    let mut response = match http_admission::dispatch(
+        &server.gate,
+        REQUEST_TIMEOUT,
+        dispatch(&server.db, request),
+    )
+    .await
+    {
+        Outcome::Dispatched(Ok(reply)) => match serde_json::to_vec(&reply) {
+            Ok(bytes) if bytes.len() <= tail::RESPONSE_LIMIT => {
+                ([(header::CONTENT_TYPE, "application/json")], bytes).into_response()
             }
-            Err(_) => (StatusCode::REQUEST_TIMEOUT, "encrypted_tail_timeout").into_response(),
+            _ => (StatusCode::INTERNAL_SERVER_ERROR, "encrypted_tail_refused").into_response(),
         },
-        Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "encrypted_tail_busy").into_response(),
+        Outcome::Dispatched(Err(e)) => {
+            let category = if is_stale(&e) {
+                "membership-stale"
+            } else if e.to_string() == "error encrypted-tail-prefix-identity-collision" {
+                "prefix_identity_collision"
+            } else {
+                "encrypted_tail_refused"
+            };
+            (StatusCode::CONFLICT, category).into_response()
+        }
+        Outcome::DispatchTimeout => {
+            (StatusCode::REQUEST_TIMEOUT, "encrypted_tail_timeout").into_response()
+        }
+        Outcome::PermitTimeout => {
+            let mut response =
+                (StatusCode::SERVICE_UNAVAILABLE, "encrypted_tail_busy").into_response();
+            http_admission::mark_busy(&mut response);
+            response
+        }
     };
     response.headers_mut().insert(
         header::CACHE_CONTROL,
@@ -194,37 +208,58 @@ impl Client {
             hex::encode(bearer.expose())
         ))?;
         authorization.set_sensitive(true);
-        let mut response = self
-            .transport
-            .http
-            .post(endpoint)
-            .header(header::CONTENT_TYPE, "application/json")
-            .header(header::AUTHORIZATION, authorization)
-            .body(bytes)
-            .send()
-            .await
-            .map_err(|_| anyhow::anyhow!("error encrypted-tail-network outcome-unknown"))?;
-        if response.status() != StatusCode::OK {
-            let mut bytes = Vec::new();
+        let mut attempt = 0;
+        let mut response = loop {
+            let mut response = self
+                .transport
+                .http
+                .post(endpoint.clone())
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, authorization.clone())
+                .body(bytes.clone())
+                .send()
+                .await
+                .map_err(|_| anyhow::anyhow!("error encrypted-tail-network outcome-unknown"))?;
+            if response.status() == StatusCode::OK {
+                break response;
+            }
+            let status = response.status();
+            let retry_after = response
+                .headers()
+                .get(header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok());
+            let mut response_bytes = Vec::new();
             while let Some(chunk) = response
                 .chunk()
                 .await
                 .map_err(|_| anyhow::anyhow!("error encrypted-tail-network outcome-unknown"))?
             {
                 ensure!(
-                    bytes.len() + chunk.len() <= tail::CONTROL_LIMIT,
+                    response_bytes.len() + chunk.len() <= tail::CONTROL_LIMIT,
                     "error encrypted-tail-refused"
                 );
-                bytes.extend(chunk);
+                response_bytes.extend(chunk);
             }
-            if bytes == b"membership-stale" {
+            let busy = status == StatusCode::SERVICE_UNAVAILABLE
+                && retry_after.is_some()
+                && matches!(
+                    response_bytes.as_slice(),
+                    b"encrypted_tail_busy" | b"encrypted_image_busy"
+                );
+            if busy && attempt < BUSY_RETRIES {
+                tokio::time::sleep(busy_retry_delay(attempt, retry_after.unwrap())).await;
+                attempt += 1;
+                continue;
+            }
+            if response_bytes == b"membership-stale" {
                 anyhow::bail!(aven_core::sync::seed_claim::membership::StaleContext);
             }
-            if bytes == b"prefix_identity_collision" {
+            if response_bytes == b"prefix_identity_collision" {
                 anyhow::bail!("error encrypted-tail-prefix-identity-collision")
             }
             anyhow::bail!("error encrypted-tail-refused outcome-unknown")
-        }
+        };
         ensure!(
             response
                 .headers()
@@ -410,6 +445,16 @@ impl Client {
         Ok(!page.has_more)
     }
 }
+
+fn busy_retry_delay(attempt: usize, retry_after: u64) -> std::time::Duration {
+    let base_ms = 50_u64 << attempt.min(5);
+    let mut random = [0_u8; 2];
+    let _ = getrandom::fill(&mut random);
+    let jitter_ms = u16::from_le_bytes(random) as u64 % (base_ms / 2 + 1);
+    std::time::Duration::from_millis(base_ms + jitter_ms)
+        .max(std::time::Duration::from_secs(retry_after.min(2)))
+}
+
 #[cfg(test)]
 mod tests;
 

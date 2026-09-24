@@ -19,26 +19,34 @@ pub struct Round {
 }
 
 pub(super) async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response {
-    let mut response = match server.gate.try_acquire() {
-        Ok(_permit) => match tokio::time::timeout(
-            REQUEST_TIMEOUT,
-            dispatch(&server.db, request, server.image_policy),
-        )
-        .await
-        {
-            Ok(Ok(reply)) => match serde_json::to_vec(&reply) {
-                Ok(bytes) if bytes.len() <= images::HTTP_LIMIT => {
-                    ([(header::CONTENT_TYPE, "application/json")], bytes).into_response()
-                }
-                _ => (StatusCode::INTERNAL_SERVER_ERROR, "encrypted_image_refused").into_response(),
-            },
-            Ok(Err(error)) if is_stale(&error) => {
-                (StatusCode::CONFLICT, "membership-stale").into_response()
+    let mut response = match http_admission::dispatch(
+        &server.gate,
+        REQUEST_TIMEOUT,
+        dispatch(&server.db, request, server.image_policy),
+    )
+    .await
+    {
+        Outcome::Dispatched(Ok(reply)) => match serde_json::to_vec(&reply) {
+            Ok(bytes) if bytes.len() <= images::HTTP_LIMIT => {
+                ([(header::CONTENT_TYPE, "application/json")], bytes).into_response()
             }
-            Ok(Err(_)) => (StatusCode::CONFLICT, "encrypted_image_refused").into_response(),
-            Err(_) => (StatusCode::REQUEST_TIMEOUT, "encrypted_image_timeout").into_response(),
+            _ => (StatusCode::INTERNAL_SERVER_ERROR, "encrypted_image_refused").into_response(),
         },
-        Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "encrypted_image_busy").into_response(),
+        Outcome::Dispatched(Err(error)) if is_stale(&error) => {
+            (StatusCode::CONFLICT, "membership-stale").into_response()
+        }
+        Outcome::Dispatched(Err(_)) => {
+            (StatusCode::CONFLICT, "encrypted_image_refused").into_response()
+        }
+        Outcome::DispatchTimeout => {
+            (StatusCode::REQUEST_TIMEOUT, "encrypted_image_timeout").into_response()
+        }
+        Outcome::PermitTimeout => {
+            let mut response =
+                (StatusCode::SERVICE_UNAVAILABLE, "encrypted_image_busy").into_response();
+            http_admission::mark_busy(&mut response);
+            response
+        }
     };
     response.headers_mut().insert(
         header::CACHE_CONTROL,

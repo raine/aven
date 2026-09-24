@@ -104,7 +104,12 @@ async fn count_exchange(
             && *remaining > 0
         {
             *remaining -= 1;
-            return (StatusCode::SERVICE_UNAVAILABLE, "enrollment-busy").into_response();
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(header::RETRY_AFTER, "0")],
+                "enrollment-busy",
+            )
+                .into_response();
         }
     }
     let stale_gate = if matches!(&operation, Some(Operation::Published { .. })) {
@@ -812,52 +817,36 @@ async fn control_exchange_retains_small_response_cap() {
 }
 
 #[tokio::test]
-async fn occupied_enrollment_permit_returns_uncacheable_busy_response() {
+async fn enrollment_permit_timeout_is_retryable_and_uncacheable() {
     let root = tempfile::tempdir().unwrap();
     let db = Database::open(&root.path().join("server.sqlite"))
         .await
         .unwrap();
+    tokio::time::pause();
     let server = Arc::new(Server {
         db,
         gate: tokio::sync::Semaphore::new(1),
     });
     let permit = server.gate.acquire().await.unwrap();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let origin = format!("http://{}", listener.local_addr().unwrap());
-    let app = Router::new()
-        .route(PATH, post(handle))
-        .with_state(server.clone());
-    let task = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    let client = reqwest::Client::new();
-    let response = client
-        .post(format!("{origin}{PATH}"))
-        .json(&serde_json::json!({}))
-        .send()
-        .await
+    let request = Request::builder()
+        .method("POST")
+        .uri(PATH)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from("{}"))
         .unwrap();
+    let task = tokio::spawn(handle(State(server.clone()), request));
+    tokio::task::yield_now().await;
+    tokio::time::advance(REQUEST_TIMEOUT).await;
+    let response = task.await.unwrap();
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(response.headers()[header::RETRY_AFTER], "1");
     assert_eq!(
-        response
-            .headers()
-            .get(header::CACHE_CONTROL)
-            .and_then(|h| h.to_str().ok()),
-        Some("no-store")
+        to_bytes(response.into_body(), 256).await.unwrap(),
+        "enrollment-busy"
     );
-    assert_eq!(response.text().await.unwrap(), "enrollment-busy");
     assert_eq!(server.gate.available_permits(), 0);
     drop(permit);
-    let response = client
-        .post(format!("{origin}{PATH}"))
-        .json(&serde_json::json!({}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
-    assert_eq!(response.text().await.unwrap(), "enrollment-refused");
-    task.abort();
 }
 
 #[tokio::test]

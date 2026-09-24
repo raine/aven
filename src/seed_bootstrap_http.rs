@@ -7,10 +7,13 @@
 //! only ClaimSetup uses setup authority. IDs and payloads never enter URLs.
 //! JSON expansion is bounded at four bytes per binary byte plus 4096 bytes of
 //! framing. Status responses are bounded at 1 MiB. One active request per router
-//! bounds concurrent core materialization; busy callers explicitly retry.
-//! No request tracing, credential redirects, automatic retries or cancellation.
+//! bounds concurrent core materialization; busy callers retry a bounded number
+//! of times. No request tracing, credential redirects or cancellation.
 
-use crate::protected_local_keys::ProtectedLocalKeyStore;
+use crate::{
+    http_admission::{self, Outcome},
+    protected_local_keys::ProtectedLocalKeyStore,
+};
 use anyhow::{Result, ensure};
 use aven_core::{
     db::Database,
@@ -37,6 +40,8 @@ const PATH: &str = "/e2ee/bootstrap/v1";
 const REQUEST_LIMIT: usize = 4 * staging::MAX_REQUEST_BYTES + 4096;
 const RESPONSE_LIMIT: usize = 1_048_576;
 const TIMEOUT: Duration = Duration::from_secs(30);
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(35);
+const BUSY_RETRIES: usize = 3;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -154,12 +159,16 @@ fn refusal(status: StatusCode) -> Response {
 }
 
 async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response {
-    let Ok(_permit) = server.admission.try_acquire() else {
-        return refusal(StatusCode::SERVICE_UNAVAILABLE);
-    };
-    match tokio::time::timeout(TIMEOUT, handle_bounded(&server, request)).await {
-        Ok(response) => response,
-        Err(_) => refusal(StatusCode::REQUEST_TIMEOUT),
+    match http_admission::dispatch(&server.admission, TIMEOUT, handle_bounded(&server, request))
+        .await
+    {
+        Outcome::Dispatched(response) => response,
+        Outcome::DispatchTimeout => refusal(StatusCode::REQUEST_TIMEOUT),
+        Outcome::PermitTimeout => {
+            let mut response = refusal(StatusCode::SERVICE_UNAVAILABLE);
+            http_admission::mark_busy(&mut response);
+            response
+        }
     }
 }
 
@@ -340,7 +349,7 @@ impl Client {
             .no_brotli()
             .no_zstd()
             .no_deflate()
-            .timeout(TIMEOUT)
+            .timeout(CLIENT_TIMEOUT)
             .build()
             .map_err(|_| anyhow::anyhow!("error bootstrap-transport"))?;
         Ok(Self {
@@ -371,19 +380,38 @@ impl Client {
         ))
         .map_err(|_| anyhow::anyhow!("error bootstrap-credential"))?;
         authorization.set_sensitive(true);
-        let mut response = self
+        let request = self
             .http
             .post(self.endpoint.clone())
             .header(header::AUTHORIZATION, authorization)
             .header(header::CONTENT_TYPE, "application/json")
-            .body(bytes)
-            .send()
-            .await
-            .map_err(|_| anyhow::anyhow!("error bootstrap-network outcome-unknown"))?;
-        ensure!(
-            response.status() == StatusCode::OK,
-            "error bootstrap-refused outcome-unknown"
-        );
+            .body(bytes);
+        let mut attempt = 0;
+        let mut response = loop {
+            let response = request
+                .try_clone()
+                .ok_or_else(|| anyhow::anyhow!("error bootstrap-request"))?
+                .send()
+                .await
+                .map_err(|_| anyhow::anyhow!("error bootstrap-network outcome-unknown"))?;
+            if response.status() == StatusCode::OK {
+                break response;
+            }
+            let retry_after = response
+                .headers()
+                .get(header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok());
+            if response.status() == StatusCode::SERVICE_UNAVAILABLE
+                && attempt < BUSY_RETRIES
+                && let Some(retry_after) = retry_after
+            {
+                tokio::time::sleep(busy_retry_delay(attempt, retry_after)).await;
+                attempt += 1;
+                continue;
+            }
+            anyhow::bail!("error bootstrap-refused outcome-unknown");
+        };
         ensure!(
             response
                 .headers()
@@ -613,6 +641,14 @@ fn components(
         ));
     }
     out
+}
+
+fn busy_retry_delay(attempt: usize, retry_after: u64) -> Duration {
+    let base_ms = 50_u64 << attempt.min(5);
+    let mut random = [0_u8; 2];
+    let _ = getrandom::fill(&mut random);
+    let jitter_ms = u16::from_le_bytes(random) as u64 % (base_ms / 2 + 1);
+    Duration::from_millis(base_ms + jitter_ms).max(Duration::from_secs(retry_after.min(2)))
 }
 
 #[cfg(test)]

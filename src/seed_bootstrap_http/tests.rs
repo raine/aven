@@ -189,6 +189,58 @@ async fn representative_domain(
         .bind(&ws.id).bind(task).bind(task).bind(&changes[0]).bind(&changes[1]).execute(&mut *conn).await.unwrap();
 }
 
+#[tokio::test]
+async fn client_retries_retryable_busy_response() {
+    use axum::{Router, http::header, response::IntoResponse, routing::post};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    let root = tempfile::tempdir().unwrap();
+    let (_db, _store, seed, _package) = fixture(root.path()).await;
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let state = attempts.clone();
+    let app = Router::new().route(
+        PATH,
+        post(move || {
+            let state = state.clone();
+            async move {
+                if state.fetch_add(1, Ordering::SeqCst) == 0 {
+                    (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        [(header::RETRY_AFTER, "0")],
+                        "{\"error\":\"bootstrap-refused\"}",
+                    )
+                        .into_response()
+                } else {
+                    (
+                        [(header::CONTENT_TYPE, "application/json")],
+                        serde_json::to_vec(&Reply::Missing).unwrap(),
+                    )
+                        .into_response()
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client = Client::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    assert!(matches!(
+        client
+            .exchange(
+                seed.genesis(),
+                seed.bearer(),
+                Operation::Status { bootstrap: [0; 32] }
+            )
+            .await
+            .unwrap(),
+        Reply::Missing
+    ));
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    task.abort();
+}
+
 async fn serve(db: Database) -> (Client, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let client = Client::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
