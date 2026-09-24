@@ -663,9 +663,10 @@ when metadata is current and images settle or after 16 consecutive failed or
 unavailable image rounds. Status is local and reports metadata separately from
 image uploads, downloads and unavailability. A registered but unused outbound
 invitation pauses ordinary rounds; rerunning invite resumes the same
-invitation, and no withdrawal exists. `invitation.rs` owns the provisional
-`aven-sync-setup-1:` and `aven-sync-invite-1:` text handoff: secret bytes plus
-the validated server origin in base64url.
+invitation, and no withdrawal exists. `invitation.rs` encodes device
+invitations as the pairing spec's `aven://pair/v2/` URI and setup invitations
+in the provisional `aven-sync-setup-1:` form, both carrying the validated
+server origin.
 
 `aven server setup` stores one expiring setup verifier in server `meta`,
 refusing claimed storage or storage with change history. `aven server

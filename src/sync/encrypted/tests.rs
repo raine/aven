@@ -187,7 +187,7 @@ async fn spawn_invite(
     let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
     loop {
         let line = lines.next_line().await.unwrap().unwrap();
-        if line.starts_with("aven-sync-invite-1:") {
+        if line.starts_with("aven://pair/v2/") {
             return (child, line, lines);
         }
     }
@@ -462,7 +462,7 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
 
     // Secrets stay out of databases, configuration and logs.
     let secret = setup_invitation.trim_start_matches("aven-sync-setup-1:");
-    let device_secret = device_invitation.trim_start_matches("aven-sync-invite-1:");
+    let device_secret = device_invitation.trim_start_matches("aven://pair/v2/");
     for path in [
         a.db(),
         b.db(),
