@@ -76,6 +76,79 @@ async fn one_action_removes_seed_and_survivors_sync_tasks_and_images() {
         floor(&f.peer_store, &f.peer, &f.origin).await.head(),
         m.head()
     );
+
+    // A fresh join installs the original snapshot, not a server-selected current
+    // projection. Ordinary rounds then catch up using both historical and new keys.
+    let fresh = join(&f, "fresh", &f.peer, &f.peer_store).await;
+    assert_eq!(
+        scalar(
+            &fresh.db,
+            "SELECT count(*) FROM tasks WHERE title='PRIVATE-HTTP-SEED-TASK'"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar(
+            &fresh.db,
+            "SELECT count(*) FROM tasks WHERE title='survivor after removal'"
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        scalar(
+            &fresh.db,
+            "SELECT count(*) FROM task_attachments WHERE deleted=0"
+        )
+        .await,
+        1
+    );
+    {
+        let inputs = fresh
+            .store
+            .active_inputs(&fresh.db, &f.origin)
+            .await
+            .unwrap();
+        assert_eq!(inputs.membership.generations().len(), 2);
+        inputs
+            .generation_keys()
+            .validate(&inputs.membership)
+            .unwrap();
+    }
+    for _ in 0..8 {
+        client
+            .attachment_round(&fresh.store, &fresh.db, &fresh.blobs)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        title(&fresh.db, task.id.as_str()).await,
+        "survivor after removal"
+    );
+    assert_eq!(
+        scalar(
+            &fresh.db,
+            "SELECT count(*) FROM task_attachments WHERE deleted=0"
+        )
+        .await,
+        2
+    );
+    assert_eq!(
+        client
+            .attachment_round(&fresh.store, &fresh.db, &fresh.blobs)
+            .await
+            .unwrap()
+            .images,
+        ImageTransfer::Complete
+    );
+    let cursor = fresh.db.meta("sync_cursor").await.unwrap();
+    enrollment.install(&fresh.store, &fresh.db).await.unwrap();
+    assert_eq!(fresh.db.meta("sync_cursor").await.unwrap(), cursor);
+    assert_eq!(
+        title(&fresh.db, task.id.as_str()).await,
+        "survivor after removal"
+    );
 }
 
 // Intercepts management only, preserving actual authorization and transactions.
