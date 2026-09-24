@@ -140,7 +140,7 @@ impl Client {
         blob_dir: &Path,
     ) -> Result<AttachmentRound> {
         let enrollment = crate::peer_enrollment_http::Client::new(&self.locator)?;
-        enrollment.refresh(store, db).await?;
+        enrollment.finish_pending_management(store, db).await?;
         let mut progress = RoundProgress::default();
         match self
             .attachment_round_once(store, db, blob_dir, &mut progress)

@@ -11,7 +11,7 @@ pub use evidence::{Evidence, EvidenceRecord, MAX_EVIDENCE_JSON_BYTES, Mailbox};
 mod keys;
 mod rotation;
 pub use keys::VerifiedKeys;
-pub use rotation::Generation;
+pub use rotation::{Generation, RotationMaterial};
 pub(crate) mod persistence;
 pub use persistence::{MAX_CANDIDATES, MAX_INVITATIONS, ManagementPreparation};
 #[cfg(test)]
@@ -110,6 +110,9 @@ impl Membership {
     }
     pub fn sequence(&self) -> u64 {
         self.heads.len() as u64
+    }
+    pub fn has_device(&self, device: Hash) -> bool {
+        self.members.iter().any(|member| member.device == device)
     }
     pub fn device_count(&self) -> usize {
         self.members.len()

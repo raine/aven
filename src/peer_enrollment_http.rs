@@ -1,5 +1,6 @@
 //! Isolated repeatable device enrollment and published snapshot retrieval.
 //! The public mailbox never exposes bootstrap chunks, images or credentials.
+mod management;
 use crate::{protected_local_keys::ProtectedLocalKeyStore, seed_bootstrap_http};
 use anyhow::{Result, ensure};
 use aven_core::{
@@ -18,6 +19,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
+pub use management::RemovalStatus;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

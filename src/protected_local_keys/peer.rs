@@ -117,6 +117,10 @@ pub(crate) struct ActiveInputs {
     _lock: File,
 }
 impl ActiveInputs {
+    pub(super) fn authority(&self) -> Device<'_> {
+        self.keys.authority()
+    }
+
     pub fn generation_keys(&self) -> &VerifiedKeys {
         &self.coverage
     }
@@ -141,7 +145,7 @@ impl ProtectedLocalKeyStore {
                 .load_bounded(IDENTITY_LIMIT)?
                 .is_some())
     }
-    async fn phase(
+    pub(super) async fn phase(
         &self,
         db: &Database,
         name: &str,
@@ -169,6 +173,16 @@ impl ProtectedLocalKeyStore {
         self.write_owned(name, size, bytes)?;
         db.pin_enrollment_artifact(id.incarnation, name, Sha256::digest(bytes).into())
             .await
+    }
+    pub(super) async fn save_management_phase(
+        &self,
+        db: &Database,
+        inputs: &ActiveInputs,
+        name: &str,
+        size: usize,
+        bytes: &[u8],
+    ) -> Result<()> {
+        self.save_phase(db, &inputs.id, name, size, bytes).await
     }
     async fn identity(&self, db: &Database, guard: &InstallationGuard) -> Result<Option<Identity>> {
         let pin = db.enrollment_pin().await?;

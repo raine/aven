@@ -10,6 +10,52 @@ pub struct Generation {
 const ROTATION_PLAINTEXT_BYTES: usize = 176;
 const ROTATION_KEY_OFFSET: usize = 6 + 3 * 32 + 2 + 32;
 
+/// Fresh per-candidate material, owned in protected storage before package creation.
+pub struct RotationMaterial {
+    generation: Hash,
+    key: LocalSharedStatePackageKey,
+    entropy: Secret,
+}
+impl RotationMaterial {
+    pub fn generate() -> Result<Self> {
+        Ok(Self {
+            generation: *Secret::generate()?.expose(),
+            key: LocalSharedStatePackageKey::new(*Secret::generate()?.expose()),
+            entropy: Secret::generate()?,
+        })
+    }
+    pub fn protected_storage_bytes(&self) -> Zeroizing<Vec<u8>> {
+        let mut bytes = Zeroizing::new(b"AVRM\0\x01".to_vec());
+        bytes.extend(self.generation);
+        bytes.extend(self.key.protected_storage_bytes());
+        bytes.extend(self.entropy.expose());
+        bytes
+    }
+    pub fn validate_generation(&self, membership: &Membership) -> Result<()> {
+        let generation = membership.current_generation();
+        check(
+            generation.id == self.generation
+                && generation.commitment
+                    == generation_commitment(
+                        LocalSharedStatePackageContext {
+                            vault_id: membership.genesis.context.vault_id,
+                            generation_id: self.generation,
+                        },
+                        self.key.protected_storage_bytes(),
+                    ),
+        )
+    }
+    pub fn from_protected_storage(bytes: &[u8]) -> Result<Self> {
+        check(bytes.len() == 102)?;
+        let mut r = Reader(bytes);
+        check(r.take(6)? == b"AVRM\0\x01")?;
+        Ok(Self {
+            generation: r.array()?,
+            key: LocalSharedStatePackageKey::new(r.array()?),
+            entropy: Secret::new(r.array()?),
+        })
+    }
+}
 fn revoke(m: &Membership, targets: &[Hash]) -> Result<Membership> {
     check(targets.len() < m.members.len() && targets.windows(2).all(|w| w[0] < w[1]))?;
     let mut next = m.clone();
@@ -149,16 +195,24 @@ impl Device<'_> {
         keys: &VerifiedKeys,
         cutoff: u64,
     ) -> Result<Vec<u8>> {
-        let generation = *Secret::generate()?.expose();
-        let key = LocalSharedStatePackageKey::new(*Secret::generate()?.expose());
-        let entropy = Secret::generate()?;
+        self.prepare_rotation_with(m, keys, cutoff, &RotationMaterial::generate()?)
+    }
+    /// Replay one protected candidate. Replacements must use fresh material;
+    /// callers own predecessor/cutoff binding and must not reuse losing secrets.
+    pub fn prepare_rotation_with(
+        &self,
+        m: &Membership,
+        keys: &VerifiedKeys,
+        cutoff: u64,
+        material: &RotationMaterial,
+    ) -> Result<Vec<u8>> {
         self.rotation_with(
             m,
             keys,
-            generation,
-            &key,
+            material.generation,
+            &material.key,
             cutoff,
-            &mut ChaCha20Rng::from_seed(*entropy.expose()),
+            &mut ChaCha20Rng::from_seed(*material.entropy.expose()),
         )
     }
     pub(super) fn rotation_with(

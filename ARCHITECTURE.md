@@ -655,9 +655,10 @@ bytes and bootstrap identity remain unchanged. These pure APIs establish signed
 intent and key coverage, not server commit, protected storage or runtime readiness.
 The server journal admits AddDevice, Revoke and Rotate. Protected refresh retains
 complete historical key coverage across these transitions. Ordinary host rounds
-use that coverage and reconcile frozen work across cutoffs. They never dispatch
-management or finish a pending rotation automatically; shipping removal/setup UI
-and automatic management remain separate integration gates.
+use that coverage and reconcile frozen work across cutoffs. Ordinary host rounds
+finish pending rotations through the bounded management dispatcher; pull-only
+rounds never dispatch management. Shipping removal/setup UI remains a separate
+integration gate.
 
 ### Transactional repeatable membership
 
@@ -688,7 +689,8 @@ rollback, and invitation/evidence bounds. These are not HTTP or protected-store
 power-loss evidence. Content and image cutover/race tests live under
 `encrypted_tail/server/rotation_tests.rs`; run `cargo test -p aven-core --lib
 'sync::encrypted_tail::'`. The isolated enrollment HTTP adapter exposes management
-preparation/application, but the host has no management dispatcher.
+preparation/application; `peer_enrollment_http/management.rs` owns the bounded
+client removal/finish dispatcher.
 
 ### Protected enrollment, checkpoints and refresh
 
@@ -705,8 +707,9 @@ journal protects exact request binding, candidate and Sent facts before disclosu
 Only a verified different successor at the candidate's signed slot permits a new
 candidate for the same recipient. Unfinished invitations block ordinary dispatch,
 including on already-installed peers. Expiry does not withdraw a disclosed key or
-clear this fence. No client removal/rotation dispatcher, signed cancellation or
-recovery path clears it.
+clear this fence. Safe management may proceed through this fence but cannot
+clear it or grant ordinary dispatch readiness. Signed cancellation and recovery
+remain outside this owner.
 
 `src/protected_local_keys/membership.rs` owns append-only protected checkpoint
 records and commitment-addressed public evidence outside replaceable SQLite.
@@ -747,6 +750,35 @@ coverage. `encrypted_tail_http::tests::membership::rotation::` covers server-dri
 removal with surviving root task/image rounds, cutover outcomes, signed interval
 negatives, frozen reads and atomic supersession across subprocess exits. SQL faults and subprocess exits are not
 power-loss, Keychain, mobile, interoperability or independent security evidence.
+
+### Durable removal and automatic rotation
+
+`src/protected_local_keys/rotation.rs` reuses the installation-bound append-only
+phase owner for bounded removal/finish intents, predecessor/cutoff plans, protected
+rotation material, exact signed candidates and Sent/Ready commitments. SQLite
+stores only artifact digests. Complete signed ancestry resolves a candidate's slot
+before any replacement: no successor retries exact bytes, a matching successor is
+committed, and another signed successor proves loss. A losing Rotate replacement
+owns fresh generation/key/HPKE randomness. `RotationMaterial` is protected-only
+storage framing, not a network codec or an alternative key-coverage authority.
+Original enrollment, bootstrap and installation receipts stay immutable.
+
+`src/peer_enrollment_http/management.rs` holds the existing installation/store
+locks across refresh, authenticated preparation and bounded exact dispatch.
+`remove_device` persists one target intent and attempts Revoke then Rotate.
+Ordinary metadata/image rounds resume local work and can finish another device's
+freeze, with at most one typed stale retry. A second race fails without discarding
+the retained candidate. Pull-only and explicit image repair remain read-only with
+respect to management. Last-device refusal occurs before creating an intent;
+self-removal can confirm an in-flight acknowledgement but cannot use a retired
+credential to resolve a lost reply. Local data and keys remain retained.
+
+Focused tests: `encrypted_tail_http::tests::membership::management::` uses actual
+root client entries and independent installed peers for removal, task/image
+continuation, lost/undelivered replies, reopen, competing finishers, fresh losing
+secrets, second-race bounds, disclosure fences and protected-phase process exits.
+The process-exit worker is exercised by its parent test. These are loopback and
+file-backed protected-store results, not platform power-loss or security approval.
 
 ### Sync flow
 

@@ -261,7 +261,7 @@ impl Client {
     /// Image availability is reported separately by `attachment_round`.
     pub async fn round(&self, store: &ProtectedLocalKeyStore, db: &Database) -> Result<bool> {
         let enrollment = crate::peer_enrollment_http::Client::new(&self.locator)?;
-        enrollment.refresh(store, db).await?;
+        enrollment.finish_pending_management(store, db).await?;
         let mut pushed = false;
         match self.round_once(store, db, &mut pushed).await {
             Err(error) if is_stale(&error) => {

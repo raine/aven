@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Encrypted sync removes a device’s server access and automatically rotates keys for remaining devices, preserving existing tasks, images and offline edits.
+
 - Encrypted sync lets any enrolled device invite another device and keeps existing devices syncing after it joins.
 
 - Encrypted sync supports recurring tasks, including template edits, lifecycle changes and completion, without creating conflicting occurrences while catching up.

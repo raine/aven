@@ -369,10 +369,6 @@ async fn frozen_rounds_pull_history_and_resolve_accepted_refs_without_image_muta
             .unwrap();
         let before: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT high_water FROM server_e2ee_allocator),(SELECT count(*) FROM server_e2ee_image_chunks),(SELECT coalesce(sum(epoch),0) FROM server_e2ee_images)").fetch_one(&mut *aven_core::test_support::acquire(&f.server).await.unwrap()).await.unwrap();
         client
-            .attachment_round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
-            .await
-            .unwrap();
-        client
             .pull_only_round(&f.peer_store, &f.peer)
             .await
             .unwrap();

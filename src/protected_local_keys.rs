@@ -1,6 +1,7 @@
 mod adoption;
 mod membership;
 pub(crate) mod peer;
+pub(crate) mod rotation;
 mod seed;
 pub use peer::EnrollmentReadiness;
 

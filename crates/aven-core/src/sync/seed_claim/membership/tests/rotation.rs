@@ -438,3 +438,45 @@ fn encoded_maxima_and_freeze_reserves_are_exercised_with_signed_history() {
     near.heads = vec![near.head(); MAX_TRANSITIONS];
     assert!(Device::seed(&f.seed).prepare_revoke(&near, &[]).is_err());
 }
+
+#[test]
+fn protected_rotation_material_replays_exact_candidate_and_rejects_other_generation() {
+    let f = fixture();
+    let (_, _, peer, _, m) = first(&f);
+    let keys = m.verify_initial_key(&f.key).unwrap();
+    let revoke = peer.authority().prepare_revoke(&m, &[]).unwrap();
+    let pending = m.append(&[], &[], &revoke).unwrap();
+    let material = RotationMaterial::generate().unwrap();
+    let bytes = material.protected_storage_bytes();
+    assert_eq!(bytes.len(), 102);
+    let reopened = RotationMaterial::from_protected_storage(&bytes).unwrap();
+    let raw = peer
+        .authority()
+        .prepare_rotation_with(&pending, &keys, 100, &material)
+        .unwrap();
+    assert_eq!(
+        raw,
+        peer.authority()
+            .prepare_rotation_with(&pending, &keys, 100, &reopened)
+            .unwrap()
+    );
+    let after = pending.append(&[], &[], &raw).unwrap();
+    reopened.validate_generation(&after).unwrap();
+    let other = RotationMaterial::generate().unwrap();
+    assert!(other.validate_generation(&after).is_err());
+    assert_ne!(
+        raw,
+        peer.authority()
+            .prepare_rotation_with(&pending, &keys, 100, &other)
+            .unwrap()
+    );
+    for length in [0, 6, 101] {
+        assert!(RotationMaterial::from_protected_storage(&bytes[..length]).is_err());
+    }
+    let mut malformed = bytes.to_vec();
+    malformed.push(0);
+    assert!(RotationMaterial::from_protected_storage(&malformed).is_err());
+    malformed.truncate(102);
+    malformed[5] = 2;
+    assert!(RotationMaterial::from_protected_storage(&malformed).is_err());
+}
