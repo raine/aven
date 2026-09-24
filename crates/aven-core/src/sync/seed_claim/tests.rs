@@ -545,3 +545,42 @@ async fn claim_exit_worker() {
     .unwrap();
     std::process::exit(23);
 }
+
+#[tokio::test]
+async fn issued_server_setup_expires_and_refuses_used_storage() {
+    let root = tempfile::tempdir().unwrap();
+    let db = Database::open(&root.path().join("server.sqlite"))
+        .await
+        .unwrap();
+    assert!(!db.is_e2ee_server_storage().await.unwrap());
+    let seed = authority();
+    let request = seed.genesis.claim_bytes();
+    let (secret, operator) = operator();
+    db.issue_e2ee_server_setup(&operator, 100).await.unwrap();
+    assert!(db.is_e2ee_server_storage().await.unwrap());
+    assert!(db.e2ee_server_setup(100).await.unwrap().is_none());
+    let issued = db.e2ee_server_setup(99).await.unwrap().unwrap();
+    db.admit_seed_claim(
+        &request,
+        Some(&issued),
+        ClaimAuthentication::SetupSecret(&secret),
+    )
+    .await
+    .unwrap();
+    let error = db
+        .issue_e2ee_server_setup(&operator, 200)
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "error e2ee-server-already-claimed");
+
+    let used = Database::open(&root.path().join("used.sqlite"))
+        .await
+        .unwrap();
+    let workspace = used.list_workspaces().await.unwrap().remove(0);
+    used.create_label(&workspace, "history").await.unwrap();
+    let error = used
+        .issue_e2ee_server_setup(&operator, 200)
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "error e2ee-server-storage-not-empty");
+}

@@ -122,6 +122,7 @@ struct Server {
 
 /// A dedicated router with no plaintext routes or legacy-token authentication.
 /// Its database must be isolated from a plaintext server and other routers.
+/// Without an explicit `setup`, claims use the storage's unexpired issued verifier.
 /// Bind loopback for local construction, or terminate TLS before remote access.
 pub fn router(
     database: Database,
@@ -234,9 +235,18 @@ async fn dispatch(server: &Server, secret: &Secret, e: Envelope) -> Result<Reply
             } else {
                 ClaimAuthentication::SeedBearer(secret)
             };
-            let result = db
-                .admit_seed_claim(bytes, server.setup.as_ref(), authentication)
-                .await?;
+            let persisted;
+            let setup = match &server.setup {
+                Some(setup) => Some(setup),
+                None => {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_secs();
+                    persisted = db.e2ee_server_setup(now).await?;
+                    persisted.as_ref()
+                }
+            };
+            let result = db.admit_seed_claim(bytes, setup, authentication).await?;
             Reply::Claimed {
                 vault: result.vault_id,
                 claim: result.claim_id,

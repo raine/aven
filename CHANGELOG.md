@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Encrypted sync can be set up from the command line: `aven server setup` and `aven server --encrypted` prepare and serve a server, `aven sync setup` starts syncing from an existing database, and `aven sync invite` with `aven sync join` adds an empty database on another device. `aven sync` and `aven sync status` then report task and image progress separately.
+
 - Encrypted sync removes a device’s server access and automatically rotates keys for remaining devices, preserving existing tasks, images and offline edits.
 
 - Encrypted sync lets any enrolled device invite another device and keeps existing devices syncing after it joins.

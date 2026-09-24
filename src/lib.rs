@@ -56,7 +56,15 @@ use sync::{run_server, sync_client};
 use workspaces::resolve_active_workspace_with_routing;
 
 pub async fn run_cli() -> Result<()> {
-    let cli = cli::parse();
+    run_cli_from(std::env::args_os()).await
+}
+
+async fn run_cli_from<I, T>(args: I) -> Result<()>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let cli = cli::parse_from(args);
     let command = cli
         .command
         .unwrap_or_else(|| Commands::Tui(cli::TuiArgs::default()));
@@ -413,10 +421,22 @@ async fn dispatch_database(
                 resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             cmd_conflict(&database, &workspace, args).await
         }
-        DatabaseCommand::Sync(args) => match &args.command {
+        DatabaseCommand::Sync(args) => match args.command {
             Some(SyncSubcommand::Pair(_)) => unreachable!("pairing command is standalone"),
+            Some(SyncSubcommand::Setup(setup)) => {
+                sync::encrypted::setup(&database, &config, setup).await
+            }
+            Some(SyncSubcommand::Invite) => sync::encrypted::invite(&database, &config).await,
+            Some(SyncSubcommand::Join) => sync::encrypted::join(&database, &config).await,
             Some(SyncSubcommand::Status(status)) => {
-                cmd_sync_status(&database, &config, status.json).await
+                if sync::encrypted::is_encrypted(&database).await? {
+                    sync::encrypted::status(&database, status.json).await
+                } else {
+                    cmd_sync_status(&database, &config, status.json).await
+                }
+            }
+            None if sync::encrypted::is_encrypted(&database).await? => {
+                sync::encrypted::sync(&database, &config, &args).await
             }
             None => sync_client(&database, args, &config).await,
         },

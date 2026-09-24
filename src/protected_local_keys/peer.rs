@@ -1004,6 +1004,26 @@ impl ProtectedLocalKeyStore {
             _inputs: inputs,
         })
     }
+    /// Whether this installation joined as a peer, and the server locator its
+    /// enrollment identity is bound to.
+    pub(crate) async fn association(&self, db: &Database) -> Result<Option<(bool, String)>> {
+        let guard = InstallationGuard::acquire(db.path())?;
+        self.validate_database(db)?;
+        prepare_directory(&self.directory)?;
+        let _lock = self.lock()?;
+        Ok(self
+            .identity(db, &guard)
+            .await?
+            .map(|id| (id.role == "peer", id.locator.clone())))
+    }
+    /// An outbound invitation not yet admitted blocks ordinary rounds.
+    pub(crate) async fn invitation_pending(&self, db: &Database) -> Result<bool> {
+        let _guard = InstallationGuard::acquire(db.path())?;
+        self.validate_database(db)?;
+        prepare_directory(&self.directory)?;
+        let _lock = self.lock()?;
+        Ok(self.outbound_readiness(db).await?.is_some())
+    }
     pub async fn enrollment_readiness(&self, db: &Database) -> Result<EnrollmentReadiness> {
         let guard = InstallationGuard::acquire(db.path())?;
         self.validate_database(db)?;

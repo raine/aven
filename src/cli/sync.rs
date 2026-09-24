@@ -148,17 +148,46 @@ pub(crate) struct DaemonRepairArgs {
 }
 
 #[derive(Args)]
+#[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
 pub(crate) struct ServerArgs {
+    #[command(subcommand)]
+    pub(crate) command: Option<ServerSubcommand>,
     /// Listen address; port 0 asks the OS to choose a free port
     #[arg(long, default_value = "127.0.0.1:0")]
     pub(crate) bind: SocketAddr,
     /// SQLite path; blobs use local.blob_dir or a path derived from this path
-    #[arg(long)]
-    pub(crate) data: PathBuf,
+    #[arg(long, required = true)]
+    pub(crate) data: Option<PathBuf>,
     /// Confirm an authenticated public bind without built-in TLS
     #[arg(long)]
     pub(crate) unsafe_public_bind: bool,
+    /// Serve end-to-end encrypted sync from storage prepared by `server setup`
+    #[arg(long, conflicts_with = "unsafe_public_bind")]
+    pub(crate) encrypted: bool,
 }
+
+#[derive(Subcommand)]
+pub(crate) enum ServerSubcommand {
+    /// Prepare encrypted server storage and print its setup invitation
+    #[command(after_long_help = SERVER_SETUP_HELP)]
+    Setup(ServerSetupArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct ServerSetupArgs {
+    /// SQLite path of the encrypted server storage
+    #[arg(long)]
+    pub(crate) data: PathBuf,
+    /// Server URL that devices reach: HTTPS, or HTTP on a loopback address
+    #[arg(long)]
+    pub(crate) url: String,
+}
+
+pub(super) const SERVER_SETUP_HELP: &str = r#"The setup invitation lets one device claim this server and set up sync from
+its database. It expires after one hour; running setup again replaces it until
+a device has claimed the server. Serve the storage with
+`aven server --encrypted --data PATH`. The encrypted server binds only loopback
+addresses; put a TLS reverse proxy in front of it for other devices."#;
 
 #[derive(Args)]
 pub(crate) struct SyncArgs {
@@ -179,6 +208,37 @@ pub(crate) enum SyncSubcommand {
     Pair(PairArgs),
     /// Report sync configuration, health, progress, and pending work
     Status(StatusArgs),
+    /// Set up encrypted sync from this database with a server setup invitation
+    #[command(after_long_help = SETUP_HELP)]
+    Setup(SetupArgs),
+    /// Invite another device to encrypted sync and wait until it joins
+    #[command(after_long_help = INVITE_HELP)]
+    Invite,
+    /// Join encrypted sync from an empty database with a device invitation
+    #[command(after_long_help = JOIN_HELP)]
+    Join,
+}
+
+pub(super) const SETUP_HELP: &str = r#"Paste the invitation printed by `aven server setup`, or pipe it to standard
+input. Setup previews this database and asks for confirmation; use --yes when
+standard input is not a terminal. This database becomes the starting point of
+the synced data. Afterwards it can no longer use plaintext sync, backup
+restore, or import. Rerun the same command to resume an interrupted setup."#;
+
+pub(super) const INVITE_HELP: &str = r#"The invitation is printed to standard output. Anyone with it can access all
+synced data and manage devices. Keep this command running until the other
+device joins; it stops when the invitation expires after ten minutes."#;
+
+pub(super) const JOIN_HELP: &str = r#"Paste the invitation printed by `aven sync invite`, or pipe it to standard
+input, while the inviting device waits. The database must be empty. Joining
+downloads the synced data and then its images. Rerun the same command to resume
+an interrupted join."#;
+
+#[derive(Args)]
+pub(crate) struct SetupArgs {
+    /// Skip the confirmation prompt
+    #[arg(long)]
+    pub(crate) yes: bool,
 }
 
 #[derive(Args)]

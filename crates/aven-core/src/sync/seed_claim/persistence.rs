@@ -4,7 +4,9 @@ use subtle::ConstantTimeEq;
 use super::{
     ClaimAuthentication, ClaimResult, Genesis, SetupAuthority, codec, credential_verifier,
 };
-use crate::db::{Database, begin_immediate};
+use crate::db::{self, Database, begin_immediate};
+
+const SERVER_SETUP_KEY: &str = "e2ee_server_setup";
 
 impl Database {
     /// Admits one immutable sequence-zero claim under operator setup authority.
@@ -89,5 +91,68 @@ impl Database {
         ensure!(stored == commitment, "error seed-claim-local-pin-conflict");
         tx.commit().await?;
         Ok(())
+    }
+
+    /// Replaces the operator setup verifier of encrypted server storage. Claimed
+    /// storage and storage holding any task history cannot take a new verifier.
+    pub async fn issue_e2ee_server_setup(
+        &self,
+        setup: &SetupAuthority,
+        expires_at: u64,
+    ) -> Result<()> {
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        let claimed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_seed_claim)")
+            .fetch_one(&mut *tx)
+            .await?;
+        ensure!(!claimed, "error e2ee-server-already-claimed");
+        let history: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM changes)")
+            .fetch_one(&mut *tx)
+            .await?;
+        ensure!(!history, "error e2ee-server-storage-not-empty");
+        let value = format!(
+            "{}:{}:{expires_at}",
+            hex::encode(setup.id),
+            hex::encode(setup.verifier)
+        );
+        db::set_meta(&mut tx, SERVER_SETUP_KEY, &value).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// The configured setup verifier while it is unexpired at `now` (Unix seconds).
+    pub async fn e2ee_server_setup(&self, now: u64) -> Result<Option<SetupAuthority>> {
+        let Some(value) = self.meta(SERVER_SETUP_KEY).await? else {
+            return Ok(None);
+        };
+        let corrupt = || anyhow::anyhow!("error e2ee-server-setup-corrupt");
+        let mut parts = value.split(':');
+        let (Some(id), Some(verifier), Some(expires_at), None) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            return Err(corrupt());
+        };
+        let decode = |text: &str| -> Result<[u8; 32]> {
+            hex::decode(text)
+                .ok()
+                .and_then(|bytes| bytes.try_into().ok())
+                .ok_or_else(corrupt)
+        };
+        let expires_at: u64 = expires_at.parse().map_err(|_| corrupt())?;
+        let setup = SetupAuthority::from_verifier(decode(id)?, decode(verifier)?);
+        Ok((now < expires_at).then_some(setup))
+    }
+
+    /// True once storage was prepared for, or claimed by, an encrypted vault.
+    pub async fn is_e2ee_server_storage(&self) -> Result<bool> {
+        if self.meta(SERVER_SETUP_KEY).await?.is_some() {
+            return Ok(true);
+        }
+        let mut conn = self.acquire_reader().await?;
+        Ok(
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_seed_claim)")
+                .fetch_one(&mut *conn)
+                .await?,
+        )
     }
 }

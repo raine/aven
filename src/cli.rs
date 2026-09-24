@@ -34,7 +34,7 @@ pub(crate) use data_safety::{
     AttachmentListArgs, AttachmentPruneArgs, AttachmentSubcommand, BackupCommand,
     BackupRestoreArgs, BackupSubcommand, DoctorArgs, ExportArgs, ImportArgs,
 };
-pub(crate) use help::parse;
+pub(crate) use help::parse_from;
 pub(crate) use recurrence::{
     RecurCommand, RecurEditArgs, RecurHistoryArgs, RecurListArgs, RecurRefArgs, RecurShowArgs,
     RecurStopArgs, RecurSubcommand,
@@ -44,7 +44,7 @@ pub(crate) use relationships::{
 };
 pub(crate) use sync::{
     ConflictCommand, ConflictSubcommand, DaemonArgs, DaemonSubcommand, PairArgs, ServerArgs,
-    SyncArgs, SyncSubcommand,
+    ServerSetupArgs, ServerSubcommand, SetupArgs, SyncArgs, SyncSubcommand,
 };
 pub(crate) use tasks::{
     AddArgs, BulkUpdateArgs, ContextArgs, ListArgs, NoteArgs, NoteDeleteArgs, PrimeArgs, RefArgs,

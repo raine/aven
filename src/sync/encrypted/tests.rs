@@ -1,0 +1,455 @@
+//! Real CLI commands in separate worker processes: two installations with
+//! independent databases, configuration and file-backed protected keys, and an
+//! `aven server --encrypted` process on loopback.
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
+use std::process::{Output, Stdio};
+use std::time::Duration;
+
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, Command};
+
+const WORKER: &str = "sync::encrypted::tests::cli_worker";
+
+/// Runs `aven` argument vectors from `AVEN_CLI_WORKER_ARGS` through the
+/// ordinary parse and dispatch path, then exits with the command's status.
+#[test]
+#[ignore = "subprocess worker for encrypted CLI tests"]
+fn cli_worker() {
+    let Ok(args) = std::env::var("AVEN_CLI_WORKER_ARGS") else {
+        return;
+    };
+    let args: Vec<String> = serde_json::from_str(&args).unwrap();
+    let result = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(crate::run_cli_from(
+            std::iter::once("aven".to_string()).chain(args),
+        ));
+    std::io::stdout().flush().unwrap();
+    match result {
+        Ok(()) => std::process::exit(0),
+        Err(error) => {
+            eprintln!("Error: {error:#}");
+            std::process::exit(1)
+        }
+    }
+}
+
+struct Installation {
+    root: PathBuf,
+    name: &'static str,
+}
+
+impl Installation {
+    fn new(root: &Path, name: &'static str) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            name,
+        }
+    }
+
+    fn db(&self) -> PathBuf {
+        self.root.join(format!("{}.sqlite", self.name))
+    }
+
+    fn command(&self, args: &[&str]) -> Command {
+        let mut full = vec!["--db".to_string(), self.db().display().to_string()];
+        full.extend(args.iter().map(|arg| arg.to_string()));
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--ignored", "--exact", WORKER, "--nocapture", "--quiet"])
+            .env(
+                "AVEN_CLI_WORKER_ARGS",
+                serde_json::to_string(&full).unwrap(),
+            )
+            .env("AVEN_CONFIG_DIR", self.root.join(self.name).join("config"))
+            .env(
+                "AVEN_TEST_PROTECTED_KEYS",
+                self.root.join(self.name).join("keys"),
+            )
+            .env("XDG_STATE_HOME", self.root.join(self.name).join("state"))
+            .env(
+                "AVEN_LOG_FILE",
+                self.root.join(format!("{}.log", self.name)),
+            )
+            .env("AVEN_NO_UPDATE_CHECK", "1")
+            .env_remove("AVEN_DB")
+            .env_remove("AVEN_DEV_DB")
+            .env_remove("AVEN_SYNC_SERVER")
+            .env_remove("AVEN_SYNC_DISABLED")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        command
+    }
+
+    async fn run(&self, args: &[&str]) -> Output {
+        self.command(args).output().await.unwrap()
+    }
+
+    async fn run_with_input(&self, args: &[&str], input: &str) -> Output {
+        let mut child = self.command(args).stdin(Stdio::piped()).spawn().unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(input.as_bytes()).await.unwrap();
+        drop(stdin);
+        child.wait_with_output().await.unwrap()
+    }
+
+    async fn ok(&self, args: &[&str]) -> String {
+        let output = self.run(args).await;
+        success(&output, args)
+    }
+}
+
+/// Command output without the test harness banner printed before the worker.
+fn stdout(output: &Output) -> String {
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.split_once("running 1 test\n")
+        .map_or(text.as_ref(), |(_, rest)| rest)
+        .to_string()
+}
+
+fn success(output: &Output, args: &[&str]) -> String {
+    let stdout = stdout(output);
+    assert!(
+        output.status.success(),
+        "{args:?} failed\nstdout:\n{stdout}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    stdout
+}
+
+fn failure(output: &Output) -> String {
+    assert!(!output.status.success(), "command unexpectedly succeeded");
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+fn created_ref(stdout: &str) -> String {
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("created "))
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap_or_else(|| panic!("no created ref in {stdout}"))
+        .to_string()
+}
+
+fn line_with(stdout: &str, prefix: &str) -> String {
+    stdout
+        .lines()
+        .find(|line| line.starts_with(prefix))
+        .unwrap_or_else(|| panic!("no {prefix} line in {stdout}"))
+        .to_string()
+}
+
+fn png(path: &Path, marker: u8) -> Vec<u8> {
+    let mut image = ::image::RgbaImage::new(11, 7);
+    for (index, byte) in image.as_mut().iter_mut().enumerate() {
+        *byte = marker.wrapping_add(index as u8).rotate_left(3);
+    }
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    ::image::DynamicImage::ImageRgba8(image)
+        .write_to(&mut bytes, ::image::ImageFormat::Png)
+        .unwrap();
+    std::fs::write(path, bytes.get_ref()).unwrap();
+    bytes.into_inner()
+}
+
+async fn start_server(operator: &Installation, data: &Path, bind: &str) -> Child {
+    let data = data.display().to_string();
+    let mut child = operator
+        .command(&["server", "--encrypted", "--data", &data, "--bind", bind])
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while let Some(line) = lines.next_line().await.unwrap() {
+            if line.starts_with("listening url=") {
+                return;
+            }
+        }
+        panic!("encrypted server exited before listening");
+    })
+    .await
+    .unwrap();
+    child
+}
+
+/// Starts `sync invite` and returns its invitation line and remaining output.
+async fn spawn_invite(
+    node: &Installation,
+) -> (
+    Child,
+    String,
+    tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+) {
+    let mut child = node.command(&["sync", "invite"]).spawn().unwrap();
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    loop {
+        let line = lines.next_line().await.unwrap().unwrap();
+        if line.starts_with("aven-sync-invite-1:") {
+            return (child, line, lines);
+        }
+    }
+}
+
+async fn titles(node: &Installation) -> Vec<String> {
+    let json: serde_json::Value =
+        serde_json::from_str(&node.ok(&["list", "--all", "--json"]).await).unwrap();
+    let mut titles = json
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|task| task["title"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    titles.sort();
+    titles
+}
+
+async fn attachment_bytes(node: &Installation, task: &str, out: &Path) -> Vec<Vec<u8>> {
+    let json: serde_json::Value =
+        serde_json::from_str(&node.ok(&["attachment", "list", task, "--json"]).await).unwrap();
+    let mut images = Vec::new();
+    for (index, attachment) in json.as_array().unwrap().iter().enumerate() {
+        let id = attachment["attachment_id"].as_str().unwrap();
+        let path = out.join(format!("{}-{task}-{index}.png", node.name));
+        let path = path.display().to_string();
+        node.ok(&["attachment", "get", id, "--output", &path]).await;
+        images.push(std::fs::read(&path).unwrap());
+    }
+    images.sort();
+    images
+}
+
+async fn status(node: &Installation) -> serde_json::Value {
+    serde_json::from_str(&node.ok(&["sync", "status", "--json"]).await).unwrap()
+}
+
+async fn converge(nodes: &[&Installation]) {
+    for _ in 0..2 {
+        for node in nodes {
+            let stdout = node.ok(&["sync"]).await;
+            assert!(stdout.contains("Tasks are up to date"), "{stdout}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn cli_sets_up_pairs_and_syncs_two_installations() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let operator = Installation::new(root, "operator");
+    let a = Installation::new(root, "a");
+    let b = Installation::new(root, "b");
+    let server_data = root.join("server.sqlite");
+    let data = server_data.display().to_string();
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let bind = format!("127.0.0.1:{port}");
+    let url = format!("http://127.0.0.1:{port}");
+
+    // Synthetic data on the future seed, created through ordinary commands.
+    a.ok(&["label", "create", "home"]).await;
+    let epic = created_ref(
+        &a.ok(&["add", "Seed epic", "--project", "app", "--epic"])
+            .await,
+    );
+    let child = created_ref(
+        &a.ok(&[
+            "add",
+            "Seed child",
+            "--project",
+            "app",
+            "--label",
+            "home",
+            "--metadata",
+            "owner=a",
+            "--priority",
+            "high",
+        ])
+        .await,
+    );
+    let blocker = created_ref(&a.ok(&["add", "Seed blocker", "--project", "app"]).await);
+    a.ok(&["epic", "add", &child, &epic]).await;
+    a.ok(&["dep", "add", &child, &blocker]).await;
+    a.ok(&["note", &child, "seed note"]).await;
+    a.ok(&["add", "Seed daily", "--project", "app", "--repeat", "daily"])
+        .await;
+    let seed_png = root.join("seed.png");
+    let seed_image = png(&seed_png, 1);
+    a.ok(&["attachment", "add", &child, &seed_png.display().to_string()])
+        .await;
+
+    // Operator storage refuses non-loopback binds and plaintext service.
+    let setup_invitation = line_with(
+        &operator
+            .ok(&["server", "setup", "--data", &data, "--url", &url])
+            .await,
+        "aven-sync-setup-1:",
+    );
+    let error = failure(
+        &operator
+            .run(&[
+                "server",
+                "--encrypted",
+                "--data",
+                &data,
+                "--bind",
+                "0.0.0.0:0",
+            ])
+            .await,
+    );
+    assert!(error.contains("encrypted-server-bind-loopback"), "{error}");
+    let error = failure(&operator.run(&["server", "--data", &data]).await);
+    assert!(error.contains("server-storage-encrypted"), "{error}");
+
+    // Setup requires explicit confirmation when standard input is not a terminal.
+    let error = failure(
+        &a.run_with_input(&["sync", "setup"], &setup_invitation)
+            .await,
+    );
+    assert!(
+        error.contains("sync-setup-confirmation-required"),
+        "{error}"
+    );
+    assert!(error.contains("Workspaces: 1, tasks: 4"), "{error}");
+    // Setup interrupted before the server answers resumes the same capture.
+    let error = failure(
+        &a.run_with_input(&["sync", "setup", "--yes"], &setup_invitation)
+            .await,
+    );
+    assert!(error.contains("outcome-unknown"), "{error}");
+    assert_eq!(status(&a).await["state"], "setup-incomplete");
+    let error = failure(&a.run(&["sync"]).await);
+    assert!(error.contains("sync-setup-incomplete"), "{error}");
+    let mut server = start_server(&operator, &server_data, &bind).await;
+    let output = a
+        .run_with_input(&["sync", "setup"], &setup_invitation)
+        .await;
+    let stdout = success(&output, &["sync", "setup"]);
+    assert!(
+        stdout.contains(&format!("Sync set up with {url}")),
+        "{stdout}"
+    );
+    assert!(stdout.contains("Images are up to date"), "{stdout}");
+    let error = failure(&a.run(&["sync", "--server", &url]).await);
+    assert!(error.contains("sync-server-fixed"), "{error}");
+
+    // Joining refuses a database that already holds tasks.
+    let occupied = Installation::new(root, "occupied");
+    occupied.ok(&["add", "Unrelated local task"]).await;
+
+    // An abandoned invite command resumes the same invitation; B joins while
+    // the second command waits for it.
+    let (mut abandoned, first_invitation, _) = spawn_invite(&a).await;
+    let paused = status(&a).await;
+    assert_eq!(paused["state"], "invitation-pending");
+    let error = failure(&a.run(&["sync"]).await);
+    assert!(error.contains("sync-invitation-pending"), "{error}");
+    abandoned.kill().await.unwrap();
+    abandoned.wait().await.unwrap();
+    let (invite, device_invitation, mut invite_stdout) = spawn_invite(&a).await;
+    assert_eq!(device_invitation, first_invitation);
+    let error = failure(
+        &occupied
+            .run_with_input(&["sync", "join"], &device_invitation)
+            .await,
+    );
+    assert!(
+        error.contains("sync-join-requires-empty-database"),
+        "{error}"
+    );
+    let joined = b
+        .run_with_input(&["sync", "join"], &device_invitation)
+        .await;
+    let stdout = success(&joined, &["sync", "join"]);
+    assert!(
+        stdout.contains(&format!("Joined sync with {url}")),
+        "{stdout}"
+    );
+    let invited = invite.wait_with_output().await.unwrap();
+    assert!(invited.status.success());
+    let mut rest = String::new();
+    while let Some(line) = invite_stdout.next_line().await.unwrap() {
+        rest.push_str(&line);
+    }
+    assert!(rest.contains("Device added"), "{rest}");
+    assert_eq!(titles(&a).await, titles(&b).await);
+    assert_eq!(
+        attachment_bytes(&b, &child, root).await,
+        vec![seed_image.clone()]
+    );
+
+    // Bidirectional edits, including a new image from B.
+    b.ok(&["edit", &child, "--title", "Child renamed on B"])
+        .await;
+    let b_png = root.join("b.png");
+    let b_image = png(&b_png, 2);
+    b.ok(&["attachment", "add", &blocker, &b_png.display().to_string()])
+        .await;
+    a.ok(&["note", &blocker, "note from A"]).await;
+    a.ok(&["add", "Task from A", "--project", "app"]).await;
+    converge(&[&b, &a, &b]).await;
+    assert_eq!(titles(&a).await, titles(&b).await);
+    assert!(titles(&a).await.contains(&"Child renamed on B".to_string()));
+    assert!(titles(&b).await.contains(&"Task from A".to_string()));
+    assert_eq!(
+        attachment_bytes(&a, &blocker, root).await,
+        vec![b_image.clone()]
+    );
+
+    // Offline edits survive a server restart and then sync.
+    server.kill().await.unwrap();
+    server.wait().await.unwrap();
+    a.ok(&["add", "Offline task from A", "--project", "app"])
+        .await;
+    let error = failure(&a.run(&["sync"]).await);
+    assert!(error.contains("outcome-unknown"), "{error}");
+    assert_eq!(status(&a).await["local_changes_pending"], true);
+    let _server = start_server(&operator, &server_data, &bind).await;
+    converge(&[&a, &b]).await;
+    assert!(
+        titles(&b)
+            .await
+            .contains(&"Offline task from A".to_string())
+    );
+
+    for node in [&a, &b] {
+        let report = status(node).await;
+        assert_eq!(report["state"], "ready", "{report}");
+        assert_eq!(report["server"], url.as_str());
+        assert_eq!(report["local_changes_pending"], false);
+        assert_eq!(report["image_uploads_pending"], false);
+        assert_eq!(report["image_downloads_pending"], false);
+        assert_eq!(report["images_unavailable"], false);
+    }
+    let text = a.ok(&["sync", "status"]).await;
+    assert!(text.contains("Sync: end-to-end encrypted"), "{text}");
+    let error = failure(
+        &a.run_with_input(&["sync", "setup", "--yes"], &setup_invitation)
+            .await,
+    );
+    assert!(error.contains("sync-already-set-up"), "{error}");
+
+    // Secrets stay out of databases, configuration and logs.
+    let secret = setup_invitation.trim_start_matches("aven-sync-setup-1:");
+    let device_secret = device_invitation.trim_start_matches("aven-sync-invite-1:");
+    for path in [
+        a.db(),
+        b.db(),
+        server_data.clone(),
+        root.join("a.log"),
+        root.join("b.log"),
+    ] {
+        let bytes = std::fs::read(&path).unwrap_or_default();
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(
+            !text.contains(secret) && !text.contains(device_secret),
+            "{}",
+            path.display()
+        );
+    }
+}

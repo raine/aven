@@ -2,7 +2,7 @@ use std::fmt;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use aven_core::db::Database;
 use aven_core::sync::ServerSyncPage;
 use aven_core::sync::wire::{BlobUploadContract, MissingBlobsRequest, MissingBlobsResponse};
@@ -22,9 +22,10 @@ use super::wire::{
     SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse, validate_pushed_change,
     validate_sync_request_envelope,
 };
-use crate::cli::ServerArgs;
+use crate::cli::{ServerArgs, ServerSetupArgs, ServerSubcommand};
 use crate::config;
 use crate::signals::shutdown_signal;
+use aven_core::sync::seed_claim::{Secret, SetupAuthority};
 
 #[derive(Clone)]
 struct ServerState {
@@ -103,13 +104,23 @@ fn validate_bind_policy(
 }
 
 pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> Result<()> {
+    if let Some(ServerSubcommand::Setup(setup)) = args.command {
+        return setup_encrypted_server(setup).await;
+    }
+    let data = args.data.clone().context("error server-data-required")?;
+    if args.encrypted {
+        return run_encrypted_server(args.bind, &data, &config).await;
+    }
     let scope = BindScope::classify(args.bind.ip());
     let auth_token = config.sync_auth_token().map(str::to_string);
     let auth_enabled = auth_token.is_some();
     validate_bind_policy(scope, args.unsafe_public_bind, auth_token.as_deref())?;
-    let database = Database::open(&args.data).await?;
+    let database = Database::open(&data).await?;
+    if database.is_e2ee_server_storage().await? {
+        bail!("error server-storage-encrypted hint=\"serve it with `aven server --encrypted`\"");
+    }
     database.reconcile_server_attachment_parents().await?;
-    let blob_dir = config::resolve_blob_dir(&args.data, &config)?;
+    let blob_dir = config::resolve_blob_dir(&data, &config)?;
     let lifecycle_policy = config.local.attachment_lifecycle.server_policy();
     let state = ServerState {
         database,
@@ -156,6 +167,67 @@ pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> R
     maintenance.abort();
     let _ = maintenance.await;
     result?;
+    Ok(())
+}
+
+/// Setup invitations stay usable for one hour, or until a device claims storage.
+const SETUP_INVITATION_SECONDS: u64 = 3600;
+
+async fn setup_encrypted_server(args: ServerSetupArgs) -> Result<()> {
+    let server = super::encrypted::server_origin(&args.url)?;
+    let database = Database::open(&args.data).await?;
+    let mut setup_id = [0; 32];
+    getrandom::fill(&mut setup_id).map_err(|_| anyhow::anyhow!("error server-setup-entropy"))?;
+    let secret = Secret::generate()?;
+    let authority =
+        SetupAuthority::from_verifier(setup_id, SetupAuthority::verifier(setup_id, &secret));
+    database
+        .issue_e2ee_server_setup(
+            &authority,
+            super::encrypted::unix_now()? + SETUP_INVITATION_SECONDS,
+        )
+        .await?;
+    let invitation = super::encrypted::SetupInvitation {
+        server,
+        setup_id,
+        secret,
+    };
+    println!("{}", invitation.encode().as_str());
+    eprintln!("Anyone with this invitation can claim this server. It expires in one hour.");
+    eprintln!("Run `aven sync setup` on the device whose data should start the sync.");
+    Ok(())
+}
+
+/// Serves only the isolated encrypted routers. Each operation authenticates
+/// against the stored vault; TLS belongs in a reverse proxy, so only loopback
+/// binds are accepted.
+async fn run_encrypted_server(
+    bind: std::net::SocketAddr,
+    data: &std::path::Path,
+    config: &config::AppConfig,
+) -> Result<()> {
+    if !bind.ip().is_loopback() {
+        bail!(
+            "error encrypted-server-bind-loopback hint=\"bind 127.0.0.1 behind a TLS reverse proxy\""
+        );
+    }
+    let database = Database::open(data).await?;
+    if !database.is_e2ee_server_storage().await? {
+        bail!("error encrypted-server-storage-unprepared hint=\"run `aven server setup` first\"");
+    }
+    let app = crate::seed_bootstrap_http::router(database.clone(), None, Default::default())
+        .merge(crate::peer_enrollment_http::router(database.clone()))
+        .merge(crate::encrypted_tail_http::router_with_policy(
+            database,
+            config.local.attachment_lifecycle.server_policy(),
+        ));
+    let listener = TcpListener::bind(bind).await?;
+    let addr = listener.local_addr()?;
+    info!(bind = %addr, "encrypted sync server starting");
+    println!("listening url=http://{addr} scope=loopback encrypted=true");
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
     Ok(())
 }
 

@@ -2,6 +2,7 @@ use std::time::Duration;
 
 mod client;
 mod coordination;
+pub(crate) mod encrypted;
 mod server;
 
 pub(crate) const ATTACHMENT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(5 * 60);

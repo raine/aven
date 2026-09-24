@@ -124,7 +124,13 @@ pub struct ProtectedLocalKeyStore {
 
 impl ProtectedLocalKeyStore {
     pub fn for_database(database_path: &Path) -> StoreResult<Self> {
+        #[cfg(not(test))]
         let directory = protected_store_directory()?;
+        // Tests never reach the login Keychain; CLI test workers name isolated files.
+        #[cfg(test)]
+        let directory = std::env::var_os("AVEN_TEST_PROTECTED_KEYS")
+            .map(PathBuf::from)
+            .ok_or_else(|| error(ProtectedLocalKeyStoreErrorKind::Unavailable))?;
         Self::with_directory(database_path, directory)
     }
 
@@ -133,7 +139,12 @@ impl ProtectedLocalKeyStore {
             .canonicalize()
             .map_err(|_| error(ProtectedLocalKeyStoreErrorKind::Unavailable))?;
         let account = database_account(&canonical);
+        #[cfg(not(test))]
         let backend = Backend::production(&directory, &account)?;
+        #[cfg(test)]
+        let backend = Backend::File(FileBackend {
+            path: directory.join(format!("{account}.keyring")),
+        });
         Ok(Self {
             account,
             directory,
@@ -275,6 +286,7 @@ fn error(kind: ProtectedLocalKeyStoreErrorKind) -> ProtectedLocalKeyStoreError {
     ProtectedLocalKeyStoreError::new(kind)
 }
 
+#[cfg_attr(test, allow(dead_code))]
 fn protected_store_directory() -> StoreResult<PathBuf> {
     let state = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
@@ -456,6 +468,7 @@ enum Backend {
 }
 
 impl Backend {
+    #[cfg_attr(test, allow(dead_code))]
     fn production(directory: &Path, account: &str) -> StoreResult<Self> {
         #[cfg(target_os = "macos")]
         {
