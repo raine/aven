@@ -2662,4 +2662,5 @@ mod attachments;
 
 mod recurrence;
 
+mod checkpoint_faults;
 mod membership;
