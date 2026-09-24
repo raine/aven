@@ -96,6 +96,10 @@ async fn dispatch(
         operation,
     })
 }
+pub(crate) struct DrainSnapshot {
+    tail: crate::protected_local_keys::peer::TailSnapshot,
+}
+
 #[derive(Default)]
 struct RoundProgress {
     pushed: bool,
@@ -131,6 +135,17 @@ impl Client {
         )
         .await
     }
+    pub(crate) async fn start_drain(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+    ) -> Result<DrainSnapshot> {
+        let enrollment = crate::peer_enrollment_http::Client::new(&self.locator)?;
+        enrollment.finish_pending_management(store, db).await?;
+        Ok(DrainSnapshot {
+            tail: store.tail_snapshot(db, &self.locator).await?,
+        })
+    }
     /// Resolves at most one ordered local head, applies one metadata page and
     /// downloads at most one image. The caller owns the local blob root;
     /// committed metadata is independent of image transfer success.
@@ -140,25 +155,43 @@ impl Client {
         db: &Database,
         blob_dir: &Path,
     ) -> Result<Round> {
-        let enrollment = crate::peer_enrollment_http::Client::new(&self.locator)?;
-        enrollment.finish_pending_management(store, db).await?;
+        let mut drain = Box::pin(self.start_drain(store, db)).await?;
+        Box::pin(self.round_in_drain(store, db, blob_dir, &mut drain)).await
+    }
+    pub(crate) async fn round_in_drain(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        blob_dir: &Path,
+        drain: &mut DrainSnapshot,
+    ) -> Result<Round> {
+        if !drain.tail.is_current(db).await? {
+            drain.tail = store.tail_snapshot(db, &self.locator).await?;
+        }
+        drain.tail.require_publishing_ready()?;
         let mut progress = RoundProgress::default();
-        match self.round_once(store, db, blob_dir, &mut progress).await {
+        match self
+            .round_once(&drain.tail, db, blob_dir, &mut progress)
+            .await
+        {
             Err(error) if is_stale(&error) => {
+                let enrollment = crate::peer_enrollment_http::Client::new(&self.locator)?;
                 enrollment.refresh(store, db).await?;
-                self.round_once(store, db, blob_dir, &mut progress).await
+                drain.tail = store.tail_snapshot(db, &self.locator).await?;
+                drain.tail.require_publishing_ready()?;
+                self.round_once(&drain.tail, db, blob_dir, &mut progress)
+                    .await
             }
             result => result,
         }
     }
     async fn round_once(
         &self,
-        store: &ProtectedLocalKeyStore,
+        inputs: &crate::protected_local_keys::peer::TailSnapshot,
         db: &Database,
         blob_dir: &Path,
         progress: &mut RoundProgress,
     ) -> Result<Round> {
-        let inputs = store.tail_inputs(db, &self.locator).await?;
         let a = &inputs.authority;
         if !progress.pushed {
             progress.image_state = self.push(a, &inputs.bearer, db, blob_dir).await?;

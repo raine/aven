@@ -106,6 +106,15 @@ impl Database {
         .fetch_optional(&mut *conn)
         .await?)
     }
+    /// Monotonic, nonsecret marker for write-once enrollment state changes.
+    pub async fn enrollment_artifact_marker(&self) -> Result<i64> {
+        let mut conn = self.acquire_reader().await?;
+        Ok(
+            sqlx::query_scalar("SELECT count(*) FROM local_peer_enrollment_artifacts")
+                .fetch_one(&mut *conn)
+                .await?,
+        )
+    }
     pub async fn pin_enrollment_artifact(
         &self,
         identity: [u8; 32],

@@ -1284,11 +1284,9 @@ impl ProtectedLocalKeyStore {
             .await?
             .0)
     }
-    pub(crate) async fn tail_inputs(&self, db: &Database, locator: &str) -> Result<TailInputs> {
+    pub(crate) async fn tail_snapshot(&self, db: &Database, locator: &str) -> Result<TailSnapshot> {
         let inputs = self.active_inputs(db, locator).await?;
-        if let Some(readiness) = self.outbound_readiness(db).await? {
-            readiness.require_resolved_disclosure()?;
-        }
+        let publishing_blocked = self.outbound_readiness(db).await?;
         let b = inputs.membership.publication().binding();
         let association = format!(
             "{}:{}:{}",
@@ -1320,11 +1318,19 @@ impl ProtectedLocalKeyStore {
                 .context("error encrypted-tail-generation")?
                 .parse()?,
         };
-        Ok(TailInputs {
+        let snapshot = TailSnapshot {
             authority,
             bearer: Secret::new(*inputs.bearer().expose()),
-            _inputs: inputs,
-        })
+            publishing_blocked,
+            enrollment_marker: db.enrollment_artifact_marker().await?,
+        };
+        drop(inputs);
+        Ok(snapshot)
+    }
+    pub(crate) async fn tail_inputs(&self, db: &Database, locator: &str) -> Result<TailSnapshot> {
+        let snapshot = self.tail_snapshot(db, locator).await?;
+        snapshot.require_publishing_ready()?;
+        Ok(snapshot)
     }
     /// Whether this installation joined as a peer, and the server locator its
     /// enrollment identity is bound to.
@@ -1399,8 +1405,21 @@ pub(crate) enum Disclosure {
     Withdrawn,
     Unresolved,
 }
-pub(crate) struct TailInputs {
+pub(crate) struct TailSnapshot {
     pub authority: aven_core::sync::encrypted_tail::Authority,
     pub bearer: Secret,
-    _inputs: ActiveInputs,
+    publishing_blocked: Option<EnrollmentReadiness>,
+    enrollment_marker: i64,
+}
+impl TailSnapshot {
+    pub(crate) fn require_publishing_ready(&self) -> Result<()> {
+        if let Some(readiness) = &self.publishing_blocked {
+            readiness.require_resolved_disclosure()?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn is_current(&self, db: &Database) -> Result<bool> {
+        Ok(self.enrollment_marker == db.enrollment_artifact_marker().await?)
+    }
 }

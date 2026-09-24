@@ -601,9 +601,39 @@ impl KeychainBackend {
 pub(crate) mod tests {
     use super::*;
 
+    tokio::task_local! {
+        static SCOPED_BACKEND_LOADS: std::sync::atomic::AtomicU64;
+    }
+
+    pub(crate) struct BackendLoads(std::sync::atomic::AtomicU64);
+    impl BackendLoads {
+        pub(crate) fn fetch_add(&self, value: u64, ordering: std::sync::atomic::Ordering) -> u64 {
+            let previous = self.0.fetch_add(value, ordering);
+            let _ = SCOPED_BACKEND_LOADS.try_with(|loads| {
+                loads.fetch_add(value, ordering);
+            });
+            previous
+        }
+
+        pub(crate) fn load(&self, ordering: std::sync::atomic::Ordering) -> u64 {
+            self.0.load(ordering)
+        }
+
+        pub(crate) async fn measure<F: std::future::Future>(&self, future: F) -> (F::Output, u64) {
+            SCOPED_BACKEND_LOADS
+                .scope(std::sync::atomic::AtomicU64::new(0), async {
+                    let output = future.await;
+                    let loads = SCOPED_BACKEND_LOADS
+                        .with(|count| count.load(std::sync::atomic::Ordering::Relaxed));
+                    (output, loads)
+                })
+                .await
+        }
+    }
+
     /// Protected backend loads in this process: each is one Keychain lookup on macOS.
-    pub(crate) static BACKEND_LOADS: std::sync::atomic::AtomicU64 =
-        std::sync::atomic::AtomicU64::new(0);
+    pub(crate) static BACKEND_LOADS: BackendLoads =
+        BackendLoads(std::sync::atomic::AtomicU64::new(0));
     use aven_core::api::{CreateTask, Store};
     use aven_core::choices::{TaskPriority, TaskStatus};
 

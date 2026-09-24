@@ -56,8 +56,12 @@ async fn measure_drain(client: &Client, store: &ProtectedLocalKeyStore, db: &Dat
         Instant::now(),
     );
     let mut rounds = 0;
+    let mut drain = client.start_drain(store, db).await.unwrap();
     loop {
-        let round = client.round(store, db, &blobs(db)).await.unwrap();
+        let round = client
+            .round_in_drain(store, db, &blobs(db), &mut drain)
+            .await
+            .unwrap();
         rounds += 1;
         assert_ne!(round.images, ImageTransfer::Failed);
         if round.metadata_caught_up && round.images == ImageTransfer::Complete {
@@ -71,6 +75,64 @@ async fn measure_drain(client: &Client, store: &ProtectedLocalKeyStore, db: &Dat
         loads: BACKEND_LOADS.load(Relaxed) - loads,
         seconds: start.elapsed().as_secs_f64(),
     }
+}
+
+#[tokio::test]
+async fn drain_reuses_protected_tail_snapshot() {
+    let f = fixture().await;
+    converge(&f).await;
+    let workspace = f.seed.list_workspaces().await.unwrap().remove(0);
+    for index in 0..5 {
+        f.seed
+            .create_task(&workspace, draft(&format!("snapshot task {index}")))
+            .await
+            .unwrap();
+    }
+    let client = Client::new(&f.origin).unwrap();
+    let (drain, setup_loads) = BACKEND_LOADS
+        .measure(client.start_drain(&f.seed_store, &f.seed))
+        .await;
+    let mut drain = drain.unwrap();
+    let (rounds, round_loads) = BACKEND_LOADS
+        .measure(async {
+            for round_number in 1..=16 {
+                let round = client
+                    .round_in_drain(&f.seed_store, &f.seed, &blobs(&f.seed), &mut drain)
+                    .await
+                    .unwrap();
+                if round.metadata_caught_up && round.images == ImageTransfer::Complete {
+                    return round_number;
+                }
+            }
+            panic!("round budget")
+        })
+        .await;
+    assert!(setup_loads > 0);
+    assert!(rounds >= 5);
+    assert_eq!(round_loads, 0);
+}
+
+#[tokio::test]
+async fn drain_observes_new_outbound_invitation() {
+    let f = fixture().await;
+    converge(&f).await;
+    let client = Client::new(&f.origin).unwrap();
+    let mut drain = client.start_drain(&f.seed_store, &f.seed).await.unwrap();
+    let enrollment = crate::peer_enrollment_http::Client::new(&f.origin).unwrap();
+    let expiry = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 3600;
+    enrollment
+        .invite(&f.seed_store, &f.seed, expiry)
+        .await
+        .unwrap();
+    let error = client
+        .round_in_drain(&f.seed_store, &f.seed, &blobs(&f.seed), &mut drain)
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "error enrollment-unresolved");
 }
 
 #[tokio::test(flavor = "multi_thread")]

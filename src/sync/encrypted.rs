@@ -740,8 +740,10 @@ async fn drain_reporting(
     let mut last = None;
     let mut rounds = 0;
     let mut image_retries = 0;
+    let mut drain = Box::pin(client.start_drain(store, database)).await?;
     while rounds < round_limit {
-        let round: Round = client.round(store, database, blob_dir).await?;
+        let round: Round =
+            Box::pin(client.round_in_drain(store, database, blob_dir, &mut drain)).await?;
         on_round(&round);
         rounds += 1;
         last = Some(round);
