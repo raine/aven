@@ -1002,3 +1002,116 @@ async fn management_loopback_authenticates_removed_seed_before_stale_hint() {
 }
 
 mod rotation;
+
+/// Leaves time to register and request before the server's strict expiry.
+fn soon() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 6
+}
+
+async fn past(expiry: u64) {
+    while std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        < expiry
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+#[tokio::test]
+async fn expired_unsent_invitation_retires_but_sent_candidate_stays_blocked() {
+    let root = tempfile::tempdir().unwrap();
+    let (db, store, _server, origin, task) = adopted(root.path()).await;
+    let client = Client::new(&origin).unwrap();
+    let peer = |name: &str| {
+        let root = root.path().to_path_buf();
+        let name = name.to_string();
+        async move {
+            let db = Database::open(&root.join(format!("{name}.sqlite")))
+                .await
+                .unwrap();
+            let keys = isolated_store(db.path(), &root.join(format!("{name}-keys")));
+            (db, keys)
+        }
+    };
+
+    // A requested but never admitted invitation retires at its declared expiry.
+    let expires = soon();
+    let stale = client.invite(&store, &db, expires).await.unwrap();
+    let stale_handle = stale.handle();
+    let (late_db, late_keys) = peer("late").await;
+    client
+        .request(&late_keys, &late_db, Some(stale))
+        .await
+        .unwrap();
+    let error = store.tail_inputs(&db, &origin).await.err().unwrap();
+    assert_eq!(error.to_string(), "error enrollment-unresolved");
+    past(expires).await;
+    drop(store.tail_inputs(&db, &origin).await.unwrap());
+    assert_eq!(store.outbound_invitation(&db).await.unwrap(), None);
+    // A stale admission attempt for the retired handle can never send a grant.
+    let error = client
+        .admit_handle(&store, &db, Some(stale_handle))
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "error enrollment-invitation-retired");
+    assert!(!client.complete(&late_keys, &late_db).await.unwrap());
+
+    // A new invitation gets a new identity and admits normally.
+    let fresh = client.invite(&store, &db, expiry()).await.unwrap();
+    assert_ne!(fresh.handle(), stale_handle);
+    let (fresh_db, fresh_keys) = peer("fresh").await;
+    client
+        .request(&fresh_keys, &fresh_db, Some(fresh))
+        .await
+        .unwrap();
+    assert!(client.admit(&store, &db).await.unwrap());
+    assert!(client.complete(&fresh_keys, &fresh_db).await.unwrap());
+    drop(store.tail_inputs(&db, &origin).await.unwrap());
+
+    // A candidate that may have been sent is never retired by expiry.
+    let expires = soon();
+    let sent = client.invite(&store, &db, expires).await.unwrap();
+    let (sent_db, sent_keys) = peer("sent").await;
+    client
+        .request(&sent_keys, &sent_db, Some(sent))
+        .await
+        .unwrap();
+    {
+        let inputs = store.active_inputs(&db, &origin).await.unwrap();
+        let journal = store
+            .prepare_invitation(&db, &inputs, None, None)
+            .await
+            .unwrap();
+        let mail = client
+            .exchange(
+                Operation::Mailbox {
+                    vault: inputs.membership.genesis().context().vault_id,
+                    handle: journal.handle,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let Reply::Mailbox(mail) = mail else {
+            panic!("mailbox reply")
+        };
+        store
+            .prepare_admission(&db, &inputs, &journal, mail.request.as_ref().unwrap())
+            .await
+            .unwrap();
+    }
+    past(expires).await;
+    let error = store.tail_inputs(&db, &origin).await.err().unwrap();
+    assert_eq!(error.to_string(), "error withdrawal-required-unsupported");
+    assert_eq!(
+        store.outbound_invitation(&db).await.unwrap(),
+        Some(EnrollmentReadiness::UnresolvedDisclosure)
+    );
+    task.abort();
+}

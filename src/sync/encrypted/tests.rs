@@ -5,6 +5,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
 use std::time::Duration;
+use tokio::time::Instant;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
@@ -178,12 +179,17 @@ async fn start_server(operator: &Installation, data: &Path, bind: &str) -> Child
 /// Starts `sync invite` and returns its invitation line and remaining output.
 async fn spawn_invite(
     node: &Installation,
+    seconds: Option<&str>,
 ) -> (
     Child,
     String,
     tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
 ) {
-    let mut child = node.command(&["sync", "invite"]).spawn().unwrap();
+    let mut command = node.command(&["sync", "invite"]);
+    if let Some(seconds) = seconds {
+        command.env("AVEN_TEST_INVITATION_SECONDS", seconds);
+    }
+    let mut child = command.spawn().unwrap();
     let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
     loop {
         let line = lines.next_line().await.unwrap().unwrap();
@@ -350,7 +356,19 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
 
     // An abandoned invite command resumes the same invitation; B joins while
     // the second command waits for it.
-    let (mut abandoned, first_invitation, _) = spawn_invite(&a).await;
+    // An abandoned invitation that expires unused stops pausing sync.
+    let (mut expiring, expired_invitation, _) = spawn_invite(&a, Some("5")).await;
+    let declared = Instant::now();
+    expiring.kill().await.unwrap();
+    expiring.wait().await.unwrap();
+    assert_eq!(status(&a).await["state"], "invitation-pending");
+    tokio::time::sleep_until(declared + Duration::from_secs(6)).await;
+    let stdout = a.ok(&["sync"]).await;
+    assert!(stdout.contains("Tasks are up to date"), "{stdout}");
+    assert_eq!(status(&a).await["state"], "ready");
+
+    let (mut abandoned, first_invitation, _) = spawn_invite(&a, None).await;
+    assert_ne!(first_invitation, expired_invitation);
     let paused = status(&a).await;
     assert_eq!(paused["state"], "invitation-pending");
     let error = failure(&a.run(&["sync"]).await);
@@ -376,7 +394,7 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
     interrupted.wait().await.unwrap();
     assert_eq!(status(&b).await["state"], "join-incomplete");
     let requested_identity = enrollment_identity(&b).await;
-    let (invite, device_invitation, mut invite_stdout) = spawn_invite(&a).await;
+    let (invite, device_invitation, mut invite_stdout) = spawn_invite(&a, None).await;
     assert_eq!(device_invitation, first_invitation);
     let error = failure(
         &occupied

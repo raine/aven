@@ -227,7 +227,10 @@ restore, or import. Rerun the same command to resume an interrupted setup."#;
 
 pub(super) const INVITE_HELP: &str = r#"The invitation is printed to standard output. Anyone with it can access all
 synced data and manage devices. Keep this command running until the other
-device joins; it stops when the invitation expires after ten minutes."#;
+device joins; it stops when the invitation expires after ten minutes. Sync on
+this device pauses until the invitation is used. An unused invitation stops
+pausing sync once it expires, unless keys were already sent to the other device;
+then sync resumes only after that device joins."#;
 
 pub(super) const JOIN_HELP: &str = r#"Paste the invitation printed by `aven sync invite`, or pipe it to standard
 input, while the inviting device waits. The database must be empty. Joining

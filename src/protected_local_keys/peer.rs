@@ -372,12 +372,24 @@ impl ProtectedLocalKeyStore {
         );
         keys.authority().validate(&membership)?;
         coverage.validate(&membership)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
         for journal in self.journals(db).await? {
             if let Some(ready) = self.phase(db, &journal.name("ready"), 128).await? {
                 ensure!(
                     membership.contains_head(&ready.as_slice().try_into()?),
                     "error enrollment-checkpoint-mismatch"
                 );
+            } else if !self.retired(db, &journal).await?
+                && !self.may_have_sent(db, &journal).await?
+                && now >= Declaration::from_record(&membership, &journal.declaration)?.expiry()
+            {
+                // This store lock also covers admission preparation and dispatch,
+                // so no grant for this handle was or can be sent. Sent journals
+                // stay unresolved until admission or a qualifying rotation.
+                self.save_phase(db, &id, &journal.name("retired"), 128, &journal.handle)
+                    .await?;
             }
         }
         Ok(ActiveInputs {
@@ -478,9 +490,30 @@ impl ProtectedLocalKeyStore {
         }
         Ok(journals)
     }
+    /// Terminal pre-disclosure abandonment of an expired, never-sent invitation.
+    async fn retired(&self, db: &Database, journal: &Outbound) -> Result<bool> {
+        Ok(self
+            .phase(db, &journal.name("retired"), 128)
+            .await?
+            .is_some())
+    }
+    async fn may_have_sent(&self, db: &Database, journal: &Outbound) -> Result<bool> {
+        for attempt in 0..membership::MAX_CANDIDATES {
+            if self
+                .phase(db, &journal.name(&format!("sent-{attempt}")), 128)
+                .await?
+                .is_some()
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
     async fn outbound_readiness(&self, db: &Database) -> Result<Option<EnrollmentReadiness>> {
         for journal in self.journals(db).await? {
-            if self.phase(db, &journal.name("ready"), 128).await?.is_some() {
+            if self.phase(db, &journal.name("ready"), 128).await?.is_some()
+                || self.retired(db, &journal).await?
+            {
                 continue;
             }
             let sent = self
@@ -515,7 +548,9 @@ impl ProtectedLocalKeyStore {
                 .context("error enrollment-invitation-missing");
         }
         for journal in &journals {
-            if self.phase(db, &journal.name("ready"), 128).await?.is_none() {
+            if self.phase(db, &journal.name("ready"), 128).await?.is_none()
+                && !self.retired(db, journal).await?
+            {
                 // Exact registration retry retains the immutable invitation.
                 ensure!(
                     self.phase(db, &journal.name("sent-0"), 128)
@@ -579,6 +614,10 @@ impl ProtectedLocalKeyStore {
                 .await?
                 .is_some(),
             "error enrollment-not-registered"
+        );
+        ensure!(
+            !self.retired(db, journal).await?,
+            "error enrollment-invitation-retired"
         );
         // Binding precedes even tentative grant preparation, and never rebinds.
         self.save_phase(db, &inputs.id, &journal.name("bound"), 2048, request)
@@ -1016,13 +1055,18 @@ impl ProtectedLocalKeyStore {
             .await?
             .map(|id| (id.role == "peer", id.locator.clone())))
     }
-    /// An outbound invitation not yet admitted blocks ordinary rounds.
-    pub(crate) async fn invitation_pending(&self, db: &Database) -> Result<bool> {
+    /// An unretired outbound invitation not yet admitted blocks ordinary
+    /// rounds: `Pending` before any grant was sent, otherwise
+    /// `UnresolvedDisclosure`.
+    pub(crate) async fn outbound_invitation(
+        &self,
+        db: &Database,
+    ) -> Result<Option<EnrollmentReadiness>> {
         let _guard = InstallationGuard::acquire(db.path())?;
         self.validate_database(db)?;
         prepare_directory(&self.directory)?;
         let _lock = self.lock()?;
-        Ok(self.outbound_readiness(db).await?.is_some())
+        self.outbound_readiness(db).await
     }
     pub async fn enrollment_readiness(&self, db: &Database) -> Result<EnrollmentReadiness> {
         let guard = InstallationGuard::acquire(db.path())?;

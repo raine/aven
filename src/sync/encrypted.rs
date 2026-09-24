@@ -34,7 +34,18 @@ const ROUND_LIMIT: usize = 1000;
 /// Consecutive failed or unavailable image rounds before a drain stops. Each
 /// such round still pulls, but a failed local head cannot advance.
 const IMAGE_RETRY_ROUNDS: usize = 16;
-const INVITATION_SECONDS: u64 = 600;
+#[cfg(not(test))]
+fn invitation_seconds() -> u64 {
+    600
+}
+// CLI test workers declare short-lived invitations to exercise expiry.
+#[cfg(test)]
+fn invitation_seconds() -> u64 {
+    std::env::var("AVEN_TEST_INVITATION_SECONDS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(600)
+}
 const INPUT_LIMIT: u64 = 8192;
 #[cfg(not(test))]
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -169,27 +180,31 @@ pub(crate) async fn setup(database: &Database, config: &AppConfig, args: SetupAr
 pub(crate) async fn invite(database: &Database, config: &AppConfig) -> Result<()> {
     config.ensure_sync_allowed()?;
     let store = key_store(database)?;
-    // A pending invitation is resumed rather than refused.
-    let Some((_, server)) = store.association(database).await? else {
-        bail!("error sync-setup-incomplete hint=\"rerun `aven sync setup`\"");
+    let (server, invitation) = {
+        let _guard = super::coordination::acquire(database).await?;
+        // A pending invitation is resumed rather than refused.
+        let Some((_, server)) = store.association(database).await? else {
+            bail!("error sync-setup-incomplete hint=\"rerun `aven sync setup`\"");
+        };
+        let invitation = peer_enrollment_http::Client::new(&server)?
+            .invite(&store, database, unix_now()? + invitation_seconds())
+            .await?;
+        (server, invitation)
     };
     let client = peer_enrollment_http::Client::new(&server)?;
-    let invitation = {
-        let _guard = super::coordination::acquire(database).await?;
-        client
-            .invite(&store, database, unix_now()? + INVITATION_SECONDS)
-            .await?
-    };
     let text = DeviceInvitation { server, invitation }.encode();
     println!("{}", text.as_str());
     std::io::stdout().flush()?;
     eprintln!("Anyone with this invitation can access all your synced data and manage devices.");
     eprintln!("Run `aven sync join` on the other device. Waiting for it to join...");
-    let deadline = Instant::now() + Duration::from_secs(INVITATION_SECONDS);
+    let deadline = Instant::now() + Duration::from_secs(invitation_seconds());
     while Instant::now() < deadline {
         let admitted = {
             let _guard = super::coordination::acquire(database).await?;
-            client.admit(&store, database).await?
+            match client.admit(&store, database).await {
+                Err(error) if busy(&error) => false,
+                result => result?,
+            }
         };
         if admitted {
             println!("Device added");
@@ -198,7 +213,7 @@ pub(crate) async fn invite(database: &Database, config: &AppConfig) -> Result<()
         tokio::time::sleep(POLL_INTERVAL).await;
     }
     bail!(
-        "error sync-invitation-unused hint=\"sync on this device waits until the invitation is used; rerun `aven sync invite` to keep waiting\""
+        "error sync-invitation-unused hint=\"sync on this device resumes when the invitation is used or has expired unused\""
     )
 }
 
@@ -235,8 +250,13 @@ pub(crate) async fn join(database: &Database, config: &AppConfig) -> Result<()> 
             .request(&store, database, Some(invitation.invitation))
             .await?;
         eprintln!("Waiting for the inviting device...");
-        let deadline = Instant::now() + Duration::from_secs(INVITATION_SECONDS);
-        while !client.complete(&store, database).await? {
+        let deadline = Instant::now() + Duration::from_secs(invitation_seconds());
+        loop {
+            match client.complete(&store, database).await {
+                Ok(true) => break,
+                Err(error) if !busy(&error) => return Err(error),
+                _ => {}
+            }
             ensure!(
                 Instant::now() < deadline,
                 "error sync-join-timeout hint=\"keep `aven sync invite` running on the other device, then rerun `aven sync join`\""
@@ -256,13 +276,14 @@ pub(crate) async fn join(database: &Database, config: &AppConfig) -> Result<()> 
     Ok(())
 }
 
+/// The enrollment server serves one exchange at a time; pollers retry.
+fn busy(error: &anyhow::Error) -> bool {
+    error.to_string() == "error enrollment-busy"
+}
+
 async fn associated_server(store: &ProtectedLocalKeyStore, database: &Database) -> Result<String> {
     match store.association(database).await? {
         Some((peer, server)) => {
-            ensure!(
-                !store.invitation_pending(database).await?,
-                "error sync-invitation-pending hint=\"sync resumes after the invited device joins; rerun `aven sync invite` to keep waiting\""
-            );
             ensure!(
                 !peer
                     || matches!(
@@ -284,18 +305,23 @@ pub(crate) async fn sync(database: &Database, config: &AppConfig, args: &SyncArg
         "error sync-server-fixed hint=\"encrypted sync uses the server chosen during setup\""
     );
     let store = key_store(database)?;
-    let server = associated_server(&store, database).await?;
     let blob_dir = config::resolve_blob_dir(database.path(), config)?;
-    let client = tail_http::Client::new(&server)?;
     let _guard = super::coordination::acquire(database).await?;
+    let server = associated_server(&store, database).await?;
+    let client = tail_http::Client::new(&server)?;
     let outcome = drain(&client, &store, database, &blob_dir)
         .await
-        .map_err(|error| {
-            if error.to_string() == "error snapshot-not-installed" {
+        .map_err(|error| match error.to_string().as_str() {
+            "error snapshot-not-installed" => {
                 error.context("error sync-join-incomplete hint=\"rerun `aven sync join`\"")
-            } else {
-                error
             }
+            "error enrollment-unresolved" => error.context(
+                "error sync-invitation-pending hint=\"sync resumes when the invited device joins or the unused invitation expires\"",
+            ),
+            "error withdrawal-required-unsupported" => error.context(
+                "error sync-invitation-disclosed hint=\"keys may have been sent to the invited device; sync resumes only after it joins\"",
+            ),
+            _ => error,
         })?;
     if args.json {
         print_json_pretty(&outcome)
@@ -413,14 +439,11 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
     };
     if let Some((peer, server)) = store.association(database).await? {
         report.server = Some(server.clone());
-        report.state = if store.invitation_pending(database).await? {
-            "invitation-pending"
-        } else if peer
+        report.state = if peer
             && !matches!(
                 store.enrollment_readiness(database).await?,
                 EnrollmentReadiness::Enrolled { .. }
-            )
-        {
+            ) {
             "join-incomplete"
         } else {
             match store.tail_inputs(database, &server).await {
@@ -434,10 +457,15 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
                     report.images_unavailable = state.downloads.map(|d| d.unavailable);
                     "ready"
                 }
-                Err(error) if peer && error.to_string() == "error snapshot-not-installed" => {
-                    "join-incomplete"
-                }
-                Err(error) => return Err(error),
+                // Reading inputs first retires expired never-sent invitations.
+                Err(error) => match store.outbound_invitation(database).await? {
+                    Some(EnrollmentReadiness::UnresolvedDisclosure) => "invitation-disclosed",
+                    Some(_) => "invitation-pending",
+                    None if peer && error.to_string() == "error snapshot-not-installed" => {
+                        "join-incomplete"
+                    }
+                    None => return Err(error),
+                },
             }
         };
     }
@@ -452,7 +480,11 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
         "setup-incomplete" => println!("State: setup incomplete. Rerun `aven sync setup`."),
         "join-incomplete" => println!("State: joining incomplete. Rerun `aven sync join`."),
         "invitation-pending" => println!(
-            "State: paused until the invited device joins. Rerun `aven sync invite` to keep waiting."
+            "State: paused until the invited device joins or the unused invitation expires."
+        ),
+        "invitation-disclosed" => println!(
+            "State: paused until the invited device joins. Keys may have been sent to it, \
+             and expiry does not withdraw them."
         ),
         _ => println!("State: ready"),
     }

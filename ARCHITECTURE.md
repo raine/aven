@@ -661,9 +661,13 @@ status takes that lock too because protected inputs hold the installation
 exclusively. `aven sync` repeats `Client::round` up to 1,000 rounds, stopping
 when metadata is current and images settle or after 16 consecutive failed or
 unavailable image rounds. Status is local and reports metadata separately from
-image uploads, downloads and unavailability. A registered but unused outbound
-invitation pauses ordinary rounds; rerunning invite resumes the same
-invitation, and no withdrawal exists. `invitation.rs` encodes device
+image uploads, downloads and unavailability. An unused outbound invitation
+pauses ordinary rounds, and rerunning invite resumes it. `active_inputs`, under
+the store lock that also covers admission preparation and dispatch, retires an
+expired invitation with no `sent-*` marker through a protected `retired` phase;
+admission refuses retired handles and invite then creates a new invitation.
+Once a grant may have been sent, expiry never retires it: withdrawal needs the
+Revoke/Rotate path, which is not wired for unadmitted recipients. `invitation.rs` encodes device
 invitations as the pairing spec's `aven://pair/v2/` URI and setup invitations
 in the provisional `aven-sync-setup-1:` form, both carrying the validated
 server origin.
