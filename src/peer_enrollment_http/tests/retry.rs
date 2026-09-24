@@ -193,7 +193,8 @@ fn invitation(vault: &[u8], inviter: &[u8], psk: u8) -> Invitation {
 #[tokio::test]
 async fn refused_replacements_keep_the_join_and_its_data_unchanged() {
     let root = tempfile::tempdir().unwrap();
-    let (db, store, _server, origin, task) = adopted(root.path()).await;
+    let counts = Arc::new(ExchangeCounts::default());
+    let (db, store, _server, origin, task) = adopted_with(root.path(), Some(counts.clone())).await;
     let client = Client::new(&origin).unwrap();
     let original = client.invite(&store, &db, expiry()).await.unwrap();
     let bytes = original.protected_storage_bytes();
@@ -231,18 +232,22 @@ async fn refused_replacements_keep_the_join_and_its_data_unchanged() {
     }
     assert_eq!(protected_files(&p.keys), before);
 
-    // Three replacements are retained; a fourth is refused.
+    // Replacements are retained through the limit; another is refused.
     for psk in 1..MAX_JOIN_ATTEMPTS as u8 {
         p.store
             .replace_peer(&p.db, &origin, invitation(vault, inviter, psk))
             .await
             .unwrap();
     }
+    assert_eq!(
+        p.store.peer_attempts(&p.db, &origin).await.unwrap().len(),
+        MAX_JOIN_ATTEMPTS
+    );
     let full = protected_files(&p.keys);
     retained(&before, &full);
     let error = p
         .store
-        .replace_peer(&p.db, &origin, invitation(vault, inviter, 9))
+        .replace_peer(&p.db, &origin, invitation(vault, inviter, u8::MAX))
         .await
         .err()
         .unwrap();
@@ -277,7 +282,7 @@ async fn refused_replacements_keep_the_join_and_its_data_unchanged() {
     .unwrap();
     let error = p
         .store
-        .replace_peer(&p.db, &origin, invitation(vault, inviter, 8))
+        .replace_peer(&p.db, &origin, invitation(vault, inviter, u8::MAX - 1))
         .await
         .err()
         .unwrap();
@@ -291,7 +296,10 @@ async fn refused_replacements_keep_the_join_and_its_data_unchanged() {
     // The original attempt still completes past unregistered replacements,
     // and the final empty-target check still refuses installation.
     assert!(client.admit(&store, &db).await.unwrap());
+    let mailbox_reads = || counts.mailboxes.lock().unwrap().values().sum::<usize>();
+    let reads_before = mailbox_reads();
     assert!(client.complete(&p.store, &p.db).await.unwrap());
+    assert_eq!(mailbox_reads() - reads_before, MAX_JOIN_ATTEMPTS);
     let error = client.install(&p.store, &p.db).await.unwrap_err();
     assert!(
         error.to_string().starts_with("error shared-state-install"),

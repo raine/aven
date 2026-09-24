@@ -17,12 +17,13 @@ use serde::{Deserialize, Serialize};
 type Hash = [u8; 32];
 const IDENTITY_LIMIT: usize = 8192;
 const JOURNAL_LIMIT: usize = 4096;
+// Attempts and mailbox responses are stored as separate protected records, so
+// these per-record bounds do not grow with MAX_JOIN_ATTEMPTS.
 const CANDIDATE_LIMIT: usize = 4 * membership::MAX_RECORD_BYTES + 1024;
 const RESPONSE_LIMIT: usize = CANDIDATE_LIMIT + 4096;
 const ATTEMPT_LIMIT: usize = 512;
-/// Join attempts per installation: the original request and up to three
-/// replacements, each retained with its exact invitation and request.
-pub(crate) const MAX_JOIN_ATTEMPTS: usize = 4;
+/// Retained join attempts per installation, including the original request.
+pub(crate) const MAX_JOIN_ATTEMPTS: usize = 16;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Identity {
@@ -199,9 +200,6 @@ impl ProtectedLocalKeyStore {
             );
             for (kind, size) in [
                 ("peer-sent", 128),
-                ("peer-attempt-1", ATTEMPT_LIMIT),
-                ("peer-attempt-2", ATTEMPT_LIMIT),
-                ("peer-attempt-3", ATTEMPT_LIMIT),
                 ("peer-response", RESPONSE_LIMIT),
                 ("peer-verified", 2048),
                 ("peer-ready", 128),
@@ -209,6 +207,14 @@ impl ProtectedLocalKeyStore {
             ] {
                 ensure!(
                     self.phase(db, kind, size).await?.is_none(),
+                    "error enrollment-protected-missing"
+                );
+            }
+            for index in 1..MAX_JOIN_ATTEMPTS {
+                ensure!(
+                    self.phase(db, &format!("peer-attempt-{index}"), ATTEMPT_LIMIT)
+                        .await?
+                        .is_none(),
                     "error enrollment-protected-missing"
                 );
             }

@@ -527,7 +527,7 @@ fn explain_join_refusal(error: anyhow::Error) -> anyhow::Error {
             "error sync-join-new-invitation-unavailable hint=\"joining already got past admission, so a new invitation cannot be used; rerun `aven sync join` with an invitation this database already used\""
         }
         "error enrollment-retry-limit" => {
-            "error sync-join-new-invitation-limit hint=\"this database has used four invitations and cannot take a fifth; rerun `aven sync join` with one of them to finish if the other device accepted it, otherwise keep this database unchanged and join from a new empty database, for example `aven --db PATH sync join`\""
+            "error sync-join-new-invitation-limit hint=\"this database has reached its invitation limit; rerun `aven sync join` with an invitation it already used to finish if the other device accepted it, otherwise keep this database unchanged and join from a new empty database, for example `aven --db PATH sync join`\""
         }
         _ if error.to_string().starts_with("error shared-state-install") => {
             "error sync-join-target-not-empty hint=\"data was added to this database while joining, so it cannot finish joining; keep it unchanged and join from a new empty database, for example `aven --db PATH sync join`\""

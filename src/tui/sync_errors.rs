@@ -87,9 +87,9 @@ fn explain(kind: OperationKind, error: &anyhow::Error) -> &'static str {
                 needed. Resume joining.";
     }
     if has("sync-join-new-invitation-limit") {
-        return "This database has already used four invitations and can't take another. \
-                Resume joining to finish if the other device accepted one of them; \
-                otherwise keep it as it is, and join from a new, empty database.";
+        return "This database has reached its invitation limit. Resume joining to finish \
+                if the other device accepted an invitation it already used; otherwise \
+                keep it as it is, and join from a new, empty database.";
     }
     if has("sync-invitation-pending") || has("enrollment-unresolved") {
         return "Sync is paused until the invited device joins. Once the unused \
