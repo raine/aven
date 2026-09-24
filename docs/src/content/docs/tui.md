@@ -274,7 +274,7 @@ history. See [`aven recur`](/command-reference/#aven-recur) for CLI management.
 
 ## Conflicts and sync
 
-The header shows synchronization state. Press `v c` to open tasks with unresolved field conflicts, then use the `c` family to inspect and resolve them.
+The header shows synchronization state. Click it, press `C s`, or run `:sync` to open the **Sync** dialog, where you can set up or join sync, sync now, add a device, and manage devices. Press `S` to sync immediately. Press `v c` to open tasks with unresolved field conflicts, then use the `c` family to inspect and resolve them.
 
 See [Sync across devices](/sync/) for setup, transport, and conflict handling.
 See [Back up and restore](/backups/) for recovery workflows.
@@ -318,10 +318,14 @@ Mouse actions cover the same common outcomes as keyboard commands:
 The in-app command catalog is the authoritative shortcut reference:
 
 - `?` lists commands available in the current mode.
-- `:` searches command names and descriptions. From a task-list surface, choose
+- `:` searches command names and descriptions. `:sync` opens the **Sync**
+  dialog; `:config-status` remains an alias. From a task-list surface, choose
   `:add-device` to invite another device to sync. The **Add device** overlay
   shows the invitation as a QR code and closes with Escape or an outside click;
   the TUI keeps waiting for the device until it joins or the invitation expires.
+  Closing the Sync dialog likewise hides progress without stopping setup,
+  joining, or device removal; quitting the TUI interrupts them, and they can
+  be resumed later.
 - Prefix keys show their available continuations in the footer.
 
 | Prefix | Family |

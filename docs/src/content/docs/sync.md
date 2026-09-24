@@ -13,6 +13,10 @@ invitation from a device that already syncs.
 A database that has not been set up or joined stays local. Everything except
 sync keeps working.
 
+In the TUI, the **Sync** dialog covers the same steps: open it with `:sync`,
+`C s`, or a click on the sync indicator in the header. Press `S` to sync
+immediately without opening it.
+
 Use [Configuration](/configuration/) for `sync.*` and `daemon.*` settings. See
 [Back up and restore](/backups/) when you need to preserve, move, or recover
 local data.
@@ -61,6 +65,15 @@ not a terminal, pipe the invitation and pass `--yes`. Every other device starts
 from this data. Afterwards the database can no longer use backup restore or
 import. Rerun the same command to resume an interrupted setup.
 
+In the TUI, choose **Set up sync** in the Sync dialog and paste the invitation.
+The invitation is never displayed. Before anything starts, the dialog shows the
+server, the workspaces and tasks this database will publish, and any images
+missing on this computer, which other devices see as unavailable. Setup keeps
+running if you close the dialog, and the header shows it is syncing. If setup
+stops, for example because the server is unreachable, the dialog offers
+**Resume setup**, which continues the same setup instead of starting over. After
+restarting the TUI, resuming asks for the same invitation again.
+
 ## Add a device
 
 On a device that already syncs, create a device invitation and keep the command
@@ -71,15 +84,26 @@ aven sync invite
 ```
 
 The command prints an `aven://pair/v2/` invitation and, in an interactive
-terminal, also shows it as a QR code. In the TUI, open the command panel with
-`:` and choose `:add-device` to show the QR code; the TUI keeps waiting for the
-device after you close the overlay.
+terminal, also shows it as a QR code. In the TUI, choose **Add device** in the
+Sync dialog, or `:add-device`, to show the QR code; the TUI keeps waiting for the
+device after you close the overlay. The TUI shows only the QR code. To paste the
+invitation on another computer, run `aven sync invite` on the inviting device,
+which prints the invitation that is already waiting.
 
 On the new device, use an empty database and paste the invitation:
 
 ```sh
 aven sync join
 ```
+
+In the TUI, choose **Join existing sync** in the Sync dialog, paste the
+invitation, and confirm the server. A database that already has tasks or other
+data cannot join, because existing local data cannot be merged with synced data
+yet; the dialog explains this and changes nothing. While joining waits for the
+inviting device and downloads tasks, the TUI pauses adding tasks, projects,
+labels, and workspaces. Once tasks arrive they appear in the list while images
+keep downloading. **Resume joining** continues an interrupted join without the
+invitation.
 
 Anyone with the invitation can access all synced data and manage devices. It
 expires after ten minutes. Sync on the inviting device pauses until the
@@ -113,6 +137,15 @@ unfinished; rerunning the command, or syncing any remaining device, finishes
 it. If the command is interrupted, rerun it with the same `device_id` to
 resume. Removal does not erase anything on the removed device: it keeps the
 tasks and images it already downloaded. A device cannot remove itself.
+
+In the TUI, choose **Manage devices** in the Sync dialog. The list is checked
+with the server when it opens and says when it was checked. Each device appears
+by the shortest ID prefix that tells it apart, and the current one is marked
+**This device**; select a device to see its full ID, and press `y` to copy it.
+Press Enter on another device and confirm to remove it. The dialog reports
+access removal and key rotation separately, and offers **Finish removal** while
+rotation is unfinished. A server refusal means the removal could not be
+confirmed, not that it happened.
 
 ## Sync a client
 
