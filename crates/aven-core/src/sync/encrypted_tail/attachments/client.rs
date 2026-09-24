@@ -330,20 +330,32 @@ pub(in crate::sync::encrypted_tail) async fn supersede(
     }
     Ok(projection)
 }
+/// The local plaintext image source is missing or no longer matches its hash.
+#[derive(Debug)]
+pub struct ImageSourceUnavailable;
+impl std::fmt::Display for ImageSourceUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("error encrypted-image-source-unavailable")
+    }
+}
 async fn read_source(blob_dir: &Path, sha: &str, total: u64) -> Result<Vec<u8>> {
     use tokio::io::AsyncReadExt;
-    let file =
-        tokio::fs::File::open(crate::attachments::storage::object_path(blob_dir, sha)?).await?;
-    let mut bytes = Vec::new();
-    file.take(super::codec::IMAGE_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)
-        .await?;
-    valid(
-        bytes.len() as u64 == total
-            && bytes.len() <= super::codec::IMAGE_BYTES
-            && hex::encode(hash(&bytes)) == sha,
-    )?;
-    Ok(bytes)
+    async {
+        let file =
+            tokio::fs::File::open(crate::attachments::storage::object_path(blob_dir, sha)?).await?;
+        let mut bytes = Vec::new();
+        file.take(super::codec::IMAGE_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .await?;
+        valid(
+            bytes.len() as u64 == total
+                && bytes.len() <= super::codec::IMAGE_BYTES
+                && hex::encode(hash(&bytes)) == sha,
+        )?;
+        anyhow::Ok(bytes)
+    }
+    .await
+    .context(ImageSourceUnavailable)
 }
 
 pub struct Download {

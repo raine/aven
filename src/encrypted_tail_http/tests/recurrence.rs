@@ -191,13 +191,7 @@ async fn concurrent_completion_preserves_deterministic_successor_identity() {
             .await
             .unwrap();
     }
-    let frozen = f
-        .peer
-        .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
-        .await
-        .unwrap()
-        .unwrap()
-        .record;
+    let frozen = head_record(&f.peer, &inputs.authority).await;
     drop(inputs);
     let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
     while !f.seed.encrypted_tail_idle(&inputs.authority).await.unwrap() {
@@ -385,13 +379,7 @@ async fn lost_ack_reopen_reuses_frozen_recurrence_bytes() {
     create(&f.peer).await;
     let c = Client::new(&f.origin).unwrap();
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
-    let record = f
-        .peer
-        .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
-        .await
-        .unwrap()
-        .unwrap()
-        .record;
+    let record = head_record(&f.peer, &inputs.authority).await;
     let Reply::Appended(mapping) = c
         .exchange(
             &inputs.authority.context,

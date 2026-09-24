@@ -239,13 +239,7 @@ async fn old_head_lost_append_and_original_enrollment_retry_preserve_exact_work(
     )
     .await;
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
-    let record = f
-        .peer
-        .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
-        .await
-        .unwrap()
-        .unwrap()
-        .record;
+    let record = head_record(&f.peer, &inputs.authority).await;
     let (id, _) = f
         .peer
         .encrypted_tail_frozen_record(&inputs.authority)
@@ -286,15 +280,7 @@ async fn old_head_lost_append_and_original_enrollment_retry_preserve_exact_work(
     let third = join(&f, "third", &f.seed, &f.seed_store).await;
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
     assert_eq!(inputs.authority.context.head, floor_head(&f.peer).await);
-    assert_eq!(
-        f.peer
-            .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
-            .await
-            .unwrap()
-            .unwrap()
-            .record,
-        record
-    );
+    assert_eq!(head_record(&f.peer, &inputs.authority).await, record);
     assert!(
         client
             .exchange(
@@ -446,13 +432,7 @@ async fn lost_image_response(stage: &'static str) {
         .unwrap()
         .upload
         .unwrap();
-    let record = f
-        .peer
-        .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
-        .await
-        .unwrap()
-        .unwrap()
-        .record;
+    let record = head_record(&f.peer, &inputs.authority).await;
     let (id, _) = f
         .peer
         .encrypted_tail_frozen_record(&inputs.authority)
@@ -538,15 +518,7 @@ async fn lost_image_response(stage: &'static str) {
         .await
         .unwrap();
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
-    assert_eq!(
-        f.peer
-            .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
-            .await
-            .unwrap()
-            .unwrap()
-            .record,
-        record
-    );
+    assert_eq!(head_record(&f.peer, &inputs.authority).await, record);
     if stage != "Append" {
         // The original device-owned ticket and epoch survive head advancement.
         client
@@ -634,13 +606,7 @@ async fn stale_round_race(count: usize) {
     let w = f.seed.list_workspaces().await.unwrap().remove(0);
     f.seed.create_task(&w, draft("head race")).await.unwrap();
     let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
-    let original = f
-        .seed
-        .prepare_encrypted_push(&inputs.authority, &blobs(&f.seed))
-        .await
-        .unwrap()
-        .unwrap()
-        .record;
+    let original = head_record(&f.seed, &inputs.authority).await;
     drop(inputs);
     let (events, mut incoming) = tokio::sync::mpsc::channel(1);
     let fault = Arc::new(HttpFault {
@@ -674,15 +640,7 @@ async fn stale_round_race(count: usize) {
                 .is::<aven_core::sync::seed_claim::membership::StaleContext>()
         );
         let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
-        assert_eq!(
-            f.seed
-                .prepare_encrypted_push(&inputs.authority, &blobs(&f.seed))
-                .await
-                .unwrap()
-                .unwrap()
-                .record,
-            original
-        );
+        assert_eq!(head_record(&f.seed, &inputs.authority).await, original);
         drop(inputs);
     }
     drain(&client, &f.seed_store, &f.seed).await;
@@ -880,13 +838,7 @@ async fn protected_ahead_sqlite_failure_recovers_forward_and_missing_evidence_re
         .unwrap();
     let before_cursor = f.peer.meta("sync_cursor").await.unwrap();
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
-    let frozen = f
-        .peer
-        .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
-        .await
-        .unwrap()
-        .unwrap()
-        .record;
+    let frozen = head_record(&f.peer, &inputs.authority).await;
     drop(inputs);
     let _third = join(&f, "third", &f.seed, &f.seed_store).await;
     execute_local(&f.peer,"CREATE TRIGGER mirror_fault BEFORE UPDATE ON local_membership_checkpoint WHEN NEW.sequence=3 BEGIN SELECT RAISE(ABORT,'test checkpoint fault'); END").await;
@@ -916,15 +868,7 @@ async fn protected_ahead_sqlite_failure_recovers_forward_and_missing_evidence_re
     );
     assert_eq!(reopened.meta("sync_cursor").await.unwrap(), before_cursor);
     let inputs = keys.tail_inputs(&reopened, &f.origin).await.unwrap();
-    assert_eq!(
-        reopened
-            .prepare_encrypted_push(&inputs.authority, &blobs(&reopened))
-            .await
-            .unwrap()
-            .unwrap()
-            .record,
-        frozen
-    );
+    assert_eq!(head_record(&reopened, &inputs.authority).await, frozen);
     drop(inputs);
     let digest = reopened
         .membership_checkpoint_mirror()
@@ -1261,13 +1205,7 @@ async fn pull_only_stale_race(count: usize) {
         .await
         .unwrap();
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
-    let frozen = f
-        .peer
-        .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
-        .await
-        .unwrap()
-        .unwrap()
-        .record;
+    let frozen = head_record(&f.peer, &inputs.authority).await;
     drop(inputs);
     let cursor = f.peer.meta("sync_cursor").await.unwrap();
     let watermark = f.peer.meta("e2ee_initial_image_watermark").await.unwrap();

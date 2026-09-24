@@ -2,7 +2,7 @@
 pub(crate) mod client;
 pub(crate) mod codec;
 pub(crate) mod server;
-pub use client::{Download, Upload};
+pub use client::{Download, ImageSourceUnavailable, Upload};
 pub use codec::{HTTP_LIMIT, TRANSFER_BYTES};
 use serde::{Deserialize, Serialize};
 

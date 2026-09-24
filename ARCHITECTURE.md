@@ -430,8 +430,10 @@ and the single ordinary `Client::round`. Each call pushes at most one ordered he
 applies one metadata page and downloads at most one image. The caller supplies the
 local blob directory. `metadata_caught_up` reports remote-watermark completion and
 local metadata idle; `images` separately reports pending, failed or unavailable
-images. A failed image upload leaves its Ref frozen; local preparation refusals are
-round errors. Download failure never rolls back committed metadata.
+images. An unavailable local image source or failed image upload reports images
+Failed and leaves that head pending while the page is still pulled. Other preparation
+refusals, integrity violations and same-ID divergence remain round errors. Download
+failure never rolls back committed metadata.
 Fresh peer installation starts a local initial-image catch-up marker as pending.
 The first validated tail page atomically captures its finite watermark with page
 effects. Subsequent bounded rounds request that same watermark until reached,

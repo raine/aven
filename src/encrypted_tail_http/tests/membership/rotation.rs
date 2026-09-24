@@ -93,13 +93,7 @@ async fn installed_survivors_sync_unfrozen_unaccepted_and_lost_ack_tasks_across_
         let task = pending_task(&f, "offline task survives cutoffs").await;
         let original = if mode > 0 {
             let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
-            let record = f
-                .peer
-                .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
-                .await
-                .unwrap()
-                .unwrap()
-                .record;
+            let record = head_record(&f.peer, &inputs.authority).await;
             drop(inputs);
             Some(record)
         } else {
@@ -535,13 +529,7 @@ async fn signed_intervals_fence_fast_ack_pages_and_absence_with_observed_accepta
     let third = join(&f, "third", &f.seed, &f.seed_store).await;
     pending_task(&f, "interval-negative pending task").await;
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
-    let old = f
-        .peer
-        .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
-        .await
-        .unwrap()
-        .unwrap()
-        .record;
+    let old = head_record(&f.peer, &inputs.authority).await;
     let (id, _) = f
         .peer
         .encrypted_tail_frozen_record(&inputs.authority)

@@ -185,13 +185,7 @@ async fn accepted_task(f: &Fixture, title: &str) -> (String, String, Vec<u8>) {
     .await
     .unwrap();
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
-    let record = f
-        .peer
-        .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
-        .await
-        .unwrap()
-        .unwrap()
-        .record;
+    let record = head_record(&f.peer, &inputs.authority).await;
     let Reply::Appended(_) = Client::new(&f.origin)
         .unwrap()
         .exchange(
@@ -233,13 +227,7 @@ async fn accepted_image(f: &Fixture, accept_ref: bool) -> (String, Vec<u8>, Vec<
         .unwrap()
         .upload
         .unwrap();
-    let record = f
-        .peer
-        .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
-        .await
-        .unwrap()
-        .unwrap()
-        .record;
+    let record = head_record(&f.peer, &inputs.authority).await;
     let client = Client::new(&f.origin).unwrap();
     let aven_core::sync::encrypted_tail::attachments::Reply::Status(status) = client
         .image_exchange(
@@ -336,13 +324,7 @@ async fn run_task_checkpoint(accepted: bool) {
         .await
         .unwrap();
         let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
-        let record = f
-            .peer
-            .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
-            .await
-            .unwrap()
-            .unwrap()
-            .record;
+        let record = head_record(&f.peer, &inputs.authority).await;
         (id, task.id.to_string(), record)
     };
     let driver_id = device(&removed.store, &removed.db, &f.origin).await;

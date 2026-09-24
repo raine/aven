@@ -237,27 +237,14 @@ async fn dependencies_preserve_undo_and_later_intent_through_acceptance_reopen_a
         .unwrap();
     let record = {
         let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
-        f.seed
-            .prepare_encrypted_push(&inputs.authority, &blobs(&f.seed))
-            .await
-            .unwrap()
-            .unwrap()
-            .record
+        head_record(&f.seed, &inputs.authority).await
     };
     f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
     assert_dependency(&f.seed, &w, &task, &target, true).await;
     {
         let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
         let a = &inputs.authority;
-        assert_eq!(
-            f.seed
-                .prepare_encrypted_push(a, &blobs(&f.seed))
-                .await
-                .unwrap()
-                .unwrap()
-                .record,
-            record
-        );
+        assert_eq!(head_record(&f.seed, a).await, record);
         let mut outcomes = Vec::new();
         for _ in 0..2 {
             let Reply::Appended(mapping) = client

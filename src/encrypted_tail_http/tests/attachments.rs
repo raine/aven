@@ -113,13 +113,7 @@ async fn incomplete_ref_ticket_ownership_expiry_and_exact_retry() {
         .unwrap()
         .upload
         .unwrap();
-    let record = f
-        .peer
-        .prepare_encrypted_push(a, &blobs(&f.peer))
-        .await
-        .unwrap()
-        .unwrap()
-        .record;
+    let record = head_record(&f.peer, a).await;
     let ticket = declare(&f, a, &inputs.bearer, &upload).await;
     assert!(
         f.server
@@ -407,13 +401,7 @@ async fn lost_ref_ack_after_unref_and_prune_needs_no_upload_source() {
             .unwrap()
             .upload
             .unwrap();
-        frozen = f
-            .peer
-            .prepare_encrypted_push(a, &blobs(&f.peer))
-            .await
-            .unwrap()
-            .unwrap()
-            .record;
+        frozen = head_record(&f.peer, a).await;
         let ticket = declare(&f, a, &inputs.bearer, &upload).await;
         f.server
             .encrypted_image_exchange(&a.context, &inputs.bearer, put(&upload, &ticket), policy())
@@ -558,13 +546,7 @@ async fn reservation_promises_shared_accounting_and_put_rollback() {
             .unwrap(),
         ImageReply::Pruned(0)
     ));
-    let record = f
-        .peer
-        .prepare_encrypted_push(a, &blobs(&f.peer))
-        .await
-        .unwrap()
-        .unwrap()
-        .record;
+    let record = head_record(&f.peer, a).await;
     f.server
         .encrypted_tail_exchange(
             &a.context,
@@ -773,7 +755,7 @@ async fn explicitly_unmapped_bootstrap_reference_is_initialized_and_deletable() 
 }
 
 #[tokio::test]
-async fn pending_image_head_and_later_task_edit_converge_through_one_round_entry() {
+async fn pending_image_head_and_later_task_edit_converge_and_missing_source_still_pulls() {
     let f = fixture().await;
     converge(&f).await;
     let reference = add_image(&f).await;
@@ -804,6 +786,43 @@ async fn pending_image_head_and_later_task_edit_converge_through_one_round_entry
     .unwrap();
     assert_eq!(pending, ["attachment_add", "set_field"]);
     let c = Client::new(&f.origin).unwrap();
+    // An unavailable local source keeps the ordered head pending but still pulls.
+    let source = f.root.path().join("peer-blobs/objects/sha256").join(&sha);
+    let bytes = std::fs::read(&source).unwrap();
+    std::fs::remove_file(&source).unwrap();
+    let remote = f
+        .seed
+        .create_task(
+            &f.seed.list_workspaces().await.unwrap().remove(0),
+            draft("remote while image source is missing"),
+        )
+        .await
+        .unwrap()
+        .task;
+    drain(&c, &f.seed_store, &f.seed).await;
+    let blocked = c
+        .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
+        .await
+        .unwrap();
+    assert_eq!(blocked.images, ImageTransfer::Failed);
+    assert!(!blocked.metadata_caught_up);
+    assert_eq!(
+        title(&f.peer, remote.id.as_str()).await,
+        "remote while image source is missing"
+    );
+    assert_eq!(
+        scalar(&f.peer, "SELECT count(*) FROM local_e2ee_outbox").await,
+        0
+    );
+    assert_eq!(
+        scalar(
+            &f.peer,
+            "SELECT count(*) FROM changes WHERE server_seq IS NULL"
+        )
+        .await,
+        2
+    );
+    std::fs::write(&source, bytes).unwrap();
     let mut rounds = 0;
     while !c
         .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))

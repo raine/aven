@@ -313,6 +313,13 @@ fn blobs(db: &Database) -> PathBuf {
         parent.join(format!("{name}-blobs"))
     }
 }
+async fn head_record(db: &Database, a: &tail::Authority) -> Vec<u8> {
+    db.prepare_encrypted_push(a, &blobs(db))
+        .await
+        .unwrap()
+        .unwrap()
+        .record
+}
 async fn drain(client: &Client, store: &ProtectedLocalKeyStore, db: &Database) {
     for _ in 0..100 {
         match client.round(store, db, &blobs(db)).await {
@@ -523,12 +530,7 @@ async fn frozen_restart_lost_ack_and_server_restart_keep_exact_identity() {
     let (record, context, bearer) = {
         let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
         (
-            f.peer
-                .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
-                .await
-                .unwrap()
-                .unwrap()
-                .record,
+            head_record(&f.peer, &inputs.authority).await,
             inputs.authority.context.clone(),
             Secret::new(*inputs.bearer.expose()),
         )
@@ -537,15 +539,7 @@ async fn frozen_restart_lost_ack_and_server_restart_keep_exact_identity() {
     let store = isolated_store(reopened.path(), &f.root.path().join("peer-keys"));
     {
         let inputs = store.tail_inputs(&reopened, &f.origin).await.unwrap();
-        assert_eq!(
-            reopened
-                .prepare_encrypted_push(&inputs.authority, &blobs(&reopened))
-                .await
-                .unwrap()
-                .unwrap()
-                .record,
-            record
-        );
+        assert_eq!(head_record(&reopened, &inputs.authority).await, record);
     }
     let c = Client::new(&f.origin).unwrap();
     let Reply::Appended(first) = c
@@ -727,13 +721,7 @@ async fn current_auth_prefix_tamper_and_whole_page_rollback() {
         .unwrap();
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
     let a = &inputs.authority;
-    let frozen = f
-        .peer
-        .prepare_encrypted_push(a, &blobs(&f.peer))
-        .await
-        .unwrap()
-        .unwrap()
-        .record;
+    let frozen = head_record(&f.peer, a).await;
     for field in 0..5 {
         let mut wrong = a.context.clone();
         match field {
@@ -948,15 +936,7 @@ async fn process_exit_before_dispatch_after_acceptance_and_during_page_commit() 
         let store = isolated_store(reopened.path(), &f.root.path().join("peer-keys"));
         if let Some(bytes) = frozen {
             let inputs = store.tail_inputs(&reopened, &f.origin).await.unwrap();
-            assert_eq!(
-                reopened
-                    .prepare_encrypted_push(&inputs.authority, &blobs(&reopened))
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .record,
-                bytes
-            );
+            assert_eq!(head_record(&reopened, &inputs.authority).await, bytes);
         }
         drain(&c, &store, &reopened).await;
         drain(&c, &f.seed_store, &f.seed).await;
@@ -1053,12 +1033,7 @@ async fn same_id_different_ciphertext_requires_equal_domain_not_identity() {
         }
         let peer_record = {
             let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
-            f.peer
-                .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
-                .await
-                .unwrap()
-                .unwrap()
-                .record
+            head_record(&f.peer, &inputs.authority).await
         };
         let c = Client::new(&f.origin).unwrap();
         drain(&c, &f.seed_store, &f.seed).await;
@@ -1737,12 +1712,7 @@ async fn checkpoint_creation_undo_pending_frozen_and_accepted() {
         .task;
     let record = {
         let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
-        f.seed
-            .prepare_encrypted_push(&inputs.authority, &blobs(&f.seed))
-            .await
-            .unwrap()
-            .unwrap()
-            .record
+        head_record(&f.seed, &inputs.authority).await
     };
     let error = f.seed.apply_latest_tui_undo(&w.id).await.err().unwrap();
     assert!(
@@ -1752,15 +1722,7 @@ async fn checkpoint_creation_undo_pending_frozen_and_accepted() {
     assert_eq!(title(&f.seed, frozen.id.as_str()).await, "undo frozen");
     {
         let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
-        assert_eq!(
-            f.seed
-                .prepare_encrypted_push(&inputs.authority, &blobs(&f.seed))
-                .await
-                .unwrap()
-                .unwrap()
-                .record,
-            record
-        );
+        assert_eq!(head_record(&f.seed, &inputs.authority).await, record);
     }
     converge(&f).await;
     f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
@@ -1829,12 +1791,7 @@ async fn checkpoint_overlapping_conflicts_and_frozen_pending_change() {
         .unwrap();
     let frozen = {
         let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
-        f.peer
-            .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
-            .await
-            .unwrap()
-            .unwrap()
-            .record
+        head_record(&f.peer, &inputs.authority).await
     };
     f.peer
         .update_task(
@@ -1849,15 +1806,7 @@ async fn checkpoint_overlapping_conflicts_and_frozen_pending_change() {
         .unwrap();
     {
         let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
-        assert_eq!(
-            f.peer
-                .prepare_encrypted_push(&inputs.authority, &blobs(&f.peer))
-                .await
-                .unwrap()
-                .unwrap()
-                .record,
-            frozen
-        );
+        assert_eq!(head_record(&f.peer, &inputs.authority).await, frozen);
     }
     converge(&f).await;
     for db in [&f.seed, &f.peer] {
@@ -1919,13 +1868,7 @@ async fn checkpoint_observed_mapping_and_stale_page_contradictions() {
         .unwrap();
     let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
     let a = &inputs.authority;
-    let record = f
-        .seed
-        .prepare_encrypted_push(a, &blobs(&f.seed))
-        .await
-        .unwrap()
-        .unwrap()
-        .record;
+    let record = head_record(&f.seed, a).await;
     let client = Client::new(&f.origin).unwrap();
     let Reply::Appended(mapping) = client
         .exchange(
@@ -1974,15 +1917,7 @@ async fn checkpoint_observed_mapping_and_stale_page_contradictions() {
     bad.watermark += 1;
     assert!(f.seed.apply_encrypted_tail_page(a, &bad).await.is_err());
     assert_eq!(f.seed.encrypted_tail_cursor(a).await.unwrap(), after);
-    assert_eq!(
-        f.seed
-            .prepare_encrypted_push(a, &blobs(&f.seed))
-            .await
-            .unwrap()
-            .unwrap()
-            .record,
-        record
-    );
+    assert_eq!(head_record(&f.seed, a).await, record);
     f.seed.apply_encrypted_tail_page(a, &page).await.unwrap();
     assert!(f.seed.apply_encrypted_tail_page(a, &page).await.is_err());
     assert_eq!(f.seed.encrypted_tail_cursor(a).await.unwrap(), page.cursor);
@@ -2262,12 +2197,7 @@ async fn checkpoint_note_pending_edit_survives_frozen_acceptance_and_restart() {
         .unwrap();
     let record = {
         let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
-        f.seed
-            .prepare_encrypted_push(&inputs.authority, &blobs(&f.seed))
-            .await
-            .unwrap()
-            .unwrap()
-            .record
+        head_record(&f.seed, &inputs.authority).await
     };
     f.seed
         .edit_note(&w, &task, &note, "later pending".into())
@@ -2276,15 +2206,7 @@ async fn checkpoint_note_pending_edit_survives_frozen_acceptance_and_restart() {
     {
         let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
         let a = &inputs.authority;
-        assert_eq!(
-            f.seed
-                .prepare_encrypted_push(a, &blobs(&f.seed))
-                .await
-                .unwrap()
-                .unwrap()
-                .record,
-            record
-        );
+        assert_eq!(head_record(&f.seed, a).await, record);
         let Reply::Appended(mapping) = client
             .exchange(
                 &a.context,
@@ -2413,25 +2335,12 @@ async fn checkpoint_note_undo_preserves_frozen_history_and_pending_restoration()
         .unwrap();
     let record = {
         let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
-        f.seed
-            .prepare_encrypted_push(&inputs.authority, &blobs(&f.seed))
-            .await
-            .unwrap()
-            .unwrap()
-            .record
+        head_record(&f.seed, &inputs.authority).await
     };
     f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
     {
         let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
-        assert_eq!(
-            f.seed
-                .prepare_encrypted_push(&inputs.authority, &blobs(&f.seed))
-                .await
-                .unwrap()
-                .unwrap()
-                .record,
-            record
-        );
+        assert_eq!(head_record(&f.seed, &inputs.authority).await, record);
     }
     converge(&f).await;
     assert_eq!(note_body(&f.peer, &note).await.as_deref(), Some("initial"));
@@ -2440,13 +2349,7 @@ async fn checkpoint_note_undo_preserves_frozen_history_and_pending_restoration()
         .await
         .unwrap();
     let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
-    let record = f
-        .seed
-        .prepare_encrypted_push(&inputs.authority, &blobs(&f.seed))
-        .await
-        .unwrap()
-        .unwrap()
-        .record;
+    let record = head_record(&f.seed, &inputs.authority).await;
     drop(inputs);
     f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
     f.seed
@@ -2455,15 +2358,7 @@ async fn checkpoint_note_undo_preserves_frozen_history_and_pending_restoration()
         .unwrap();
     {
         let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
-        assert_eq!(
-            f.seed
-                .prepare_encrypted_push(&inputs.authority, &blobs(&f.seed))
-                .await
-                .unwrap()
-                .unwrap()
-                .record,
-            record
-        );
+        assert_eq!(head_record(&f.seed, &inputs.authority).await, record);
     }
     converge(&f).await;
     for db in [&f.seed, &f.peer] {
@@ -2492,12 +2387,7 @@ async fn checkpoint_note_creation_undo_respects_history_ownership() {
         .unwrap();
     let record = {
         let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
-        f.seed
-            .prepare_encrypted_push(&inputs.authority, &blobs(&f.seed))
-            .await
-            .unwrap()
-            .unwrap()
-            .record
+        head_record(&f.seed, &inputs.authority).await
     };
     let error = f.seed.apply_latest_tui_undo(&w.id).await.err().unwrap();
     assert!(
@@ -2510,15 +2400,7 @@ async fn checkpoint_note_creation_undo_respects_history_ownership() {
     );
     {
         let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
-        assert_eq!(
-            f.seed
-                .prepare_encrypted_push(&inputs.authority, &blobs(&f.seed))
-                .await
-                .unwrap()
-                .unwrap()
-                .record,
-            record
-        );
+        assert_eq!(head_record(&f.seed, &inputs.authority).await, record);
     }
     converge(&f).await;
     let error = f.seed.apply_latest_tui_undo(&w.id).await.err().unwrap();
@@ -2607,23 +2489,9 @@ async fn checkpoint_idle_check_preserves_frozen_work_and_checks_authority() {
         scalar(&f.seed, "SELECT count(*) FROM local_e2ee_outbox").await,
         0
     );
-    let record = f
-        .seed
-        .prepare_encrypted_push(&inputs.authority, &blobs(&f.seed))
-        .await
-        .unwrap()
-        .unwrap()
-        .record;
+    let record = head_record(&f.seed, &inputs.authority).await;
     assert!(!f.seed.encrypted_tail_idle(&inputs.authority).await.unwrap());
-    assert_eq!(
-        f.seed
-            .prepare_encrypted_push(&inputs.authority, &blobs(&f.seed))
-            .await
-            .unwrap()
-            .unwrap()
-            .record,
-        record
-    );
+    assert_eq!(head_record(&f.seed, &inputs.authority).await, record);
     inputs.authority.sync_generation += 1;
     assert!(f.seed.encrypted_tail_idle(&inputs.authority).await.is_err());
 }

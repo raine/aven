@@ -292,8 +292,9 @@ impl Client {
         }
         Ok(!a.rotation_pending())
     }
-    /// Dispatches at most the one ordered head. A failed image transfer leaves
-    /// that head frozen and is reported instead of appending its Ref.
+    /// Dispatches at most the one ordered head. An unavailable local image source
+    /// or failed image transfer leaves that head pending and is reported instead
+    /// of appending its Ref.
     async fn push(
         &self,
         a: &tail::Authority,
@@ -304,8 +305,14 @@ impl Client {
         if !self.reconcile_frozen(a, bearer, db, blob_dir).await? {
             return Ok(None);
         }
-        let Some(tail::Push { record, upload }) = db.prepare_encrypted_push(a, blob_dir).await?
-        else {
+        // A missing local source leaves its head pending without blocking pulls.
+        let prepared = match db.prepare_encrypted_push(a, blob_dir).await {
+            Err(error) if error.is::<tail::attachments::ImageSourceUnavailable>() => {
+                return Ok(Some(ImageTransfer::Failed));
+            }
+            prepared => prepared?,
+        };
+        let Some(tail::Push { record, upload }) = prepared else {
             return Ok(None);
         };
         let ticket = match upload {
