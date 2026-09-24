@@ -319,9 +319,9 @@ The in-app command catalog is the authoritative shortcut reference:
 
 - `?` lists commands available in the current mode.
 - `:` searches command names and descriptions. From a task-list surface, choose
-  `:pair-mobile` to open the **Pair mobile device** overlay with the same pairing
-  invitation as `aven sync pair`. The overlay wraps its private-network guidance
-  and closes with Escape or an outside click.
+  `:add-device` to invite another device to sync. The **Add device** overlay
+  shows the invitation as a QR code and closes with Escape or an outside click;
+  the TUI keeps waiting for the device until it joins or the invitation expires.
 - Prefix keys show their available continuations in the footer.
 
 | Prefix | Family |

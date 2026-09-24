@@ -18,24 +18,20 @@ aven reads `config.yaml` from `AVEN_CONFIG_DIR` when set, otherwise from `~/.con
 | Key | Values |
 | --- | --- |
 | `sync.enabled` | `true` or `false` |
-| `sync.server_url` | JSON-quoted HTTP URL, or `null` when unset |
 | `sync.interval_seconds` | Positive integer, with the default resolved to `30` |
 | `update.automatic_checks` | `true` or `false` |
 | `local.db_path` | JSON-quoted path, or `null` when unset |
 | `local.image_optimization` | `off`, `paste`, or `on` |
 
 ```sh
-aven config get sync.server_url
+aven config get sync.enabled
 aven config set sync.enabled true
-aven config set sync.server_url https://sync.example.com
 aven config set local.db_path null
 ```
 
 `aven config set <key> <value>` validates the value, updates only that scalar in
 `config.yaml`, and preserves comments and unrelated settings. The write replaces
-the file atomically. Use `null` to clear `sync.server_url` or `local.db_path`.
-Configuration keys containing secrets, including `sync.auth_token`, are not
-available through `config get` or `config set`.
+the file atomically. Use `null` to clear `local.db_path`.
 
 Use `aven doctor` to inspect the active config, database path, workspace, project, sync cursor, daemon wake address, and routing decisions. Doctor still produces a redacted report when this file is malformed, unreadable, or contains an invalid value. It includes available YAML line and column context without printing config values that may contain secrets.
 
@@ -70,8 +66,6 @@ project:
 
 sync:
   enabled: true
-  server_url: "http://127.0.0.1:3000"
-  auth_token: "shared-secret"
   interval_seconds: 30
 
 daemon:
@@ -218,13 +212,13 @@ project:
 
 ## Sync and daemon settings
 
-Sync is optional and self-hosted. Configure sync when `aven sync` and `aven daemon` should use a default server:
+Sync is optional, self-hosted, and end-to-end encrypted. The server is chosen
+when a database is set up or joined, not in configuration; see
+[Sync across devices](/sync/). Enable automatic sync by the daemon:
 
 ```yaml
 sync:
   enabled: true
-  server_url: "http://127.0.0.1:3000"
-  auth_token: "shared-secret"
   interval_seconds: 30
 
 daemon:
@@ -416,5 +410,4 @@ Useful environment overrides include:
 | --- | --- |
 | `AVEN_CONFIG_DIR` | Config directory containing `config.yaml` |
 | `AVEN_DB` | SQLite database path |
-| `AVEN_SYNC_SERVER` | Sync server URL |
 | `AVEN_NO_UPDATE_CHECK` | Disable automatic update checks and TUI notifications when set to `1`, `true`, or `yes` |

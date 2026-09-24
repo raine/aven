@@ -5,6 +5,16 @@ protocol constants. [ARCHITECTURE.md](ARCHITECTURE.md) maps the implementation
 owners. This document describes the compatibility contract and the evidence
 required to change it.
 
+Scope: this workspace ships only end-to-end encrypted sync. Its encrypted tail
+validates retained and new operations against replica protocol 18 through the
+operation contracts and persisted replica behavior below, so those sections
+govern every shared operation change. The unencrypted `/sync` request and
+response envelope, discovery and server admission described here remain in
+`aven-core` only for the external mobile consumer API; no server in this
+workspace speaks them, and releases carry no protocol markers. Changing an
+encrypted operation contract also requires an encrypted tail codec change and
+its own security review.
+
 ## What a protocol version means
 
 A protocol version identifies a shared-data contract: which operations and values
@@ -155,12 +165,9 @@ an explicit policy decision; do not silently relax baseline import validation.
    Decide how any new shared data interacts with baseline-only JSON import and
    local-only databases before shipping it. Do not invent implicit promotion,
    down-conversion, or selective upload.
-5. **Advance the active version and release metadata.** Keep the literal
-   `SYNC_PROTOCOL_VERSION` declaration compatible with release-workflow
-   extraction. The `sync-protocol-N` asset identifies the active server protocol;
-   `sync-client-baseline-N` identifies cumulative client support. Releases without
-   a baseline marker retain exact-protocol meaning. Keep CLI/TUI update checks,
-   pairing, typed errors, and status behavior aligned with those meanings.
+5. **Advance the active version.** Keep typed errors and status behavior aligned
+   with the new meaning, and update the encrypted tail's accepted operation set
+   in `encrypted_tail/domain.rs` deliberately.
 6. **Prove the actual feature in both modes.** Use the checks below, including a
    real released-server process. Test-only future operation names demonstrate the
    mechanism, not compatibility of a newly implemented production feature.
@@ -197,11 +204,10 @@ For a protocol addition, retain evidence for:
   it; acknowledgements and local application remain transactional.
 - Historical replay preserving materialized state, conflict behavior, and
   deterministic identities across the supported contracts.
-- Import, standalone behavior, release-marker interpretation, and host surfaces
-  affected by the new contract.
+- Import, standalone behavior, and host surfaces affected by the new contract.
 
 Start with `cargo test -p aven-core --lib sync::`, then choose focused CLI sync,
-conflict, status, updater, recurrence, and consumer tests for the affected paths.
+conflict, recurrence, encrypted tail, and consumer tests for the affected paths.
 Follow the validation guidance in `ARCHITECTURE.md`; automated tests do not replace
 an unchanged released-server interoperability exercise.
 

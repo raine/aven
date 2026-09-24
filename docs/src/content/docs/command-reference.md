@@ -833,46 +833,56 @@ See [Task metadata](/task-metadata/) for key rules, value semantics, filtering, 
 
 ### `aven sync`
 
-Push local changes and pull remote changes until both backlogs are drained.
+Exchange changes with the end-to-end encrypted sync server chosen during setup
+or join.
 
 ```sh
-aven sync [--server <url>]
+aven sync [--json]
 ```
 
-The server URL resolves from `--server`, then `AVEN_SYNC_SERVER`, then `sync.server_url`. When configured, `sync.auth_token` is sent as bearer authentication. Aven pins the normalized server URL in database metadata and rejects accidental reuse of one database with a different server.
+Sync runs bounded rounds until tasks are up to date and image transfers settle,
+or until a round limit stops it. Output reports whether tasks and images are up
+to date; `--json` emits a versioned result. A database that has not been set up
+or joined fails with `sync-not-set-up` and stays usable locally.
 
-Output reports pushed and pulled task changes, uploaded and downloaded image counts and sizes, remaining work, the resulting server cursor, and completion state. Large attachment backlogs transfer in bounded rounds, and `complete=false` means sync still has work to do.
+#### `aven sync setup`
+
+Start sync from this database with the invitation printed by `aven server setup`.
 
 ```sh
-aven sync
-aven sync --server http://127.0.0.1:3000
+aven sync setup [--yes]
 ```
 
-#### `aven sync pair`
+Paste the invitation, or pipe it to standard input. Setup previews the database
+and asks for confirmation; `--yes` is required when standard input is not a
+terminal. Every other device starts from this data. Afterwards the database can
+no longer use backup restore or import. Rerun the command to resume an
+interrupted setup.
 
-Produce a terminal QR pairing invitation for Aven iOS onboarding.
+#### `aven sync invite`
+
+Invite another device and wait until it joins.
 
 ```sh
-aven sync pair [--server <url>]
-aven sync --server <url> pair
+aven sync invite
 ```
 
-The invitation transfers the existing shared `sync.auth_token` and a
-phone-reachable sync server URL. The pair-local `--server` wins over the parent
-`sync --server` form when both are present. The remaining server precedence is
-`AVEN_SYNC_SERVER`, then `sync.server_url`. A selected blank server reports a
-missing server instead of falling through. The command requires a configured,
-nonempty `sync.auth_token` and rejects invalid or loopback URLs.
+Standard output receives the `aven://pair/v2/` invitation. An interactive
+standard error also shows it as a QR code. Anyone with the invitation can access
+all synced data and manage devices. It expires after ten minutes, and sync on
+this device pauses until it is used or expires.
 
-Pairing reads configuration only. It does not open a task database, contact the
-server, mutate configuration, or run sync. The QR code is the only invitation
-payload output: ordinary text and errors omit the token and encoded invitation.
-Terminal output uses black-on-white ANSI styling unless `NO_COLOR` is present.
-Redirected output uses plain rows without escape sequences or a terminal-width
-check.
-Use `--server` when the desktop sync configuration uses loopback or another
-address the phone cannot reach. Public HTTPS and reverse-proxy server URLs remain
-supported.
+#### `aven sync join`
+
+Join sync from an empty database with a device invitation.
+
+```sh
+aven sync join
+```
+
+Paste the invitation, or pipe it to standard input, while the inviting device
+waits. Joining downloads the synced data and then its images. Rerun the command
+to resume an interrupted join.
 
 #### `aven sync status`
 
@@ -883,33 +893,38 @@ aven sync status
 aven sync status --json
 ```
 
-The report distinguishes `disabled`, `unconfigured`, `healthy`, `degraded`,
-`blocked`, and `failed`. It includes the effective and database-pinned server
-identities, pending change and attachment counts, unresolved conflicts, cursor
-progress, and last attempt, success, transfer counts, and privacy-safe error.
-The versioned JSON report uses the same field names and adds `version` for
-compatibility checks. Authentication values, task content, payloads, and raw
-server responses are omitted.
+The state is `not-set-up`, `setup-incomplete`, `join-incomplete`,
+`invitation-pending`, `invitation-disclosed`, or `ready`. Ready databases also
+report the server, whether local changes wait to sync, the server position, and
+pending image uploads, downloads, and unavailable images. The versioned JSON
+report omits keys, invitations, and task content.
 
 ### `aven server`
 
-Run an HTTP sync server backed by its own SQLite database.
+Serve end-to-end encrypted sync from storage prepared by `aven server setup`.
 
 ```sh
-aven server --data <path> [--bind <address>] [--unsafe-public-bind]
+aven server --data <path> [--bind <address>]
+aven server setup --data <path> --url <url>
 ```
 
 | Option | Description |
 | --- | --- |
 | `--data <path>` | Required server SQLite database path. |
-| `--bind <ip:port>` | Listen address. Defaults to `127.0.0.1:0`, which chooses an available loopback port. |
-| `--unsafe-public-bind` | Allow a public IP bind. Public binds also require `sync.auth_token`. |
+| `--bind <ip:port>` | Loopback listen address. Defaults to `127.0.0.1:0`, which chooses an available port. |
+| `--url <url>` | For `setup`: the origin devices reach, HTTPS or loopback HTTP. |
 
-Loopback binds can run without authentication. Private-network binds require `sync.auth_token`. Public binds require both an auth token and `--unsafe-public-bind`; aven prints a warning to use TLS or a reverse proxy. The server exposes `POST /sync`, accepts compressed requests, compresses responses when appropriate, and shuts down gracefully on an operating-system termination signal.
+`server setup` stores an expiring setup verifier and prints a setup invitation
+for `aven sync setup`. Running it again before a device claims the server
+replaces the invitation. The server binds only loopback addresses and does not
+terminate TLS; put a TLS reverse proxy in front of it. Both commands refuse
+storage that holds change history, including storage from the unencrypted sync
+of earlier releases. The server shuts down gracefully on an operating-system
+termination signal.
 
 ```sh
-aven server --data ~/.local/share/aven/server.sqlite --bind 127.0.0.1:3000
-aven server --data /srv/aven/server.sqlite --bind 192.168.1.10:3000
+aven server setup --data /srv/aven/server.sqlite --url https://sync.example.com
+aven server --data /srv/aven/server.sqlite --bind 127.0.0.1:3000
 ```
 
 ### `aven conflict`
@@ -966,7 +981,7 @@ aven daemon restart
 aven daemon repair [--if-installed] [--program <path>]
 ```
 
-Running `aven daemon` in the foreground requires `sync.enabled: true` and `sync.server_url`. It syncs immediately, then on the configured interval and whenever a local mutation sends a UDP wake signal. Failed syncs use exponential backoff up to five minutes. Bounded rounds with more work remaining resume promptly. The process exits when its executable changes so a service manager can restart the updated binary.
+Running `aven daemon` in the foreground requires `sync.enabled: true`. Until the database is set up or joined it waits without contacting a server. Once set up, it syncs immediately, then on the configured interval and whenever a local mutation sends a UDP wake signal. Failed syncs use exponential backoff up to five minutes. Bounded rounds with more work remaining resume promptly. The process exits when its executable changes so a service manager can restart the updated binary.
 
 `daemon status` is observational. It reports platform support, installation,
 loaded and running state, executable consistency, configuration validity,
@@ -1125,19 +1140,16 @@ aven doctor --json --fail-on-error
 Check GitHub releases for a newer aven version.
 
 ```sh
-aven update [--yes] [--allow-sync-incompatibility]
+aven update [--yes]
 ```
 
 Package-manager installations receive manager-specific update instructions. Direct installations report an available release without changing the executable unless `--yes` is supplied.
-
-Before installing a release with a different sync protocol, Aven sends an empty request to the configured sync server to check compatibility. The request contains no tasks and does not advance sync state. If the server is incompatible or cannot be checked, Aven recommends updating the server first and does not install. Use `--yes --allow-sync-incompatibility` to proceed despite that warning. The override does not skip archive, checksum, or executable validation.
 
 A direct update downloads the platform archive, verifies it, replaces the current executable, and asks you to restart running aven processes. Cached release information is used when a fresh check fails and a valid cache entry exists.
 
 ```sh
 aven update
 aven update --yes
-aven update --yes --allow-sync-incompatibility
 ```
 
 ## Data safety commands
