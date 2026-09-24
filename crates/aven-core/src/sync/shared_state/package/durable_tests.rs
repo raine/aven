@@ -31,6 +31,7 @@ async fn frozen_upload_survives_edits_source_loss_and_reopen() {
         .unwrap();
     let exact = frozen.upload_package();
     assert_eq!(frozen.descriptor(), exact.descriptor);
+    let stream = decode_context_id(capture.stream_id(), "stream").unwrap();
     assert_eq!(
         publication::validate_keyless(&exact).unwrap().image_count,
         2
@@ -39,7 +40,7 @@ async fn frozen_upload_survives_edits_source_loss_and_reopen() {
         &exact,
         &key,
         package_context(),
-        *frozen.stream_id(),
+        stream,
         decode_context_id(capture.candidate_id(), "candidate").unwrap(),
         [7; 32],
     )
@@ -98,7 +99,7 @@ async fn frozen_upload_survives_edits_source_loss_and_reopen() {
                 vault_id: [1; 32],
                 ..package_context()
             },
-            *retry.stream_id(),
+            stream,
             decode_context_id(retry.candidate_id(), "candidate").unwrap(),
         ),
         (
@@ -106,7 +107,7 @@ async fn frozen_upload_survives_edits_source_loss_and_reopen() {
             [2; 32],
             decode_context_id(retry.candidate_id(), "candidate").unwrap(),
         ),
-        (package_context(), *retry.stream_id(), [3; 32]),
+        (package_context(), stream, [3; 32]),
     ] {
         assert!(
             publication::authenticate(&exact, &key, context, stream, bootstrap, [7; 32]).is_err()
@@ -117,20 +118,15 @@ async fn frozen_upload_survives_edits_source_loss_and_reopen() {
             &exact,
             &LocalSharedStatePackageKey::new([9; 32]),
             package_context(),
-            *retry.stream_id(),
+            stream,
             decode_context_id(retry.candidate_id(), "candidate").unwrap(),
             [7; 32]
         )
         .is_err()
     );
-    let decoded = decrypt_package(&retry, &key).unwrap();
+    let decoded = publication::decrypt_capture(&exact, &key).unwrap();
     assert_eq!(decoded.snapshot.tables.tasks[0].title, "captured title");
-    assert_eq!(
-        decrypt_local_shared_state_package_images(&retry, &key)
-            .unwrap()
-            .len(),
-        2
-    );
+    assert_eq!(publication::decrypt_images(&exact, &key).unwrap().len(), 2);
     let target = Database::open(&dir.path().join("target.sqlite"))
         .await
         .unwrap();
@@ -161,29 +157,42 @@ async fn frozen_upload_survives_edits_source_loss_and_reopen() {
         .await
         .unwrap();
     let mut conn = database.acquire_reader().await.unwrap();
-    let counts: (i64, i64, i64, i64) = sqlx::query_as(
+    let counts: (i64, i64, i64) = sqlx::query_as(
         "SELECT (SELECT count(*) FROM local_shared_capture_publication),
-                (SELECT count(*) FROM local_shared_capture_packages),
-                (SELECT count(*) FROM local_shared_capture_package_image_chunks),
+                (SELECT count(*) FROM local_shared_capture_package_records),
                 (SELECT count(*) FROM local_shared_capture_pins)",
     )
     .fetch_one(&mut *conn)
     .await
     .unwrap();
-    assert_eq!(counts, (0, 0, 0, 0));
+    assert_eq!(counts, (0, 0, 0));
 }
 
 #[tokio::test]
-async fn prior_local_only_storage_requires_explicit_cancel_and_new_identity() {
+async fn migration_fences_prior_local_only_package_without_regeneration() {
     let (dir, database, task) = source_with_history().await;
     add_selected_images(dir.path(), &database, &task).await;
     let capture = database
         .capture_local_shared_state_never_dispatched()
         .await
         .unwrap();
+    // Rebuild the storage layout that preceded the frozen record table, holding a
+    // local-only package: encrypted bytes with no descriptor, catalogs or freeze
+    // commitment. Then apply the forward migration again and reopen.
     let mut conn = database.acquire_writer().await.unwrap();
-    // The local-only storage profile has no descriptor/catalog row or freeze
-    // commitment. Refusal must happen before interpreting its encrypted bytes.
+    sqlx::raw_sql(concat!(
+        "DROP TABLE local_shared_capture_package_records;",
+        include_str!(
+            "../../../../migrations/20260922062906_encrypted_local_shared_capture_package.sql"
+        ),
+        include_str!(
+            "../../../../migrations/20260922073647_encrypted_local_shared_capture_images.sql"
+        ),
+        "DELETE FROM _sqlx_migrations WHERE version = 20260923095516;",
+    ))
+    .execute(&mut *conn)
+    .await
+    .unwrap();
     sqlx::query(
         "INSERT INTO local_shared_capture_packages (
             candidate_id, format_version, suite, vault_id, generation_id,
@@ -207,7 +216,22 @@ async fn prior_local_only_storage_requires_explicit_cancel_and_new_identity() {
     .execute(&mut *conn)
     .await
     .unwrap();
+    sqlx::migrate!("./migrations")
+        .run(&mut *conn)
+        .await
+        .unwrap();
     drop(conn);
+    drop(database);
+    let database = Database::open(&dir.path().join("source.sqlite"))
+        .await
+        .unwrap();
+
+    assert!(
+        database
+            .has_local_shared_state_package_never_dispatched()
+            .await
+            .unwrap()
+    );
     for _ in 0..2 {
         let error = database
             .package_local_shared_state_never_dispatched(
@@ -221,21 +245,24 @@ async fn prior_local_only_storage_requires_explicit_cancel_and_new_identity() {
         assert!(
             error
                 .to_string()
-                .contains("cancel-never-dispatched-capture-and-recapture")
+                .contains("cancel-never-dispatched-capture-and-recapture"),
+            "{error:#}"
         );
     }
     let mut conn = database.acquire_reader().await.unwrap();
-    let record: Vec<u8> =
-        sqlx::query_scalar("SELECT record FROM local_shared_capture_package_chunks")
-            .fetch_one(&mut *conn)
-            .await
-            .unwrap();
-    assert_eq!(record, [1, 2, 3, 4]);
-    let pins: i64 = sqlx::query_scalar("SELECT count(*) FROM local_shared_capture_pins")
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap();
-    assert_eq!(pins, 2);
+    let state: (Vec<u8>, i64, i64, i64) = sqlx::query_as(
+        "SELECT
+             (SELECT frozen_descriptor_commitment FROM local_shared_capture_journal),
+             (SELECT count(*) FROM local_shared_capture_publication),
+             (SELECT count(*) FROM local_shared_capture_pins),
+             (SELECT count(*) FROM sqlite_master
+              WHERE name LIKE 'local_shared_capture_package%'
+                AND name != 'local_shared_capture_package_records')",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+    assert_eq!(state, (vec![0; 32], 0, 2, 0));
     drop(conn);
     database
         .cancel_local_shared_state_never_dispatched(capture.candidate_id())
@@ -260,16 +287,71 @@ async fn prior_local_only_storage_requires_explicit_cancel_and_new_identity() {
 
 #[tokio::test]
 async fn corrupt_or_missing_frozen_components_never_trigger_replacement() {
-    for mutation in [
-        "DELETE FROM local_shared_capture_packages",
-        "DELETE FROM local_shared_capture_publication",
-        "UPDATE local_shared_capture_publication SET descriptor = zeroblob(length(descriptor))",
-        "UPDATE local_shared_capture_publication SET prefix_catalog = zeroblob(length(prefix_catalog))",
-        "UPDATE local_shared_capture_packages SET state_total_plaintext_bytes = state_total_plaintext_bytes + 1",
-        "UPDATE local_shared_capture_package_chunks SET record_commitment = zeroblob(32)",
-        "DELETE FROM local_shared_capture_package_image_chunks",
-        "UPDATE local_shared_capture_package_images SET total_plaintext_bytes = total_plaintext_bytes + 1",
-    ] {
+    let first_image = "(SELECT min(object_id) FROM local_shared_capture_package_records
+                        WHERE component = 'image')";
+    let mutations: Vec<(&str, Vec<String>)> = vec![
+        (
+            "missing publication row",
+            vec!["DELETE FROM local_shared_capture_publication".into()],
+        ),
+        (
+            "zeroed descriptor",
+            vec!["UPDATE local_shared_capture_publication SET descriptor = zeroblob(length(descriptor))".into()],
+        ),
+        (
+            "zeroed prefix catalog",
+            vec!["UPDATE local_shared_capture_publication SET prefix_catalog = zeroblob(length(prefix_catalog))".into()],
+        ),
+        (
+            "corrupt state record",
+            vec!["UPDATE local_shared_capture_package_records SET record = zeroblob(length(record)) WHERE component = 'state' AND chunk_index = 0".into()],
+        ),
+        (
+            "corrupt manifest record",
+            vec!["UPDATE local_shared_capture_package_records SET record = zeroblob(length(record)) WHERE component = 'manifest'".into()],
+        ),
+        (
+            "corrupt image record",
+            vec![format!("UPDATE local_shared_capture_package_records SET record = zeroblob(length(record)) WHERE component = 'image' AND object_id = {first_image}")],
+        ),
+        (
+            "missing state records",
+            vec!["DELETE FROM local_shared_capture_package_records WHERE component = 'state'".into()],
+        ),
+        (
+            "missing image component",
+            vec![format!("DELETE FROM local_shared_capture_package_records WHERE component = 'image' AND object_id = {first_image}")],
+        ),
+        (
+            "missing manifest index",
+            vec!["UPDATE local_shared_capture_package_records SET chunk_index = chunk_index + 1 WHERE component = 'manifest'".into()],
+        ),
+        (
+            "extra manifest index",
+            vec!["INSERT INTO local_shared_capture_package_records SELECT candidate_id, component, object_id, chunk_index + 1, record FROM local_shared_capture_package_records WHERE component = 'manifest'".into()],
+        ),
+        (
+            "foreign image component",
+            vec!["INSERT INTO local_shared_capture_package_records SELECT candidate_id, component, randomblob(32), chunk_index, record FROM local_shared_capture_package_records WHERE component = 'image' LIMIT 1".into()],
+        ),
+        (
+            "swapped image components",
+            [
+                "CREATE TEMP TABLE swap AS SELECT min(object_id) AS a, max(object_id) AS b
+                 FROM local_shared_capture_package_records WHERE component = 'image'",
+                "UPDATE local_shared_capture_package_records SET object_id = zeroblob(32)
+                 WHERE component = 'image' AND object_id = (SELECT a FROM swap)",
+                "UPDATE local_shared_capture_package_records SET object_id = (SELECT a FROM swap)
+                 WHERE component = 'image' AND object_id = (SELECT b FROM swap)",
+                "UPDATE local_shared_capture_package_records SET object_id = (SELECT b FROM swap)
+                 WHERE component = 'image' AND object_id = zeroblob(32)",
+                "DROP TABLE swap",
+            ]
+            .map(String::from)
+            .to_vec(),
+        ),
+    ];
+    for (name, statements) in mutations {
         let (dir, database, task) = source_with_history().await;
         add_selected_images(dir.path(), &database, &task).await;
         database
@@ -286,7 +368,13 @@ async fn corrupt_or_missing_frozen_components_never_trigger_replacement() {
             .await
             .unwrap();
         let mut conn = database.acquire_writer().await.unwrap();
-        sqlx::query(mutation).execute(&mut *conn).await.unwrap();
+        for statement in &statements {
+            sqlx::query(sqlx::AssertSqlSafe(statement.as_str()))
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+        }
+        let corrupted = stored_package_rows(&mut conn).await;
         drop(conn);
         drop(database);
         let database = Database::open(&dir.path().join("source.sqlite"))
@@ -296,7 +384,8 @@ async fn corrupt_or_missing_frozen_components_never_trigger_replacement() {
             database
                 .has_local_shared_state_package_never_dispatched()
                 .await
-                .unwrap()
+                .unwrap(),
+            "{name}"
         );
         for _ in 0..2 {
             assert!(
@@ -309,28 +398,53 @@ async fn corrupt_or_missing_frozen_components_never_trigger_replacement() {
                     )
                     .await
                     .is_err(),
-                "{mutation}"
+                "{name}"
             );
         }
         let mut conn = database.acquire_reader().await.unwrap();
+        assert_eq!(stored_package_rows(&mut conn).await, corrupted, "{name}");
         let commitment: Vec<u8> = sqlx::query_scalar(
             "SELECT frozen_descriptor_commitment FROM local_shared_capture_journal",
         )
         .fetch_one(&mut *conn)
         .await
         .unwrap();
-        assert_eq!(commitment, sha256(&frozen.descriptor));
+        assert_eq!(commitment, sha256(frozen.descriptor()), "{name}");
         let pins: i64 = sqlx::query_scalar("SELECT count(*) FROM local_shared_capture_pins")
             .fetch_one(&mut *conn)
             .await
             .unwrap();
-        assert_eq!(pins, 2);
+        assert_eq!(pins, 2, "{name}");
         drop(conn);
         database
             .cancel_local_shared_state_never_dispatched(frozen.candidate_id())
             .await
             .unwrap();
     }
+}
+
+type StoredPackageRows = (
+    Vec<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)>,
+    Vec<(String, Vec<u8>, i64, Vec<u8>)>,
+);
+
+async fn stored_package_rows(conn: &mut sqlx::SqliteConnection) -> StoredPackageRows {
+    let publication = sqlx::query_as(
+        "SELECT descriptor, data_catalog, prefix_catalog, image_catalog
+         FROM local_shared_capture_publication",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap();
+    let records = sqlx::query_as(
+        "SELECT component, object_id, chunk_index, record
+         FROM local_shared_capture_package_records
+         ORDER BY component, object_id, chunk_index",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap();
+    (publication, records)
 }
 
 #[tokio::test]
@@ -382,7 +496,8 @@ async fn process_exit_before_and_after_freeze_commit_preserves_ownership() {
         let counts: (i64, i64, i64) = sqlx::query_as(
             "SELECT (SELECT count(*) FROM local_shared_capture_pins),
                     (SELECT count(*) FROM local_shared_capture_publication),
-                    (SELECT count(*) FROM local_shared_capture_package_image_chunks)",
+                    (SELECT count(*) FROM local_shared_capture_package_records
+                     WHERE component = 'image')",
         )
         .fetch_one(&mut *conn)
         .await
@@ -528,17 +643,15 @@ async fn failed_freeze_marker_write_rolls_back_bytes_but_retains_capture_and_pin
             .unwrap()
     );
     let mut conn = database.acquire_writer().await.unwrap();
-    let counts: (i64, i64, i64, i64, i64) = sqlx::query_as(
-        "SELECT (SELECT count(*) FROM local_shared_capture_packages),
-                (SELECT count(*) FROM local_shared_capture_publication),
-                (SELECT count(*) FROM local_shared_capture_package_chunks),
-                (SELECT count(*) FROM local_shared_capture_package_image_chunks),
+    let counts: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM local_shared_capture_publication),
+                (SELECT count(*) FROM local_shared_capture_package_records),
                 (SELECT count(*) FROM local_shared_capture_pins)",
     )
     .fetch_one(&mut *conn)
     .await
     .unwrap();
-    assert_eq!(counts, (0, 0, 0, 0, 2));
+    assert_eq!(counts, (0, 0, 2));
     sqlx::query("DROP TRIGGER fail_freeze")
         .execute(&mut *conn)
         .await

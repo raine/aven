@@ -68,7 +68,7 @@ mod projection;
 pub(crate) mod staging;
 
 use super::super::{NeverDispatchedLocalSharedCapture, SharedStateCapture};
-use super::{self as crypto, EncryptedLocalSharedStatePackage, LocalSharedStatePackageKey};
+use super::{self as crypto, LocalSharedStatePackageKey};
 use catalog::{Artifact, Declaration, Image, Images};
 use codec::*;
 use zeroize::Zeroizing;
@@ -236,29 +236,25 @@ fn manifest_plaintext(d: &Descriptor, stats: &domain::Stats) -> Vec<u8> {
 pub(super) fn build(
     capture: &NeverDispatchedLocalSharedCapture,
     context: crypto::LocalSharedStatePackageContext,
-    images: &[crypto::EncryptedLocalSharedStateImage],
-    image_mappings: &[crypto::PrivateImageMapping],
+    images: &[crypto::EncryptedImage],
     key: &LocalSharedStatePackageKey,
     membership_predecessor: [u8; 32],
-) -> Result<EncryptedLocalSharedStatePackage> {
+) -> Result<Package> {
     let stream_id =
         crypto::decode_context_id(capture.stream_id(), "stream").map_err(|_| Error::Invalid)?;
     let bootstrap = crypto::decode_context_id(capture.candidate_id(), "candidate")
         .map_err(|_| Error::Invalid)?;
-    let frozen_mappings = image_mappings
+    let objects = images
         .iter()
-        .map(|m| (m.source_sha256.as_str(), m.object_id))
+        .map(|image| (image.sha256.as_str(), image.object_id))
         .collect::<std::collections::HashMap<_, _>>();
     let mappings = capture
         .images
         .iter()
-        .map(|r| {
-            let object = frozen_mappings.get(r.sha256.as_str()).copied();
-            domain::Mapping {
-                sha256: r.sha256.clone(),
-                classification: r.classification.clone(),
-                object,
-            }
+        .map(|r| domain::Mapping {
+            sha256: r.sha256.clone(),
+            classification: r.classification.clone(),
+            object: objects.get(r.sha256.as_str()).copied(),
         })
         .collect::<Vec<_>>();
     let (plaintext, stats) = domain::encode(&capture.capture.snapshot.tables, &mappings)?;
@@ -271,9 +267,9 @@ pub(super) fn build(
     let objects = images
         .iter()
         .map(|image| {
-            let mapping = image_mappings
+            let mapping = mappings
                 .iter()
-                .find(|m| m.object_id == image.object_id)
+                .find(|m| m.object == Some(image.object_id))
                 .ok_or(Error::Invalid)?;
             Ok(Image {
                 id: image.object_id,
@@ -347,19 +343,8 @@ pub(super) fn build(
         manifest: artifact_records(&manifest),
         images: image_records,
     };
-    let local = EncryptedLocalSharedStatePackage {
-        candidate_id: capture.candidate_id().to_owned(),
-        stream_id,
-        context,
-        state,
-        manifest,
-        images: images.to_vec(),
-        image_mappings: image_mappings.to_vec(),
-        descriptor: package.descriptor.clone(),
-        catalogs: package.catalogs.clone(),
-    };
-    validate_against_capture(&package, capture, &local, key, membership_predecessor)?;
-    Ok(local)
+    validate_against_capture(&package, capture, key, membership_predecessor)?;
+    Ok(package)
 }
 
 /// Authenticates all domain, manifest and image bytes under the supplied key and
@@ -383,8 +368,11 @@ pub fn authenticate(
     Ok(())
 }
 
-pub(super) fn membership(package: &EncryptedLocalSharedStatePackage) -> Result<[u8; 32]> {
-    Ok(Descriptor::decode(&package.descriptor)?.membership)
+pub(super) fn context_and_membership(
+    package: &Package,
+) -> Result<(crypto::LocalSharedStatePackageContext, [u8; 32])> {
+    let d = Descriptor::decode(&package.descriptor)?;
+    Ok((d.context(), d.membership))
 }
 
 /// Checks exact clear commitments, framing, canonical coverage and all selected
@@ -543,49 +531,25 @@ fn decrypt_metadata(
     Ok((capture, mappings))
 }
 
-fn validate_local_metadata(local: &EncryptedLocalSharedStatePackage) -> Result<()> {
-    let d = Descriptor::decode(&local.descriptor)?;
-    valid(
-        d.context() == local.context
-            && d.stream == local.stream_id
-            && d.bootstrap
-                == crypto::decode_context_id(local.candidate_id(), "candidate")
-                    .map_err(|_| Error::Invalid)?,
-    )?;
-    valid(Artifact::from_encrypted(&local.state)? == decode_state_catalog(&local.catalogs[0])?)?;
-    valid(Artifact::from_encrypted(&local.manifest)? == d.manifest)?;
-    let images = Images::decode(&local.catalogs[2])?;
-    valid(images.objects.len() == local.images.len())?;
-    for image in &local.images {
-        let object = images
-            .objects
-            .iter()
-            .find(|o| o.id == image.object_id)
-            .ok_or(Error::Invalid)?;
-        valid(Artifact::from_encrypted(&image.artifact)? == object.artifact)?;
-    }
-    Ok(())
-}
-
-pub(super) fn decrypt_local(
-    local: &EncryptedLocalSharedStatePackage,
+/// Authenticates and decrypts the complete package into installable state.
+pub(super) fn decrypt_capture(
+    package: &Package,
     key: &LocalSharedStatePackageKey,
 ) -> Result<SharedStateCapture> {
-    validate_local_metadata(local)?;
-    let (capture, mappings) = decrypt_domain(&local.upload_package(), key)?;
-    let mut selected = mappings
-        .into_iter()
-        .filter_map(|mapping| {
-            mapping.object.map(|object_id| crypto::PrivateImageMapping {
-                source_sha256: mapping.sha256,
-                classification: mapping.classification,
-                object_id,
-            })
-        })
-        .collect::<Vec<_>>();
-    selected.sort_by(|a, b| a.source_sha256.cmp(&b.source_sha256));
-    valid(selected == local.image_mappings)?;
-    Ok(capture)
+    Ok(decrypt_domain(package, key)?.0)
+}
+
+/// Returns every selected image's private hash and authenticated plaintext.
+#[cfg(test)]
+pub(super) fn decrypt_images(
+    package: &Package,
+    key: &LocalSharedStatePackageKey,
+) -> Result<Vec<(String, Zeroizing<Vec<u8>>)>> {
+    let mut images = Vec::new();
+    decrypt_domain_images(package, key, |sha256, bytes| {
+        images.push((sha256.to_string(), bytes));
+    })?;
+    Ok(images)
 }
 
 /// Client-side check against the immutable source, not live rows. Also checks
@@ -594,25 +558,14 @@ pub(super) fn decrypt_local(
 pub fn validate_against_capture(
     package: &Package,
     capture: &NeverDispatchedLocalSharedCapture,
-    local: &EncryptedLocalSharedStatePackage,
     key: &LocalSharedStatePackageKey,
     membership_predecessor: [u8; 32],
 ) -> Result<()> {
-    validate_local_metadata(local)?;
     let d = Descriptor::decode(&package.descriptor)?;
     valid(
-        d.context() == local.context
-            && d.stream == local.stream_id
-            && d.membership == membership_predecessor,
-    )?;
-    valid(
-        capture.candidate_id() == local.candidate_id()
-            && capture.stream_id() == hex::encode(d.stream),
-    )?;
-    valid(
-        d.bootstrap
-            == crypto::decode_context_id(local.candidate_id(), "candidate")
-                .map_err(|_| Error::Invalid)?,
+        d.membership == membership_predecessor
+            && capture.stream_id() == hex::encode(d.stream)
+            && capture.candidate_id() == hex::encode(d.bootstrap),
     )?;
     let (decoded, mappings) = decrypt_domain(package, key)?;
     valid(
@@ -625,27 +578,11 @@ pub fn validate_against_capture(
         .iter()
         .map(|r| (r.sha256.as_str(), r.classification.as_str()))
         .collect::<std::collections::HashMap<_, _>>();
-    let frozen_mappings = local
-        .image_mappings
-        .iter()
-        .map(|m| (m.source_sha256.as_str(), m.object_id))
-        .collect::<std::collections::HashMap<_, _>>();
     for mapping in &mappings {
         valid(
             captured_images.get(mapping.sha256.as_str()).copied()
                 == Some(mapping.classification.as_str()),
         )?;
-        let expected = frozen_mappings.get(mapping.sha256.as_str()).copied();
-        valid(mapping.object == expected)?;
-    }
-    valid(package.images.len() == local.images.len())?;
-    for image in &package.images {
-        let original = local
-            .images
-            .iter()
-            .find(|i| i.object_id == image.object_id)
-            .ok_or(Error::Invalid)?;
-        valid(image.records == artifact_records(&original.artifact))?;
     }
     Ok(())
 }

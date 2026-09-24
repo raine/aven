@@ -22,8 +22,6 @@ pub use session::{
 pub use shared_state::adoption::{SeedPublicationIntent, SeedSourceAuthority};
 pub use shared_state::bootstrap_format;
 pub use shared_state::{
-    DecryptedLocalSharedStateImage, EncryptedLocalSharedStateImage,
     EncryptedLocalSharedStatePackage, LocalSharedStatePackageContext, LocalSharedStatePackageKey,
     NeverDispatchedLocalSharedCapture, SharedStateCapture, SharedStateInstallReport,
-    decrypt_local_shared_state_package_images,
 };

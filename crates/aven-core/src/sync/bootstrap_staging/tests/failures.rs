@@ -480,13 +480,23 @@ async fn keyless_staging_does_not_establish_arbitrary_domain_validity() {
         )
         .await
         .unwrap();
+    let capture = f
+        .source
+        .resume_local_shared_state_never_dispatched()
+        .await
+        .unwrap()
+        .unwrap();
+    let stream: [u8; 32] = hex::decode(capture.stream_id())
+        .unwrap()
+        .try_into()
+        .unwrap();
     assert!(local.upload_package() == original);
     assert!(
         bootstrap_format::authenticate(
             &f.package,
             &f.key,
             f.seed.genesis().context(),
-            *local.stream_id(),
+            stream,
             f.id,
             f.seed.genesis().commitment()
         )

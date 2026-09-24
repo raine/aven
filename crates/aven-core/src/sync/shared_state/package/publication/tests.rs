@@ -1,3 +1,4 @@
+use super::super::EncryptedLocalSharedStatePackage;
 use super::super::test_support::*;
 use super::*;
 use crate::operations::TaskUpdate;
@@ -199,7 +200,7 @@ async fn real_capture_round_trip_images_privacy_and_unchanged_local_retry() {
     )
     .await
     .unwrap();
-    validate_against_capture(&package, &capture, &local, &package_key(), [0x64; 32]).unwrap();
+    validate_against_capture(&package, &capture, &package_key(), [0x64; 32]).unwrap();
     let retry = db
         .package_local_shared_state_never_dispatched(
             dir.path(),
@@ -215,16 +216,15 @@ async fn real_capture_round_trip_images_privacy_and_unchanged_local_retry() {
         .await
         .unwrap()
         .unwrap();
-    validate_against_capture(&package, &resumed, &retry, &package_key(), [0x64; 32]).unwrap();
+    validate_against_capture(&package, &resumed, &package_key(), [0x64; 32]).unwrap();
     let rebuilt = retry.upload_package();
     assert_eq!(package.descriptor, rebuilt.descriptor);
     assert!(package.images == rebuilt.images);
-    assert!(validate_against_capture(&package, &capture, &local, &package_key(), [0; 32]).is_err());
+    assert!(validate_against_capture(&package, &capture, &package_key(), [0; 32]).is_err());
     assert!(
         validate_against_capture(
             &package,
             &capture,
-            &local,
             &LocalSharedStatePackageKey::new([9; 32]),
             [0x64; 32]
         )
@@ -234,7 +234,7 @@ async fn real_capture_round_trip_images_privacy_and_unchanged_local_retry() {
 
 #[tokio::test]
 async fn keyless_rejects_incomplete_mutated_reordered_and_recommitted_catalogs() {
-    let (_, _, capture, local, package) = specimen().await;
+    let (_, _, capture, _, package) = specimen().await;
     for index in 0..3 {
         let mut bad = package.clone();
         bad.catalogs[index].pop();
@@ -292,7 +292,7 @@ async fn keyless_rejects_incomplete_mutated_reordered_and_recommitted_catalogs()
     bad.catalogs[1] = catalog::prefix_encode(&rows).unwrap();
     recommit_catalog(&mut bad, 1);
     validate_keyless(&bad).unwrap();
-    assert!(validate_against_capture(&bad, &capture, &local, &package_key(), [0x64; 32]).is_err());
+    assert!(validate_against_capture(&bad, &capture, &package_key(), [0x64; 32]).is_err());
 }
 
 #[tokio::test]
@@ -425,7 +425,7 @@ async fn unavailable_reference_has_no_object_or_byte_obligation() {
     assert_eq!(catalog.references.len(), 1);
     assert!(catalog.references[0].deleted);
     assert_eq!(catalog.references[0].object, None);
-    validate_against_capture(&package, &capture, &local, &package_key(), [0x64; 32]).unwrap();
+    validate_against_capture(&package, &capture, &package_key(), [0x64; 32]).unwrap();
     let mut bad = package;
     let mut catalog = catalog;
     catalog.references[0].object = Some([88; 32]);
@@ -481,7 +481,7 @@ async fn empty_capture_and_records_spanning_transport_chunks() {
         .unwrap();
     let package = local.upload_package();
     assert!(package.state.len() > 1);
-    validate_against_capture(&package, &capture, &local, &package_key(), [0x64; 32]).unwrap();
+    validate_against_capture(&package, &capture, &package_key(), [0x64; 32]).unwrap();
     let mut reversed = package.clone();
     reversed.state.reverse();
     assert!(validate_keyless(&reversed).is_err());

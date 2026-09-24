@@ -22,7 +22,8 @@ async fn encrypted_package_round_trips_and_retries_exact_bytes() {
         .unwrap();
     let mut conn = source.acquire_writer().await.unwrap();
     let records: Vec<Vec<u8>> = sqlx::query_scalar(
-        "SELECT record FROM local_shared_capture_package_chunks ORDER BY class, chunk_index",
+        "SELECT record FROM local_shared_capture_package_records
+         ORDER BY component, object_id, chunk_index",
     )
     .fetch_all(&mut *conn)
     .await
@@ -80,7 +81,7 @@ async fn encrypted_package_round_trips_and_retries_exact_bytes() {
         .await
         .unwrap();
     assert_eq!(first, retry);
-    let decrypted = decrypt_package(&retry, &key).unwrap();
+    let decrypted = publication::decrypt_capture(&retry.upload_package(), &key).unwrap();
     assert_eq!(sorted_tables(&decrypted), original_snapshot);
     let mut different_context = package_context();
     different_context.generation_id[0] ^= 1;
@@ -158,8 +159,8 @@ async fn encrypted_package_round_trips_and_retries_exact_bytes() {
     let remaining: (i64, i64, i64) = sqlx::query_as(
         "SELECT
              (SELECT count(*) FROM local_shared_capture_journal),
-             (SELECT count(*) FROM local_shared_capture_packages),
-             (SELECT count(*) FROM local_shared_capture_package_chunks)",
+             (SELECT count(*) FROM local_shared_capture_publication),
+             (SELECT count(*) FROM local_shared_capture_package_records)",
     )
     .fetch_one(&mut *conn)
     .await
@@ -186,54 +187,45 @@ async fn selected_images_round_trip_and_retry_exact_persisted_ciphertext_after_r
         )
         .await
         .unwrap();
-    assert_eq!(first.images().len(), 2);
-    assert_ne!(first.images()[0].object_id(), first.images()[1].object_id());
-    let decrypted = decrypt_local_shared_state_package_images(&first, &key).unwrap();
-    let recovered = decrypted
-        .iter()
-        .map(|image| (image.source_sha256().to_string(), image.bytes().to_vec()))
+    let upload = first.upload_package();
+    assert_eq!(upload.images.len(), 2);
+    assert_ne!(upload.images[0].object_id, upload.images[1].object_id);
+    let current_hash = crate::attachments::storage::sha256_hex(&current);
+    let recovered = publication::decrypt_images(&upload, &key)
+        .unwrap()
+        .into_iter()
+        .map(|(sha256, bytes)| (sha256, bytes.to_vec()))
         .collect::<std::collections::HashMap<_, _>>();
     assert_eq!(
-        recovered[&crate::attachments::storage::sha256_hex(&current)],
-        current
-    );
-    assert_eq!(recovered[&extra_hash], extra);
-    assert!(
-        decrypted
-            .iter()
-            .any(|image| image.classification() == "current_selected")
-    );
-    assert!(
-        decrypted
-            .iter()
-            .any(|image| image.classification() == "extra_selected")
+        recovered,
+        std::collections::HashMap::from([
+            (current_hash.clone(), current),
+            (extra_hash.clone(), extra)
+        ])
     );
 
     let mut conn = source.acquire_reader().await.unwrap();
     let frozen: Vec<(Vec<u8>, i64, Vec<u8>)> = sqlx::query_as(
         "SELECT object_id, chunk_index, record
-         FROM local_shared_capture_package_image_chunks
+         FROM local_shared_capture_package_records WHERE component = 'image'
          ORDER BY object_id, chunk_index",
     )
     .fetch_all(&mut *conn)
     .await
     .unwrap();
-    let persisted_hashes: Vec<String> = sqlx::query_scalar(
-        "SELECT source_sha256 FROM local_shared_capture_package_images ORDER BY source_sha256",
-    )
-    .fetch_all(&mut *conn)
-    .await
-    .unwrap();
     drop(conn);
-    assert_eq!(persisted_hashes.len(), 2);
-    assert!(!persisted_hashes.contains(&"cd".repeat(32)));
-    for image in first.images() {
-        for (_, record) in image.chunks() {
-            assert!(!persisted_hashes.iter().any(|hash| {
-                record
+    // Private plaintext hashes never appear in clear frozen bytes.
+    let clear = [&upload.descriptor]
+        .into_iter()
+        .chain(&upload.catalogs)
+        .chain(frozen.iter().map(|(_, _, record)| record));
+    for bytes in clear {
+        for hash in [&current_hash, &extra_hash] {
+            assert!(
+                !bytes
                     .windows(hash.len())
                     .any(|window| window == hash.as_bytes())
-            }));
+            );
         }
     }
 
@@ -253,7 +245,7 @@ async fn selected_images_round_trip_and_retry_exact_persisted_ciphertext_after_r
     let mut conn = reopened.acquire_reader().await.unwrap();
     let retried: Vec<(Vec<u8>, i64, Vec<u8>)> = sqlx::query_as(
         "SELECT object_id, chunk_index, record
-         FROM local_shared_capture_package_image_chunks
+         FROM local_shared_capture_package_records WHERE component = 'image'
          ORDER BY object_id, chunk_index",
     )
     .fetch_all(&mut *conn)
@@ -270,8 +262,8 @@ async fn selected_images_round_trip_and_retry_exact_persisted_ciphertext_after_r
     let mut conn = reopened.acquire_reader().await.unwrap();
     let remaining: (i64, i64, i64) = sqlx::query_as(
         "SELECT
-             (SELECT count(*) FROM local_shared_capture_package_images),
-             (SELECT count(*) FROM local_shared_capture_package_image_chunks),
+             (SELECT count(*) FROM local_shared_capture_publication),
+             (SELECT count(*) FROM local_shared_capture_package_records),
              (SELECT count(*) FROM local_shared_capture_pins)",
     )
     .fetch_one(&mut *conn)
@@ -299,49 +291,61 @@ async fn incomplete_image_package_rejects_selected_capture_without_rewrite() {
         .await
         .unwrap();
     let mut conn = source.acquire_writer().await.unwrap();
-    sqlx::query("DELETE FROM local_shared_capture_package_images")
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-    let frozen: Vec<(i64, i64, Vec<u8>)> = sqlx::query_as(
-        "SELECT class, chunk_index, record
-         FROM local_shared_capture_package_chunks ORDER BY class, chunk_index",
+    sqlx::query(
+        "DELETE FROM local_shared_capture_package_records
+         WHERE component = 'image' AND object_id = (
+             SELECT min(object_id) FROM local_shared_capture_package_records
+             WHERE component = 'image'
+         )",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    let frozen: Vec<(String, Vec<u8>, i64, Vec<u8>)> = sqlx::query_as(
+        "SELECT component, object_id, chunk_index, record
+         FROM local_shared_capture_package_records
+         ORDER BY component, object_id, chunk_index",
     )
     .fetch_all(&mut *conn)
     .await
     .unwrap();
     drop(conn);
 
-    let error = source
-        .package_local_shared_state_never_dispatched(
-            source_dir.path(),
-            package_context(),
-            &key,
-            [0x64; 32],
-        )
-        .await
-        .unwrap_err();
-    assert!(error.to_string().contains("image-coverage-mismatch"));
+    for _ in 0..2 {
+        let error = source
+            .package_local_shared_state_never_dispatched(
+                source_dir.path(),
+                package_context(),
+                &key,
+                [0x64; 32],
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("frozen-records-invalid"),
+            "{error:#}"
+        );
+    }
 
     let mut conn = source.acquire_reader().await.unwrap();
-    let after: Vec<(i64, i64, Vec<u8>)> = sqlx::query_as(
-        "SELECT class, chunk_index, record
-         FROM local_shared_capture_package_chunks ORDER BY class, chunk_index",
+    let after: Vec<(String, Vec<u8>, i64, Vec<u8>)> = sqlx::query_as(
+        "SELECT component, object_id, chunk_index, record
+         FROM local_shared_capture_package_records
+         ORDER BY component, object_id, chunk_index",
     )
     .fetch_all(&mut *conn)
     .await
     .unwrap();
-    let counts: (i64, i64, i64) = sqlx::query_as(
+    let counts: (i64, i64) = sqlx::query_as(
         "SELECT
-             (SELECT count(*) FROM local_shared_capture_packages),
-             (SELECT count(*) FROM local_shared_capture_package_images),
+             (SELECT count(*) FROM local_shared_capture_publication),
              (SELECT count(*) FROM local_shared_capture_pins)",
     )
     .fetch_one(&mut *conn)
     .await
     .unwrap();
     assert_eq!(after, frozen);
-    assert_eq!(counts, (1, 0, 2));
+    assert_eq!(counts, (1, 2));
 }
 
 #[tokio::test]
@@ -377,7 +381,7 @@ async fn selected_source_failure_preserves_pins_and_allows_cancellation_cleanup(
         let mut conn = source.acquire_reader().await.unwrap();
         let counts: (i64, i64) = sqlx::query_as(
             "SELECT
-                 (SELECT count(*) FROM local_shared_capture_packages),
+                 (SELECT count(*) FROM local_shared_capture_publication),
                  (SELECT count(*) FROM local_shared_capture_pins)",
         )
         .fetch_one(&mut *conn)
@@ -406,7 +410,7 @@ async fn freeze_and_pin_counts(database: &Database) -> (i64, i64, i64) {
         "SELECT
              (SELECT count(*) FROM local_shared_capture_journal
               WHERE frozen_descriptor_commitment IS NOT NULL),
-             (SELECT count(*) FROM local_shared_capture_packages),
+             (SELECT count(*) FROM local_shared_capture_publication),
              (SELECT count(*) FROM local_shared_capture_pins)",
     )
     .fetch_one(&mut *conn)
@@ -550,7 +554,8 @@ async fn wrong_key_and_interrupted_persistence_leave_no_install_or_partial_packa
         .unwrap();
     let mut conn = source.acquire_writer().await.unwrap();
     sqlx::query(
-        "CREATE TRIGGER fail_image_chunk BEFORE INSERT ON local_shared_capture_package_image_chunks
+        "CREATE TRIGGER fail_image_chunk BEFORE INSERT ON local_shared_capture_package_records
+         WHEN NEW.component = 'image'
          BEGIN SELECT RAISE(ABORT, 'injected package failure'); END",
     )
     .execute(&mut *conn)
@@ -570,17 +575,17 @@ async fn wrong_key_and_interrupted_persistence_leave_no_install_or_partial_packa
             .is_err()
     );
     let mut conn = source.acquire_writer().await.unwrap();
-    let package_counts: (i64, i64, i64, i64) = sqlx::query_as(
+    let package_counts: (i64, i64, i64) = sqlx::query_as(
         "SELECT
-             (SELECT count(*) FROM local_shared_capture_packages),
-             (SELECT count(*) FROM local_shared_capture_package_chunks),
-             (SELECT count(*) FROM local_shared_capture_package_images),
-             (SELECT count(*) FROM local_shared_capture_package_image_chunks)",
+             (SELECT count(*) FROM local_shared_capture_publication),
+             (SELECT count(*) FROM local_shared_capture_package_records),
+             (SELECT count(*) FROM local_shared_capture_journal
+              WHERE frozen_descriptor_commitment IS NOT NULL)",
     )
     .fetch_one(&mut *conn)
     .await
     .unwrap();
-    assert_eq!(package_counts, (0, 0, 0, 0));
+    assert_eq!(package_counts, (0, 0, 0));
     sqlx::query("DROP TRIGGER fail_image_chunk")
         .execute(&mut *conn)
         .await
@@ -765,36 +770,31 @@ async fn persisted_ciphertext_corruption_blocks_resume_without_repackaging() {
         .unwrap();
     let mut conn = source.acquire_writer().await.unwrap();
     sqlx::query(
-        "UPDATE local_shared_capture_package_image_chunks
+        "UPDATE local_shared_capture_package_records
          SET record = substr(record, 1, length(record) - 1)
-         WHERE chunk_index = 0",
-    )
-    .execute(&mut *conn)
-    .await
-    .unwrap_err();
-    sqlx::query(
-        "UPDATE local_shared_capture_package_image_chunks
-         SET record_commitment = zeroblob(32)
-         WHERE chunk_index = 0",
+         WHERE component = 'image' AND chunk_index = 0",
     )
     .execute(&mut *conn)
     .await
     .unwrap();
     drop(conn);
-    assert!(
-        source
-            .package_local_shared_state_never_dispatched(
-                source_dir.path(),
-                package_context(),
-                &package_key(),
-                [0x64; 32]
-            )
-            .await
-            .is_err()
-    );
+    for _ in 0..2 {
+        assert!(
+            source
+                .package_local_shared_state_never_dispatched(
+                    source_dir.path(),
+                    package_context(),
+                    &package_key(),
+                    [0x64; 32]
+                )
+                .await
+                .is_err()
+        );
+    }
+    assert_eq!(freeze_and_pin_counts(&source).await, (1, 1, 2));
 }
 
-fn sorted_tables(capture: &SharedStateCapture) -> serde_json::Value {
+fn sorted_tables(capture: &super::super::SharedStateCapture) -> serde_json::Value {
     let mut tables = serde_json::to_value(&capture.snapshot.tables).unwrap();
     for rows in tables.as_object_mut().unwrap().values_mut() {
         rows.as_array_mut()

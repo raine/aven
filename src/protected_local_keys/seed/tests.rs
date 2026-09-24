@@ -248,8 +248,13 @@ async fn frozen_incompatible_package_refuses_and_explicit_recapture_preserves_ke
         .await
         .unwrap();
     assert_ne!(package.candidate_id(), frozen.candidate_id());
-    assert_ne!(package.stream_id(), frozen.stream_id());
-    assert_eq!(package.context(), frozen.context());
+    // Profile-1 descriptors start with 7 magic bytes, then vault, stream and
+    // generation IDs.
+    let recaptured = package.upload_package().descriptor;
+    let frozen = frozen.upload_package().descriptor;
+    assert_ne!(recaptured[39..71], frozen[39..71]);
+    assert_eq!(recaptured[7..39], frozen[7..39]);
+    assert_eq!(recaptured[71..103], frozen[71..103]);
     assert_eq!(original, fs::read(package_path(&store)).unwrap());
     assert_eq!(
         seed.protected_storage_bytes(),

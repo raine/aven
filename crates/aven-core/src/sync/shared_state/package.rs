@@ -10,28 +10,22 @@ use hkdf::Hkdf;
 use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, Zeroizing};
 
-use super::{LOCAL_CAPTURE_STATE, NeverDispatchedLocalSharedCapture, SharedStateCapture};
+use super::{LOCAL_CAPTURE_STATE, NeverDispatchedLocalSharedCapture};
 use crate::data_safety::export_types::AvenExport;
 use crate::db::{self, Database};
 
-const PACKAGE_STORAGE_VERSION: i64 = 1;
-const PACKAGE_SUITE: i64 = 1;
 const CHUNK_PLAINTEXT_BYTES: usize = 1_048_576;
 const CHUNK_HEADER_BYTES: usize = 198;
 const CHUNK_RECORD_OVERHEAD: usize = 222;
-const MAX_STATE_PLAINTEXT_BYTES: usize = 256 * 1024 * 1024;
 const MAX_STATE_CHUNKS: usize = 256;
-const MAX_MANIFEST_PLAINTEXT_BYTES: usize = 1024 * 1024;
 const MAX_IMAGE_PLAINTEXT_BYTES: usize = crate::attachments::validation::MAX_BLOB_BYTES;
-const MAX_IMAGE_CHUNKS: usize = 25;
 const MAX_PACKAGE_IMAGE_COUNT: usize = 1024;
 const MAX_PACKAGE_IMAGE_PLAINTEXT_BYTES: usize = 256 * 1024 * 1024;
 const IMAGE_FAMILY: u8 = 1;
 const IMAGE_CLASS: u8 = 0;
-const STATE_CLASS: u8 = 1;
-const MANIFEST_CLASS: u8 = 2;
-
-type ChunkRow = (i64, i64, i64, Vec<u8>, Vec<u8>);
+const STATE_COMPONENT: &str = "state";
+const MANIFEST_COMPONENT: &str = "manifest";
+const IMAGE_COMPONENT: &str = "image";
 
 /// Public cryptographic context supplied by the future vault owner.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,22 +76,16 @@ impl Drop for LocalSharedStatePackageKey {
     }
 }
 
-/// Exact encrypted bytes for one local bootstrap package.
+/// Exact frozen upload components for the one never-dispatched local package.
 ///
-/// This value is transferable between local databases, but has no dispatch or
-/// publication behavior. Upload components use the experimental publication codec;
-/// this is not a security-approved production wire contract.
+/// The descriptor commits to the catalogs, and the catalogs commit to every
+/// encrypted record, so this value has no separately stored metadata. It has
+/// no dispatch or publication behavior. Upload components use the experimental
+/// publication codec; this is not a security-approved production wire contract.
 #[derive(Clone, PartialEq, Eq)]
 pub struct EncryptedLocalSharedStatePackage {
     candidate_id: String,
-    stream_id: [u8; 32],
-    context: LocalSharedStatePackageContext,
-    state: EncryptedArtifact,
-    manifest: EncryptedArtifact,
-    images: Vec<EncryptedLocalSharedStateImage>,
-    image_mappings: Vec<PrivateImageMapping>,
-    descriptor: Vec<u8>,
-    catalogs: [Vec<u8>; 3],
+    upload: publication::Package,
 }
 
 impl fmt::Debug for EncryptedLocalSharedStatePackage {
@@ -105,177 +93,26 @@ impl fmt::Debug for EncryptedLocalSharedStatePackage {
         formatter
             .debug_struct("EncryptedLocalSharedStatePackage")
             .field("candidate_id", &self.candidate_id)
-            .field("stream_id", &self.stream_id)
-            .field("context", &self.context)
-            .field("state", &self.state)
-            .field("manifest", &self.manifest)
-            .field("image_count", &self.images.len())
+            .field("state_records", &self.upload.state.len())
+            .field("manifest_records", &self.upload.manifest.len())
+            .field("image_count", &self.upload.images.len())
             .finish()
     }
 }
 
 impl EncryptedLocalSharedStatePackage {
     pub(crate) fn descriptor(&self) -> &[u8] {
-        &self.descriptor
+        &self.upload.descriptor
     }
 
     /// Copies the exact frozen descriptor, catalogs and encrypted records.
     /// Returning these bytes does not make this local package dispatchable.
     pub fn upload_package(&self) -> publication::Package {
-        let mut images = self
-            .images
-            .iter()
-            .map(|image| publication::ImageRecords {
-                object_id: image.object_id,
-                records: image
-                    .artifact
-                    .chunks
-                    .iter()
-                    .map(|chunk| chunk.record.clone())
-                    .collect(),
-            })
-            .collect::<Vec<_>>();
-        images.sort_by_key(|image| image.object_id);
-        publication::Package {
-            descriptor: self.descriptor.clone(),
-            catalogs: self.catalogs.clone(),
-            state: self
-                .state
-                .chunks
-                .iter()
-                .map(|chunk| chunk.record.clone())
-                .collect(),
-            manifest: self
-                .manifest
-                .chunks
-                .iter()
-                .map(|chunk| chunk.record.clone())
-                .collect(),
-            images,
-        }
+        self.upload.clone()
     }
 
     pub fn candidate_id(&self) -> &str {
         &self.candidate_id
-    }
-
-    pub fn stream_id(&self) -> &[u8; 32] {
-        &self.stream_id
-    }
-
-    pub fn context(&self) -> LocalSharedStatePackageContext {
-        self.context
-    }
-
-    pub fn state_chunk_count(&self) -> usize {
-        self.state.chunks.len()
-    }
-
-    pub fn state_total_plaintext_bytes(&self) -> u64 {
-        self.state.total_plaintext_bytes
-    }
-
-    pub fn manifest_chunk_count(&self) -> usize {
-        self.manifest.chunks.len()
-    }
-
-    pub fn manifest_total_plaintext_bytes(&self) -> u64 {
-        self.manifest.total_plaintext_bytes
-    }
-
-    pub fn state_aggregate_commitment(&self) -> &[u8; 32] {
-        &self.state.aggregate_commitment
-    }
-
-    pub fn manifest_aggregate_commitment(&self) -> &[u8; 32] {
-        &self.manifest.aggregate_commitment
-    }
-
-    pub fn images(&self) -> &[EncryptedLocalSharedStateImage] {
-        &self.images
-    }
-
-    pub fn state_chunks(&self) -> impl ExactSizeIterator<Item = (&[u8; 32], &[u8])> {
-        self.state
-            .chunks
-            .iter()
-            .map(|chunk| (&chunk.record_commitment, chunk.record.as_slice()))
-    }
-
-    pub fn manifest_chunks(&self) -> impl ExactSizeIterator<Item = (&[u8; 32], &[u8])> {
-        self.manifest
-            .chunks
-            .iter()
-            .map(|chunk| (&chunk.record_commitment, chunk.record.as_slice()))
-    }
-}
-
-/// One opaque encrypted image representation in a local capture package.
-///
-/// The descriptor exposes no plaintext hash or attachment metadata. Those
-/// mappings remain inside encrypted domain records and local private persistence.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EncryptedLocalSharedStateImage {
-    object_id: [u8; 32],
-    artifact: EncryptedArtifact,
-}
-
-impl EncryptedLocalSharedStateImage {
-    pub fn object_id(&self) -> &[u8; 32] {
-        &self.object_id
-    }
-
-    pub fn total_plaintext_bytes(&self) -> u64 {
-        self.artifact.total_plaintext_bytes
-    }
-
-    pub fn aggregate_commitment(&self) -> &[u8; 32] {
-        &self.artifact.aggregate_commitment
-    }
-
-    pub fn chunks(&self) -> impl ExactSizeIterator<Item = (&[u8; 32], &[u8])> {
-        self.artifact
-            .chunks
-            .iter()
-            .map(|chunk| (&chunk.record_commitment, chunk.record.as_slice()))
-    }
-}
-
-/// Authenticated plaintext recovered from a local image package.
-#[derive(PartialEq, Eq)]
-pub struct DecryptedLocalSharedStateImage {
-    source_sha256: String,
-    classification: String,
-    object_id: [u8; 32],
-    bytes: Zeroizing<Vec<u8>>,
-}
-
-impl fmt::Debug for DecryptedLocalSharedStateImage {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("DecryptedLocalSharedStateImage")
-            .field("classification", &self.classification)
-            .field("object_id", &self.object_id)
-            .field("byte_count", &self.bytes.len())
-            .finish()
-    }
-}
-
-impl DecryptedLocalSharedStateImage {
-    pub fn source_sha256(&self) -> &str {
-        &self.source_sha256
-    }
-
-    pub fn classification(&self) -> &str {
-        &self.classification
-    }
-
-    pub fn object_id(&self) -> &[u8; 32] {
-        &self.object_id
-    }
-
-    pub fn bytes(&self) -> &[u8] {
-        &self.bytes
     }
 }
 
@@ -292,16 +129,15 @@ pub(crate) struct EncryptedChunk {
     pub(crate) record: Vec<u8>,
 }
 
-#[derive(Clone, PartialEq, Eq)]
-struct PrivateImageMapping {
-    source_sha256: String,
-    classification: String,
-    object_id: [u8; 32],
+/// One freshly encrypted selected image, before the package is assembled.
+pub(super) struct EncryptedImage {
+    pub(super) sha256: String,
+    pub(super) object_id: [u8; 32],
+    pub(super) artifact: EncryptedArtifact,
 }
 
 struct SelectedImagePlaintext {
     source_sha256: String,
-    classification: String,
     bytes: Zeroizing<Vec<u8>>,
 }
 
@@ -312,7 +148,7 @@ impl Database {
     pub async fn has_local_shared_state_package_never_dispatched(&self) -> Result<bool> {
         let mut conn = self.acquire_reader().await?;
         let exists: i64 = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM local_shared_capture_packages LIMIT 1)
+            "SELECT EXISTS(SELECT 1 FROM local_shared_capture_publication LIMIT 1)
                  OR EXISTS(SELECT 1 FROM local_shared_capture_journal
                            WHERE frozen_descriptor_commitment IS NOT NULL)",
         )
@@ -323,8 +159,8 @@ impl Database {
 
     /// Encrypts the durable never-dispatched capture or returns its frozen package.
     ///
-    /// The first successful call freezes descriptor, catalogs, ciphertext and
-    /// image mappings in one SQLite transaction under the capture candidate ID.
+    /// The first successful call freezes the descriptor, catalogs and encrypted
+    /// records in one SQLite transaction under the capture candidate ID.
     /// Tentative preparation before that commit can be retried. Later calls
     /// authenticate and return the exact saved bytes without reading image files.
     /// `membership_predecessor` is context only, not proof of authorization.
@@ -343,7 +179,6 @@ impl Database {
             .await?
             .context("error local-shared-capture-missing")?;
         let candidate_id = capture.candidate_id().to_string();
-        let stream_id = decode_context_id(capture.stream_id(), "stream")?;
 
         let mut conn = self.acquire_writer().await?;
         let mut tx = db::begin_immediate(&mut conn).await?;
@@ -358,15 +193,7 @@ impl Database {
         .await?;
         if let Some(package) = load_package(&mut tx, &candidate_id).await? {
             tx.commit().await?;
-            validate_package_identity(&package, context, stream_id, membership_predecessor)?;
-            validate_package_image_coverage(&package, &selected_inventory)?;
-            publication::validate_against_capture(
-                &package.upload_package(),
-                &capture,
-                &package,
-                key,
-                membership_predecessor,
-            )?;
+            validate_frozen(&package, &capture, context, key, membership_predecessor)?;
             return Ok(package);
         }
         tx.commit().await?;
@@ -401,15 +228,7 @@ impl Database {
         .await?;
         if let Some(existing) = load_package(&mut tx, &candidate_id).await? {
             tx.commit().await?;
-            validate_package_identity(&existing, context, stream_id, membership_predecessor)?;
-            validate_package_image_coverage(&existing, &selected_inventory)?;
-            publication::validate_against_capture(
-                &existing.upload_package(),
-                &capture,
-                &existing,
-                key,
-                membership_predecessor,
-            )?;
+            validate_frozen(&existing, &capture, context, key, membership_predecessor)?;
             return Ok(existing);
         }
         persist_package(&mut tx, &package).await?;
@@ -433,48 +252,9 @@ impl Database {
         package: &EncryptedLocalSharedStatePackage,
         key: &LocalSharedStatePackageKey,
     ) -> Result<super::SharedStateInstallReport> {
-        let capture = decrypt_package(package, key)?;
+        let capture = publication::decrypt_capture(&package.upload, key)?;
         self.install_shared_state(&capture).await
     }
-}
-
-/// Authenticates and decrypts all image objects in a local capture package.
-///
-/// This local API returns private plaintext mappings. It is not a network
-/// descriptor or publication format.
-pub fn decrypt_local_shared_state_package_images(
-    package: &EncryptedLocalSharedStatePackage,
-    key: &LocalSharedStatePackageKey,
-) -> Result<Vec<DecryptedLocalSharedStateImage>> {
-    decrypt_package(package, key)?;
-    package
-        .image_mappings
-        .iter()
-        .map(|mapping| {
-            let image = package
-                .images
-                .iter()
-                .find(|image| image.object_id == mapping.object_id)
-                .context("error encrypted-local-shared-package-image-descriptor-mismatch")?;
-            let image_key = derive_image_key(key, package.context, image.object_id)?;
-            let bytes = decrypt_artifact(
-                &image.artifact,
-                package.context,
-                package.stream_id,
-                image.object_id,
-                IMAGE_FAMILY,
-                IMAGE_CLASS,
-                &image_key,
-                MAX_IMAGE_PLAINTEXT_BYTES,
-            )?;
-            Ok(DecryptedLocalSharedStateImage {
-                source_sha256: mapping.source_sha256.clone(),
-                classification: mapping.classification.clone(),
-                object_id: image.object_id,
-                bytes: Zeroizing::new(bytes),
-            })
-        })
-        .collect()
 }
 
 fn encrypt_package(
@@ -486,7 +266,6 @@ fn encrypt_package(
 ) -> Result<EncryptedLocalSharedStatePackage> {
     let stream_id = decode_context_id(capture.stream_id(), "stream")?;
     let mut images = Vec::with_capacity(selected_images.len());
-    let mut mappings = Vec::with_capacity(selected_images.len());
     for image in selected_images {
         let object_id = random_id()?;
         let image_key = derive_image_key(key, context, object_id)?;
@@ -499,70 +278,32 @@ fn encrypt_package(
             IMAGE_CLASS,
             &image_key,
         )?;
-        images.push(EncryptedLocalSharedStateImage {
+        images.push(EncryptedImage {
+            sha256: image.source_sha256.clone(),
             object_id,
             artifact,
         });
-        mappings.push(PrivateImageMapping {
-            source_sha256: image.source_sha256.clone(),
-            classification: image.classification.clone(),
-            object_id,
-        });
     }
-    Ok(publication::build(
-        capture,
-        context,
-        &images,
-        &mappings,
-        key,
-        membership_predecessor,
-    )?)
+    Ok(EncryptedLocalSharedStatePackage {
+        candidate_id: capture.candidate_id().to_string(),
+        upload: publication::build(capture, context, &images, key, membership_predecessor)?,
+    })
 }
 
-fn decrypt_package(
+/// Checks a frozen package against the caller's expected context and the
+/// independent capture before it is returned.
+fn validate_frozen(
     package: &EncryptedLocalSharedStatePackage,
-    key: &LocalSharedStatePackageKey,
-) -> Result<SharedStateCapture> {
-    Ok(publication::decrypt_local(package, key)?)
-}
-
-fn validate_package_image_coverage(
-    package: &EncryptedLocalSharedStatePackage,
-    selected_inventory: &[(String, String)],
-) -> Result<()> {
-    let stored = package
-        .image_mappings
-        .iter()
-        .map(|mapping| {
-            (
-                mapping.source_sha256.as_str(),
-                mapping.classification.as_str(),
-            )
-        })
-        .collect::<Vec<_>>();
-    let expected = selected_inventory
-        .iter()
-        .map(|(sha256, classification)| (sha256.as_str(), classification.as_str()))
-        .collect::<Vec<_>>();
-    ensure!(
-        stored == expected,
-        "error encrypted-local-shared-package-image-coverage-mismatch hint=cancel-never-dispatched-capture-and-recapture"
-    );
-    Ok(())
-}
-
-fn validate_package_identity(
-    package: &EncryptedLocalSharedStatePackage,
+    capture: &NeverDispatchedLocalSharedCapture,
     context: LocalSharedStatePackageContext,
-    stream_id: [u8; 32],
+    key: &LocalSharedStatePackageKey,
     membership_predecessor: [u8; 32],
 ) -> Result<()> {
     ensure!(
-        package.context == context
-            && package.stream_id == stream_id
-            && publication::membership(package)? == membership_predecessor,
+        publication::context_and_membership(&package.upload)? == (context, membership_predecessor),
         "error encrypted-local-shared-package-context-mismatch"
     );
+    publication::validate_against_capture(&package.upload, capture, key, membership_predecessor)?;
     Ok(())
 }
 
@@ -958,7 +699,6 @@ async fn load_selected_image_plaintexts(
         );
         output.push(SelectedImagePlaintext {
             source_sha256: source_sha256.clone(),
-            classification: classification.clone(),
             bytes,
         });
     }
@@ -983,98 +723,42 @@ async fn persist_package(
     conn: &mut sqlx::SqliteConnection,
     package: &EncryptedLocalSharedStatePackage,
 ) -> Result<()> {
-    sqlx::query(
-        "INSERT INTO local_shared_capture_packages(
-             candidate_id, format_version, suite, vault_id, generation_id,
-             state_total_plaintext_bytes, state_chunk_count, state_aggregate_commitment,
-             manifest_total_plaintext_bytes, manifest_chunk_count,
-             manifest_aggregate_commitment, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&package.candidate_id)
-    .bind(PACKAGE_STORAGE_VERSION)
-    .bind(PACKAGE_SUITE)
-    .bind(package.context.vault_id.as_slice())
-    .bind(package.context.generation_id.as_slice())
-    .bind(i64::try_from(package.state.total_plaintext_bytes)?)
-    .bind(i64::try_from(package.state.chunks.len())?)
-    .bind(package.state.aggregate_commitment.as_slice())
-    .bind(i64::try_from(package.manifest.total_plaintext_bytes)?)
-    .bind(i64::try_from(package.manifest.chunks.len())?)
-    .bind(package.manifest.aggregate_commitment.as_slice())
-    .bind(crate::ids::now())
-    .execute(&mut *conn)
-    .await?;
+    let upload = &package.upload;
     sqlx::query(
         "INSERT INTO local_shared_capture_publication(
              candidate_id, descriptor, data_catalog, prefix_catalog, image_catalog
          ) VALUES (?, ?, ?, ?, ?)",
     )
     .bind(&package.candidate_id)
-    .bind(&package.descriptor)
-    .bind(&package.catalogs[0])
-    .bind(&package.catalogs[1])
-    .bind(&package.catalogs[2])
+    .bind(&upload.descriptor)
+    .bind(&upload.catalogs[0])
+    .bind(&upload.catalogs[1])
+    .bind(&upload.catalogs[2])
     .execute(&mut *conn)
     .await?;
-    for (class, artifact) in [
-        (STATE_CLASS, &package.state),
-        (MANIFEST_CLASS, &package.manifest),
-    ] {
-        for (index, chunk) in artifact.chunks.iter().enumerate() {
-            sqlx::query(
-                "INSERT INTO local_shared_capture_package_chunks(
-                     candidate_id, class, chunk_index, record_length,
-                     record_commitment, record
-                 ) VALUES (?, ?, ?, ?, ?, ?)",
-            )
-            .bind(&package.candidate_id)
-            .bind(i64::from(class))
-            .bind(i64::try_from(index)?)
-            .bind(i64::try_from(chunk.record.len())?)
-            .bind(chunk.record_commitment.as_slice())
-            .bind(&chunk.record)
-            .execute(&mut *conn)
-            .await?;
-        }
-    }
-    ensure!(
-        package.image_mappings.len() == package.images.len(),
-        "error encrypted-local-shared-package-image-count-mismatch"
+    let components = [
+        (STATE_COMPONENT, &[][..], &upload.state),
+        (MANIFEST_COMPONENT, &[][..], &upload.manifest),
+    ]
+    .into_iter()
+    .chain(
+        upload
+            .images
+            .iter()
+            .map(|image| (IMAGE_COMPONENT, &image.object_id[..], &image.records)),
     );
-    for (mapping, image) in package.image_mappings.iter().zip(&package.images) {
-        ensure!(
-            mapping.object_id == image.object_id,
-            "error encrypted-local-shared-package-image-descriptor-mismatch"
-        );
-        sqlx::query(
-            "INSERT INTO local_shared_capture_package_images(
-                 candidate_id, source_sha256, classification, object_id,
-                 total_plaintext_bytes, chunk_count, aggregate_commitment
-             ) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&package.candidate_id)
-        .bind(&mapping.source_sha256)
-        .bind(&mapping.classification)
-        .bind(image.object_id.as_slice())
-        .bind(i64::try_from(image.artifact.total_plaintext_bytes)?)
-        .bind(i64::try_from(image.artifact.chunks.len())?)
-        .bind(image.artifact.aggregate_commitment.as_slice())
-        .execute(&mut *conn)
-        .await?;
-        for (index, chunk) in image.artifact.chunks.iter().enumerate() {
+    for (component, object_id, records) in components {
+        for (index, record) in records.iter().enumerate() {
             sqlx::query(
-                "INSERT INTO local_shared_capture_package_image_chunks(
-                     candidate_id, object_id, chunk_index, record_length,
-                     record_commitment, record
-                 ) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO local_shared_capture_package_records(
+                     candidate_id, component, object_id, chunk_index, record
+                 ) VALUES (?, ?, ?, ?, ?)",
             )
             .bind(&package.candidate_id)
-            .bind(image.object_id.as_slice())
+            .bind(component)
+            .bind(object_id)
             .bind(i64::try_from(index)?)
-            .bind(i64::try_from(chunk.record.len())?)
-            .bind(chunk.record_commitment.as_slice())
-            .bind(&chunk.record)
+            .bind(record)
             .execute(&mut *conn)
             .await?;
         }
@@ -1083,7 +767,7 @@ async fn persist_package(
         "UPDATE local_shared_capture_journal SET frozen_descriptor_commitment = ?
          WHERE candidate_id = ? AND frozen_descriptor_commitment IS NULL",
     )
-    .bind(sha256(&package.descriptor).as_slice())
+    .bind(sha256(&upload.descriptor).as_slice())
     .bind(&package.candidate_id)
     .execute(&mut *conn)
     .await?;
@@ -1094,6 +778,8 @@ async fn persist_package(
     Ok(())
 }
 
+/// Loads the frozen package and verifies every record against the committed
+/// descriptor and catalogs. Missing or corrupt bytes fail without replacement.
 pub(super) async fn load_package(
     conn: &mut sqlx::SqliteConnection,
     candidate_id: &str,
@@ -1106,51 +792,6 @@ pub(super) async fn load_package(
     .fetch_optional(&mut *conn)
     .await?
     .flatten();
-    type PackageRow = (
-        i64,
-        i64,
-        Vec<u8>,
-        Vec<u8>,
-        i64,
-        i64,
-        Vec<u8>,
-        i64,
-        i64,
-        Vec<u8>,
-    );
-    let row: Option<PackageRow> = sqlx::query_as(
-        "SELECT format_version, suite, vault_id, generation_id,
-                state_total_plaintext_bytes, state_chunk_count,
-                state_aggregate_commitment, manifest_total_plaintext_bytes,
-                manifest_chunk_count, manifest_aggregate_commitment
-         FROM local_shared_capture_packages WHERE candidate_id = ?",
-    )
-    .bind(candidate_id)
-    .fetch_optional(&mut *conn)
-    .await?;
-    let Some((
-        format_version,
-        suite,
-        vault_id,
-        generation_id,
-        state_total,
-        state_count,
-        state_aggregate,
-        manifest_total,
-        manifest_count,
-        manifest_aggregate,
-    )) = row
-    else {
-        ensure!(
-            frozen.is_none(),
-            "error encrypted-local-shared-package-frozen-bytes-missing"
-        );
-        return Ok(None);
-    };
-    ensure!(
-        format_version == PACKAGE_STORAGE_VERSION && suite == PACKAGE_SUITE,
-        "error encrypted-local-shared-package-unsupported"
-    );
     type PublicationRow = (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>);
     let publication: Option<PublicationRow> = sqlx::query_as(
         "SELECT descriptor, data_catalog, prefix_catalog, image_catalog
@@ -1159,208 +800,70 @@ pub(super) async fn load_package(
     .bind(candidate_id)
     .fetch_optional(&mut *conn)
     .await?;
-    let (descriptor, data_catalog, prefix_catalog, image_catalog) = publication.context(
-        "error encrypted-local-shared-package-format-incompatible-or-incomplete hint=cancel-never-dispatched-capture-and-recapture",
-    )?;
+    let Some((descriptor, data_catalog, prefix_catalog, image_catalog)) = publication else {
+        ensure!(
+            frozen.is_none(),
+            "error encrypted-local-shared-package-frozen-bytes-missing hint=cancel-never-dispatched-capture-and-recapture"
+        );
+        return Ok(None);
+    };
     ensure!(
         frozen.as_deref() == Some(sha256(&descriptor).as_slice()),
         "error encrypted-local-shared-package-frozen-descriptor-mismatch"
     );
-    let context = LocalSharedStatePackageContext {
-        vault_id: vec_to_array(vault_id, "vault id")?,
-        generation_id: vec_to_array(generation_id, "generation id")?,
-    };
-    let stream_id: String = sqlx::query_scalar(
-        "SELECT stream_id FROM local_shared_capture_journal WHERE candidate_id = ?",
-    )
-    .bind(candidate_id)
-    .fetch_one(&mut *conn)
-    .await?;
-    let chunks: Vec<ChunkRow> = sqlx::query_as(
-        "SELECT class, chunk_index, record_length, record_commitment, record
-         FROM local_shared_capture_package_chunks
-         WHERE candidate_id = ? ORDER BY class, chunk_index",
+    let rows: Vec<(String, Vec<u8>, i64, Vec<u8>)> = sqlx::query_as(
+        "SELECT component, object_id, chunk_index, record
+         FROM local_shared_capture_package_records
+         WHERE candidate_id = ? ORDER BY component, object_id, chunk_index",
     )
     .bind(candidate_id)
     .fetch_all(&mut *conn)
     .await?;
-    let state = load_artifact(
-        &chunks,
-        STATE_CLASS,
-        state_total,
-        state_count,
-        state_aggregate,
-        MAX_STATE_PLAINTEXT_BYTES,
-        MAX_STATE_CHUNKS,
-    )?;
-    let manifest = load_artifact(
-        &chunks,
-        MANIFEST_CLASS,
-        manifest_total,
-        manifest_count,
-        manifest_aggregate,
-        MAX_MANIFEST_PLAINTEXT_BYTES,
-        1,
-    )?;
-    ensure!(
-        chunks.len() == state.chunks.len() + manifest.chunks.len(),
-        "error encrypted-local-shared-package-chunk-class"
-    );
-    type ImageRow = (String, String, Vec<u8>, i64, i64, Vec<u8>);
-    let image_rows: Vec<ImageRow> = sqlx::query_as(
-        "SELECT source_sha256, classification, object_id,
-                total_plaintext_bytes, chunk_count, aggregate_commitment
-         FROM local_shared_capture_package_images
-         WHERE candidate_id = ? ORDER BY source_sha256",
-    )
-    .bind(candidate_id)
-    .fetch_all(&mut *conn)
-    .await?;
-    ensure!(
-        image_rows.len() <= MAX_PACKAGE_IMAGE_COUNT,
-        "error encrypted-local-shared-package-too-many-images"
-    );
-    let mut images = Vec::with_capacity(image_rows.len());
-    let mut image_mappings = Vec::with_capacity(image_rows.len());
-    let mut image_total = 0_usize;
-    for (source_sha256, classification, object_id, total, count, aggregate) in image_rows {
-        let object_id = vec_to_array(object_id, "image object id")?;
-        let image_chunks: Vec<(i64, i64, Vec<u8>, Vec<u8>)> = sqlx::query_as(
-            "SELECT chunk_index, record_length, record_commitment, record
-             FROM local_shared_capture_package_image_chunks
-             WHERE candidate_id = ? AND object_id = ? ORDER BY chunk_index",
-        )
-        .bind(candidate_id)
-        .bind(object_id.as_slice())
-        .fetch_all(&mut *conn)
-        .await?;
-        let artifact = load_image_artifact(image_chunks, total, count, aggregate)?;
-        image_total = image_total
-            .checked_add(usize::try_from(artifact.total_plaintext_bytes)?)
-            .context("image total overflow")?;
-        ensure!(
-            image_total <= MAX_PACKAGE_IMAGE_PLAINTEXT_BYTES,
-            "error encrypted-local-shared-package-images-too-large"
-        );
-        image_mappings.push(PrivateImageMapping {
-            source_sha256,
-            classification,
-            object_id,
-        });
-        images.push(EncryptedLocalSharedStateImage {
-            object_id,
-            artifact,
-        });
-    }
-    Ok(Some(EncryptedLocalSharedStatePackage {
-        candidate_id: candidate_id.to_string(),
-        stream_id: decode_context_id(&stream_id, "stream")?,
-        context,
-        state,
-        manifest,
-        images,
-        image_mappings,
+    let mut upload = publication::Package {
         descriptor,
         catalogs: [data_catalog, prefix_catalog, image_catalog],
-    }))
-}
-
-fn load_image_artifact(
-    rows: Vec<(i64, i64, Vec<u8>, Vec<u8>)>,
-    total: i64,
-    count: i64,
-    aggregate: Vec<u8>,
-) -> Result<EncryptedArtifact> {
-    ensure!(
-        total > 0
-            && usize::try_from(total)? <= MAX_IMAGE_PLAINTEXT_BYTES
-            && count > 0
-            && usize::try_from(count)? <= MAX_IMAGE_CHUNKS
-            && rows.len() == usize::try_from(count)?,
-        "error encrypted-local-shared-package-image-bounds"
-    );
-    let mut chunks = Vec::with_capacity(rows.len());
-    for (expected, (index, record_length, commitment, record)) in rows.into_iter().enumerate() {
-        ensure!(
-            index == i64::try_from(expected)? && record_length == i64::try_from(record.len())?,
-            "error encrypted-local-shared-package-image-chunk-order"
-        );
-        chunks.push(EncryptedChunk {
-            record_commitment: vec_to_array(commitment, "image record commitment")?,
-            record,
-        });
-    }
-    let artifact = EncryptedArtifact {
-        total_plaintext_bytes: u64::try_from(total)?,
-        aggregate_commitment: vec_to_array(aggregate, "image aggregate commitment")?,
-        chunks,
+        state: Vec::new(),
+        manifest: Vec::new(),
+        images: Vec::new(),
     };
-    ensure!(
-        aggregate_commitment(&artifact.chunks) == artifact.aggregate_commitment
-            && artifact
-                .chunks
-                .iter()
-                .all(|chunk| sha256(&chunk.record) == chunk.record_commitment),
-        "error encrypted-local-shared-package-image-aggregate-mismatch"
-    );
-    Ok(artifact)
-}
-
-fn load_artifact(
-    rows: &[ChunkRow],
-    class: u8,
-    total: i64,
-    count: i64,
-    aggregate: Vec<u8>,
-    maximum_plaintext_bytes: usize,
-    maximum_chunks: usize,
-) -> Result<EncryptedArtifact> {
-    ensure!(
-        total >= 0
-            && usize::try_from(total)? <= maximum_plaintext_bytes
-            && count > 0
-            && usize::try_from(count)? <= maximum_chunks,
-        "error encrypted-local-shared-package-bounds"
-    );
-    let selected = rows
-        .iter()
-        .filter(|row| row.0 == i64::from(class))
-        .collect::<Vec<_>>();
-    ensure!(
-        selected.len() == usize::try_from(count)?,
-        "error encrypted-local-shared-package-chunk-count"
-    );
-    let mut chunks = Vec::with_capacity(selected.len());
-    for (expected, row) in selected.into_iter().enumerate() {
+    for (component, object_id, index, record) in rows {
+        let records = match component.as_str() {
+            STATE_COMPONENT => &mut upload.state,
+            MANIFEST_COMPONENT => &mut upload.manifest,
+            IMAGE_COMPONENT => {
+                let object_id = <[u8; 32]>::try_from(object_id.as_slice()).map_err(|_| {
+                    anyhow::anyhow!("error encrypted-local-shared-package-invalid-image-object")
+                })?;
+                if upload
+                    .images
+                    .last()
+                    .is_none_or(|image| image.object_id != object_id)
+                {
+                    upload.images.push(publication::ImageRecords {
+                        object_id,
+                        records: Vec::new(),
+                    });
+                }
+                &mut upload
+                    .images
+                    .last_mut()
+                    .expect("image group was just ensured")
+                    .records
+            }
+            _ => anyhow::bail!("error encrypted-local-shared-package-invalid-component"),
+        };
         ensure!(
-            row.1 == i64::try_from(expected)? && row.2 == i64::try_from(row.4.len())?,
+            usize::try_from(index)? == records.len(),
             "error encrypted-local-shared-package-chunk-order"
         );
-        chunks.push(EncryptedChunk {
-            record_commitment: vec_to_array(row.3.clone(), "record commitment")?,
-            record: row.4.clone(),
-        });
+        records.push(record);
     }
-    let artifact = EncryptedArtifact {
-        total_plaintext_bytes: u64::try_from(total)?,
-        aggregate_commitment: vec_to_array(aggregate, "aggregate commitment")?,
-        chunks,
-    };
-    ensure!(
-        aggregate_commitment(&artifact.chunks) == artifact.aggregate_commitment
-            && artifact
-                .chunks
-                .iter()
-                .all(|chunk| sha256(&chunk.record) == chunk.record_commitment),
-        "error encrypted-local-shared-package-aggregate-mismatch"
-    );
-    Ok(artifact)
-}
-
-fn vec_to_array(bytes: Vec<u8>, name: &str) -> Result<[u8; 32]> {
-    bytes
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("error encrypted-local-shared-package-invalid-{name}"))
+    publication::validate_keyless(&upload)
+        .context("error encrypted-local-shared-package-frozen-records-invalid")?;
+    Ok(Some(EncryptedLocalSharedStatePackage {
+        candidate_id: candidate_id.to_string(),
+        upload,
+    }))
 }
 
 #[cfg(test)]

@@ -332,7 +332,6 @@ impl Database {
         package::publication::validate_against_capture(
             &upload,
             &capture,
-            &package,
             key,
             seed.genesis().commitment(),
         )?;
@@ -441,7 +440,6 @@ impl Database {
                 package::publication::validate_against_capture(
                     &package.upload_package(),
                     &capture,
-                    &package,
                     key,
                     seed.genesis().commitment(),
                 )?;
@@ -460,7 +458,6 @@ impl Database {
         package::publication::validate_against_capture(
             &upload,
             &capture,
-            &package,
             key,
             seed.genesis().commitment(),
         )?;
@@ -605,7 +602,6 @@ impl Database {
         package::publication::validate_against_capture(
             &package.upload_package(),
             &capture,
-            &package,
             key,
             seed.genesis().commitment(),
         )?;
