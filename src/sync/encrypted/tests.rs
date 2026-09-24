@@ -607,3 +607,15 @@ async fn pair(root: &Path) -> Pair {
         b,
     }
 }
+
+#[test]
+fn join_timeout_hint_covers_expiry_without_suggesting_discarding_data() {
+    let hint = super::JOIN_TIMEOUT;
+    assert!(hint.starts_with("error sync-join-timeout hint="));
+    assert!(hint.contains("rerun `aven sync join`"));
+    assert!(hint.contains("If that invitation has expired"));
+    assert!(hint.contains("keep it unchanged"));
+    for word in ["delete", "reset", "disposable", "is empty"] {
+        assert!(!hint.contains(word), "{hint}");
+    }
+}

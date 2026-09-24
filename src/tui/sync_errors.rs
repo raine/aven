@@ -23,6 +23,15 @@ fn codes(error: &anyhow::Error) -> impl Iterator<Item = String> + '_ {
     })
 }
 
+/// A timeout does not show whether the invitation expired, so both outcomes
+/// are explained, and this database is never called disposable.
+pub(crate) const JOIN_TIMEOUT: &str = "The other device didn't add this device in time. \
+     Keep Add device open on the other device, then resume joining.";
+
+pub(crate) const JOIN_TIMEOUT_EXPIRED: &str = "If that invitation has expired, this \
+     database can't finish joining. Keep it as it is, and join from a new, empty database \
+     with a new invitation.";
+
 pub(crate) const JOIN_REQUIRES_EMPTY: &str = "This computer already has tasks or other data. \
      Joining needs an empty database, because existing local data can't be merged with \
      synced data yet. Nothing here was changed.";
@@ -57,8 +66,7 @@ fn explain(kind: OperationKind, error: &anyhow::Error) -> &'static str {
                 be installed here. Join from a new, empty database instead.";
     }
     if has("sync-join-timeout") {
-        return "The other device didn't add this device in time. Keep Add device open on \
-                the other device, then resume joining.";
+        return JOIN_TIMEOUT;
     }
     if has("sync-join-server-mismatch") || has("enrollment-invitation-conflict") {
         return "This invitation doesn't match the join this database already started. \
@@ -188,6 +196,23 @@ mod tests {
                 .message
                 .contains("earlier device removal")
         );
+    }
+
+    #[test]
+    fn join_timeouts_do_not_claim_expiry_or_suggest_discarding_data() {
+        let error = anyhow!(
+            "error sync-join-timeout hint=\"the other device did not add this device in time\""
+        );
+        let failure = failure(OperationKind::Join, &error);
+        assert_eq!(failure.message, JOIN_TIMEOUT);
+        assert!(failure.join_timed_out());
+        for text in [JOIN_TIMEOUT, JOIN_TIMEOUT_EXPIRED] {
+            for word in ["delete", "reset", "disposable", "is empty"] {
+                assert!(!text.contains(word), "{text}");
+            }
+        }
+        assert!(JOIN_TIMEOUT_EXPIRED.starts_with("If that invitation has expired"));
+        assert!(JOIN_TIMEOUT_EXPIRED.contains("Keep it as it is"));
     }
 
     #[test]

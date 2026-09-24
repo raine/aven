@@ -104,7 +104,10 @@ yet; the dialog explains this and changes nothing. While joining waits for the
 inviting device and downloads tasks, the TUI pauses adding tasks, projects,
 labels, and workspaces. Once tasks arrive they appear in the list while images
 keep downloading. **Resume joining** continues an interrupted join without the
-invitation.
+invitation. If the inviting device does not add this one in time, keep it waiting and
+resume. A timeout does not show whether the invitation expired; if it has, this
+database cannot finish joining. Keep it as it is and join from a new, empty
+database with a new invitation.
 
 Anyone with the invitation can access all synced data and manage devices. It
 expires after ten minutes. Sync on the inviting device pauses until the

@@ -217,6 +217,7 @@ fn running(kind: OperationKind, stage: Option<Stage>) -> SyncActivity {
         }),
         last: None,
         devices: None,
+        join_timed_out: false,
     }
 }
 
@@ -372,6 +373,7 @@ fn results_distinguish_images_from_tasks() {
                 },
             }),
             devices: None,
+            join_timed_out: false,
         },
     );
 
@@ -390,6 +392,7 @@ fn failures_show_plain_messages_and_technical_details_on_request() {
         running: None,
         last: Some(OperationResult::Failed(failure)),
         devices: None,
+        join_timed_out: false,
     };
     let status = TuiSyncStatus {
         set_up: true,
@@ -581,4 +584,45 @@ fn removal_results_do_not_claim_completion_before_rotation() {
     };
     let rendered = render_page(SyncPage::Devices, sync_status(), running);
     assert!(rendered.contains("Removing access and securing future changes"));
+}
+
+#[test]
+fn join_timeout_guidance_stays_visible_while_resuming_in_the_session() {
+    let incomplete = TuiSyncStatus {
+        set_up: true,
+        phase: LocalPhase::JoinIncomplete,
+        ..TuiSyncStatus::default()
+    };
+    let timed_out = SyncActivity {
+        last: Some(OperationResult::Failed(OperationFailure {
+            kind: OperationKind::Join,
+            message: crate::tui::sync_errors::JOIN_TIMEOUT.to_string(),
+            details: "error sync-join-timeout".to_string(),
+        })),
+        join_timed_out: true,
+        ..SyncActivity::default()
+    };
+    let after = render_page(SyncPage::Home, incomplete.clone(), timed_out.clone());
+    assert!(after.contains("didn't add this device in time"), "{after}");
+    assert!(after.contains("If that invitation has expired"), "{after}");
+    assert!(after.contains("Resume joining"), "{after}");
+
+    let resuming = SyncActivity {
+        running: Some(RunningOperation {
+            kind: OperationKind::Join,
+            stage: Some(Stage::WaitingForInviter),
+            started_at: std::time::Instant::now(),
+        }),
+        last: None,
+        ..timed_out
+    };
+    let during = render_page(SyncPage::Home, incomplete.clone(), resuming);
+    assert!(during.contains("Waiting for the other device"), "{during}");
+    assert!(
+        during.contains("If that invitation has expired"),
+        "{during}"
+    );
+
+    let fresh = render_page(SyncPage::Home, incomplete, SyncActivity::default());
+    assert!(!fresh.contains("If that invitation has expired"), "{fresh}");
 }

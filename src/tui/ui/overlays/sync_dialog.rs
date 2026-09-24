@@ -17,6 +17,7 @@ use crate::tui::overlay::{
     InvitationKind, SecretText, SyncAction, SyncDialogView, SyncPage, dialog_area, sync_actions,
 };
 use crate::tui::store::TuiSyncStatus;
+use crate::tui::sync_errors::JOIN_TIMEOUT_EXPIRED;
 use crate::tui::sync_operations::{
     DrainSummary, OperationFailure, OperationKind, OperationResult, RunningOperation, SyncActivity,
     short_device_ids,
@@ -256,6 +257,9 @@ fn home_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
         && matches!(running.kind, OperationKind::Setup | OperationKind::Join)
     {
         progress_lines(lines, running, width);
+        if running.kind == OperationKind::Join {
+            push_expired_join_guidance(lines, view.activity, width);
+        }
         return;
     }
     let summary = sync_status_summary(status);
@@ -278,6 +282,9 @@ fn home_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
         return;
     }
     push_last_result(lines, view.activity, width);
+    if status.phase == LocalPhase::JoinIncomplete {
+        push_expired_join_guidance(lines, view.activity, width);
+    }
 
     lines.push(Line::from(""));
     lines.extend(wrapped_row(
@@ -413,6 +420,23 @@ fn progress_lines(lines: &mut Vec<Line<'static>>, running: &RunningOperation, wi
         _ => "You can close this dialog and keep working.",
     };
     lines.extend(paragraph(note, Style::new().fg(FG_MUTED), width));
+}
+
+/// After a join timed out in this session, explains what to do if the
+/// invitation expired. A timeout alone does not show that it did.
+fn push_expired_join_guidance(
+    lines: &mut Vec<Line<'static>>,
+    activity: &SyncActivity,
+    width: usize,
+) {
+    if activity.join_timed_out {
+        lines.push(Line::from(""));
+        lines.extend(paragraph(
+            JOIN_TIMEOUT_EXPIRED,
+            Style::new().fg(FG_MUTED),
+            width,
+        ));
+    }
 }
 
 /// Device operations report no engine stages; one truthful line covers them.

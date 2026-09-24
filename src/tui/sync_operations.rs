@@ -83,6 +83,10 @@ pub(crate) struct OperationFailure {
 }
 
 impl OperationFailure {
+    pub(crate) fn join_timed_out(&self) -> bool {
+        self.kind == OperationKind::Join && self.details.contains("error sync-join-timeout")
+    }
+
     /// The engine reported an earlier removal that must finish first.
     pub(crate) fn removal_unfinished(&self) -> bool {
         self.details.contains("error management-unfinished")
@@ -104,6 +108,9 @@ pub(crate) struct SyncActivity {
     pub(crate) running: Option<RunningOperation>,
     pub(crate) last: Option<OperationResult>,
     pub(crate) devices: Option<DeviceSnapshot>,
+    /// A join timed out in this session; guidance about an expired invitation
+    /// stays visible while joining is resumed.
+    pub(crate) join_timed_out: bool,
 }
 
 impl SyncActivity {
@@ -312,6 +319,13 @@ impl SyncOperations {
                     super::sync_errors::failure(kind, &error),
                 )),
             };
+            match &result {
+                Some(OperationResult::Failed(failure)) if failure.join_timed_out() => {
+                    self.activity.join_timed_out = true
+                }
+                Some(OperationResult::Joined { .. }) => self.activity.join_timed_out = false,
+                _ => {}
+            }
             if let Some(result) = &result {
                 self.activity.last = Some(result.clone());
             }
@@ -446,6 +460,32 @@ mod tests {
         last[31] = 0;
         let ids = short_device_ids(&[device(first, false), device(last, false)]);
         assert_ne!(ids[0], ids[1]);
+    }
+
+    async fn settle(operations: &mut SyncOperations) -> Option<OperationEvent> {
+        loop {
+            if let Some(event @ OperationEvent::Finished(..)) = operations.poll().await {
+                return Some(event);
+            }
+            tokio::task::yield_now().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn a_join_timeout_is_remembered_for_the_session() {
+        let mut operations = SyncOperations::new();
+        assert!(operations.spawn(OperationKind::Join, async {
+            Err(anyhow::anyhow!("error sync-join-timeout hint=\"x\""))
+        }));
+        settle(&mut operations).await;
+        assert!(operations.activity.join_timed_out);
+
+        // A later failure for another reason keeps the guidance.
+        assert!(operations.spawn(OperationKind::Join, async {
+            Err(anyhow::anyhow!("error enrollment-network outcome-unknown"))
+        }));
+        settle(&mut operations).await;
+        assert!(operations.activity.join_timed_out);
     }
 
     #[test]

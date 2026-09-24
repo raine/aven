@@ -411,6 +411,10 @@ pub(crate) async fn ensure_join_available(database: &Database, config: &AppConfi
     }
 }
 
+/// A timeout proves neither expiry nor non-admission, so the hint covers both
+/// outcomes and never suggests discarding this database.
+const JOIN_TIMEOUT: &str = "error sync-join-timeout hint=\"the other device did not add this device in time; keep `aven sync invite` running there and rerun `aven sync join`. If that invitation has expired, this database cannot finish joining: keep it unchanged and join from a new empty database with a new invitation\"";
+
 const ALREADY_SET_UP: &str =
     "error sync-already-set-up hint=\"add devices with `aven sync invite` on this database\"";
 const JOIN_REQUIRES_EMPTY: &str = "error sync-join-requires-empty-database hint=\"join with a new database, for example `aven --db PATH sync join`\"";
@@ -484,10 +488,7 @@ pub(crate) async fn run_join(
                 Err(error) if !busy(&error) => return Err(error),
                 _ => {}
             }
-            ensure!(
-                Instant::now() < deadline,
-                "error sync-join-timeout hint=\"keep `aven sync invite` running on the other device, then rerun `aven sync join`\""
-            );
+            ensure!(Instant::now() < deadline, JOIN_TIMEOUT);
             tokio::time::sleep(POLL_INTERVAL).await;
         }
         server

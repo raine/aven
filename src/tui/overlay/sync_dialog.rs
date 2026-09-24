@@ -712,6 +712,7 @@ mod tests {
             }),
             last: None,
             devices: None,
+            join_timed_out: false,
         };
         assert!(
             sync_actions(
