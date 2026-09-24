@@ -116,15 +116,6 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
     let original = store.prepare_seed_claim(&client, [9; 32]).await.unwrap();
     let protected = original.protected_storage_bytes();
     drop(original);
-    let mut stale_session = aven_core::sync::SyncSession::start(
-        client.clone(),
-        "https://legacy.test".into(),
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    let stale_request = stale_session.prepare_request().await.unwrap().unwrap();
     let stale_page = client
         .prepare_client_sync_page("https://legacy.test".into(), 0, 10)
         .await
@@ -648,30 +639,6 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
         .unwrap();
     assert_eq!(cursor, (binding.prefix_count + 12).to_string());
     drop(conn);
-    assert!(
-        stale_session
-            .prepare_request()
-            .await
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("e2ee-installation-fenced")
-    );
-    assert!(
-        stale_session
-            .accept_response(
-                &stale_request.context,
-                aven_core::sync::SyncHttpResponse {
-                    status: 200,
-                    headers: vec![],
-                    body: vec![]
-                }
-            )
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("e2ee-installation-fenced")
-    );
     let response = aven_core::sync::wire::SyncResponse {
         protocol_version: aven_core::sync::wire::SYNC_PROTOCOL_VERSION,
         changes: vec![],
@@ -686,8 +653,6 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
                 sync_generation: stale_page.sync_generation,
                 response,
                 attempted_at: "2100-09-21T12:00:00Z".into(),
-                previous_pushed: 0,
-                previous_pulled: 0
             })
             .await
             .unwrap_err()

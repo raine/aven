@@ -72,17 +72,7 @@ async fn assert_source_migration(version: i64, old_sources: &[&str]) {
 }
 
 #[test]
-fn ios_source_protocol_rejects_older_peers_and_source_mutations() {
-    use aven_core::sync::wire::{
-        SYNC_PROTOCOL_VERSION, validate_sync_protocol_version,
-        validate_sync_request_protocol_version,
-    };
-
-    for version in [16, 17] {
-        assert!(validate_sync_request_protocol_version(Some(version)).is_err());
-        assert!(validate_sync_protocol_version(SYNC_PROTOCOL_VERSION, version).is_err());
-    }
-    assert!(validate_sync_request_protocol_version(Some(SYNC_PROTOCOL_VERSION)).is_ok());
+fn source_is_not_a_mutable_field() {
     assert!(aven_core::task_fields::TaskField::parse("source").is_none());
 }
 

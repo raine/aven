@@ -174,14 +174,6 @@ mod concurrency_tests {
         let mut context = TaskContext::from_waker(Waker::noop());
         // Polling stops at the held writer gate, after installation acquisition.
         assert!(page.as_mut().poll(&mut context).is_pending());
-        independent
-            .prepare_server_blob_uploads(root.path(), Default::default(), &[])
-            .await
-            .unwrap();
-        independent
-            .maintain_server_blobs(root.path(), Default::default())
-            .await
-            .unwrap();
         crate::db::backup_database(&path, &root.path().join("backup.sqlite"))
             .await
             .unwrap();
@@ -192,15 +184,14 @@ mod concurrency_tests {
         let nested = InstallationGuard::acquire_plaintext(&path).unwrap();
         assert!(nested.fence().is_err());
         drop(nested);
-        let mut blobs =
-            Box::pin(clone.prepare_server_blob_uploads(root.path(), Default::default(), &[]));
-        assert!(blobs.as_mut().poll(&mut context).is_pending());
+        let mut second = Box::pin(clone.prepare_client_sync_page("https://sync.test".into(), 0, 1));
+        assert!(second.as_mut().poll(&mut context).is_pending());
         // Both ordinary calls coexist, but exclusive setup/replacement cannot.
         assert!(InstallationGuard::acquire(&path).is_err());
         drop(writer);
         page.await.unwrap();
         assert!(InstallationGuard::acquire(&path).is_err());
-        blobs.await.unwrap();
+        second.await.unwrap();
         let exclusive = InstallationGuard::acquire(&path).unwrap();
         assert!(
             independent
@@ -211,8 +202,7 @@ mod concurrency_tests {
         exclusive.fence().unwrap();
         drop(exclusive);
         assert!(
-            independent
-                .prepare_server_blob_uploads(root.path(), Default::default(), &[])
+            crate::db::backup_database(&path, &root.path().join("fenced.sqlite"))
                 .await
                 .unwrap_err()
                 .to_string()

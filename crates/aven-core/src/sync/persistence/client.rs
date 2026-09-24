@@ -12,117 +12,20 @@ use crate::sync::wire::{
 };
 
 impl Database {
-    pub(in crate::sync) async fn ensure_plaintext_sync_available(
-        &self,
-        expected_generation: Option<i64>,
-    ) -> Result<()> {
-        let _installation = self.plaintext_installation_guard()?;
-        let mut conn = self.acquire_reader().await?;
-        super::super::shared_state::ensure_no_active_local_shared_capture(&mut conn).await?;
-        if let Some(expected) = expected_generation {
-            anyhow::ensure!(
-                sync_generation(&mut conn).await? == expected,
-                "error stale-sync-page sync-generation-changed"
-            );
-        }
-        Ok(())
-    }
-
-    pub(in crate::sync) async fn pending_sync_changes_exist(&self) -> Result<bool> {
-        let mut conn = self.acquire_reader().await?;
-        Ok(
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM changes WHERE server_seq IS NULL)")
-                .fetch_one(&mut *conn)
-                .await?,
-        )
-    }
-
-    pub(in crate::sync) async fn pending_blob_counts(
-        &self,
-        known_server_blobs: &HashSet<String>,
-    ) -> Result<crate::attachments::lifecycle::ByteCount> {
-        let mut conn = self.acquire_reader().await?;
-        let known = serde_json::to_string(known_server_blobs)?;
-        let (count, bytes): (i64, i64) = sqlx::query_as(
-            "WITH known(sha256) AS (
-               SELECT value FROM json_each(?)
-             ), pending AS (
-               SELECT json_extract(payload, '$.workspace_id') AS workspace_id,
-                      json_extract(payload, '$.sha256') AS sha256,
-                      MAX(CAST(json_extract(payload, '$.byte_size') AS INTEGER)) AS byte_size
-               FROM changes
-               WHERE server_seq IS NULL AND op_type = 'attachment_add'
-               GROUP BY workspace_id, sha256
-             )
-             SELECT COUNT(*), COALESCE(SUM(byte_size), 0)
-             FROM pending LEFT JOIN known USING (sha256)
-             WHERE known.sha256 IS NULL",
-        )
-        .bind(known)
-        .fetch_one(&mut *conn)
-        .await?;
-        Ok(crate::attachments::lifecycle::ByteCount {
-            count: u64::try_from(count)?,
-            bytes: u64::try_from(bytes)?,
-        })
-    }
-
-    pub(in crate::sync) async fn replica_sync_protocol(&self) -> Result<u32> {
-        let mut conn = self.acquire_reader().await?;
-        super::super::protocol::replica_protocol(&mut conn).await
-    }
-
-    pub(in crate::sync) async fn prepare_sync_discovery(&self, server: &str) -> Result<String> {
-        let _installation = self.plaintext_installation_guard()?;
-        let mut conn = self.acquire_writer().await?;
-        super::super::shared_state::adoption::ensure_unbound(&mut conn).await?;
-        validate_sync_server(&mut conn, server).await?;
-        super::super::protocol::replica_protocol(&mut conn).await?;
-        get_meta(&mut conn, "client_id")
-            .await?
-            .context("missing client id")
-    }
-
-    pub(in crate::sync) async fn block_sync_protocol(&self, protocol: u32) -> Result<()> {
-        let _installation = self.plaintext_installation_guard()?;
-        let mut conn = self.acquire_writer().await?;
-        super::super::shared_state::adoption::ensure_unbound(&mut conn).await?;
-        set_meta(&mut conn, "sync_blocked_protocol", &protocol.to_string()).await
-    }
-
     pub async fn prepare_client_sync_page(
         &self,
         server: String,
         push_limit: usize,
         pull_limit: u32,
     ) -> Result<ClientSyncPage> {
-        self.prepare_client_sync_page_at_protocol(server, push_limit, pull_limit, None)
-            .await
-    }
-
-    pub(in crate::sync) async fn prepare_client_sync_page_at_protocol(
-        &self,
-        server: String,
-        push_limit: usize,
-        pull_limit: u32,
-        protocol: Option<u32>,
-    ) -> Result<ClientSyncPage> {
         let _installation = self.plaintext_installation_guard()?;
         let mut conn = self.acquire_writer().await?;
         super::super::shared_state::adoption::ensure_unbound(&mut conn).await?;
         super::super::shared_state::ensure_no_active_local_shared_capture(&mut conn).await?;
         validate_sync_server(&mut conn, &server).await?;
-        let behavior_protocol = super::super::protocol::replica_protocol(&mut conn).await?;
+        let protocol = super::super::protocol::replica_protocol(&mut conn).await?;
         let sync_generation = sync_generation(&mut conn).await?;
-        let protocol = protocol.unwrap_or(behavior_protocol);
         super::super::protocol::validate_behavior_protocol(protocol)?;
-        if protocol < behavior_protocol {
-            return Err(super::super::protocol::SyncCompatibilityError {
-                server_protocol: protocol,
-                client_protocol: behavior_protocol,
-            }
-            .into());
-        }
         let client_id = get_meta(&mut conn, "client_id")
             .await?
             .context("missing client id")?;
@@ -142,7 +45,6 @@ impl Database {
             super::super::protocol::validate_change(protocol, change)?;
         }
         Ok(ClientSyncPage {
-            behavior_protocol,
             sync_generation,
             pending: request.changes.len(),
             request,
@@ -150,14 +52,6 @@ impl Database {
     }
 
     pub async fn apply_client_sync_page(&self, page: ApplySyncPage) -> Result<usize> {
-        self.apply_client_sync_page_with_context(page, None).await
-    }
-
-    pub(in crate::sync) async fn apply_client_sync_page_with_context(
-        &self,
-        page: ApplySyncPage,
-        expected_behavior: Option<u32>,
-    ) -> Result<usize> {
         let protocol = page
             .request
             .protocol_version
@@ -180,7 +74,7 @@ impl Database {
         let _installation = self.plaintext_installation_guard()?;
         let mut conn = self.acquire_writer().await?;
         super::super::shared_state::adoption::ensure_unbound(&mut conn).await?;
-        apply_sync_response(&mut conn, page, expected_behavior).await
+        apply_sync_response(&mut conn, page).await
     }
 }
 
@@ -265,7 +159,6 @@ async fn load_unsynced_changes(
 pub(super) async fn apply_sync_response(
     conn: &mut SqliteConnection,
     page: ApplySyncPage,
-    expected_behavior: Option<u32>,
 ) -> Result<usize> {
     let mut applied = 0;
     let mut tx = begin_immediate(conn).await?;
@@ -279,9 +172,6 @@ pub(super) async fn apply_sync_response(
         );
     }
     let current_behavior = super::super::protocol::replica_protocol(&mut tx).await?;
-    if expected_behavior.is_some_and(|expected| expected != current_behavior) {
-        bail!("error stale-sync-page replica-protocol-changed");
-    }
     let selected = page
         .request
         .protocol_version
@@ -373,35 +263,7 @@ pub(super) async fn apply_sync_response(
         &crate::attachments::lifecycle::SystemClock,
     )
     .await?;
-    let pushed = page.previous_pushed + page.response.push_acks.len() as i64;
-    let pulled = page.previous_pulled + applied;
     set_meta(&mut tx, "sync_cursor", &page.response.cursor.to_string()).await?;
-    set_meta(&mut tx, "sync_last_success_at", &page.attempted_at).await?;
-    let pending: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM changes WHERE server_seq IS NULL)")
-            .fetch_one(&mut *tx)
-            .await?;
-    let caught_up = !page.response.has_more && !pending;
-    set_meta(
-        &mut tx,
-        "sync_metadata_caught_up",
-        if caught_up { "1" } else { "0" },
-    )
-    .await?;
-    if caught_up {
-        set_meta(&mut tx, "sync_metadata_confirmed_at", &crate::ids::now()).await?;
-    }
-
-    set_meta(&mut tx, "sync_last_error", "").await?;
-    set_meta(&mut tx, "sync_blocked_protocol", "").await?;
-    set_meta(&mut tx, "sync_last_pushed", &pushed.to_string()).await?;
-    set_meta(&mut tx, "sync_last_pulled", &pulled.to_string()).await?;
-    set_meta(
-        &mut tx,
-        "sync_last_cursor",
-        &page.response.cursor.to_string(),
-    )
-    .await?;
     tx.commit().await?;
     Ok(applied)
 }
@@ -590,11 +452,9 @@ mod tests {
                 changes: vec![remote],
             },
             attempted_at: "2026-08-22T00:00:01Z".to_string(),
-            previous_pushed: 0,
-            previous_pulled: 0,
         };
 
-        apply_sync_response(&mut conn, page, None).await.unwrap();
+        apply_sync_response(&mut conn, page).await.unwrap();
 
         let state: (i64, String) = sqlx::query_as(
             "SELECT linked, last_change_id FROM task_related_links

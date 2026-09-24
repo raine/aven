@@ -472,9 +472,14 @@ mod tests {
                 .unwrap();
             assert_eq!(changes, 6);
         }
-        let facts = database.sync_facts().await.unwrap();
-        assert_eq!(facts.pending_changes, 0);
-        assert!(facts.metadata_caught_up);
+        assert_eq!(
+            database
+                .sync_persistence_status()
+                .await
+                .unwrap()
+                .pending_changes,
+            0
+        );
         let integrity = database.database_integrity_report().await.unwrap();
         assert!(integrity.quick_check_ok);
         assert!(
@@ -629,8 +634,6 @@ mod tests {
                     changes: vec![remove, demote],
                 },
                 attempted_at: "2026-09-06T00:00:00Z".to_string(),
-                previous_pushed: 0,
-                previous_pulled: 0,
             })
             .await
             .unwrap();

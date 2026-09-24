@@ -123,65 +123,6 @@ async fn cancellation_commit_prevents_intent_creation() {
 }
 
 #[tokio::test]
-async fn source_fence_rejects_real_metadata_and_blob_entry_points() {
-    let (root, database, _source, _seed, _key, _candidate) = fixture().await;
-    assert!(
-        database
-            .prepare_sync_discovery("http://localhost")
-            .await
-            .is_err()
-    );
-    assert!(
-        database
-            .prepare_client_sync_page("http://localhost".into(), 1, 1)
-            .await
-            .is_err()
-    );
-    assert!(database.missing_local_blob_page(1).await.is_err());
-    let contract = crate::sync::wire::BlobUploadContract {
-        workspace_id: crate::workspaces::Workspace::default().id.to_string(),
-        sha256: "11".repeat(32),
-        byte_size: 1,
-        media_type: "image/png".into(),
-        width: 1,
-        height: 1,
-    };
-    assert!(
-        database
-            .prepare_blob_upload(root.path(), &contract)
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("e2ee-installation-fenced")
-    );
-    let mut image = std::io::Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgba8(image::RgbaImage::new(1, 1))
-        .write_to(&mut image, image::ImageFormat::Png)
-        .unwrap();
-    let bytes = image.into_inner();
-    let blob = crate::sync::blob::MissingLocalBlob {
-        sha256: crate::attachments::storage::sha256_hex(&bytes),
-        byte_size: bytes.len() as i64,
-        media_type: "image/png".into(),
-        width: Some(1),
-        height: Some(1),
-    };
-    assert!(
-        database
-            .store_downloaded_blob(root.path(), Default::default(), &blob, bytes)
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("e2ee-installation-fenced")
-    );
-    assert!(
-        !crate::attachments::storage::object_path(root.path(), &blob.sha256)
-            .unwrap()
-            .exists()
-    );
-}
-
-#[tokio::test]
 async fn intent_sql_failure_preserves_capture_and_allows_local_cancel() {
     let (_root, database, source, seed, key, candidate) = fixture().await;
     let mut conn = database.acquire_writer().await.unwrap();

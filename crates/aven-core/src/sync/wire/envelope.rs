@@ -2,55 +2,6 @@ use super::*;
 use anyhow::{Context, Result, bail};
 use std::collections::{HashMap, HashSet};
 
-pub(super) fn validate_blob_contracts(blobs: &[BlobUploadContract]) -> Result<()> {
-    if blobs.len() > MAX_PUSH_BATCH {
-        bail!(
-            "error blob-batch-too-large limit={} got={}",
-            MAX_PUSH_BATCH,
-            blobs.len()
-        );
-    }
-    let mut seen = HashSet::with_capacity(blobs.len());
-    let mut hashes = HashSet::with_capacity(blobs.len());
-    for blob in blobs {
-        ensure_sync_id("workspace_id", &blob.workspace_id)?;
-        validate_sha256_for_sync(&blob.sha256)?;
-        validate_blob_size_for_sync(blob.byte_size)?;
-        map_attachment_validation(validate_media_type(&blob.media_type))?;
-        map_attachment_validation(validate_dimensions(Some(blob.width), Some(blob.height)))?;
-        if !seen.insert((blob.workspace_id.as_str(), blob.sha256.as_str())) {
-            bail!("error duplicate-blob-contract");
-        }
-        hashes.insert(blob.sha256.as_str());
-    }
-    if hashes.len() > MAX_BLOB_TRANSFER_OBJECTS {
-        bail!(
-            "error blob-batch-too-large limit={} got={}",
-            MAX_BLOB_TRANSFER_OBJECTS,
-            hashes.len()
-        );
-    }
-    Ok(())
-}
-
-pub(super) fn validate_blob_hashes(hashes: &[String]) -> Result<()> {
-    if hashes.len() > MAX_BLOB_TRANSFER_OBJECTS {
-        bail!(
-            "error blob-batch-too-large limit={} got={}",
-            MAX_BLOB_TRANSFER_OBJECTS,
-            hashes.len()
-        );
-    }
-    let mut seen = HashSet::with_capacity(hashes.len());
-    for hash in hashes {
-        validate_sha256_for_sync(hash)?;
-        if !seen.insert(hash.as_str()) {
-            bail!("error duplicate-blob-hash");
-        }
-    }
-    Ok(())
-}
-
 #[derive(Debug)]
 
 struct SyncProtocolError {
@@ -81,10 +32,6 @@ pub(super) fn validate_sync_protocol_version(client: u32, server: u32) -> Result
     Ok(())
 }
 
-pub(super) fn validate_sync_request_protocol_version(client: Option<u32>) -> Result<()> {
-    validate_sync_protocol_version(client.unwrap_or(0), SYNC_PROTOCOL_VERSION)
-}
-
 pub(super) fn request_pull_limit(requested: Option<u32>) -> Result<u32> {
     match requested {
         None => Ok(MAX_PULL_BATCH),
@@ -93,12 +40,6 @@ pub(super) fn request_pull_limit(requested: Option<u32>) -> Result<u32> {
             bail!("error sync-pull-limit-out-of-range min=1 max={MAX_PULL_BATCH} got={limit}")
         }
     }
-}
-
-pub(super) fn validate_sync_request_envelope(
-    request: &SyncRequest,
-) -> Result<ValidatedSyncRequestEnvelope> {
-    validate_request_at_protocol(request, SYNC_PROTOCOL_VERSION)
 }
 
 pub(super) fn validate_request_at_protocol(
@@ -127,21 +68,6 @@ fn validate_push_batch_size(len: usize) -> Result<()> {
         bail!("error sync-push-too-large limit={MAX_PUSH_BATCH} got={len}");
     }
     Ok(())
-}
-
-pub(super) fn validate_sync_response_for_request(
-    after: i64,
-    pull_limit: u32,
-    request_change_ids: &[String],
-    response: &SyncResponse,
-) -> Result<()> {
-    validate_response_at_protocol(
-        SYNC_PROTOCOL_VERSION,
-        after,
-        pull_limit,
-        request_change_ids,
-        response,
-    )
 }
 
 pub(super) fn validate_response_at_protocol(
@@ -336,7 +262,7 @@ mod tests {
             changes: Vec::new(),
         };
         assert_eq!(
-            validate_sync_request_envelope(&request)
+            validate_request_at_protocol(&request, SYNC_PROTOCOL_VERSION)
                 .unwrap_err()
                 .to_string(),
             "error sync-after-out-of-range min=0 got=-1"
@@ -365,7 +291,7 @@ mod tests {
             ],
         };
         assert_eq!(
-            validate_sync_request_envelope(&request)
+            validate_request_at_protocol(&request, SYNC_PROTOCOL_VERSION)
                 .unwrap_err()
                 .to_string(),
             "error sync-push-too-large limit=256 got=257"
@@ -403,7 +329,7 @@ mod tests {
             ],
         };
         assert_eq!(
-            validate_sync_response_for_request(0, MAX_PULL_BATCH, &[], &response)
+            validate_response_at_protocol(SYNC_PROTOCOL_VERSION, 0, MAX_PULL_BATCH, &[], &response)
                 .unwrap_err()
                 .to_string(),
             "error invalid-sync-response pull-too-large limit=512 got=513"

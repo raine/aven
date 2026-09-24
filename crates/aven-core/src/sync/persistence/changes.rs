@@ -1,9 +1,16 @@
+#[cfg(any(test, feature = "test-support"))]
 use std::collections::HashSet;
 
-use anyhow::{Context, Result, bail};
-use sqlx::{QueryBuilder, Sqlite, SqliteConnection};
+#[cfg(any(test, feature = "test-support"))]
+use anyhow::bail;
+use anyhow::{Context, Result};
+use sqlx::SqliteConnection;
+#[cfg(any(test, feature = "test-support"))]
+use sqlx::{QueryBuilder, Sqlite};
 
-use super::super::wire::{ChangeWire, PushAck};
+use super::super::wire::ChangeWire;
+#[cfg(any(test, feature = "test-support"))]
+use super::super::wire::PushAck;
 use crate::change_log::op_type;
 
 pub(in crate::sync) fn is_epic_change(change: &ChangeWire) -> bool {
@@ -34,6 +41,7 @@ pub(in crate::sync) async fn reconcile_epic_change(
     Ok(())
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub(in crate::sync) async fn reconcile_acknowledged_epic_memberships(
     conn: &mut SqliteConnection,
     acknowledgements: &[PushAck],
@@ -60,6 +68,7 @@ pub(in crate::sync) async fn reconcile_acknowledged_epic_memberships(
     Ok(())
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub(in crate::sync) async fn load_existing_change_ids(
     conn: &mut SqliteConnection,
     changes: &[ChangeWire],
@@ -82,29 +91,7 @@ pub(in crate::sync) async fn load_existing_change_ids(
         .collect())
 }
 
-pub(in crate::sync) async fn load_assigned_change_ids(
-    conn: &mut SqliteConnection,
-    changes: &[ChangeWire],
-) -> Result<HashSet<String>> {
-    if changes.is_empty() {
-        return Ok(HashSet::new());
-    }
-    let mut query_builder = QueryBuilder::<Sqlite>::new(
-        "SELECT change_id FROM changes WHERE server_seq IS NOT NULL AND change_id IN (",
-    );
-    let mut separated = query_builder.separated(", ");
-    for change in changes {
-        separated.push_bind(&change.change_id);
-    }
-    separated.push_unseparated(")");
-    Ok(query_builder
-        .build_query_scalar::<String>()
-        .fetch_all(&mut *conn)
-        .await?
-        .into_iter()
-        .collect())
-}
-
+#[cfg(any(test, feature = "test-support"))]
 pub(in crate::sync) async fn verify_existing_change(
     conn: &mut SqliteConnection,
     incoming: &ChangeWire,
@@ -159,6 +146,7 @@ pub(in crate::sync) async fn update_change_server_seq(
     Ok(())
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub(in crate::sync) async fn update_change_server_seqs_if_missing(
     conn: &mut SqliteConnection,
     push_acks: &[PushAck],

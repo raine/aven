@@ -574,8 +574,6 @@ async fn exchange_bounded(client_path: &Path, server: &Database, pull_limit: u32
                 changes: persisted.changes,
             },
             attempted_at: "2026-07-18T00:00:00Z".to_string(),
-            previous_pushed: 0,
-            previous_pulled: 0,
         })
         .await
         .unwrap();
@@ -721,12 +719,9 @@ async fn consumer_api_creation_sync_and_export_preserve_task_sources() {
 }
 
 #[tokio::test]
-async fn consumer_api_queue_report_ranks_open_tasks_and_reads_last_success() {
+async fn consumer_api_queue_report_ranks_open_tasks() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("queue-report.sqlite");
-    let server = Database::open(&directory.path().join("queue-server.sqlite"))
-        .await
-        .unwrap();
     let store = Store::open(&path).await.unwrap();
     let workspace = store.resolve_workspace("default").await.unwrap();
 
@@ -775,25 +770,11 @@ async fn consumer_api_queue_report_ranks_open_tasks_and_reads_last_success() {
             .all(|row| { row.status != TaskStatus::Done && row.status != TaskStatus::Canceled })
     );
     assert!(report.tasks.iter().all(|row| !row.display_ref.is_empty()));
-    assert_eq!(report.last_success_at, None);
 
     let missing_id = WorkspaceId::new();
     let error = store.queue_report(&missing_id).await.unwrap_err();
     assert_eq!(error.code, ErrorCode::NotFound);
     assert_eq!(error.message, format!("workspace not found: {missing_id}"));
-
-    drop(store);
-    exchange(&path, &server).await;
-    let reopened = Store::open(&path).await.unwrap();
-    assert_eq!(
-        reopened
-            .queue_report(&workspace.id)
-            .await
-            .unwrap()
-            .last_success_at
-            .as_deref(),
-        Some("2026-07-18T00:00:00Z")
-    );
 }
 
 #[tokio::test]
@@ -1154,14 +1135,6 @@ async fn consumer_api_completes_local_task_and_conflict_flows() {
     assert!(storage.objects.is_dir());
     assert!(storage.trash.is_dir());
     assert!(storage.previews.is_dir());
-    let invalid_sync_server = match first
-        .start_sync_session("ftp://sync.test".to_string(), None, None)
-        .await
-    {
-        Ok(_) => panic!("unsupported sync server URL was accepted"),
-        Err(error) => error,
-    };
-    assert_eq!(invalid_sync_server.code, ErrorCode::Validation);
     let workspaces = first.list_workspaces().await.unwrap();
     assert_eq!(workspaces.len(), 1);
     let workspace = first.resolve_workspace("default").await.unwrap();
@@ -2267,57 +2240,6 @@ async fn attachment_bytes_are_scoped_bounded_and_leased() {
         .await
         .unwrap();
     assert_eq!(count, 0);
-}
-
-#[tokio::test]
-async fn sync_facts_confirm_metadata_only_after_catch_up() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("facts.sqlite");
-    let store = Store::open(&path).await.unwrap();
-    let server = Database::open(&directory.path().join("server.sqlite"))
-        .await
-        .unwrap();
-    let before = store.sync_facts().await.unwrap();
-    assert!(!before.metadata_caught_up);
-    assert!(before.metadata_confirmed_at.is_none());
-    exchange(&path, &server).await;
-    let confirmed = store.sync_facts().await.unwrap();
-    assert_eq!(confirmed.pending_changes, 0);
-    assert!(confirmed.metadata_caught_up);
-    assert!(confirmed.metadata_confirmed_at.as_deref().unwrap() > "2026-07-18T00:00:00Z");
-    let workspace = store.resolve_workspace("default").await.unwrap();
-    store
-        .create_task(
-            &workspace.id,
-            CreateTask {
-                metadata: Vec::new(),
-                title: "Pending".into(),
-                description: String::new(),
-                project: "Core".into(),
-                status: TaskStatus::Inbox,
-                priority: TaskPriority::None,
-                available_at: None,
-                due_on: None,
-            },
-        )
-        .await
-        .unwrap();
-    let pending = store.sync_facts().await.unwrap();
-    assert!(pending.pending_changes > 0);
-    assert_eq!(
-        pending.metadata_confirmed_at,
-        confirmed.metadata_confirmed_at
-    );
-    exchange_bounded(&path, &server, 1).await;
-    let partial = store.sync_facts().await.unwrap();
-    assert_eq!(partial.pending_changes, 0);
-    assert!(!partial.metadata_caught_up);
-    assert_eq!(
-        partial.metadata_confirmed_at,
-        confirmed.metadata_confirmed_at
-    );
-    exchange(&path, &server).await;
-    assert_eq!(store.sync_facts().await.unwrap().pending_changes, 0);
 }
 
 #[tokio::test]

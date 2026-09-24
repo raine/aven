@@ -144,8 +144,6 @@ async fn apply_remote_attachment_change(
                 has_more: false,
             },
             attempted_at: "2026-09-21T12:00:00Z".into(),
-            previous_pushed: 0,
-            previous_pulled: 0,
         })
         .await
         .unwrap();
@@ -203,8 +201,6 @@ impl TestStream {
                         has_more: false,
                     },
                     attempted_at: attempted_at.into(),
-                    previous_pushed: 0,
-                    previous_pulled: 0,
                 })
                 .await
                 .unwrap();
@@ -1169,8 +1165,6 @@ async fn active_local_capture_fences_sync_backup_import_and_restore() {
             sync_generation: prepared.sync_generation,
             response,
             attempted_at: "2026-09-21T12:01:00Z".into(),
-            previous_pushed: 0,
-            previous_pulled: 0,
         })
         .await
         .unwrap_err();
@@ -1237,8 +1231,6 @@ async fn active_local_capture_fences_sync_backup_import_and_restore() {
             sync_generation: stale_generation,
             response: stale_response,
             attempted_at: "2026-09-21T12:02:00Z".into(),
-            previous_pushed: 0,
-            previous_pulled: 0,
         })
         .await
         .unwrap_err();

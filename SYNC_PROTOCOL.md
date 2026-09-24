@@ -8,10 +8,10 @@ required to change it.
 Scope: this workspace ships only end-to-end encrypted sync. Its encrypted tail
 validates retained and new operations against replica protocol 18 through the
 operation contracts and persisted replica behavior below, so those sections
-govern every shared operation change. The unencrypted `/sync` request and
-response envelope, discovery and server admission described here remain in
-`aven-core` only for the external mobile consumer API; no server in this
-workspace speaks them, and releases carry no protocol markers. Changing an
+govern every shared operation change. The unencrypted request and response
+envelope survives only behind `aven-core`'s `test-support` feature as an
+in-process page simulator for fixtures; discovery, server admission and
+release protocol markers no longer exist. Changing an
 encrypted operation contract also requires an encrypted tail codec change and
 its own security review.
 

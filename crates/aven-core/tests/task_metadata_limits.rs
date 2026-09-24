@@ -111,12 +111,10 @@ async fn drain(db: &Database, server: &Database) {
             sync_generation: page.sync_generation,
             response,
             attempted_at: "2026-09-22T00:00:00Z".into(),
-            previous_pushed: 0,
-            previous_pulled: 0,
         })
         .await
         .unwrap();
-        if !has_more && db.sync_facts().await.unwrap().pending_changes == 0 {
+        if !has_more && db.sync_persistence_status().await.unwrap().pending_changes == 0 {
             return;
         }
     }
@@ -290,7 +288,10 @@ async fn plaintext_merge_conflicts_and_capture_preserve_over_limit_metadata() {
             assert!(!final_values.iter().any(|v| v.key == "key1"));
             for db in [&a, &b] {
                 drain(db, &server).await;
-                assert_eq!(db.sync_facts().await.unwrap().pending_changes, 0);
+                assert_eq!(
+                    db.sync_persistence_status().await.unwrap().pending_changes,
+                    0
+                );
                 assert!(
                     db.task_conflicts(&w, &task.id, None)
                         .await

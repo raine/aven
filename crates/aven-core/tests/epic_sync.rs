@@ -148,9 +148,8 @@ impl Replicas {
     async fn assert_all(&self, expected: Option<&TaskId>) {
         for path in [&self.first, &self.second] {
             let db = Database::open(path).await.unwrap();
-            let facts = db.sync_facts().await.unwrap();
-            assert_eq!(facts.pending_changes, 0, "{}: {facts:?}", path.display());
-            assert!(facts.metadata_caught_up, "{}: {facts:?}", path.display());
+            let status = db.sync_persistence_status().await.unwrap();
+            assert_eq!(status.pending_changes, 0, "{}: {status:?}", path.display());
             drop(db);
             self.assert_parent(path, expected).await;
         }
@@ -207,8 +206,6 @@ async fn apply(path: &Path, request: SyncRequest, response: SyncResponse) {
             sync_generation: 0,
             response,
             attempted_at: "2026-09-06T00:00:00Z".to_string(),
-            previous_pushed: 0,
-            previous_pulled: 0,
         })
         .await
         .unwrap();
@@ -230,13 +227,13 @@ async fn exchange(
 async fn drain(path: &Path, server: &Database, push_limit: usize, pull_limit: u32) {
     for _ in 0..64 {
         let response = exchange(path, server, push_limit, pull_limit).await;
-        let facts = Database::open(path)
+        let status = Database::open(path)
             .await
             .unwrap()
-            .sync_facts()
+            .sync_persistence_status()
             .await
             .unwrap();
-        if !response.has_more && facts.pending_changes == 0 {
+        if !response.has_more && status.pending_changes == 0 {
             return;
         }
     }
@@ -349,9 +346,10 @@ async fn acknowledgement_beyond_cursor_preserves_write_after_prepare_and_reopen(
     replicas.add(&replicas.second, parent).await;
     apply(&replicas.second, request, response).await;
     let db = Database::open(&replicas.second).await.unwrap();
-    let facts = db.sync_facts().await.unwrap();
-    assert_eq!(facts.pending_changes, 1);
-    assert!(!facts.metadata_caught_up);
+    assert_eq!(
+        db.sync_persistence_status().await.unwrap().pending_changes,
+        1
+    );
     drop(db);
     replicas.assert_parent(&replicas.second, Some(parent)).await;
 
@@ -388,14 +386,13 @@ async fn acknowledged_readd_beyond_cursor_is_visible_without_pending_writes() {
     );
     apply(&replicas.second, request, response).await;
 
-    let facts = Database::open(&replicas.second)
+    let status = Database::open(&replicas.second)
         .await
         .unwrap()
-        .sync_facts()
+        .sync_persistence_status()
         .await
         .unwrap();
-    assert_eq!(facts.pending_changes, 0);
-    assert!(!facts.metadata_caught_up);
+    assert_eq!(status.pending_changes, 0);
     replicas.assert_parent(&replicas.second, Some(parent)).await;
     replicas.settle(1, 1).await;
     replicas.assert_quiet(Some(parent)).await;
@@ -434,8 +431,6 @@ async fn failed_epic_page_rolls_back_membership_acknowledgements_and_cursor() {
             sync_generation: 0,
             response: invalid,
             attempted_at: "2026-09-06T00:00:00Z".to_string(),
-            previous_pushed: 0,
-            previous_pulled: 0,
         })
         .await
         .unwrap_err();

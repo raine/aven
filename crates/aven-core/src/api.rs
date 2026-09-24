@@ -18,7 +18,6 @@ use crate::operations::{
     TaskCreationOptions, TaskDraft, TaskUpdate as InternalTaskUpdate,
     UpdateRecurrenceTemplateParams,
 };
-pub use crate::pairing::{PairingInvitation, PairingInvitationError};
 use crate::query::{
     MAX_RECURRENCE_HISTORY_LIMIT, RecurrenceCounts as InternalRecurrenceCounts,
     RecurrenceHistoryEntry as InternalRecurrenceHistoryEntry,
@@ -36,62 +35,10 @@ use crate::recurrence::{
     RecurrenceRule as InternalRecurrenceRule, RecurrenceSchedule, RecurrenceSeriesId, TimeZoneId,
     WeekdaySet,
 };
-use crate::sync::SyncSession;
 use crate::task_fields::TaskField;
 use crate::types::{Project, RecurrenceOccurrence, RecurrenceSeries, Task};
 use crate::undo::TaskUndoSnapshot;
 use crate::workspaces::Workspace;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SyncFacts {
-    pub pending_changes: i64,
-    pub attachment_uploads: i64,
-    pub attachment_downloads: u64,
-    pub metadata_confirmed_at: Option<String>,
-    pub metadata_caught_up: bool,
-    pub compatibility_block: Option<crate::sync::protocol::SyncCompatibilityError>,
-}
-
-#[derive(Clone)]
-pub struct ConnectionInspection {
-    pub server_url: Option<String>,
-    pub server_origin: Option<String>,
-    pub last_success_at: Option<String>,
-    pub facts: SyncFacts,
-}
-
-/// Reads an isolated snapshot without initializing, migrating, or repairing the replica.
-pub async fn inspect_connection(path: impl AsRef<Path>) -> Result<ConnectionInspection, Error> {
-    let database = Database::inspect(path.as_ref())
-        .await
-        .database
-        .ok_or_else(|| {
-            Error::new(
-                ErrorCode::Database,
-                "local connection information is unavailable".to_string(),
-            )
-        })?;
-    let server_url = database
-        .meta("sync_server_url")
-        .await
-        .map_err(Error::from_internal)?;
-    let server_origin = server_url.as_deref().and_then(|server| {
-        let url = url::Url::parse(server).ok()?;
-        crate::sync::wire::sync_server_url_is_valid_url(&url)
-            .then(|| url.origin().ascii_serialization())
-    });
-    let last_success_at = database
-        .meta("sync_last_success_at")
-        .await
-        .map_err(Error::from_internal)?;
-    let facts = database.sync_facts().await.map_err(Error::from_internal)?;
-    Ok(ConnectionInspection {
-        server_url,
-        server_origin,
-        last_success_at,
-        facts,
-    })
-}
 
 #[derive(Clone)]
 pub struct Store {
@@ -130,35 +77,11 @@ impl Store {
         })
     }
 
-    pub async fn start_sync_session(
-        &self,
-        server: String,
-        auth_token: Option<String>,
-        page_budget: Option<usize>,
-    ) -> Result<SyncSession, Error> {
-        if !crate::sync::wire::sync_server_url_is_valid(&server) {
-            return Err(Error::new(
-                ErrorCode::Validation,
-                "invalid sync server URL".to_string(),
-            ));
-        }
-        SyncSession::start(self.database.clone(), server, auth_token, page_budget)
-            .await
-            .map_err(Error::from_internal)
-    }
-
     pub async fn list_workspaces(&self) -> Result<Vec<WorkspaceRecord>, Error> {
         self.database
             .list_workspaces()
             .await
             .map(|workspaces| workspaces.into_iter().map(WorkspaceRecord::from).collect())
-            .map_err(Error::from_internal)
-    }
-
-    pub async fn sync_facts(&self) -> Result<SyncFacts, Error> {
-        self.database
-            .sync_facts()
-            .await
             .map_err(Error::from_internal)
     }
 
@@ -910,16 +833,9 @@ impl Store {
             .await
             .map_err(Error::from_internal)?
             .clamp(0, i64::from(u32::MAX)) as u32;
-        let last_success_at = self
-            .database
-            .sync_persistence_status()
-            .await
-            .map_err(Error::from_internal)?
-            .last_success;
         Ok(QueueReport {
             tasks,
             unresolved_conflict_count,
-            last_success_at,
         })
     }
 
@@ -2524,7 +2440,6 @@ impl From<TaskListItem> for QueueTaskSummary {
 pub struct QueueReport {
     pub tasks: Vec<QueueTaskSummary>,
     pub unresolved_conflict_count: u32,
-    pub last_success_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

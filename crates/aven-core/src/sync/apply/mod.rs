@@ -15,13 +15,13 @@ mod workspace;
 
 use anyhow::{Result, bail};
 use sqlx::SqliteConnection;
-use tracing::debug;
 
 use crate::change_log::op_type;
 use crate::sync::wire::{AttachmentAddPayload, AttachmentDeletePayload, ChangeWire};
 
+#[cfg(any(test, feature = "test-support"))]
 pub async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
-    debug!(
+    tracing::debug!(
         change_id = %change.change_id,
         op_type = %change.op_type,
         entity_type = %change.entity_type,

@@ -95,11 +95,9 @@ fn staging_dir(blob_dir: &Path) -> PathBuf {
 
 pub use leases::{acquire_lease, release_lease};
 pub use liveness::reconcile_liveness;
-pub(crate) use liveness::{
-    reconcile_liveness_for_hashes_in_transaction, reconcile_liveness_in_transaction,
-};
+pub(crate) use liveness::reconcile_liveness_for_hashes_in_transaction;
 #[cfg(test)]
 pub(crate) use maintenance::reconcile_missing_objects;
 pub use maintenance::{prune, prune_preview_cache};
-pub use quota::{ensure_local_capacity, release_reservation, reserve_upload};
+pub use quota::{ensure_local_capacity, release_reservation};
 pub use report::lifecycle_report;

@@ -13,7 +13,6 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
-base64.workspace = true
 chacha20poly1305.workspace = true
 chacha20 = { version = "=0.10.2", default-features = false, features = ["rng", "zeroize"] }
 ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["fast", "zeroize"] }
@@ -22,7 +21,6 @@ rand_core = "=0.10.1"
 subtle = "2.6"
 chrono = { workspace = true, features = ["serde"] }
 chrono-tz.workspace = true
-flate2.workspace = true
 getrandom = "0.4"
 hex.workspace = true
 hkdf.workspace = true
@@ -47,4 +45,5 @@ sqlx = { workspace = true, features = ["sqlite-unbundled"] }
 sqlx = { workspace = true, features = ["sqlite"] }
 
 [dev-dependencies]
+aven-core = { path = ".", features = ["test-support"] }
 tempfile.workspace = true

@@ -13,6 +13,7 @@ use crate::ids::{BASE32, MetadataFieldId, ProjectId, WorkspaceId};
 use crate::task_fields::TaskField;
 
 mod changes;
+#[cfg(any(test, feature = "test-support"))]
 mod envelope;
 mod recurrence;
 #[cfg(test)]
@@ -40,7 +41,7 @@ pub fn sync_server_url_is_valid(server: &str) -> bool {
         .is_ok_and(sync_server_url_is_valid_url)
 }
 
-pub(crate) fn sync_server_url_is_valid_url(url: &url::Url) -> bool {
+fn sync_server_url_is_valid_url(url: &url::Url) -> bool {
     matches!(url.scheme(), "http" | "https")
         && url.host_str().is_some()
         && url.username().is_empty()
@@ -48,15 +49,13 @@ pub(crate) fn sync_server_url_is_valid_url(url: &url::Url) -> bool {
         && url.query().is_none()
         && url.fragment().is_none()
 }
+#[cfg(any(test, feature = "test-support"))]
 pub const MAX_PUSH_BATCH: usize = 256;
-/// Full decoded JSON metadata request allowance, shared by page selection and HTTP extraction.
-/// Compatible with the 2 MiB default body allowance in Axum 0.8.
+/// Full decoded JSON request allowance for the in-process page simulator.
+#[cfg(any(test, feature = "test-support"))]
 pub const MAX_SYNC_REQUEST_BYTES: usize = 2 * 1024 * 1024;
+#[cfg(any(test, feature = "test-support"))]
 pub const MAX_PULL_BATCH: u32 = 512;
-pub const MAX_BLOB_TRANSFER_OBJECTS: usize = 16;
-pub const MAX_BLOB_TRANSFER_BYTES: u64 = 64 * 1024 * 1024;
-pub const DAEMON_SYNC_PAGE_BUDGET: usize = 8;
-pub const DAEMON_INCOMPLETE_RESCHEDULE_MS: u64 = 100;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangeWire {
@@ -155,32 +154,14 @@ fn validate_attachment_change_envelope(change: &ChangeWire, expected_op_type: &s
     Ok(())
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PushAck {
     pub change_id: String,
     pub server_seq: i64,
 }
 
-pub fn validate_blob_contracts(blobs: &[BlobUploadContract]) -> Result<()> {
-    envelope::validate_blob_contracts(blobs)
-}
-
-pub fn validate_blob_hashes(hashes: &[String]) -> Result<()> {
-    envelope::validate_blob_hashes(hashes)
-}
-
-pub fn validate_sync_protocol_version(client: u32, server: u32) -> Result<()> {
-    envelope::validate_sync_protocol_version(client, server)
-}
-
-pub fn validate_sync_request_protocol_version(client: Option<u32>) -> Result<()> {
-    envelope::validate_sync_request_protocol_version(client)
-}
-
-pub fn request_pull_limit(requested: Option<u32>) -> Result<u32> {
-    envelope::request_pull_limit(requested)
-}
-
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone, Copy)]
 pub struct ValidatedSyncRequestEnvelope {
     pub after: i64,
@@ -188,12 +169,7 @@ pub struct ValidatedSyncRequestEnvelope {
     pub push_count: usize,
 }
 
-pub fn validate_sync_request_envelope(
-    request: &SyncRequest,
-) -> Result<ValidatedSyncRequestEnvelope> {
-    envelope::validate_sync_request_envelope(request)
-}
-
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn validate_request_at_protocol(
     request: &SyncRequest,
     protocol: u32,
@@ -201,15 +177,7 @@ pub(crate) fn validate_request_at_protocol(
     envelope::validate_request_at_protocol(request, protocol)
 }
 
-pub fn validate_sync_response_for_request(
-    after: i64,
-    pull_limit: u32,
-    request_change_ids: &[String],
-    response: &SyncResponse,
-) -> Result<()> {
-    envelope::validate_sync_response_for_request(after, pull_limit, request_change_ids, response)
-}
-
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn validate_response_at_protocol(
     protocol: u32,
     after: i64,
@@ -259,6 +227,7 @@ impl ChangeRow {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncRequest {
     #[serde(default)]
@@ -270,6 +239,7 @@ pub struct SyncRequest {
     pub changes: Vec<ChangeWire>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SyncResponse {
     pub protocol_version: u32,
@@ -280,32 +250,14 @@ pub struct SyncResponse {
     pub changes: Vec<ChangeWire>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlobUploadContract {
-    pub workspace_id: String,
-    pub sha256: String,
-    pub byte_size: i64,
-    pub media_type: String,
-    pub width: i64,
-    pub height: i64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct MissingBlobsRequest {
-    pub blobs: Vec<BlobUploadContract>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct MissingBlobsResponse {
-    pub missing: Vec<String>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChangeDirection {
     Pushed,
+    #[cfg(any(test, feature = "test-support"))]
     Pulled,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn validate_pushed_change(change: &ChangeWire) -> Result<()> {
     validate_local_change_shape(change)?;
     super::protocol::validate_change(SYNC_PROTOCOL_VERSION, change)
@@ -315,6 +267,7 @@ pub(crate) fn validate_local_change_shape(change: &ChangeWire) -> Result<()> {
     validate_change_shape(change, ChangeDirection::Pushed)
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn validate_pulled_change(change: &ChangeWire) -> Result<()> {
     validate_change_shape(change, ChangeDirection::Pulled)
 }
@@ -418,6 +371,7 @@ fn validate_change_server_seq(change: &ChangeWire, direction: ChangeDirection) -
         ChangeDirection::Pushed if change.server_seq.is_some() => {
             bail!("error invalid-sync-change server_seq client-supplied");
         }
+        #[cfg(any(test, feature = "test-support"))]
         ChangeDirection::Pulled => match change.server_seq {
             Some(server_seq) if server_seq > 0 => {}
             Some(server_seq) => {

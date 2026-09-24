@@ -4,21 +4,14 @@ pub mod bootstrap_staging;
 pub mod encrypted_tail;
 mod persistence;
 pub(crate) use persistence::changes::canonical_equal;
-mod planner;
 pub mod protocol;
 pub mod seed_claim;
-mod session;
 pub(crate) mod shared_state;
 pub mod wire;
 
-pub use persistence::{
-    ApplySyncPage, ClientSyncPage, ServerSyncPage, ServerSyncResult, SyncPersistenceStatus,
-};
-pub use session::{
-    PairingConnectionValidationResponse, PreparedSyncRequest, SyncHttpHeader, SyncHttpResponse,
-    SyncPageOutcome, SyncRequestContext, SyncRequestTimeout, SyncRetryDecision, SyncSession,
-    SyncSessionSummary, classify_pairing_connection_validation_response,
-};
+pub use persistence::SyncPersistenceStatus;
+#[cfg(any(test, feature = "test-support"))]
+pub use persistence::{ApplySyncPage, ClientSyncPage, ServerSyncPage, ServerSyncResult};
 pub use shared_state::adoption::{SeedPublicationIntent, SeedSourceAuthority};
 pub use shared_state::bootstrap_format;
 pub use shared_state::{
