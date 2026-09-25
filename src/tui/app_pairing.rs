@@ -16,7 +16,7 @@ use crate::tui::overlay::OverlayState;
 /// the user asks to copy it.
 pub(super) struct InviteController {
     create: Option<JoinHandle<Result<PendingInvitation>>>,
-    admission: Option<JoinHandle<Result<()>>>,
+    admission: Option<JoinHandle<Result<encrypted::Admission>>>,
     presentation: Option<Arc<PairingPresentation>>,
     text: Option<Zeroizing<String>>,
 }
@@ -151,7 +151,8 @@ impl App {
             .context("invitation task stopped")
             .and_then(|result| result)
         {
-            Ok(()) => self.set_success("device added"),
+            Ok(encrypted::Admission::Admitted) => self.set_success("device added"),
+            Ok(encrypted::Admission::Cancelled) => self.set_info("invitation cancelled"),
             Err(error) => {
                 self.store.refresh_sync_status().await?;
                 let status = encrypted::invitation_status(&self.store.database()).await?;

@@ -28,6 +28,7 @@ pub use management::RemovalStatus;
 pub(crate) struct CreatedInvitation {
     pub(crate) invitation: Invitation,
     pub(crate) state: OpenInvitation,
+    pub(crate) vault: [u8; 32],
     pub(crate) resumed: bool,
 }
 use serde::{Deserialize, Serialize};
@@ -710,6 +711,7 @@ impl Client {
                     return Ok(CreatedInvitation {
                         invitation,
                         state,
+                        vault: inputs.membership.genesis().context().vault_id,
                         resumed: previous.is_some_and(|old| old.handle == journal.handle),
                     });
                 }
@@ -787,6 +789,17 @@ impl Client {
     }
     pub async fn admit(&self, store: &ProtectedLocalKeyStore, db: &Database) -> Result<bool> {
         self.admit_handle(store, db, None).await
+    }
+    /// Whether a device has asked to join with this invitation. Only the
+    /// server is consulted, so frequent checks stay cheap.
+    pub(crate) async fn join_requested(&self, vault: [u8; 32], handle: [u8; 32]) -> Result<bool> {
+        match self
+            .exchange(Operation::Mailbox { vault, handle }, None)
+            .await?
+        {
+            Reply::Mailbox(mail) => Ok(mail.request.is_some()),
+            _ => anyhow::bail!("error enrollment-response"),
+        }
     }
     /// Exact historical outcomes remain addressable after subsequent invitations.
     pub async fn admit_handle(

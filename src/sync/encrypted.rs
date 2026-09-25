@@ -19,6 +19,7 @@ use crate::cli::{JoinArgs, SetupArgs};
 use crate::config::{self, AppConfig};
 use crate::encrypted_tail_http::{self as tail_http, ImageTransfer, Round};
 use crate::peer_enrollment_http;
+use crate::protected_local_keys::peer::InvitationProgress;
 use crate::protected_local_keys::{
     EnrollmentReadiness, ProtectedLocalKeyStore, ProtectedLocalKeyStoreError,
     ProtectedLocalKeyStoreErrorKind,
@@ -404,6 +405,8 @@ pub(crate) async fn run_setup(
 pub(crate) struct PendingInvitation {
     server: String,
     text: Zeroizing<String>,
+    handle: [u8; 32],
+    vault: [u8; 32],
     deadline: Instant,
     expires_at: u64,
     resumed: bool,
@@ -487,6 +490,8 @@ pub(crate) async fn create_invitation(
     Ok(PendingInvitation {
         server,
         text,
+        handle: created.state.handle,
+        vault: created.vault,
         deadline: Instant::now() + Duration::from_secs(created.state.expires_at - now),
         expires_at: created.state.expires_at,
         resumed: created.resumed,
@@ -542,60 +547,93 @@ pub(crate) async fn cancel_invitation(
     Ok(Cancellation::Cancelled)
 }
 
-async fn poll_admission(database: &Database, invitation: &PendingInvitation) -> Result<bool> {
+/// How a wait for the invited device ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Admission {
+    Admitted,
+    /// Another command retired or withdrew the invitation.
+    Cancelled,
+}
+
+const INVITATION_UNUSED: &str = "error sync-invitation-unused hint=\"the invitation expired unused; if keys may have been sent with it, the next `aven sync` changes keys before uploading new changes\"";
+
+/// Checks this invitation's local state, then the server mailbox, and admits
+/// only once a join request is waiting, so an idle wait stays cheap.
+async fn poll_admission(
+    database: &Database,
+    client: &peer_enrollment_http::Client,
+    invitation: &PendingInvitation,
+) -> Result<Option<Admission>> {
     let store = key_store(database)?;
-    let client = peer_enrollment_http::Client::new(&invitation.server)?;
     let _guard = super::coordination::acquire(database).await?;
-    match client.admit(&store, database).await {
-        Err(error) if busy(&error) => Ok(false),
-        result => track_access_result(database, result).await,
+    match store
+        .invitation_progress(database, &invitation.handle)
+        .await?
+    {
+        InvitationProgress::Admitted => return Ok(Some(Admission::Admitted)),
+        InvitationProgress::Closed => return Ok(Some(Admission::Cancelled)),
+        InvitationProgress::Open => {}
+    }
+    match client
+        .join_requested(invitation.vault, invitation.handle)
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => return Ok(None),
+        Err(error) if busy(&error) => return Ok(None),
+        Err(error) => return Err(error),
+    }
+    match client
+        .admit_handle(&store, database, Some(invitation.handle))
+        .await
+    {
+        Err(error) if busy(&error) => Ok(None),
+        result => Ok(track_access_result(database, result)
+            .await?
+            .then_some(Admission::Admitted)),
     }
 }
 
-/// Polls admission until the invited device joins or the invitation expires.
+/// Polls admission until the invited device joins, the invitation is
+/// cancelled, or it expires.
 pub(crate) async fn await_admission(
     database: &Database,
     invitation: &PendingInvitation,
-) -> Result<()> {
+) -> Result<Admission> {
+    let client = peer_enrollment_http::Client::new(&invitation.server)?;
     while Instant::now() < invitation.deadline {
-        if poll_admission(database, invitation).await? {
-            return Ok(());
+        if let Some(admission) = poll_admission(database, &client, invitation).await? {
+            return Ok(admission);
         }
         tokio::time::sleep(POLL_INTERVAL).await;
     }
-    bail!(
-        "error sync-invitation-unused hint=\"the invitation expired unused; if keys may have been sent with it, the next `aven sync` changes keys before uploading new changes\""
-    )
+    bail!(INVITATION_UNUSED)
 }
 
+/// Like [`await_admission`], but `None` reports an interrupt.
 async fn await_admission_until_interrupt(
     database: &Database,
     invitation: &PendingInvitation,
-) -> Result<bool> {
-    // The listener runs during each network poll, but cancellation is acted on
-    // only after that poll releases the coordination lock.
+) -> Result<Option<Admission>> {
+    // The listener runs during each poll, but cancellation is acted on only
+    // after that poll releases the coordination lock.
     let mut interrupt = tokio::spawn(tokio::signal::ctrl_c());
+    let client = peer_enrollment_http::Client::new(&invitation.server)?;
     while Instant::now() < invitation.deadline {
-        match poll_admission(database, invitation).await {
-            Ok(true) => {
+        match poll_admission(database, &client, invitation).await {
+            Ok(None) => {}
+            result => {
                 interrupt.abort();
-                return Ok(true);
-            }
-            Ok(false) => {}
-            Err(error) => {
-                interrupt.abort();
-                return Err(error);
+                return result;
             }
         }
         tokio::select! {
             _ = tokio::time::sleep(POLL_INTERVAL) => {}
-            _ = &mut interrupt => return Ok(false),
+            _ = &mut interrupt => return Ok(None),
         }
     }
     interrupt.abort();
-    bail!(
-        "error sync-invitation-unused hint=\"the invitation expired unused; if keys may have been sent with it, the next `aven sync` changes keys before uploading new changes\""
-    )
+    bail!(INVITATION_UNUSED)
 }
 
 pub(crate) async fn invite(database: &Database, config: &AppConfig) -> Result<()> {
@@ -611,9 +649,13 @@ pub(crate) async fn invite(database: &Database, config: &AppConfig) -> Result<()
     print_invitation_qr(&invitation);
     eprintln!("Anyone with this invitation can access all your synced data and manage devices.");
     eprintln!("Run `aven sync join` on the other device. Waiting for it to join...");
-    if await_admission_until_interrupt(database, &invitation).await? {
-        eprintln!("Device added");
-        return Ok(());
+    match await_admission_until_interrupt(database, &invitation).await? {
+        Some(Admission::Admitted) => {
+            eprintln!("Device added");
+            return Ok(());
+        }
+        Some(Admission::Cancelled) => bail!(INVITATION_CANCELLED),
+        None => {}
     }
     let cancellation = tokio::select! {
         result = cancel_invitation(database, config) => result?,
@@ -695,6 +737,8 @@ pub(crate) async fn ensure_join_available(database: &Database, config: &AppConfi
 /// not stop an admission committed before it, so the hint is conditional on
 /// expiry and a replacement keeps the earlier invitation's admission usable.
 const JOIN_TIMEOUT: &str = "error sync-join-timeout hint=\"the other device did not add this device in time; keep `aven sync invite` running there and rerun `aven sync join`. If the invitation expired, run `aven sync invite` again on the same device and pass the new invitation to `aven sync join --new-invitation`; an admission from the earlier invitation still completes the join\"";
+
+const INVITATION_CANCELLED: &str = "error sync-invitation-cancelled hint=\"another command cancelled this invitation; run `aven sync invite` again to add a device\"";
 
 const ALREADY_SET_UP: &str =
     "error sync-already-set-up hint=\"add devices with `aven sync invite` on this database\"";

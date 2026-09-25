@@ -398,6 +398,16 @@ pub(crate) fn explain(
             next_step: "Start a new sync to keep changing devices; see Recover from device loss in the sync docs.",
         });
     }
+    if has("sync-invitation-cancelled") {
+        return Some(Explanation {
+            code: "sync-invitation-cancelled",
+            message: "Invitation cancelled by another command.",
+            next_step: match surface {
+                ErrorSurface::Cli => "Run `aven sync invite` to add a device.",
+                ErrorSurface::Tui => "Choose Add device to create a new invitation.",
+            },
+        });
+    }
     if has("enrollment-busy") {
         return Some(Explanation {
             code: "enrollment-busy",

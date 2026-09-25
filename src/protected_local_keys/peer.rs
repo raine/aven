@@ -86,6 +86,14 @@ pub(crate) struct OpenInvitation {
     pub(crate) keys_may_have_been_sent: bool,
 }
 
+/// Where one issued invitation stands, as recorded on this device.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InvitationProgress {
+    Open,
+    Admitted,
+    Closed,
+}
+
 /// An issued invitation that is neither admitted nor closed.
 #[cfg(test)]
 #[derive(Debug, PartialEq, Eq)]
@@ -588,6 +596,29 @@ impl ProtectedLocalKeyStore {
             }
         }
         Ok(None)
+    }
+
+    /// Reads only this invitation's terminal phases, so waiting for a join can
+    /// check it often without loading every journal.
+    pub(crate) async fn invitation_progress(
+        &self,
+        db: &Database,
+        handle: &Hash,
+    ) -> Result<InvitationProgress> {
+        let recorded = async |name| {
+            Ok::<_, anyhow::Error>(
+                self.phase(db, &invitation_phase_name(handle, name), 128)
+                    .await?
+                    .is_some(),
+            )
+        };
+        if recorded("ready").await? {
+            Ok(InvitationProgress::Admitted)
+        } else if recorded("retired").await? || recorded("withdrawn").await? {
+            Ok(InvitationProgress::Closed)
+        } else {
+            Ok(InvitationProgress::Open)
+        }
     }
 
     /// Retires the open invitation if no grant has been sent. The returned
@@ -1475,8 +1506,11 @@ fn responding(attempts: Vec<Joiner>, mail: &membership::Mailbox) -> Result<Joine
 }
 impl Outbound {
     fn name(&self, phase: &str) -> String {
-        format!("invite-{}-{phase}", hex::encode(self.handle))
+        invitation_phase_name(&self.handle, phase)
     }
+}
+fn invitation_phase_name(handle: &Hash, phase: &str) -> String {
+    format!("invite-{}-{phase}", hex::encode(handle))
 }
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Disclosure {

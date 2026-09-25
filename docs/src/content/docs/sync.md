@@ -140,6 +140,8 @@ invitation, reports its declared expiry, and waits only for the time left.
 Before keys have been sent, stop the CLI command with Ctrl-C or run
 `aven sync invite --cancel`; in the TUI choose **Cancel invitation**. This
 retires the invitation locally and asks the server to stop the waiting joiner.
+A running `aven sync invite` whose invitation is cancelled from another command
+or the TUI stops waiting and exits with an error (`sync-invitation-cancelled`).
 After keys may have been sent, cancellation cannot close it early: Aven reports
 its expiry, and the next sync changes keys after it expires.
 

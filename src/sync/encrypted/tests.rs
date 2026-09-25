@@ -718,6 +718,27 @@ async fn set_up(root: &Path) -> (Child, Installation) {
     (server, a)
 }
 
+/// A waiting `sync invite` stops as soon as another command cancels its
+/// invitation, with a distinct failure scripts can detect.
+#[cfg(unix)]
+#[tokio::test]
+async fn cli_waiting_invite_stops_when_another_command_cancels_it() {
+    let root = tempfile::tempdir().unwrap();
+    let (_server, a) = set_up(root.path()).await;
+
+    let (waiting, _, _) = spawn_invite(&a, None).await;
+    let cancelled = a.ok(&["sync", "invite", "--cancel"]).await;
+    assert!(cancelled.contains("Invitation cancelled"), "{cancelled}");
+    let output = tokio::time::timeout(Duration::from_secs(10), waiting.wait_with_output())
+        .await
+        .expect("waiting invite kept running after cancellation")
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("sync-invitation-cancelled"), "{stderr}");
+    assert_eq!(status(&a).await["invitation"], "none");
+}
+
 /// The reported flow with a short declared invitation lifetime: the inviting
 /// device stops before admitting, the join times out and the invitation
 /// expires, and the same database finishes with a new invitation.
