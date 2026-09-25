@@ -81,6 +81,8 @@ async fn missing_seed_or_package_authority_never_regenerates() {
             .unwrap();
         let store = isolated_store(db.path(), &root.path().join("keys"));
         store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
+        // A fenced source depends on this exact seed.
+        store.prepare_seed_source(&db).await.unwrap();
         fs::remove_file(seed_path(&store)).unwrap();
         if remove_marker {
             fs::remove_file(store.seed_marker_path()).unwrap();
@@ -97,6 +99,36 @@ async fn missing_seed_or_package_authority_never_regenerates() {
                 .is_err()
         );
         assert!(!package_path(&store).exists());
+    }
+}
+
+#[tokio::test]
+async fn rollback_interrupted_after_key_deletion_recovers_on_next_setup() {
+    for remove_marker in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let db = Database::open(&root.path().join("db.sqlite"))
+            .await
+            .unwrap();
+        let store = isolated_store(db.path(), &root.path().join("keys"));
+        let seed = store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
+        // The claim was refused; rollback deleted protected authority but the
+        // database step failed, leaving the pin.
+        fs::remove_file(seed_path(&store)).unwrap();
+        if remove_marker {
+            fs::remove_file(store.seed_marker_path()).unwrap();
+        }
+        assert_eq!(
+            Some(seed.genesis().commitment()),
+            db.local_seed_genesis_commitment().await.unwrap()
+        );
+        let retry = store.prepare_seed_claim(&db, [8; 32]).await.unwrap();
+        assert_eq!(retry.genesis().setup_id(), [8; 32]);
+        assert_eq!(
+            Some(retry.genesis().commitment()),
+            db.local_seed_genesis_commitment().await.unwrap()
+        );
+        store.rollback_seed_claim(&db, &retry).await.unwrap();
+        assert!(db.local_seed_genesis_commitment().await.unwrap().is_none());
     }
 }
 

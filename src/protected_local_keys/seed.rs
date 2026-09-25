@@ -23,7 +23,12 @@ impl ProtectedLocalKeyStore {
                 .is_none_or(|(_, _, role)| role == "inviter"),
             "error enrollment-peer-cannot-become-seed"
         );
-        let pin = database.local_seed_genesis_commitment().await?;
+        let mut pin = database.local_seed_genesis_commitment().await?;
+        if let Some(commitment) = pin
+            && self.clear_unfenced_orphan_pin(database, commitment).await?
+        {
+            pin = None;
+        }
         let package = if pin.is_some()
             || database
                 .has_local_shared_state_package_never_dispatched()
@@ -69,6 +74,8 @@ impl ProtectedLocalKeyStore {
             "error seed-claim-rollback-fenced"
         );
         let commitment = seed.genesis().commitment();
+        // Protected authority goes first so an interruption leaves an unfenced
+        // pin without authority, which `prepare_seed_claim` clears.
         {
             let _guard = self.lock()?;
             let package = self.load_required_locked()?;
@@ -80,15 +87,47 @@ impl ProtectedLocalKeyStore {
                 }
             }
             backend.delete()?;
-            match fs::remove_file(self.seed_marker_path()) {
-                Ok(()) => sync_parent(&self.seed_marker_path())?,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(_) => {
-                    return Err(super::error(ProtectedLocalKeyStoreErrorKind::WriteFailed).into());
-                }
-            }
+            self.remove_seed_marker()?;
         }
         database.rollback_local_seed_genesis(commitment).await
+    }
+
+    /// Clears a seed pin whose protected authority is gone when nothing was
+    /// fenced, captured or dispatched under it. Only an interrupted rollback
+    /// leaves that state; the refused claim authorized nothing on the server.
+    async fn clear_unfenced_orphan_pin(
+        &self,
+        database: &Database,
+        commitment: [u8; 32],
+    ) -> anyhow::Result<bool> {
+        if database.seed_source_pin().await?.is_some()
+            || database.seed_publication_intent_bytes().await?.is_some()
+            || database
+                .has_local_shared_state_package_never_dispatched()
+                .await?
+        {
+            return Ok(false);
+        }
+        {
+            let _guard = self.lock()?;
+            if self.seed_backend().load_bounded(SEED_BYTES)?.is_some() {
+                return Ok(false);
+            }
+            self.remove_seed_marker()?;
+        }
+        database.rollback_local_seed_genesis(commitment).await?;
+        Ok(true)
+    }
+
+    fn remove_seed_marker(&self) -> anyhow::Result<()> {
+        match fs::remove_file(self.seed_marker_path()) {
+            Ok(()) => sync_parent(&self.seed_marker_path())?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {
+                return Err(super::error(ProtectedLocalKeyStoreErrorKind::WriteFailed).into());
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn seed_backend(&self) -> Backend {
