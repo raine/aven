@@ -474,11 +474,13 @@ fn device_activity(rotation_pending: bool) -> SyncActivity {
                 devices: vec![
                     Device {
                         id: [0xa1; 32],
+                        label: Some("Office Mac".to_string()),
                         current: true,
                         admission_sequence: 0,
                     },
                     Device {
                         id: other,
+                        label: None,
                         current: false,
                         admission_sequence: 7,
                     },
@@ -496,7 +498,7 @@ fn device_list_marks_this_device_and_disambiguates_short_ids() {
     let rendered = render_page(SyncPage::Devices, sync_status(), device_activity(false));
 
     assert!(rendered.contains("Checked with the server just now."));
-    assert!(rendered.contains("› a1a1a1a1a1…"));
+    assert!(rendered.contains("› a1a1a1a1a1…  Office Mac"));
     assert!(rendered.contains("This device"));
     assert!(rendered.contains("a1a1a1a1ff…"));
     assert!(rendered.contains(&hex::encode([0xa1; 32])[..40]));

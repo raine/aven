@@ -158,6 +158,29 @@ terminal task, and outcome conflict resolutions (whose reference may be empty),
 do not use the reference. Terminal-versus-terminal races remain outcome
 conflicts without a duplicate status conflict.
 
+#### Device label records
+
+`publish_device_label` is encrypted display metadata in the ordinary tail, not
+membership or authorization data. It has `entity_type=device`, a lowercase
+64-character device ID as `entity_id`, no field or base version, and exactly one
+payload key: `{"label":"..."}`. The label is 1–64 Unicode scalar values, at
+most 256 UTF-8 bytes, and contains no control characters. Its server projection
+is empty, so the server stores and orders the encrypted record without learning
+the label.
+
+A desktop publishes one record for its own device ID before its first ordinary
+tail drain after setup or join. An already-enrolled desktop does the same on its
+next sync if its record is absent. The value comes from the macOS Computer Name
+or Linux hostname, is automatic, and is not edited or republished. iOS uses the
+same record with `iPhone` or `iPad` after enrollment. Missing records remain
+valid for older devices.
+
+Effective labels are read from retained encrypted history and paired only with
+the currently verified membership. Removing a device therefore removes its
+label from every device-management view as soon as membership refreshes; the
+historical encrypted record remains for deterministic replay. Labels never
+select a device or affect admission, removal, credentials, or key rotation.
+
 ### Persisted replica behavior
 
 The SQLite `meta` key `sync_established_protocol` stores the established protocol

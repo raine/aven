@@ -119,6 +119,7 @@ const BASELINE_OPERATIONS: &[&str] = &[
     "open_recurrence_pause",
     "close_recurrence_pause",
     "stop_recurrence_series",
+    "publish_device_label",
 ];
 const STATUSES: &[&str] = &["inbox", "backlog", "todo", "active", "done", "canceled"];
 const PRIORITIES: &[&str] = &["none", "low", "medium", "high", "urgent"];
@@ -161,6 +162,13 @@ pub(crate) fn validate_operation(
             field.context("error invalid-sync-change field missing")?,
             &["key"],
         )?;
+    }
+    if op == "publish_device_label" {
+        let label = payload
+            .get("label")
+            .and_then(Value::as_str)
+            .context("error invalid-sync-change device-label")?;
+        crate::sync::device_labels::validate_device_label(label)?;
     }
     if op == "attachment_add"
         && let Some(value) = payload.get("media_type").and_then(Value::as_str)

@@ -757,6 +757,7 @@ async fn drain_reporting(
     round_limit: usize,
     on_round: &mut (dyn FnMut(&Round) + Send),
 ) -> Result<Outcome> {
+    super::device_label::publish_if_missing(database, store).await?;
     let mut last = None;
     let mut rounds = 0;
     let mut image_retries = 0;

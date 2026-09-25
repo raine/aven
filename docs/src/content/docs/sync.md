@@ -133,11 +133,15 @@ aven sync device list
 aven sync device list --json
 ```
 
-The list comes from the server's current membership. It shows each device's
-`device_id`, which device is the current one, and whether key rotation is
-still pending after a removal.
+The list combines the server's current membership with automatic labels kept
+inside the encrypted synced data. On macOS the label is the Computer Name from
+System Settings; on Linux it is the hostname. The server never sees the label.
+Older devices without one appear by ID prefix only, and duplicate labels remain
+distinguishable by that prefix. Text output is a compact table; JSON keeps the
+full `device_id` and `admission_sequence` and adds `label`.
 
-Remove another device with its `device_id`:
+Remove another device with its full ID or a unique prefix of at least four
+hexadecimal characters:
 
 ```sh
 aven sync device remove DEVICE_ID
@@ -145,16 +149,19 @@ aven sync device remove DEVICE_ID --json
 ```
 
 Removal stops the device from syncing and rotates the keys for future
-changes. The result is `complete`, or `pending` while key rotation is
-unfinished; rerunning the command, or syncing any remaining device, finishes
-it. If the command is interrupted, rerun it with the same `device_id` to
-resume. Removal does not erase anything on the removed device: it keeps the
+changes. If a prefix matches more than one current device, the command lists
+the matches instead of choosing one. The result is `complete`, or `pending`
+while key rotation is unfinished; rerunning the command, or syncing any
+remaining device, finishes it. If the command is interrupted, use the full ID
+selected by the first attempt to resume. Removal does not erase anything on the
+removed device: it keeps the
 tasks and images it already downloaded. A device cannot remove itself.
 
 In the TUI, choose **Manage devices** in the Sync dialog. The list is checked
 with the server when it opens and says when it was checked. Each device appears
-by the shortest ID prefix that tells it apart, and the current one is marked
-**This device**; select a device to see its full ID, and press `y` to copy it.
+with its automatic label, when available, beside the shortest ID prefix that
+tells it apart. The current one is marked **This device**; select a device to see
+its full ID, and press `y` to copy it.
 Press Enter on another device and confirm to remove it. The dialog reports
 access removal and key rotation separately, and offers **Finish removal** while
 rotation is unfinished. A server refusal means the removal could not be

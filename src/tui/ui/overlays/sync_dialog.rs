@@ -610,12 +610,16 @@ fn devices_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
                 if focused {
                     selected_device = Some(device);
                 }
-                let label = if device.current {
-                    format!("{:<24}This device", short_ids[*device_index])
-                } else {
-                    short_ids[*device_index].clone()
+                let identity = match &device.label {
+                    Some(label) => format!("{}  {label}", short_ids[*device_index]),
+                    None => short_ids[*device_index].clone(),
                 };
-                action_line_owned(label, focused)
+                let row = if device.current {
+                    format!("{identity:<32}This device")
+                } else {
+                    identity
+                };
+                action_line_owned(row, focused)
             }
             action => action_line(action.label(), focused),
         };
@@ -718,7 +722,10 @@ fn confirm_remove_lines(body: &mut Body, activity: &SyncActivity, device: &[u8; 
     let label = devices
         .iter()
         .position(|listed| listed.id == *device)
-        .map(|index| short_device_ids(devices)[index].clone())
+        .map(|index| match &devices[index].label {
+            Some(label) => format!("{} ({label})", short_device_ids(devices)[index]),
+            None => short_device_ids(devices)[index].clone(),
+        })
         .unwrap_or_else(|| short_id(device));
     let lines = &mut body.lines;
     lines.push(Line::from(Span::styled(

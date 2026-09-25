@@ -145,23 +145,19 @@ async fn cli_lists_and_removes_devices_with_resumable_removal() {
         .find(|entry| entry["current"] == true)
         .unwrap();
     assert_eq!(a_entry["admission_sequence"], 0);
+    assert!(a_entry["label"].as_str().is_some());
     let (b_all, b_id) = ids(&devices(&b).await);
     let (c_all, c_id) = ids(&devices(&c).await);
     assert_eq!((&b_all, &c_all), (&all, &all));
     assert!(a_id != b_id && b_id != c_id && a_id != c_id);
     let text = b.ok(&["sync", "device", "list"]).await;
-    assert!(
-        text.starts_with("devices count=3 key_rotation=complete\n"),
-        "{text}"
-    );
-    assert!(
-        text.contains(&format!("device device_id={b_id} current=true ")),
-        "{text}"
-    );
-    assert!(
-        text.contains(&format!("device device_id={c_id} current=false ")),
-        "{text}"
-    );
+    assert!(text.starts_with("LABEL"), "{text}");
+    assert!(text.contains("ID"), "{text}");
+    assert!(text.contains("this device"), "{text}");
+    assert!(text.contains(&format!("{}…", &b_id[..8])), "{text}");
+    assert!(text.contains(&format!("{}…", &c_id[..8])), "{text}");
+    assert!(!text.contains("admission_sequence"), "{text}");
+    assert!(!text.contains("key_rotation"), "{text}");
 
     // Targets are explicit, and refusals leave membership unchanged.
     let error = failure(&a.run(&["sync", "device", "remove", "c"]).await);
@@ -177,19 +173,23 @@ async fn cli_lists_and_removes_devices_with_resumable_removal() {
 
     // The server accepts the removal, but A never receives the reply.
     lose.store(true, Ordering::SeqCst);
-    let error = failure(&a.run(&["sync", "device", "remove", &c_id]).await);
+    let error = failure(&a.run(&["sync", "device", "remove", &c_id[..4]]).await);
     assert!(error.contains("outcome-unknown"), "{error}");
     assert!(error.contains("sync-device-removal-incomplete"), "{error}");
     assert!(!lose.load(Ordering::SeqCst));
     let listing = devices(&a).await;
     assert_eq!(listing["key_rotation_pending"], true);
     assert!(!ids(&listing).0.contains(&c_id));
+    let text = a.ok(&["sync", "device", "list"]).await;
+    assert!(text.contains("Key update still finishing."), "{text}");
     assert!(titles(&a).await.contains(&"Seed task".to_string()));
 
     // A survivor's ordinary sync finishes the rotation; A's retry then
     // resolves its retained removal instead of starting another.
     b.ok(&["sync"]).await;
     assert_eq!(devices(&a).await["key_rotation_pending"], false);
+    let text = a.ok(&["sync", "device", "list"]).await;
+    assert!(!text.contains("Key update still finishing."), "{text}");
     let removal: serde_json::Value =
         serde_json::from_str(&a.ok(&["sync", "device", "remove", &c_id, "--json"]).await).unwrap();
     assert_eq!(

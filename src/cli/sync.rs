@@ -205,13 +205,13 @@ pub(crate) enum SyncSubcommand {
 
 pub(super) const DEVICE_HELP: &str = r#"Examples:
   aven sync device list --json
-  aven sync device remove DEVICE_ID --json
+  aven sync device remove DEVICE_ID_OR_PREFIX --json
 
 Both commands contact the server. Remove a device from any other device in
-sync, using the device_id printed by `device list`. Removal stops the device
-from syncing and rotates the keys for future changes; it does not erase data
-the device already downloaded. Rerun an interrupted removal with the same
-device_id to resume it."#;
+sync, using its full ID or a unique prefix of at least four hexadecimal
+characters. Removal stops the device from syncing and rotates the keys for
+future changes; it does not erase data the device already downloaded. Rerun an
+interrupted removal with the same full device ID to resume it."#;
 
 #[derive(Args)]
 pub(crate) struct DeviceCommand {
@@ -228,7 +228,7 @@ pub(crate) enum DeviceSubcommand {
     },
     /// Remove another device from sync and rotate keys for future changes
     Remove {
-        /// Device ID printed by `aven sync device list`
+        /// Full device ID, or a unique prefix of at least 4 hex characters
         device_id: String,
         #[arg(long, help = "Print machine-readable JSON")]
         json: bool,

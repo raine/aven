@@ -439,6 +439,7 @@ mod tests {
     fn device(id: [u8; 32], current: bool) -> Device {
         Device {
             id,
+            label: None,
             current,
             admission_sequence: 0,
         }

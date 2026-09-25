@@ -6,6 +6,30 @@ use crate::task_fields::TaskField;
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
+pub(super) fn validate_publish_device_label(change: &ChangeWire) -> Result<()> {
+    ensure_entity_type(change, "device")?;
+    if change.entity_id.len() != 64
+        || !change
+            .entity_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        bail!("error invalid-sync-change entity_id invalid-device-id");
+    }
+    if change.field.is_some()
+        || change.base_version.is_some()
+        || change
+            .payload
+            .as_object()
+            .is_none_or(|payload| payload.len() != 1)
+    {
+        bail!("error invalid-sync-change device-label shape");
+    }
+    let label = required_string_payload("label", &change.payload)?;
+    crate::sync::device_labels::validate_device_label(&label)?;
+    Ok(())
+}
+
 pub(super) fn validate_create_workspace(change: &ChangeWire) -> Result<()> {
     ensure_entity_type(change, "workspace")?;
     ensure_sync_id("entity_id", &change.entity_id)?;

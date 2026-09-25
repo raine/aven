@@ -39,6 +39,9 @@ pub(crate) async fn apply_remote_change_quiet(
     change: &ChangeWire,
 ) -> Result<()> {
     match change.op_type.as_str() {
+        // Device labels are read from retained encrypted history and have no
+        // task-domain materialization.
+        op_type::PUBLISH_DEVICE_LABEL => {}
         op_type::CREATE_WORKSPACE => workspace::create_workspace(conn, change).await?,
         op_type::SET_WORKSPACE_FIELD => workspace::set_workspace_field(conn, change).await?,
         op_type::CREATE_PROJECT => project::create_project(conn, change).await?,

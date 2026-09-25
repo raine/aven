@@ -6,6 +6,7 @@
 use anyhow::{Result, bail, ensure};
 use aven_core::db::Database;
 use serde::Serialize;
+use unicode_width::UnicodeWidthStr;
 
 use super::{NOT_SET_UP, REFUSED, associated_server, explain_change_limit, is_set_up, key_store};
 use crate::config::AppConfig;
@@ -26,6 +27,7 @@ struct DeviceList {
 #[derive(Serialize)]
 struct DeviceEntry {
     device_id: String,
+    label: Option<String>,
     current: bool,
     admission_sequence: u64,
 }
@@ -73,6 +75,7 @@ async fn open(database: &Database, config: &AppConfig) -> Result<Session> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Device {
     pub(crate) id: [u8; 32],
+    pub(crate) label: Option<String>,
     pub(crate) current: bool,
     /// Position of the admission in the membership chain; not a date or a
     /// device number.
@@ -104,6 +107,7 @@ pub(crate) async fn load_devices(database: &Database, config: &AppConfig) -> Res
             _ => explain_revoked(error),
         })?;
     let current = inputs.device();
+    let labels = database.device_labels().await?;
     Ok(DeviceListing {
         server,
         key_rotation_pending: inputs.membership.rotation_pending(),
@@ -112,6 +116,7 @@ pub(crate) async fn load_devices(database: &Database, config: &AppConfig) -> Res
             .admissions()
             .map(|(device, sequence)| Device {
                 id: device,
+                label: labels.get(&device).cloned(),
                 current: device == current,
                 admission_sequence: sequence,
             })
@@ -130,6 +135,7 @@ pub(crate) async fn list(database: &Database, config: &AppConfig, json: bool) ->
             .iter()
             .map(|device| DeviceEntry {
                 device_id: hex::encode(device.id),
+                label: device.label.clone(),
                 current: device.current,
                 admission_sequence: device.admission_sequence,
             })
@@ -138,32 +144,144 @@ pub(crate) async fn list(database: &Database, config: &AppConfig, json: bool) ->
     if json {
         return print_json_pretty(&report);
     }
-    println!(
-        "devices count={} key_rotation={}",
-        report.devices.len(),
-        if report.key_rotation_pending {
-            "pending"
-        } else {
-            "complete"
-        }
-    );
-    for device in &report.devices {
-        println!(
-            "device device_id={} current={} admission_sequence={}",
-            device.device_id, device.current, device.admission_sequence
-        );
+    print_device_table(&report.devices);
+    if report.key_rotation_pending {
+        println!("\nKey update still finishing.");
     }
     Ok(())
 }
 
-fn parse_device_id(text: &str) -> Result<[u8; 32]> {
+fn short_device_ids(devices: &[DeviceEntry]) -> Vec<String> {
+    let mut length = 8;
+    while length < 64 {
+        let mut prefixes = devices
+            .iter()
+            .map(|device| &device.device_id[..length])
+            .collect::<Vec<_>>();
+        prefixes.sort_unstable();
+        prefixes.dedup();
+        if prefixes.len() == devices.len() {
+            break;
+        }
+        length += 1;
+    }
+    devices
+        .iter()
+        .map(|device| format!("{}…", &device.device_id[..length]))
+        .collect()
+}
+
+fn print_device_table(devices: &[DeviceEntry]) {
+    let ids = short_device_ids(devices);
+    let has_labels = devices.iter().any(|device| device.label.is_some());
+    let label_width = devices
+        .iter()
+        .filter_map(|device| device.label.as_deref())
+        .map(UnicodeWidthStr::width)
+        .chain(std::iter::once("LABEL".len()))
+        .max()
+        .unwrap_or(0);
+    let id_width = ids
+        .iter()
+        .map(|id| UnicodeWidthStr::width(id.as_str()))
+        .chain(std::iter::once("ID".len()))
+        .max()
+        .unwrap_or(0);
+    if has_labels {
+        println!("{:<label_width$}  {:<id_width$}  STATUS", "LABEL", "ID");
+    } else {
+        println!("{:<id_width$}  STATUS", "ID");
+    }
+    for (device, id) in devices.iter().zip(ids) {
+        let status = if device.current { "this device" } else { "" };
+        if has_labels {
+            let label = device.label.as_deref().unwrap_or("");
+            let padding = label_width.saturating_sub(UnicodeWidthStr::width(label));
+            println!("{label}{}  {id:<id_width$}  {status}", " ".repeat(padding));
+        } else {
+            println!("{id:<id_width$}  {status}");
+        }
+    }
+}
+
+fn valid_device_prefix(text: &str) -> bool {
+    (4..=64).contains(&text.len()) && text.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn decode_full_device_id(text: &str) -> Result<[u8; 32]> {
     let mut device = [0; 32];
     if text.len() != 64 || hex::decode_to_slice(text, &mut device).is_err() {
-        bail!(
-            "error sync-device-id-invalid hint=\"use a 64-character device_id from `aven sync device list`\""
-        );
+        bail!("error sync-device-id-invalid");
     }
     Ok(device)
+}
+
+fn matching_devices<'a>(devices: &'a [Device], prefix: &str) -> Vec<&'a Device> {
+    let prefix = prefix.to_ascii_lowercase();
+    devices
+        .iter()
+        .filter(|device| hex::encode(device.id).starts_with(&prefix))
+        .collect()
+}
+
+async fn resolve_device_id(
+    database: &Database,
+    config: &AppConfig,
+    text: &str,
+) -> Result<[u8; 32]> {
+    if !valid_device_prefix(text) {
+        bail!(
+            "error sync-device-id-invalid hint=\"use at least 4 hexadecimal characters from `aven sync device list`\""
+        );
+    }
+    if text.len() == 64 {
+        return decode_full_device_id(text);
+    }
+    let listing = load_devices(database, config).await?;
+    let matches = matching_devices(&listing.devices, text);
+    match matches.as_slice() {
+        [device] => Ok(device.id),
+        [] => bail!(
+            "error sync-device-not-found hint=\"no current device has that ID prefix; list devices with `aven sync device list`\""
+        ),
+        _ => {
+            let listed = matches
+                .iter()
+                .map(|device| match &device.label {
+                    Some(label) => format!("  {label}  {}", hex::encode(device.id)),
+                    None => format!("  {}", hex::encode(device.id)),
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            bail!("error sync-device-id-ambiguous\nMatching devices:\n{listed}")
+        }
+    }
+}
+
+#[cfg(test)]
+mod prefix_tests {
+    use super::*;
+
+    fn device(id: [u8; 32]) -> Device {
+        Device {
+            id,
+            label: None,
+            current: false,
+            admission_sequence: 0,
+        }
+    }
+
+    #[test]
+    fn prefixes_are_case_insensitive_and_can_be_ambiguous() {
+        let mut first = [0xab; 32];
+        let mut second = [0xab; 32];
+        first[2] = 0x10;
+        second[2] = 0x20;
+        let devices = [device(first), device(second), device([0xcd; 32])];
+        assert_eq!(matching_devices(&devices, "ABAB").len(), 2);
+        assert_eq!(matching_devices(&devices, "abab1")[0].id, first);
+        assert!(matching_devices(&devices, "ffff").is_empty());
+    }
 }
 
 /// Explains engine refusals that do not name their cause. The engine has
@@ -279,7 +397,7 @@ pub(crate) async fn remove(
     device_id: &str,
     json: bool,
 ) -> Result<()> {
-    let target = parse_device_id(device_id)?;
+    let target = resolve_device_id(database, config, device_id).await?;
     let removal = remove_other_device(database, config, target).await?;
     let report = RemovalReport {
         version: 1,

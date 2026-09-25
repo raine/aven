@@ -2,6 +2,7 @@ mod apply;
 pub mod base64_bytes;
 mod blob;
 pub mod bootstrap_staging;
+mod device_labels;
 pub mod encrypted_tail;
 mod persistence;
 pub(crate) use persistence::changes::canonical_equal;

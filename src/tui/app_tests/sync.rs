@@ -315,11 +315,13 @@ fn listed_devices(app: &mut App) -> [u8; 32] {
             devices: vec![
                 Device {
                     id: [1; 32],
+                    label: Some("Office Mac".to_string()),
                     current: true,
                     admission_sequence: 0,
                 },
                 Device {
                     id: other,
+                    label: None,
                     current: false,
                     admission_sequence: 2,
                 },

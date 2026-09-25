@@ -45,6 +45,7 @@ pub mod op_type {
     pub const OPEN_RECURRENCE_PAUSE: &str = "open_recurrence_pause";
     pub const CLOSE_RECURRENCE_PAUSE: &str = "close_recurrence_pause";
     pub const STOP_RECURRENCE_SERIES: &str = "stop_recurrence_series";
+    pub const PUBLISH_DEVICE_LABEL: &str = "publish_device_label";
 }
 
 pub enum ChangeEntity {

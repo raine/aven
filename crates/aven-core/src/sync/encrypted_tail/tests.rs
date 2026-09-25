@@ -270,6 +270,26 @@ fn administration_operations_keep_strict_shapes_and_workspace_scope() {
     }
 }
 #[test]
+fn device_labels_are_encrypted_unscoped_records() {
+    let mut label = change();
+    label.entity_type = "device".into();
+    label.entity_id = "ab".repeat(32);
+    label.field = None;
+    label.op_type = "publish_device_label".into();
+    label.payload = json!({"label":"Office Mac"});
+    label.base_version = None;
+    assert!(matches!(
+        domain::validate(&label).unwrap(),
+        Projection::None
+    ));
+
+    label.payload["label"] = json!("bad\nname");
+    assert!(domain::validate(&label).is_err());
+    label.payload = json!({"label":"Office Mac", "extra":true});
+    assert!(domain::validate(&label).is_err());
+}
+
+#[test]
 fn every_registered_operation_name_has_encrypted_validation() {
     // The op_type constants are the maintained vocabulary; the protocol test pins them.
     let registered: Vec<&str> = include_str!("../../change_log.rs")

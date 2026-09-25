@@ -890,20 +890,26 @@ List devices in sync, or remove another device.
 
 ```sh
 aven sync device list [--json]
-aven sync device remove <device-id> [--json]
+aven sync device remove <device-id-or-prefix> [--json]
 ```
 
-Both commands contact the server. `list` prints each device's 64-character
-`device_id`, whether it is the current device, and its `admission_sequence`,
-which is `0` for the device that set up sync. It also reports whether key
-rotation is pending. `remove` revokes the device and rotates keys for future
-changes, then reports `state` as `complete` or `pending` with
+Both commands contact the server. Text `list` output is a table containing the
+automatic label when available, a unique short ID, and **this device** for the
+current device. It mentions an unfinished key update only while one is pending.
+The label is the macOS Computer Name or Linux hostname and is stored only in the
+encrypted synced data. JSON retains each full `device_id`, `current`, and
+`admission_sequence` value and adds `label`; it also retains
+`key_rotation_pending`.
+
+`remove` accepts a full ID or a unique prefix of at least four hexadecimal
+characters. An ambiguous prefix lists its matches. Removal rotates keys for
+future changes, then reports `state` as `complete` or `pending` with
 `access_revoked` and `key_rotation_pending`. An interrupted removal fails with
-`sync-device-removal-incomplete`; rerun it with the same `device_id` to resume.
-Refusals include `sync-device-id-invalid`, `sync-device-not-found`, and
-`sync-device-current`; a device cannot remove itself. Removal does not erase
-data the removed device already downloaded. JSON output is versioned and omits
-keys, credentials, and invitations.
+`sync-device-removal-incomplete`; use the full selected `device_id` to resume.
+Refusals include `sync-device-id-invalid`, `sync-device-id-ambiguous`,
+`sync-device-not-found`, and `sync-device-current`; a device cannot remove
+itself. Removal does not erase data the removed device already downloaded. JSON
+output is versioned and omits keys, credentials, and invitations.
 
 #### `aven sync status`
 

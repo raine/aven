@@ -237,6 +237,7 @@ pub(super) fn payload_keys(op: &str) -> Option<&'static [&'static str]> {
             "created_at",
         ],
         "attachment_delete" => &["attachment_id", "filename", "media_type", "deleted_at"],
+        "publish_device_label" => &["label"],
         _ => return None,
     })
 }
@@ -298,6 +299,9 @@ pub(super) fn validate(c: &ChangeWire) -> Result<Projection> {
     }
     if c.op_type == "set_label_name" {
         valid(p.get("new_name") != p.get("name"))?;
+    }
+    if c.op_type == "publish_device_label" {
+        return Ok(Projection::None);
     }
     // Workspace operations are database-wide and identify the workspace as their entity.
     let workspace = if workspace_op {

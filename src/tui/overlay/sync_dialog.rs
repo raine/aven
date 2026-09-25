@@ -616,11 +616,13 @@ mod tests {
                     devices: vec![
                         Device {
                             id: [1; 32],
+                            label: Some("Office Mac".to_string()),
                             current: true,
                             admission_sequence: 0,
                         },
                         Device {
                             id: [2; 32],
+                            label: None,
                             current: false,
                             admission_sequence: 2,
                         },

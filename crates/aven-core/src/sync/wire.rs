@@ -288,6 +288,7 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
     serialize_change_payload(&change.payload)?;
 
     match change.op_type.as_str() {
+        op_type::PUBLISH_DEVICE_LABEL => changes::validate_publish_device_label(change)?,
         op_type::CREATE_WORKSPACE => changes::validate_create_workspace(change)?,
         op_type::SET_WORKSPACE_FIELD => changes::validate_set_workspace_field(change)?,
         op_type::CREATE_PROJECT => changes::validate_create_project(change)?,

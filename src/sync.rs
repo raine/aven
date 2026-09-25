@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 mod coordination;
+mod device_label;
 pub(crate) mod encrypted;
 mod server;
 
