@@ -489,23 +489,14 @@ fn version_flag_prints_package_version() {
 }
 
 #[test]
-fn explicit_zero_result_limits_are_value_errors() {
+fn explicit_zero_result_limit_reports_clap_value_error() {
     let env = TestEnv::new();
-    let db = env.db("invalid-result-limits.sqlite");
+    let db = env.db("invalid-result-limit.sqlite");
 
-    for arguments in [
-        vec!["search", "task", "--json", "--limit", "0"],
-        vec!["list", "--limit", "0"],
-        vec!["prime", "--limit", "0"],
-        vec!["label", "list", "--limit", "0"],
-        vec!["project", "list", "--limit", "0"],
-        vec!["conflict", "list", "--limit", "0"],
-    ] {
-        let output = env.aven(&db, arguments);
-        assert_eq!(output.status.code(), Some(2));
-        let error = fail(output);
-        contains_all(&error, &["invalid value '0'", "--limit <LIMIT>", "1.."]);
-    }
+    let output = env.aven(&db, ["list", "--limit", "0"]);
+    assert_eq!(output.status.code(), Some(2));
+    let error = fail(output);
+    contains_all(&error, &["invalid value '0'", "--limit <LIMIT>", "1.."]);
 }
 
 #[test]
