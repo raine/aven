@@ -142,6 +142,41 @@ async fn cancellation_races_serialize_across_independent_pools() {
     f.unpublished().await;
 }
 
+/// Cancellation is terminal for the bootstrap ID, whether or not it was
+/// declared. Nothing else rejects a delayed declaration of that ID, and the
+/// seed's resume path declares whenever status does not report cancellation.
+#[tokio::test]
+async fn delayed_declaration_never_reopens_or_publishes_a_canceled_candidate() {
+    for declared in [false, true] {
+        let f = Fixture::new().await;
+        let p = f.publication();
+        if declared {
+            f.declare().await;
+            f.upload().await;
+        }
+        f.server
+            .cancel_bootstrap_staging(&f.auth(), f.id)
+            .await
+            .unwrap();
+        assert!(
+            f.server
+                .declare_bootstrap_staging(&f.auth(), &f.package.descriptor, f.budget())
+                .await
+                .is_err()
+        );
+        for (component, records) in f.components() {
+            assert!(
+                f.server
+                    .put_bootstrap_chunk(&f.auth(), f.request(component, 0, records[0]))
+                    .await
+                    .is_err()
+            );
+        }
+        assert!(f.publish(&p).await.is_err());
+        f.unpublished().await;
+    }
+}
+
 /// A request delayed across expiry and resume is indistinguishable from a
 /// current one. Slot verification, expiry, cancellation and the single active
 /// candidate still bound what it can change.
