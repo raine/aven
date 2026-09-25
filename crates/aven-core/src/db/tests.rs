@@ -368,7 +368,9 @@ async fn unpopulated_bootstrap_tables_take_the_catalog_slice_schema() {
         assert!(!present, "{table}.{column}");
     }
     let widest = vec![0_u8; crate::sync::bootstrap_format::MAX_DESCRIPTOR_BYTES];
-    let insert = "INSERT INTO server_bootstrap_candidates VALUES (?, ?, 1, 1, 0, 0, 0)";
+    let insert = "INSERT INTO server_bootstrap_candidates
+        (bootstrap, descriptor, canceled, expires_at, byte_budget, chunk_budget)
+        VALUES (?, ?, 1, 0, 0, 0)";
     sqlx::query(insert)
         .bind([1_u8; 32].as_slice())
         .bind(&widest)
