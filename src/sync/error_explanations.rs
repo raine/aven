@@ -180,6 +180,20 @@ pub(crate) fn explain(
             next_step: "Run `aven config set sync.enabled true` and try again.",
         });
     }
+    if has("sync-setup-confirmation-required") {
+        return Some(Explanation {
+            code: "sync-setup-confirmation-required",
+            message: "Setup needs confirmation, and standard input isn't a terminal.",
+            next_step: "Review the summary above, then rerun `aven sync setup` with --yes.",
+        });
+    }
+    if has("sync-join-confirmation-required") {
+        return Some(Explanation {
+            code: "sync-join-confirmation-required",
+            message: "Joining needs confirmation, and standard input isn't a terminal.",
+            next_step: "Check the server above, then rerun `aven sync join` with --yes.",
+        });
+    }
     if has("sync-setup-invitation-mismatch") {
         return Some(Explanation {
             code: "sync-setup-invitation-mismatch",
@@ -433,7 +447,7 @@ pub(crate) fn explain(
         return Some(Explanation {
             code: "enrollment-refused",
             message: "The server refused the join request.",
-            next_step: "The invitation may have expired or already been used; run `aven sync invite` on the other device and try again.",
+            next_step: "The invitation may have expired, been cancelled, or already been used; run `aven sync invite` on the other device and try again.",
         });
     }
     if has("sync-server-refused")
@@ -505,7 +519,7 @@ pub(crate) fn explain(
             ErrorAction::Join => Explanation {
                 code,
                 message: "The server refused the join request.",
-                next_step: "The invitation may have expired or already been used; get a new invitation and try again.",
+                next_step: "The invitation may have expired, been cancelled, or already been used; get a new invitation and try again.",
             },
             ErrorAction::Setup => Explanation {
                 code,
@@ -617,6 +631,27 @@ mod tests {
         assert_eq!(configured.code, "sync-disabled");
         assert!(configured.next_step.contains("sync.enabled true"));
         assert!(!configured.combined().contains("AVEN_SYNC_DISABLED"));
+    }
+
+    #[test]
+    fn confirmation_required_names_the_flag() {
+        for (code, command) in [
+            ("sync-setup-confirmation-required", "`aven sync setup`"),
+            ("sync-join-confirmation-required", "`aven sync join`"),
+        ] {
+            let error = anyhow!("error {code} hint=\"rerun with --yes to confirm\"");
+            let explanation = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
+            assert_eq!(explanation.code, code);
+            assert!(explanation.next_step.contains(command));
+            assert!(explanation.next_step.contains("--yes"));
+        }
+    }
+
+    #[test]
+    fn refused_join_mentions_cancellation() {
+        let error = anyhow!("error enrollment-refused").context("error sync-join-command");
+        let explanation = explain(ErrorAction::Join, ErrorSurface::Cli, &error).unwrap();
+        assert!(explanation.next_step.contains("been cancelled"));
     }
 
     #[test]
