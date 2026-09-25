@@ -8,7 +8,8 @@ use unicode_width::UnicodeWidthStr;
 use crate::query::RecurrenceSeriesLifecycleFilter;
 use crate::tui::event::{Action, CommandContext, preferred_shortcut_label};
 use crate::tui::store::{
-    ClosedTaskVisibility, RefreshHealth, TaskProjectionOrigin, TaskQuery, TaskScope, TuiStore,
+    ClosedTaskVisibility, RefreshHealth, TaskProjectionOrigin, TaskQuery, TaskScope, TaskViewState,
+    TuiStore,
 };
 use crate::tui::theme::{ACCENT, BG, BG_ALT, FG, FG_DIM, FG_MUTED, RED};
 
@@ -68,18 +69,45 @@ impl EmptyState {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct EmptyStateContext<'a> {
+    pub(crate) view_state: &'a TaskViewState,
+    pub(crate) open_count: i64,
+    pub(crate) done_count: i64,
+    pub(crate) upcoming_count: i64,
+    pub(crate) has_tasks: bool,
+    pub(crate) load_failed: bool,
+}
+
+impl EmptyStateContext<'_> {
+    fn from_store(store: &TuiStore) -> EmptyStateContext<'_> {
+        EmptyStateContext {
+            view_state: &store.view_state,
+            open_count: store.counts.open,
+            done_count: store.counts.done,
+            upcoming_count: store.counts.upcoming,
+            has_tasks: !store.tasks.is_empty(),
+            load_failed: store.refresh_health() == RefreshHealth::Failed,
+        }
+    }
+}
+
 pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
-    if store.refresh_health() == RefreshHealth::Failed {
+    task_empty_state_for(&EmptyStateContext::from_store(store))
+}
+
+pub(crate) fn task_empty_state_for(context: &EmptyStateContext<'_>) -> EmptyState {
+    if context.load_failed {
         return load_failed_state();
     }
 
-    let modifiers = &store.view_state.filter_modifiers;
+    let modifiers = &context.view_state.filter_modifiers;
     let has_narrowing_filters = modifiers.deleted_only
         || modifiers.label.is_some()
         || modifiers.priority.is_some()
         || (modifiers.closed == ClosedTaskVisibility::Only
-            && store.view_state.query != TaskQuery::Epics);
-    match &store.view_state.projection_origin {
+            && context.view_state.query != TaskQuery::Epics);
+    match &context.view_state.projection_origin {
         TaskProjectionOrigin::SearchPrompt => {
             return EmptyState::new(
                 EmptyStateReason::SearchPrompt,
@@ -138,7 +166,7 @@ pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
     if modifiers.label.is_some()
         || modifiers.priority.is_some()
         || (modifiers.closed == ClosedTaskVisibility::Only
-            && store.view_state.query != TaskQuery::Epics)
+            && context.view_state.query != TaskQuery::Epics)
     {
         return EmptyState::new(
             EmptyStateReason::NoFilterMatches,
@@ -151,9 +179,9 @@ pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
     }
 
     if matches!(
-        store.view_state.query,
+        context.view_state.query,
         TaskQuery::Queue | TaskQuery::Open | TaskQuery::All
-    ) && store.counts.upcoming > 0
+    ) && context.upcoming_count > 0
     {
         return EmptyState::new(
             EmptyStateReason::DeferredTasks,
@@ -166,16 +194,16 @@ pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
     }
 
     if matches!(
-        store.view_state.query,
+        context.view_state.query,
         TaskQuery::Queue | TaskQuery::Open | TaskQuery::All
-    ) && store.counts.open == 0
-        && store.counts.done == 0
-        && store.counts.upcoming == 0
+    ) && context.open_count == 0
+        && context.done_count == 0
+        && context.upcoming_count == 0
     {
-        return scope_empty_state(&store.view_state.scope);
+        return scope_empty_state(&context.view_state.scope);
     }
 
-    match store.view_state.query {
+    match context.view_state.query {
         TaskQuery::Queue => named_state(
             "Queue is clear",
             "Queue ranks available work, including tasks with unresolved blockers.",
@@ -308,10 +336,14 @@ pub(crate) fn task_empty_state(store: &TuiStore) -> EmptyState {
 }
 
 pub(crate) fn recurrence_empty_state(store: &TuiStore) -> EmptyState {
-    if store.refresh_health() == RefreshHealth::Failed {
+    recurrence_empty_state_for(&EmptyStateContext::from_store(store))
+}
+
+pub(crate) fn recurrence_empty_state_for(context: &EmptyStateContext<'_>) -> EmptyState {
+    if context.load_failed {
         return load_failed_state();
     }
-    if store.view_state.recurring.search.is_some() {
+    if context.view_state.recurring.search.is_some() {
         return EmptyState::new(
             EmptyStateReason::RecurrenceSearch,
             "No recurring series match this search",
@@ -321,7 +353,7 @@ pub(crate) fn recurrence_empty_state(store: &TuiStore) -> EmptyState {
             "search",
         );
     }
-    let lifecycle = store.view_state.recurring.lifecycle;
+    let lifecycle = context.view_state.recurring.lifecycle;
     if lifecycle != RecurrenceSeriesLifecycleFilter::ActiveOrPaused {
         let title = match lifecycle {
             RecurrenceSeriesLifecycleFilter::ActiveOrPaused => {
@@ -341,7 +373,7 @@ pub(crate) fn recurrence_empty_state(store: &TuiStore) -> EmptyState {
             "lifecycle filter",
         );
     }
-    let title = match store.view_state.scope {
+    let title = match context.view_state.scope {
         TaskScope::Workspace => "No active or paused recurring series in this workspace",
         TaskScope::Project(_) => "No active or paused recurring series in this project",
     };
@@ -356,10 +388,14 @@ pub(crate) fn recurrence_empty_state(store: &TuiStore) -> EmptyState {
 }
 
 pub(crate) fn recent_actions_empty_state(store: &TuiStore) -> EmptyState {
-    if store.refresh_health() == RefreshHealth::Failed {
+    recent_actions_empty_state_for(&EmptyStateContext::from_store(store))
+}
+
+pub(crate) fn recent_actions_empty_state_for(context: &EmptyStateContext<'_>) -> EmptyState {
+    if context.load_failed {
         return load_failed_state();
     }
-    let detail = match store.view_state.scope {
+    let detail = match context.view_state.scope {
         TaskScope::Workspace => "Task changes in this workspace will appear here.",
         TaskScope::Project(_) => "Task changes in this project will appear here.",
     };
@@ -374,8 +410,12 @@ pub(crate) fn recent_actions_empty_state(store: &TuiStore) -> EmptyState {
 }
 
 pub(crate) fn column_board_empty_state(store: &TuiStore) -> EmptyState {
-    if store.refresh_health() == RefreshHealth::Failed || store.tasks.is_empty() {
-        task_empty_state(store)
+    column_board_empty_state_for(&EmptyStateContext::from_store(store))
+}
+
+pub(crate) fn column_board_empty_state_for(context: &EmptyStateContext<'_>) -> EmptyState {
+    if context.load_failed || !context.has_tasks {
+        task_empty_state_for(context)
     } else {
         EmptyState::new(
             EmptyStateReason::ColumnConfiguration,

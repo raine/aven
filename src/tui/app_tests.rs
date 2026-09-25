@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use super::*;
 use crate::choices::{TaskPriority, TaskSource, TaskStatus};
 use crate::operations::TaskDraft;
@@ -49,13 +51,10 @@ fn detail_scroll(app: &App) -> u16 {
 
 async fn test_app() -> App {
     let dir = tempfile::tempdir().unwrap();
-    let pool = crate::test_support::open_db(&dir.path().join("test.db"))
-        .await
-        .unwrap();
+    let db_path = dir.path().join("test.db");
+    let pool = open_test_pool(&db_path).await;
     reset_default_workspace(&pool).await;
-    let database = aven_core::db::Database::open(&dir.path().join("test.db"))
-        .await
-        .unwrap();
+    let database = aven_core::db::Database::open(&db_path).await.unwrap();
     let mut app = App::new_for_tests(database).await.unwrap();
     app._test_database_dir = Some(dir);
     app
@@ -241,15 +240,51 @@ async fn create_blocked_pair(app: &mut App) -> (crate::ids::TaskId, crate::ids::
 
 async fn test_app_with_pool() -> (tempfile::TempDir, SqlitePool, App) {
     let dir = tempfile::tempdir().unwrap();
-    let pool = crate::test_support::open_db(&dir.path().join("test.db"))
-        .await
-        .unwrap();
+    let db_path = dir.path().join("test.db");
+    let pool = open_test_pool(&db_path).await;
     reset_default_workspace(&pool).await;
-    let database = aven_core::db::Database::open(&dir.path().join("test.db"))
-        .await
-        .unwrap();
+    let database = aven_core::db::Database::open(&db_path).await.unwrap();
     let app = App::new_for_tests(database).await.unwrap();
     (dir, pool, app)
+}
+
+async fn open_test_pool(db_path: &std::path::Path) -> SqlitePool {
+    let Some(template_path) = std::env::var_os("AVEN_TUI_DB_TEMPLATE") else {
+        return crate::test_support::open_db(db_path).await.unwrap();
+    };
+    let template_path = PathBuf::from(template_path);
+    assert!(
+        template_path.is_file(),
+        "TUI database template does not exist: {}",
+        template_path.display()
+    );
+    assert_ne!(template_path, db_path);
+    std::fs::copy(&template_path, db_path).unwrap();
+
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(db_path)
+        .create_if_missing(false)
+        .foreign_keys(true)
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    let template_client_id: String =
+        sqlx::query_scalar("SELECT value FROM meta WHERE key = 'client_id'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let client_id = aven_core::ids::new_id();
+    assert_ne!(client_id, template_client_id);
+    let updated = sqlx::query("UPDATE meta SET value = ? WHERE key = 'client_id'")
+        .bind(client_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(updated.rows_affected(), 1);
+    pool
 }
 
 async fn reset_default_workspace(pool: &SqlitePool) {
@@ -257,6 +292,43 @@ async fn reset_default_workspace(pool: &SqlitePool) {
     crate::workspaces::ensure_default_workspace(&mut conn)
         .await
         .unwrap();
+}
+
+#[tokio::test]
+#[ignore = "invoked by `just test-tui-template`"]
+async fn prepare_tui_database_template() {
+    let path = PathBuf::from(
+        std::env::var_os("AVEN_TUI_DB_TEMPLATE")
+            .expect("AVEN_TUI_DB_TEMPLATE must name the template output path"),
+    );
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    for sidecar in [
+        aven_core::db::wal_path(&path),
+        aven_core::db::shm_path(&path),
+    ] {
+        let _ = std::fs::remove_file(sidecar);
+    }
+    let _ = std::fs::remove_file(&path);
+
+    let pool = crate::test_support::open_db(&path).await.unwrap();
+    let (busy, log_frames, checkpointed_frames): (i64, i64, i64) =
+        sqlx::query_as("PRAGMA wal_checkpoint(TRUNCATE)")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(busy, 0, "template checkpoint must not be busy");
+    assert_eq!(log_frames, checkpointed_frames);
+    let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode=DELETE")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(journal_mode.to_ascii_lowercase(), "delete");
+    pool.close().await;
+    assert!(path.is_file());
+    assert!(!aven_core::db::wal_path(&path).exists());
+    assert!(!aven_core::db::shm_path(&path).exists());
 }
 
 fn key(code: KeyCode) -> KeyEvent {

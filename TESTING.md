@@ -20,6 +20,12 @@ names containing the same text. `test-target` runs the named integration-test
 target; target names use Rust/Cargo naming, such as `cli_local` for
 `tests/cli_local.rs`.
 
+`just test-tui-template` prepares a fully migrated, checkpointed blank database
+once, then runs keyboard-dispatch and conflict TUI tests with a private copy per
+test. The template path is under `target/test-fixtures/`; ordinary test commands
+keep using real database creation. Tests for migrations, historical schemas,
+WAL, backups, restores, or installation identity should use the normal path.
+
 ## Affected-package handoff
 
 `just test-package <package>` runs that package's non-documentation test targets.
