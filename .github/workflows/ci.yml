@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   checks:
     name: Full checks
@@ -18,10 +22,20 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-      - name: Install tools
+      - name: Install prebuilt tools
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172
+        with:
+          tool: cargo-deny@0.20.2,cargo-machete@0.9.2,cargo-nextest@0.9.146,just@1.58.0
+          fallback: none
+      - name: Install source-only tools
         run: |
-          cargo install checkle cargo-deny cargo-machete cargo-nextest just sqlx-cli --locked
+          cargo install checkle --version '=0.1.2' --locked
+          cargo install sqlx-cli --version '=0.9.0' --locked
+      - name: Check SQLx metadata
+        run: just sqlx-check
       - name: Run full checks
+        env:
+          WM_TARGET_BRANCH: HEAD
         run: just check-ci
 
   shell-fixtures:
