@@ -856,8 +856,8 @@ aven sync setup [--yes]
 Paste the invitation, or pipe it to standard input. Setup previews the database
 and asks for confirmation; `--yes` is required when standard input is not a
 terminal. Every other device starts from this data. Afterwards the database can
-no longer use backup restore or import. Rerun the command to resume an
-interrupted setup.
+still create backups, but restore and import are refused there. Rerun the
+command to resume an interrupted setup.
 
 #### `aven sync invite`
 
@@ -1195,7 +1195,9 @@ aven backup restore <path> --yes
 
 Without `--output`, backup creates a timestamped `.aven-backup.tar.zst` archive beside the active database. The archive contains a consistent database backup and every attachment image available on this device. The database preserves recurring schedules, future-task settings, completed, skipped, and missed history, pauses, conflicts, and task-specific notes and attachments. Attachment records for missing images remain in the database, but the missing files cannot be included. Cached previews and incomplete files are excluded. Aven validates every included image while creating the archive.
 
-`backup restore` requires `--yes`. Restore checks the archive, database, attachment information, and image files before replacing local data. It creates safety copies of the existing database and attachment directory first. Plain SQLite backup files remain accepted for database-only recovery.
+Backups work for databases that take part in sync, including incomplete setup or joining. Sync bindings, enrollment state, and encryption keys are excluded, so restoring to a fresh path creates a local-only database.
+
+`backup restore` requires `--yes`. Restore checks the archive, database, attachment information, and image files before replacing local data. It creates safety copies of the existing database and attachment directory first. Plain SQLite backup files remain accepted for database-only recovery. Restore is refused when the target database takes part in sync; use a fresh database path instead.
 
 ```sh
 aven backup

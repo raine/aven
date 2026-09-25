@@ -664,11 +664,9 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
             .is_err()
     );
     assert!(client.import_data(&before).await.is_err());
-    assert!(
-        aven_core::db::backup_database(client.path(), &root.path().join("backup.sqlite"))
-            .await
-            .is_err()
-    );
+    aven_core::db::backup_database(client.path(), &root.path().join("backup.sqlite"))
+        .await
+        .unwrap();
     let other = Database::open(&root.path().join("other.sqlite"))
         .await
         .unwrap();
@@ -1072,7 +1070,7 @@ async fn actual_source_preparation_excludes_sqlite_and_archive_restore_at_bounda
             .await
             .unwrap_err()
             .to_string()
-            .contains("e2ee-installation-fenced")
+            .contains("takes part in sync")
     );
     assert!(
         aven_core::data_safety::restore_backup_archive(
@@ -1083,7 +1081,7 @@ async fn actual_source_preparation_excludes_sqlite_and_archive_restore_at_bounda
         .await
         .unwrap_err()
         .to_string()
-        .contains("e2ee-installation-fenced")
+        .contains("takes part in sync")
     );
     assert!(!root.path().join("target-blobs").exists());
 }

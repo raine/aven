@@ -121,7 +121,7 @@ impl Database {
     }
 
     pub async fn import_data(&self, export: &AvenExport) -> Result<IntegrityReport> {
-        let _installation = self.plaintext_installation_guard()?;
+        let _installation = self.import_installation_guard()?;
         let mut conn = self.acquire_writer().await?;
         validation::ensure_supported_export(&mut conn, export).await?;
         validation::validate_export_snapshot(export)?;
@@ -152,9 +152,8 @@ impl Database {
     }
 
     pub async fn create_backup_archive(&self, blob_dir: &Path, output: &Path) -> Result<()> {
-        let _installation = self.plaintext_installation_guard()?;
+        let _installation = self.backup_installation_guard()?;
         let mut conn = self.acquire_writer().await?;
-        crate::sync::shared_state::ensure_no_active_local_shared_capture(&mut conn).await?;
         let hashes: Vec<String> = sqlx::query_scalar(
             "SELECT sha256 FROM blob_inventory WHERE available = 1 ORDER BY sha256",
         )

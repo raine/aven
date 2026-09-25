@@ -158,7 +158,7 @@ pub(super) async fn restore_backup_archive(
     archive: &Path,
 ) -> Result<PathBuf> {
     let _installation = db::installation::InstallationGuard::acquire(db_path)?;
-    _installation.ensure_unbound()?;
+    _installation.ensure_restore_target_unbound()?;
     let staging = tempfile::tempdir().context("could not create restore staging directory")?;
     let entries = extract_archive(archive, staging.path())?;
     let manifest_path = staging.path().join(MANIFEST_ENTRY);
@@ -171,7 +171,7 @@ pub(super) async fn restore_backup_archive(
     validate_archive_entries(&entries, &manifest)?;
     let database_path = staging.path().join(&manifest.database);
     validate_sqlite_file(&database_path).await?;
-    db::ensure_file_has_no_active_local_shared_capture(&database_path, "restore-source").await?;
+    db::detach_backup_snapshot(&database_path).await?;
     db::ensure_file_has_no_active_local_shared_capture(db_path, "restore-target").await?;
     let mut facts_by_hash = HashMap::with_capacity(manifest.objects.len());
     for object in &manifest.objects {
@@ -535,6 +535,60 @@ mod tests {
         let mut bytes = Cursor::new(Vec::new());
         image.write_to(&mut bytes, ImageFormat::Png).unwrap();
         bytes.into_inner()
+    }
+
+    #[tokio::test]
+    async fn setup_incomplete_archive_restores_as_local_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source.sqlite");
+        let source = db::Database::open(&source_path).await.unwrap();
+        let mut conn = source.acquire_writer().await.unwrap();
+        db::set_meta(&mut conn, "backup-test", "preserved")
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO local_seed_genesis_pin VALUES (1, zeroblob(32))")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+        source
+            .capture_local_shared_state_never_dispatched()
+            .await
+            .unwrap();
+        let installation = db::installation::InstallationGuard::acquire(&source_path).unwrap();
+        installation.fence().unwrap();
+        drop(installation);
+        let archive_path = temp.path().join("backup.aven-backup.tar.zst");
+        source
+            .create_backup_archive(&temp.path().join("source-blobs"), &archive_path)
+            .await
+            .unwrap();
+
+        let target_path = temp.path().join("restored.sqlite");
+        restore_backup_archive(
+            &target_path,
+            &temp.path().join("restored-blobs"),
+            &archive_path,
+        )
+        .await
+        .unwrap();
+        let restored = db::Database::open(&target_path).await.unwrap();
+        assert_eq!(
+            restored.meta("backup-test").await.unwrap().as_deref(),
+            Some("preserved")
+        );
+        assert!(
+            restored
+                .local_seed_genesis_commitment()
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(restored.enrollment_pin().await.unwrap().is_none());
+        assert_eq!(
+            restored.meta("sync_generation").await.unwrap().as_deref(),
+            Some("0")
+        );
     }
 
     #[tokio::test]

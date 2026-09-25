@@ -62,8 +62,9 @@ aven sync setup
 
 Setup previews the database and asks for confirmation. When standard input is
 not a terminal, pipe the invitation and pass `--yes`. Every other device starts
-from this data. Afterwards the database can no longer use backup restore or
-import. Rerun the same command to resume an interrupted setup.
+from this data. Afterwards you can still create backups, but restore and import
+are refused on this database. Rerun the same command to resume an interrupted
+setup.
 
 In the TUI, choose **Set up sync** in the Sync dialog and paste the invitation.
 The invitation is never displayed. Before anything starts, the dialog shows the
@@ -256,9 +257,13 @@ The repair command succeeds without changes when the LaunchAgent is absent.
 
 ## Recover from device loss
 
-A database that has set up or joined sync refuses `aven backup restore` and
-`aven import`. This is intentional: do not replace data in a database that
-takes part in sync.
+A database that has set up or joined sync can create backups, including while
+setup or joining is incomplete. Those backups contain the local tasks and
+available images but no sync binding or keys.
+
+`aven backup restore` and `aven import` are refused when the target database
+takes part in sync. Restore a backup to a fresh database path instead of
+replacing a syncing database.
 
 If one device is lost or broken, no backup is needed. Run `aven sync invite` on
 a device that still syncs, then run `aven sync join` on an empty database on

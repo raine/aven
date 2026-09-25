@@ -21,10 +21,11 @@ aven backup restore backup.aven-backup.tar.zst --yes
 Without `--output`, Aven writes a timestamped backup beside the active database.
 Use `--output` when you need a specific destination.
 
-A backup archive contains the complete SQLite database and every attachment
-image available on the device. Recurring schedules, future-task settings,
-completed, skipped, and missed history, pauses, conflicts, task fields, notes,
-and attachments remain intact.
+A backup archive contains the local data from a consistent SQLite snapshot and
+every attachment image available on the device. Recurring schedules,
+future-task settings, completed, skipped, and missed history, pauses, conflicts,
+task fields, notes, and attachments remain intact. Sync bindings, enrollment
+state, and encryption keys are excluded, so a restored copy is local only.
 
 Images that have not downloaded cannot be included. Run `aven sync` first when
 the sync server may have files this device lacks. Restore checks the archive and
@@ -37,8 +38,10 @@ a safety backup first and preserves the previous attachment directory.
 
 ## Recover data used with sync
 
-A database that has set up or joined end-to-end encrypted sync refuses restore
-and import. This is intentional for this release.
+A database that has set up or joined end-to-end encrypted sync can create a
+backup, including while setup or joining is incomplete. It still refuses
+restore and import because replacing data in a database that takes part in sync
+is unsafe. Restore the backup to a fresh database path instead.
 
 If one device is lost or broken, use a surviving device instead of a backup:
 run `aven sync invite` there, then run `aven sync join` on an empty database on

@@ -732,12 +732,10 @@ pub(crate) mod tests {
         );
 
         let backup = temp.path().join("backup.tar.zst");
-        assert!(
-            database
-                .create_backup_archive(&temp.path().join("blobs"), &backup)
-                .await
-                .is_err()
-        );
+        database
+            .create_backup_archive(&temp.path().join("blobs"), &backup)
+            .await
+            .unwrap();
 
         let target_dir = tempfile::tempdir().unwrap();
         let target = Database::open(&target_dir.path().join("target.sqlite"))

@@ -21,7 +21,7 @@ pub(super) async fn backup_before_pending_migrations(
     }
     let backup_path = migration_backup_path(path)?;
     let mut conn = pool.acquire().await?;
-    backup_database_with_connection(&mut conn, &backup_path).await?;
+    backup_database_exact_with_connection(&mut conn, &backup_path).await?;
     prune_migration_backups(path)?;
     Ok(())
 }
@@ -84,7 +84,7 @@ pub async fn backup_database(source: &Path, backup: &Path) -> Result<()> {
     if !source.is_file() {
         bail!("could not open source {}", source.display());
     }
-    let _installation = super::installation::InstallationGuard::acquire_plaintext(source)?;
+    let _installation = super::installation::InstallationGuard::acquire_for_backup(source)?;
     backup_database_unlocked(source, backup).await
 }
 
@@ -118,9 +118,8 @@ pub fn shm_path(path: &Path) -> PathBuf {
 
 pub async fn restore_database_file(target: &Path, source: &Path) -> Result<PathBuf> {
     let _installation = super::installation::InstallationGuard::acquire(target)?;
-    _installation.ensure_unbound()?;
+    _installation.ensure_restore_target_unbound()?;
     validate_sqlite_source(source).await?;
-    ensure_file_has_no_active_local_shared_capture(source, "source").await?;
     ensure_file_has_no_active_local_shared_capture(target, "target").await?;
     let safety = create_restore_safety_backup(target).await?;
     let staging = target.with_extension("restore-staging");
@@ -135,6 +134,7 @@ pub async fn restore_database_file(target: &Path, source: &Path) -> Result<PathB
             staging.display()
         )
     })?;
+    detach_backup_snapshot(&staging).await?;
     for sidecar in [wal_path(target), shm_path(target)] {
         if sidecar.exists() {
             fs::remove_file(&sidecar)
@@ -193,7 +193,22 @@ pub(crate) async fn backup_database_with_connection(
     conn: &mut SqliteConnection,
     backup: &Path,
 ) -> Result<()> {
+    backup_database_with_connection_mode(conn, backup, true).await
+}
+
+async fn backup_database_exact_with_connection(
+    conn: &mut SqliteConnection,
+    backup: &Path,
+) -> Result<()> {
     ensure_connection_has_no_active_local_shared_capture(conn, "backup source").await?;
+    backup_database_with_connection_mode(conn, backup, false).await
+}
+
+async fn backup_database_with_connection_mode(
+    conn: &mut SqliteConnection,
+    backup: &Path,
+    detach_sync: bool,
+) -> Result<()> {
     wait_at_backup_precheck_boundary(backup).await;
     let parent = backup.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent).with_context(|| format!("could not create {}", parent.display()))?;
@@ -207,9 +222,87 @@ pub(crate) async fn backup_database_with_connection(
         .execute(&mut *conn)
         .await
         .with_context(|| format!("could not back up database to {}", backup.display()))?;
-    ensure_file_has_no_active_local_shared_capture(&staging, "backup-snapshot").await?;
+    if detach_sync {
+        detach_backup_snapshot(&staging).await?;
+    } else {
+        ensure_file_has_no_active_local_shared_capture(&staging, "backup-snapshot").await?;
+    }
     fs::rename(&staging, backup)
         .with_context(|| format!("could not replace {}", backup.display()))?;
+    Ok(())
+}
+
+pub(crate) async fn detach_backup_snapshot(path: &Path) -> Result<()> {
+    let mut conn = SqliteConnection::connect_with(
+        &SqliteConnectOptions::new()
+            .filename(path)
+            .foreign_keys(false)
+            .busy_timeout(Duration::from_secs(5)),
+    )
+    .await
+    .with_context(|| format!("could not prepare local-only backup {}", path.display()))?;
+    sqlx::query("PRAGMA secure_delete=ON")
+        .execute(&mut conn)
+        .await?;
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master
+         WHERE type = 'table' AND (
+             name GLOB 'local_shared_capture_*'
+             OR name GLOB 'local_seed_*'
+             OR name GLOB 'local_peer_*'
+             OR name GLOB 'local_membership_*'
+             OR name GLOB 'local_e2ee_*'
+         )",
+    )
+    .fetch_all(&mut conn)
+    .await?;
+    let mut tx = conn.begin().await?;
+    if tables
+        .iter()
+        .any(|table| table == "local_shared_capture_journal")
+    {
+        sqlx::query("UPDATE local_shared_capture_journal SET publication_owned = 0")
+            .execute(&mut *tx)
+            .await?;
+    }
+    if tables
+        .iter()
+        .any(|table| table == "local_seed_publication_intent")
+    {
+        sqlx::query("DELETE FROM local_seed_publication_intent")
+            .execute(&mut *tx)
+            .await?;
+    }
+    for table in tables {
+        let quoted = table.replace('"', "\"\"");
+        sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM \"{quoted}\"")))
+            .execute(&mut *tx)
+            .await?;
+    }
+    sqlx::query("DELETE FROM meta WHERE key LIKE 'sync_%' OR key LIKE 'e2ee_%'")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "INSERT INTO meta(key, value) VALUES ('sync_cursor', '0'), ('sync_generation', '0')",
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    let foreign_key_errors: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM pragma_foreign_key_check")
+            .fetch_one(&mut conn)
+            .await?;
+    if foreign_key_errors != 0 {
+        bail!("error backup-detach-foreign-key-check");
+    }
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&mut conn)
+        .await?;
+    sqlx::query("PRAGMA journal_mode=DELETE")
+        .execute(&mut conn)
+        .await?;
+    sqlx::query("VACUUM").execute(&mut conn).await?;
+    conn.close().await?;
     Ok(())
 }
 
@@ -458,13 +551,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn completed_snapshot_rejects_capture_committed_after_backup_precheck() {
+    async fn restore_detaches_a_bound_source_database() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.sqlite");
+        let target = temp.path().join("target.sqlite");
+        let database = Database::open(&source).await.unwrap();
+        let mut conn = database.acquire_writer().await.unwrap();
+        set_meta(&mut conn, "restore-test", "preserved")
+            .await
+            .unwrap();
+        set_meta(&mut conn, "e2ee_association", "old-sync")
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO local_peer_enrollment VALUES (1, zeroblob(32), 'client', 'peer')")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+        database.pool.close().await;
+
+        restore_database_file(&target, &source).await.unwrap();
+
+        let restored = Database::open(&target).await.unwrap();
+        assert_eq!(
+            restored.meta("restore-test").await.unwrap().as_deref(),
+            Some("preserved")
+        );
+        assert!(restored.enrollment_pin().await.unwrap().is_none());
+        assert!(restored.meta("e2ee_association").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn completed_snapshot_detaches_capture_committed_after_backup_precheck() {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("source.sqlite");
         let backup = temp.path().join("backup.sqlite");
         let database = Database::open(&source).await.unwrap();
         fs::write(&backup, b"existing destination").unwrap();
-        let existing = fs::read(&backup).unwrap();
         let (reached_tx, reached_rx) = tokio::sync::oneshot::channel();
         let (resume_tx, resume_rx) = tokio::sync::oneshot::channel();
         *BACKUP_PRECHECK_BARRIER
@@ -484,9 +607,19 @@ mod tests {
             .unwrap();
         resume_tx.send(()).unwrap();
 
-        let error = worker.await.unwrap().unwrap_err();
-        assert!(error.to_string().contains("role=backup-snapshot"));
-        assert_eq!(fs::read(&backup).unwrap(), existing);
+        worker.await.unwrap().unwrap();
+        let mut snapshot = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(&backup)
+                .read_only(true),
+        )
+        .await
+        .unwrap();
+        let capture: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_shared_capture_journal")
+            .fetch_one(&mut snapshot)
+            .await
+            .unwrap();
+        assert_eq!(capture, 0);
         assert!(
             fs::read_dir(temp.path())
                 .unwrap()
@@ -495,6 +628,75 @@ mod tests {
                     .file_name()
                     .to_string_lossy()
                     .starts_with(".aven-sqlite-backup-"))
+        );
+    }
+
+    #[tokio::test]
+    async fn backup_of_bound_installation_is_local_only() {
+        const SECRET_MARKER: &[u8] = b"aven-test-secret-source-authority-7f9d3a21";
+
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.sqlite");
+        let backup = temp.path().join("backup.sqlite");
+        let restored_path = temp.path().join("restored.sqlite");
+        let database = Database::open(&source).await.unwrap();
+        let mut conn = database.acquire_writer().await.unwrap();
+        sqlx::query("INSERT INTO local_seed_source VALUES (1, ?, 'client')")
+            .bind(SECRET_MARKER)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        set_meta(&mut conn, "e2ee_association", "old-sync")
+            .await
+            .unwrap();
+        drop(conn);
+        let installation = super::super::installation::InstallationGuard::acquire(&source).unwrap();
+        installation.fence().unwrap();
+        drop(installation);
+
+        backup_database(&source, &backup).await.unwrap();
+
+        let mut snapshot = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(&backup)
+                .read_only(true),
+        )
+        .await
+        .unwrap();
+        let bound: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_seed_source")
+            .fetch_one(&mut snapshot)
+            .await
+            .unwrap();
+        assert_eq!(bound, 0);
+        assert_eq!(
+            get_meta(&mut snapshot, "e2ee_association").await.unwrap(),
+            None
+        );
+        assert_eq!(
+            get_meta(&mut snapshot, "sync_generation")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("0")
+        );
+        assert!(!PathBuf::from(format!("{}.aven-e2ee-bound", backup.display())).exists());
+        drop(snapshot);
+        assert!(
+            !fs::read(&backup)
+                .unwrap()
+                .windows(SECRET_MARKER.len())
+                .any(|window| window == SECRET_MARKER)
+        );
+
+        database.pool.close().await;
+        restore_database_file(&restored_path, &source)
+            .await
+            .unwrap();
+        assert!(
+            !fs::read(&restored_path)
+                .unwrap()
+                .windows(SECRET_MARKER.len())
+                .any(|window| window == SECRET_MARKER)
         );
     }
 }

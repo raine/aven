@@ -26,7 +26,7 @@ pub use backup::{
     shm_path, wal_path,
 };
 pub(crate) use backup::{
-    backup_database_with_connection, create_restore_safety_backup,
+    backup_database_with_connection, create_restore_safety_backup, detach_backup_snapshot,
     ensure_file_has_no_active_local_shared_capture,
 };
 pub(crate) use changes::{IdentifiedChange, insert_change, insert_change_with_identity};

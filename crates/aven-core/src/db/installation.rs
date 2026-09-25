@@ -30,6 +30,11 @@ impl InstallationGuard {
         Ok(guard)
     }
 
+    /// Backups share exclusion but may read an encrypted-sync installation.
+    pub(crate) fn acquire_for_backup(path: &Path) -> Result<Self> {
+        Self::acquire_mode(path, false)
+    }
+
     fn acquire_mode(path: &Path, exclusive: bool) -> Result<Self> {
         let parent = path
             .parent()
@@ -99,6 +104,26 @@ impl InstallationGuard {
         }
     }
 
+    pub(crate) fn ensure_restore_target_unbound(&self) -> Result<()> {
+        self.ensure_replacement_target_unbound(
+            "This database takes part in sync, so restore is refused here. Restore the backup to a new database path.",
+        )
+    }
+
+    fn ensure_import_target_unbound(&self) -> Result<()> {
+        self.ensure_replacement_target_unbound(
+            "This database takes part in sync, so import is refused here. Import into a new database path.",
+        )
+    }
+
+    fn ensure_replacement_target_unbound(&self, message: &str) -> Result<()> {
+        match fs::symlink_metadata(&self.marker) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+            Ok(_) => anyhow::bail!(message.to_string()),
+        }
+    }
+
     /// Permanently refuses replacement even if later source setup fails.
     pub fn fence(&self) -> Result<()> {
         ensure!(self.exclusive, "error installation-exclusive-lock-required");
@@ -121,6 +146,23 @@ impl super::Database {
         self.file_identity()
             .map(InstallationGuard::acquire_plaintext)
             .transpose()
+    }
+
+    pub(crate) fn backup_installation_guard(&self) -> Result<Option<InstallationGuard>> {
+        self.file_identity()
+            .map(InstallationGuard::acquire_for_backup)
+            .transpose()
+    }
+
+    pub(crate) fn import_installation_guard(&self) -> Result<Option<InstallationGuard>> {
+        let guard = self
+            .file_identity()
+            .map(InstallationGuard::acquire_for_backup)
+            .transpose()?;
+        if let Some(guard) = &guard {
+            guard.ensure_import_target_unbound()?;
+        }
+        Ok(guard)
     }
 }
 
@@ -201,12 +243,12 @@ mod concurrency_tests {
         );
         exclusive.fence().unwrap();
         drop(exclusive);
-        assert!(
-            crate::db::backup_database(&path, &root.path().join("fenced.sqlite"))
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("e2ee-installation-fenced")
-        );
+        crate::db::backup_database(&path, &root.path().join("fenced.sqlite"))
+            .await
+            .unwrap();
+        independent
+            .create_backup_archive(root.path(), &root.path().join("fenced.tar.zst"))
+            .await
+            .unwrap();
     }
 }
