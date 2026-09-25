@@ -14,6 +14,8 @@ use aven_core::sync::{
     },
 };
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use std::sync::atomic::Ordering;
 type Hash = [u8; 32];
 const IDENTITY_LIMIT: usize = 8192;
 const JOURNAL_LIMIT: usize = 4096;
@@ -404,7 +406,7 @@ impl ProtectedLocalKeyStore {
         );
         keys.authority().validate(&membership)?;
         coverage.validate(&membership)?;
-        let now = unix_now()?;
+        let now = self.enrollment_now()?;
         for journal in self.journals(db).await? {
             if let Some(ready) = self.phase(db, &journal.name("ready"), 128).await? {
                 ensure!(
@@ -805,7 +807,7 @@ impl ProtectedLocalKeyStore {
         db: &Database,
         inputs: &ActiveInputs,
     ) -> Result<Option<Outbound>> {
-        let now = unix_now()?;
+        let now = self.enrollment_now()?;
         Ok(self
             .unresolved_disclosures(db, inputs)
             .await?
@@ -1397,6 +1399,8 @@ impl ProtectedLocalKeyStore {
             bearer: Secret::new(*inputs.bearer().expose()),
             withdrawal_deadline,
             enrollment_marker: db.enrollment_artifact_marker().await?,
+            #[cfg(test)]
+            enrollment_clock: self.enrollment_clock.clone(),
         };
         drop(inputs);
         Ok(snapshot)
@@ -1487,6 +1491,8 @@ pub(crate) struct TailSnapshot {
     /// then on, publishing waits for its withdrawal rotation.
     withdrawal_deadline: Option<u64>,
     enrollment_marker: i64,
+    #[cfg(test)]
+    enrollment_clock: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
 }
 impl TailSnapshot {
     /// Checked before every step that publishes new encrypted content.
@@ -1498,6 +1504,12 @@ impl TailSnapshot {
     }
 
     pub(crate) fn publishing_blocked(&self) -> Result<bool> {
+        #[cfg(test)]
+        let now = match &self.enrollment_clock {
+            Some(clock) => clock.load(Ordering::SeqCst),
+            None => unix_now()?,
+        };
+        #[cfg(not(test))]
         let now = unix_now()?;
         Ok(self
             .withdrawal_deadline
@@ -1506,6 +1518,16 @@ impl TailSnapshot {
 
     pub(crate) async fn is_current(&self, db: &Database) -> Result<bool> {
         Ok(self.enrollment_marker == db.enrollment_artifact_marker().await?)
+    }
+}
+
+impl ProtectedLocalKeyStore {
+    fn enrollment_now(&self) -> Result<u64> {
+        #[cfg(test)]
+        if let Some(clock) = &self.enrollment_clock {
+            return Ok(clock.load(Ordering::SeqCst));
+        }
+        unix_now()
     }
 }
 

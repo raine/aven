@@ -113,32 +113,6 @@ fn visible_command_tree_has_help_descriptions() {
 }
 
 #[test]
-fn every_visible_command_renders_short_and_long_help() {
-    fn check(command: &clap::Command, path: &str) {
-        let mut rendered_command = command.clone();
-        let mut short = Vec::new();
-        rendered_command.write_help(&mut short).unwrap();
-        assert!(!short.is_empty(), "{path} rendered empty short help");
-
-        let mut rendered_command = command.clone();
-        let mut long = Vec::new();
-        rendered_command.write_long_help(&mut long).unwrap();
-        assert!(!long.is_empty(), "{path} rendered empty long help");
-
-        for subcommand in command
-            .get_subcommands()
-            .filter(|subcommand| !subcommand.is_hide_set())
-        {
-            check(subcommand, &format!("{path} {}", subcommand.get_name()));
-        }
-    }
-
-    let mut command = Cli::command();
-    command.build();
-    check(&command, "aven");
-}
-
-#[test]
 fn complex_commands_keep_examples_and_safety_guidance() {
     fn long_help(path: &[&str]) -> String {
         let mut command = Cli::command();

@@ -31,6 +31,12 @@ just test-package aven-core
 just check-package aven
 ```
 
+To opt in to a report of passing tests slower than one second, use
+`just profile-tests` with the same package, target, or test-name filters as
+`just _test`, for example `just profile-tests --package aven --lib
+peer_enrollment_http::tests::`. The `slow-tests` nextest profile reports slow
+statuses without changing normal test or `check-full` output.
+
 The workspace packages are `aven` and `aven-core`; `aven` depends on
 `aven-core`, not the reverse. Select the package that owns the changed behavior.
 If a core API or contract change affects its `aven` consumer, check both

@@ -289,7 +289,6 @@ dependencies = [
  "libc",
  "mac-notification-sys",
  "notify-rust",
- "oxipng",
  "pulldown-cmark",
  "qrcode",
  "ratatui",

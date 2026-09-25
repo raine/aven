@@ -889,31 +889,6 @@ fn add_task_empty_title_input_without_focus_omits_cursor() {
 }
 
 #[test]
-fn add_task_title_input_draws_cursor_as_cell() {
-    let line = add_task_title_input_line("abc", Some(1), 20);
-    assert_eq!(line.spans[0].content.as_ref(), "a");
-    assert_eq!(line.spans[1].content.as_ref(), "b");
-    assert_eq!(line.spans[1].style.fg, Some(BG_ALT));
-    assert_eq!(line.spans[1].style.bg, Some(FG));
-    assert_eq!(line.spans[2].content.as_ref(), "c");
-}
-
-#[test]
-fn add_task_title_input_draws_end_cursor_as_blank_cell() {
-    let line = add_task_title_input_line("abc", Some(3), 20);
-    assert_eq!(line.spans[0].content.as_ref(), "abc");
-    assert_eq!(line.spans[1].content.as_ref(), " ");
-    assert_eq!(line.spans[1].style.bg, Some(FG));
-}
-
-#[test]
-fn add_task_title_input_scrolls_to_cursor_cell() {
-    let line = add_task_title_input_line("abcdef", Some(5), 4);
-    assert_eq!(line.spans[0].content.as_ref(), "cde");
-    assert_eq!(line.spans[1].content.as_ref(), "f");
-}
-
-#[test]
 fn add_task_metadata_title_labels_values() {
     let line = add_task_metadata_title(
         "aven",

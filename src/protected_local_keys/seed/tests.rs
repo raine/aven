@@ -197,12 +197,14 @@ async fn corrupt_unavailable_and_wrong_installation_refuse_without_replacement()
         account: store.account.clone(),
         directory: store.directory.clone(),
         backend: Backend::Unavailable,
+        enrollment_clock: None,
     };
     assert!(unavailable.prepare_seed_claim(&db, [9; 32]).await.is_err());
     let failed = ProtectedLocalKeyStore {
         account: store.account.clone(),
         directory: store.directory.clone(),
         backend: Backend::FailWrite,
+        enrollment_clock: None,
     };
     assert!(
         failed
@@ -378,6 +380,7 @@ fn seed_create_failure_and_unsafe_files_do_not_replace_authority() {
         account: store.account.clone(),
         directory: root.path().join("failed"),
         backend: Backend::FailWrite,
+        enrollment_clock: None,
     };
     assert_eq!(
         failed
@@ -441,6 +444,7 @@ async fn isolated_seed_keychain_reopen() {
         }),
         account,
         directory: root.path().join("markers"),
+        enrollment_clock: None,
     });
     let first = cleanup.0.prepare_seed_claim(&db, [9; 32]).await.unwrap();
     let reopened = cleanup.0.prepare_seed_claim(&db, [9; 32]).await.unwrap();

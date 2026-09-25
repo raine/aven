@@ -117,6 +117,10 @@ test-target package target:
 test-package package:
     just _test --package {{package}} --all-targets
 
+# Report passing tests that take longer than one second
+profile-tests *ARGS:
+    env SQLX_OFFLINE=true RUST_MIN_STACK=4194304 cargo nextest run --target-dir target/test --locked --no-fail-fast --profile slow-tests {{ARGS}}
+
 # Lint every target in one package
 _clippy-package package:
     @scripts/quiet-check "clippy {{package}}" cargo clippy --message-format=json --target-dir target/clippy --package {{package}} --all-targets -- -D warnings -D clippy::all

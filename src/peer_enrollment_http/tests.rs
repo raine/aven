@@ -16,7 +16,7 @@ use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 use tokio::sync::Notify;
 
@@ -129,8 +129,36 @@ async fn serve_counted(
     db: Database,
     counts: Arc<ExchangeCounts>,
 ) -> (String, tokio::task::JoinHandle<()>) {
-    let app = e2ee_http::router(db).layer(middleware::from_fn_with_state(counts, count_exchange));
+    let app = e2ee_http::router(db);
+    serve_counted_app(app, counts).await
+}
+async fn serve_counted_with_clock(
+    db: Database,
+    counts: Arc<ExchangeCounts>,
+    clock: Arc<AtomicU64>,
+) -> (String, tokio::task::JoinHandle<()>) {
+    let app = seed_bootstrap_http::router(db.clone(), Some(setup()), Default::default())
+        .merge(router_with_clock(db.clone(), clock))
+        .merge(crate::encrypted_tail_http::router(db));
+    serve_counted_app(app, counts).await
+}
+async fn serve_counted_app(
+    app: Router,
+    counts: Arc<ExchangeCounts>,
+) -> (String, tokio::task::JoinHandle<()>) {
+    let app = app.layer(middleware::from_fn_with_state(counts, count_exchange));
     e2ee_http::serve(app, "127.0.0.1:0").await
+}
+fn test_clock() -> Arc<AtomicU64> {
+    Arc::new(AtomicU64::new(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    ))
+}
+fn advance_clock(clock: &AtomicU64, to: u64) {
+    clock.store(to, Ordering::SeqCst);
 }
 fn expiry() -> u64 {
     std::time::SystemTime::now()
@@ -160,11 +188,47 @@ async fn adopted_with(
     String,
     tokio::task::JoinHandle<()>,
 ) {
-    let (db, store, seed, _) = fixture(root).await;
+    adopted_inner(root, counts, None).await
+}
+async fn adopted_with_clock(
+    root: &Path,
+    counts: Option<Arc<ExchangeCounts>>,
+    clock: Arc<AtomicU64>,
+) -> (
+    Database,
+    ProtectedLocalKeyStore,
+    Database,
+    String,
+    tokio::task::JoinHandle<()>,
+) {
+    adopted_inner(root, counts, Some(clock)).await
+}
+async fn adopted_inner(
+    root: &Path,
+    counts: Option<Arc<ExchangeCounts>>,
+    clock: Option<Arc<AtomicU64>>,
+) -> (
+    Database,
+    ProtectedLocalKeyStore,
+    Database,
+    String,
+    tokio::task::JoinHandle<()>,
+) {
+    let (db, mut store, seed, _) = fixture(root).await;
+    if let Some(clock) = &clock {
+        store.set_enrollment_clock(clock.clone());
+    }
     let server = Database::open(&root.join("server.sqlite")).await.unwrap();
-    let (origin, task) = match counts {
-        Some(counts) => serve_counted(server.clone(), counts).await,
-        None => e2ee_http::serve(e2ee_http::router(server.clone()), "127.0.0.1:0").await,
+    let (origin, task) = match (counts, clock) {
+        (Some(counts), Some(clock)) => {
+            serve_counted_with_clock(server.clone(), counts, clock).await
+        }
+        (Some(counts), None) => serve_counted(server.clone(), counts).await,
+        (None, Some(clock)) => {
+            let counts = Arc::new(ExchangeCounts::default());
+            serve_counted_with_clock(server.clone(), counts, clock).await
+        }
+        (None, None) => e2ee_http::serve(e2ee_http::router(server.clone()), "127.0.0.1:0").await,
     };
     e2ee_http::adopt(&origin, &db, &store, &seed).await;
     (db, store, server, origin, task)
@@ -805,6 +869,7 @@ async fn enrollment_permit_timeout_is_retryable_and_uncacheable() {
     let server = Arc::new(Server {
         db,
         gate: tokio::sync::Semaphore::new(1),
+        enrollment_clock: None,
     });
     let permit = server.gate.acquire().await.unwrap();
     let request = Request::builder()
@@ -1004,8 +1069,6 @@ async fn management_loopback_authenticates_removed_seed_before_stale_hint() {
 mod retry;
 mod rotation;
 
-/// Leaves time to register, request and prepare a grant before the server's
-/// strict real-clock expiry, even under a parallel test load.
 fn soon() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1014,21 +1077,22 @@ fn soon() -> u64 {
         + 20
 }
 
-async fn past(expiry: u64) {
-    while std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-        < expiry
-    {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
+#[tokio::test]
+async fn production_clock_rejects_an_already_expired_invitation() {
+    let root = tempfile::tempdir().unwrap();
+    let (db, store, _, origin, task) = adopted(root.path()).await;
+    let client = Client::new(&origin).unwrap();
+    let error = client.invite(&store, &db, 0).await.unwrap_err();
+    assert_eq!(error.to_string(), "error enrollment-invitation-unavailable");
+    task.abort();
 }
 
 #[tokio::test]
 async fn expired_unsent_invitation_retires_but_sent_candidate_stays_blocked() {
     let root = tempfile::tempdir().unwrap();
-    let (db, store, _server, origin, task) = adopted(root.path()).await;
+    let clock = test_clock();
+    let (db, store, _server, origin, task) =
+        adopted_with_clock(root.path(), None, clock.clone()).await;
     let client = Client::new(&origin).unwrap();
     let peer = |name: &str| {
         let root = root.path().to_path_buf();
@@ -1055,7 +1119,7 @@ async fn expired_unsent_invitation_retires_but_sent_candidate_stays_blocked() {
         store.outbound_invitation(&db).await.unwrap(),
         Some(OutboundInvitation::Pending)
     );
-    past(expires).await;
+    advance_clock(&clock, expires);
     drop(store.tail_inputs(&db, &origin).await.unwrap());
     assert_eq!(store.outbound_invitation(&db).await.unwrap(), None);
     // A stale admission attempt for the retired handle can never send a grant.
@@ -1112,7 +1176,7 @@ async fn expired_unsent_invitation_retires_but_sent_candidate_stays_blocked() {
     }
     let tail = store.tail_inputs(&db, &origin).await.unwrap();
     assert!(!tail.publishing_blocked().unwrap());
-    past(expires).await;
+    advance_clock(&clock, expires);
     // The same snapshot starts refusing publication at the declared expiry.
     assert!(
         tail.require_publishing_ready()
@@ -1175,7 +1239,9 @@ async fn generations(store: &ProtectedLocalKeyStore, db: &Database, origin: &str
 #[tokio::test]
 async fn expired_sent_invitation_withdraws_by_rotation_unless_admission_won() {
     let root = tempfile::tempdir().unwrap();
-    let (db, store, server, origin, task) = adopted(root.path()).await;
+    let clock = test_clock();
+    let (db, store, server, origin, task) =
+        adopted_with_clock(root.path(), None, clock.clone()).await;
     let client = Client::new(&origin).unwrap();
     let peer = |name: &str| {
         let root = root.path().to_path_buf();
@@ -1209,7 +1275,7 @@ async fn expired_sent_invitation_withdraws_by_rotation_unless_admission_won() {
         .await
         .unwrap();
     let (handle, record) = sent_candidate(&client, &store, &db, &origin).await;
-    past(expires).await;
+    advance_clock(&clock, expires);
 
     // Faults before the final phase: the fence is written, the server commits
     // the cancellation but the reply is lost, and the freeze and rotation
@@ -1230,13 +1296,14 @@ async fn expired_sent_invitation_withdraws_by_rotation_unless_admission_won() {
             .unwrap_err();
         assert_eq!(error.to_string(), "error enrollment-invitation-withdrawing");
         assert_eq!(
-            server
-                .cancel_membership_invitation(
-                    &Context::active(&inputs).auth(inputs.bearer()),
-                    handle
-                )
-                .await
-                .unwrap(),
+            membership::cancel_membership_invitation_at(
+                &server,
+                &Context::active(&inputs).auth(inputs.bearer()),
+                handle,
+                i64::try_from(expires).unwrap(),
+            )
+            .await
+            .unwrap(),
             aven_core::sync::seed_claim::membership::CancelStatus::Cancelled
         );
         store
@@ -1263,7 +1330,8 @@ async fn expired_sent_invitation_withdraws_by_rotation_unless_admission_won() {
     drop(store);
     drop(db);
     let db = Database::open(&path).await.unwrap();
-    let store = isolated_store(db.path(), &root.path().join("keys"));
+    let mut store = isolated_store(db.path(), &root.path().join("keys"));
+    store.set_enrollment_clock(clock.clone());
     let rounds = crate::encrypted_tail_http::Client::new(&origin).unwrap();
     for _ in 0..2 {
         rounds.round(&store, &db, root.path()).await.unwrap();
@@ -1274,14 +1342,15 @@ async fn expired_sent_invitation_withdraws_by_rotation_unless_admission_won() {
     {
         let inputs = store.active_inputs(&db, &origin).await.unwrap();
         assert!(
-            server
-                .admit_membership_device(
-                    &Context::active(&inputs).auth(inputs.bearer()),
-                    handle,
-                    &record
-                )
-                .await
-                .is_err()
+            membership::admit_membership_device_at(
+                &server,
+                &Context::active(&inputs).auth(inputs.bearer()),
+                handle,
+                &record,
+                i64::try_from(expires).unwrap(),
+            )
+            .await
+            .is_err()
         );
     }
     rounds
@@ -1306,20 +1375,21 @@ async fn expired_sent_invitation_withdraws_by_rotation_unless_admission_won() {
         .await
         .unwrap();
     let (handle, record) = sent_candidate(&client, &store, &db, &origin).await;
-    past(expires).await;
+    advance_clock(&clock, expires);
     client.finish_pending_management(&store, &db).await.unwrap();
     assert_eq!(generations(&store, &db, &origin).await, initial + 2);
     assert_eq!(store.outbound_invitation(&db).await.unwrap(), None);
     {
         let inputs = store.active_inputs(&db, &origin).await.unwrap();
-        let error = server
-            .admit_membership_device(
-                &Context::active(&inputs).auth(inputs.bearer()),
-                handle,
-                &record,
-            )
-            .await
-            .unwrap_err();
+        let error = membership::admit_membership_device_at(
+            &server,
+            &Context::active(&inputs).auth(inputs.bearer()),
+            handle,
+            &record,
+            i64::try_from(expires).unwrap(),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(error.to_string(), "error enrollment-expired");
     }
     assert!(!client.complete(&other_keys, &other_db).await.unwrap());
@@ -1335,16 +1405,17 @@ async fn expired_sent_invitation_withdraws_by_rotation_unless_admission_won() {
     let (handle, record) = sent_candidate(&client, &store, &db, &origin).await;
     {
         let inputs = store.active_inputs(&db, &origin).await.unwrap();
-        server
-            .admit_membership_device(
-                &Context::active(&inputs).auth(inputs.bearer()),
-                handle,
-                &record,
-            )
-            .await
-            .unwrap();
+        membership::admit_membership_device_at(
+            &server,
+            &Context::active(&inputs).auth(inputs.bearer()),
+            handle,
+            &record,
+            i64::try_from(expires - 1).unwrap(),
+        )
+        .await
+        .unwrap();
     }
-    past(expires).await;
+    advance_clock(&clock, expires);
     client.finish_pending_management(&store, &db).await.unwrap();
     assert_eq!(generations(&store, &db, &origin).await, initial + 2);
     assert_eq!(store.outbound_invitation(&db).await.unwrap(), None);

@@ -22,7 +22,61 @@ pub(crate) mod tests;
 pub use super::peer::Invitation;
 use super::peer::{Recipient, verify};
 use super::*;
+#[cfg(feature = "test-support")]
+use crate::db::Database;
+use anyhow::Result;
 pub use pairing::{Declaration, Device, Joiner, ProvisionalGrant, VerifiedEnrollment};
+
+/// Registers an invitation using a caller-supplied Unix timestamp.
+///
+/// The timestamp is normally supplied by the system clock. Explicit time is
+/// useful to deterministic enrollment tests that exercise expiry boundaries.
+#[cfg(feature = "test-support")]
+pub async fn register_membership_invitation_at(
+    db: &Database,
+    auth: &peer::Authentication<'_>,
+    raw: &[u8],
+    time: i64,
+) -> Result<peer::RegistrationStatus> {
+    db.register_membership_invitation_at(auth, raw, time).await
+}
+
+/// Posts an enrollment request using a caller-supplied Unix timestamp.
+#[cfg(feature = "test-support")]
+pub async fn post_membership_request_at(
+    db: &Database,
+    vault: [u8; 32],
+    handle: [u8; 32],
+    request: &[u8],
+    time: i64,
+) -> Result<()> {
+    db.post_membership_request_at(vault, handle, request, time)
+        .await
+}
+
+/// Cancels an invitation using a caller-supplied Unix timestamp.
+#[cfg(feature = "test-support")]
+pub async fn cancel_membership_invitation_at(
+    db: &Database,
+    auth: &peer::Authentication<'_>,
+    handle: [u8; 32],
+    time: i64,
+) -> Result<CancelStatus> {
+    db.cancel_membership_invitation_at(auth, handle, time).await
+}
+
+/// Admits a device using a caller-supplied Unix timestamp.
+#[cfg(feature = "test-support")]
+pub async fn admit_membership_device_at(
+    db: &Database,
+    auth: &peer::Authentication<'_>,
+    handle: [u8; 32],
+    record: &[u8],
+    time: i64,
+) -> Result<Vec<u8>> {
+    db.admit_membership_device_at(auth, handle, record, time)
+        .await
+}
 
 pub const MAX_DEVICES: usize = 32;
 pub const MAX_RECORD_BYTES: usize = 32768;

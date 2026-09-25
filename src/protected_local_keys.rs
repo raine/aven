@@ -9,6 +9,8 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::{Arc, atomic::AtomicU64};
 
 use aven_core::db::Database;
 use aven_core::sync::{
@@ -120,6 +122,15 @@ pub struct ProtectedLocalKeyStore {
     account: String,
     directory: PathBuf,
     backend: Backend,
+    #[cfg(test)]
+    enrollment_clock: Option<Arc<AtomicU64>>,
+}
+
+#[cfg(test)]
+impl ProtectedLocalKeyStore {
+    pub(crate) fn set_enrollment_clock(&mut self, clock: Arc<AtomicU64>) {
+        self.enrollment_clock = Some(clock);
+    }
 }
 
 impl ProtectedLocalKeyStore {
@@ -149,6 +160,8 @@ impl ProtectedLocalKeyStore {
             account,
             directory,
             backend,
+            #[cfg(test)]
+            enrollment_clock: None,
         })
     }
 
@@ -710,6 +723,7 @@ pub(crate) mod tests {
             }),
             account,
             directory: root.to_path_buf(),
+            enrollment_clock: None,
         }
     }
 
@@ -918,6 +932,7 @@ pub(crate) mod tests {
                 account: database_account(&database_path.canonicalize().unwrap()),
                 directory: root,
                 backend,
+                enrollment_clock: None,
             };
             let error = store.load_or_create().unwrap_err();
             assert_eq!(error.kind(), expected);
@@ -982,6 +997,7 @@ pub(crate) mod tests {
             account,
             directory,
             backend: Backend::Keychain(backend),
+            enrollment_clock: None,
         };
         let first = store.load_or_create().unwrap().context();
         assert_eq!(store.load_required().unwrap().context(), first);

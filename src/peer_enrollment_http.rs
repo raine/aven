@@ -31,7 +31,9 @@ pub(crate) struct CreatedInvitation {
     pub(crate) resumed: bool,
 }
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, atomic::AtomicU64};
 
 const PATH: &str = "/e2ee/enrollment/v1";
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
@@ -133,21 +135,42 @@ enum Reply {
 struct Server {
     db: Database,
     gate: tokio::sync::Semaphore,
+    #[cfg(test)]
+    enrollment_clock: Option<Arc<AtomicU64>>,
 }
 /// Merge only into an isolated E2EE router, never the legacy plaintext server.
 pub fn router(db: Database) -> Router {
+    router_with_clock_inner(db, None)
+}
+fn router_with_clock_inner(db: Database, clock: Option<Arc<AtomicU64>>) -> Router {
+    #[cfg(not(test))]
+    let _ = clock;
     Router::new()
         .route(PATH, post(handle))
         .with_state(Arc::new(Server {
             db,
             gate: tokio::sync::Semaphore::new(1),
+            #[cfg(test)]
+            enrollment_clock: clock,
         }))
 }
+#[cfg(test)]
+pub(crate) fn router_with_clock(db: Database, clock: Arc<AtomicU64>) -> Router {
+    router_with_clock_inner(db, Some(clock))
+}
 async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response {
+    #[cfg(test)]
+    let time = server
+        .enrollment_clock
+        .as_ref()
+        .map(|clock| clock.load(Ordering::SeqCst))
+        .map(|time| i64::try_from(time).expect("test clock fits Unix time"));
+    #[cfg(not(test))]
+    let time = None;
     let response = match http_admission::dispatch(
         &server.gate,
         REQUEST_TIMEOUT,
-        dispatch(&server.db, request),
+        dispatch(&server.db, request, time),
     )
     .await
     {
@@ -178,7 +201,9 @@ async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response
     };
     http_admission::no_store(response)
 }
-async fn dispatch(db: &Database, request: Request) -> Result<Reply> {
+async fn dispatch(db: &Database, request: Request, time: Option<i64>) -> Result<Reply> {
+    #[cfg(not(test))]
+    let _ = time;
     ensure!(
         http_admission::is_json(request.headers()),
         "error enrollment-http"
@@ -217,22 +242,37 @@ async fn dispatch(db: &Database, request: Request) -> Result<Reply> {
             )
             .await?,
         ),
-        Operation::Cancel { context, handle } => Reply::Cancelled(
-            db.cancel_membership_invitation(
-                &context.auth(
-                    credential
-                        .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?,
-                ),
-                handle,
-            )
-            .await?,
-        ),
+        Operation::Cancel { context, handle } => {
+            let auth = context.auth(
+                credential
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?,
+            );
+            #[cfg(test)]
+            let status = match time {
+                Some(time) => {
+                    membership::cancel_membership_invitation_at(db, &auth, handle, time).await?
+                }
+                None => db.cancel_membership_invitation(&auth, handle).await?,
+            };
+            #[cfg(not(test))]
+            let status = db.cancel_membership_invitation(&auth, handle).await?;
+            Reply::Cancelled(status)
+        }
         Operation::Post {
             vault,
             handle,
             request,
         } => {
+            #[cfg(test)]
+            match time {
+                Some(time) => {
+                    membership::post_membership_request_at(db, vault, handle, &request, time)
+                        .await?
+                }
+                None => db.post_membership_request(vault, handle, &request).await?,
+            }
+            #[cfg(not(test))]
             db.post_membership_request(vault, handle, &request).await?;
             Reply::Done
         }
@@ -242,33 +282,50 @@ async fn dispatch(db: &Database, request: Request) -> Result<Reply> {
         Operation::Register {
             context,
             declaration,
-        } => Reply::Registered(
-            db.register_membership_invitation(
-                &context.auth(
-                    credential
-                        .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?,
-                ),
-                &declaration,
-            )
-            .await?,
-        ),
+        } => {
+            let auth = context.auth(
+                credential
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?,
+            );
+            #[cfg(test)]
+            let status = match time {
+                Some(time) => {
+                    membership::register_membership_invitation_at(db, &auth, &declaration, time)
+                        .await?
+                }
+                None => {
+                    db.register_membership_invitation(&auth, &declaration)
+                        .await?
+                }
+            };
+            #[cfg(not(test))]
+            let status = db
+                .register_membership_invitation(&auth, &declaration)
+                .await?;
+            Reply::Registered(status)
+        }
         Operation::Admit {
             context,
             handle,
             record,
-        } => Reply::Admitted(
-            db.admit_membership_device(
-                &context.auth(
-                    credential
-                        .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?,
-                ),
-                handle,
-                &record,
-            )
-            .await?,
-        ),
+        } => {
+            let auth = context.auth(
+                credential
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?,
+            );
+            #[cfg(test)]
+            let admitted = match time {
+                Some(time) => {
+                    membership::admit_membership_device_at(db, &auth, handle, &record, time).await?
+                }
+                None => db.admit_membership_device(&auth, handle, &record).await?,
+            };
+            #[cfg(not(test))]
+            let admitted = db.admit_membership_device(&auth, handle, &record).await?;
+            Reply::Admitted(admitted)
+        }
         Operation::Published {
             context,
             descriptor,

@@ -1,5 +1,4 @@
-//! Replacement invitations for an unfinished join. Expiry here is the
-//! server's real clock passing a short declared invitation lifetime.
+//! Replacement invitations for an unfinished join.
 use super::*;
 use crate::protected_local_keys::peer::MAX_JOIN_ATTEMPTS;
 
@@ -48,7 +47,9 @@ fn retained(
 #[tokio::test]
 async fn expired_join_finishes_with_a_replacement_from_the_same_keys() {
     let root = tempfile::tempdir().unwrap();
-    let (db, store, _server, origin, task) = adopted(root.path()).await;
+    let clock = test_clock();
+    let (db, store, _server, origin, task) =
+        adopted_with_clock(root.path(), None, clock.clone()).await;
     let client = Client::new(&origin).unwrap();
     let expires = soon();
     let original = client.invite(&store, &db, expires).await.unwrap();
@@ -59,7 +60,7 @@ async fn expired_join_finishes_with_a_replacement_from_the_same_keys() {
         .unwrap();
     let first = p.store.prepare_peer(&p.db, &origin, None).await.unwrap();
     let pin = p.db.enrollment_pin().await.unwrap();
-    past(expires).await;
+    advance_clock(&clock, expires);
     // The inviter can no longer admit the expired request.
     assert!(!client.admit(&store, &db).await.unwrap_or(false));
     assert!(!client.complete(&p.store, &p.db).await.unwrap());
@@ -320,7 +321,9 @@ async fn refused_replacements_keep_the_join_and_its_data_unchanged() {
 #[tokio::test]
 async fn process_exit_while_replacing_and_completing_a_replacement() {
     let root = tempfile::tempdir().unwrap();
-    let (db, store, server, origin, task) = adopted(root.path()).await;
+    let clock = test_clock();
+    let (db, store, server, origin, task) =
+        adopted_with_clock(root.path(), None, clock.clone()).await;
     let client = Client::new(&origin).unwrap();
     let expires = soon();
     let original = client.invite(&store, &db, expires).await.unwrap();
@@ -329,7 +332,7 @@ async fn process_exit_while_replacing_and_completing_a_replacement() {
         .request(&p.store, &p.db, Some(original))
         .await
         .unwrap();
-    past(expires).await;
+    advance_clock(&clock, expires);
     drop(store.tail_inputs(&db, &origin).await.unwrap());
     let replacement = client.invite(&store, &db, expiry()).await.unwrap();
     {
