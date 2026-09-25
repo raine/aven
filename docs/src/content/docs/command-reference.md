@@ -853,11 +853,14 @@ Start sync from this database with the invitation printed by `aven server setup`
 aven sync setup [--yes]
 ```
 
-Paste the invitation, or pipe it to standard input. Setup previews the database
-and asks for confirmation; `--yes` is required when standard input is not a
-terminal. Every other device starts from this data. Afterwards the database can
-still create backups, but restore and import are refused there. Rerun the
-command to resume an interrupted setup.
+Paste the invitation, or pipe it to standard input. Setup previews the database,
+checks its image files, and lists missing images that will be published as
+unavailable. It asks for confirmation; `--yes` is required when standard input
+is not a terminal. Every other device starts from this data. Afterwards the
+database can still create backups, but restore and import are refused there.
+Rerun the command to resume an interrupted setup whose server outcome was
+unknown. A definite rejection before setup is frozen leaves the database
+local-only.
 
 #### `aven sync invite`
 
@@ -926,8 +929,12 @@ aven sync status
 aven sync status --json
 ```
 
-The state is `not-set-up`, `setup-incomplete`, `join-incomplete`,
-`key-change-pending`, or `ready`. `key-change-pending` means an invitation
+The state is `not-set-up`, `setup-incomplete`, `setup-recovery-required`,
+`join-incomplete`, `key-change-pending`, or `ready`.
+`setup-recovery-required` means a fenced setup was definitely refused by storage
+that belongs to another sync; local editing and export remain available, but the
+database must be backed up and restored to a new path to become local-only.
+`key-change-pending` means an invitation
 expired after keys may have been sent to a device that never joined; the next
 `aven sync` changes keys before uploading new changes. Ready and
 `key-change-pending` databases also report the server, whether local changes

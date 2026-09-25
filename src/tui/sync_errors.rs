@@ -65,10 +65,18 @@ fn explain(kind: OperationKind, error: &anyhow::Error) -> &'static str {
         return "This invitation belongs to a different setup. Paste the invitation that \
                 started setup.";
     }
-    if has("sync-setup-refused") {
-        return "The server refused this setup invitation. If the server's setup was run \
-                again or the invitation is over an hour old, use the newest one; otherwise \
-                check the server and try again.";
+    if has("sync-setup-storage-already-claimed") {
+        return "This server already belongs to another sync. Nothing here was changed. \
+                To use that sync, join it from an empty database.";
+    }
+    if has("sync-setup-invitation-rejected") {
+        return "This setup invitation expired, was replaced, or is for different storage. \
+                Nothing here was changed. Create a current invitation for this unclaimed \
+                server and try again.";
+    }
+    if has("sync-setup-outcome-unknown") {
+        return "The server claim couldn't be confirmed. Resume continues the same setup. \
+                Local work continues.";
     }
     if has("sync-already-set-up") {
         return "This database already takes part in sync.";
@@ -193,6 +201,29 @@ mod tests {
                 .starts_with("Couldn't reach the sync server")
         );
         assert!(failure.details.contains("enrollment-network"));
+    }
+
+    #[test]
+    fn definite_setup_refusals_explain_that_local_data_was_not_changed() {
+        let claimed = anyhow!("error bootstrap-storage-already-claimed")
+            .context("error sync-setup-storage-already-claimed");
+        let claimed_failure = failure(OperationKind::Setup, &claimed);
+        assert!(
+            claimed_failure
+                .message
+                .contains("already belongs to another sync")
+        );
+        assert!(claimed_failure.message.contains("Nothing here was changed"));
+
+        let rejected = anyhow!("error bootstrap-setup-invitation-rejected")
+            .context("error sync-setup-invitation-rejected");
+        let rejected_failure = failure(OperationKind::Setup, &rejected);
+        assert!(rejected_failure.message.contains("expired, was replaced"));
+        assert!(
+            rejected_failure
+                .message
+                .contains("Nothing here was changed")
+        );
     }
 
     #[test]

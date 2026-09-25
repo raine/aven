@@ -228,7 +228,8 @@ impl App {
                     self.start_sync_operation(OperationKind::Setup, Some(invitation));
                     return Ok(SyncDialogState::default());
                 }
-                let preview = encrypted::setup_preview(&self.store.database()).await?;
+                let preview =
+                    encrypted::setup_preview(&self.store.database(), self.intake.config()).await?;
                 Ok(SyncDialogState::page(SyncPage::ConfirmSetup {
                     server,
                     preview,

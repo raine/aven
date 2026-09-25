@@ -77,6 +77,8 @@ pub(crate) enum LocalPhase {
     NotSetUp,
     /// Setup started from this database and has not bound the server yet.
     SetupIncomplete,
+    /// Setup is fenced and the server definitely rejected its claim.
+    SetupRecoveryRequired,
     /// Joining started and the synced data has not been installed yet.
     JoinIncomplete,
     SetUp,
@@ -93,7 +95,11 @@ pub(crate) async fn local_phase(database: &Database) -> Result<LocalPhase> {
         }
         Some(_) => LocalPhase::SetUp,
         None if database.local_seed_genesis_commitment().await?.is_some() => {
-            LocalPhase::SetupIncomplete
+            if database.meta("e2ee_setup_refused").await?.is_some() {
+                LocalPhase::SetupRecoveryRequired
+            } else {
+                LocalPhase::SetupIncomplete
+            }
         }
         None => LocalPhase::NotSetUp,
     })
@@ -166,8 +172,9 @@ pub(crate) struct SetupPreview {
     pub(crate) leaves_unencrypted_server: bool,
 }
 
-pub(crate) async fn setup_preview(database: &Database) -> Result<SetupPreview> {
+pub(crate) async fn setup_preview(database: &Database, config: &AppConfig) -> Result<SetupPreview> {
     let workspaces = database.list_workspaces().await?;
+    let blob_dir = config::resolve_blob_dir(database.path(), config)?;
     let mut tasks = 0;
     for workspace in &workspaces {
         tasks += database.workspace_task_counts(&workspace.id).await?.visible;
@@ -175,13 +182,16 @@ pub(crate) async fn setup_preview(database: &Database) -> Result<SetupPreview> {
     Ok(SetupPreview {
         workspaces: workspaces.len(),
         tasks,
-        missing_images: database.missing_sync_attachment_counts().await?.count,
+        missing_images: database
+            .missing_setup_attachment_counts(&blob_dir)
+            .await?
+            .count,
         leaves_unencrypted_server: database.meta("sync_server_url").await?.is_some(),
     })
 }
 
-async fn print_setup_preview(database: &Database, server: &str) -> Result<()> {
-    let preview = setup_preview(database).await?;
+async fn print_setup_preview(database: &Database, config: &AppConfig, server: &str) -> Result<()> {
+    let preview = setup_preview(database, config).await?;
     eprintln!("Set up sync from this database");
     eprintln!("  Database: {}", database.path().display());
     eprintln!("  Server: {server}");
@@ -220,7 +230,7 @@ pub(crate) async fn setup(database: &Database, config: &AppConfig, args: SetupAr
     let invitation = SetupInvitation::decode(&read_invitation("Setup invitation: ")?)?;
     let resuming = database.local_seed_genesis_commitment().await?.is_some();
     if !resuming {
-        print_setup_preview(database, &invitation.server).await?;
+        print_setup_preview(database, config, &invitation.server).await?;
         confirm_setup(args.yes)?;
     }
     let outcome = run_setup(database, config, &invitation, &|stage| {
@@ -255,26 +265,67 @@ pub(crate) async fn run_setup(
             .prepare_seed_claim(database, invitation.setup_id)
             .await
             .context("error sync-setup-invitation-mismatch hint=\"resume with the invitation that started setup\"")?;
+        let setup = ClaimAuthentication::SetupSecret(&invitation.secret);
+        let claim = match bootstrap.claim(seed.genesis(), setup).await {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                // A response may have been lost after admission. The pinned
+                // seed bearer proves an exact retry without the invitation.
+                let bearer = ClaimAuthentication::SeedBearer(seed.bearer());
+                bootstrap.claim(seed.genesis(), bearer).await
+            }
+        };
+        if let Err(error) = claim {
+            if definite_setup_refusal(&error) {
+                if database.seed_source_pin().await?.is_none() {
+                    store.rollback_seed_claim(database, &seed).await?;
+                    return Err(explain_setup_refusal(error));
+                }
+                if error.to_string() == "error bootstrap-storage-already-claimed" {
+                    database
+                        .mark_local_seed_setup_refused(error.to_string().as_str())
+                        .await?;
+                    return Err(error.context(
+                        "error sync-setup-recovery-required hint=\"this fenced setup was definitely refused; back up this database and restore it to a new path for a local-only copy; local editing and export still work\"",
+                    ));
+                }
+                return Err(explain_setup_refusal(error));
+            }
+            // An unknown outcome may already have admitted this exact claim.
+            // Fence and freeze the same local snapshot so retrying is safe.
+            store.prepare_seed_source(database).await?;
+            database
+                .capture_local_shared_state_for_setup(&blob_dir)
+                .await?;
+            store
+                .package_seed_capture(database, &blob_dir, invitation.setup_id)
+                .await?;
+            return Err(error.context(
+                "error sync-setup-outcome-unknown hint=\"the server claim couldn't be confirmed; resume continues the same setup\"",
+            ));
+        }
         store.prepare_seed_source(database).await?;
         database
-            .capture_local_shared_state_never_dispatched()
+            .capture_local_shared_state_for_setup(&blob_dir)
             .await?;
         store
             .package_seed_capture(database, &blob_dir, invitation.setup_id)
             .await?;
-        let setup = ClaimAuthentication::SetupSecret(&invitation.secret);
-        if let Err(error) = bootstrap.claim(seed.genesis(), setup).await {
-            // An admitted claim stays confirmable by its own bearer after the
-            // setup invitation expires.
-            let bearer = ClaimAuthentication::SeedBearer(seed.bearer());
-            bootstrap
-                .claim(seed.genesis(), bearer)
-                .await
-                .map_err(|_| explain_setup_refusal(error))?;
-        }
     }
     progress(Stage::UploadingData);
-    bootstrap.resume(&store, database).await?;
+    if let Err(error) = bootstrap.resume(&store, database).await {
+        if error.to_string() == "error bootstrap-storage-already-claimed"
+            && database.seed_source_pin().await?.is_some()
+        {
+            database
+                .mark_local_seed_setup_refused(error.to_string().as_str())
+                .await?;
+            return Err(error.context(
+                "error sync-setup-recovery-required hint=\"this fenced setup was definitely refused; back up this database and restore it to a new path for a local-only copy; local editing and export still work\"",
+            ));
+        }
+        return Err(error);
+    }
     progress(Stage::FinishingSetup);
     // Binds this installation's enrollment identity to the server.
     peer_enrollment_http::Client::new(&invitation.server)?
@@ -568,7 +619,9 @@ pub(crate) async fn ensure_join_available(database: &Database, config: &AppConfi
                 .context(JOIN_REQUIRES_EMPTY)?;
             Ok(())
         }
-        LocalPhase::SetupIncomplete | LocalPhase::SetUp => bail!(ALREADY_SET_UP),
+        LocalPhase::SetupIncomplete | LocalPhase::SetupRecoveryRequired | LocalPhase::SetUp => {
+            bail!(ALREADY_SET_UP)
+        }
     }
 }
 
@@ -739,15 +792,23 @@ pub(crate) async fn await_join(
     }
 }
 
-/// A refused claim may come from a replaced or expired setup invitation, but a
-/// refusal does not prove which; the hint names both possibilities.
-fn explain_setup_refusal(error: anyhow::Error) -> anyhow::Error {
-    if !error.to_string().starts_with("error bootstrap-refused") {
-        return error;
-    }
-    error.context(
-        "error sync-setup-refused hint=\"the server refused this setup invitation; if `aven server setup` was run again or the invitation is over an hour old, rerun setup with the newest invitation, otherwise check the server and retry\"",
+fn definite_setup_refusal(error: &anyhow::Error) -> bool {
+    matches!(
+        error.to_string().as_str(),
+        "error bootstrap-storage-already-claimed" | "error bootstrap-setup-invitation-rejected"
     )
+}
+
+fn explain_setup_refusal(error: anyhow::Error) -> anyhow::Error {
+    match error.to_string().as_str() {
+        "error bootstrap-storage-already-claimed" => error.context(
+            "error sync-setup-storage-already-claimed hint=\"this server already belongs to another sync; nothing here was changed; to use that sync, join it from an empty database\"",
+        ),
+        "error bootstrap-setup-invitation-rejected" => error.context(
+            "error sync-setup-invitation-rejected hint=\"this setup invitation expired, was replaced, or is for different storage; nothing here was changed; run `aven server setup` for this unclaimed storage and try its current invitation\"",
+        ),
+        _ => error,
+    }
 }
 
 /// The enrollment server serves one exchange at a time; pollers retry.
@@ -1009,10 +1070,15 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
         );
         return Ok(());
     }
-    report.state = "setup-incomplete";
+    report.state = match local_phase(database).await? {
+        LocalPhase::SetupRecoveryRequired => "setup-recovery-required",
+        _ => "setup-incomplete",
+    };
     let store = key_store(database)?;
     let _guard = super::coordination::acquire(database).await?;
-    if let Some((peer, server)) = store.association(database).await? {
+    if report.state != "setup-recovery-required"
+        && let Some((peer, server)) = store.association(database).await?
+    {
         report.server = Some(server.clone());
         let enrollment_ready = !peer
             || matches!(
@@ -1060,6 +1126,10 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
     }
     match report.state {
         "setup-incomplete" => println!("State: setup incomplete. Rerun `aven sync setup`."),
+        "setup-recovery-required" => println!(
+            "State: this setup was refused and cannot resume. Local editing and export still work. \
+             Back up this database, then restore it to a new path for a local-only copy."
+        ),
         "join-incomplete" => println!(
             "State: joining incomplete. Rerun `aven sync join`; if its invitation expired, \
              pass a new one from the same device with `aven sync join --new-invitation`."

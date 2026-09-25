@@ -393,8 +393,11 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
         &a.run_with_input(&["sync", "setup"], &setup_invitation)
             .await,
     );
-    assert!(error.contains("bootstrap-refused"), "{error}");
-    assert!(error.contains("sync-setup-refused"), "{error}");
+    assert!(
+        error.contains("bootstrap-setup-invitation-rejected"),
+        "{error}"
+    );
+    assert!(error.contains("sync-setup-invitation-rejected"), "{error}");
     let setup_invitation = reissued;
     let output = a
         .run_with_input(&["sync", "setup"], &setup_invitation)
@@ -405,6 +408,24 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
         "{stdout}"
     );
     assert!(stdout.contains("Images are up to date"), "{stdout}");
+
+    // A setup invitation for storage claimed by another database is a
+    // definite refusal and leaves local data local-only.
+    let rejected = Installation::new(root, "rejected-setup");
+    rejected.ok(&["add", "Keep local"]).await;
+    let error = failure(
+        &rejected
+            .run_with_input(&["sync", "setup", "--yes"], &setup_invitation)
+            .await,
+    );
+    assert!(
+        error.contains("sync-setup-storage-already-claimed"),
+        "{error}"
+    );
+    assert!(error.contains("nothing here was changed"), "{error}");
+    assert_eq!(status(&rejected).await["state"], "not-set-up");
+    let local = rejected.ok(&["list", "--all"]).await;
+    assert!(local.contains("Keep local"), "{local}");
 
     // Joining refuses a database that already holds tasks.
     let occupied = Installation::new(root, "occupied");

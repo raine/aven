@@ -199,8 +199,20 @@ pub(crate) fn sync_actions(
                 actions.push(SyncAction::ManageDevices);
                 actions
             }
+            LocalPhase::NotSetUp
+                if matches!(
+                    activity.last,
+                    Some(OperationResult::Failed(ref failure))
+                        if failure.kind == OperationKind::Setup
+                            && (failure.details.contains("sync-setup-storage-already-claimed")
+                                || failure.details.contains("sync-setup-invitation-rejected"))
+                ) =>
+            {
+                vec![SyncAction::Back]
+            }
             LocalPhase::NotSetUp => vec![SyncAction::SetUp, SyncAction::Join],
             LocalPhase::SetupIncomplete => vec![SyncAction::ResumeSetup],
+            LocalPhase::SetupRecoveryRequired => vec![SyncAction::Back],
             LocalPhase::JoinIncomplete => {
                 vec![SyncAction::ResumeJoin, SyncAction::NewJoinInvitation]
             }

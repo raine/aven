@@ -174,37 +174,43 @@ impl Database {
         key: &LocalSharedStatePackageKey,
         membership_predecessor: [u8; 32],
     ) -> Result<EncryptedLocalSharedStatePackage> {
-        let capture = self
-            .resume_local_shared_state_never_dispatched()
-            .await?
-            .context("error local-shared-capture-missing")?;
-        let candidate_id = capture.candidate_id().to_string();
-
-        let mut conn = self.acquire_writer().await?;
-        let mut tx = db::begin_immediate(&mut conn).await?;
-        super::adoption::ensure_no_intent(&mut tx).await?;
-        let selected_inventory: Vec<(String, String)> = sqlx::query_as(
-            "SELECT sha256, classification FROM local_shared_capture_images
-             WHERE candidate_id = ? AND classification != 'unavailable'
-             ORDER BY sha256",
-        )
-        .bind(&candidate_id)
-        .fetch_all(&mut *tx)
-        .await?;
-        if let Some(package) = load_package(&mut tx, &candidate_id).await? {
+        let (capture, selected) = loop {
+            let capture = self
+                .resume_local_shared_state_never_dispatched()
+                .await?
+                .context("error local-shared-capture-missing")?;
+            let candidate_id = capture.candidate_id().to_string();
+            let mut conn = self.acquire_writer().await?;
+            let mut tx = db::begin_immediate(&mut conn).await?;
+            super::adoption::ensure_no_intent(&mut tx).await?;
+            let selected_inventory: Vec<(String, String)> = sqlx::query_as(
+                "SELECT sha256, classification FROM local_shared_capture_images
+                 WHERE candidate_id = ? AND classification != 'unavailable'
+                 ORDER BY sha256",
+            )
+            .bind(&candidate_id)
+            .fetch_all(&mut *tx)
+            .await?;
+            if let Some(package) = load_package(&mut tx, &candidate_id).await? {
+                tx.commit().await?;
+                validate_frozen(&package, &capture, context, key, membership_predecessor)?;
+                return Ok(package);
+            }
             tx.commit().await?;
-            validate_frozen(&package, &capture, context, key, membership_predecessor)?;
-            return Ok(package);
-        }
-        tx.commit().await?;
-        drop(conn);
+            drop(conn);
 
-        let selected = load_selected_image_plaintexts(
-            blob_dir,
-            &selected_inventory,
-            &capture.shared_state().snapshot,
-        )
-        .await?;
+            let (selected, missing) = load_selected_image_plaintexts(
+                blob_dir,
+                &selected_inventory,
+                &capture.shared_state().snapshot,
+            )
+            .await?;
+            if missing.is_empty() {
+                break (capture, selected);
+            }
+            mark_capture_images_unavailable(self, &candidate_id, &missing).await?;
+        };
+        let candidate_id = capture.candidate_id().to_string();
         let package = encrypt_package(&capture, context, &selected, key, membership_predecessor)?;
 
         let mut conn = self.acquire_writer().await?;
@@ -631,13 +637,14 @@ async fn load_selected_image_plaintexts(
     blob_dir: &Path,
     selected: &[(String, String)],
     snapshot: &AvenExport,
-) -> Result<Vec<SelectedImagePlaintext>> {
+) -> Result<(Vec<SelectedImagePlaintext>, Vec<String>)> {
     ensure!(
         selected.len() <= MAX_PACKAGE_IMAGE_COUNT,
         "error encrypted-local-shared-package-too-many-images"
     );
     let mut total = 0_usize;
     let mut output = Vec::with_capacity(selected.len());
+    let mut missing = Vec::new();
     for (source_sha256, classification) in selected {
         ensure!(
             matches!(
@@ -653,11 +660,43 @@ async fn load_selected_image_plaintexts(
             .find(|row| row.sha256 == source_sha256.as_str())
             .context("error encrypted-local-shared-package-image-inventory-missing")?;
         let path = crate::attachments::storage::object_path(blob_dir, source_sha256)?;
-        let bytes = crate::attachments::blocking::run(move || {
-            Ok::<_, anyhow::Error>(Zeroizing::new(std::fs::read(path)?))
-        })
-        .await
-        .context("error encrypted-local-shared-package-selected-image-missing")?;
+        let read =
+            crate::attachments::blocking::run(move || Ok::<_, anyhow::Error>(std::fs::read(path)?))
+                .await;
+        let bytes = match read {
+            Ok(bytes) => Zeroizing::new(bytes),
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                missing.push(source_sha256.clone());
+                continue;
+            }
+            Err(error) => {
+                let attachment = snapshot
+                    .tables
+                    .task_attachments
+                    .iter()
+                    .find(|attachment| attachment.sha256 == source_sha256.as_str());
+                let task = attachment.and_then(|attachment| {
+                    snapshot.tables.tasks.iter().find(|task| {
+                        task.id == attachment.task_id
+                            && task.workspace_id == attachment.workspace_id
+                    })
+                });
+                return Err(error).with_context(|| {
+                    format!(
+                        "error encrypted-local-shared-package-image-read task={:?} attachment={:?}",
+                        task.map(|task| task.title.as_str())
+                            .unwrap_or("unknown task"),
+                        attachment
+                            .and_then(|attachment| attachment.filename.as_deref())
+                            .unwrap_or("unknown attachment")
+                    )
+                });
+            }
+        };
         ensure!(
             !bytes.is_empty()
                 && bytes.len() <= MAX_IMAGE_PLAINTEXT_BYTES
@@ -702,7 +741,60 @@ async fn load_selected_image_plaintexts(
             bytes,
         });
     }
-    Ok(output)
+    Ok((output, missing))
+}
+
+async fn mark_capture_images_unavailable(
+    database: &Database,
+    candidate_id: &str,
+    hashes: &[String],
+) -> Result<()> {
+    let mut conn = database.acquire_writer().await?;
+    let mut tx = db::begin_immediate(&mut conn).await?;
+    super::adoption::ensure_no_intent(&mut tx).await?;
+    ensure!(
+        load_package(&mut tx, candidate_id).await?.is_none(),
+        "error encrypted-local-shared-package-frozen"
+    );
+    let snapshot_json: String = sqlx::query_scalar(
+        "SELECT snapshot_json FROM local_shared_capture_journal
+         WHERE singleton = 1 AND candidate_id = ?",
+    )
+    .bind(candidate_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let mut persisted: super::PersistedLocalCapture = serde_json::from_str(&snapshot_json)?;
+    for hash in hashes {
+        let image = persisted
+            .images
+            .iter_mut()
+            .find(|image| image.sha256 == *hash)
+            .context("error local-shared-capture-image-set-mismatch")?;
+        image.classification = "unavailable".to_string();
+        sqlx::query(
+            "UPDATE local_shared_capture_images SET classification = 'unavailable'
+             WHERE candidate_id = ? AND sha256 = ?",
+        )
+        .bind(candidate_id)
+        .bind(hash)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM local_shared_capture_pins WHERE candidate_id = ? AND sha256 = ?")
+            .bind(candidate_id)
+            .bind(hash)
+            .execute(&mut *tx)
+            .await?;
+    }
+    sqlx::query(
+        "UPDATE local_shared_capture_journal SET snapshot_json = ?
+         WHERE singleton = 1 AND candidate_id = ?",
+    )
+    .bind(serde_json::to_string(&persisted)?)
+    .bind(candidate_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 fn random_id() -> Result<[u8; 32]> {

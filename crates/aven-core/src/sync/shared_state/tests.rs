@@ -1268,7 +1268,7 @@ async fn remote_current_attachment_without_inventory_fails_capture() {
 }
 
 #[tokio::test]
-async fn unavailable_current_image_fails_but_deleted_history_is_permitted() {
+async fn unavailable_current_image_is_captured_without_a_byte_obligation() {
     let (_temp, database, workspace) = fresh().await;
     let task_id = task(&database, &workspace, "remote image owner").await;
     let attachment_id = crate::ids::new_id();
@@ -1295,15 +1295,6 @@ async fn unavailable_current_image_fails_but_deleted_history_is_permitted() {
         .unwrap();
     }
 
-    let error = database
-        .capture_local_shared_state_never_dispatched()
-        .await
-        .unwrap_err();
-    assert!(error.to_string().contains("required-image-unavailable"));
-    assert!(error.to_string().contains("complete image download"));
-
-    apply_remote_attachment_change(&database, &workspace, &task_id, &attachment_id, &hash, true)
-        .await;
     let capture = database
         .capture_local_shared_state_never_dispatched()
         .await

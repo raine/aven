@@ -84,6 +84,18 @@ impl Database {
         Ok(ClaimResult::from_genesis(&genesis))
     }
 
+    /// Whether encrypted server storage already has its immutable seed claim.
+    pub async fn e2ee_server_is_claimed(&self) -> Result<bool> {
+        let mut conn = self.acquire_reader().await?;
+        Ok(
+            sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM server_seed_claim WHERE singleton = 1)",
+            )
+            .fetch_one(&mut *conn)
+            .await?,
+        )
+    }
+
     /// Nonsecret loss-detection pin. This is never a substitute for host authority.
     pub async fn local_seed_genesis_commitment(&self) -> Result<Option<[u8; 32]>> {
         let mut conn = self.acquire_reader().await?;
@@ -117,6 +129,43 @@ impl Database {
                 .fetch_one(&mut *tx)
                 .await?;
         ensure!(stored == commitment, "error seed-claim-local-pin-conflict");
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Records that a fenced setup cannot resume against its server.
+    pub async fn mark_local_seed_setup_refused(&self, reason: &str) -> Result<()> {
+        let mut conn = self.acquire_writer().await?;
+        crate::db::set_meta(&mut conn, "e2ee_setup_refused", reason).await
+    }
+
+    /// Removes a provisional seed pin after a claim was definitely rejected.
+    /// Once source authority or publication state exists, the installation is
+    /// fenced and this operation refuses to undo it.
+    pub async fn rollback_local_seed_genesis(&self, expected: [u8; 32]) -> Result<()> {
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        let fenced: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM local_seed_source)
+                 OR EXISTS(SELECT 1 FROM local_seed_publication_intent)
+                 OR EXISTS(SELECT 1 FROM local_shared_capture_journal)",
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        ensure!(!fenced, "error seed-claim-rollback-fenced");
+        let stored: Option<Vec<u8>> =
+            sqlx::query_scalar("SELECT commitment FROM local_seed_genesis_pin WHERE singleton = 1")
+                .fetch_optional(&mut *tx)
+                .await?;
+        ensure!(
+            stored
+                .as_deref()
+                .is_none_or(|value| value == expected.as_slice()),
+            "error seed-claim-rollback-conflict"
+        );
+        sqlx::query("DELETE FROM local_seed_genesis_pin WHERE singleton = 1")
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         Ok(())
     }

@@ -52,6 +52,45 @@ impl ProtectedLocalKeyStore {
             .await
     }
 
+    /// Removes only the provisional seed authority for an exact, unfenced
+    /// claim. Package keys remain available for ordinary local data.
+    pub async fn rollback_seed_claim(
+        &self,
+        database: &Database,
+        seed: &SeedAuthority,
+    ) -> anyhow::Result<()> {
+        self.validate_database(database)?;
+        anyhow::ensure!(
+            database.seed_source_pin().await?.is_none()
+                && database.seed_publication_intent_bytes().await?.is_none()
+                && !database
+                    .has_local_shared_state_package_never_dispatched()
+                    .await?,
+            "error seed-claim-rollback-fenced"
+        );
+        let commitment = seed.genesis().commitment();
+        {
+            let _guard = self.lock()?;
+            let package = self.load_required_locked()?;
+            let backend = self.seed_backend();
+            if let Some(bytes) = backend.load_bounded(SEED_BYTES)? {
+                let stored = self.decode_seed(&bytes, &package)?;
+                if stored.genesis().commitment() != commitment {
+                    anyhow::bail!("error seed-claim-rollback-conflict");
+                }
+            }
+            backend.delete()?;
+            match fs::remove_file(self.seed_marker_path()) {
+                Ok(()) => sync_parent(&self.seed_marker_path())?,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => {
+                    return Err(super::error(ProtectedLocalKeyStoreErrorKind::WriteFailed).into());
+                }
+            }
+        }
+        database.rollback_local_seed_genesis(commitment).await
+    }
+
     pub(super) fn seed_backend(&self) -> Backend {
         match &self.backend {
             #[cfg(target_os = "macos")]

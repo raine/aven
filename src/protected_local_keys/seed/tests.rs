@@ -422,10 +422,10 @@ async fn isolated_seed_keychain_reopen() {
     impl Drop for Cleanup {
         fn drop(&mut self) {
             if let Backend::Keychain(backend) = &self.0.backend {
-                backend.delete();
+                let _ = backend.delete();
             }
             if let Backend::Keychain(backend) = self.0.seed_backend() {
-                backend.delete();
+                let _ = backend.delete();
             }
         }
     }
@@ -449,7 +449,7 @@ async fn isolated_seed_keychain_reopen() {
         reopened.protected_storage_bytes()
     );
     if let Backend::Keychain(backend) = cleanup.0.seed_backend() {
-        backend.delete();
+        let _ = backend.delete();
     }
     assert!(cleanup.0.prepare_seed_claim(&db, [9; 32]).await.is_err());
 }

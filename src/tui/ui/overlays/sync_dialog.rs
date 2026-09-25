@@ -277,6 +277,13 @@ fn home_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
         state_line(status, summary.health, view.syncing),
         Style::new().fg(FG_MUTED),
     )));
+    if status.phase == LocalPhase::SetupRecoveryRequired {
+        lines.extend(paragraph(
+            "Local editing and export still work. Back up this database, then restore it to a new path for a local-only copy.",
+            Style::new().fg(FG),
+            width,
+        ));
+    }
 
     if let Some(running) = &view.activity.running {
         lines.push(Line::from(""));
@@ -1065,6 +1072,9 @@ fn state_line(status: &TuiSyncStatus, health: SyncHealth, syncing: bool) -> &'st
         (SyncHealth::RuntimeDisabled, _) => "Sync is disabled by the runtime override",
         (_, LocalPhase::NotSetUp) => "This database is local only",
         (_, LocalPhase::SetupIncomplete) => "Setup started here and didn't finish",
+        (_, LocalPhase::SetupRecoveryRequired) => {
+            "This refused setup needs backup and restore to a new path"
+        }
         (_, LocalPhase::JoinIncomplete) => "Joining started here and didn't finish",
         (_, LocalPhase::SetUp) => "Sync is end-to-end encrypted",
     }

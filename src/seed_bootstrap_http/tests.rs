@@ -88,13 +88,16 @@ async fn loopback_rejects_bad_authority_context_and_bytes_without_mutation() {
         .await
         .unwrap();
     let (http, task) = serve(server.clone()).await;
-    assert!(
-        http.claim(
+    let rejected = http
+        .claim(
             seed.genesis(),
-            ClaimAuthentication::SetupSecret(&Secret::new([0; 32]))
+            ClaimAuthentication::SetupSecret(&Secret::new([0; 32])),
         )
         .await
-        .is_err()
+        .unwrap_err();
+    assert_eq!(
+        rejected.to_string(),
+        "error bootstrap-setup-invitation-rejected"
     );
     // An otherwise valid setup credential with wrong context cannot claim.
     let bad = Envelope {
@@ -307,13 +310,16 @@ async fn loopback_rejects_bad_authority_context_and_bytes_without_mutation() {
     );
     assert!(http.resume(&store, &db).await.unwrap());
     assert!(!http.resume(&store, &db).await.unwrap());
-    assert!(
-        http.claim(
+    let claimed = http
+        .claim(
             seed.genesis(),
-            ClaimAuthentication::SetupSecret(&Secret::new([7; 32]))
+            ClaimAuthentication::SetupSecret(&Secret::new([7; 32])),
         )
         .await
-        .is_err()
+        .unwrap_err();
+    assert_eq!(
+        claimed.to_string(),
+        "error bootstrap-storage-already-claimed"
     );
     let Reply::Published(retried) = http
         .exchange(seed.genesis(), seed.bearer(), publish())

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use crate::data_safety::export_types::{
     AvenExport, EXPORT_FORMAT, EXPORT_VERSION, RELATED_LINKS_EXPORT_VERSION,
@@ -106,6 +107,25 @@ impl Database {
     pub async fn capture_local_shared_state_never_dispatched(
         &self,
     ) -> Result<NeverDispatchedLocalSharedCapture> {
+        self.capture_local_shared_state_never_dispatched_inner(None)
+            .await
+    }
+
+    /// Captures setup state while checking that inventory marked available is
+    /// still present on disk. Files missing at this boundary are published as
+    /// unavailable; other filesystem failures remain explicit errors.
+    pub async fn capture_local_shared_state_for_setup(
+        &self,
+        blob_dir: &Path,
+    ) -> Result<NeverDispatchedLocalSharedCapture> {
+        self.capture_local_shared_state_never_dispatched_inner(Some(blob_dir))
+            .await
+    }
+
+    async fn capture_local_shared_state_never_dispatched_inner(
+        &self,
+        blob_dir: Option<&Path>,
+    ) -> Result<NeverDispatchedLocalSharedCapture> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = db::begin_immediate(&mut conn).await?;
         adoption::ensure_no_intent(&mut tx).await?;
@@ -120,7 +140,7 @@ impl Database {
         let mut source_provenance = tables.shared_history_provenance.clone();
         source_provenance.sort_by(|a, b| a.change_id.cmp(&b.change_id));
         let source_provenance = serde_json::to_string(&source_provenance)?;
-        let image_classes = classify_images(&tables)?;
+        let image_classes = classify_images(&tables, blob_dir)?;
         let capture = SharedStateCapture::from_tables(schema_version, tables)?;
         let candidate_id = random_cryptographic_id()?;
         let stream_id = random_cryptographic_id()?;
@@ -724,6 +744,7 @@ async fn validate_persisted_local_capture(
 /// packaging, before anything is frozen; pins protect them until then.
 fn classify_images(
     tables: &crate::data_safety::export_types::ExportTables,
+    blob_dir: Option<&Path>,
 ) -> Result<Vec<(String, &'static str)>> {
     let deleted_tasks = tables
         .tasks
@@ -744,24 +765,49 @@ fn classify_images(
         .collect::<HashSet<_>>();
     let mut result = Vec::with_capacity(tables.blob_inventory.len());
     for inventory in &tables.blob_inventory {
-        if inventory.available == 0 {
-            ensure!(
-                !current_hashes.contains(inventory.sha256.as_str()),
-                "error local-shared-capture-required-image-unavailable sha256={} hint=\"complete image download or remove the live attachment before capture\"",
-                inventory.sha256
-            );
-            ensure!(
-                unavailable_image_has_validated_history(tables, &inventory.sha256)?,
-                "error local-shared-capture-unavailable-image-provenance-missing sha256={} hint=\"restore the image or explicitly delete its attachment before capture\"",
-                inventory.sha256
-            );
+        let missing_on_disk = if let Some(blob_dir) = blob_dir {
+            let path = crate::attachments::storage::object_path(blob_dir, &inventory.sha256)?;
+            match std::fs::metadata(path) {
+                Ok(metadata) => !metadata.is_file(),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+                Err(error) => {
+                    let attachment = tables
+                        .task_attachments
+                        .iter()
+                        .find(|attachment| attachment.sha256 == inventory.sha256);
+                    let task = attachment.and_then(|attachment| {
+                        tables.tasks.iter().find(|task| {
+                            task.id == attachment.task_id
+                                && task.workspace_id == attachment.workspace_id
+                        })
+                    });
+                    anyhow::bail!(
+                        "error local-shared-capture-image-file task={:?} attachment={:?}: {}",
+                        task.map(|task| task.title.as_str())
+                            .unwrap_or("unknown task"),
+                        attachment
+                            .and_then(|attachment| attachment.filename.as_deref())
+                            .unwrap_or("unknown attachment"),
+                        error
+                    );
+                }
+            }
+        } else {
+            false
+        };
+        ensure!(
+            matches!(inventory.available, 0 | 1),
+            "error local-shared-capture-image-availability-invalid"
+        );
+        let unavailable = if blob_dir.is_some() {
+            missing_on_disk
+        } else {
+            inventory.available == 0
+        };
+        if unavailable {
             result.push((inventory.sha256.clone(), "unavailable"));
             continue;
         }
-        ensure!(
-            inventory.available == 1,
-            "error local-shared-capture-image-availability-invalid"
-        );
         result.push((
             inventory.sha256.clone(),
             if current_hashes.contains(inventory.sha256.as_str()) {
@@ -778,53 +824,6 @@ fn random_cryptographic_id() -> Result<String> {
     let mut bytes = [0_u8; 32];
     getrandom::fill(&mut bytes).context("error local-shared-capture-rng")?;
     Ok(hex::encode(bytes))
-}
-
-fn unavailable_image_has_validated_history(
-    tables: &crate::data_safety::export_types::ExportTables,
-    sha256: &str,
-) -> Result<bool> {
-    let attachments = tables
-        .task_attachments
-        .iter()
-        .filter(|attachment| attachment.sha256 == sha256)
-        .collect::<Vec<_>>();
-    if attachments.is_empty() {
-        return Ok(true);
-    }
-    let changes = tables
-        .changes
-        .iter()
-        .map(|change| (change.change_id.as_str(), change))
-        .collect::<HashMap<_, _>>();
-    for attachment in attachments {
-        if attachment.deleted != 1 {
-            return Ok(false);
-        }
-        let Some(change_id) = attachment.deleted_by_change_id.as_deref() else {
-            return Ok(false);
-        };
-        let Some(change) = changes.get(change_id) else {
-            return Ok(false);
-        };
-        let payload: serde_json::Value = serde_json::from_str(&change.payload)?;
-        if change.entity_type != "task"
-            || change.entity_id != attachment.task_id.as_str()
-            || change.field.as_deref() != Some("attachments")
-            || change.op_type != crate::change_log::op_type::ATTACHMENT_DELETE
-            || payload
-                .get("workspace_id")
-                .and_then(serde_json::Value::as_str)
-                != Some(attachment.workspace_id.as_str())
-            || payload
-                .get("attachment_id")
-                .and_then(serde_json::Value::as_str)
-                != Some(attachment.attachment_id.as_str())
-        {
-            return Ok(false);
-        }
-    }
-    Ok(true)
 }
 
 pub(crate) async fn ensure_empty_target(conn: &mut sqlx::SqliteConnection) -> Result<()> {

@@ -60,11 +60,12 @@ On the device whose data should start the sync, paste the setup invitation:
 aven sync setup
 ```
 
-Setup previews the database and asks for confirmation. When standard input is
-not a terminal, pipe the invitation and pass `--yes`. Every other device starts
-from this data. Afterwards you can still create backups, but restore and import
-are refused on this database. Rerun the same command to resume an interrupted
-setup.
+Setup previews the database and asks for confirmation. The preview checks the
+image files themselves; missing images are listed and published as unavailable
+instead of stopping setup. When standard input is not a terminal, pipe the
+invitation and pass `--yes`. Every other device starts from this data. Afterwards
+you can still create backups, but restore and import are refused on this
+database. Rerun the same command to resume an interrupted setup.
 
 In the TUI, choose **Set up sync** in the Sync dialog and paste the invitation.
 The invitation is never displayed. Before anything starts, the dialog shows the
@@ -72,8 +73,18 @@ server, the workspaces and tasks this database will publish, and any images
 missing on this computer, which other devices see as unavailable. Setup keeps
 running if you close the dialog, and the header shows it is syncing. If setup
 stops, for example because the server is unreachable, the dialog offers
-**Resume setup**, which continues the same setup instead of starting over. After
-restarting the TUI, resuming asks for the same invitation again.
+**Resume setup**, which continues the same setup instead of starting over. An
+unknown claim outcome keeps this resumable snapshot because the server may have
+accepted it before the connection failed. After restarting the TUI, resuming
+asks for the same invitation again.
+
+Setup claims the server before the database is marked as syncing. If the server
+already belongs to another sync, or definitely rejects the invitation, the
+database remains local-only and no setup snapshot is frozen. To use an existing
+sync, join it from an empty database instead. A database fenced by an older
+setup attempt can report that recovery is required after the server confirms it
+belongs to another sync. Local editing and export still work; back it up and
+restore it to a new path to recover a local-only copy.
 
 ## Add a device
 

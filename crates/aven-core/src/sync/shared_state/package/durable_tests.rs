@@ -426,9 +426,11 @@ async fn process_freeze_worker() {
         .map(|image| (image.sha256.clone(), image.classification.clone()))
         .collect::<Vec<_>>();
     selected.sort();
-    let selected = load_selected_image_plaintexts(&root, &selected, &capture.capture.snapshot)
-        .await
-        .unwrap();
+    let (selected, missing) =
+        load_selected_image_plaintexts(&root, &selected, &capture.capture.snapshot)
+            .await
+            .unwrap();
+    assert!(missing.is_empty());
     let package = encrypt_package(
         &capture,
         package_context(),

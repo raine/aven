@@ -349,8 +349,8 @@ async fn incomplete_image_package_rejects_selected_capture_without_rewrite() {
 }
 
 #[tokio::test]
-async fn selected_source_failure_preserves_pins_and_allows_cancellation_cleanup() {
-    for corrupt in [false, true] {
+async fn corrupt_selected_source_preserves_pins_and_allows_cancellation_cleanup() {
+    for corrupt in [true] {
         let (source_dir, source, task_id) = source_with_history().await;
         let (_, _, extra_hash) = add_selected_images(source_dir.path(), &source, &task_id).await;
         let capture = source
@@ -361,8 +361,6 @@ async fn selected_source_failure_preserves_pins_and_allows_cancellation_cleanup(
             crate::attachments::storage::object_path(source_dir.path(), &extra_hash).unwrap();
         if corrupt {
             std::fs::write(&path, b"corrupt").unwrap();
-        } else {
-            std::fs::remove_file(&path).unwrap();
         }
         let error = source
             .package_local_shared_state_never_dispatched(
@@ -373,11 +371,7 @@ async fn selected_source_failure_preserves_pins_and_allows_cancellation_cleanup(
             )
             .await
             .unwrap_err();
-        assert!(error.to_string().contains(if corrupt {
-            "size-mismatch"
-        } else {
-            "selected-image-missing"
-        }));
+        assert!(error.to_string().contains("size-mismatch"));
         let mut conn = source.acquire_reader().await.unwrap();
         let counts: (i64, i64) = sqlx::query_as(
             "SELECT
@@ -419,6 +413,30 @@ async fn freeze_and_pin_counts(database: &Database) -> (i64, i64, i64) {
 }
 
 #[tokio::test]
+async fn setup_capture_classifies_a_missing_file_as_unavailable() {
+    let (dir, database, task_id) = source_with_history().await;
+    let (current, _, _) = add_selected_images(dir.path(), &database, &task_id).await;
+    let current_hash = crate::attachments::storage::sha256_hex(&current);
+    let current_path = crate::attachments::storage::object_path(dir.path(), &current_hash).unwrap();
+    std::fs::remove_file(current_path).unwrap();
+
+    let capture = database
+        .capture_local_shared_state_for_setup(dir.path())
+        .await
+        .unwrap();
+    let classification: String = sqlx::query_scalar(
+        "SELECT classification FROM local_shared_capture_images
+         WHERE candidate_id = ? AND sha256 = ?",
+    )
+    .bind(capture.candidate_id())
+    .bind(current_hash)
+    .fetch_one(&mut *database.acquire_reader().await.unwrap())
+    .await
+    .unwrap();
+    assert_eq!(classification, "unavailable");
+}
+
+#[tokio::test]
 async fn capture_pins_unverified_selected_bytes_and_packaging_is_the_byte_gate() {
     for case in ["missing-current", "corrupt-extra", "dimension-metadata"] {
         let (dir, database, task_id) = source_with_history().await;
@@ -431,7 +449,7 @@ async fn capture_pins_unverified_selected_bytes_and_packaging_is_the_byte_gate()
         let expected_error = match case {
             "missing-current" => {
                 std::fs::remove_file(&current_path).unwrap();
-                "selected-image-missing"
+                ""
             }
             "corrupt-extra" => {
                 let mut corrupt = extra.clone();
@@ -450,8 +468,8 @@ async fn capture_pins_unverified_selected_bytes_and_packaging_is_the_byte_gate()
             }
         };
 
-        // Capture classifies metadata only; unverified selected bytes stay
-        // selected and pinned rather than being downgraded to unavailable.
+        // The general capture pins inventory-selected bytes. Packaging may
+        // still downgrade a file that vanished before the package froze.
         let capture = database
             .capture_local_shared_state_never_dispatched()
             .await
@@ -472,6 +490,31 @@ async fn capture_pins_unverified_selected_bytes_and_packaging_is_the_byte_gate()
         expected_classes.sort();
         assert_eq!(classes, expected_classes, "{case}");
         assert_eq!(freeze_and_pin_counts(&database).await, (0, 0, 2), "{case}");
+
+        if case == "missing-current" {
+            let frozen = database
+                .package_local_shared_state_never_dispatched(
+                    dir.path(),
+                    package_context(),
+                    &package_key(),
+                    [0x64; 32],
+                )
+                .await
+                .unwrap();
+            assert_eq!(freeze_and_pin_counts(&database).await, (1, 1, 1), "{case}");
+            std::fs::remove_file(&extra_path).unwrap();
+            let retry = database
+                .package_local_shared_state_never_dispatched(
+                    dir.path(),
+                    package_context(),
+                    &package_key(),
+                    [0x64; 32],
+                )
+                .await
+                .unwrap();
+            assert!(retry == frozen);
+            continue;
+        }
 
         for _ in 0..2 {
             let error = database

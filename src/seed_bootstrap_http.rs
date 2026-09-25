@@ -149,13 +149,17 @@ pub fn router(
 }
 
 fn refusal(status: StatusCode) -> Response {
+    refusal_with(status, "bootstrap-refused")
+}
+
+fn refusal_with(status: StatusCode, code: &'static str) -> Response {
     (
         status,
         [
             (header::CONTENT_TYPE, "application/json"),
             (header::CACHE_CONTROL, "no-store"),
         ],
-        "{\"error\":\"bootstrap-refused\"}",
+        format!("{{\"error\":\"{code}\"}}"),
     )
         .into_response()
 }
@@ -191,8 +195,20 @@ async fn handle_bounded(server: &Server, request: Request) -> Response {
     let Ok(envelope) = serde_json::from_slice::<Envelope>(&bytes) else {
         return refusal(StatusCode::BAD_REQUEST);
     };
+    let claim = matches!(
+        &envelope.operation,
+        Operation::ClaimSetup { .. } | Operation::ClaimBearer { .. }
+    );
     let reply = match dispatch(server, &secret, envelope).await {
         Ok(reply) => reply,
+        Err(error) if claim || error.to_string() == "error bootstrap-unauthorized" => {
+            let code = match server.database.e2ee_server_is_claimed().await {
+                Ok(true) => "bootstrap-storage-already-claimed",
+                Ok(false) => "bootstrap-setup-invitation-rejected",
+                Err(_) => return refusal(StatusCode::INTERNAL_SERVER_ERROR),
+            };
+            return refusal_with(StatusCode::CONFLICT, code);
+        }
         Err(_) => return refusal(StatusCode::CONFLICT),
     };
     http_admission::json(&reply, RESPONSE_LIMIT)
@@ -298,6 +314,41 @@ pub struct Client {
     pub(crate) endpoint: reqwest::Url,
 }
 
+fn ensure_json_response(response: &reqwest::Response) -> Result<()> {
+    ensure!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            == Some("application/json")
+            && !response.headers().contains_key(header::CONTENT_ENCODING),
+        "error bootstrap-response"
+    );
+    ensure!(
+        response
+            .content_length()
+            .is_none_or(|length| length <= RESPONSE_LIMIT as u64),
+        "error bootstrap-response-limit"
+    );
+    Ok(())
+}
+
+async fn read_response_bytes(response: &mut reqwest::Response) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| anyhow::anyhow!("error bootstrap-network outcome-unknown"))?
+    {
+        ensure!(
+            chunk.len() <= RESPONSE_LIMIT - bytes.len(),
+            "error bootstrap-response-limit"
+        );
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
 impl Client {
     pub fn new(origin: &str) -> Result<Self> {
         let mut url =
@@ -340,6 +391,10 @@ impl Client {
         secret: &Secret,
         operation: Operation,
     ) -> Result<Reply> {
+        let claim = matches!(
+            &operation,
+            Operation::ClaimSetup { .. } | Operation::ClaimBearer { .. }
+        );
         let bytes = serde_json::to_vec(&Envelope {
             vault: genesis.context().vault_id,
             genesis: genesis.commitment(),
@@ -364,7 +419,7 @@ impl Client {
             .body(bytes);
         let mut attempt = 0;
         let mut response = loop {
-            let response = request
+            let mut response = request
                 .try_clone()
                 .ok_or_else(|| anyhow::anyhow!("error bootstrap-request"))?
                 .send()
@@ -386,35 +441,24 @@ impl Client {
                 attempt += 1;
                 continue;
             }
+            ensure_json_response(&response)?;
+            let bytes = read_response_bytes(&mut response).await?;
+            let code = serde_json::from_slice::<serde_json::Value>(&bytes)
+                .ok()
+                .and_then(|value| value.get("error")?.as_str().map(str::to_owned));
+            match code.as_deref() {
+                Some("bootstrap-storage-already-claimed") => {
+                    anyhow::bail!("error bootstrap-storage-already-claimed")
+                }
+                Some("bootstrap-setup-invitation-rejected") if claim => {
+                    anyhow::bail!("error bootstrap-setup-invitation-rejected")
+                }
+                _ => {}
+            }
             anyhow::bail!("error bootstrap-refused outcome-unknown");
         };
-        ensure!(
-            response
-                .headers()
-                .get(header::CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                == Some("application/json")
-                && !response.headers().contains_key(header::CONTENT_ENCODING),
-            "error bootstrap-response"
-        );
-        ensure!(
-            response
-                .content_length()
-                .is_none_or(|n| n <= RESPONSE_LIMIT as u64),
-            "error bootstrap-response-limit"
-        );
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| anyhow::anyhow!("error bootstrap-network outcome-unknown"))?
-        {
-            ensure!(
-                chunk.len() <= RESPONSE_LIMIT - bytes.len(),
-                "error bootstrap-response-limit"
-            );
-            bytes.extend_from_slice(&chunk);
-        }
+        ensure_json_response(&response)?;
+        let bytes = read_response_bytes(&mut response).await?;
         serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("error bootstrap-response"))
     }
 

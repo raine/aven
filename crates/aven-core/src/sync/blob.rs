@@ -1,4 +1,6 @@
-use anyhow::Result;
+use std::path::Path;
+
+use anyhow::{Context, Result};
 use sqlx::SqliteConnection;
 
 use crate::attachments::lifecycle::ByteCount;
@@ -9,6 +11,42 @@ impl Database {
     pub async fn missing_sync_attachment_counts(&self) -> Result<ByteCount> {
         let mut conn = self.acquire_reader().await?;
         missing_local_blob_counts(&mut conn).await
+    }
+
+    /// Live setup images whose object file is absent, regardless of the
+    /// inventory's last-known availability bit.
+    pub async fn missing_setup_attachment_counts(&self, blob_dir: &Path) -> Result<ByteCount> {
+        let mut conn = self.acquire_reader().await?;
+        let rows: Vec<(String, i64, String, String)> = sqlx::query_as(
+            "SELECT ta.sha256, MAX(ta.byte_size), MIN(t.title), MIN(ta.filename)
+             FROM task_attachments ta
+             JOIN tasks t ON t.workspace_id = ta.workspace_id AND t.id = ta.task_id
+             WHERE ta.deleted = 0 AND t.deleted = 0
+             GROUP BY ta.sha256 ORDER BY ta.sha256",
+        )
+        .fetch_all(&mut *conn)
+        .await?;
+        let mut missing = ByteCount::default();
+        for (sha256, byte_size, task, attachment) in rows {
+            let path = crate::attachments::storage::object_path(blob_dir, &sha256)?;
+            match std::fs::metadata(path) {
+                Ok(metadata) if metadata.is_file() => {}
+                Ok(_) => {
+                    missing.count += 1;
+                    missing.bytes += u64::try_from(byte_size)?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    missing.count += 1;
+                    missing.bytes += u64::try_from(byte_size)?;
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("error setup-image-file task={task:?} attachment={attachment:?}")
+                    });
+                }
+            }
+        }
+        Ok(missing)
     }
 }
 
@@ -152,6 +190,16 @@ mod tests {
         );
 
         let blob_dir = temp.path().join("blobs");
+        assert_eq!(
+            database
+                .missing_setup_attachment_counts(&blob_dir)
+                .await
+                .unwrap(),
+            ByteCount {
+                count: 3,
+                bytes: 12
+            }
+        );
         let mut conn = database.acquire_writer().await.unwrap();
         let missing = crate::attachments::lifecycle::reconcile_missing_objects(
             &mut conn,

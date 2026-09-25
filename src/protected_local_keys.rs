@@ -429,6 +429,15 @@ fn read_restricted_file(path: &Path, expected_len: usize) -> StoreResult<Option<
     Ok(Some(bytes))
 }
 
+fn sync_parent(path: &Path) -> StoreResult<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| error(ProtectedLocalKeyStoreErrorKind::WriteFailed))?;
+    File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|_| error(ProtectedLocalKeyStoreErrorKind::WriteFailed))
+}
+
 fn write_restricted_new(path: &Path, bytes: &[u8]) -> StoreResult<()> {
     let parent = path
         .parent()
@@ -531,6 +540,19 @@ impl Backend {
             Self::Unavailable => Err(error(ProtectedLocalKeyStoreErrorKind::Unavailable)),
         }
     }
+
+    fn delete(&self) -> StoreResult<()> {
+        match self {
+            #[cfg(target_os = "macos")]
+            Self::Keychain(backend) => backend.delete(),
+            #[cfg(any(target_os = "linux", test))]
+            Self::File(backend) => backend.delete(),
+            #[cfg(test)]
+            Self::FailWrite => Err(error(ProtectedLocalKeyStoreErrorKind::WriteFailed)),
+            #[cfg(test)]
+            Self::Unavailable => Err(error(ProtectedLocalKeyStoreErrorKind::Unavailable)),
+        }
+    }
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -546,6 +568,14 @@ impl FileBackend {
 
     fn create(&self, bytes: &[u8]) -> StoreResult<()> {
         write_restricted_new(&self.path, bytes)
+    }
+
+    fn delete(&self) -> StoreResult<()> {
+        match fs::remove_file(&self.path) {
+            Ok(()) => sync_parent(&self.path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(error(ProtectedLocalKeyStoreErrorKind::WriteFailed)),
+        }
     }
 }
 
@@ -590,10 +620,15 @@ impl KeychainBackend {
         }
     }
 
-    #[cfg(test)]
-    fn delete(&self) {
+    fn delete(&self) -> StoreResult<()> {
         use security_framework::passwords::delete_generic_password_options;
-        let _ = delete_generic_password_options(self.options());
+        use security_framework_sys::base::errSecItemNotFound;
+
+        match delete_generic_password_options(self.options()) {
+            Ok(()) => Ok(()),
+            Err(source) if source.code() == errSecItemNotFound => Ok(()),
+            Err(_) => Err(error(ProtectedLocalKeyStoreErrorKind::WriteFailed)),
+        }
     }
 }
 
@@ -942,7 +977,7 @@ pub(crate) mod tests {
             service: format!("fi.zendit.Aven.tests.{}", account),
             account: account.clone(),
         };
-        backend.delete();
+        let _ = backend.delete();
         let store = ProtectedLocalKeyStore {
             account,
             directory,
@@ -953,6 +988,6 @@ pub(crate) mod tests {
         let Backend::Keychain(backend) = &store.backend else {
             unreachable!();
         };
-        backend.delete();
+        let _ = backend.delete();
     }
 }
