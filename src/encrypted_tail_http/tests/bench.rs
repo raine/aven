@@ -1,6 +1,6 @@
-//! Ignored sync throughput benchmark. Counts rounds, HTTP requests and
-//! protected backend loads (one Keychain lookup each on macOS) for a seed that
-//! pushes many changes and images, and a peer that pulls them.
+//! Ignored sync throughput benchmark. Counts rounds, HTTP requests, HTTP body
+//! bytes and protected backend loads (one Keychain lookup each on macOS) for a
+//! seed that pushes many changes and images, and a peer that pulls them.
 //!
 //! cargo test --lib encrypted_tail_http::tests::bench -- --ignored --nocapture
 //! Sizes: AVEN_BENCH_TASKS (default 2000), AVEN_BENCH_IMAGES (default 500).
@@ -32,6 +32,8 @@ fn distinct_png(index: usize) -> Vec<u8> {
 struct Measured {
     rounds: usize,
     requests: u64,
+    request_bytes: u64,
+    response_bytes: u64,
     loads: u64,
     seconds: f64,
 }
@@ -39,9 +41,11 @@ struct Measured {
 impl Measured {
     fn print(&self, label: &str) {
         println!(
-            "{label}: rounds={} requests={} protected_loads={} loads_per_round={:.1} elapsed={:.2}s",
+            "{label}: rounds={} requests={} request_bytes={} response_bytes={} protected_loads={} loads_per_round={:.1} elapsed={:.2}s",
             self.rounds,
             self.requests,
+            self.request_bytes,
+            self.response_bytes,
             self.loads,
             self.loads as f64 / self.rounds.max(1) as f64,
             self.seconds
@@ -50,8 +54,10 @@ impl Measured {
 }
 
 async fn measure_drain(client: &Client, store: &ProtectedLocalKeyStore, db: &Database) -> Measured {
-    let (requests, loads, start) = (
+    let (requests, request_bytes, response_bytes, loads, start) = (
         HTTP_REQUESTS.load(Relaxed),
+        HTTP_REQUEST_BYTES.load(Relaxed),
+        HTTP_RESPONSE_BYTES.load(Relaxed),
         BACKEND_LOADS.load(Relaxed),
         Instant::now(),
     );
@@ -72,6 +78,8 @@ async fn measure_drain(client: &Client, store: &ProtectedLocalKeyStore, db: &Dat
     Measured {
         rounds,
         requests: HTTP_REQUESTS.load(Relaxed) - requests,
+        request_bytes: HTTP_REQUEST_BYTES.load(Relaxed) - request_bytes,
+        response_bytes: HTTP_RESPONSE_BYTES.load(Relaxed) - response_bytes,
         loads: BACKEND_LOADS.load(Relaxed) - loads,
         seconds: start.elapsed().as_secs_f64(),
     }

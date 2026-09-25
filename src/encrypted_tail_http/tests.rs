@@ -23,6 +23,9 @@ impl Drop for Fixture {
 }
 /// Requests served by `serve` in this process, read by the ignored benchmark.
 static HTTP_REQUESTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Request and response body bytes served by `serve`, read by the benchmark.
+static HTTP_REQUEST_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static HTTP_RESPONSE_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 async fn serve(server: Database, address: &str) -> (String, tokio::task::JoinHandle<()>) {
     let tail = Router::new()
         .route(PATH, post(handle))
@@ -34,8 +37,13 @@ async fn serve(server: Database, address: &str) -> (String, tokio::task::JoinHan
         }));
     let app = e2ee_http::router_with_tail(server, tail).layer(axum::middleware::from_fn(
         |request: Request, next: axum::middleware::Next| async move {
-            HTTP_REQUESTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            next.run(request).await
+            use axum::body::HttpBody;
+            use std::sync::atomic::Ordering::Relaxed;
+            HTTP_REQUESTS.fetch_add(1, Relaxed);
+            HTTP_REQUEST_BYTES.fetch_add(request.body().size_hint().lower(), Relaxed);
+            let response = next.run(request).await;
+            HTTP_RESPONSE_BYTES.fetch_add(response.body().size_hint().lower(), Relaxed);
+            response
         },
     ));
     e2ee_http::serve(app, address).await
