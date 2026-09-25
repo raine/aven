@@ -13,13 +13,13 @@ fn idle_sync_renders_compact_summary_and_actions() {
     assert!(!rendered.contains("Sync status"));
     assert!(rendered.contains("No changes waiting"));
     assert!(rendered.contains("end-to-end encrypted"));
-    assert!(rendered.contains("automatic"));
-    assert!(rendered.contains("pending"));
-    assert!(rendered.contains("conflicts"));
+    assert!(rendered.contains("Automatic"));
+    assert!(rendered.contains("Pending"));
+    assert!(rendered.contains("Conflicts"));
     assert!(rendered.contains("› Sync now"));
     assert!(rendered.contains("Add device"));
     assert!(rendered.contains("d details"));
-    assert!(!rendered.contains("sync cursor"));
+    assert!(!rendered.contains("Sync cursor"));
     assert!(!rendered.contains("Up to date"));
 }
 
@@ -28,9 +28,9 @@ fn details_reveal_internal_diagnostics() {
     let rendered = render_overlay_view(sync_overlay(sync_status(), true));
 
     assert!(rendered.contains("DETAILS"));
-    assert!(rendered.contains("wake address"));
-    assert!(rendered.contains("sync cursor"));
-    assert!(rendered.contains("local sequence"));
+    assert!(rendered.contains("Wake address"));
+    assert!(rendered.contains("Sync cursor"));
+    assert!(rendered.contains("Local sequence"));
     assert!(rendered.contains("d summary"));
 }
 
@@ -81,7 +81,7 @@ fn conflicts_use_attention_color() {
     assert_eq!(lines[0].spans[0].style.fg, Some(ORANGE));
     assert!(lines.iter().any(|line| {
         let text = line.to_string();
-        text.starts_with("conflicts") && text.ends_with('2')
+        text.starts_with("Conflicts") && text.ends_with('2')
     }));
 }
 
@@ -102,7 +102,7 @@ fn summary_fits_narrow_terminals() {
     assert!(rendered.contains("Sync"));
     assert!(rendered.contains("No changes"));
     assert!(rendered.contains("Sync now"));
-    assert!(!rendered.contains("sync cursor"));
+    assert!(!rendered.contains("Sync cursor"));
 }
 
 #[test]
@@ -294,12 +294,12 @@ fn invitation_field_describes_what_was_pasted() {
         (
             InvitationKind::Setup,
             setup.as_str(),
-            "✓ Setup invitation for http://127.0.0.1:37463",
+            "Invitation      ✓ http://127.0.0.1:37463",
         ),
         (
             InvitationKind::Join,
             device.as_str(),
-            "✓ Device invitation for http://127.0.0.1:37463",
+            "Invitation      ✓ http://127.0.0.1:37463",
         ),
         (
             InvitationKind::Setup,
@@ -520,7 +520,7 @@ fn open_invitation_is_visible_and_can_be_cancelled() {
     };
     let rendered = render_page(SyncPage::Home, status, SyncActivity::default());
 
-    assert!(rendered.contains("invitation"), "{rendered}");
+    assert!(rendered.contains("Invitation"), "{rendered}");
     assert!(rendered.contains("open, expires"), "{rendered}");
     assert!(rendered.contains("Cancel invitation"), "{rendered}");
 }

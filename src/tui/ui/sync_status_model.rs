@@ -78,7 +78,7 @@ pub(super) fn sync_status_summary(status: &TuiSyncStatus) -> SyncStatusSummary {
     let mut issues = Vec::new();
     if status.set_up && status.enabled && !status.daemon_wake.ok {
         issues.push(SyncIssue {
-            label: "wake address",
+            label: "Wake address",
             value: status.daemon_wake.value.clone(),
         });
     }

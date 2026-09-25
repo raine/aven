@@ -234,7 +234,7 @@ fn body(view: &SyncDialogView<'_>, width: usize) -> Body {
         body.lines.extend(detail_lines(view.status, width));
         if let Some(OperationResult::Failed(failure)) = &view.activity.last {
             body.lines.extend(wrapped_row(
-                "last error",
+                "Last error",
                 &failure.message,
                 Style::new().fg(FG_MUTED),
                 width,
@@ -307,26 +307,26 @@ fn home_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
 
     lines.push(Line::from(""));
     lines.extend(wrapped_row(
-        "automatic",
+        "Automatic",
         if status.enabled { "on" } else { "off" },
         Style::new().fg(FG_MUTED),
         width,
     ));
     lines.extend(wrapped_row(
-        "pending",
+        "Pending",
         &status.pending_changes.to_string(),
         attention_style(status.pending_changes > 0),
         width,
     ));
     lines.extend(wrapped_row(
-        "conflicts",
+        "Conflicts",
         &status.conflicts.to_string(),
         attention_style(status.conflicts > 0),
         width,
     ));
     if let Some(invitation) = status.invitation {
         lines.extend(wrapped_row(
-            "invitation",
+            "Invitation",
             &format!(
                 "open, expires {}",
                 crate::sync::encrypted::format_expiry(invitation.expires_at)
@@ -848,12 +848,8 @@ fn invitation_lines(
     lines.push(Line::from(""));
     let (text, color) = match (kind, input.check()) {
         (_, InvitationCheck::Empty) => ("paste the invitation".to_string(), FG_DIM),
-        (InvitationKind::Setup, InvitationCheck::Setup(server)) => {
-            (format!("✓ Setup invitation for {server}"), GREEN)
-        }
-        (InvitationKind::Join, InvitationCheck::Device(server)) => {
-            (format!("✓ Device invitation for {server}"), GREEN)
-        }
+        (InvitationKind::Setup, InvitationCheck::Setup(server))
+        | (InvitationKind::Join, InvitationCheck::Device(server)) => (format!("✓ {server}"), GREEN),
         (InvitationKind::Setup, InvitationCheck::Device(_)) => (
             "Device invitation; use Join existing sync instead".to_string(),
             RED,
@@ -868,7 +864,7 @@ fn invitation_lines(
         (_, InvitationCheck::Unknown) => ("Not an Aven invitation".to_string(), RED),
     };
     lines.extend(wrapped_row(
-        "invitation",
+        "Invitation",
         &text,
         Style::new().fg(color),
         width,
@@ -890,7 +886,7 @@ fn confirm_setup_lines(body: &mut Body, server: &str, preview: &SetupPreview, wi
         "Set up sync",
         Style::new().fg(FG).add_modifier(Modifier::BOLD),
     )));
-    lines.extend(wrapped_row("server", server, Style::new().fg(FG), width));
+    lines.extend(wrapped_row("Server", server, Style::new().fg(FG), width));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "Use this computer's data:",
@@ -950,7 +946,7 @@ fn confirm_join_lines(body: &mut Body, server: &str, replace: bool, width: usize
         },
         Style::new().fg(FG).add_modifier(Modifier::BOLD),
     )));
-    lines.extend(wrapped_row("server", server, Style::new().fg(FG), width));
+    lines.extend(wrapped_row("Server", server, Style::new().fg(FG), width));
     lines.push(Line::from(""));
     if replace {
         lines.extend(paragraph(
@@ -1115,34 +1111,34 @@ fn detail_lines(status: &TuiSyncStatus, width: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     if status.set_up && status.enabled {
         lines.extend(wrapped_row(
-            "interval",
+            "Interval",
             &format!("{} seconds", status.interval_seconds),
             Style::new().fg(FG_MUTED),
             width,
         ));
         let wake_style = Style::new().fg(if status.daemon_wake.ok { FG_MUTED } else { RED });
         lines.extend(wrapped_row(
-            "wake address",
+            "Wake address",
             &status.daemon_wake.value,
             wake_style,
             width,
         ));
     }
     lines.extend(wrapped_row(
-        "sync cursor",
+        "Sync cursor",
         status.sync_cursor.as_deref().unwrap_or("missing"),
         Style::new().fg(FG_MUTED),
         width,
     ));
     lines.extend(wrapped_row(
-        "local sequence",
+        "Local sequence",
         status.local_sequence.as_deref().unwrap_or("missing"),
         Style::new().fg(FG_MUTED),
         width,
     ));
     if let Some(at) = &status.access_refused_at {
         lines.extend(wrapped_row(
-            "access refused",
+            "Access refused",
             at,
             Style::new().fg(RED),
             width,
