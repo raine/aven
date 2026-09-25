@@ -24,7 +24,10 @@ async fn conflict_show_opens_text_panel_and_esc_closes() {
     assert!(matches!(
         &app.overlay,
         Some(OverlayState::TextPanel(state))
-            if state.lines.iter().any(|line| line.contains("field=title"))
+            if state.lines.iter().any(|line| line == "title")
+                && state.lines.iter().any(|line| line == "this device: local title")
+                && state.lines.iter().any(|line| line == "other device: remote title")
+                && state.lines.iter().all(|line| !line.contains("variant-a"))
     ));
 
     app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();

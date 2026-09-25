@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use anyhow::{Context, Result, bail};
 use aven_core::choices::TaskSource;
 use aven_core::db::Database;
@@ -19,7 +21,7 @@ use crate::refs::DisplayRefContext;
 use crate::render::{KvLine, changed_text, print_json_pretty, quote};
 use crate::task_render::{
     TaskLineJson, build_full_task_report, print_full_task_report, print_task_line_item,
-    task_full_json, task_line_json_item,
+    task_full_json, task_line_json_item, task_line_text,
 };
 use crate::types::Task;
 use crate::workspaces::Workspace;
@@ -460,8 +462,15 @@ pub(crate) async fn cmd_list(
         let items = items.iter().map(task_line_json_item).collect::<Vec<_>>();
         print_json_pretty(&items)?;
     } else {
+        let stdout = std::io::stdout();
+        let mut output = stdout.lock();
         for item in items {
-            print_task_line_item(&item);
+            if let Err(error) = writeln!(output, "{}", task_line_text(&item)) {
+                if error.kind() == std::io::ErrorKind::BrokenPipe {
+                    return Ok(());
+                }
+                return Err(error.into());
+            }
         }
     }
     Ok(())

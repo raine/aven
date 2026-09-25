@@ -22,6 +22,10 @@ pub struct Round {
     /// While publishing is blocked, withheld local changes do not count.
     pub metadata_caught_up: bool,
     pub images: ImageTransfer,
+    /// Metadata records appended by this device during the round.
+    pub sent_changes: usize,
+    /// Metadata records applied from the server during the round.
+    pub received_changes: usize,
     /// New encrypted content waits for a withdrawal rotation; this round
     /// uploaded nothing but still pulled and downloaded.
     pub publishing_blocked: bool,
@@ -228,6 +232,7 @@ impl Client {
         // Reaching the cap completes only this round's push phase. The next
         // bounded round resumes from the next ordered singleton head.
         progress.push_complete = true;
+        let cursor_before_pull = db.encrypted_round_state(a).await?.cursor;
         if progress.page_complete.is_none() {
             progress.page_complete = Some(self.pull(a, &inputs.bearer, db).await?);
         }
@@ -257,6 +262,8 @@ impl Client {
                 && (state.idle || progress.publishing_blocked),
             // A failed push outranks later download outcomes in this round.
             images: progress.image_state.unwrap_or(images),
+            sent_changes: progress.pushes,
+            received_changes: state.cursor.saturating_sub(cursor_before_pull) as usize,
             publishing_blocked: progress.publishing_blocked,
         })
     }

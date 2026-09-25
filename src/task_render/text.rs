@@ -3,11 +3,11 @@ use crate::render::{KvLine, print_multiline_block, quote, yes_no};
 
 use super::TaskFullReport;
 
-pub(crate) fn print_task_line_item(item: &TaskListItem) {
+pub(crate) fn task_line_text(item: &TaskListItem) -> String {
     let labels = item.labels.join(",");
     if let Some(group) = &item.recurrence_group {
         let counts = &group.counts;
-        let line = KvLine::new(group.series_ref.clone())
+        return KvLine::new(group.series_ref.clone())
             .field("status", item.task.status)
             .field("priority", item.task.priority)
             .field("labels", &labels)
@@ -23,10 +23,8 @@ pub(crate) fn print_task_line_item(item: &TaskListItem) {
             .field("missed", counts.missed)
             .quoted("title", &item.task.title)
             .finish();
-        println!("{line}");
-        return;
     }
-    let line = KvLine::new(item.display_ref.clone())
+    KvLine::new(item.display_ref.clone())
         .field("status", item.task.status)
         .field("priority", item.task.priority)
         .field("labels", &labels)
@@ -73,8 +71,11 @@ pub(crate) fn print_task_line_item(item: &TaskListItem) {
             (item.dependent_count > 0).then(|| item.dependent_count.to_string()),
         )
         .quoted("title", &item.task.title)
-        .finish();
-    println!("{line}");
+        .finish()
+}
+
+pub(crate) fn print_task_line_item(item: &TaskListItem) {
+    println!("{}", task_line_text(item));
 }
 
 pub(crate) fn print_full_task_report(report: &TaskFullReport) {

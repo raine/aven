@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::{Rect, Size};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use super::super::dialog::{Dialog, dialog_hint_line};
@@ -24,7 +24,7 @@ use crate::tui::sync_operations::{
 };
 use crate::tui::text::cell_width_ranges;
 use crate::tui::theme::{
-    ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, GREEN, INVERSE_FG, ORANGE, RED, SELECTED,
+    ACCENT, BG, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, GREEN, INVERSE_FG, ORANGE, RED, SELECTED,
 };
 
 pub(crate) const SYNC_TITLE: &str = "Sync";
@@ -115,6 +115,12 @@ impl Layout {
 
 pub(in crate::tui::ui) fn render_sync_dialog(frame: &mut Frame, view: &SyncDialogView<'_>) {
     let layout = Layout::new(view, frame.area().as_size());
+    let band = Rect {
+        x: frame.area().x,
+        width: frame.area().width,
+        ..layout.area
+    };
+    frame.render_widget(Block::new().style(Style::new().bg(BG)), band);
     let visible = layout
         .body
         .lines
@@ -824,14 +830,14 @@ fn invitation_lines(
         ),
         InvitationKind::Join if status.phase == LocalPhase::JoinIncomplete => (
             "Use a new invitation",
-            "On the device that created the first invitation, open Add device and press c \
-             to copy a new invitation, then paste it here. Invitations from other devices \
-             can't be used.",
+            "On the device that created the first invitation, use Add device or run \
+             `aven sync invite` to create a new invitation, then paste it here. \
+             Invitations from other devices can't be used.",
         ),
         InvitationKind::Join => (
             "Join existing sync",
-            "On a device that already syncs, open Add device and press c to copy the \
-             invitation, then paste it here.",
+            "On a device that already syncs, use Add device or run `aven sync invite`, \
+             then paste the invitation here.",
         ),
     };
     lines.push(Line::from(Span::styled(
@@ -882,10 +888,14 @@ fn confirm_setup_lines(body: &mut Body, server: &str, preview: &SetupPreview, wi
         format!("  {}", plural(preview.workspaces as u64, "workspace")),
         Style::new().fg(FG_MUTED),
     )));
-    lines.push(Line::from(Span::styled(
-        format!("  {}", plural(preview.tasks.max(0) as u64, "task")),
+    lines.extend(paragraph(
+        &format!(
+            "  {} non-deleted task records, including scheduled and recurring occurrences",
+            preview.tasks.max(0)
+        ),
         Style::new().fg(FG_MUTED),
-    )));
+        width,
+    ));
     if preview.missing_images > 0 {
         lines.extend(paragraph(
             &format!(
@@ -942,7 +952,7 @@ fn confirm_join_lines(body: &mut Body, server: &str, replace: bool, width: usize
     }
     lines.extend(paragraph(
         "This computer will download the synced tasks, then their images. Keep Add \
-         device open on the other device until joining finishes.",
+         device or `aven sync invite` open on the other device until joining finishes.",
         Style::new().fg(FG_MUTED),
         width,
     ));
@@ -1091,19 +1101,21 @@ fn state_line(status: &TuiSyncStatus, health: SyncHealth, syncing: bool) -> &'st
 
 fn detail_lines(status: &TuiSyncStatus, width: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    lines.extend(wrapped_row(
-        "interval",
-        &format!("{} seconds", status.interval_seconds),
-        Style::new().fg(FG_MUTED),
-        width,
-    ));
-    let wake_style = Style::new().fg(if status.daemon_wake.ok { FG_MUTED } else { RED });
-    lines.extend(wrapped_row(
-        "wake address",
-        &status.daemon_wake.value,
-        wake_style,
-        width,
-    ));
+    if status.set_up && status.enabled {
+        lines.extend(wrapped_row(
+            "interval",
+            &format!("{} seconds", status.interval_seconds),
+            Style::new().fg(FG_MUTED),
+            width,
+        ));
+        let wake_style = Style::new().fg(if status.daemon_wake.ok { FG_MUTED } else { RED });
+        lines.extend(wrapped_row(
+            "wake address",
+            &status.daemon_wake.value,
+            wake_style,
+            width,
+        ));
+    }
     lines.extend(wrapped_row(
         "sync cursor",
         status.sync_cursor.as_deref().unwrap_or("missing"),

@@ -77,6 +77,11 @@ fn detail_test_item() -> TaskListItem {
     TaskListItem {
         metadata: Vec::new(),
         activity: Vec::new(),
+        conflicts: vec![crate::query::TaskConflictValue {
+            field: "title".to_string(),
+            local_value: "Fix token refresh race".to_string(),
+            remote_value: "Fix refresh race".to_string(),
+        }],
         task: crate::types::Task {
             id: crate::test_support::task_id("7KQ9A1X"),
             workspace_id: "0000000000000001".parse().unwrap(),

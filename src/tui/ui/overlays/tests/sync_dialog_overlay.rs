@@ -303,7 +303,8 @@ fn setup_confirmation_discloses_data_server_and_restrictions() {
 
     assert!(rendered.contains("https://sync.example.com"));
     assert!(rendered.contains("3 workspaces"));
-    assert!(rendered.contains("142 tasks"));
+    assert!(rendered.contains("142 non-deleted task records"));
+    assert!(rendered.contains("scheduled and recurring occurrences"));
     assert!(rendered.contains("2 images missing on this computer"));
     assert!(rendered.contains("backup restore or import"));
     assert!(rendered.contains("previous unencrypted sync server"));

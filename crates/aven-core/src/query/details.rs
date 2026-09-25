@@ -82,7 +82,7 @@ pub async fn task_detail_with_display_refs(
     })
 }
 
-async fn task_detail_conflicts(
+pub(super) async fn task_detail_conflicts(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     task_id: &crate::ids::TaskId,

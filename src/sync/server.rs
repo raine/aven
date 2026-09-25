@@ -52,6 +52,14 @@ async fn setup_server(args: ServerSetupArgs) -> Result<()> {
     println!("{}", invitation.encode().as_str());
     eprintln!("Anyone with this invitation can claim this server. It expires in one hour.");
     eprintln!("Run `aven sync setup` on the device whose data should start the sync.");
+    let port = url::Url::parse(&args.url)
+        .ok()
+        .and_then(|url| url.port_or_known_default())
+        .unwrap_or(3554);
+    eprintln!(
+        "Then start the server: aven server --data {} --bind 127.0.0.1:{port}",
+        args.data.display()
+    );
     Ok(())
 }
 

@@ -261,7 +261,7 @@ pub(crate) fn explain(
                     "Join from a new database with `aven --db PATH sync join`. Nothing here was changed."
                 }
                 ErrorSurface::Tui => {
-                    "Choose a new, empty database and join there. Nothing here was changed."
+                    "Start aven with `aven --db /new/path sync join` to use a new, empty database. Nothing here was changed."
                 }
             },
         });
@@ -283,7 +283,9 @@ pub(crate) fn explain(
                 ErrorSurface::Cli => {
                     "Join from a new, empty database with `aven --db PATH sync join`."
                 }
-                ErrorSurface::Tui => "Join from a new, empty database instead.",
+                ErrorSurface::Tui => {
+                    "Start aven with `aven --db /new/path sync join` to use a new, empty database."
+                }
             },
         });
     }
@@ -296,7 +298,7 @@ pub(crate) fn explain(
                     "Keep `aven sync invite` running on the other device, then rerun `aven sync join`."
                 }
                 ErrorSurface::Tui => {
-                    "Keep Add device open on the other device, then choose Resume joining."
+                    "Keep Add device or `aven sync invite` open on the other device, then choose Resume joining."
                 }
             },
         });

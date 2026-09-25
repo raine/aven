@@ -308,6 +308,7 @@ pub struct TaskListItem {
     pub live_attachment_count: u32,
     pub metadata: Vec<TaskMetadataValue>,
     pub activity: Vec<RecentActionItem>,
+    pub conflicts: Vec<TaskConflictValue>,
     pub has_conflict: bool,
     pub unresolved_blocker_count: i64,
     pub dependent_count: i64,
@@ -322,6 +323,13 @@ pub struct TaskListItem {
     pub recurrence: Option<TaskRecurrenceSummary>,
     pub recurrence_group: Option<RecurrenceTaskGroup>,
     pub hydration: TaskItemHydration,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskConflictValue {
+    pub field: String,
+    pub local_value: String,
+    pub remote_value: String,
 }
 
 #[derive(Serialize, Debug, Clone, PartialEq, Eq)]

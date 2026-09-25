@@ -42,7 +42,7 @@ fn onboarding_lines() -> Vec<Line<'static>> {
         shortcut_line("Enter", "Open the selected task and see its details"),
         shortcut_line("s / d", "Change status or mark the selected task done"),
         shortcut_line("u", "Undo the last change"),
-        shortcut_line(":", "Open the command panel"),
+        shortcut_line(":", "Open commands; use :sync to join existing sync"),
         Line::default(),
         section_heading("Learn more"),
         resource_line("TUI guide", "https://aven.raine.dev/tui/"),

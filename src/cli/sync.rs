@@ -139,12 +139,16 @@ pub(crate) struct DaemonRepairArgs {
 }
 
 #[derive(Args)]
-#[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
+#[command(
+    args_conflicts_with_subcommands = true,
+    subcommand_negates_reqs = true,
+    override_help = SERVER_COMMAND_HELP
+)]
 pub(crate) struct ServerArgs {
     #[command(subcommand)]
     pub(crate) command: Option<ServerSubcommand>,
-    /// Listen address; port 0 asks the OS to choose a free port
-    #[arg(long, default_value = "127.0.0.1:0")]
+    /// Listen address; its port must match the port in the setup URL
+    #[arg(long, default_value = "127.0.0.1:3554")]
     pub(crate) bind: SocketAddr,
     /// SQLite path of storage prepared by `server setup`
     #[arg(long, required = true)]
@@ -172,9 +176,28 @@ pub(super) const SERVER_SETUP_HELP: &str = r#"The setup invitation lets one devi
 its database. It expires after one hour; until a device has claimed the
 server, running setup again replaces it. The replacement keeps the server's
 setup identity, so a device whose setup was interrupted resumes with the new
-invitation. Serve the storage with `aven server --data PATH`. The server binds
-only loopback addresses; put a TLS reverse proxy in front of it for other
-devices."#;
+invitation. Serve the storage with `aven server --data PATH --bind ADDRESS`.
+The bind port must match the port in the setup URL. The server binds only
+loopback addresses; put a TLS reverse proxy in front of it for other devices."#;
+
+const SERVER_COMMAND_HELP: &str = r#"Run the sync server
+
+Usage: aven server [OPTIONS]
+       aven server <COMMAND>
+
+Commands:
+  setup  Prepare server storage and print its setup invitation
+  help   Print this message or the help of the given subcommand(s)
+
+Options:
+      --bind <BIND>  Listen address; its port must match the port in the setup URL [default: 127.0.0.1:3554]
+      --data <DATA>  SQLite path of storage prepared by `server setup`
+  -h, --help         Print help
+
+Prepare storage with `aven server setup` first. The server binds only
+loopback addresses and does not terminate TLS; put a TLS reverse proxy in front
+of it for other devices.
+"#;
 
 #[derive(Args)]
 pub(crate) struct SyncArgs {
@@ -261,8 +284,9 @@ received before."#;
 
 pub(super) const JOIN_HELP: &str = r#"Paste the invitation printed by `aven sync invite`, or pipe it to standard
 input, while the inviting device waits. The database must be empty. Joining
-downloads the synced data and then its images. Rerun the same command to resume
-an interrupted join.
+shows the server and asks for confirmation; use --yes when standard input is
+not a terminal. It downloads the synced data and then its images. Rerun the
+same command to resume an interrupted join without pasting the invitation again.
 
 If the invitation expired before the inviting device added this device, create a
 new invitation on that same device and pass it with --new-invitation. The
@@ -274,6 +298,9 @@ pub(crate) struct JoinArgs {
     /// Continue an unfinished join with a new invitation from the same inviting device
     #[arg(long)]
     pub(crate) new_invitation: bool,
+    /// Skip the server confirmation prompt
+    #[arg(long)]
+    pub(crate) yes: bool,
 }
 
 #[derive(Args)]

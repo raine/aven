@@ -200,6 +200,7 @@ mod tests {
         TaskListItem {
             metadata: Vec::new(),
             activity: Vec::new(),
+            conflicts: Vec::new(),
             task: crate::types::Task {
                 id: crate::test_support::task_id(&id.to_string()),
                 workspace_id: "0000000000000001".parse().unwrap(),

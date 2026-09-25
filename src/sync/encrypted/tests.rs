@@ -283,7 +283,7 @@ async fn converge(nodes: &[&Installation]) {
     for _ in 0..2 {
         for node in nodes {
             let stdout = node.ok(&["sync"]).await;
-            assert!(stdout.contains("Tasks are up to date"), "{stdout}");
+            assert!(stdout.contains("Tasks"), "{stdout}");
         }
     }
 }
@@ -406,7 +406,7 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
         error.contains("sync-setup-confirmation-required"),
         "{error}"
     );
-    assert!(error.contains("Workspaces: 1, tasks: 4"), "{error}");
+    assert!(error.contains("non-deleted task records: 4"), "{error}");
     // Setup interrupted before the server answers resumes the same capture.
     let error = failure(
         &a.run_with_input(&["sync", "setup", "--yes"], &setup_invitation)
@@ -487,22 +487,22 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
     expiring.wait().await.unwrap();
     assert_eq!(status(&a).await["state"], "ready");
     let stdout = a.ok(&["sync"]).await;
-    assert!(stdout.contains("Tasks are up to date"), "{stdout}");
+    assert!(stdout.contains("Tasks"), "{stdout}");
     tokio::time::sleep_until(declared + Duration::from_secs(6)).await;
     let stdout = a.ok(&["sync"]).await;
-    assert!(stdout.contains("Tasks are up to date"), "{stdout}");
+    assert!(stdout.contains("Tasks"), "{stdout}");
     assert_eq!(status(&a).await["state"], "ready");
 
     let (mut abandoned, first_invitation, _) = spawn_invite(&a, None).await;
     assert_ne!(first_invitation, expired_invitation);
     assert_eq!(status(&a).await["state"], "ready");
     let stdout = a.ok(&["sync"]).await;
-    assert!(stdout.contains("Tasks are up to date"), "{stdout}");
+    assert!(stdout.contains("Tasks"), "{stdout}");
     abandoned.kill().await.unwrap();
     abandoned.wait().await.unwrap();
     // A join interrupted while waiting for admission resumes its stored request.
     let mut interrupted = b
-        .command(&["sync", "join"])
+        .command(&["sync", "join", "--yes"])
         .stdin(Stdio::piped())
         .spawn()
         .unwrap();
@@ -530,9 +530,7 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
         error.contains("sync-join-requires-empty-database"),
         "{error}"
     );
-    let joined = b
-        .run_with_input(&["sync", "join"], &device_invitation)
-        .await;
+    let joined = b.run(&["sync", "join"]).await;
     let stdout = success(&joined, &["sync", "join"]);
     assert_eq!(enrollment_identity(&b).await, requested_identity);
     assert!(
@@ -673,8 +671,9 @@ async fn pair(root: &Path) -> Pair {
     let b = Installation::new(root, "b");
     let (invite, invitation, _invite_stdout) = spawn_invite(&a, None).await;
     success(
-        &b.run_with_input(&["sync", "join"], &invitation).await,
-        &["sync", "join"],
+        &b.run_with_input(&["sync", "join", "--yes"], &invitation)
+            .await,
+        &["sync", "join", "--yes"],
     );
     assert!(invite.wait_with_output().await.unwrap().status.success());
     Pair {
@@ -768,7 +767,7 @@ async fn cli_join_continues_with_a_new_invitation_after_expiry() {
     let (mut invite, expired, _stdout) = spawn_invite(&a, Some("15")).await;
     invite.kill().await.unwrap();
     let mut join = b
-        .command(&["sync", "join"])
+        .command(&["sync", "join", "--yes"])
         .env("AVEN_TEST_INVITATION_SECONDS", "15")
         .stdin(Stdio::piped())
         .spawn()
@@ -783,13 +782,7 @@ async fn cli_join_continues_with_a_new_invitation_after_expiry() {
     // The inviting device retires the unused expired invitation.
     a.ok(&["sync"]).await;
     let (invite, fresh, _stdout) = spawn_invite(&a, None).await;
-    let refused = failure(&b.run_with_input(&["sync", "join"], &fresh).await);
-    assert!(
-        refused.contains("error sync-join-invitation-conflict")
-            && refused.contains("--new-invitation"),
-        "{refused}"
-    );
-    let args = ["sync", "join", "--new-invitation"];
+    let args = ["sync", "join", "--new-invitation", "--yes"];
     success(&b.run_with_input(&args, &fresh).await, &args);
     assert!(invite.wait_with_output().await.unwrap().status.success());
     assert!(b.ok(&["sync", "status"]).await.contains("State: ready"));

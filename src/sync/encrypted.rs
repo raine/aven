@@ -4,6 +4,7 @@
 //! pin. Its server is the locator bound into protected enrollment identity;
 //! configuration never redirects it. Other databases stay local until they are
 //! set up or joined.
+use std::collections::HashSet;
 use std::io::{IsTerminal, Read, Write};
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -137,31 +138,70 @@ fn read_invitation(prompt: &str) -> Result<Zeroizing<String>> {
     if stdin.is_terminal() {
         eprint!("{prompt}");
         std::io::stderr().flush()?;
+        #[cfg(unix)]
+        let _echo = TerminalEchoGuard::disable()?;
         stdin.read_line(&mut text)?;
+        eprintln!();
     } else {
         stdin.lock().take(INPUT_LIMIT).read_to_string(&mut text)?;
     }
     Ok(text)
 }
 
-fn confirm_setup(yes: bool) -> Result<()> {
+#[cfg(unix)]
+struct TerminalEchoGuard(libc::termios);
+
+#[cfg(unix)]
+impl TerminalEchoGuard {
+    fn disable() -> Result<Self> {
+        let mut settings = std::mem::MaybeUninit::<libc::termios>::uninit();
+        ensure!(unsafe { libc::tcgetattr(libc::STDIN_FILENO, settings.as_mut_ptr()) } == 0);
+        let original = unsafe { settings.assume_init() };
+        let mut hidden = original;
+        hidden.c_lflag &= !libc::ECHO;
+        ensure!(unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &hidden) } == 0);
+        Ok(Self(original))
+    }
+}
+
+#[cfg(unix)]
+impl Drop for TerminalEchoGuard {
+    fn drop(&mut self) {
+        unsafe {
+            libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &self.0);
+        }
+    }
+}
+
+fn confirm_action(
+    yes: bool,
+    prompt: &str,
+    required_error: &str,
+    canceled_error: &str,
+) -> Result<()> {
     if yes {
         return Ok(());
     }
     let stdin = std::io::stdin();
-    ensure!(
-        stdin.is_terminal(),
-        "error sync-setup-confirmation-required hint=\"rerun with --yes to confirm\""
-    );
-    eprint!("Set up sync from this database? [y/N] ");
+    ensure!(stdin.is_terminal(), "{required_error}");
+    eprint!("{prompt} [y/N] ");
     std::io::stderr().flush()?;
     let mut answer = String::new();
     stdin.read_line(&mut answer)?;
     ensure!(
         matches!(answer.trim(), "y" | "Y" | "yes"),
-        "error sync-setup-canceled"
+        "{canceled_error}"
     );
     Ok(())
+}
+
+fn confirm_setup(yes: bool) -> Result<()> {
+    confirm_action(
+        yes,
+        "Set up sync from this database?",
+        "error sync-setup-confirmation-required hint=\"rerun with --yes to confirm\"",
+        "error sync-setup-canceled",
+    )
 }
 
 /// What setup would publish from this database.
@@ -199,7 +239,7 @@ async fn print_setup_preview(database: &Database, config: &AppConfig, server: &s
     eprintln!("  Database: {}", database.path().display());
     eprintln!("  Server: {server}");
     eprintln!(
-        "  Workspaces: {}, tasks: {}",
+        "  Workspaces: {}, non-deleted task records: {} (including scheduled and recurring occurrences)",
         preview.workspaces, preview.tasks
     );
     if preview.missing_images > 0 {
@@ -661,18 +701,36 @@ const ALREADY_SET_UP: &str =
 const JOIN_REQUIRES_EMPTY: &str = "error sync-join-requires-empty-database hint=\"join with a new database, for example `aven --db PATH sync join`\"";
 
 pub(crate) async fn join(database: &Database, config: &AppConfig, args: JoinArgs) -> Result<()> {
-    let text = read_invitation("Device invitation: ")?;
-    let invitation = DeviceInvitation::decode(&text).map_err(|error| {
-        if SetupInvitation::decode(&text).is_ok() {
-            error.context("error sync-device-invitation-setup")
-        } else {
-            error
-        }
-    })?;
+    ensure_join_available(database, config).await?;
+    let resuming = local_phase(database).await? == LocalPhase::JoinIncomplete;
+    let invitation = if resuming && !args.new_invitation {
+        None
+    } else {
+        let text = read_invitation("Device invitation: ")?;
+        ensure!(
+            !text.trim().is_empty(),
+            "error sync-join-invitation-required hint=\"paste the invitation from `aven sync invite`\""
+        );
+        let invitation = DeviceInvitation::decode(&text).map_err(|error| {
+            if SetupInvitation::decode(&text).is_ok() {
+                error.context("error sync-device-invitation-setup")
+            } else {
+                error
+            }
+        })?;
+        eprintln!("Server: {}", invitation.server);
+        confirm_action(
+            args.yes,
+            "Join this sync?",
+            "error sync-join-confirmation-required hint=\"rerun with --yes to confirm\"",
+            "error sync-join-canceled",
+        )?;
+        Some(invitation)
+    };
     let (server, outcome) = run_join(
         database,
         config,
-        || Ok(Some(invitation)),
+        || Ok(invitation),
         args.new_invitation,
         &|stage| match stage {
             Stage::WaitingForInviter => eprintln!("Waiting for the inviting device..."),
@@ -1007,6 +1065,10 @@ pub(crate) struct Outcome {
     pub(crate) rounds: usize,
     pub(crate) metadata_caught_up: bool,
     pub(crate) images: &'static str,
+    pub(crate) sent_changes: usize,
+    pub(crate) received_changes: usize,
+    pub(crate) conflicts: usize,
+    pub(crate) new_conflicts: usize,
 }
 
 impl Outcome {
@@ -1046,16 +1108,21 @@ async fn drain_reporting(
     round_limit: usize,
     on_round: &mut (dyn FnMut(&Round) + Send),
 ) -> Result<Outcome> {
+    let conflicts_before = conflict_identities(database).await?;
     super::device_label::publish_if_missing(database, store).await?;
     let mut last = None;
     let mut rounds = 0;
     let mut image_retries = 0;
+    let mut sent_changes = 0;
+    let mut received_changes = 0;
     let mut drain = Box::pin(client.start_drain(store, database)).await?;
     while rounds < round_limit {
         let round: Round =
             Box::pin(client.round_in_drain(store, database, blob_dir, &mut drain)).await?;
         on_round(&round);
         rounds += 1;
+        sent_changes += round.sent_changes;
+        received_changes += round.received_changes;
         last = Some(round);
         match round.images {
             ImageTransfer::Complete if round.metadata_caught_up => break,
@@ -1072,20 +1139,49 @@ async fn drain_reporting(
     if last.publishing_blocked {
         return Err(drain.publishing_blocked_error());
     }
+    let conflicts_after = conflict_identities(database).await?;
     Ok(Outcome {
         version: 1,
         rounds,
         metadata_caught_up: last.metadata_caught_up,
         images: image_label(last.images),
+        sent_changes,
+        received_changes,
+        conflicts: conflicts_after.len(),
+        new_conflicts: conflicts_after.difference(&conflicts_before).count(),
     })
+}
+
+async fn conflict_identities(database: &Database) -> Result<HashSet<String>> {
+    let mut identities = HashSet::new();
+    for workspace in database.list_workspaces().await? {
+        for conflict in database.list_conflicts(&workspace, None, None).await? {
+            let (first, second) = if conflict.variant_a <= conflict.variant_b {
+                (conflict.variant_a, conflict.variant_b)
+            } else {
+                (conflict.variant_b, conflict.variant_a)
+            };
+            identities.insert(format!(
+                "{}:{}:{}:{}:{}:{}",
+                workspace.id,
+                conflict.recurrence_series,
+                conflict.task_id,
+                conflict.field,
+                first,
+                second
+            ));
+        }
+    }
+    Ok(identities)
 }
 
 fn print_outcome(outcome: &Outcome) {
     if !outcome.metadata_caught_up {
         println!(
-            "Sync incomplete: stopped after {} rounds. Run `aven sync` again.",
-            outcome.rounds
+            "Sync incomplete: sent {}, received {}; stopped after {} rounds. Run `aven sync` again.",
+            outcome.sent_changes, outcome.received_changes, outcome.rounds
         );
+        print_conflict_outcome(outcome);
         if outcome.images == "failed" {
             println!(
                 "An image transfer failed, or an image added here is missing from this \
@@ -1094,7 +1190,15 @@ fn print_outcome(outcome: &Outcome) {
         }
         return;
     }
-    println!("Tasks are up to date");
+    if outcome.sent_changes == 0 && outcome.received_changes == 0 {
+        println!("Tasks were already up to date");
+    } else {
+        println!(
+            "Tasks: sent {}, received {}",
+            outcome.sent_changes, outcome.received_changes
+        );
+    }
+    print_conflict_outcome(outcome);
     match outcome.images {
         "complete" => println!("Images are up to date"),
         "unavailable" => println!("Some images are unavailable on the server"),
@@ -1103,17 +1207,35 @@ fn print_outcome(outcome: &Outcome) {
     }
 }
 
+fn print_conflict_outcome(outcome: &Outcome) {
+    if outcome.conflicts == 0 {
+        return;
+    }
+    let qualifier = if outcome.new_conflicts > 0 {
+        format!(" ({} new)", outcome.new_conflicts)
+    } else {
+        String::new()
+    };
+    println!(
+        "{} conflict{} need{} a decision{qualifier}. Run `aven conflict list`.",
+        outcome.conflicts,
+        if outcome.conflicts == 1 { "" } else { "s" },
+        if outcome.conflicts == 1 { "s" } else { "" },
+    );
+}
+
 #[derive(Serialize)]
-struct StatusReport {
+pub(crate) struct StatusReport {
     version: u32,
-    server: Option<String>,
-    state: &'static str,
+    pub(crate) server: Option<String>,
+    pub(crate) state: &'static str,
     local_changes_pending: Option<bool>,
     server_position: Option<i64>,
     initial_download_pending: Option<bool>,
     image_uploads_pending: Option<bool>,
     image_downloads_pending: Option<bool>,
     images_unavailable: Option<bool>,
+    conflicts: i64,
     invitation: &'static str,
     invitation_expires_at: Option<u64>,
     access_refused_at: Option<String>,
@@ -1121,7 +1243,7 @@ struct StatusReport {
 
 /// Local observation only; contacts no server. Waits briefly for a running
 /// sync or invitation exchange, which holds the installation exclusively.
-pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
+pub(crate) async fn status_report(database: &Database) -> Result<StatusReport> {
     let mut report = StatusReport {
         version: 1,
         server: None,
@@ -1132,6 +1254,7 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
         image_uploads_pending: None,
         image_downloads_pending: None,
         images_unavailable: None,
+        conflicts: database.unresolved_conflict_count().await?,
         invitation: "none",
         invitation_expires_at: None,
         access_refused_at: database
@@ -1140,15 +1263,7 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
             .map(|refusal| refusal.at),
     };
     if !is_set_up(database).await? {
-        if json {
-            return print_json_pretty(&report);
-        }
-        println!("Sync: not set up; this database is local only");
-        println!(
-            "Run `aven sync setup` with an invitation from `aven server setup`, or \
-             `aven sync join` on a new database."
-        );
-        return Ok(());
+        return Ok(report);
     }
     report.state = match local_phase(database).await? {
         LocalPhase::SetupRecoveryRequired => "setup-recovery-required",
@@ -1202,8 +1317,33 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
     {
         report.state = "access-refused";
     }
+    Ok(report)
+}
+
+pub(crate) fn status_state_words(state: &str) -> &'static str {
+    match state {
+        "not-set-up" => "not set up",
+        "setup-incomplete" => "setup incomplete",
+        "setup-recovery-required" => "setup recovery required",
+        "join-incomplete" => "joining incomplete",
+        "key-change-pending" => "key change pending",
+        "access-refused" => "access unconfirmed",
+        _ => "ready",
+    }
+}
+
+pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
+    let report = status_report(database).await?;
     if json {
         return print_json_pretty(&report);
+    }
+    if report.state == "not-set-up" {
+        println!("Sync: not set up; this database is local only");
+        println!(
+            "Run `aven sync setup` with an invitation from `aven server setup`, or \
+             `aven sync join` on a new database."
+        );
+        return Ok(());
     }
     println!("Sync: end-to-end encrypted");
     if let Some(server) = &report.server {
@@ -1235,15 +1375,22 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
     } else {
         println!("Invitation: none");
     }
+    if report.conflicts > 0 {
+        println!(
+            "Conflicts: {} need a decision. Run `aven conflict list`.",
+            report.conflicts
+        );
+    } else {
+        println!("Conflicts: none");
+    }
     if let Some(pending) = report.local_changes_pending {
         println!(
-            "Tasks: {}; server position {}",
+            "Tasks: {}",
             if pending {
                 "local changes waiting to sync"
             } else {
                 "no local changes waiting"
-            },
-            report.server_position.unwrap_or_default()
+            }
         );
         let mut images = Vec::new();
         if report.initial_download_pending == Some(true) {

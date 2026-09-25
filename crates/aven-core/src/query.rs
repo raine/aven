@@ -65,8 +65,9 @@ pub use types::{
     RecurrenceOccurrenceLink, RecurrenceReconciliation, RecurrenceSeriesConflict,
     RecurrenceSeriesDetail, RecurrenceSeriesLifecycleFilter, RecurrenceSeriesListItem,
     RecurrenceSeriesListQuery, RecurrenceSeriesSummary, RecurrenceTaskGroup, SidebarCounts,
-    SortDirection, TaskAvailabilityFilter, TaskDependencyLink, TaskFilters, TaskIdFilter,
-    TaskItemHydration, TaskListItem, TaskNote, TaskQueryMode, TaskRecurrenceSummary, TaskSort,
+    SortDirection, TaskAvailabilityFilter, TaskConflictValue, TaskDependencyLink, TaskFilters,
+    TaskIdFilter, TaskItemHydration, TaskListItem, TaskNote, TaskQueryMode, TaskRecurrenceSummary,
+    TaskSort,
 };
 
 pub const MAX_RECURRENCE_HISTORY_LIMIT: usize = 500;

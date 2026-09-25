@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Sync now reports sent and received changes plus open and newly created conflicts. Conflict values in the TUI are labeled by device without exposing variant IDs. Setup and join hide pasted invitations, join confirms the server and resumes without another invitation, and `aven sync invite` keeps standard output script-safe by writing **Device added** to standard error.
+
 - Sync on the inviting device keeps running while a device invitation is open. If an invitation expires after keys may have been sent to a device that never joined, the next sync changes keys before uploading new changes; until then it still downloads changes from other devices, and `aven sync status` reports `key-change-pending`. See [Sync across devices](https://aventasks.dev/sync/).
 
 - An encrypted sync allows 256 device changes over its lifetime, up to 63 of them key rotations. Adding a device is one change, and removing one is two. Once a limit is reached, start a new sync to keep adding or removing devices. `aven server` now checks its stored device membership before it starts serving, and refuses to start if the check fails. See [Sync across devices](https://aventasks.dev/sync/).

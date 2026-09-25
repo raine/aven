@@ -53,13 +53,17 @@ async fn start_relay(upstream: String, lose: Arc<AtomicBool>) -> String {
 
 async fn join_from(inviter: &Installation, joiner: &Installation) {
     let (invite, invitation, _stdout) = spawn_invite(inviter, None).await;
-    let mut joined = joiner.run_with_input(&["sync", "join"], &invitation).await;
+    let mut joined = joiner
+        .run_with_input(&["sync", "join", "--yes"], &invitation)
+        .await;
     // The server serves one enrollment exchange at a time, so the download
     // can meet the inviter's last poll; join resumes when rerun.
     if !joined.status.success() && failure(&joined).contains("error enrollment-busy") {
-        joined = joiner.run_with_input(&["sync", "join"], &invitation).await;
+        joined = joiner
+            .run_with_input(&["sync", "join", "--yes"], &invitation)
+            .await;
     }
-    success(&joined, &["sync", "join"]);
+    success(&joined, &["sync", "join", "--yes"]);
     assert!(invite.wait_with_output().await.unwrap().status.success());
 }
 

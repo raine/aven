@@ -841,8 +841,9 @@ aven sync [--json]
 ```
 
 Sync runs bounded rounds until tasks are up to date and image transfers settle,
-or until a round limit stops it. Output reports whether tasks and images are up
-to date; `--json` emits a versioned result. A database that has not been set up
+or until a round limit stops it. Output reports sent and received changes,
+open and newly created conflicts, and image state; `--json` emits the versioned
+counts and result. A database that has not been set up
 or joined fails with `sync-not-set-up` and stays usable locally.
 
 #### `aven sync setup`
@@ -871,8 +872,9 @@ aven sync invite
 aven sync invite --cancel
 ```
 
-Standard output receives the `aven://pair/v2/` invitation. An interactive
-standard error also shows it as a QR code. Anyone with the invitation can access
+Standard output receives only the `aven://pair/v2/` invitation. Interactive
+standard error also shows it as a QR code, and the eventual **Device added**
+message is written to standard error. Anyone with the invitation can access
 all synced data and manage devices. It expires after ten minutes. Rerunning the
 command resumes the open invitation and reports its declared expiry.
 
@@ -886,12 +888,16 @@ Sync on this device keeps running while the invitation is open.
 Join sync from an empty database with a device invitation.
 
 ```sh
-aven sync join
+aven sync join [--yes]
+aven sync join --new-invitation [--yes]
 ```
 
-Paste the invitation, or pipe it to standard input, while the inviting device
-waits. Joining downloads the synced data and then its images. Rerun the command
-to resume an interrupted join.
+Paste the invitation without terminal echo, or pipe it to standard input, while
+the inviting device waits. A fresh join shows the server and asks for
+confirmation; `--yes` is required for piped input. Joining downloads the synced
+data and then its images. Rerun `aven sync join` to resume an interrupted join
+without supplying the invitation. Use `--new-invitation` only when continuing
+with a replacement invitation from the original inviting device.
 
 #### `aven sync device`
 
@@ -940,9 +946,9 @@ uploading new changes. `access-refused` records when the server refused this
 device's credentials. It may have been removed, but the refusal alone does not
 prove that; check from another device. Local tasks and images remain available,
 and a successful sync clears the state. Set-up databases also report the
-server, whether local changes wait to sync, the server position, pending image
+server, whether local changes wait to sync, open conflicts, pending image
 uploads, downloads, and unavailable images, plus whether an invitation is open
-and its expiry. The versioned JSON report omits invitation text, keys, and task
+and its expiry. Text output omits the internal server position; JSON retains it. The versioned JSON report omits invitation text, keys, and task
 content.
 
 Command failures print a plain explanation, a next step, and a stable code in
@@ -961,12 +967,13 @@ aven server setup --data <path> --url <url>
 | Option | Description |
 | --- | --- |
 | `--data <path>` | Required server SQLite database path. |
-| `--bind <ip:port>` | Loopback listen address. Defaults to `127.0.0.1:0`, which chooses an available port. |
+| `--bind <ip:port>` | Loopback listen address. Defaults to `127.0.0.1:3554`; its port must match the setup URL. |
 | `--url <url>` | For `setup`: the origin devices reach, HTTPS or loopback HTTP. |
 
-`server setup` stores an expiring setup verifier and prints a setup invitation
-for `aven sync setup`. Running it again before a device claims the server
-replaces the invitation. The server binds only loopback addresses and does not
+`server setup` stores an expiring setup verifier, prints a setup invitation for
+`aven sync setup`, and prints the matching `aven server --data ... --bind ...`
+command to standard error. Running setup again before a device claims the
+server replaces the invitation. The server binds only loopback addresses and does not
 terminate TLS; put a TLS reverse proxy in front of it. Both commands refuse
 storage that holds change history, including storage from the unencrypted sync
 of earlier releases. The server shuts down gracefully on an operating-system

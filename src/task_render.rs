@@ -18,7 +18,7 @@ pub(crate) use json::{
 };
 pub(crate) use markdown::{gist_description, gist_filename, task_markdown};
 pub(crate) use text::{
-    print_full_task_report, print_task_dependency_summary, print_task_line_item,
+    print_full_task_report, print_task_dependency_summary, print_task_line_item, task_line_text,
 };
 
 use anyhow::Result;

@@ -144,15 +144,30 @@ pub(super) async fn add_runtime_database_sections(
             },
         );
         if let Some(database) = database {
-            match crate::sync::encrypted::is_set_up(database).await {
-                Ok(true) => sync_section.info("sync.set_up", "set up", "yes"),
-                Ok(false) => sync_section.info(
-                    "sync.set_up",
-                    "set up",
-                    "no; run `aven sync setup` or `aven sync join`",
-                ),
+            match crate::sync::encrypted::status_report(database).await {
+                Ok(status) => {
+                    sync_section.info(
+                        "sync.set_up",
+                        "set up",
+                        if status.state == "not-set-up" {
+                            "no; run `aven sync setup` or `aven sync join`"
+                        } else {
+                            "yes"
+                        },
+                    );
+                    sync_section.info(
+                        "sync.server",
+                        "server",
+                        status.server.as_deref().unwrap_or("none"),
+                    );
+                    sync_section.info(
+                        "sync.state",
+                        "state",
+                        crate::sync::encrypted::status_state_words(status.state),
+                    );
+                }
                 Err(error) => {
-                    sync_section.check("sync.set_up", "set up", false, format!("{error:#}"))
+                    sync_section.check("sync.state", "state", false, format!("{error:#}"))
                 }
             }
         }

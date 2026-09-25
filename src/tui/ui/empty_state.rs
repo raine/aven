@@ -549,11 +549,11 @@ fn scope_empty_state(scope: &TaskScope) -> EmptyState {
     let (title, detail) = match scope {
         TaskScope::Workspace => (
             "No tasks in this workspace",
-            "Add the first task to start building your queue.",
+            "Add the first task, or use :sync to join an existing sync.",
         ),
         TaskScope::Project(_) => (
             "No tasks in this project",
-            "Add the first task for this project.",
+            "Add the first task, or use :sync to join an existing sync.",
         ),
     };
     EmptyState::new(

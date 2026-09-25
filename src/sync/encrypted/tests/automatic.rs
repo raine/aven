@@ -103,8 +103,8 @@ async fn daemon_waits_for_setup_then_syncs_encrypted_rounds_on_wake() {
             .contains(&"Synced by the daemon".to_string())
     );
 
-    // Daemon logs report rounds without task content.
+    // Plain daemon events are not duplicated by tracing output.
     let log = log.lock().unwrap().clone();
-    assert!(log.contains("daemon sync completed"), "{log}");
+    assert!(!log.contains("daemon sync completed"), "{log}");
     assert!(!log.contains("Synced by the daemon"));
 }

@@ -53,14 +53,7 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
     let socket = UdpSocket::bind(wake_addr).await.with_context(|| {
         format!("could not bind daemon wake address {wake_addr}; is another daemon running?")
     })?;
-    info!(
-        db = %args.db_path.display(),
-        wake_addr = %wake_addr,
-        interval_seconds,
-        "daemon starting"
-    );
     println!("daemon db={} wake={}", args.db_path.display(), wake_addr);
-
     let blob_dir = crate::config::resolve_blob_dir(&args.db_path, &args.config)?;
     let lifecycle_policy = args.config.local.attachment_lifecycle.policy();
     let binary_fingerprint = current_binary_fingerprint()?;
@@ -101,7 +94,6 @@ async fn run_loop(
             result = socket.recv_from(&mut wake_buf) => {
                 if let Err(err) = result {
                     warn!(error = %err, "daemon wake receive failed");
-                    eprintln!("daemon wake failed: {err}");
                 } else {
                     debug!("daemon wake received");
                 }
@@ -113,7 +105,6 @@ async fn run_loop(
             }
             _ = sleep_until(next_binary_check) => {
                 if binary_changed(&binary_fingerprint)? {
-                    info!(path = %binary_fingerprint.path.display(), "daemon executable changed");
                     println!("daemon-executable-changed path={}", binary_fingerprint.path.display());
                     break;
                 }
@@ -139,7 +130,6 @@ async fn run_loop(
                     Ok(DaemonRound::NotSetUp) => {
                         if !awaiting_setup {
                             awaiting_setup = true;
-                            info!("daemon sync waiting for setup");
                             println!("daemon-sync-not-set-up hint=\"run `aven sync setup` or `aven sync join`\"");
                         }
                         backoff_seconds = 1;
@@ -155,7 +145,6 @@ async fn run_loop(
                         next_sync = Instant::now() + Duration::from_secs(retry_seconds);
                         retry_not_before = Some(next_sync);
                         warn!(error = %err, retry_seconds, "daemon sync failed");
-                        eprintln!("daemon sync failed: {err}");
                     }
                 }
             }
@@ -201,12 +190,6 @@ async fn sync_once(database: &Database, config: &AppConfig) -> Result<DaemonRoun
     let round = encrypted::daemon_round(database, config, DAEMON_ROUND_BUDGET).await?;
     match &round {
         DaemonRound::Completed(outcome) => {
-            info!(
-                rounds = outcome.rounds,
-                metadata_caught_up = outcome.metadata_caught_up,
-                images = outcome.images,
-                "daemon sync completed"
-            );
             println!(
                 "daemon-synced rounds={} metadata_caught_up={} images={}",
                 outcome.rounds, outcome.metadata_caught_up, outcome.images
@@ -227,13 +210,6 @@ async fn maintain_attachments(
         .await
     {
         Ok(summary) => {
-            info!(
-                eligible = summary.eligible.count,
-                eligible_bytes = summary.eligible.bytes,
-                pruned = summary.pruned.count,
-                pruned_bytes = summary.pruned.bytes,
-                "attachment maintenance completed"
-            );
             println!(
                 "daemon-maintained eligible={} eligible_bytes={} pruned={} pruned_bytes={}",
                 summary.eligible.count,

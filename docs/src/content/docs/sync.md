@@ -95,8 +95,10 @@ running:
 aven sync invite
 ```
 
-The command prints an `aven://pair/v2/` invitation and, in an interactive
-terminal, also shows it as a QR code. In the TUI, choose **Add device** in the
+The command prints an `aven://pair/v2/` invitation to standard output and, in
+an interactive terminal, also shows it as a QR code. Its eventual **Device
+added** message goes to standard error, so redirected standard output contains
+only the invitation. In the TUI, choose **Add device** in the
 Sync dialog, or `:add-device`, to show the QR code, the time left, and the join
 command for the other device. The TUI keeps waiting after you close the overlay
 and shows the open invitation in the header and Sync dialog. To paste the
@@ -111,14 +113,15 @@ On the new device, use an empty database and paste the invitation:
 aven sync join
 ```
 
-In the TUI, choose **Join existing sync** in the Sync dialog, paste the
-invitation, and confirm the server. A database that already has tasks or other
+On a terminal, Aven hides the pasted invitation, shows the server, and asks for
+confirmation. Use `--yes` when piping the invitation. In the TUI, choose **Join
+existing sync** in the Sync dialog, paste the invitation, and confirm the server. A database that already has tasks or other
 data cannot join, because existing local data cannot be merged with synced data
 yet; the dialog explains this and changes nothing. While joining waits for the
 inviting device and downloads tasks, the TUI pauses adding tasks, projects,
 labels, and workspaces. Once tasks arrive they appear in the list while images
-keep downloading. **Resume joining** continues an interrupted join without the
-invitation. If the inviting device does not add this one in time, keep it waiting and
+keep downloading. **Resume joining** or rerunning `aven sync join` continues an
+interrupted join without asking for the invitation. If the inviting device does not add this one in time, keep it waiting and
 resume. A timeout does not show whether the invitation expired. If it expired,
 create a new invitation on the same inviting device and continue with it:
 **Use a new invitation** in the TUI, or `aven sync join --new-invitation` on the
@@ -216,7 +219,10 @@ aven sync --json
 ```
 
 Each sync exchanges bounded rounds until tasks are up to date and image
-transfers settle. Sync always uses the server chosen during setup or join.
+transfers settle. Text and JSON output report sent and received changes, open
+conflicts, and how many conflicts were newly created in that run. New conflicts
+are identified by their conflict identities, not by comparing counts. Sync
+always uses the server chosen during setup or join.
 
 Check local state without contacting the server:
 
@@ -226,7 +232,8 @@ aven sync status --json
 ```
 
 The status report shows whether the database is set up, the server, whether
-local changes wait to sync, and pending image uploads and downloads. If the
+local changes wait to sync, open conflicts, and pending image uploads and
+downloads. Text output omits the internal server position; JSON retains it. If the
 server refuses this device's credentials, the status persists
 `access-refused` with the time of the refusal. This does not prove that the
 device was removed; check from another device. Local tasks and images remain

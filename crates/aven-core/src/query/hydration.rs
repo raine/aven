@@ -131,6 +131,22 @@ pub async fn build_task_list_items(
             rollup
         });
         let recurrence = enrichment.recurrence_by_task.remove(&task_id);
+        let conflicts = if matches!(
+            hydration,
+            TaskHydration::Detail | TaskHydration::DetailWithoutActivity
+        ) {
+            super::details::task_detail_conflicts(conn, workspace_id, &task_id)
+                .await?
+                .into_iter()
+                .map(|conflict| super::TaskConflictValue {
+                    field: conflict.field,
+                    local_value: conflict.local_value,
+                    remote_value: conflict.remote_value,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let queue = queue_meta_on(
             &task,
             has_conflict,
@@ -150,6 +166,7 @@ pub async fn build_task_list_items(
             live_attachment_count,
             metadata,
             activity,
+            conflicts,
             has_conflict,
             unresolved_blocker_count,
             dependent_count,

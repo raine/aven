@@ -69,15 +69,10 @@ impl App {
         }
         let mut lines = Vec::new();
         for target in &targets {
-            lines.push(format!("field={}", target.field));
-            lines.push(format!(
-                "local {}: {}",
-                target.variant_a, target.local_value
-            ));
-            lines.push(format!(
-                "remote {}: {}",
-                target.variant_b, target.remote_value
-            ));
+            lines.push(target.field.clone());
+            lines.push(format!("this device: {}", target.local_value));
+            lines.push(format!("other device: {}", target.remote_value));
+            lines.push("resolve: c a this · c r other · c m manual".to_string());
             lines.push(String::new());
         }
         if lines.last().is_some_and(String::is_empty) {
@@ -217,8 +212,12 @@ impl App {
             ConflictResolutionChoice::Local => CONFLICT_CONFIRM_LOCAL_TITLE,
             ConflictResolutionChoice::Remote => CONFLICT_CONFIRM_REMOTE_TITLE,
         };
+        let device = match choice {
+            ConflictResolutionChoice::Local => "this device's",
+            ConflictResolutionChoice::Remote => "the other device's",
+        };
         let prompt = format!(
-            "Resolve field={} with {}?",
+            "Keep {device} {}? {}",
             target.field,
             truncate_value_preview(&value, 60)
         );
