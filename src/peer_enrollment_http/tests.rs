@@ -1433,3 +1433,81 @@ async fn expired_sent_invitation_withdraws_by_rotation_unless_admission_won() {
     assert!(client.complete(&late_keys, &late_db).await.unwrap());
     task.abort();
 }
+
+#[tokio::test]
+async fn only_authentication_refusals_read_as_access_refusals() {
+    use crate::sync::error_explanations::is_access_refusal;
+    use axum::routing::post;
+
+    let cases = [
+        (
+            StatusCode::FORBIDDEN,
+            "enrollment-unauthorized",
+            "error enrollment-unauthorized",
+            true,
+        ),
+        (
+            StatusCode::BAD_REQUEST,
+            "enrollment-refused",
+            "error enrollment-refused outcome-unknown",
+            false,
+        ),
+        (
+            StatusCode::REQUEST_TIMEOUT,
+            "enrollment-timeout",
+            "error enrollment-timeout outcome-unknown",
+            false,
+        ),
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "enrollment-server-error",
+            "error enrollment-server outcome-unknown",
+            false,
+        ),
+        (
+            StatusCode::BAD_GATEWAY,
+            "",
+            "error enrollment-server outcome-unknown",
+            false,
+        ),
+    ];
+    for (status, body, expected, refusal) in cases {
+        let app = Router::new().route(PATH, post(move || async move { (status, body) }));
+        let (origin, task) = e2ee_http::serve(app, "127.0.0.1:0").await;
+        let error = Client::new(&origin)
+            .unwrap()
+            .exchange(
+                Operation::Mailbox {
+                    vault: [0; 32],
+                    handle: [0; 32],
+                },
+                None,
+            )
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(error.to_string(), expected);
+        assert_eq!(is_access_refusal(&error), refusal, "{expected}");
+        task.abort();
+    }
+    // An oversized error body is a server failure, not a refusal.
+    let app = Router::new().route(
+        PATH,
+        post(|| async { (StatusCode::BAD_REQUEST, "x".repeat(1024)) }),
+    );
+    let (origin, task) = e2ee_http::serve(app, "127.0.0.1:0").await;
+    let error = Client::new(&origin)
+        .unwrap()
+        .exchange(
+            Operation::Mailbox {
+                vault: [0; 32],
+                handle: [0; 32],
+            },
+            None,
+        )
+        .await
+        .map(|_| ())
+        .unwrap_err();
+    assert!(!is_access_refusal(&error), "{error}");
+    task.abort();
+}

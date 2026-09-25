@@ -56,7 +56,7 @@ pub(crate) fn has_code(error: &Error, expected: &str) -> bool {
 
 pub(crate) fn is_access_refusal(error: &Error) -> bool {
     has_code(error, "sync-server-refused")
-        || has_code(error, "enrollment-refused")
+        || has_code(error, "enrollment-unauthorized")
         || has_code(error, "enrollment-revoked")
         || has_code(error, "sync-device-removed")
 }
@@ -420,7 +420,7 @@ pub(crate) fn explain(
         });
     }
     if has("sync-server-refused")
-        || (has("enrollment-refused")
+        || (has("enrollment-unauthorized")
             && matches!(
                 action,
                 ErrorAction::Sync
@@ -433,8 +433,19 @@ pub(crate) fn explain(
         return Some(access_refused(if has("sync-server-refused") {
             "sync-server-refused"
         } else {
-            "enrollment-refused"
+            "enrollment-unauthorized"
         }));
+    }
+    if has("enrollment-timeout") || has("enrollment-server") {
+        return Some(Explanation {
+            code: if has("enrollment-timeout") {
+                "enrollment-timeout"
+            } else {
+                "enrollment-server"
+            },
+            message: "The sync server couldn't complete the request.",
+            next_step: "Try again later. Local work continues.",
+        });
     }
     if has("sync-device-removal-unfinished") || has("management-unfinished") {
         return Some(Explanation {
@@ -565,7 +576,7 @@ mod tests {
 
     #[test]
     fn access_refusal_names_removal_only_as_a_possibility() {
-        let error = anyhow!("error enrollment-refused outcome-unknown")
+        let error = anyhow!("error enrollment-unauthorized")
             .context("error sync-server-refused hint=\"raw\"");
         let explanation = explain(ErrorAction::Sync, ErrorSurface::Tui, &error).unwrap();
         assert_eq!(explanation.code, "sync-server-refused");

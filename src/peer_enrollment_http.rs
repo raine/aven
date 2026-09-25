@@ -187,6 +187,12 @@ async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response
         Outcome::Dispatched(Err(error)) if is_stale(&error) => {
             (StatusCode::CONFLICT, "membership-stale").into_response()
         }
+        Outcome::Dispatched(Err(error)) if is_unauthorized(&error) => {
+            (StatusCode::FORBIDDEN, "enrollment-unauthorized").into_response()
+        }
+        Outcome::Dispatched(Err(error)) if aven_core::db::is_storage_error(&error) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "enrollment-server-error").into_response()
+        }
         Outcome::Dispatched(Err(_)) => {
             (StatusCode::BAD_REQUEST, "enrollment-refused").into_response()
         }
@@ -425,7 +431,7 @@ impl Client {
             {
                 ensure!(
                     chunk.len() <= 256 - response_bytes.len(),
-                    "error enrollment-refused outcome-unknown"
+                    "error enrollment-server outcome-unknown"
                 );
                 response_bytes.extend_from_slice(&chunk);
             }
@@ -443,7 +449,20 @@ impl Client {
             if busy {
                 anyhow::bail!("error enrollment-busy");
             }
-            anyhow::bail!("error enrollment-refused outcome-unknown");
+            // Only an authentication refusal says anything about this device's
+            // access; timeouts and server failures stay ordinary errors.
+            match (status, response_bytes.as_slice()) {
+                (StatusCode::FORBIDDEN, b"enrollment-unauthorized") => {
+                    anyhow::bail!("error enrollment-unauthorized")
+                }
+                (StatusCode::BAD_REQUEST, b"enrollment-refused") => {
+                    anyhow::bail!("error enrollment-refused outcome-unknown")
+                }
+                (StatusCode::REQUEST_TIMEOUT, _) => {
+                    anyhow::bail!("error enrollment-timeout outcome-unknown")
+                }
+                _ => anyhow::bail!("error enrollment-server outcome-unknown"),
+            }
         };
         ensure!(
             response.status() == StatusCode::OK
@@ -453,7 +472,7 @@ impl Client {
                     .and_then(|h| h.to_str().ok())
                     == Some("application/json")
                 && !response.headers().contains_key(header::CONTENT_ENCODING),
-            "error enrollment-refused outcome-unknown"
+            "error enrollment-server outcome-unknown"
         );
         ensure!(
             response
@@ -896,6 +915,12 @@ fn busy_retry_delay(attempt: usize, retry_after: u64) -> std::time::Duration {
 
 fn is_stale(error: &anyhow::Error) -> bool {
     error.is::<membership::StaleContext>()
+}
+/// Credential or membership authentication failed for this request.
+fn is_unauthorized(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.to_string() == "error enrollment-unauthorized")
 }
 #[cfg(test)]
 mod tests;

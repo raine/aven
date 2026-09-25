@@ -237,9 +237,10 @@ downloads. Text output omits the internal server position; JSON retains it. If t
 server refuses this device's credentials, the status persists
 `access-refused` with the time of the refusal. This does not prove that the
 device was removed; check from another device. Local tasks and images remain
-available, and a successful retry clears the refusal. The TUI shows a red sync
-error and offers **Sync now**, but disables device management until that retry
-succeeds. JSON is a versioned report intended for scripts and omits keys,
+available, and any later request the server accepts, such as a sync or device
+list, clears the refusal. Timeouts and server failures are not refusals. The TUI
+shows a red sync error and offers **Sync now** and cancelling an open
+invitation, but disables device management until a request succeeds. JSON is a versioned report intended for scripts and omits keys,
 invitations, and task content.
 
 CLI failures show a plain explanation, a next step, and a stable code in square

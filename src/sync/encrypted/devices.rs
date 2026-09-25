@@ -106,7 +106,7 @@ pub(crate) async fn load_devices(database: &Database, config: &AppConfig) -> Res
         .refresh_inputs(&store, database, &mut inputs)
         .await
         .map_err(|error| match error.to_string().as_str() {
-            "error enrollment-refused outcome-unknown" => error.context(REFUSED),
+            "error enrollment-unauthorized" => error.context(REFUSED),
             _ => explain_revoked(error),
         });
     track_access_result(database, refreshed).await?;
@@ -312,8 +312,7 @@ async fn explain_removal_error(
         "error management-unfinished" => {
             "error sync-device-removal-unfinished hint=\"an earlier device removal from this device is unfinished; run `aven sync` to finish it, then retry\""
         }
-        // A lost reply and a refused credential look the same here.
-        "error enrollment-refused outcome-unknown" => {
+        "error enrollment-unauthorized" => {
             "error sync-device-removal-incomplete hint=\"rerun the same command; it resumes this removal. If the server keeps refusing, another device may have removed this device from sync\""
         }
         _ => {
@@ -386,7 +385,7 @@ pub(crate) async fn finish_removal(database: &Database, config: &AppConfig) -> R
         .finish_pending_management(&store, database)
         .await
         .map_err(|error| match error.to_string().as_str() {
-            "error enrollment-refused outcome-unknown" => error.context(REFUSED),
+            "error enrollment-unauthorized" => error.context(REFUSED),
             _ => explain_revoked(error),
         });
     track_access_result(database, finished).await?;

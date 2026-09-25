@@ -272,3 +272,9 @@ mod tests;
 
 #[cfg(test)]
 mod payload_tests;
+
+/// Whether `error` came from the database engine, such as a lock timeout,
+/// rather than a decision made on stored data.
+pub fn is_storage_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| cause.is::<sqlx::Error>())
+}

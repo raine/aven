@@ -191,13 +191,20 @@ pub(crate) fn sync_actions(
     match state.page {
         SyncPage::Home if activity.running.is_some() => Vec::new(),
         SyncPage::Home => match status.phase {
-            LocalPhase::SetUp if status.access_refused_at.is_some() => vec![SyncAction::SyncNow],
             LocalPhase::SetUp => {
-                let mut actions = vec![SyncAction::SyncNow, SyncAction::AddDevice];
+                let refused = status.access_refused_at.is_some();
+                let mut actions = vec![SyncAction::SyncNow];
+                if !refused {
+                    actions.push(SyncAction::AddDevice);
+                }
+                // Cancelling retires the invitation locally even when the
+                // server refuses this device.
                 if status.invitation.is_some() {
                     actions.push(SyncAction::CancelInvitation);
                 }
-                actions.push(SyncAction::ManageDevices);
+                if !refused {
+                    actions.push(SyncAction::ManageDevices);
+                }
                 actions
             }
             LocalPhase::NotSetUp
@@ -482,6 +489,17 @@ mod tests {
             ..status(LocalPhase::SetUp)
         };
         assert_eq!(sync_actions(&state, &refused, &idle), [SyncAction::SyncNow]);
+        let refused_with_invitation = TuiSyncStatus {
+            invitation: Some(crate::sync::encrypted::InvitationStatus {
+                expires_at: 1,
+                keys_may_have_been_sent: false,
+            }),
+            ..refused
+        };
+        assert_eq!(
+            sync_actions(&state, &refused_with_invitation, &idle),
+            [SyncAction::SyncNow, SyncAction::CancelInvitation]
+        );
     }
 
     #[test]

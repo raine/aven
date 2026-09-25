@@ -959,7 +959,7 @@ fn explain_round_error(error: anyhow::Error) -> anyhow::Error {
         "error snapshot-not-installed" | "error enrollment-unresolved" => {
             error.context("error sync-join-incomplete hint=\"rerun `aven sync join`\"")
         }
-        "error enrollment-refused outcome-unknown" => error.context(REFUSED),
+        "error enrollment-unauthorized" => error.context(REFUSED),
         "error withdrawal-rotation-required" => error.context(KEY_CHANGE_REQUIRED),
         _ => error,
     }
@@ -979,9 +979,13 @@ async fn remember_access_refusal(database: &Database, error: &anyhow::Error) {
     }
 }
 
+/// Any authenticated server success proves current access.
 async fn track_access_result<T>(database: &Database, result: Result<T>) -> Result<T> {
     match result {
-        Ok(value) => Ok(value),
+        Ok(value) => {
+            database.clear_sync_access_refusal().await?;
+            Ok(value)
+        }
         Err(error) => {
             remember_access_refusal(database, &error).await;
             Err(error)

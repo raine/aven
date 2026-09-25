@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn access_refusals_name_removal_only_as_a_possibility() {
-        let error = anyhow!("error enrollment-refused outcome-unknown")
+        let error = anyhow!("error enrollment-unauthorized")
             .context("error sync-server-refused hint=\"raw\"");
         let message = failure(OperationKind::Sync, &error).message;
         assert!(message.contains("may have been removed"), "{message}");

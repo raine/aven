@@ -5,7 +5,9 @@ description: Release notes for aven.
 
 ## Unreleased
 
-- Sync now reports sent and received changes plus open and newly created conflicts. Conflict values in the TUI are labeled by device without exposing variant IDs. Setup and join hide pasted invitations, join confirms the server and resumes without another invitation, and `aven sync invite` keeps standard output script-safe by writing **Device added** to standard error.
+- Fix: Encrypted sync setup no longer discards its setup keys when a server storage error follows an accepted claim, and recovers from an interrupted cancellation of a refused setup. Server timeouts and failures no longer mark a device's access as refused, any accepted request clears the refusal, and the TUI keeps invitation cancellation available while access is refused.
+
+- Sync now reports sent and received changes plus open and newly created conflicts. Conflict values in the TUI are labeled current and incoming without exposing variant IDs. Setup and join hide pasted invitations, join confirms the server and resumes without another invitation, and `aven sync invite` keeps standard output script-safe by writing **Device added** to standard error.
 
 - Sync on the inviting device keeps running while a device invitation is open. If an invitation expires after keys may have been sent to a device that never joined, the next sync changes keys before uploading new changes; until then it still downloads changes from other devices, and `aven sync status` reports `key-change-pending`. See [Sync across devices](https://aventasks.dev/sync/).
 

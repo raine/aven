@@ -137,6 +137,12 @@ async fn cli_lists_and_removes_devices_with_resumable_removal() {
     let recovered = status(&a).await;
     assert_eq!(recovered["state"], "ready");
     assert!(recovered["access_refused_at"].is_null());
+    // So does any other authenticated success, such as listing devices.
+    let database = aven_core::db::Database::open(&a.db()).await.unwrap();
+    database.record_sync_access_refusal().await.unwrap();
+    drop(database);
+    devices(&a).await;
+    assert!(status(&a).await["access_refused_at"].is_null());
 
     // Every device sees the same verified membership and only itself as current.
     let listing = devices(&a).await;
