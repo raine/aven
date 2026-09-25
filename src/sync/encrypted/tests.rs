@@ -397,7 +397,13 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
         error.contains("bootstrap-setup-invitation-rejected"),
         "{error}"
     );
-    assert!(error.contains("sync-setup-invitation-rejected"), "{error}");
+    assert!(
+        error.contains("sync-setup-fenced-invitation-rejected"),
+        "{error}"
+    );
+    assert!(error.contains("newest invitation for that same server storage"));
+    assert!(error.contains("back up this database and restore it to a new path"));
+    assert!(!error.contains("nothing here was changed"));
     let setup_invitation = reissued;
     let output = a
         .run_with_input(&["sync", "setup"], &setup_invitation)

@@ -69,6 +69,12 @@ fn explain(kind: OperationKind, error: &anyhow::Error) -> &'static str {
         return "This server already belongs to another sync. Nothing here was changed. \
                 To use that sync, join it from an empty database.";
     }
+    if has("sync-setup-fenced-invitation-rejected") {
+        return "This setup is already frozen. Resume with the invitation that started setup, \
+                or the newest invitation for that same server storage. If neither is \
+                available, back up this database and restore it to a new path. Local \
+                editing and export still work.";
+    }
     if has("sync-setup-invitation-rejected") {
         return "This setup invitation expired, was replaced, or is for different storage. \
                 Nothing here was changed. Create a current invitation for this unclaimed \
@@ -224,6 +230,14 @@ mod tests {
                 .message
                 .contains("Nothing here was changed")
         );
+
+        let fenced = anyhow!("error bootstrap-setup-invitation-rejected")
+            .context("error sync-setup-fenced-invitation-rejected");
+        let fenced_failure = failure(OperationKind::Setup, &fenced);
+        assert!(fenced_failure.message.contains("already frozen"));
+        assert!(fenced_failure.message.contains("newest invitation"));
+        assert!(fenced_failure.message.contains("restore it to a new path"));
+        assert!(!fenced_failure.message.contains("Nothing here was changed"));
     }
 
     #[test]

@@ -289,7 +289,7 @@ pub(crate) async fn run_setup(
                         "error sync-setup-recovery-required hint=\"this fenced setup was definitely refused; back up this database and restore it to a new path for a local-only copy; local editing and export still work\"",
                     ));
                 }
-                return Err(explain_setup_refusal(error));
+                return Err(explain_fenced_setup_refusal(error));
             }
             // An unknown outcome may already have admitted this exact claim.
             // Fence and freeze the same local snapshot so retrying is safe.
@@ -797,6 +797,15 @@ fn definite_setup_refusal(error: &anyhow::Error) -> bool {
         error.to_string().as_str(),
         "error bootstrap-storage-already-claimed" | "error bootstrap-setup-invitation-rejected"
     )
+}
+
+fn explain_fenced_setup_refusal(error: anyhow::Error) -> anyhow::Error {
+    match error.to_string().as_str() {
+        "error bootstrap-setup-invitation-rejected" => error.context(
+            "error sync-setup-fenced-invitation-rejected hint=\"this setup is already frozen; resume with the invitation that started setup or the newest invitation for that same server storage; if neither is available, back up this database and restore it to a new path for a local-only copy; local editing and export still work\"",
+        ),
+        _ => error,
+    }
 }
 
 fn explain_setup_refusal(error: anyhow::Error) -> anyhow::Error {
