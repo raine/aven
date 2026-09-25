@@ -581,7 +581,7 @@ async fn tampered_grant_and_protected_loss_cannot_complete_or_regenerate() {
         .unwrap();
     let mut bad = evidence.clone();
     bad.admission.as_mut().unwrap()[1200] ^= 1;
-    assert!(peer_store.pin_peer_response(&target, &bad).await.is_err());
+    assert!(peer_store.open_peer_response(&target, &bad).await.is_err());
     assert_eq!(
         peer_store.enrollment_readiness(&target).await.unwrap(),
         EnrollmentReadiness::Pending
@@ -1509,5 +1509,166 @@ async fn only_authentication_refusals_read_as_access_refusals() {
         .map(|_| ())
         .unwrap_err();
     assert!(!is_access_refusal(&error), "{error}");
+    task.abort();
+}
+
+#[tokio::test]
+async fn late_or_invalid_mailbox_requests_never_become_candidates() {
+    let root = tempfile::tempdir().unwrap();
+    let clock = test_clock();
+    let (db, store, _server, origin, task) =
+        adopted_with_clock(root.path(), None, clock.clone()).await;
+    let client = Client::new(&origin).unwrap();
+    let target = Database::open(&root.path().join("peer.sqlite"))
+        .await
+        .unwrap();
+    let peer_store = isolated_store(target.path(), &root.path().join("peer-keys"));
+    let expires = soon();
+    let invitation = client.invite(&store, &db, expires).await.unwrap();
+    client
+        .request(&peer_store, &target, Some(invitation))
+        .await
+        .unwrap();
+    // Inputs loaded before expiry model a mailbox reply delayed past it.
+    let inputs = store.active_inputs(&db, &origin).await.unwrap();
+    let journal = store
+        .prepare_invitation(&db, &inputs, None, None)
+        .await
+        .unwrap();
+    let Reply::Mailbox(mail) = client
+        .exchange(
+            Operation::Mailbox {
+                vault: inputs.membership.genesis().context().vault_id,
+                handle: journal.handle,
+            },
+            None,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("mailbox reply")
+    };
+    let request = mail.request.unwrap();
+
+    // An invalid request fails validation without binding the journal.
+    let mut forged = request.clone();
+    *forged.last_mut().unwrap() ^= 1;
+    assert!(
+        store
+            .prepare_admission(&db, &inputs, &journal, &forged)
+            .await
+            .is_err()
+    );
+
+    advance_clock(&clock, expires);
+    let error = store
+        .prepare_admission(&db, &inputs, &journal, &request)
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "error enrollment-expired");
+    drop(inputs);
+    // Nothing could have been sent, so the invitation simply retires.
+    drop(store.tail_inputs(&db, &origin).await.unwrap());
+    assert_eq!(store.outbound_invitation(&db).await.unwrap(), None);
+    task.abort();
+}
+
+#[tokio::test]
+async fn sent_candidate_resends_exactly_after_expiry() {
+    let root = tempfile::tempdir().unwrap();
+    let clock = test_clock();
+    let (db, store, _server, origin, task) =
+        adopted_with_clock(root.path(), None, clock.clone()).await;
+    let client = Client::new(&origin).unwrap();
+    let target = Database::open(&root.path().join("peer.sqlite"))
+        .await
+        .unwrap();
+    let peer_store = isolated_store(target.path(), &root.path().join("peer-keys"));
+    let expires = soon();
+    let invitation = client.invite(&store, &db, expires).await.unwrap();
+    client
+        .request(&peer_store, &target, Some(invitation))
+        .await
+        .unwrap();
+    let inputs = store.active_inputs(&db, &origin).await.unwrap();
+    let journal = store
+        .prepare_invitation(&db, &inputs, None, None)
+        .await
+        .unwrap();
+    let Reply::Mailbox(mail) = client
+        .exchange(
+            Operation::Mailbox {
+                vault: inputs.membership.genesis().context().vault_id,
+                handle: journal.handle,
+            },
+            None,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("mailbox reply")
+    };
+    let request = mail.request.unwrap();
+    let record = store
+        .prepare_admission(&db, &inputs, &journal, &request)
+        .await
+        .unwrap();
+    advance_clock(&clock, expires);
+    // A possibly sent candidate stays resendable, byte for byte.
+    assert_eq!(
+        store
+            .prepare_admission(&db, &inputs, &journal, &request)
+            .await
+            .unwrap(),
+        record
+    );
+    drop(inputs);
+    assert_eq!(
+        store.outbound_invitation(&db).await.unwrap(),
+        Some(OutboundInvitation::Disclosed)
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn forged_admission_signature_is_not_pinned_and_correct_response_completes() {
+    let root = tempfile::tempdir().unwrap();
+    let (db, store, server, origin, task) = adopted(root.path()).await;
+    let client = Client::new(&origin).unwrap();
+    let invitation = client.invite(&store, &db, expiry()).await.unwrap();
+    let target = Database::open(&root.path().join("peer.sqlite"))
+        .await
+        .unwrap();
+    let peer_store = isolated_store(target.path(), &root.path().join("peer-keys"));
+    client
+        .request(&peer_store, &target, Some(invitation))
+        .await
+        .unwrap();
+    assert!(client.admit(&store, &db).await.unwrap());
+    let peer = peer_store
+        .prepare_peer(&target, &origin, None)
+        .await
+        .unwrap();
+    let mut forged = server
+        .membership_mailbox(peer.vault(), peer.handle())
+        .await
+        .unwrap();
+    // The signature is the final component; HPKE opening ignores it.
+    *forged.admission.as_mut().unwrap().last_mut().unwrap() ^= 1;
+    let grant = peer_store
+        .open_peer_response(&target, &forged)
+        .await
+        .unwrap();
+    assert!(
+        client
+            .finish(&peer_store, &target, &peer, &forged, grant)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        peer_store.enrollment_readiness(&target).await.unwrap(),
+        EnrollmentReadiness::Pending
+    );
+    assert!(client.complete(&peer_store, &target).await.unwrap());
     task.abort();
 }

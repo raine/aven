@@ -878,8 +878,8 @@ impl Client {
                 .await
             {
                 Ok(Reply::Mailbox(mail)) if mail.admission.is_some() => {
-                    let grant = store.pin_peer_response(db, &mail).await?;
-                    return self.finish(store, db, peer, grant).await;
+                    let grant = store.open_peer_response(db, &mail).await?;
+                    return self.finish(store, db, peer, &mail, grant).await;
                 }
                 Ok(Reply::Mailbox(_)) => waiting = true,
                 Ok(_) => {
@@ -903,6 +903,7 @@ impl Client {
         store: &ProtectedLocalKeyStore,
         db: &Database,
         peer: &membership::Joiner,
+        mail: &membership::Mailbox,
         grant: membership::ProvisionalGrant,
     ) -> Result<bool> {
         let context = Context {
@@ -913,7 +914,7 @@ impl Client {
             head: grant.outcome,
         };
         let evidence = self.membership(&context, peer.bearer()).await?;
-        store.finish_peer(db, &evidence).await?;
+        store.finish_peer(db, mail, &evidence).await?;
         Ok(true)
     }
 }

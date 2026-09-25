@@ -750,10 +750,11 @@ impl ProtectedLocalKeyStore {
                 && !self.closed(db, journal).await?,
             "error enrollment-invitation-withdrawing"
         );
-        // Binding precedes even tentative grant preparation, and never rebinds.
-        self.save_phase(db, &inputs.id, &journal.name("bound"), 2048, request)
-            .await?;
         let d = Declaration::from_record(&inputs.membership, &journal.declaration)?;
+        // Inputs may predate a long mailbox wait, so expiry is sampled here
+        // rather than when they were loaded. A candidate that may already have
+        // been sent can still be resent; anything else would be a first dispatch.
+        let expired = self.enrollment_now()? >= d.expiry();
         let mut index = 0;
         for attempt in 0..membership::MAX_CANDIDATES {
             let Some(bytes) = self
@@ -766,6 +767,9 @@ impl ProtectedLocalKeyStore {
             else {
                 break;
             };
+            // A stored candidate means this binding exists; it never rebinds.
+            self.save_phase(db, &inputs.id, &journal.name("bound"), 2048, request)
+                .await?;
             let candidate: Candidate = serde_json::from_slice(&bytes)
                 .map_err(|_| anyhow::anyhow!("error enrollment-protected-framing"))?;
             let predecessor = self.load_evidence(&candidate.predecessor)?.verify()?;
@@ -777,6 +781,11 @@ impl ProtectedLocalKeyStore {
             if inputs.membership.contains_head(&result.head())
                 || inputs.membership.head() == predecessor.head()
             {
+                let sent = journal.name(&format!("sent-{attempt}"));
+                ensure!(
+                    !expired || self.phase(db, &sent, 128).await?.is_some(),
+                    "error enrollment-expired"
+                );
                 self.save_phase(
                     db,
                     &inputs.id,
@@ -801,6 +810,7 @@ impl ProtectedLocalKeyStore {
             index < membership::MAX_CANDIDATES,
             "error membership-candidate-limit"
         );
+        ensure!(!expired, "error enrollment-expired");
         let inv = Invitation::from_protected_storage(&journal.invitation)?;
         let record = inputs.keys.authority().prepare_admission(
             &inputs.membership,
@@ -809,6 +819,11 @@ impl ProtectedLocalKeyStore {
             request,
             inputs.generation_keys(),
         )?;
+        // Binding follows the request's full validation during preparation, so
+        // an unauthenticated request never occupies it, and precedes the
+        // candidate that depends on it.
+        self.save_phase(db, &inputs.id, &journal.name("bound"), 2048, request)
+            .await?;
         let candidate = Candidate {
             predecessor: self.save_evidence(&inputs.evidence)?,
             record: record.clone(),
@@ -1186,11 +1201,36 @@ impl ProtectedLocalKeyStore {
             })
             .transpose()
     }
-    pub(crate) async fn pin_peer_response(
+    /// Opens a mailbox admission without retaining it. The signature and
+    /// membership binding are unchecked here, so only `finish_peer` pins it.
+    pub(crate) async fn open_peer_response(
         &self,
         db: &Database,
         mail: &membership::Mailbox,
     ) -> Result<membership::ProvisionalGrant> {
+        let guard = InstallationGuard::acquire(db.path())?;
+        self.validate_database(db)?;
+        let _lock = self.lock()?;
+        let id = self
+            .identity(db, &guard)
+            .await?
+            .context("error enrollment-missing")?;
+        ensure!(id.role == "peer", "error enrollment-role");
+        responding(self.attempts(db, &id).await?, mail)?.open_provisional(
+            &mail.declaration,
+            mail.admission
+                .as_deref()
+                .context("error enrollment-outcome-missing")?,
+        )
+    }
+    /// Pins `mail` only after `evidence` proves its exact outcome, so an
+    /// unverified response never blocks a correct one.
+    pub(crate) async fn finish_peer(
+        &self,
+        db: &Database,
+        mail: &membership::Mailbox,
+        evidence: &Evidence,
+    ) -> Result<()> {
         let guard = InstallationGuard::acquire(db.path())?;
         self.validate_database(db)?;
         let _lock = self.lock()?;
@@ -1206,6 +1246,8 @@ impl ProtectedLocalKeyStore {
                 .as_deref()
                 .context("error enrollment-outcome-missing")?,
         )?;
+        let verified = evidence.enrollment(&peer, grant.outcome)?;
+        let current = evidence.verify()?;
         self.save_phase(
             db,
             &id,
@@ -1214,30 +1256,6 @@ impl ProtectedLocalKeyStore {
             &serde_json::to_vec(mail)?,
         )
         .await?;
-        Ok(grant)
-    }
-    pub(crate) async fn finish_peer(&self, db: &Database, evidence: &Evidence) -> Result<()> {
-        let guard = InstallationGuard::acquire(db.path())?;
-        self.validate_database(db)?;
-        let _lock = self.lock()?;
-        let id = self
-            .identity(db, &guard)
-            .await?
-            .context("error enrollment-missing")?;
-        ensure!(id.role == "peer", "error enrollment-role");
-        let mail = self
-            .response(db)
-            .await?
-            .context("error enrollment-response-missing")?;
-        let peer = responding(self.attempts(db, &id).await?, &mail)?;
-        let grant = peer.open_provisional(
-            &mail.declaration,
-            mail.admission
-                .as_deref()
-                .context("error enrollment-outcome-missing")?,
-        )?;
-        let verified = evidence.enrollment(&peer, grant.outcome)?;
-        let current = evidence.verify()?;
         // Retain only the original outcome's ancestry, never a mutable Ready value.
         let mut original = evidence.clone();
         original
