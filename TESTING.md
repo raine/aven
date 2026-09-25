@@ -43,6 +43,21 @@ To opt in to a report of passing tests slower than one second, use
 peer_enrollment_http::tests::`. The `slow-tests` nextest profile reports slow
 statuses without changing normal test or `check-full` output.
 
+The default nextest profile uses 12 test threads. Test builds use debug level 1,
+which retains source-line tables for backtraces while reducing debugger detail
+such as local-variable information. To compare suite concurrency, warm
+`target/test` and repeat the full suite at 6, 8, and 12 threads:
+
+```sh
+env SQLX_OFFLINE=true RUST_MIN_STACK=4194304 cargo nextest run \
+    --target-dir target/test --locked --workspace --all-targets \
+    --no-fail-fast --status-level fail --test-threads 12
+```
+
+To compare test-profile builds, use separate empty target directories with
+`cargo nextest run --no-run --locked --workspace --all-targets`, setting
+`CARGO_PROFILE_TEST_DEBUG=2` or `1` in each environment.
+
 The workspace packages are `aven` and `aven-core`; `aven` depends on
 `aven-core`, not the reverse. Select the package that owns the changed behavior.
 If a core API or contract change affects its `aven` consumer, check both
