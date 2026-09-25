@@ -406,7 +406,10 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
         error.contains("sync-setup-confirmation-required"),
         "{error}"
     );
-    assert!(error.contains("non-deleted task records: 4"), "{error}");
+    assert!(
+        error.contains("tasks: 4 (including scheduled and recurring)"),
+        "{error}"
+    );
     // Setup interrupted before the server answers resumes the same capture.
     let error = failure(
         &a.run_with_input(&["sync", "setup", "--yes"], &setup_invitation)

@@ -890,7 +890,7 @@ fn confirm_setup_lines(body: &mut Body, server: &str, preview: &SetupPreview, wi
     )));
     lines.extend(paragraph(
         &format!(
-            "  {} non-deleted task records, including scheduled and recurring occurrences",
+            "  {} tasks (including scheduled and recurring)",
             preview.tasks.max(0)
         ),
         Style::new().fg(FG_MUTED),

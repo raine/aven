@@ -148,7 +148,7 @@ pub(crate) struct ServerArgs {
     #[command(subcommand)]
     pub(crate) command: Option<ServerSubcommand>,
     /// Listen address; its port must match the port in the setup URL
-    #[arg(long, default_value = "127.0.0.1:3554")]
+    #[arg(long, default_value = "127.0.0.1:3746")]
     pub(crate) bind: SocketAddr,
     /// SQLite path of storage prepared by `server setup`
     #[arg(long, required = true)]
@@ -190,7 +190,7 @@ Commands:
   help   Print this message or the help of the given subcommand(s)
 
 Options:
-      --bind <BIND>  Listen address; its port must match the port in the setup URL [default: 127.0.0.1:3554]
+      --bind <BIND>  Listen address; its port must match the port in the setup URL [default: 127.0.0.1:3746]
       --data <DATA>  SQLite path of storage prepared by `server setup`
   -h, --help         Print help
 

@@ -239,7 +239,7 @@ async fn print_setup_preview(database: &Database, config: &AppConfig, server: &s
     eprintln!("  Database: {}", database.path().display());
     eprintln!("  Server: {server}");
     eprintln!(
-        "  Workspaces: {}, non-deleted task records: {} (including scheduled and recurring occurrences)",
+        "  Workspaces: {}, tasks: {} (including scheduled and recurring)",
         preview.workspaces, preview.tasks
     );
     if preview.missing_images > 0 {

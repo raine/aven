@@ -967,7 +967,7 @@ aven server setup --data <path> --url <url>
 | Option | Description |
 | --- | --- |
 | `--data <path>` | Required server SQLite database path. |
-| `--bind <ip:port>` | Loopback listen address. Defaults to `127.0.0.1:3554`; its port must match the setup URL. |
+| `--bind <ip:port>` | Loopback listen address. Defaults to `127.0.0.1:3746`; its port must match the setup URL. |
 | `--url <url>` | For `setup`: the origin devices reach, HTTPS or loopback HTTP. |
 
 `server setup` stores an expiring setup verifier, prints a setup invitation for

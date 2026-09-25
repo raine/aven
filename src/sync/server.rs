@@ -55,7 +55,7 @@ async fn setup_server(args: ServerSetupArgs) -> Result<()> {
     let port = url::Url::parse(&args.url)
         .ok()
         .and_then(|url| url.port_or_known_default())
-        .unwrap_or(3554);
+        .unwrap_or(3746);
     eprintln!(
         "Then start the server: aven server --data {} --bind 127.0.0.1:{port}",
         args.data.display()
