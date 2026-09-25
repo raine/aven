@@ -130,7 +130,11 @@ pub(in crate::tui::ui) fn render_sync_dialog(frame: &mut Frame, view: &SyncDialo
         .take(layout.visible_rows)
         .cloned()
         .collect::<Vec<_>>();
-    let mut dialog = Dialog::new(SYNC_TITLE, layout.area.width, layout.area.height);
+    let title = match page_title(view) {
+        Some(page) => format!("{SYNC_TITLE} › {page}"),
+        None => SYNC_TITLE.to_string(),
+    };
+    let mut dialog = Dialog::new(&title, layout.area.width, layout.area.height);
     if layout.scrolling() {
         dialog = dialog.right_title(Line::from(Span::styled(
             scroll_title(layout.start, layout.body.lines.len(), layout.visible_rows),
@@ -187,6 +191,31 @@ pub(crate) fn sync_dialog_scroll_cap(view: &SyncDialogView<'_>, terminal: Size) 
         .len()
         .saturating_sub(layout.visible_rows)
         .min(u16::MAX as usize) as u16
+}
+
+/// The sub-page shown after "Sync" in the border title; the top-level page
+/// has none.
+fn page_title(view: &SyncDialogView<'_>) -> Option<&'static str> {
+    Some(match &view.state.page {
+        SyncPage::Home => return None,
+        SyncPage::Invitation {
+            kind: InvitationKind::Setup,
+            ..
+        } if view.status.phase == LocalPhase::SetupIncomplete => "Resume setup",
+        SyncPage::Invitation {
+            kind: InvitationKind::Setup,
+            ..
+        }
+        | SyncPage::ConfirmSetup { .. } => "Set up sync",
+        SyncPage::Invitation {
+            kind: InvitationKind::Join,
+            ..
+        } if view.status.phase == LocalPhase::JoinIncomplete => "Use a new invitation",
+        SyncPage::ConfirmJoin { replace: true, .. } => "Use a new invitation",
+        SyncPage::Invitation { .. } | SyncPage::ConfirmJoin { .. } => "Join existing sync",
+        SyncPage::Devices => "Manage devices",
+        SyncPage::ConfirmRemove { .. } => "Remove device",
+    })
 }
 
 fn body(view: &SyncDialogView<'_>, width: usize) -> Body {
@@ -543,10 +572,6 @@ fn short_id(device: &[u8; 32]) -> String {
 fn devices_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
     let activity = view.activity;
     let lines = &mut body.lines;
-    lines.push(Line::from(Span::styled(
-        "Devices",
-        Style::new().fg(FG).add_modifier(Modifier::BOLD),
-    )));
     let listing_failed = matches!(
         activity.device_result(),
         Some(OperationResult::Failed(failure)) if failure.kind == OperationKind::ListDevices
@@ -761,11 +786,11 @@ fn confirm_remove_lines(body: &mut Body, activity: &SyncActivity, device: &[u8; 
         })
         .unwrap_or_else(|| short_id(device));
     let lines = &mut body.lines;
-    lines.push(Line::from(Span::styled(
-        format!("Remove device {label}?"),
-        Style::new().fg(FG).add_modifier(Modifier::BOLD),
-    )));
-    lines.push(Line::from(""));
+    lines.extend(paragraph(
+        &format!("Remove {label} from sync?"),
+        Style::new().fg(FG),
+        width,
+    ));
     lines.extend(paragraph(
         "This device will lose access to future synced changes. Tasks and images it \
          already downloaded will remain on it.",
@@ -819,32 +844,24 @@ fn invitation_lines(
     width: usize,
 ) {
     let lines = &mut body.lines;
-    let (heading, guidance) = match kind {
-        InvitationKind::Setup if status.phase == LocalPhase::SetupIncomplete => (
-            "Resume setup",
+    let guidance = match kind {
+        InvitationKind::Setup if status.phase == LocalPhase::SetupIncomplete => {
             "Setup started earlier and didn't finish. Paste the same setup invitation to \
-             continue it; nothing is captured again.",
-        ),
-        InvitationKind::Setup => (
-            "Set up sync",
-            "Paste the setup invitation printed by `aven server setup` on your server.",
-        ),
-        InvitationKind::Join if status.phase == LocalPhase::JoinIncomplete => (
-            "Use a new invitation",
+             continue it; nothing is captured again."
+        }
+        InvitationKind::Setup => {
+            "Paste the setup invitation printed by `aven server setup` on your server."
+        }
+        InvitationKind::Join if status.phase == LocalPhase::JoinIncomplete => {
             "On the device that created the first invitation, use Add device or run \
              `aven sync invite` to create a new invitation, then paste it here. \
-             Invitations from other devices can't be used.",
-        ),
-        InvitationKind::Join => (
-            "Join existing sync",
+             Invitations from other devices can't be used."
+        }
+        InvitationKind::Join => {
             "On a device that already syncs, use Add device or run `aven sync invite`, \
-             then paste the invitation here.",
-        ),
+             then paste the invitation here."
+        }
     };
-    lines.push(Line::from(Span::styled(
-        heading,
-        Style::new().fg(FG).add_modifier(Modifier::BOLD),
-    )));
     lines.extend(paragraph(guidance, Style::new().fg(FG_MUTED), width));
     lines.push(Line::from(""));
     let (text, color) = match (kind, input.check()) {
@@ -891,10 +908,6 @@ fn invitation_lines(
 
 fn confirm_setup_lines(body: &mut Body, server: &str, preview: &SetupPreview, width: usize) {
     let lines = &mut body.lines;
-    lines.push(Line::from(Span::styled(
-        "Set up sync",
-        Style::new().fg(FG).add_modifier(Modifier::BOLD),
-    )));
     lines.extend(wrapped_row("Server", server, Style::new().fg(FG), width));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
@@ -947,14 +960,6 @@ fn confirm_setup_lines(body: &mut Body, server: &str, preview: &SetupPreview, wi
 
 fn confirm_join_lines(body: &mut Body, server: &str, replace: bool, width: usize) {
     let lines = &mut body.lines;
-    lines.push(Line::from(Span::styled(
-        if replace {
-            "Continue joining with a new invitation"
-        } else {
-            "Join existing sync"
-        },
-        Style::new().fg(FG).add_modifier(Modifier::BOLD),
-    )));
     lines.extend(wrapped_row("Server", server, Style::new().fg(FG), width));
     lines.push(Line::from(""));
     if replace {

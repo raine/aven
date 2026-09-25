@@ -199,6 +199,25 @@ fn dialog_text(view: SyncDialogView<'_>) -> String {
         .join(" ")
 }
 
+/// The border title row of the rendered dialog.
+fn page_title(page: SyncPage, status: TuiSyncStatus) -> String {
+    let state = borrow_value(SyncDialogState::page(page));
+    let backend = TestBackend::new(100, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| {
+            render_non_help_overlay_content(
+                frame,
+                &OverlayView::Sync(Box::new(sync_view(state, status))),
+            )
+        })
+        .unwrap();
+    (0..40)
+        .map(|row| buffer_row(terminal.backend().buffer(), row))
+        .find(|line| line.contains(SYNC_TITLE))
+        .expect("title row")
+}
+
 fn render_page(page: SyncPage, status: TuiSyncStatus, activity: SyncActivity) -> String {
     let state = borrow_value(SyncDialogState::page(page));
     dialog_text(activity_view(state, status, activity))
@@ -219,6 +238,89 @@ fn running(kind: OperationKind, stage: Option<Stage>) -> SyncActivity {
         devices: None,
         join_timed_out: false,
     }
+}
+
+#[test]
+fn sub_pages_name_themselves_in_the_border_title() {
+    let invitation = |kind| SyncPage::Invitation {
+        kind,
+        input: SecretText::default(),
+        error: None,
+    };
+    let status = |phase| TuiSyncStatus {
+        set_up: phase != LocalPhase::NotSetUp,
+        phase,
+        ..TuiSyncStatus::default()
+    };
+    let confirm_join = |replace| SyncPage::ConfirmJoin {
+        server: "https://sync.example.com".to_string(),
+        invitation: SecretText::default(),
+        replace,
+    };
+    let confirm_setup = SyncPage::ConfirmSetup {
+        server: "https://sync.example.com".to_string(),
+        preview: SetupPreview {
+            workspaces: 1,
+            tasks: 2,
+            missing_images: 0,
+            leaves_unencrypted_server: false,
+        },
+        invitation: SecretText::default(),
+    };
+    for (page, phase, expected) in [
+        (
+            invitation(InvitationKind::Setup),
+            LocalPhase::NotSetUp,
+            "Sync › Set up sync",
+        ),
+        (
+            invitation(InvitationKind::Setup),
+            LocalPhase::SetupIncomplete,
+            "Sync › Resume setup",
+        ),
+        (confirm_setup, LocalPhase::NotSetUp, "Sync › Set up sync"),
+        (
+            invitation(InvitationKind::Join),
+            LocalPhase::NotSetUp,
+            "Sync › Join existing sync",
+        ),
+        (
+            invitation(InvitationKind::Join),
+            LocalPhase::JoinIncomplete,
+            "Sync › Use a new invitation",
+        ),
+        (
+            confirm_join(false),
+            LocalPhase::NotSetUp,
+            "Sync › Join existing sync",
+        ),
+        (
+            confirm_join(true),
+            LocalPhase::JoinIncomplete,
+            "Sync › Use a new invitation",
+        ),
+        (
+            SyncPage::Devices,
+            LocalPhase::SetUp,
+            "Sync › Manage devices",
+        ),
+        (
+            SyncPage::ConfirmRemove { device: [2; 32] },
+            LocalPhase::SetUp,
+            "Sync › Remove device",
+        ),
+    ] {
+        let title = page_title(page.clone(), status(phase));
+        assert!(title.contains(expected), "{title}");
+        let body = render_page(page, status(phase), SyncActivity::default());
+        let heading = expected.trim_start_matches("Sync › ");
+        assert!(
+            !body.lines().any(|line| line.trim() == heading),
+            "in-box title for {heading}: {body}"
+        );
+    }
+    let home = page_title(SyncPage::Home, local_status());
+    assert!(!home.contains('›'), "{home}");
 }
 
 #[test]
@@ -714,7 +816,7 @@ fn removal_confirmation_explains_consequences_and_names_the_full_target() {
         device_activity(false),
     );
 
-    assert!(rendered.contains("Remove device a1a1a1a1ff…?"));
+    assert!(rendered.contains("Remove a1a1a1a1ff… from sync?"));
     assert!(rendered.contains("lose access to future synced changes"));
     assert!(rendered.contains("already downloaded will remain on it"));
     assert!(rendered.contains(&hex::encode(other)[..40]));
@@ -810,7 +912,6 @@ fn a_new_invitation_for_an_unfinished_join_explains_what_is_kept() {
         incomplete.clone(),
         SyncActivity::default(),
     );
-    assert!(form.contains("Use a new invitation"), "{form}");
     assert!(
         form.contains("device that created the first invitation"),
         "{form}"
@@ -825,10 +926,6 @@ fn a_new_invitation_for_an_unfinished_join_explains_what_is_kept() {
         },
         incomplete,
         SyncActivity::default(),
-    );
-    assert!(
-        confirm.contains("Continue joining with a new invitation"),
-        "{confirm}"
     );
     assert!(confirm.contains("keeps its identity"), "{confirm}");
     assert!(confirm.contains("earlier invitation is kept"), "{confirm}");
