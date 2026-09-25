@@ -68,15 +68,19 @@ If a core API or contract change affects its `aven` consumer, check both
 packages. Database migration or SQLx query/metadata changes also need
 `just sqlx-check`.
 
-For coordinated worktree changes, each agent runs `just check-package` for its
-affected package before handoff. The coordinator/integrator relies on the
-existing pre-push hook to run `just check-full` once, after integrating the
-changes. Do not repeat the full gate in every worktree.
+The pre-commit hook runs format, dependency/static-safety, and migration-order
+checks; it does not infer affected packages from staged paths. For coordinated
+worktree changes, each agent runs `just check-package` for its affected package
+before handoff. The coordinator/integrator relies on the existing pre-push hook
+to run `just check-full` once, after integrating the changes. Do not repeat the
+full gate in every worktree.
 
 ## Full gate on the integrated tree
 
 `just check-full` preserves the repository-wide gate: `just check`, the full
-test suite, and deferred SQLx/build checks. Use it once after integration. If
+test suite, and deferred SQLx validation. All-target nextest compilation also
+emits the normal `aven` binary used by integration tests, so no separate
+workspace build is needed. Use the full gate once after integration. If
 the affected package or boundary is unclear, changes span packages, workspace
 configuration or shared test infrastructure changes, or focused checks leave
 material risk, choose the conservative full gate rather than guessing.

@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/aven-test-sqlx-check.XXXXXX")"
+trap 'rm -rf "$tmp_dir"' EXIT
+fixture="$tmp_dir/repo"
+mkdir -p "$fixture/scripts" "$tmp_dir/bin"
+cp "$repo_root/scripts/sqlx-check-if-needed" "$fixture/scripts/"
+chmod +x "$fixture/scripts/sqlx-check-if-needed"
+
+cat >"$tmp_dir/bin/just" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$AVEN_TEST_JUST_LOG"
+EOF
+chmod +x "$tmp_dir/bin/just"
+
+git -C "$fixture" init -q -b main
+git -C "$fixture" config user.name 'SQLx gate test'
+git -C "$fixture" config user.email 'sqlx-gate-test@example.invalid'
+mkdir -p "$fixture/src" "$fixture/crates/aven-core/migrations" \
+  "$fixture/crates/aven-core/.sqlx"
+printf '[workspace]\n' >"$fixture/Cargo.toml"
+printf '# lock\n' >"$fixture/Cargo.lock"
+printf 'fn main() {}\n' >"$fixture/build.rs"
+printf 'SELECT 1;\n' >"$fixture/crates/aven-core/migrations/001_init.sql"
+printf '{}\n' >"$fixture/crates/aven-core/.sqlx/query.json"
+printf 'pub fn query() { sqlx::query!("SELECT 1"); }\n' >"$fixture/src/query.rs"
+printf 'pub fn unrelated() {}\n' >"$fixture/src/unrelated.rs"
+git -C "$fixture" add .
+git -C "$fixture" commit -qm 'baseline'
+git -C "$fixture" switch -qc work
+
+log_file="$tmp_dir/just.log"
+output_file="$tmp_dir/output.log"
+run_gate() {
+  : >"$log_file"
+  (cd "$fixture" && PATH="$tmp_dir/bin:$PATH" \
+    AVEN_TEST_JUST_LOG="$log_file" WM_TARGET_BRANCH=main \
+    scripts/sqlx-check-if-needed) >"$output_file" 2>&1
+}
+assert_skip() {
+  run_gate
+  if [[ -s "$log_file" ]] || ! grep -Fq 'skip sqlx-check:' "$output_file"; then
+    cat "$output_file" >&2
+    echo 'expected SQLx check to be skipped' >&2
+    exit 1
+  fi
+}
+assert_check() {
+  run_gate
+  if ! grep -Fxq 'sqlx-check' "$log_file" || ! grep -Fq 'run sqlx-check:' "$output_file"; then
+    cat "$output_file" >&2
+    echo 'expected SQLx check to run' >&2
+    exit 1
+  fi
+}
+reset_fixture() {
+  git -C "$fixture" reset -q --hard main
+  git -C "$fixture" clean -q -fd
+}
+
+printf 'pub fn unrelated() { let _ = 1; }\n' >"$fixture/src/unrelated.rs"
+assert_skip
+reset_fixture
+
+printf 'pub fn added() { sqlx::query!("SELECT 1"); }\n' >"$fixture/src/new_query.rs"
+assert_check
+reset_fixture
+
+printf 'pub fn staged() { sqlx::query!("SELECT 1"); }\n' >"$fixture/src/staged.rs"
+git -C "$fixture" add src/staged.rs
+rm "$fixture/src/staged.rs"
+assert_check
+reset_fixture
+
+printf 'pub fn query() { sqlx::query!("SELECT 1"); }\npub fn changed() {}\n' \
+  >"$fixture/src/query.rs"
+assert_check
+reset_fixture
+
+printf 'pub fn query() {}\n' >"$fixture/src/query.rs"
+assert_check
+reset_fixture
+
+rm "$fixture/src/query.rs"
+assert_check
+reset_fixture
+
+printf '\n# changed\n' >>"$fixture/Cargo.toml"
+assert_check
+reset_fixture
+printf '\n# changed\n' >>"$fixture/Cargo.lock"
+assert_check
+reset_fixture
+printf 'fn main() { /* changed */ }\n' >"$fixture/build.rs"
+assert_check
+reset_fixture
+printf 'SELECT 2;\n' >"$fixture/crates/aven-core/migrations/002_next.sql"
+assert_check
+reset_fixture
+printf '{"query": 2}\n' >"$fixture/crates/aven-core/.sqlx/query.json"
+assert_check
+reset_fixture
+printf 'SELECT 2;\n' >"$fixture/src/query.sql"
+assert_check
+reset_fixture
+
+ln -s missing.rs "$fixture/src/uncertain.rs"
+assert_check
+reset_fixture
+
+: >"$log_file"
+if (cd "$fixture" && PATH="$tmp_dir/bin:$PATH" \
+  AVEN_TEST_JUST_LOG="$log_file" WM_TARGET_BRANCH=missing \
+  scripts/sqlx-check-if-needed) >"$output_file" 2>&1; then
+  :
+else
+  cat "$output_file" >&2
+  echo 'expected missing target to fail closed through SQLx validation' >&2
+  exit 1
+fi
+if ! grep -Fxq 'sqlx-check' "$log_file"; then
+  cat "$output_file" >&2
+  echo 'missing target did not invoke SQLx validation' >&2
+  exit 1
+fi
+
+echo 'SQLx change detection checks passed'

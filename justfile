@@ -23,12 +23,12 @@ migration-new name:
     @scripts/new-migration {{name}}
 
 # Run commit-time checks without mutating files
-pre-commit: check
+pre-commit: check-fast-readonly migration-order
 
-# Run checks that are deferred until workmux merge
-pre-merge: sqlx-check-if-needed build
+# Run SQLx validation deferred until workmux merge
+pre-merge: sqlx-check-if-needed
 
-# Run every check, including tests and redundant compile gates
+# Run every check, including tests and deferred SQLx validation
 check-full: check test pre-merge
 
 # Configure Git to use the repository hooks
@@ -95,6 +95,7 @@ check-types:
 public-tooling-test:
     scripts/test-process-lock
     scripts/test-pre-commit
+    scripts/test-sqlx-check-if-needed
     scripts/test-workmux-environment
 
 # Run tests
@@ -138,7 +139,7 @@ sqlx-prepare:
     rm -f "$db"
     DATABASE_URL="sqlite://$db" cargo sqlx database create
     DATABASE_URL="sqlite://$db" cargo sqlx migrate run --source crates/aven-core/migrations
-    (cd crates/aven-core && DATABASE_URL="sqlite://$db" cargo sqlx prepare -- --all-targets)
+    (cd crates/aven-core && DATABASE_URL="sqlite://$db" cargo sqlx prepare -- --lib)
 
 # Check sqlx offline query metadata
 sqlx-check:
@@ -148,39 +149,11 @@ sqlx-check:
     rm -f "$db"
     scripts/quiet-check sqlx-create env DATABASE_URL="sqlite://$db" cargo sqlx database create
     scripts/quiet-check sqlx-migrate env DATABASE_URL="sqlite://$db" cargo sqlx migrate run --source crates/aven-core/migrations
-    (cd crates/aven-core && ../../scripts/quiet-check sqlx-check env DATABASE_URL="sqlite://$db" cargo sqlx prepare --check -- --all-targets --locked)
+    (cd crates/aven-core && ../../scripts/quiet-check sqlx-check env DATABASE_URL="sqlite://$db" cargo sqlx prepare --check -- --lib --locked)
 
 # Check sqlx offline query metadata when SQLx inputs changed
 sqlx-check-if-needed:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    target="${WM_TARGET_BRANCH:-main}"
-    if ! git rev-parse --verify --quiet "$target^{commit}" >/dev/null; then
-      echo "run sqlx-check: target ref '$target' not found"
-      just sqlx-check
-      exit 0
-    fi
-    mapfile -t merge_bases < <(git merge-base --all HEAD "$target" 2>/dev/null || true)
-    if [[ "${#merge_bases[@]}" -ne 1 ]]; then
-      echo "run sqlx-check: expected one merge base with '$target', got ${#merge_bases[@]}"
-      just sqlx-check
-      exit 0
-    fi
-    sqlx_paths=(
-      Cargo.lock
-      Cargo.toml
-      ':(glob)**/Cargo.toml'
-      build.rs
-      ':(glob)**/build.rs'
-      crates/aven-core/migrations
-      crates/aven-core/.sqlx
-      ':(glob)**/*.rs'
-    )
-    if git diff --quiet "${merge_bases[0]}" HEAD -- "${sqlx_paths[@]}"; then
-      echo "skip sqlx-check: SQLx inputs unchanged against $target"
-      exit 0
-    fi
-    just sqlx-check
+    @scripts/sqlx-check-if-needed
 
 # Run installed static analysis tools
 static-analysis:

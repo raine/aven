@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+target_ref="${WM_TARGET_BRANCH:-main}"
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/aven-sqlx-check.XXXXXX")"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+run_sqlx_check_and_exit() {
+  printf 'run sqlx-check: %s\n' "$1"
+  (cd "$repo_root" && just sqlx-check)
+  exit $?
+}
+
+if ! git -C "$repo_root" rev-parse --verify --quiet "$target_ref^{commit}" >/dev/null; then
+  run_sqlx_check_and_exit "target ref '$target_ref' not found"
+fi
+
+if ! merge_bases_text="$(git -C "$repo_root" merge-base --all HEAD "$target_ref" 2>/dev/null)"; then
+  run_sqlx_check_and_exit "could not determine a merge base with '$target_ref'"
+fi
+merge_bases=()
+while IFS= read -r merge_base; do
+  [[ -n "$merge_base" ]] && merge_bases+=("$merge_base")
+done <<< "$merge_bases_text"
+if [[ "${#merge_bases[@]}" -ne 1 ]]; then
+  run_sqlx_check_and_exit "expected one merge base with '$target_ref', got ${#merge_bases[@]}"
+fi
+merge_base="${merge_bases[0]}"
+
+if ! git -C "$repo_root" ls-files -u -z >"$tmp_dir/unmerged"; then
+  run_sqlx_check_and_exit "could not classify the current Git index"
+fi
+if [[ -s "$tmp_dir/unmerged" ]]; then
+  run_sqlx_check_and_exit "unmerged paths make SQLx inputs uncertain"
+fi
+
+if ! git -C "$repo_root" diff --cached --name-only -z --no-renames "$merge_base" -- >"$tmp_dir/changed-paths"; then
+  run_sqlx_check_and_exit "could not list staged changes against '$target_ref'"
+fi
+if ! git -C "$repo_root" diff --name-only -z --no-renames "$merge_base" -- >>"$tmp_dir/changed-paths"; then
+  run_sqlx_check_and_exit "could not list working-tree changes against '$target_ref'"
+fi
+if ! git -C "$repo_root" ls-files -z --others --exclude-standard >>"$tmp_dir/changed-paths"; then
+  run_sqlx_check_and_exit "could not list untracked files"
+fi
+mapfile -d '' -t changed_paths <"$tmp_dir/changed-paths"
+
+sqlx_global_input() {
+  case "$1" in
+    Cargo.lock | */Cargo.lock | Cargo.toml | */Cargo.toml \
+      | build.rs | */build.rs \
+      | migrations/* | */migrations/* \
+      | .sqlx | .sqlx/* | */.sqlx | */.sqlx/* \
+      | .cargo/config | .cargo/config.* | */.cargo/config | */.cargo/config.* \
+      | sqlx.toml | */sqlx.toml | *.sql)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+macro_classification() {
+  local source_file="$1"
+  local status
+  if perl -0777 -ne 'exit(/\bsqlx\s*::\s*query\w*\s*!/s ? 0 : 1)' "$source_file"; then
+    return 0
+  else
+    status=$?
+    if [[ "$status" -eq 1 ]]; then
+      return 1
+    fi
+    return 2
+  fi
+}
+
+for path in "${changed_paths[@]}"; do
+  if sqlx_global_input "$path"; then
+    run_sqlx_check_and_exit "changed SQLx input: $path"
+  fi
+  [[ "$path" == *.rs ]] || continue
+
+  base_entry="$(git -C "$repo_root" ls-tree "$merge_base" -- ":(literal)$path")" || \
+    run_sqlx_check_and_exit "could not inspect base-tree entry for $path"
+  index_entry="$(git -C "$repo_root" ls-files --stage -- ":(literal)$path")" || \
+    run_sqlx_check_and_exit "could not inspect index entry for $path"
+  if [[ -n "$index_entry" ]]; then
+    index_mode="${index_entry%% *}"
+    case "$index_mode" in
+      100644 | 100755) ;;
+      *) run_sqlx_check_and_exit "non-regular Rust source in index: $path" ;;
+    esac
+    index_oid="${index_entry#* }"
+    index_oid="${index_oid%% *}"
+    if ! git -C "$repo_root" cat-file blob "$index_oid" >"$tmp_dir/index-source"; then
+      run_sqlx_check_and_exit "could not read index source: $path"
+    fi
+    if macro_classification "$tmp_dir/index-source"; then
+      run_sqlx_check_and_exit "changed SQLx query macro file: $path"
+    else
+      status=$?
+      if [[ "$status" -ne 1 ]]; then
+        run_sqlx_check_and_exit "could not classify index Rust source: $path"
+      fi
+    fi
+  fi
+
+  if [[ -n "$base_entry" ]]; then
+    base_mode="${base_entry%% *}"
+    case "$base_mode" in
+      100644 | 100755) ;;
+      *) run_sqlx_check_and_exit "non-regular Rust source in base tree: $path" ;;
+    esac
+    if ! git -C "$repo_root" show "$merge_base:$path" >"$tmp_dir/base-source"; then
+      run_sqlx_check_and_exit "could not read base-tree source: $path"
+    fi
+    if macro_classification "$tmp_dir/base-source"; then
+      run_sqlx_check_and_exit "changed SQLx query macro file: $path"
+    else
+      status=$?
+      if [[ "$status" -ne 1 ]]; then
+        run_sqlx_check_and_exit "could not classify base-tree Rust source: $path"
+      fi
+    fi
+  fi
+
+  working_path="$repo_root/$path"
+  if [[ -L "$working_path" ]]; then
+    run_sqlx_check_and_exit "symlinked Rust source makes SQLx inputs uncertain: $path"
+  elif [[ -e "$working_path" ]]; then
+    if [[ ! -f "$working_path" || ! -r "$working_path" ]] \
+      || ! cat "$working_path" >"$tmp_dir/working-source"; then
+      run_sqlx_check_and_exit "could not read working-tree Rust source: $path"
+    fi
+    if macro_classification "$tmp_dir/working-source"; then
+      run_sqlx_check_and_exit "changed SQLx query macro file: $path"
+    else
+      status=$?
+      if [[ "$status" -ne 1 ]]; then
+        run_sqlx_check_and_exit "could not classify working-tree Rust source: $path"
+      fi
+    fi
+  fi
+done
+
+printf 'skip sqlx-check: SQLx inputs unchanged against %s\n' "$target_ref"
