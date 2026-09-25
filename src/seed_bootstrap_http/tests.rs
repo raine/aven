@@ -81,6 +81,50 @@ fn budget(package: &Package) -> staging::Budget {
 }
 
 #[tokio::test]
+async fn claim_storage_error_after_commit_stays_ambiguous_and_exact_retry_succeeds() {
+    let root = tempfile::tempdir().unwrap();
+    let (_db, _store, seed, _package) = fixture(root.path()).await;
+    let server = Database::open(&root.path().join("server.sqlite"))
+        .await
+        .unwrap();
+    let (http, task) = serve(server.clone()).await;
+    let setup_secret = Secret::new([7; 32]);
+    http.claim(
+        seed.genesis(),
+        ClaimAuthentication::SetupSecret(&setup_secret),
+    )
+    .await
+    .unwrap();
+    // The reply to the committed claim was lost and the retry meets a locked
+    // server database.
+    let mut lock = aven_core::test_support::acquire(&server).await.unwrap();
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    for authentication in [
+        ClaimAuthentication::SetupSecret(&setup_secret),
+        ClaimAuthentication::SeedBearer(seed.bearer()),
+    ] {
+        let error = http
+            .claim(seed.genesis(), authentication)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(error, "error bootstrap-refused outcome-unknown");
+    }
+    sqlx::query("ROLLBACK").execute(&mut *lock).await.unwrap();
+    drop(lock);
+    http.claim(
+        seed.genesis(),
+        ClaimAuthentication::SeedBearer(seed.bearer()),
+    )
+    .await
+    .unwrap();
+    task.abort();
+}
+
+#[tokio::test]
 async fn loopback_rejects_bad_authority_context_and_bytes_without_mutation() {
     let root = tempfile::tempdir().unwrap();
     let (db, store, seed, package) = fixture(root.path()).await;

@@ -428,6 +428,31 @@ pub enum ClaimAuthentication<'a> {
     SeedBearer(&'a Secret),
 }
 
+/// A claim refusal decided inside the claim transaction. Any other claim
+/// error leaves the outcome unknown to the claimant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClaimRefusal {
+    /// The credential does not authorize this claim; `claimed` records
+    /// whether storage already held a claim.
+    Unauthorized { claimed: bool },
+    /// Storage holds a different claim.
+    Conflict,
+    /// The stored claim was retired by publication.
+    Retired,
+}
+
+impl fmt::Display for ClaimRefusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Unauthorized { .. } => "error seed-claim-unauthorized",
+            Self::Conflict => "error seed-claim-conflict",
+            Self::Retired => "error seed-claim-retired",
+        })
+    }
+}
+
+impl std::error::Error for ClaimRefusal {}
+
 /// Equality result, not proof of READY, active membership or physical durability.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClaimResult {

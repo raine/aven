@@ -2,7 +2,8 @@ use anyhow::{Result, ensure};
 use subtle::ConstantTimeEq;
 
 use super::{
-    ClaimAuthentication, ClaimResult, Genesis, SetupAuthority, codec, credential_verifier,
+    ClaimAuthentication, ClaimRefusal, ClaimResult, Genesis, SetupAuthority, codec,
+    credential_verifier,
 };
 use crate::db::{self, Database, begin_immediate};
 
@@ -53,7 +54,7 @@ impl Database {
             sqlx::query_scalar("SELECT genesis_only FROM server_seed_claim WHERE singleton = 1")
                 .fetch_optional(&mut *tx)
                 .await?;
-        ensure!(genesis_only != Some(false), "error seed-claim-retired");
+        ensure!(genesis_only != Some(false), ClaimRefusal::Retired);
         let stored: Option<Vec<u8>> =
             sqlx::query_scalar("SELECT genesis FROM server_seed_claim WHERE singleton = 1")
                 .fetch_optional(&mut *tx)
@@ -71,9 +72,14 @@ impl Database {
                     )
             }
         };
-        ensure!(authorized, "error seed-claim-unauthorized");
+        ensure!(
+            authorized,
+            ClaimRefusal::Unauthorized {
+                claimed: stored.is_some()
+            }
+        );
         if let Some(stored) = stored {
-            ensure!(stored == incoming, "error seed-claim-conflict");
+            ensure!(stored == incoming, ClaimRefusal::Conflict);
         } else {
             sqlx::query("INSERT INTO server_seed_claim(singleton, genesis) VALUES (1, ?)")
                 .bind(genesis.record().as_slice())

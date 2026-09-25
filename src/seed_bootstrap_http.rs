@@ -20,7 +20,8 @@ use aven_core::{
     sync::{
         base64_bytes, bootstrap_staging as staging,
         seed_claim::{
-            ClaimAuthentication, ClaimResult, Genesis, PublicationOutcome, Secret, SetupAuthority,
+            ClaimAuthentication, ClaimRefusal, ClaimResult, Genesis, PublicationOutcome, Secret,
+            SetupAuthority,
         },
     },
 };
@@ -201,7 +202,20 @@ async fn handle_bounded(server: &Server, request: Request) -> Response {
     );
     let reply = match dispatch(server, &secret, envelope).await {
         Ok(reply) => reply,
-        Err(error) if claim || error.to_string() == "error bootstrap-unauthorized" => {
+        // Only a refusal decided inside the claim transaction is definite; any
+        // other claim error, such as a storage timeout, leaves the outcome
+        // unknown so the claimant keeps its authority and retries.
+        Err(error) if claim => {
+            let code = match error.downcast_ref::<ClaimRefusal>() {
+                Some(ClaimRefusal::Unauthorized { claimed: false }) => {
+                    "bootstrap-setup-invitation-rejected"
+                }
+                Some(_) => "bootstrap-storage-already-claimed",
+                None => return refusal(StatusCode::CONFLICT),
+            };
+            return refusal_with(StatusCode::CONFLICT, code);
+        }
+        Err(error) if error.to_string() == "error bootstrap-unauthorized" => {
             let code = match server.database.e2ee_server_is_claimed().await {
                 Ok(true) => "bootstrap-storage-already-claimed",
                 Ok(false) => "bootstrap-setup-invitation-rejected",
