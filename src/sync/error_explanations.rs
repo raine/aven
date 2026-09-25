@@ -4,6 +4,8 @@
 //! user-facing message and next step avoid exposing internal error chains.
 use anyhow::Error;
 
+use crate::protected_local_keys::{ProtectedLocalKeyStoreError, ProtectedLocalKeyStoreErrorKind};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ErrorAction {
     General,
@@ -181,6 +183,49 @@ pub(crate) fn explain(
                 }
                 ErrorSurface::Tui => "Resume with the invitation that started this setup.",
             },
+        });
+    }
+    if let Some(explanation) = protected_key_store_explanation(error) {
+        return Some(explanation);
+    }
+    if has("sync-setup-storage-already-claimed") {
+        return Some(Explanation {
+            code: "sync-setup-storage-already-claimed",
+            message: "This server storage already belongs to another sync.",
+            next_step: "Join that sync from an empty database, or set up sync with empty server storage. Nothing here was changed.",
+        });
+    }
+    if has("sync-setup-fenced-invitation-rejected") {
+        return Some(Explanation {
+            code: "sync-setup-fenced-invitation-rejected",
+            message: "This frozen setup couldn't use that invitation.",
+            next_step: "Resume with the invitation that started setup, or the newest invitation for the same server storage. If neither is available, back up and restore to a new path.",
+        });
+    }
+    if has("sync-setup-invitation-rejected") {
+        return Some(Explanation {
+            code: "sync-setup-invitation-rejected",
+            message: "This setup invitation expired, was replaced, or belongs to different storage.",
+            next_step: "Create a current invitation for this unclaimed server and try again. Nothing here was changed.",
+        });
+    }
+    if has("sync-setup-outcome-unknown") {
+        return Some(Explanation {
+            code: "sync-setup-outcome-unknown",
+            message: "The server claim couldn't be confirmed.",
+            next_step: match surface {
+                ErrorSurface::Cli => {
+                    "Rerun `aven sync setup` to resume the same setup. Local work continues."
+                }
+                ErrorSurface::Tui => "Choose Resume setup. Local work continues.",
+            },
+        });
+    }
+    if has("sync-setup-recovery-required") {
+        return Some(Explanation {
+            code: "sync-setup-recovery-required",
+            message: "This frozen setup was refused by server storage that belongs to another sync.",
+            next_step: "Back up this database and restore it to a new path for a local-only copy. Local editing and export still work.",
         });
     }
     if has("sync-setup-refused") {
@@ -445,6 +490,51 @@ pub(crate) fn explain(
         });
     }
     None
+}
+
+fn protected_key_store_explanation(error: &Error) -> Option<Explanation> {
+    let kind = error.chain().find_map(|cause| {
+        cause
+            .downcast_ref::<ProtectedLocalKeyStoreError>()
+            .map(ProtectedLocalKeyStoreError::kind)
+    })?;
+    Some(match kind {
+        ProtectedLocalKeyStoreErrorKind::MissingAuthority => Explanation {
+            code: "protected-key-storage-missing",
+            message: "Protected sync keys are missing from this device.",
+            next_step: "Do not replace them with new keys; recover this device from a known-good backup or another device.",
+        },
+        ProtectedLocalKeyStoreErrorKind::Unavailable => Explanation {
+            code: "protected-key-storage-unavailable",
+            message: "Protected sync key storage is unavailable.",
+            next_step: "Make the system key store available, then retry the same command.",
+        },
+        ProtectedLocalKeyStoreErrorKind::Corrupt => Explanation {
+            code: "protected-key-storage-unsafe",
+            message: "Protected sync key storage is corrupt or unsafe.",
+            next_step: "Do not replace its keys. Check the protected storage and recover from a known-good backup if needed.",
+        },
+        ProtectedLocalKeyStoreErrorKind::WriteFailed => Explanation {
+            code: "protected-key-storage-write-failed",
+            message: "Protected sync keys couldn't be saved.",
+            next_step: "Check access to the system key store and retry the same command.",
+        },
+        ProtectedLocalKeyStoreErrorKind::WrongDatabase => Explanation {
+            code: "protected-key-storage-wrong-database",
+            message: "These protected sync keys belong to a different database installation.",
+            next_step: "Use the database that owns these keys or recover from a known-good backup.",
+        },
+        ProtectedLocalKeyStoreErrorKind::SetupMismatch => Explanation {
+            code: "protected-key-storage-setup-mismatch",
+            message: "The setup invitation doesn't match the protected setup state.",
+            next_step: "Resume with the invitation that started this setup.",
+        },
+        ProtectedLocalKeyStoreErrorKind::UnsupportedPlatform => Explanation {
+            code: "protected-key-storage-unsupported",
+            message: "Protected sync key storage isn't supported on this platform.",
+            next_step: "Use a supported macOS or Linux installation for encrypted sync.",
+        },
+    })
 }
 
 fn access_refused(code: &'static str) -> Explanation {

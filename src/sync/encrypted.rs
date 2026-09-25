@@ -18,7 +18,10 @@ use crate::cli::{JoinArgs, SetupArgs};
 use crate::config::{self, AppConfig};
 use crate::encrypted_tail_http::{self as tail_http, ImageTransfer, Round};
 use crate::peer_enrollment_http;
-use crate::protected_local_keys::{EnrollmentReadiness, ProtectedLocalKeyStore};
+use crate::protected_local_keys::{
+    EnrollmentReadiness, ProtectedLocalKeyStore, ProtectedLocalKeyStoreError,
+    ProtectedLocalKeyStoreErrorKind,
+};
 use crate::render::print_json_pretty;
 use crate::seed_bootstrap_http;
 
@@ -251,6 +254,21 @@ pub(crate) async fn setup(database: &Database, config: &AppConfig, args: SetupAr
     Ok(())
 }
 
+fn explain_seed_claim_error(error: anyhow::Error) -> anyhow::Error {
+    let setup_mismatch = error.chain().any(|cause| {
+        cause
+            .downcast_ref::<ProtectedLocalKeyStoreError>()
+            .is_some_and(|error| error.kind() == ProtectedLocalKeyStoreErrorKind::SetupMismatch)
+    });
+    if setup_mismatch {
+        error.context(
+            "error sync-setup-invitation-mismatch hint=\"resume with the invitation that started setup\"",
+        )
+    } else {
+        error
+    }
+}
+
 /// Sets up sync from this database, or resumes the setup it started. The
 /// caller confirms a fresh setup first; a resumed one continues the original
 /// capture and never recaptures.
@@ -271,7 +289,7 @@ pub(crate) async fn run_setup(
         let seed = store
             .prepare_seed_claim(database, invitation.setup_id)
             .await
-            .context("error sync-setup-invitation-mismatch hint=\"resume with the invitation that started setup\"")?;
+            .map_err(explain_seed_claim_error)?;
         let setup = ClaimAuthentication::SetupSecret(&invitation.secret);
         let claim = match bootstrap.claim(seed.genesis(), setup).await {
             Ok(()) => Ok(()),

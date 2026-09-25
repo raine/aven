@@ -151,7 +151,10 @@ impl ProtectedLocalKeyStore {
             }
         };
         let commitment = seed.genesis().commitment();
-        if seed.genesis().setup_id() != setup || pin.is_some_and(|pin| pin != commitment) {
+        if seed.genesis().setup_id() != setup {
+            return Err(error(ProtectedLocalKeyStoreErrorKind::SetupMismatch));
+        }
+        if pin.is_some_and(|pin| pin != commitment) {
             return Err(error(ProtectedLocalKeyStoreErrorKind::Corrupt));
         }
         let mut expected = SEED_MARKER.to_vec();

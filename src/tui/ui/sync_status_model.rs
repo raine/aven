@@ -154,10 +154,7 @@ mod tests {
         let summary = sync_status_summary(&status);
 
         assert_eq!(summary.health, SyncHealth::AccessRefused);
-        assert_eq!(
-            summary.badge(&status),
-            (RED, "sync error".to_string())
-        );
+        assert_eq!(summary.badge(&status), (RED, "sync error".to_string()));
         assert!(summary.can_manual_sync);
     }
 

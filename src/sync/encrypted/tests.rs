@@ -14,6 +14,47 @@ use super::SetupInvitation;
 
 const WORKER: &str = "sync::encrypted::tests::cli_worker";
 
+#[test]
+fn seed_claim_only_labels_a_real_setup_mismatch_as_invitation_mismatch() {
+    use crate::protected_local_keys::{
+        ProtectedLocalKeyStoreError, ProtectedLocalKeyStoreErrorKind,
+    };
+    use crate::sync::error_explanations::{self, ErrorAction, ErrorSurface};
+
+    let mismatch = anyhow::Error::new(ProtectedLocalKeyStoreError::new(
+        ProtectedLocalKeyStoreErrorKind::SetupMismatch,
+    ));
+    let mismatch = super::explain_seed_claim_error(mismatch);
+    assert!(
+        error_explanations::has_code(&mismatch, "sync-setup-invitation-mismatch"),
+        "{mismatch:#}"
+    );
+
+    for (kind, code, message) in [
+        (
+            ProtectedLocalKeyStoreErrorKind::Unavailable,
+            "protected-key-storage-unavailable",
+            "Protected sync key storage is unavailable.",
+        ),
+        (
+            ProtectedLocalKeyStoreErrorKind::Corrupt,
+            "protected-key-storage-unsafe",
+            "Protected sync key storage is corrupt or unsafe.",
+        ),
+    ] {
+        let error = anyhow::Error::new(ProtectedLocalKeyStoreError::new(kind));
+        let error = super::explain_seed_claim_error(error);
+        assert!(
+            !error_explanations::has_code(&error, "sync-setup-invitation-mismatch"),
+            "{error:#}"
+        );
+        let explanation =
+            error_explanations::explain(ErrorAction::Setup, ErrorSurface::Cli, &error).unwrap();
+        assert_eq!(explanation.code, code);
+        assert_eq!(explanation.message, message);
+    }
+}
+
 /// Runs `aven` argument vectors from `AVEN_CLI_WORKER_ARGS` through the
 /// ordinary parse and dispatch path, then exits with the command's status.
 #[test]

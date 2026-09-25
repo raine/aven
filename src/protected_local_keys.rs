@@ -36,6 +36,7 @@ pub enum ProtectedLocalKeyStoreErrorKind {
     Corrupt,
     WriteFailed,
     WrongDatabase,
+    SetupMismatch,
     UnsupportedPlatform,
 }
 
@@ -45,7 +46,7 @@ pub struct ProtectedLocalKeyStoreError {
 }
 
 impl ProtectedLocalKeyStoreError {
-    fn new(kind: ProtectedLocalKeyStoreErrorKind) -> Self {
+    pub(crate) fn new(kind: ProtectedLocalKeyStoreErrorKind) -> Self {
         Self { kind }
     }
 
@@ -71,6 +72,9 @@ impl fmt::Display for ProtectedLocalKeyStoreError {
             }
             ProtectedLocalKeyStoreErrorKind::WrongDatabase => {
                 "protected local key store belongs to a different database installation"
+            }
+            ProtectedLocalKeyStoreErrorKind::SetupMismatch => {
+                "protected setup invitation does not match"
             }
             ProtectedLocalKeyStoreErrorKind::UnsupportedPlatform => {
                 "protected local key storage is unsupported on this platform"

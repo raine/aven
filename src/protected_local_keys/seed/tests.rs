@@ -36,7 +36,14 @@ async fn seed_reopens_reuses_authority_and_repairs_absent_database_pin() {
         Some(retry.genesis().commitment()),
         db.local_seed_genesis_commitment().await.unwrap()
     );
-    assert!(store.prepare_seed_claim(&db, [8; 32]).await.is_err());
+    let mismatch = store.prepare_seed_claim(&db, [8; 32]).await.unwrap_err();
+    assert_eq!(
+        mismatch
+            .downcast_ref::<ProtectedLocalKeyStoreError>()
+            .unwrap()
+            .kind(),
+        ProtectedLocalKeyStoreErrorKind::SetupMismatch
+    );
     assert_eq!(
         saved,
         store
