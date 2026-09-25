@@ -24,6 +24,7 @@ const KEYRING_MAGIC: &[u8; 8] = b"AVENLKR1";
 const MARKER_MAGIC: &[u8; 8] = b"AVENLKM1";
 const KEYRING_BYTES: usize = 8 + 32 + 32 + 32 + 32;
 const MARKER_BYTES: usize = 8 + 32 + 32;
+#[cfg(target_os = "macos")]
 const KEYCHAIN_SERVICE: &str = "fi.zendit.Aven.local-package-keyring";
 
 /// Stable error classes for protected local key storage.
