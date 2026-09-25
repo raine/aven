@@ -120,6 +120,9 @@ impl App {
             }
             SyncAction::Back => home,
             SyncAction::SetUp => invitation_page(InvitationKind::Setup),
+            SyncAction::ResumeSetup if matches!(state.page, SyncPage::Invitation { .. }) => {
+                self.submit_invitation(state).await?
+            }
             SyncAction::ResumeSetup if self.sync_ops.has_setup_invitation() => {
                 self.start_sync_operation(OperationKind::Setup, None);
                 home

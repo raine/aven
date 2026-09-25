@@ -1198,7 +1198,8 @@ fn hint_line(view: &SyncDialogView<'_>, scrolling: bool) -> Line<'static> {
             hints.push(("Esc", "close"));
         }
         SyncPage::Invitation { .. } => {
-            hints.push(("Enter", "continue"));
+            hints.push(("←→", "select"));
+            hints.push(("Enter", "choose"));
             hints.push(("Ctrl-U", "clear"));
             hints.push(("Esc", "back"));
         }

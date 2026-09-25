@@ -230,6 +230,14 @@ pub(crate) fn sync_actions(
                 vec![SyncAction::ResumeJoin, SyncAction::NewJoinInvitation]
             }
         },
+        // Resuming continues the confirmed setup directly, so the button
+        // names that instead of a further step.
+        SyncPage::Invitation {
+            kind: InvitationKind::Setup,
+            ..
+        } if status.phase == LocalPhase::SetupIncomplete => {
+            vec![SyncAction::Back, SyncAction::ResumeSetup]
+        }
         SyncPage::Invitation { .. } => vec![SyncAction::Back, SyncAction::Continue],
         SyncPage::ConfirmSetup { .. } => vec![SyncAction::Back, SyncAction::ConfirmSetup],
         SyncPage::ConfirmJoin { .. } => vec![SyncAction::Back, SyncAction::ConfirmJoin],
@@ -369,7 +377,8 @@ fn handle_home_key(
     }
 }
 
-/// Every printable key edits the invitation; Enter submits it.
+/// Every printable key edits the invitation; arrows move between the
+/// buttons and Enter chooses one.
 fn handle_invitation_key(
     mut state: SyncDialogState,
     key: KeyEvent,
@@ -387,8 +396,12 @@ fn handle_invitation_key(
                 .unwrap_or(SyncAction::Continue);
             return SyncDialogOutcome::Run(state, action);
         }
-        KeyCode::Tab | KeyCode::BackTab => {
-            state.selected = 1 - state.selected.min(1);
+        KeyCode::Left | KeyCode::BackTab => {
+            state.selected = state.selected.saturating_sub(1);
+            return SyncDialogOutcome::Retained(state);
+        }
+        KeyCode::Right | KeyCode::Tab => {
+            state.selected = (state.selected + 1).min(actions.len().saturating_sub(1));
             return SyncDialogOutcome::Retained(state);
         }
         KeyCode::Backspace => input.pop(),
@@ -597,6 +610,38 @@ mod tests {
             handle_sync_dialog_key(state, key(KeyCode::Esc), &actions, 0),
             SyncDialogOutcome::Run(_, SyncAction::Back)
         ));
+    }
+
+    #[test]
+    fn invitation_arrows_move_between_buttons() {
+        let actions = [SyncAction::Back, SyncAction::Continue];
+        let state = SyncDialogState::page(SyncPage::Invitation {
+            kind: InvitationKind::Setup,
+            input: SecretText::default(),
+            error: None,
+        });
+        let state = retained(handle_sync_dialog_key(
+            state,
+            key(KeyCode::Left),
+            &actions,
+            0,
+        ));
+        assert_eq!(state.selected, 0);
+        assert!(matches!(
+            handle_sync_dialog_key(state.clone(), key(KeyCode::Enter), &actions, 0),
+            SyncDialogOutcome::Run(_, SyncAction::Back)
+        ));
+        let state = retained(handle_sync_dialog_key(
+            state,
+            key(KeyCode::Right),
+            &actions,
+            0,
+        ));
+        assert_eq!(state.selected, 1);
+        let SyncPage::Invitation { input, .. } = &state.page else {
+            panic!("expected invitation page");
+        };
+        assert_eq!(input.expose(), "");
     }
 
     #[test]

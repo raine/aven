@@ -284,6 +284,29 @@ fn invitation_form_never_renders_the_secret() {
     assert!(rendered.contains("Paste the invitation first."));
     assert!(!rendered.contains("isn't shown or saved"));
     assert!(rendered.contains(" Continue "));
+    assert!(rendered.contains("←→ select  Enter choose  Ctrl-U clear  Esc back"));
+    assert!(!rendered.contains("Enter continue"));
+}
+
+#[test]
+fn resuming_setup_names_its_button_after_the_action() {
+    let status = TuiSyncStatus {
+        set_up: true,
+        phase: LocalPhase::SetupIncomplete,
+        ..TuiSyncStatus::default()
+    };
+    let rendered = render_page(
+        SyncPage::Invitation {
+            kind: InvitationKind::Setup,
+            input: SecretText::default(),
+            error: None,
+        },
+        status,
+        SyncActivity::default(),
+    );
+
+    assert!(rendered.contains(" Resume setup "), "{rendered}");
+    assert!(!rendered.contains(" Continue "), "{rendered}");
 }
 
 #[test]
