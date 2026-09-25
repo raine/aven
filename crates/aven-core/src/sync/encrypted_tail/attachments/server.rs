@@ -13,9 +13,9 @@ async fn load(
     conn: &mut SqliteConnection,
     object: &[u8; 32],
     commitment: &[u8; 32],
-) -> Result<(Descriptor, i64, bool)> {
-    let (bytes, epoch, complete): (Vec<u8>, i64, bool) =
-        sqlx::query_as("SELECT descriptor,epoch,complete FROM server_e2ee_images WHERE object=?")
+) -> Result<(Descriptor, bool)> {
+    let (bytes, complete): (Vec<u8>, bool) =
+        sqlx::query_as("SELECT descriptor,complete FROM server_e2ee_images WHERE object=?")
             .bind(object.as_slice())
             .fetch_optional(conn)
             .await?
@@ -23,7 +23,7 @@ async fn load(
     valid(hash(&bytes) == *commitment)?;
     let d = Descriptor::decode(&bytes)?;
     valid(d.object == *object)?;
-    Ok((d, epoch, complete))
+    Ok((d, complete))
 }
 pub(crate) async fn refresh(conn: &mut SqliteConnection, now: i64) -> Result<()> {
     sqlx::query("UPDATE server_e2ee_images SET unreferenced_at=CASE WHEN EXISTS(SELECT 1 FROM server_e2ee_image_references r JOIN server_e2ee_image_parents p ON p.workspace=r.workspace AND p.parent=r.parent WHERE r.object=server_e2ee_images.object AND r.deleted=0 AND (p.deleted=0 OR p.protected=1 OR p.version IS NULL)) OR EXISTS(SELECT 1 FROM server_e2ee_image_tickets t WHERE t.object=server_e2ee_images.object AND t.expires_at>?) THEN NULL ELSE COALESCE(unreferenced_at,?) END").bind(now).bind(now).execute(conn).await?;
@@ -52,7 +52,6 @@ async fn reserve(
     d: &Descriptor,
     workspace: &str,
     device: &[u8; 32],
-    epoch: i64,
     quota: i64,
     now: i64,
 ) -> Result<()> {
@@ -60,7 +59,7 @@ async fn reserve(
         .bind(now)
         .execute(&mut *conn)
         .await?;
-    let existing: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_e2ee_image_tickets WHERE object=? AND workspace=? AND device=? AND epoch=? AND expires_at>?)").bind(d.object.as_slice()).bind(workspace).bind(device.as_slice()).bind(epoch).bind(now).fetch_one(&mut *conn).await?;
+    let existing: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_e2ee_image_tickets WHERE object=? AND workspace=? AND device=? AND expires_at>?)").bind(d.object.as_slice()).bind(workspace).bind(device.as_slice()).bind(now).fetch_one(&mut *conn).await?;
     if existing {
         return Ok(());
     }
@@ -90,8 +89,8 @@ async fn reserve(
     let expires = now
         .checked_add(crate::attachments::lifecycle::LEASE_TTL.as_secs() as i64)
         .context("error encrypted-image-clock")?;
-    sqlx::query("INSERT INTO server_e2ee_image_tickets(reservation,object,workspace,device,epoch,expires_at) VALUES(?,?,?,?,?,?) ON CONFLICT(object,workspace,device) DO UPDATE SET reservation=excluded.reservation,epoch=excluded.epoch,expires_at=excluded.expires_at")
-        .bind(id.as_slice()).bind(d.object.as_slice()).bind(workspace).bind(device.as_slice()).bind(epoch).bind(expires).execute(&mut *conn).await?;
+    sqlx::query("INSERT INTO server_e2ee_image_tickets(reservation,object,workspace,device,expires_at) VALUES(?,?,?,?,?) ON CONFLICT(object,workspace,device) DO UPDATE SET reservation=excluded.reservation,expires_at=excluded.expires_at")
+        .bind(id.as_slice()).bind(d.object.as_slice()).bind(workspace).bind(device.as_slice()).bind(expires).execute(&mut *conn).await?;
     sqlx::query("UPDATE server_e2ee_images SET unreferenced_at=NULL WHERE object=?")
         .bind(d.object.as_slice())
         .execute(conn)
@@ -106,7 +105,7 @@ async fn ticket(
     ticket: &Ticket,
     now: i64,
 ) -> Result<()> {
-    valid(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_e2ee_image_tickets t JOIN server_e2ee_images i ON i.object=t.object WHERE t.object=? AND t.workspace=? AND t.device=? AND t.reservation=? AND t.epoch=? AND i.epoch=t.epoch AND t.expires_at>?)").bind(object.as_slice()).bind(workspace).bind(device.as_slice()).bind(ticket.reservation.as_slice()).bind(ticket.epoch).bind(now).fetch_one(conn).await?)
+    valid(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_e2ee_image_tickets WHERE object=? AND workspace=? AND device=? AND reservation=? AND expires_at>?)").bind(object.as_slice()).bind(workspace).bind(device.as_slice()).bind(ticket.reservation.as_slice()).bind(now).fetch_one(conn).await?)
 }
 async fn status(
     conn: &mut SqliteConnection,
@@ -115,8 +114,8 @@ async fn status(
     device: &[u8; 32],
     now: i64,
 ) -> Result<Reply> {
-    let (epoch, complete): (i64, bool) =
-        sqlx::query_as("SELECT epoch,complete FROM server_e2ee_images WHERE object=?")
+    let complete: bool =
+        sqlx::query_scalar("SELECT complete FROM server_e2ee_images WHERE object=?")
             .bind(d.object.as_slice())
             .fetch_one(&mut *conn)
             .await?;
@@ -126,7 +125,7 @@ async fn status(
     .bind(d.object.as_slice())
     .fetch_all(&mut *conn)
     .await?;
-    let t:Option<(Vec<u8>,i64)>=sqlx::query_as("SELECT reservation,expires_at FROM server_e2ee_image_tickets WHERE object=? AND workspace=? AND device=? AND epoch=? AND expires_at>?").bind(d.object.as_slice()).bind(workspace).bind(device.as_slice()).bind(epoch).bind(now).fetch_optional(conn).await?;
+    let t:Option<(Vec<u8>,i64)>=sqlx::query_as("SELECT reservation,expires_at FROM server_e2ee_image_tickets WHERE object=? AND workspace=? AND device=? AND expires_at>?").bind(d.object.as_slice()).bind(workspace).bind(device.as_slice()).bind(now).fetch_optional(conn).await?;
     let (reservation, expires_at) = match t {
         Some((id, e)) => (
             Some(
@@ -138,7 +137,6 @@ async fn status(
         None => (None, None),
     };
     Ok(Reply::Status(Status {
-        epoch,
         complete,
         missing: (0..d.artifact.chunks.len())
             .filter(|i| !indices.contains(&(*i as i64)))
@@ -223,13 +221,12 @@ impl Database {
                 .bind(&workspace)
                 .execute(&mut *tx)
                 .await?;
-                let (_, epoch, _) = load(&mut tx, &d.object, &hash(&descriptor)).await?;
+                load(&mut tx, &d.object, &hash(&descriptor)).await?;
                 reserve(
                     &mut tx,
                     &d,
                     &workspace,
                     &context.device,
-                    epoch,
                     policy.quota_bytes,
                     now,
                 )
@@ -243,8 +240,13 @@ impl Database {
                     .checked_sub(i64::try_from(policy.grace.as_secs())?)
                     .context("error encrypted-image-clock")?;
                 let objects:Vec<Vec<u8>>=sqlx::query_scalar("SELECT object FROM server_e2ee_images WHERE unreferenced_at<=? AND (complete=1 OR EXISTS(SELECT 1 FROM server_e2ee_image_chunks c WHERE c.object=server_e2ee_images.object)) ORDER BY object LIMIT ?").bind(cutoff).bind(limit as i64).fetch_all(&mut *tx).await?;
+                // Objects with live tickets were excluded by `refresh`, so no
+                // uploader can still write to a pruned object.
                 for object in &objects {
-                    valid(sqlx::query("UPDATE server_e2ee_images SET epoch=epoch+1,complete=0 WHERE object=? AND epoch<9223372036854775807").bind(object).execute(&mut *tx).await?.rows_affected()==1)?;
+                    sqlx::query("UPDATE server_e2ee_images SET complete=0 WHERE object=?")
+                        .bind(object)
+                        .execute(&mut *tx)
+                        .await?;
                     sqlx::query("DELETE FROM server_e2ee_image_chunks WHERE object=?")
                         .bind(object)
                         .execute(&mut *tx)
@@ -252,9 +254,7 @@ impl Database {
                 }
                 Reply::Pruned(objects.len())
             }
-            other => {
-                dispatch_existing(&mut tx, context, &current.membership, other, policy, now).await?
-            }
+            other => dispatch_existing(&mut tx, context, &current.membership, other, now).await?,
         };
         tx.commit().await?;
         Ok(reply)
@@ -265,7 +265,6 @@ async fn dispatch_existing(
     context: &Context,
     membership: &Membership,
     op: Operation,
-    policy: LifecyclePolicy,
     now: i64,
 ) -> Result<Reply> {
     let (workspace, object, commitment) = match &op {
@@ -273,12 +272,6 @@ async fn dispatch_existing(
             workspace,
             object,
             descriptor_commitment,
-        }
-        | Operation::Ensure {
-            workspace,
-            object,
-            descriptor_commitment,
-            ..
         }
         | Operation::Put {
             workspace,
@@ -308,39 +301,11 @@ async fn dispatch_existing(
     };
     workspace.parse::<crate::ids::WorkspaceId>()?;
     scope(conn, &object, workspace).await?;
-    let (d, epoch, _) = load(conn, &object, &commitment).await?;
+    let (d, _) = load(conn, &object, &commitment).await?;
     valid(d.vault == context.vault && d.stream == context.stream)?;
     eligible_object(conn, membership, &d).await?;
     match &op {
         Operation::Status { .. } => status(conn, &d, workspace, &context.device, now).await,
-        Operation::Ensure { expected_epoch, .. } => {
-            valid(*expected_epoch == epoch)?;
-            // An epoch is shared by all holders. Never fence another live promise.
-            let live:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_e2ee_image_tickets WHERE object=? AND expires_at>?)").bind(object.as_slice()).bind(now).fetch_one(&mut *conn).await?;
-            let next = if live {
-                epoch
-            } else {
-                epoch
-                    .checked_add(1)
-                    .context("error encrypted-image-epoch")?
-            };
-            sqlx::query("UPDATE server_e2ee_images SET epoch=? WHERE object=?")
-                .bind(next)
-                .bind(object.as_slice())
-                .execute(&mut *conn)
-                .await?;
-            reserve(
-                conn,
-                &d,
-                workspace,
-                &context.device,
-                next,
-                policy.quota_bytes,
-                now,
-            )
-            .await?;
-            status(conn, &d, workspace, &context.device, now).await
-        }
         Operation::Read { index, .. } => {
             valid(*index < d.artifact.chunks.len())?;
             let admitted: bool = sqlx::query_scalar(
@@ -365,28 +330,15 @@ async fn dispatch_existing(
                 None => Reply::Unavailable,
             })
         }
-        Operation::Put {
-            epoch: e,
-            reservation,
-            ..
-        }
-        | Operation::Complete {
-            epoch: e,
-            reservation,
-            ..
-        }
-        | Operation::Release {
-            epoch: e,
-            reservation,
-            ..
-        } => {
+        Operation::Put { reservation, .. }
+        | Operation::Complete { reservation, .. }
+        | Operation::Release { reservation, .. } => {
             ticket(
                 conn,
                 &object,
                 workspace,
                 &context.device,
                 &Ticket {
-                    epoch: *e,
                     reservation: *reservation,
                 },
                 now,
@@ -443,7 +395,7 @@ pub(in crate::sync::encrypted_tail) async fn admit(
         } => {
             let d = Descriptor::decode(descriptor)?;
             eligible_object(conn, membership, &d).await?;
-            let (_, _, complete) = load(conn, &d.object, &hash(descriptor)).await?;
+            let (_, complete) = load(conn, &d.object, &hash(descriptor)).await?;
             valid(complete && d.vault == context.vault && d.stream == context.stream)?;
             let records: Vec<Vec<u8>> = sqlx::query_scalar(
                 "SELECT bytes FROM server_e2ee_image_chunks WHERE object=? ORDER BY chunk_index",
@@ -493,7 +445,7 @@ pub(in crate::sync::encrypted_tail) async fn admit(
                 .execute(&mut *conn)
                 .await?;
             if let Some(t) = t {
-                sqlx::query("DELETE FROM server_e2ee_image_tickets WHERE reservation=? AND device=? AND workspace=? AND object=? AND epoch=?").bind(t.reservation.as_slice()).bind(context.device.as_slice()).bind(workspace).bind(d.object.as_slice()).bind(t.epoch).execute(&mut *conn).await?;
+                sqlx::query("DELETE FROM server_e2ee_image_tickets WHERE reservation=? AND device=? AND workspace=? AND object=?").bind(t.reservation.as_slice()).bind(context.device.as_slice()).bind(workspace).bind(d.object.as_slice()).execute(&mut *conn).await?;
             }
             refresh(conn, now).await?;
         }
@@ -559,7 +511,6 @@ mod tests {
                 &retired,
                 "0000000000000000",
                 &a.context.device,
-                1,
                 i64::MAX,
                 123
             )

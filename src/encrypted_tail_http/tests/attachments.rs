@@ -73,7 +73,6 @@ async fn declare(
         panic!("status")
     };
     Ticket {
-        epoch: s.epoch,
         reservation: s.reservation.unwrap(),
     }
 }
@@ -82,7 +81,6 @@ fn put(upload: &image::Upload, t: &Ticket) -> Op {
         workspace: upload.workspace.clone(),
         object: upload.object,
         descriptor_commitment: upload.commitment,
-        epoch: t.epoch,
         reservation: t.reservation,
         index: 0,
         record: upload.records[0].clone(),
@@ -93,7 +91,6 @@ fn complete(upload: &image::Upload, t: &Ticket) -> Op {
         workspace: upload.workspace.clone(),
         object: upload.object,
         descriptor_commitment: upload.commitment,
-        epoch: t.epoch,
         reservation: t.reservation,
     }
 }
@@ -180,28 +177,7 @@ async fn incomplete_ref_ticket_ownership_expiry_and_exact_retry() {
             .await
             .is_err()
     );
-    let ImageReply::Status(renewed) = f
-        .server
-        .encrypted_image_exchange(
-            &a.context,
-            &inputs.bearer,
-            Op::Ensure {
-                workspace: upload.workspace.clone(),
-                object: upload.object,
-                descriptor_commitment: upload.commitment,
-                expected_epoch: ticket.epoch,
-            },
-            policy(),
-        )
-        .await
-        .unwrap()
-    else {
-        panic!("status")
-    };
-    let renewed = Ticket {
-        epoch: renewed.epoch,
-        reservation: renewed.reservation.unwrap(),
-    };
+    let renewed = declare(&f, a, &inputs.bearer, &upload).await;
     assert_ne!(ticket, renewed);
     assert!(
         f.server
@@ -212,7 +188,6 @@ async fn incomplete_ref_ticket_ownership_expiry_and_exact_retry() {
                     workspace: upload.workspace.clone(),
                     object: upload.object,
                     descriptor_commitment: upload.commitment,
-                    epoch: ticket.epoch,
                     reservation: ticket.reservation
                 },
                 policy()
@@ -255,6 +230,118 @@ async fn incomplete_ref_ticket_ownership_expiry_and_exact_retry() {
         scalar(&f.server, "SELECT count(*) FROM server_e2ee_tail").await,
         before + 1
     );
+}
+
+/// Random per-device reservations, ticket expiry and prune's exclusion of
+/// objects with live tickets reject stale uploaders across prune and
+/// reactivation.
+#[tokio::test]
+async fn stale_image_uploaders_are_rejected_across_prune_expiry_and_reactivation() {
+    let f = fixture().await;
+    converge(&f).await;
+    add_image(&f).await;
+    let peer = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
+    let seed = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+    let a = &peer.authority;
+    let upload = f
+        .peer
+        .prepare_encrypted_push(a, &f.root.path().join("peer-blobs"))
+        .await
+        .unwrap()
+        .unwrap()
+        .upload
+        .unwrap();
+    assert_eq!(upload.records.len(), 1);
+    let record = head_record(&f.peer, a).await;
+    let peer_op = async |op| {
+        f.server
+            .encrypted_image_exchange(&a.context, &peer.bearer, op, policy())
+            .await
+    };
+    let append = async |ticket| {
+        f.server
+            .encrypted_tail_exchange(
+                &a.context,
+                &peer.bearer,
+                Operation::Append {
+                    ticket,
+                    record: record.clone(),
+                },
+            )
+            .await
+    };
+    let prune = async || {
+        let mut p = policy();
+        p.grace = std::time::Duration::ZERO;
+        let ImageReply::Pruned(count) = f
+            .server
+            .encrypted_image_exchange(&a.context, &peer.bearer, Op::Prune { limit: 128 }, p)
+            .await
+            .unwrap()
+        else {
+            panic!("prune")
+        };
+        count
+    };
+    let chunks = async || {
+        scalar(
+            &f.server,
+            "SELECT count(*) FROM server_e2ee_image_chunks c JOIN server_e2ee_images i ON i.object=c.object WHERE i.bootstrap IS NULL",
+        )
+        .await
+    };
+
+    let old = declare(&f, a, &peer.bearer, &upload).await;
+    peer_op(put(&upload, &old)).await.unwrap();
+    // A live ticket keeps an object out of prune however long it was unreferenced.
+    exec(
+        &f.server,
+        "UPDATE server_e2ee_images SET unreferenced_at=0 WHERE bootstrap IS NULL",
+    )
+    .await;
+    assert_eq!(prune().await, 0);
+    assert_eq!(chunks().await, 1);
+    peer_op(complete(&upload, &old)).await.unwrap();
+
+    // Expiry rejects the old uploader before and after its bytes are pruned.
+    exec(
+        &f.server,
+        "UPDATE server_e2ee_image_tickets SET expires_at=0",
+    )
+    .await;
+    assert!(peer_op(put(&upload, &old)).await.is_err());
+    assert_eq!(prune().await, 1);
+    assert_eq!(chunks().await, 0);
+    assert!(peer_op(put(&upload, &old)).await.is_err());
+    assert!(peer_op(complete(&upload, &old)).await.is_err());
+    assert!(append(Some(old.clone())).await.is_err());
+
+    // Reactivation by the same device replaces its reservation.
+    let new = declare(&f, a, &peer.bearer, &upload).await;
+    assert_ne!(new.reservation, old.reservation);
+    assert!(peer_op(put(&upload, &old)).await.is_err());
+    assert!(peer_op(complete(&upload, &old)).await.is_err());
+    assert_eq!(chunks().await, 0);
+
+    // A new uploader on another device holds its own ticket.
+    let other = declare(&f, &seed.authority, &seed.bearer, &upload).await;
+    assert!(peer_op(put(&upload, &other)).await.is_err());
+    f.server
+        .encrypted_image_exchange(
+            &seed.authority.context,
+            &seed.bearer,
+            put(&upload, &other),
+            policy(),
+        )
+        .await
+        .unwrap();
+    assert!(peer_op(complete(&upload, &old)).await.is_err());
+    peer_op(put(&upload, &new)).await.unwrap();
+    peer_op(complete(&upload, &new)).await.unwrap();
+    assert!(append(Some(old)).await.is_err());
+    let Reply::Appended(_) = append(Some(new)).await.unwrap() else {
+        panic!("append")
+    };
 }
 
 #[tokio::test]

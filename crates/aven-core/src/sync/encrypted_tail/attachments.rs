@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct Ticket {
     pub reservation: [u8; 32],
-    pub epoch: i64,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -24,17 +23,10 @@ pub enum Operation {
         object: [u8; 32],
         descriptor_commitment: [u8; 32],
     },
-    Ensure {
-        workspace: String,
-        object: [u8; 32],
-        descriptor_commitment: [u8; 32],
-        expected_epoch: i64,
-    },
     Put {
         workspace: String,
         object: [u8; 32],
         descriptor_commitment: [u8; 32],
-        epoch: i64,
         reservation: [u8; 32],
         index: usize,
         record: Vec<u8>,
@@ -43,7 +35,6 @@ pub enum Operation {
         workspace: String,
         object: [u8; 32],
         descriptor_commitment: [u8; 32],
-        epoch: i64,
         reservation: [u8; 32],
     },
     Read {
@@ -56,7 +47,6 @@ pub enum Operation {
         workspace: String,
         object: [u8; 32],
         descriptor_commitment: [u8; 32],
-        epoch: i64,
         reservation: [u8; 32],
     },
     Prune {
@@ -66,7 +56,6 @@ pub enum Operation {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Status {
-    pub epoch: i64,
     pub complete: bool,
     pub missing: Vec<usize>,
     pub reservation: Option<[u8; 32]>,

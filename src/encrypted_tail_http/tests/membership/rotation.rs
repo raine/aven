@@ -301,7 +301,6 @@ async fn frozen_rounds_pull_history_and_resolve_accepted_refs_without_image_muta
                 panic!()
             };
             let ticket = Ticket {
-                epoch: status.epoch,
                 reservation: status.reservation.unwrap(),
             };
             for (index, record) in upload.records.into_iter().enumerate() {
@@ -313,7 +312,6 @@ async fn frozen_rounds_pull_history_and_resolve_accepted_refs_without_image_muta
                             workspace: upload.workspace.clone(),
                             object: upload.object,
                             descriptor_commitment: upload.commitment,
-                            epoch: ticket.epoch,
                             reservation: ticket.reservation,
                             index,
                             record,
@@ -330,7 +328,6 @@ async fn frozen_rounds_pull_history_and_resolve_accepted_refs_without_image_muta
                         workspace: upload.workspace,
                         object: upload.object,
                         descriptor_commitment: upload.commitment,
-                        epoch: ticket.epoch,
                         reservation: ticket.reservation,
                     },
                 )
@@ -369,7 +366,7 @@ async fn frozen_rounds_pull_history_and_resolve_accepted_refs_without_image_muta
             .apply_membership_management(&auth(&m, &signer), &revoke)
             .await
             .unwrap();
-        let before: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT high_water FROM server_e2ee_allocator),(SELECT count(*) FROM server_e2ee_image_chunks),(SELECT coalesce(sum(epoch),0) FROM server_e2ee_images)").fetch_one(&mut *aven_core::test_support::acquire(&f.server).await.unwrap()).await.unwrap();
+        let before: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT high_water FROM server_e2ee_allocator),(SELECT count(*) FROM server_e2ee_image_chunks),(SELECT count(*) FROM server_e2ee_image_tickets)").fetch_one(&mut *aven_core::test_support::acquire(&f.server).await.unwrap()).await.unwrap();
         client
             .pull_only_round(&f.peer_store, &f.peer)
             .await
@@ -378,7 +375,7 @@ async fn frozen_rounds_pull_history_and_resolve_accepted_refs_without_image_muta
             title(&f.peer, id.as_str()).await,
             "history progresses during freeze"
         );
-        let after: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT high_water FROM server_e2ee_allocator),(SELECT count(*) FROM server_e2ee_image_chunks),(SELECT coalesce(sum(epoch),0) FROM server_e2ee_images)").fetch_one(&mut *aven_core::test_support::acquire(&f.server).await.unwrap()).await.unwrap();
+        let after: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT high_water FROM server_e2ee_allocator),(SELECT count(*) FROM server_e2ee_image_chunks),(SELECT count(*) FROM server_e2ee_image_tickets)").fetch_one(&mut *aven_core::test_support::acquire(&f.server).await.unwrap()).await.unwrap();
         assert_eq!(before, after);
         if accepted {
             assert_eq!(

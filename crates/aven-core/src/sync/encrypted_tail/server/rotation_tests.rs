@@ -147,17 +147,10 @@ fn mutations(d: &Descriptor, t: &image::Ticket, chunk: &[u8]) -> Vec<image::Oper
     let commitment = hash(&d.encode().unwrap());
     vec![
         declare(d),
-        image::Operation::Ensure {
-            workspace: WORKSPACE.into(),
-            object: d.object,
-            descriptor_commitment: commitment,
-            expected_epoch: t.epoch,
-        },
         image::Operation::Put {
             workspace: WORKSPACE.into(),
             object: d.object,
             descriptor_commitment: commitment,
-            epoch: t.epoch,
             reservation: t.reservation,
             index: 0,
             record: chunk.to_vec(),
@@ -166,14 +159,12 @@ fn mutations(d: &Descriptor, t: &image::Ticket, chunk: &[u8]) -> Vec<image::Oper
             workspace: WORKSPACE.into(),
             object: d.object,
             descriptor_commitment: commitment,
-            epoch: t.epoch,
             reservation: t.reservation,
         },
         image::Operation::Release {
             workspace: WORKSPACE.into(),
             object: d.object,
             descriptor_commitment: commitment,
-            epoch: t.epoch,
             reservation: t.reservation,
         },
         image::Operation::Prune { limit: 1 },
@@ -190,12 +181,11 @@ async fn upload(
         panic!()
     };
     let t = image::Ticket {
-        epoch: s.epoch,
         reservation: s.reservation.unwrap(),
     };
     let ops = mutations(d, &t, &chunks[0]);
+    img(db, a, b, ops[1].clone()).await.unwrap();
     img(db, a, b, ops[2].clone()).await.unwrap();
-    img(db, a, b, ops[3].clone()).await.unwrap();
     t
 }
 fn reference(a: &Authority, d: &Descriptor, id: &str, reference: &str) -> Vec<u8> {
@@ -356,7 +346,7 @@ async fn three_peers_frozen_outcomes_and_historical_images_survive_rotation() {
     );
     for op in mutations(&orphan, &orphan_ticket, &orphan_chunks[0])
         .into_iter()
-        .take(5)
+        .take(4)
         .chain([read(&orphan)])
     {
         assert!(img(&p.f.db, &active, p.peer.bearer(), op).await.is_err());
@@ -483,7 +473,7 @@ async fn independent_pool_revoke_races_content_put_and_ref_at_one_boundary() {
                     &other,
                     &old,
                     p.f.seed.bearer(),
-                    mutations(&d, &ticket, &chunks[0])[2].clone(),
+                    mutations(&d, &ticket, &chunks[0])[1].clone(),
                 )
                 .await
                 .map(|_| ())
@@ -582,7 +572,7 @@ async fn failed_ticket_revocation_restores_head_credential_and_all_tickets() {
         &second,
         &old,
         p.f.seed.bearer(),
-        mutations(&d, &ticket, &chunks[0])[2].clone(),
+        mutations(&d, &ticket, &chunks[0])[1].clone(),
     )
     .await
     .unwrap();

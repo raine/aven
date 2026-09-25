@@ -239,7 +239,6 @@ async fn accepted_image(f: &Fixture, accept_ref: bool) -> (String, Vec<u8>, Vec<
         panic!("image declaration");
     };
     let ticket = attachments::Ticket {
-        epoch: status.epoch,
         reservation: status.reservation.unwrap(),
     };
     for (index, chunk) in upload.records.iter().cloned().enumerate() {
@@ -251,7 +250,6 @@ async fn accepted_image(f: &Fixture, accept_ref: bool) -> (String, Vec<u8>, Vec<
                     workspace: upload.workspace.clone(),
                     object: upload.object,
                     descriptor_commitment: upload.commitment,
-                    epoch: ticket.epoch,
                     reservation: ticket.reservation,
                     index,
                     record: chunk,
@@ -268,7 +266,6 @@ async fn accepted_image(f: &Fixture, accept_ref: bool) -> (String, Vec<u8>, Vec<
                 workspace: upload.workspace.clone(),
                 object: upload.object,
                 descriptor_commitment: upload.commitment,
-                epoch: ticket.epoch,
                 reservation: ticket.reservation,
             },
         )
@@ -829,17 +826,10 @@ async fn removed_credentials_cannot_retry_history_or_protected_routes_and_keep_p
             object,
             descriptor_commitment: commitment,
         },
-        attachments::Operation::Ensure {
-            workspace: image_workspace.clone(),
-            object,
-            descriptor_commitment: commitment,
-            expected_epoch: 1,
-        },
         attachments::Operation::Put {
             workspace: image_workspace.clone(),
             object,
             descriptor_commitment: commitment,
-            epoch: 1,
             reservation: [0; 32],
             index: 0,
             record: vec![],
@@ -848,7 +838,6 @@ async fn removed_credentials_cannot_retry_history_or_protected_routes_and_keep_p
             workspace: image_workspace.clone(),
             object,
             descriptor_commitment: commitment,
-            epoch: 1,
             reservation: [0; 32],
         },
         attachments::Operation::Read {
@@ -861,7 +850,6 @@ async fn removed_credentials_cannot_retry_history_or_protected_routes_and_keep_p
             workspace: image_workspace,
             object,
             descriptor_commitment: commitment,
-            epoch: 1,
             reservation: [0; 32],
         },
         attachments::Operation::Prune { limit: 1 },

@@ -282,8 +282,7 @@ impl Client {
         };
         let mut indices = std::collections::HashSet::new();
         ensure!(
-            status.epoch > 0
-                && status.missing.len() <= upload.records.len()
+            status.missing.len() <= upload.records.len()
                 && (!status.complete || status.missing.is_empty())
                 && status.expires_at.is_some(),
             "error encrypted-image-status"
@@ -296,7 +295,6 @@ impl Client {
             "error encrypted-image-status"
         );
         let ticket = Ticket {
-            epoch: status.epoch,
             reservation: status
                 .reservation
                 .ok_or_else(|| anyhow::anyhow!("error encrypted-image-ticket"))?,
@@ -317,7 +315,6 @@ impl Client {
                             workspace: upload.workspace.clone(),
                             object: upload.object,
                             descriptor_commitment: upload.commitment,
-                            epoch: ticket.epoch,
                             reservation: ticket.reservation,
                             index,
                             record
@@ -343,7 +340,6 @@ impl Client {
                         workspace: upload.workspace,
                         object: upload.object,
                         descriptor_commitment: upload.commitment,
-                        epoch: ticket.epoch,
                         reservation: ticket.reservation
                     }
                 )
@@ -401,7 +397,6 @@ impl Client {
                         workspace: workspace.into(),
                         object,
                         descriptor_commitment: commitment,
-                        epoch: ticket.epoch,
                         reservation: ticket.reservation
                     }
                 )

@@ -465,14 +465,12 @@ async fn lost_image_response(stage: &'static str) {
         panic!("declare");
     };
     let ticket = Ticket {
-        epoch: status.epoch,
         reservation: status.reservation.unwrap(),
     };
     let put = || Op::Put {
         workspace: upload.workspace.clone(),
         object: upload.object,
         descriptor_commitment: upload.commitment,
-        epoch: ticket.epoch,
         reservation: ticket.reservation,
         index: 0,
         record: upload.records[0].clone(),
@@ -481,7 +479,6 @@ async fn lost_image_response(stage: &'static str) {
         workspace: upload.workspace.clone(),
         object: upload.object,
         descriptor_commitment: upload.commitment,
-        epoch: ticket.epoch,
         reservation: ticket.reservation,
     };
     let result = client.image_exchange(&context, &bearer, put()).await;
@@ -519,7 +516,7 @@ async fn lost_image_response(stage: &'static str) {
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
     assert_eq!(head_record(&f.peer, &inputs.authority).await, record);
     if stage != "Append" {
-        // The original device-owned ticket and epoch survive head advancement.
+        // The original device-owned ticket survives head advancement.
         client
             .image_exchange(&inputs.authority.context, &inputs.bearer, put())
             .await
