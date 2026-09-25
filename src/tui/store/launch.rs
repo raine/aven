@@ -161,10 +161,10 @@ mod tests {
 
     async fn setup() -> (tempfile::TempDir, Database, PoolConnection<Sqlite>) {
         let temp = tempfile::tempdir().unwrap();
-        let database = Database::open(&temp.path().join("test.sqlite"))
+        let (database, pool) = crate::test_support::open_database(&temp.path().join("test.sqlite"))
             .await
             .unwrap();
-        let conn = aven_core::test_support::acquire(&database).await.unwrap();
+        let conn = pool.acquire().await.unwrap();
         (temp, database, conn)
     }
 
