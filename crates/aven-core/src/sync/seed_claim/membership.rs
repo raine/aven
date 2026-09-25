@@ -85,6 +85,8 @@ pub const MAX_RECORD_BYTES: usize = 32768;
 pub const MAX_TRANSITIONS: usize = 256;
 /// Lifetime key generations including the initial one; every rotation consumes one.
 pub const MAX_GENERATIONS: usize = 64;
+/// Largest generation cutoff; tail ranks are `i64`, so higher cutoffs admit no record.
+pub const MAX_CUTOFF: u64 = i64::MAX as u64;
 /// Grant plaintext carrying every generation key.
 pub const MAX_KEY_PLAINTEXT_BYTES: usize =
     GRANT_PREFIX_BYTES + 2 + GENERATION_BYTES * MAX_GENERATIONS;

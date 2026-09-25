@@ -5,7 +5,7 @@ use crate::protected_local_keys::{
     peer::{ActiveInputs, Disclosure},
     rotation::Action,
 };
-use aven_core::sync::seed_claim::membership::CancelStatus;
+use aven_core::sync::seed_claim::membership::{CancelStatus, MAX_CUTOFF};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RemovalStatus {
@@ -63,7 +63,8 @@ impl Client {
         let membership = prepared.evidence.verify()?;
         ensure!(
             membership.head() == inputs.membership.head()
-                && prepared.high_water >= membership.current_generation().starts_after,
+                && prepared.high_water >= membership.current_generation().starts_after
+                && prepared.high_water <= MAX_CUTOFF,
             "error management-context"
         );
         store.adopt_refresh(db, inputs, prepared.evidence).await?;

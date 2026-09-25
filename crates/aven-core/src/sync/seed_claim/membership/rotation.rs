@@ -74,7 +74,8 @@ fn rotate(m: &Membership, generation: Generation) -> Result<Membership> {
             && m.generations.len() < MAX_GENERATIONS
             && !m.generations.iter().any(|g| g.id == generation.id)
             && generation.starts_after >= m.publication.binding().prefix_count
-            && generation.starts_after >= m.current_generation().starts_after,
+            && generation.starts_after >= m.current_generation().starts_after
+            && generation.starts_after <= MAX_CUTOFF,
     )?;
     let mut next = m.clone();
     next.generations.push(generation);

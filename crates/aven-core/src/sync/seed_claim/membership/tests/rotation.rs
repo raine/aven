@@ -580,3 +580,36 @@ fn protected_rotation_material_replays_exact_candidate_and_rejects_other_generat
     malformed[5] = 2;
     assert!(RotationMaterial::from_protected_storage(&malformed).is_err());
 }
+
+#[test]
+fn rotation_cutoff_is_bounded_by_the_largest_tail_rank() {
+    let f = fixture();
+    let keys = f.membership.verify_initial_key(&f.key).unwrap();
+    let freeze = Device::seed(&f.seed)
+        .prepare_revoke(&f.membership, &[])
+        .unwrap();
+    let pending = f.membership.append(&[], &[], &freeze).unwrap();
+    assert!(
+        Device::seed(&f.seed)
+            .prepare_rotation(&pending, &keys, MAX_CUTOFF + 1)
+            .is_err()
+    );
+    let (raw, next, _) = rotate_fixed(Device::seed(&f.seed), &pending, &keys, 100, MAX_CUTOFF);
+    assert!(next.generation_allows(next.generations()[0].id, MAX_CUTOFF));
+    assert!(
+        pending
+            .append(&[], &[], &resign(&f.seed.signing, &raw, |_, _, _| ()))
+            .is_ok()
+    );
+    // Peers reject a correctly signed transition whose cutoff exceeds the limit.
+    let replace = |bytes: &mut Vec<u8>| {
+        let (old, new) = (MAX_CUTOFF.to_be_bytes(), (MAX_CUTOFF + 1).to_be_bytes());
+        let at = bytes.windows(8).position(|w| w == old).unwrap();
+        bytes[at..at + 8].copy_from_slice(&new);
+    };
+    let bad = resign(&f.seed.signing, &raw, |c, s, _| {
+        replace(c);
+        replace(s);
+    });
+    assert!(pending.append(&[], &[], &bad).is_err());
+}

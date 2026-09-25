@@ -1,4 +1,5 @@
 use super::*;
+use aven_core::sync::seed_claim::membership::{EvidenceRecord, MAX_CUTOFF};
 use peer_enrollment_http::RemovalStatus;
 
 async fn device(store: &ProtectedLocalKeyStore, db: &Database, origin: &str) -> [u8; 32] {
@@ -720,4 +721,78 @@ async fn completed_removal_stays_complete_across_later_freeze_and_new_intent() {
             .unwrap(),
         RemovalStatus::Complete
     );
+}
+
+/// Serves management from `evidence`, accepting every signed transition.
+async fn forged_high_water(
+    f: &Fixture,
+    evidence: aven_core::sync::seed_claim::membership::Evidence,
+    high_water: u64,
+    managed: Arc<std::sync::atomic::AtomicBool>,
+) -> tokio::task::JoinHandle<()> {
+    use serde_json::json;
+    let state = Arc::new(tokio::sync::Mutex::new(evidence));
+    let app = Router::new().route(
+        "/e2ee/enrollment/v1",
+        post(move |axum::Json(op): axum::Json<serde_json::Value>| {
+            let (state, managed) = (state.clone(), managed.clone());
+            async move {
+                let mut e = state.lock().await;
+                axum::Json(if op.get("PrepareManagement").is_some() {
+                    json!({"PreparedManagement": {"evidence": *e, "high_water": high_water}})
+                } else if let Some(manage) = op.get("Manage") {
+                    managed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    let record: String = serde_json::from_value(manage["record"].clone()).unwrap();
+                    e.transitions.push(EvidenceRecord {
+                        declaration: Vec::new(),
+                        request: Vec::new(),
+                        record: base64::Engine::decode(
+                            &base64::engine::general_purpose::STANDARD,
+                            record,
+                        )
+                        .unwrap(),
+                    });
+                    json!({"Managed": manage["record"]})
+                } else {
+                    json!({"Membership": *e})
+                })
+            }
+        }),
+    );
+    f.task.abort();
+    let address = f.origin.strip_prefix("http://").unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    e2ee_http::serve(app, address).await.1
+}
+
+#[tokio::test]
+async fn forged_high_water_beyond_tail_ranks_is_refused_before_signing() {
+    for (high_water, valid) in [(MAX_CUTOFF, true), (MAX_CUTOFF + 1, false)] {
+        let f = fixture().await;
+        let evidence = f
+            .seed_store
+            .active_inputs(&f.seed, &f.origin)
+            .await
+            .unwrap()
+            .evidence
+            .clone();
+        let target = device(&f.peer_store, &f.peer, &f.origin).await;
+        let before = floor(&f.seed_store, &f.seed, &f.origin).await;
+        let managed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let task = forged_high_water(&f, evidence, high_water, managed.clone()).await;
+        let removal = peer_enrollment_http::Client::new(&f.origin)
+            .unwrap()
+            .remove_device(&f.seed_store, &f.seed, target)
+            .await;
+        let after = floor(&f.seed_store, &f.seed, &f.origin).await;
+        if valid {
+            assert_eq!(removal.unwrap(), RemovalStatus::Complete);
+            assert_eq!(after.current_generation().starts_after, MAX_CUTOFF);
+        } else {
+            assert!(removal.is_err());
+            assert!(!managed.load(std::sync::atomic::Ordering::SeqCst));
+            assert_eq!(after.head(), before.head());
+        }
+        task.abort();
+    }
 }
