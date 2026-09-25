@@ -674,6 +674,7 @@ pub(crate) struct TuiSyncStatus {
     pub(crate) conflicts: i64,
     pub(crate) sync_cursor: Option<String>,
     pub(crate) local_sequence: Option<String>,
+    pub(crate) invitation: Option<crate::sync::encrypted::InvitationStatus>,
 }
 
 impl Default for TuiSyncStatus {
@@ -689,6 +690,7 @@ impl Default for TuiSyncStatus {
             conflicts: 0,
             sync_cursor: None,
             local_sequence: None,
+            invitation: None,
         }
     }
 }

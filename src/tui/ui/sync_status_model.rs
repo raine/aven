@@ -48,7 +48,18 @@ impl SyncStatusSummary {
         }
     }
 
-    pub(super) fn badge(&self) -> (Color, String) {
+    pub(super) fn badge(&self, status: &TuiSyncStatus) -> (Color, String) {
+        if let Some(invitation) = status.invitation {
+            let remaining = invitation
+                .expires_at
+                .saturating_sub(crate::sync::encrypted::unix_now().unwrap_or_default());
+            if remaining > 0 {
+                return (
+                    ORANGE,
+                    format!("inviting · {}:{:02}", remaining / 60, remaining % 60),
+                );
+            }
+        }
         match self.health {
             SyncHealth::Attention | SyncHealth::Unfinished => (ORANGE, "sync!".to_string()),
             SyncHealth::RuntimeDisabled => (FG_DIM, "sync off".to_string()),
@@ -103,11 +114,28 @@ mod tests {
     #[test]
     fn unfinished_setup_or_joining_is_not_reported_as_idle() {
         for phase in [LocalPhase::SetupIncomplete, LocalPhase::JoinIncomplete] {
-            let summary = sync_status_summary(&TuiSyncStatus { phase, ..set_up() });
+            let status = TuiSyncStatus { phase, ..set_up() };
+            let summary = sync_status_summary(&status);
             assert_eq!(summary.health, SyncHealth::Unfinished);
-            assert_eq!(summary.badge(), (ORANGE, "sync!".to_string()));
+            assert_eq!(summary.badge(&status), (ORANGE, "sync!".to_string()));
             assert!(!summary.can_manual_sync);
         }
+    }
+
+    #[test]
+    fn open_invitation_has_a_countdown_badge() {
+        let status = TuiSyncStatus {
+            invitation: Some(crate::sync::encrypted::InvitationStatus {
+                expires_at: crate::sync::encrypted::unix_now().unwrap() + 462,
+                keys_may_have_been_sent: false,
+            }),
+            ..set_up()
+        };
+
+        let badge = sync_status_summary(&status).badge(&status);
+
+        assert_eq!(badge.0, ORANGE);
+        assert!(badge.1.starts_with("inviting · 7:"), "{}", badge.1);
     }
 
     #[test]
@@ -121,7 +149,7 @@ mod tests {
         let summary = sync_status_summary(&status);
 
         assert_eq!(summary.health, SyncHealth::Attention);
-        assert_eq!(summary.badge(), (ORANGE, "sync!".to_string()));
+        assert_eq!(summary.badge(&status), (ORANGE, "sync!".to_string()));
     }
 
     #[test]
@@ -154,7 +182,13 @@ mod tests {
         assert!(!local.can_manual_sync);
         assert_eq!(disabled.health, SyncHealth::RuntimeDisabled);
         assert!(!disabled.can_manual_sync);
-        assert_eq!(pending.badge(), (ORANGE, "sync 4".to_string()));
+        assert_eq!(
+            pending.badge(&TuiSyncStatus {
+                pending_changes: 4,
+                ..set_up()
+            }),
+            (ORANGE, "sync 4".to_string())
+        );
         assert!(pending.can_manual_sync);
     }
 }

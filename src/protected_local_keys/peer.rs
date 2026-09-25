@@ -76,6 +76,14 @@ pub enum EnrollmentReadiness {
     Pending,
     Enrolled { head: Hash },
 }
+/// Secret-free state of an issued invitation that is neither admitted nor closed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct OpenInvitation {
+    pub(crate) handle: Hash,
+    pub(crate) expires_at: u64,
+    pub(crate) keys_may_have_been_sent: bool,
+}
+
 /// An issued invitation that is neither admitted nor closed.
 #[cfg(test)]
 #[derive(Debug, PartialEq, Eq)]
@@ -559,6 +567,57 @@ impl ProtectedLocalKeyStore {
         }
         Ok(unresolved)
     }
+    pub(crate) async fn open_invitation(
+        &self,
+        db: &Database,
+        inputs: &ActiveInputs,
+    ) -> Result<Option<OpenInvitation>> {
+        for journal in self.journals(db).await? {
+            if self.phase(db, &journal.name("ready"), 128).await?.is_none()
+                && !self.closed(db, &journal).await?
+            {
+                let declaration =
+                    Declaration::from_record(&inputs.membership, &journal.declaration)?;
+                return Ok(Some(OpenInvitation {
+                    handle: journal.handle,
+                    expires_at: declaration.expiry(),
+                    keys_may_have_been_sent: self.may_have_sent(db, &journal).await?,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Retires the open invitation if no grant has been sent. The returned
+    /// journal remains available for best-effort server cancellation.
+    pub(crate) async fn retire_open_invitation(
+        &self,
+        db: &Database,
+        inputs: &ActiveInputs,
+    ) -> Result<(Option<Outbound>, Option<OpenInvitation>)> {
+        let Some(state) = self.open_invitation(db, inputs).await? else {
+            return Ok((None, None));
+        };
+        if state.keys_may_have_been_sent {
+            return Ok((None, Some(state)));
+        }
+        let journal = self
+            .journals(db)
+            .await?
+            .into_iter()
+            .find(|journal| journal.handle == state.handle)
+            .context("error enrollment-invitation-missing")?;
+        self.save_phase(
+            db,
+            &inputs.id,
+            &journal.name("retired"),
+            128,
+            &journal.handle,
+        )
+        .await?;
+        Ok((Some(journal), Some(state)))
+    }
+
     pub(crate) async fn prepare_invitation(
         &self,
         db: &Database,

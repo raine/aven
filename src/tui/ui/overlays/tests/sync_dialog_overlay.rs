@@ -449,6 +449,22 @@ fn confirmation_buttons_are_clickable() {
     );
 }
 
+#[test]
+fn open_invitation_is_visible_and_can_be_cancelled() {
+    let status = TuiSyncStatus {
+        invitation: Some(crate::sync::encrypted::InvitationStatus {
+            expires_at: crate::sync::encrypted::unix_now().unwrap() + 600,
+            keys_may_have_been_sent: false,
+        }),
+        ..sync_status()
+    };
+    let rendered = render_page(SyncPage::Home, status, SyncActivity::default());
+
+    assert!(rendered.contains("invitation"), "{rendered}");
+    assert!(rendered.contains("open, expires"), "{rendered}");
+    assert!(rendered.contains("Cancel invitation"), "{rendered}");
+}
+
 fn sync_status() -> TuiSyncStatus {
     TuiSyncStatus {
         enabled: true,

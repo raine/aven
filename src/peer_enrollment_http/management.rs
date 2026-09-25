@@ -111,7 +111,7 @@ impl Client {
         }
         Ok(())
     }
-    async fn cancel(
+    pub(crate) async fn cancel(
         &self,
         store: &ProtectedLocalKeyStore,
         db: &Database,

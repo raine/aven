@@ -132,6 +132,7 @@ impl SecretText {
 pub(crate) enum SyncAction {
     SyncNow,
     AddDevice,
+    CancelInvitation,
     SetUp,
     Join,
     ResumeSetup,
@@ -158,6 +159,7 @@ impl SyncAction {
         match self {
             Self::SyncNow => "Sync now",
             Self::AddDevice => "Add device",
+            Self::CancelInvitation => "Cancel invitation",
             Self::SetUp => "Set up sync",
             Self::Join => "Join existing sync",
             Self::ResumeSetup => "Resume setup",
@@ -189,11 +191,14 @@ pub(crate) fn sync_actions(
     match state.page {
         SyncPage::Home if activity.running.is_some() => Vec::new(),
         SyncPage::Home => match status.phase {
-            LocalPhase::SetUp => vec![
-                SyncAction::SyncNow,
-                SyncAction::AddDevice,
-                SyncAction::ManageDevices,
-            ],
+            LocalPhase::SetUp => {
+                let mut actions = vec![SyncAction::SyncNow, SyncAction::AddDevice];
+                if status.invitation.is_some() {
+                    actions.push(SyncAction::CancelInvitation);
+                }
+                actions.push(SyncAction::ManageDevices);
+                actions
+            }
             LocalPhase::NotSetUp => vec![SyncAction::SetUp, SyncAction::Join],
             LocalPhase::SetupIncomplete => vec![SyncAction::ResumeSetup],
             LocalPhase::JoinIncomplete => {

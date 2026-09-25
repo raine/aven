@@ -118,7 +118,7 @@ fn key_store(database: &Database) -> Result<ProtectedLocalKeyStore> {
     Ok(ProtectedLocalKeyStore::for_database(database.path())?)
 }
 
-pub(super) fn unix_now() -> Result<u64> {
+pub(crate) fn unix_now() -> Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
 }
 
@@ -289,6 +289,21 @@ pub(crate) struct PendingInvitation {
     server: String,
     text: Zeroizing<String>,
     deadline: Instant,
+    expires_at: u64,
+    resumed: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct InvitationStatus {
+    pub(crate) expires_at: u64,
+    pub(crate) keys_may_have_been_sent: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Cancellation {
+    None,
+    Cancelled,
+    KeysMayHaveBeenSent { expires_at: u64 },
 }
 
 impl PendingInvitation {
@@ -296,9 +311,21 @@ impl PendingInvitation {
         &self.text
     }
 
+    pub(crate) fn expires_at(&self) -> u64 {
+        self.expires_at
+    }
+
+    pub(crate) fn resumed(&self) -> bool {
+        self.resumed
+    }
+
     /// QR presentation of the invitation text.
     pub(crate) fn presentation(&self) -> Result<crate::pairing::PairingPresentation> {
         crate::pairing::PairingPresentation::new(&self.server, &self.text)
+    }
+
+    pub(crate) fn tui_presentation(&self) -> Result<crate::pairing::PairingPresentation> {
+        crate::pairing::PairingPresentation::new_tui(&self.server, &self.text, self.expires_at)
     }
 }
 
@@ -321,8 +348,9 @@ pub(crate) async fn create_invitation(
     let Some((_, server)) = store.association(database).await? else {
         bail!("error sync-setup-incomplete hint=\"rerun `aven sync setup`\"");
     };
-    let invitation = peer_enrollment_http::Client::new(&server)?
-        .invite(&store, database, unix_now()? + invitation_seconds())
+    let now = unix_now()?;
+    let created = peer_enrollment_http::Client::new(&server)?
+        .invite_with_status(&store, database, now + invitation_seconds())
         .await
         .map_err(|error| match error.to_string().as_str() {
             "error withdrawal-required-unsupported" => error.context(
@@ -330,16 +358,81 @@ pub(crate) async fn create_invitation(
             ),
             _ => explain_change_limit(error),
         })?;
+    ensure!(
+        created.state.expires_at > now,
+        "error sync-invitation-unused hint=\"the open invitation has expired; run `aven sync` before creating another invitation\""
+    );
     let text = DeviceInvitation {
         server: server.clone(),
-        invitation,
+        invitation: created.invitation,
     }
     .encode();
     Ok(PendingInvitation {
         server,
         text,
-        deadline: Instant::now() + Duration::from_secs(invitation_seconds()),
+        deadline: Instant::now() + Duration::from_secs(created.state.expires_at - now),
+        expires_at: created.state.expires_at,
+        resumed: created.resumed,
     })
+}
+
+pub(crate) async fn invitation_status(database: &Database) -> Result<Option<InvitationStatus>> {
+    if !is_set_up(database).await? {
+        return Ok(None);
+    }
+    let store = key_store(database)?;
+    let _guard = super::coordination::acquire(database).await?;
+    let Some((_, server)) = store.association(database).await? else {
+        return Ok(None);
+    };
+    let inputs = store.active_inputs(database, &server).await?;
+    Ok(store
+        .open_invitation(database, &inputs)
+        .await?
+        .map(|state| InvitationStatus {
+            expires_at: state.expires_at,
+            keys_may_have_been_sent: state.keys_may_have_been_sent,
+        }))
+}
+
+pub(crate) async fn cancel_invitation(
+    database: &Database,
+    config: &AppConfig,
+) -> Result<Cancellation> {
+    config.ensure_sync_allowed()?;
+    ensure!(is_set_up(database).await?, NOT_SET_UP);
+    let store = key_store(database)?;
+    let _guard = super::coordination::acquire(database).await?;
+    let Some((_, server)) = store.association(database).await? else {
+        bail!("error sync-setup-incomplete hint=\"rerun `aven sync setup`\"");
+    };
+    let client = peer_enrollment_http::Client::new(&server)?;
+    let mut inputs = store.active_inputs(database, &server).await?;
+    let (journal, state) = store.retire_open_invitation(database, &inputs).await?;
+    let Some(state) = state else {
+        return Ok(Cancellation::None);
+    };
+    let Some(journal) = journal else {
+        return Ok(Cancellation::KeysMayHaveBeenSent {
+            expires_at: state.expires_at,
+        });
+    };
+    // Local retirement is the safety boundary. Server cancellation shortens
+    // the joiner's wait, but failure to deliver it cannot permit admission.
+    let _ = client
+        .cancel(&store, database, &mut inputs, journal.handle)
+        .await;
+    Ok(Cancellation::Cancelled)
+}
+
+async fn poll_admission(database: &Database, invitation: &PendingInvitation) -> Result<bool> {
+    let store = key_store(database)?;
+    let client = peer_enrollment_http::Client::new(&invitation.server)?;
+    let _guard = super::coordination::acquire(database).await?;
+    match client.admit(&store, database).await {
+        Err(error) if busy(&error) => Ok(false),
+        result => result,
+    }
 }
 
 /// Polls admission until the invited device joins or the invitation expires.
@@ -347,17 +440,8 @@ pub(crate) async fn await_admission(
     database: &Database,
     invitation: &PendingInvitation,
 ) -> Result<()> {
-    let store = key_store(database)?;
-    let client = peer_enrollment_http::Client::new(&invitation.server)?;
     while Instant::now() < invitation.deadline {
-        let admitted = {
-            let _guard = super::coordination::acquire(database).await?;
-            match client.admit(&store, database).await {
-                Err(error) if busy(&error) => false,
-                result => result?,
-            }
-        };
-        if admitted {
+        if poll_admission(database, invitation).await? {
             return Ok(());
         }
         tokio::time::sleep(POLL_INTERVAL).await;
@@ -367,16 +451,85 @@ pub(crate) async fn await_admission(
     )
 }
 
+async fn await_admission_until_interrupt(
+    database: &Database,
+    invitation: &PendingInvitation,
+) -> Result<bool> {
+    // The listener runs during each network poll, but cancellation is acted on
+    // only after that poll releases the coordination lock.
+    let mut interrupt = tokio::spawn(tokio::signal::ctrl_c());
+    while Instant::now() < invitation.deadline {
+        match poll_admission(database, invitation).await {
+            Ok(true) => {
+                interrupt.abort();
+                return Ok(true);
+            }
+            Ok(false) => {}
+            Err(error) => {
+                interrupt.abort();
+                return Err(error);
+            }
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(POLL_INTERVAL) => {}
+            _ = &mut interrupt => return Ok(false),
+        }
+    }
+    interrupt.abort();
+    bail!(
+        "error sync-invitation-unused hint=\"the invitation expired unused; if keys may have been sent with it, the next `aven sync` changes keys before uploading new changes\""
+    )
+}
+
 pub(crate) async fn invite(database: &Database, config: &AppConfig) -> Result<()> {
     let invitation = create_invitation(database, config).await?;
+    if invitation.resumed() {
+        eprintln!(
+            "Resuming the open invitation; it expires in {}.",
+            format_duration(invitation.expires_at().saturating_sub(unix_now()?))
+        );
+    }
     println!("{}", invitation.text());
     std::io::stdout().flush()?;
     print_invitation_qr(&invitation);
     eprintln!("Anyone with this invitation can access all your synced data and manage devices.");
     eprintln!("Run `aven sync join` on the other device. Waiting for it to join...");
-    await_admission(database, &invitation).await?;
-    println!("Device added");
+    if await_admission_until_interrupt(database, &invitation).await? {
+        eprintln!("Device added");
+        return Ok(());
+    }
+    let cancellation = tokio::select! {
+        result = cancel_invitation(database, config) => result?,
+        _ = tokio::signal::ctrl_c() => return Ok(()),
+    };
+    match cancellation {
+        Cancellation::Cancelled => eprintln!("Invitation cancelled."),
+        Cancellation::KeysMayHaveBeenSent { expires_at } => eprintln!(
+            "Keys may already have been sent. The invitation remains open until {}; the next sync then changes keys.",
+            format_expiry(expires_at)
+        ),
+        Cancellation::None => eprintln!("No invitation is open."),
+    }
     Ok(())
+}
+
+fn format_duration(seconds: u64) -> String {
+    let minutes = seconds.div_ceil(60);
+    if minutes == 1 {
+        "1 minute".to_string()
+    } else {
+        format!("{minutes} minutes")
+    }
+}
+
+pub(crate) fn format_expiry(expires_at: u64) -> String {
+    chrono::DateTime::from_timestamp(expires_at as i64, 0)
+        .map(|time| {
+            time.with_timezone(&chrono::Local)
+                .format("%H:%M")
+                .to_string()
+        })
+        .unwrap_or_else(|| expires_at.to_string())
 }
 
 /// Shows the invitation QR on an interactive standard error; standard output
@@ -825,6 +978,8 @@ struct StatusReport {
     image_uploads_pending: Option<bool>,
     image_downloads_pending: Option<bool>,
     images_unavailable: Option<bool>,
+    invitation: &'static str,
+    invitation_expires_at: Option<u64>,
 }
 
 /// Local observation only; contacts no server. Waits briefly for a running
@@ -840,6 +995,8 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
         image_uploads_pending: None,
         image_downloads_pending: None,
         images_unavailable: None,
+        invitation: "none",
+        invitation_expires_at: None,
     };
     if !is_set_up(database).await? {
         if json {
@@ -857,11 +1014,19 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
     let _guard = super::coordination::acquire(database).await?;
     if let Some((peer, server)) = store.association(database).await? {
         report.server = Some(server.clone());
-        report.state = if peer
-            && !matches!(
+        let enrollment_ready = !peer
+            || matches!(
                 store.enrollment_readiness(database).await?,
                 EnrollmentReadiness::Enrolled { .. }
-            ) {
+            );
+        if enrollment_ready {
+            let invitation_inputs = store.active_inputs(database, &server).await?;
+            if let Some(invitation) = store.open_invitation(database, &invitation_inputs).await? {
+                report.invitation = "open";
+                report.invitation_expires_at = Some(invitation.expires_at);
+            }
+        }
+        report.state = if !enrollment_ready {
             "join-incomplete"
         } else {
             match store.tail_inputs(database, &server).await {
@@ -905,6 +1070,11 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
              data that device may already hold stays readable to it."
         ),
         _ => println!("State: ready"),
+    }
+    if let Some(expires_at) = report.invitation_expires_at {
+        println!("Invitation: open, expires {}", format_expiry(expires_at));
+    } else {
+        println!("Invitation: none");
     }
     if let Some(pending) = report.local_changes_pending {
         println!(

@@ -35,6 +35,7 @@ impl TuiStore {
             Err(error) => SyncStatusCheck::new(false, format!("{error:#}")),
         };
         let phase = crate::sync::encrypted::local_phase(&self.database).await?;
+        let invitation = crate::sync::encrypted::invitation_status(&self.database).await?;
         Ok(TuiSyncStatus {
             enabled: config.sync.enabled,
             runtime_allowed: config.sync_is_allowed(),
@@ -46,6 +47,7 @@ impl TuiStore {
             conflicts: persistence.conflicts,
             sync_cursor: persistence.sync_cursor,
             local_sequence: persistence.local_sequence,
+            invitation,
         })
     }
 }

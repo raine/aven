@@ -74,8 +74,25 @@ fn header_wraps_complete_copy_without_overlapping_qr_or_footer() {
         text.replace(' ', "")
             .contains(presentation.server_identity())
     );
-    assert!(layout.content.bottom() < qr.top());
-    assert!(qr.bottom() < layout.footer.top());
+    assert!(layout.content.bottom() <= qr.top());
+    assert!(qr.bottom() <= layout.footer.top());
+}
+
+#[test]
+fn low_correction_invitation_fits_a_39_row_terminal() {
+    let invitation = format!(
+        "aven://pair/v2/{}",
+        "a".repeat(194 - "aven://pair/v2/".len())
+    );
+    let presentation = crate::pairing::PairingPresentation::new_tui(
+        TEST_SERVER,
+        &invitation,
+        crate::sync::encrypted::unix_now().unwrap() + 600,
+    )
+    .unwrap();
+
+    let layout = pairing_layout(ratatui::layout::Rect::new(0, 0, 155, 39), &presentation);
+    assert!(layout.qr.is_some());
 }
 
 #[test]
@@ -86,7 +103,8 @@ fn constrained_overlay_renders_complete_actionable_fallback_without_secrets() {
 
     let buffer = rendered_buffer(&presentation, 40, 12);
     let text = region_text(&buffer, layout.content);
-    assert!(text.contains("press c to copy the invitation text."));
+    assert!(text.contains("Press c to copy"));
+    assert!(text.contains("aven sync invite"));
     assert!(text.contains(NETWORK_REQUIREMENT));
     assert!(!text.contains("aven://pair/"));
     assert!(!buffer.content.iter().any(|cell| {

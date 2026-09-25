@@ -10,11 +10,11 @@ use crate::tui::overlay::{dialog_area, dialog_inner_area};
 use crate::tui::text::{cell_width_ranges, str_cells};
 use crate::tui::theme::{BG_ALT, FG, FG_MUTED};
 
-const SCAN_INSTRUCTION: &str = "Scan this code on the device to add.";
 pub(crate) const NETWORK_REQUIREMENT: &str = "Anyone with this code can access all synced data.";
+const HANDOFF: &str = "On the other device: Join existing sync, or `aven sync join`.";
 const DIALOG_CHROME_COLUMNS: u16 = 4;
 const DIALOG_CHROME_ROWS: u16 = 2;
-const QR_GAP_ROWS: u16 = 1;
+const QR_GAP_ROWS: u16 = 0;
 const FOOTER_ROWS: u16 = 1;
 const FALLBACK_WIDTH: u16 = 64;
 
@@ -30,7 +30,7 @@ pub(crate) struct PairingLayout {
 pub(crate) fn pairing_layout(terminal: Rect, presentation: &PairingPresentation) -> PairingLayout {
     let qr_width = u16::try_from(presentation.qr().width()).unwrap_or(u16::MAX);
     let qr_height = u16::try_from(presentation.qr().rows().len()).unwrap_or(u16::MAX);
-    let header_height = qr_header_height(presentation.server_identity(), qr_width);
+    let header_height = qr_header_height(presentation, qr_width);
     let required_width = qr_width.saturating_add(DIALOG_CHROME_COLUMNS);
     let required_height = header_height
         .saturating_add(QR_GAP_ROWS)
@@ -89,7 +89,7 @@ pub(in crate::tui::ui) fn render_pairing(frame: &mut Frame, presentation: &Pairi
     debug_assert_eq!(inner, layout.inner);
 
     if let Some(qr) = layout.qr {
-        render_qr_header(frame, layout.content, presentation.server_identity());
+        render_qr_header(frame, layout.content, presentation);
         render_qr(frame, qr, presentation.qr());
     } else {
         render_text(frame, layout.content, &fallback_text(), FG);
@@ -97,24 +97,41 @@ pub(in crate::tui::ui) fn render_pairing(frame: &mut Frame, presentation: &Pairi
     render_footer(frame, layout.footer);
 }
 
-fn qr_header_height(server_identity: &str, width: u16) -> u16 {
-    wrapped_height(SCAN_INSTRUCTION, width)
-        .saturating_add(wrapped_height(&format!("Server: {server_identity}"), width))
+fn waiting_text(presentation: &PairingPresentation) -> String {
+    let remaining = presentation
+        .expires_at()
+        .unwrap_or_default()
+        .saturating_sub(crate::sync::encrypted::unix_now().unwrap_or_default());
+    format!(
+        "Waiting for a device · {}:{:02} left",
+        remaining / 60,
+        remaining % 60
+    )
+}
+
+fn qr_header_height(presentation: &PairingPresentation, width: u16) -> u16 {
+    wrapped_height(&waiting_text(presentation), width)
+        .saturating_add(wrapped_height(
+            &format!("Server: {}", presentation.server_identity()),
+            width,
+        ))
+        .saturating_add(wrapped_height(HANDOFF, width))
         .saturating_add(wrapped_height(NETWORK_REQUIREMENT, width))
 }
 
-fn render_qr_header(frame: &mut Frame, area: Rect, server_identity: &str) {
-    let scan_height = wrapped_height(SCAN_INSTRUCTION, area.width);
+fn render_qr_header(frame: &mut Frame, area: Rect, presentation: &PairingPresentation) {
+    let waiting = waiting_text(presentation);
+    let waiting_height = wrapped_height(&waiting, area.width);
     render_text(
         frame,
-        Rect::new(area.x, area.y, area.width, scan_height.min(area.height)),
-        SCAN_INSTRUCTION,
+        Rect::new(area.x, area.y, area.width, waiting_height.min(area.height)),
+        &waiting,
         FG,
     );
 
-    let server = format!("Server: {server_identity}");
+    let server = format!("Server: {}", presentation.server_identity());
     let server_height = wrapped_height(&server, area.width);
-    let server_y = area.y.saturating_add(scan_height);
+    let server_y = area.y.saturating_add(waiting_height);
     render_text(
         frame,
         Rect::new(
@@ -127,7 +144,21 @@ fn render_qr_header(frame: &mut Frame, area: Rect, server_identity: &str) {
         FG_MUTED,
     );
 
-    let requirement_y = server_y.saturating_add(server_height);
+    let handoff_height = wrapped_height(HANDOFF, area.width);
+    let handoff_y = server_y.saturating_add(server_height);
+    render_text(
+        frame,
+        Rect::new(
+            area.x,
+            handoff_y,
+            area.width,
+            handoff_height.min(area.bottom().saturating_sub(handoff_y)),
+        ),
+        HANDOFF,
+        FG_MUTED,
+    );
+
+    let requirement_y = handoff_y.saturating_add(handoff_height);
     render_text(
         frame,
         Rect::new(
@@ -181,7 +212,7 @@ fn render_text(frame: &mut Frame, area: Rect, text: &str, color: Color) {
 
 fn fallback_text() -> String {
     format!(
-        "Terminal too small for QR.\n\nEnlarge it, or press c to copy the invitation text.\n\n{NETWORK_REQUIREMENT}"
+        "Terminal too small for QR. Press c to copy, enlarge it, or run `aven sync invite`.\nOn other device: Join existing sync or `aven sync join`.\n{NETWORK_REQUIREMENT}"
     )
 }
 

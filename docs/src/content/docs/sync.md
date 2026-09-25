@@ -86,11 +86,13 @@ aven sync invite
 
 The command prints an `aven://pair/v2/` invitation and, in an interactive
 terminal, also shows it as a QR code. In the TUI, choose **Add device** in the
-Sync dialog, or `:add-device`, to show the QR code; the TUI keeps waiting for the
-device after you close the overlay. To paste the invitation on another
-computer, press `c` in the overlay to copy it; the TUI never copies it
-otherwise. Treat the copied invitation like a password and clear the clipboard
-after pasting.
+Sync dialog, or `:add-device`, to show the QR code, the time left, and the join
+command for the other device. The TUI keeps waiting after you close the overlay
+and shows the open invitation in the header and Sync dialog. To paste the
+invitation on another computer, press `c` in the overlay to copy it; the TUI
+never copies it otherwise. If clipboard support is unavailable, run
+`aven sync invite` in a terminal instead. Treat the copied invitation like a
+password and clear the clipboard after pasting.
 
 On the new device, use an empty database and paste the invitation:
 
@@ -117,10 +119,20 @@ none was accepted, or local data was added while joining, it cannot finish
 joining; keep it as it is and join from a new, empty database.
 
 Anyone with the invitation can access all synced data and manage devices. It
-expires after ten minutes. Sync on the inviting device keeps running while the
-invitation is open, so a device that receives keys can read changes made in the
-meantime. If the invitation expires after keys may have been sent to a device
-that never joined, the next sync changes keys before uploading new changes.
+expires after ten minutes. Rerunning `aven sync invite` resumes an open
+invitation, reports its declared expiry, and waits only for the time left.
+`aven sync status` reports whether an invitation is open and its expiry.
+
+Before keys have been sent, stop the CLI command with Ctrl-C or run
+`aven sync invite --cancel`; in the TUI choose **Cancel invitation**. This
+retires the invitation locally and asks the server to stop the waiting joiner.
+After keys may have been sent, cancellation cannot close it early: Aven reports
+its expiry, and the next sync changes keys after it expires.
+
+Sync on the inviting device keeps running while the invitation is open, so a
+device that receives keys can read changes made in the meantime. If the
+invitation expires after keys may have been sent to a device that never joined,
+the next sync changes keys before uploading new changes.
 Until that succeeds, sync still downloads changes from other devices but keeps
 changes made here waiting, and `aven sync` reports why. That device can still
 read anything it received.

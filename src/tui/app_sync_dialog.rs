@@ -123,6 +123,10 @@ impl App {
                 self.show_pairing_invitation();
                 return Ok(());
             }
+            SyncAction::CancelInvitation => {
+                self.cancel_pairing_invitation().await?;
+                home
+            }
             SyncAction::Back => home,
             SyncAction::SetUp => invitation_page(InvitationKind::Setup),
             SyncAction::ResumeSetup if self.sync_ops.has_setup_invitation() => {

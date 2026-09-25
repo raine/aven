@@ -1,12 +1,13 @@
 //! Isolated repeatable device enrollment and published snapshot retrieval.
 //! The public mailbox never exposes bootstrap chunks, images or credentials.
 mod management;
+use crate::protected_local_keys::peer::OpenInvitation;
 use crate::{
     http_admission::{self, Outcome},
     protected_local_keys::ProtectedLocalKeyStore,
     seed_bootstrap_http,
 };
-use anyhow::{Result, ensure};
+use anyhow::{Context as _, Result, ensure};
 use aven_core::{
     db::Database,
     sync::seed_claim::{
@@ -23,6 +24,12 @@ use axum::{
     routing::post,
 };
 pub use management::RemovalStatus;
+
+pub(crate) struct CreatedInvitation {
+    pub(crate) invitation: Invitation,
+    pub(crate) state: OpenInvitation,
+    pub(crate) resumed: bool,
+}
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -589,8 +596,21 @@ impl Client {
         db: &Database,
         expires: u64,
     ) -> Result<Invitation> {
+        Ok(self
+            .invite_with_status(store, db, expires)
+            .await?
+            .invitation)
+    }
+
+    pub(crate) async fn invite_with_status(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        expires: u64,
+    ) -> Result<CreatedInvitation> {
         let mut inputs = store.active_inputs(db, &self.locator).await?;
         self.refresh_inputs(store, db, &mut inputs).await?;
+        let previous = store.open_invitation(db, &inputs).await?;
         let journal = store
             .prepare_invitation(db, &inputs, Some(expires), None)
             .await?;
@@ -606,7 +626,16 @@ impl Client {
                 .await
             {
                 Ok(Reply::Registered(peer::RegistrationStatus::Open)) => {
-                    return store.registered_invitation(db, &inputs, &journal).await;
+                    let invitation = store.registered_invitation(db, &inputs, &journal).await?;
+                    let state = store
+                        .open_invitation(db, &inputs)
+                        .await?
+                        .context("error enrollment-invitation-missing")?;
+                    return Ok(CreatedInvitation {
+                        invitation,
+                        state,
+                        resumed: previous.is_some_and(|old| old.handle == journal.handle),
+                    });
                 }
                 Err(error) if is_stale(&error) && attempt == 0 => {
                     self.refresh_inputs(store, db, &mut inputs).await?

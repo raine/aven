@@ -194,13 +194,20 @@ pub(crate) enum SyncSubcommand {
     Setup(SetupArgs),
     /// Invite another device to sync and wait until it joins
     #[command(after_long_help = INVITE_HELP)]
-    Invite,
+    Invite(InviteArgs),
     /// Join sync from an empty database with a device invitation
     #[command(after_long_help = JOIN_HELP)]
     Join(JoinArgs),
     /// List or remove the devices that take part in sync
     #[command(after_long_help = DEVICE_HELP)]
     Device(DeviceCommand),
+}
+
+#[derive(Args)]
+pub(crate) struct InviteArgs {
+    /// Cancel the open invitation instead of creating or resuming one
+    #[arg(long)]
+    pub(crate) cancel: bool,
 }
 
 pub(super) const DEVICE_HELP: &str = r#"Examples:
@@ -244,9 +251,13 @@ the same command to resume an interrupted setup."#;
 pub(super) const INVITE_HELP: &str = r#"The invitation is printed to standard output. Anyone with it can access all
 synced data and manage devices. Keep this command running until the other
 device joins; it stops when the invitation expires after ten minutes. Sync keeps
-running meanwhile. If the invitation expires after keys may have been sent to a
-device that never joined, the next sync changes keys before uploading new
-changes; that device can still read anything it received before."#;
+running meanwhile. Rerunning resumes an open invitation and reports its real
+expiry.
+
+Use --cancel to retire an invitation before keys have been sent. If keys may
+already have been sent, it remains open until expiry and the next sync changes
+keys before uploading new changes; that device can still read anything it
+received before."#;
 
 pub(super) const JOIN_HELP: &str = r#"Paste the invitation printed by `aven sync invite`, or pipe it to standard
 input, while the inviting device waits. The database must be empty. Joining

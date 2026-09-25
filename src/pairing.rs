@@ -4,9 +4,10 @@
 use std::fmt;
 
 use anyhow::{Result, bail};
-use qrcode::{Color, QrCode};
+use qrcode::{Color, EcLevel, QrCode, Version};
 
 pub(crate) const PAIRING_QUIET_ZONE_MODULES: usize = 4;
+pub(crate) const TUI_PAIRING_QUIET_ZONE_MODULES: usize = 2;
 
 const QR_LINE_STYLE: &str = "\x1b[30;47m";
 const STYLE_RESET: &str = "\x1b[0m";
@@ -15,17 +16,25 @@ const STYLE_RESET: &str = "\x1b[0m";
 pub(crate) struct PairingQr {
     width: usize,
     quiet_zone: usize,
+    version: i16,
     rows: Vec<String>,
 }
 
 impl PairingQr {
     fn encode(payload: &[u8]) -> Result<Self> {
-        let Ok(code) = QrCode::new(payload) else {
+        Self::encode_with(payload, EcLevel::M, PAIRING_QUIET_ZONE_MODULES)
+    }
+
+    fn encode_with(payload: &[u8], level: EcLevel, quiet_zone: usize) -> Result<Self> {
+        let Ok(code) = QrCode::with_error_correction_level(payload, level) else {
             bail!("error pairing-qr-too-large");
         };
         let source_width = code.width();
+        let version = match code.version() {
+            Version::Normal(version) => version,
+            Version::Micro(_) => bail!("error pairing-qr-version"),
+        };
         let colors = code.into_colors();
-        let quiet_zone = PAIRING_QUIET_ZONE_MODULES;
         let width = source_width + 2 * quiet_zone;
         let mut rows = Vec::with_capacity(width.div_ceil(2));
 
@@ -43,6 +52,7 @@ impl PairingQr {
         Ok(Self {
             width,
             quiet_zone,
+            version,
             rows,
         })
     }
@@ -89,6 +99,7 @@ impl fmt::Debug for PairingQr {
             .debug_struct("PairingQr")
             .field("width", &self.width)
             .field("quiet_zone", &self.quiet_zone)
+            .field("version", &self.version)
             .finish()
     }
 }
@@ -98,6 +109,7 @@ impl fmt::Debug for PairingQr {
 pub(crate) struct PairingPresentation {
     server_identity: String,
     qr: PairingQr,
+    expires_at: Option<u64>,
 }
 
 impl PairingPresentation {
@@ -105,6 +117,19 @@ impl PairingPresentation {
         Ok(Self {
             server_identity: server_origin.to_string(),
             qr: PairingQr::encode(invitation.as_bytes())?,
+            expires_at: None,
+        })
+    }
+
+    pub(crate) fn new_tui(server_origin: &str, invitation: &str, expires_at: u64) -> Result<Self> {
+        Ok(Self {
+            server_identity: server_origin.to_string(),
+            qr: PairingQr::encode_with(
+                invitation.as_bytes(),
+                EcLevel::L,
+                TUI_PAIRING_QUIET_ZONE_MODULES,
+            )?,
+            expires_at: Some(expires_at),
         })
     }
 
@@ -114,6 +139,10 @@ impl PairingPresentation {
 
     pub(crate) fn qr(&self) -> &PairingQr {
         &self.qr
+    }
+
+    pub(crate) fn expires_at(&self) -> Option<u64> {
+        self.expires_at
     }
 }
 
@@ -217,6 +246,22 @@ mod tests {
                 .take(qr.quiet_zone / 2)
                 .all(|row| row.chars().all(|cell| cell == ' '))
         );
+    }
+
+    #[test]
+    fn tui_invitation_uses_low_correction_and_two_module_quiet_zone() {
+        let invitation = format!(
+            "aven://pair/v2/{}",
+            "a".repeat(194 - "aven://pair/v2/".len())
+        );
+        let presentation = PairingPresentation::new_tui(TEST_SERVER, &invitation, 123).unwrap();
+        let qr = presentation.qr();
+
+        assert_eq!(invitation.len(), 194);
+        assert_eq!(qr.version, 9);
+        assert_eq!(qr.quiet_zone, TUI_PAIRING_QUIET_ZONE_MODULES);
+        assert_eq!(qr.width(), 57);
+        assert_eq!(qr.rows().len(), 29);
     }
 
     #[test]

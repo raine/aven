@@ -307,6 +307,17 @@ fn home_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
         attention_style(status.conflicts > 0),
         width,
     ));
+    if let Some(invitation) = status.invitation {
+        lines.extend(wrapped_row(
+            "invitation",
+            &format!(
+                "open, expires {}",
+                crate::sync::encrypted::format_expiry(invitation.expires_at)
+            ),
+            Style::new().fg(ORANGE),
+            width,
+        ));
+    }
     if !summary.issues.is_empty() {
         lines.push(Line::from(""));
         for issue in &summary.issues {

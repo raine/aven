@@ -865,12 +865,18 @@ Invite another device and wait until it joins.
 
 ```sh
 aven sync invite
+aven sync invite --cancel
 ```
 
 Standard output receives the `aven://pair/v2/` invitation. An interactive
 standard error also shows it as a QR code. Anyone with the invitation can access
-all synced data and manage devices. It expires after ten minutes. Sync on this
-device keeps running while it is open.
+all synced data and manage devices. It expires after ten minutes. Rerunning the
+command resumes the open invitation and reports its declared expiry.
+
+Ctrl-C or `--cancel` retires an invitation before keys have been sent. If keys
+may already have been sent, it remains open until its expiry and the next sync
+changes keys. A second Ctrl-C force-quits while cancellation is in progress.
+Sync on this device keeps running while the invitation is open.
 
 #### `aven sync join`
 
@@ -925,9 +931,9 @@ The state is `not-set-up`, `setup-incomplete`, `join-incomplete`,
 expired after keys may have been sent to a device that never joined; the next
 `aven sync` changes keys before uploading new changes. Ready and
 `key-change-pending` databases also report the server, whether local changes
-wait to sync, the server position, and pending image uploads, downloads, and
-unavailable images. The versioned JSON report omits keys, invitations, and task
-content.
+wait to sync, the server position, pending image uploads, downloads, and
+unavailable images, plus whether an invitation is open and its expiry. The
+versioned JSON report omits invitation text, keys, and task content.
 
 ### `aven server`
 

@@ -557,7 +557,7 @@ fn sync_status_label(store: &TuiStore) -> (Color, String) {
     {
         return (GREEN, "sync".to_string());
     }
-    super::sync_status_model::sync_status_summary(&store.sync_status).badge()
+    super::sync_status_model::sync_status_summary(&store.sync_status).badge(&store.sync_status)
 }
 
 #[cfg(test)]

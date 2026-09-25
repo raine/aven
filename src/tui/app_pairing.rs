@@ -102,9 +102,13 @@ impl App {
                 .context("invitation task stopped")
                 .and_then(|result| result)
             {
-                Ok(invitation) => match invitation.presentation() {
+                Ok(invitation) => match invitation.tui_presentation() {
                     Ok(presentation) => {
                         let presentation = Arc::new(presentation);
+                        self.store.sync_status.invitation = Some(encrypted::InvitationStatus {
+                            expires_at: invitation.expires_at(),
+                            keys_may_have_been_sent: false,
+                        });
                         self.invite.presentation = Some(presentation.clone());
                         self.invite.text = Some(Zeroizing::new(invitation.text().to_string()));
                         self.overlay = Some(OverlayState::Pairing(presentation));
@@ -140,8 +144,49 @@ impl App {
             .and_then(|result| result)
         {
             Ok(()) => self.set_success("device added"),
-            Err(error) => self.set_warning(format!("{error:#}")),
+            Err(error) => {
+                let status = encrypted::invitation_status(&self.store.database()).await?;
+                if status.is_some_and(|state| state.keys_may_have_been_sent) {
+                    self.set_warning("invitation expired; the next sync changes keys");
+                } else if error
+                    .to_string()
+                    .starts_with("error sync-invitation-unused")
+                {
+                    self.set_warning("invitation expired unused");
+                } else {
+                    self.set_warning(format!("{error:#}"));
+                }
+            }
         }
+        self.store.sync_status.invitation =
+            encrypted::invitation_status(&self.store.database()).await?;
         Ok(true)
+    }
+
+    pub(in crate::tui) async fn cancel_pairing_invitation(&mut self) -> Result<()> {
+        let result =
+            encrypted::cancel_invitation(&self.store.database(), self.intake.config()).await?;
+        match result {
+            encrypted::Cancellation::Cancelled => {
+                if let Some(task) = self.invite.admission.take() {
+                    task.abort();
+                }
+                self.invite.presentation = None;
+                self.invite.text = None;
+                self.store.sync_status.invitation = None;
+                self.set_success("invitation cancelled");
+            }
+            encrypted::Cancellation::KeysMayHaveBeenSent { expires_at } => {
+                self.set_warning(format!(
+                    "keys may already have been sent; the invitation expires at {}, and the next sync then changes keys",
+                    encrypted::format_expiry(expires_at)
+                ));
+            }
+            encrypted::Cancellation::None => {
+                self.store.sync_status.invitation = None;
+                self.set_info("no invitation is open");
+            }
+        }
+        Ok(())
     }
 }

@@ -477,7 +477,9 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
     while let Some(line) = invite_stdout.next_line().await.unwrap() {
         rest.push_str(&line);
     }
-    assert!(rest.contains("Device added"), "{rest}");
+    assert!(!rest.contains("Device added"), "{rest}");
+    let invite_stderr = String::from_utf8_lossy(&invited.stderr);
+    assert!(invite_stderr.contains("Device added"), "{invite_stderr}");
     assert_eq!(titles(&a).await, titles(&b).await);
     assert_eq!(
         attachment_bytes(&b, &child, root).await,
@@ -649,6 +651,47 @@ async fn set_up(root: &Path) -> (Child, Installation) {
 /// The reported flow with a short declared invitation lifetime: the inviting
 /// device stops before admitting, the join times out and the invitation
 /// expires, and the same database finishes with a new invitation.
+#[cfg(unix)]
+#[tokio::test]
+async fn cli_invitation_cancel_and_resume_use_the_declared_expiry() {
+    let root = tempfile::tempdir().unwrap();
+    let (_server, a) = set_up(root.path()).await;
+
+    let (interrupted, _, _) = spawn_invite(&a, Some("8")).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    unsafe {
+        libc::kill(interrupted.id().unwrap() as i32, libc::SIGINT);
+    }
+    let output = interrupted.wait_with_output().await.unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Invitation cancelled"), "{stderr}");
+    assert_eq!(status(&a).await["invitation"], "none");
+
+    let (mut abandoned, _, _) = spawn_invite(&a, Some("8")).await;
+    abandoned.kill().await.unwrap();
+    abandoned.wait().await.unwrap();
+    assert_eq!(status(&a).await["invitation"], "open");
+    let cancelled = a.ok(&["sync", "invite", "--cancel"]).await;
+    assert!(cancelled.contains("Invitation cancelled"), "{cancelled}");
+    assert_eq!(status(&a).await["invitation"], "none");
+
+    let (mut expiring, invitation, _) = spawn_invite(&a, Some("4")).await;
+    expiring.kill().await.unwrap();
+    expiring.wait().await.unwrap();
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let started = Instant::now();
+    let (resumed, same_invitation, _) = spawn_invite(&a, Some("4")).await;
+    assert_eq!(same_invitation, invitation);
+    let output = resumed.wait_with_output().await.unwrap();
+    assert!(!output.status.success());
+    assert!(started.elapsed() < Duration::from_secs(4));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Resuming the open invitation"), "{stderr}");
+    assert!(stderr.contains("sync-invitation-unused"), "{stderr}");
+    assert_eq!(status(&a).await["invitation"], "none");
+}
+
 #[tokio::test]
 async fn cli_join_continues_with_a_new_invitation_after_expiry() {
     let root = tempfile::tempdir().unwrap();
